@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "V*"
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and Release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: "V__VERSION__"
+          releaseName: "CLI-Manager V__VERSION__"
+          releaseBody: "See the assets to download this version and install."
+          releaseDraft: false
+          prerelease: false
