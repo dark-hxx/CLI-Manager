@@ -10,7 +10,20 @@ jobs:
   build:
     permissions:
       contents: write
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-13
+            args: "--target x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +35,14 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install dependencies
         run: npm ci
@@ -36,12 +57,19 @@ jobs:
           releaseBody: |
             ## 安装
 
-            下载 Assets 中的 `.msi` 安装包运行即可。
+            | 平台 | 格式 |
+            |------|------|
+            | Windows | `.msi` 安装包 |
+            | macOS (Apple Silicon) | `.dmg` 磁盘映像 |
+            | macOS (Intel) | `.dmg` 磁盘映像 |
+            | Linux | `.deb` / `.AppImage` |
 
-            > 首次安装可能触发 Windows SmartScreen 提示，点击"仍要运行"继续。
+            > - Windows 首次安装可能触发 SmartScreen 提示，点击"仍要运行"继续
+            > - macOS 首次打开需在"系统设置 → 隐私与安全性"中允许运行
 
             ## 变更日志
 
             详见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)
           releaseDraft: false
           prerelease: false
+          args: ${{ matrix.args }}
