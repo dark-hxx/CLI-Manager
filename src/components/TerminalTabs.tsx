@@ -3,6 +3,7 @@ import { useTerminalStore, type SessionStatus } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { XTermTerminal } from "./XTermTerminal";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
+import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
@@ -131,6 +132,7 @@ export function TerminalTabs() {
             <span>New</span>
           </button>
           <CommandTemplatePanel />
+          <CommandHistoryPanel />
         </div>
       </div>
 

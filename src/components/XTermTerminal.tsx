@@ -5,6 +5,8 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getTerminalTheme, getTerminalBackground } from "../lib/terminalThemes";
+import { useCommandHistoryStore } from "../stores/commandHistoryStore";
+import { useTerminalStore } from "../stores/terminalStore";
 
 interface Props {
   sessionId: string;
@@ -17,6 +19,7 @@ interface Props {
 export function XTermTerminal({ sessionId, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const inputBuffer = useRef("");
 
   // Update theme when resolvedTheme or terminalThemeName changes (without recreating terminal)
   useEffect(() => {
@@ -52,9 +55,27 @@ export function XTermTerminal({ sessionId, fontSize = 14, fontFamily = "Cascadia
     fitAddon.fit();
     terminalRef.current = terminal;
 
-    // Forward keyboard input to PTY
+    // Forward keyboard input to PTY and record command history
+    const addCommand = useCommandHistoryStore.getState().addCommand;
+    const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
+
     terminal.onData((data) => {
       invoke("pty_write", { sessionId, data }).catch(console.error);
+
+      if (data === "\r") {
+        const cmd = inputBuffer.current;
+        if (cmd.trim()) {
+          addCommand(getProjectId(), cmd);
+        }
+        inputBuffer.current = "";
+      } else if (data === "\x7f" || data === "\b") {
+        inputBuffer.current = inputBuffer.current.slice(0, -1);
+      } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        inputBuffer.current += data;
+      } else if (data.length > 1 && !data.startsWith("\x1b")) {
+        // Pasted text
+        inputBuffer.current += data;
+      }
     });
 
     // Sync resize to PTY

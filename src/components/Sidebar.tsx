@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useProjectStore } from "../stores/projectStore";
 import { useTerminalStore, type SessionStatus } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -176,6 +179,8 @@ function TreeNodeItem({
   collapsedIds,
   toggleCollapsed,
   getProjectStatus,
+  isPathInvalid,
+  onDragEnd,
 }: {
   node: TNode;
   depth: number;
@@ -198,7 +203,16 @@ function TreeNodeItem({
   collapsedIds: Set<string>;
   toggleCollapsed: (id: string) => void;
   getProjectStatus: (projectId: string) => SessionStatus | null;
+  isPathInvalid: (projectId: string) => boolean;
+  onDragEnd: (parentId: string | null, event: DragEndEvent) => void;
 }) {
+  const itemId = node.type === "project" ? node.project.id : node.group.id;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: itemId });
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
   const paddingLeft = 8 + depth * 16;
 
   if (node.type === "project") {
@@ -206,8 +220,14 @@ function TreeNodeItem({
     const isSelected = selectedId === p.id;
     const isMultiSelected = selectedProjectIds.has(p.id);
     const status = getProjectStatus(p.id);
+    const pathInvalid = isPathInvalid(p.id);
 
     return (
+      <div
+        ref={setNodeRef}
+        style={{ ...sortableStyle }}
+        {...attributes}
+      >
       <div
         className="flex items-center gap-2 py-1.5 rounded-md cursor-pointer text-sm group/item transition-colors"
         style={{
@@ -225,6 +245,7 @@ function TreeNodeItem({
         onClick={(e) => onSelectProject(e, p)}
         onDoubleClick={() => onOpenProject(p)}
         onContextMenu={(e) => onContextMenuProject(e, p)}
+        {...listeners}
       >
         <span style={{ color: "var(--accent)", flexShrink: 0 }}>
           {status ? (
@@ -247,6 +268,19 @@ function TreeNodeItem({
               style={{ backgroundColor: "var(--bg-primary)", color: "var(--accent)", borderColor: "var(--border)" }}
             >
               {p.cli_tool}
+            </span>
+          )}
+          {pathInvalid && (
+            <span
+              className="inline-flex shrink-0"
+              style={{ color: "var(--danger)" }}
+              title="路径不存在"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 1.5L14.5 13H1.5L8 1.5Z" />
+                <path d="M8 6V9" />
+                <circle cx="8" cy="11" r="0.5" fill="currentColor" />
+              </svg>
             </span>
           )}
         </span>
@@ -280,6 +314,7 @@ function TreeNodeItem({
           </button>
         </span>
       </div>
+      </div>
     );
   }
 
@@ -289,7 +324,7 @@ function TreeNodeItem({
   const childCount = countDescendants(node);
 
   return (
-    <div>
+    <div ref={setNodeRef} style={{ ...sortableStyle }} {...attributes}>
       <div
         className="flex items-center gap-1.5 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider cursor-pointer group/grp transition-colors"
         style={{ paddingLeft, paddingRight: 8, color: "var(--text-muted)" }}
@@ -297,6 +332,7 @@ function TreeNodeItem({
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
         onClick={() => toggleCollapsed(g.id)}
         onContextMenu={(e) => onContextMenuGroup(e, g.id, g.name)}
+        {...listeners}
       >
         <IconChevron open={isOpen} />
         <span style={{ color: "var(--accent)", flexShrink: 0 }}>
@@ -375,34 +411,40 @@ function TreeNodeItem({
       )}
 
       {isOpen && node.children.length > 0 && (
-        <div className="border-l ml-3" style={{ borderColor: "var(--border)" }}>
-          {node.children.map((child) => (
-            <TreeNodeItem
-              key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`}
-              node={child}
-              depth={depth + 1}
-              selectedId={selectedId}
-              selectedProjectIds={selectedProjectIds}
-              onSelectProject={onSelectProject}
-              onOpenProject={onOpenProject}
-              onEditProject={onEditProject}
-              onDeleteProject={onDeleteProject}
-              onAddSubGroup={onAddSubGroup}
-              onAddProjectToGroup={onAddProjectToGroup}
-              onStartGroup={onStartGroup}
-              onRenameGroup={onRenameGroup}
-              onDeleteGroup={onDeleteGroup}
-              onContextMenuProject={onContextMenuProject}
-              onContextMenuGroup={onContextMenuGroup}
-              newGroupParentId={newGroupParentId}
-              onCreateGroup={onCreateGroup}
-              onCancelNewGroup={onCancelNewGroup}
-              collapsedIds={collapsedIds}
-              toggleCollapsed={toggleCollapsed}
-              getProjectStatus={getProjectStatus}
-            />
-          ))}
-        </div>
+        <DndContext sensors={[]} collisionDetection={closestCenter} onDragEnd={(event) => onDragEnd(g.id, event)}>
+          <SortableContext items={node.children.map((c) => c.type === "group" ? c.group.id : c.project.id)} strategy={verticalListSortingStrategy}>
+            <div className="border-l ml-3" style={{ borderColor: "var(--border)" }}>
+              {node.children.map((child) => (
+                <TreeNodeItem
+                  key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`}
+                  node={child}
+                  depth={depth + 1}
+                  selectedId={selectedId}
+                  selectedProjectIds={selectedProjectIds}
+                  onSelectProject={onSelectProject}
+                  onOpenProject={onOpenProject}
+                  onEditProject={onEditProject}
+                  onDeleteProject={onDeleteProject}
+                  onAddSubGroup={onAddSubGroup}
+                  onAddProjectToGroup={onAddProjectToGroup}
+                  onStartGroup={onStartGroup}
+                  onRenameGroup={onRenameGroup}
+                  onDeleteGroup={onDeleteGroup}
+                  onContextMenuProject={onContextMenuProject}
+                  onContextMenuGroup={onContextMenuGroup}
+                  newGroupParentId={newGroupParentId}
+                  onCreateGroup={onCreateGroup}
+                  onCancelNewGroup={onCancelNewGroup}
+                  collapsedIds={collapsedIds}
+                  toggleCollapsed={toggleCollapsed}
+                  getProjectStatus={getProjectStatus}
+                  isPathInvalid={isPathInvalid}
+                  onDragEnd={onDragEnd}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </div>
   );
@@ -420,7 +462,7 @@ function countDescendants(node: TNode): number {
 // --- Main Sidebar ---
 
 export function Sidebar() {
-  const { tree, projects, groups, searchQuery, setSearchQuery, fetchAll, deleteProject, createGroup, renameGroup, deleteGroup } = useProjectStore();
+  const { tree, projects, groups, searchQuery, setSearchQuery, fetchAll, deleteProject, createGroup, renameGroup, deleteGroup, projectHealth, reorderItems } = useProjectStore();
   const createSession = useTerminalStore((s) => s.createSession);
   const sessions = useTerminalStore((s) => s.sessions);
   const sessionStatuses = useTerminalStore((s) => s.sessionStatuses);
@@ -438,6 +480,40 @@ export function Sidebar() {
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [newGroupParentId, setNewGroupParentId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  const handleDragEnd = useCallback((parentId: string | null, event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    // Find the children at this level
+    const findChildren = (pid: string | null): TNode[] => {
+      if (pid === null) return tree;
+      const findInTree = (nodes: TNode[]): TNode[] | null => {
+        for (const n of nodes) {
+          if (n.type === "group" && n.group.id === pid) return n.children;
+          if (n.type === "group") {
+            const found = findInTree(n.children);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      return findInTree(tree) ?? [];
+    };
+
+    const children = findChildren(parentId);
+    const ids = children.map((c) => c.type === "group" ? c.group.id : c.project.id);
+    const oldIndex = ids.indexOf(active.id as string);
+    const newIndex = ids.indexOf(over.id as string);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = [...ids];
+    reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, active.id as string);
+    reorderItems(parentId, reordered);
+  }, [tree, reorderItems]);
 
   useEffect(() => {
     fetchAll();
@@ -477,6 +553,10 @@ export function Sidebar() {
     return "exited";
   }, [sessions, sessionStatuses]);
 
+  const isPathInvalid = useCallback((projectId: string): boolean => {
+    return projectHealth[projectId] === false;
+  }, [projectHealth]);
+
   const toggleCollapsed = (id: string) => {
     setCollapsedIds((prev) => {
       const next = new Set(prev);
@@ -495,7 +575,8 @@ export function Sidebar() {
       }
     } catch { /* ignore */ }
     const cmd = p.startup_cmd || p.cli_tool || undefined;
-    await createSession(p.id, p.path, title, cmd, envVars);
+    const shell = p.shell && p.shell !== "powershell" ? p.shell : undefined;
+    await createSession(p.id, p.path, title, cmd, envVars, shell);
   };
 
   const openProjects = async (items: Project[]) => {
@@ -505,6 +586,7 @@ export function Sidebar() {
         cwd: p.path,
         title: p.cli_tool ? `${p.name} (${p.cli_tool})` : p.name,
         startupCmd: p.startup_cmd || p.cli_tool || undefined,
+        shell: p.shell || undefined,
       })));
       return;
     }
@@ -748,53 +830,80 @@ export function Sidebar() {
           </div>
         )}
 
-        {tree.map((node) => {
-          // Intercept rename for groups
-          if (node.type === "group" && renamingGroupId === node.group.id) {
-            return (
-              <div key={`g:${node.group.id}`} className="flex items-center gap-1.5 px-2 py-1.5">
-                <IconChevron open={true} />
-                <InlineRename
-                  initial={node.group.name}
-                  onConfirm={(name) => handleRenameConfirm(node.group.id, name)}
-                  onCancel={() => setRenamingGroupId(null)}
-                />
-              </div>
-            );
-          }
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd(null, event)}>
+          <SortableContext items={tree.map((n) => n.type === "group" ? n.group.id : n.project.id)} strategy={verticalListSortingStrategy}>
+            {tree.map((node) => {
+              if (node.type === "group" && renamingGroupId === node.group.id) {
+                return (
+                  <div key={`g:${node.group.id}`} className="flex items-center gap-1.5 px-2 py-1.5">
+                    <IconChevron open={true} />
+                    <InlineRename
+                      initial={node.group.name}
+                      onConfirm={(name) => handleRenameConfirm(node.group.id, name)}
+                      onCancel={() => setRenamingGroupId(null)}
+                    />
+                  </div>
+                );
+              }
 
-          return (
-            <TreeNodeItem
-              key={node.type === "group" ? `g:${node.group.id}` : `p:${node.project.id}`}
-              node={node}
-              depth={0}
-              selectedId={selectedId}
-              selectedProjectIds={selectedProjectIds}
-              onSelectProject={handleSelectProject}
-              onOpenProject={handleOpen}
-              onEditProject={setEditingProject}
-              onDeleteProject={handleRequestDeleteProject}
-              onAddSubGroup={handleAddSubGroup}
-              onAddProjectToGroup={handleAddProjectToGroup}
-              onStartGroup={handleStartGroup}
-              onRenameGroup={handleRenameGroup}
-              onDeleteGroup={handleRequestDeleteGroup}
-              onContextMenuProject={handleContextMenuProject}
-              onContextMenuGroup={handleContextMenuGroup}
-              newGroupParentId={newGroupParentId}
-              onCreateGroup={handleCreateGroup}
-              onCancelNewGroup={handleCancelNewGroup}
-              collapsedIds={collapsedIds}
-              toggleCollapsed={toggleCollapsed}
-              getProjectStatus={getProjectStatus}
-            />
-          );
-        })}
+              return (
+                <TreeNodeItem
+                  key={node.type === "group" ? `g:${node.group.id}` : `p:${node.project.id}`}
+                  node={node}
+                  depth={0}
+                  selectedId={selectedId}
+                  selectedProjectIds={selectedProjectIds}
+                  onSelectProject={handleSelectProject}
+                  onOpenProject={handleOpen}
+                  onEditProject={setEditingProject}
+                  onDeleteProject={handleRequestDeleteProject}
+                  onAddSubGroup={handleAddSubGroup}
+                  onAddProjectToGroup={handleAddProjectToGroup}
+                  onStartGroup={handleStartGroup}
+                  onRenameGroup={handleRenameGroup}
+                  onDeleteGroup={handleRequestDeleteGroup}
+                  onContextMenuProject={handleContextMenuProject}
+                  onContextMenuGroup={handleContextMenuGroup}
+                  newGroupParentId={newGroupParentId}
+                  onCreateGroup={handleCreateGroup}
+                  onCancelNewGroup={handleCancelNewGroup}
+                  collapsedIds={collapsedIds}
+                  toggleCollapsed={toggleCollapsed}
+                  getProjectStatus={getProjectStatus}
+                  isPathInvalid={isPathInvalid}
+                  onDragEnd={handleDragEnd}
+                />
+              );
+            })}
+          </SortableContext>
+        </DndContext>
 
         {tree.length === 0 && (
-          <div className="flex flex-col items-center py-8 gap-2" style={{ color: "var(--text-muted)" }}>
-            <IconFolder />
-            <p className="text-xs">No projects found</p>
+          <div className="flex flex-col items-center py-10 px-4 gap-3" style={{ color: "var(--text-muted)" }}>
+            <svg width="40" height="40" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
+              <rect x="2" y="3" width="12" height="10" rx="2" />
+              <path d="M5 6.5L7 8L5 9.5" />
+              <path d="M8.5 9.5H11" />
+            </svg>
+            <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+              欢迎使用 CLI-Manager
+            </p>
+            <p className="text-xs text-center leading-relaxed">
+              集中管理你的开发项目终端。添加项目后即可快速启动 CLI 工具。
+            </p>
+            <button
+              onClick={() => { setAddToGroupId(null); setShowAdd(true); }}
+              className="mt-2 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md"
+              style={{ backgroundColor: "var(--accent)", color: "#fff" }}
+            >
+              <IconPlus /> 快速添加项目
+            </button>
+            <div className="mt-3 text-[11px] text-left w-full space-y-1.5" style={{ color: "var(--text-muted)" }}>
+              <p>提示：</p>
+              <p>- 双击项目打开终端</p>
+              <p>- Ctrl+Click 多选后批量启动</p>
+              <p>- 右键项目可查看更多操作</p>
+            </div>
           </div>
         )}
       </div>
@@ -813,7 +922,7 @@ export function Sidebar() {
           </button>
         </div>
         <div className="flex items-center justify-between mt-3">
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>外部 PowerShell</span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>外部终端</span>
           <button
             className="switch"
             data-on={useExternalTerminal ? "true" : "false"}

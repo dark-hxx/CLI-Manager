@@ -16,6 +16,7 @@ export interface Project {
   cli_tool: string;
   startup_cmd: string;
   env_vars: string;
+  shell: string;
   created_at: string;
   updated_at: string;
 }
@@ -28,6 +29,7 @@ export interface CreateProjectInput {
   cli_tool?: string;
   startup_cmd?: string;
   env_vars?: string;
+  shell?: string;
 }
 
 export interface UpdateProjectInput {
@@ -39,6 +41,7 @@ export interface UpdateProjectInput {
   cli_tool?: string;
   startup_cmd?: string;
   env_vars?: string;
+  shell?: string;
 }
 
 export interface CreateGroupInput {
@@ -78,3 +81,18 @@ export interface UpdateTemplateInput {
   description?: string;
   sort_order?: number;
 }
+
+export interface CommandHistoryEntry {
+  id: string;
+  project_id: string | null;
+  command: string;
+  executed_at: string;
+}
+
+export const SHELL_OPTIONS = [
+  { value: "powershell", label: "PowerShell" },
+  { value: "cmd", label: "CMD" },
+  { value: "pwsh", label: "PowerShell Core" },
+  { value: "wsl", label: "WSL" },
+  { value: "bash", label: "Bash" },
+] as const;

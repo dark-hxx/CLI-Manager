@@ -69,6 +69,28 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 4,
+            description: "create_command_history_table",
+            sql: "
+                CREATE TABLE IF NOT EXISTS command_history (
+                    id          TEXT PRIMARY KEY,
+                    project_id  TEXT,
+                    command     TEXT NOT NULL,
+                    executed_at TEXT NOT NULL,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_command_history_project ON command_history(project_id);
+                CREATE INDEX IF NOT EXISTS idx_command_history_time ON command_history(executed_at DESC);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "add_shell_to_projects",
+            sql: "ALTER TABLE projects ADD COLUMN shell TEXT NOT NULL DEFAULT 'powershell';",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -91,6 +113,7 @@ pub fn run() {
             commands::terminal::pty_resize,
             commands::terminal::pty_close,
             commands::terminal::pty_status,
+            commands::fs::check_paths_exist,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

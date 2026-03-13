@@ -9,9 +9,10 @@ pub async fn pty_create(
     pty_manager: tauri::State<'_, PtyManager>,
     cwd: Option<String>,
     env_vars: Option<HashMap<String, String>>,
+    shell: Option<String>,
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
-    pty_manager.create(&session_id, cwd.as_deref(), env_vars, app_handle)?;
+    pty_manager.create(&session_id, cwd.as_deref(), env_vars, shell.as_deref(), app_handle)?;
     Ok(session_id)
 }
 

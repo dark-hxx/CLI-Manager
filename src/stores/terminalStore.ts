@@ -15,7 +15,7 @@ interface TerminalStore {
   activeSessionId: string | null;
   sessionStatuses: Record<string, SessionStatus>;
   statusListeners: Record<string, UnlistenFn>;
-  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>) => Promise<string>;
+  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
 }
@@ -26,10 +26,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   sessionStatuses: {},
   statusListeners: {},
 
-  createSession: async (projectId, cwd, title, startupCmd, envVars) => {
+  createSession: async (projectId, cwd, title, startupCmd, envVars, shell) => {
     const sessionId = await invoke<string>("pty_create", {
       cwd: cwd ?? null,
       envVars: envVars ?? null,
+      shell: shell ?? null,
     });
     const session: TerminalSession = {
       id: sessionId,

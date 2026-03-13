@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../lib/db";
 import type {
   Project, CreateProjectInput, UpdateProjectInput,
@@ -10,6 +11,7 @@ interface ProjectStore {
   groups: Group[];
   tree: TreeNode[];
   searchQuery: string;
+  projectHealth: Record<string, boolean>;
   setSearchQuery: (q: string) => void;
   fetchAll: () => Promise<void>;
   fetchProjects: () => Promise<void>;
@@ -20,6 +22,7 @@ interface ProjectStore {
   createGroup: (input: CreateGroupInput) => Promise<Group>;
   renameGroup: (id: string, name: string) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
+  reorderItems: (parentId: string | null, orderedIds: string[]) => Promise<void>;
 }
 
 function buildTree(groups: Group[], projects: Project[], search: string): TreeNode[] {
@@ -94,6 +97,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   groups: [],
   tree: [],
   searchQuery: "",
+  projectHealth: {},
 
   setSearchQuery: (q) => {
     set({ searchQuery: q });
@@ -108,7 +112,20 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       db.select<Project[]>("SELECT * FROM projects ORDER BY sort_order, name"),
     ]);
     const tree = buildTree(groups, projects, get().searchQuery);
-    set({ groups, projects, tree });
+
+    // Path health check
+    let projectHealth = get().projectHealth;
+    if (projects.length > 0) {
+      try {
+        const paths = projects.map((p) => p.path);
+        const results = await invoke<boolean[]>("check_paths_exist", { paths });
+        const health: Record<string, boolean> = {};
+        projects.forEach((p, i) => { health[p.id] = results[i]; });
+        projectHealth = health;
+      } catch { /* ignore */ }
+    }
+
+    set({ groups, projects, tree, projectHealth });
   },
 
   fetchProjects: async () => {
@@ -133,14 +150,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       cli_tool: input.cli_tool ?? "",
       startup_cmd: input.startup_cmd ?? "",
       env_vars: input.env_vars ?? "{}",
+      shell: input.shell ?? "powershell",
       created_at: ts,
       updated_at: ts,
     };
     await db.execute(
-      `INSERT INTO projects (id, name, path, group_name, group_id, sort_order, cli_tool, startup_cmd, env_vars, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO projects (id, name, path, group_name, group_id, sort_order, cli_tool, startup_cmd, env_vars, shell, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [project.id, project.name, project.path, project.group_name, project.group_id, project.sort_order,
-       project.cli_tool, project.startup_cmd, project.env_vars, project.created_at, project.updated_at]
+       project.cli_tool, project.startup_cmd, project.env_vars, project.shell, project.created_at, project.updated_at]
     );
     await get().fetchAll();
     return project;
@@ -219,6 +237,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       [id]
     );
     await db.execute("DELETE FROM groups WHERE id = $1", [id]);
+    await get().fetchAll();
+  },
+
+  reorderItems: async (_parentId, orderedIds) => {
+    const db = await getDb();
+    const groupIds = new Set(get().groups.map((g) => g.id));
+
+    for (let i = 0; i < orderedIds.length; i++) {
+      const id = orderedIds[i];
+      if (groupIds.has(id)) {
+        await db.execute("UPDATE groups SET sort_order = $1 WHERE id = $2", [i, id]);
+      } else {
+        await db.execute("UPDATE projects SET sort_order = $1 WHERE id = $2", [i, id]);
+      }
+    }
     await get().fetchAll();
   },
 }));

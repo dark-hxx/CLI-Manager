@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-CLI-Manager 是一款 Windows 桌面应用，用于集中管理基于 PowerShell 的多个开发项目的 CLI 工具（如 claude、codex）。
+CLI-Manager 是一款 Windows 桌面应用，用于集中管理多个开发项目的 CLI 终端（支持 PowerShell / CMD / PWsh / WSL / Bash）。
 
 ## 技术栈
 
@@ -33,28 +33,32 @@ npm run tauri add <plugin>           # 安装 Tauri 插件
 ## 架构
 
 ### 前后端分工
-- **Rust 后端**（`src-tauri/src/`）：仅负责 PTY 会话管理（创建/写入/调整大小/关闭 PowerShell 进程）
+- **Rust 后端**（`src-tauri/src/`）：PTY 会话管理（多 Shell 支持）、文件系统操作（路径验证）
 - **前端**（`src/`）：项目 CRUD 通过 `@tauri-apps/plugin-sql` 直接操作 SQLite，UI 渲染和状态管理
 
 ### IPC 通信
-- 前端 → 后端：`invoke('pty_create' | 'pty_write' | 'pty_resize' | 'pty_close', args)`
+- 前端 → 后端：`invoke('pty_create' | 'pty_write' | 'pty_resize' | 'pty_close' | 'check_paths_exist', args)`
+  - `pty_create` 接受 `shell` 参数指定 Shell 类型
+  - `check_paths_exist` 批量验证项目路径有效性
 - 后端 → 前端：`app_handle.emit("pty-output-{sessionId}", data)` 推送 PTY 输出
 
 ### 关键目录
 ```
 src/
-  components/       # React 组件（Sidebar, TerminalTabs, XTermTerminal, ConfigModal）
-  stores/           # Zustand stores（projectStore, terminalStore, settingsStore）
-  lib/              # 工具（db.ts 数据库连接, types.ts 类型定义）
+  components/       # React 组件（Sidebar, TerminalTabs, XTermTerminal, ConfigModal, CommandHistoryPanel）
+  stores/           # Zustand stores（projectStore, terminalStore, settingsStore, commandHistoryStore）
+  lib/              # 工具（db.ts 数据库连接, types.ts 类型定义, externalTerminal.ts 外部终端）
 src-tauri/src/
-  lib.rs            # Tauri 入口，插件注册，migrations
+  lib.rs            # Tauri 入口，插件注册，migrations（v1-v5）
   commands/         # Tauri command handlers
-    terminal.rs     # PTY 相关 commands
+    terminal.rs     # PTY 相关 commands（pty_create 支持 shell 参数）
+    fs.rs           # 文件系统 commands（check_paths_exist）
   pty/
-    manager.rs      # PtyManager：ConPTY 会话生命周期管理
+    manager.rs      # PtyManager：ConPTY 会话生命周期管理，多 Shell 支持
 ```
 
 ### 数据层
-- SQLite 表：`projects`（项目配置）、`command_templates`（命令模板）
-- migrations 定义在 `src-tauri/src/lib.rs`
+- SQLite 表：`projects`（项目配置，含 shell 字段）、`groups`（项目分组）、`command_templates`（命令模板）、`command_history`（命令历史）
+- migrations 定义在 `src-tauri/src/lib.rs`（v1-v5）
 - 前端通过 `@tauri-apps/plugin-sql` 的 `Database.load("sqlite:cli-manager.db")` 直接执行 SQL
+- 前端依赖 `@dnd-kit/core` + `@dnd-kit/sortable` 实现拖拽排序

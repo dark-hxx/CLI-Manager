@@ -33,6 +33,15 @@ jobs:
         with:
           tagName: "V__VERSION__"
           releaseName: "CLI-Manager V__VERSION__"
-          releaseBody: "See the assets to download this version and install."
+          releaseBody: |
+            ## 安装
+
+            下载 Assets 中的 `.msi` 安装包运行即可。
+
+            > 首次安装可能触发 Windows SmartScreen 提示，点击"仍要运行"继续。
+
+            ## 变更日志
+
+            详见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)
           releaseDraft: false
           prerelease: false

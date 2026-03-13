@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../stores/projectStore";
 import type { Project, Group } from "../lib/types";
+import { SHELL_OPTIONS } from "../lib/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 interface Props {
@@ -21,6 +22,7 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
   );
   const [cliTool, setCliTool] = useState(project?.cli_tool ?? "");
   const [startupCmd, setStartupCmd] = useState(project?.startup_cmd ?? "");
+  const [shell, setShell] = useState(project?.shell ?? "powershell");
   const [envVarsText, setEnvVarsText] = useState(project?.env_vars ?? "{}");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -70,6 +72,7 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
           cli_tool: cliTool.trim(),
           startup_cmd: startupCmd.trim(),
           env_vars: envVarsText.trim(),
+          shell,
         });
       } else {
         await createProject({
@@ -79,6 +82,7 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
           cli_tool: cliTool.trim() || undefined,
           startup_cmd: startupCmd.trim() || undefined,
           env_vars: envVarsText.trim() || undefined,
+          shell,
         });
       }
       onClose();
@@ -160,6 +164,21 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
           </div>
 
           <Field label="CLI 工具" value={cliTool} onChange={setCliTool} style={inputStyle} placeholder="claude / codex / custom" />
+
+          <div>
+            <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Shell</label>
+            <select
+              value={shell}
+              onChange={(e) => setShell(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm rounded border outline-none"
+              style={inputStyle}
+            >
+              {SHELL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
           <Field label="启动命令" value={startupCmd} onChange={setStartupCmd} style={inputStyle} placeholder="npm run dev" />
           <div>
             <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>

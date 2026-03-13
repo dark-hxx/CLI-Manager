@@ -1,6 +1,49 @@
 # Changelog
 
-## [Unreleased] - 2026-03-13
+## [V0.0.2] - 2026-03-13
+
+### P1 功能扩展
+
+#### 2.1 命令历史记录与搜索
+- 新增 `src/stores/commandHistoryStore.ts` — 命令历史 Zustand store，SQLite 持久化，最大 1000 条 FIFO 清理
+- 新增 `src/components/CommandHistoryPanel.tsx` — 终端 Tab 栏命令历史下拉面板，支持搜索和一键重放
+- 修改 `src/components/XTermTerminal.tsx` — 添加 `inputBuffer` 追踪键入，Enter 时自动记录命令
+- 修改 `src/components/TerminalTabs.tsx` — 集成 CommandHistoryPanel 按钮
+- 修改 `src/lib/types.ts` — 新增 `CommandHistoryEntry` 接口
+- SQLite migration v4：`command_history` 表 + 索引（project_id、executed_at）
+- 自动去重：同项目连续相同命令不重复记录
+
+#### 2.2 拖拽排序
+- 新增依赖 `@dnd-kit/core`、`@dnd-kit/sortable`、`@dnd-kit/utilities`
+- 修改 `src/components/Sidebar.tsx` — 集成 dnd-kit，`TreeNodeItem` 使用 `useSortable` hook
+- 支持根级和分组内拖拽排序，排序结果持久化到 SQLite
+- 修改 `src/stores/projectStore.ts` — 新增 `reorderItems()` 方法
+
+#### 2.3 空状态引导
+- 修改 `src/components/Sidebar.tsx` — 无项目时显示欢迎信息、快速添加按钮和使用提示
+
+#### 2.4 项目健康检查
+- 新增 `src-tauri/src/commands/fs.rs` — `check_paths_exist` Tauri command，批量验证路径有效性
+- 修改 `src-tauri/src/commands/mod.rs` — 注册 `fs` 模块
+- 修改 `src-tauri/src/lib.rs` — 注册 `check_paths_exist` handler
+- 修改 `src/stores/projectStore.ts` — `fetchAll()` 调用路径验证，维护 `projectHealth` 状态
+- 修改 `src/components/Sidebar.tsx` — 路径无效时项目节点显示警告三角图标
+
+#### 2.5 多 Shell 支持
+- SQLite migration v5：`projects` 表新增 `shell` 列（默认 `powershell`）
+- 修改 `src-tauri/src/pty/manager.rs` — 新增 `resolve_shell()` 支持 powershell/cmd/pwsh/wsl/bash
+- 修改 `src-tauri/src/commands/terminal.rs` — `pty_create` 新增 `shell` 参数
+- 修改 `src/stores/terminalStore.ts` — `createSession` 传递 shell 参数
+- 修改 `src/components/ConfigModal.tsx` — 新增 Shell 下拉选择器
+- 修改 `src/lib/types.ts` — Project 接口新增 `shell` 字段，新增 `SHELL_OPTIONS` 常量
+- 修改 `src/lib/externalTerminal.ts` — 支持按项目配置启动不同 Shell 的外部终端
+
+### P1 Bug 修复
+- **[High]** `externalTerminal.ts` — 外部终端硬编码 powershell，改为根据项目 shell 配置动态选择
+- **[Medium]** `Sidebar.tsx` — "外部 PowerShell" 标签改为 "外部终端"，匹配多 Shell 支持
+
+### 其他变更
+- 替换应用图标为 folder+shell 风格图标（512x512 PNG → `npx tauri icon` 生成全尺寸）
 
 ### 设置系统
 

@@ -4,7 +4,16 @@ export interface ExternalTab {
   cwd?: string;
   title: string;
   startupCmd?: string;
+  shell?: string;
 }
+
+const SHELL_EXE: Record<string, { exe: string; noExitFlag?: string }> = {
+  powershell: { exe: "powershell", noExitFlag: "-NoExit" },
+  cmd: { exe: "cmd", noExitFlag: "/K" },
+  pwsh: { exe: "pwsh", noExitFlag: "-NoExit" },
+  wsl: { exe: "wsl" },
+  bash: { exe: "bash" },
+};
 
 function pushTabArgs(args: string[], tab: ExternalTab) {
   args.push("new-tab");
@@ -12,10 +21,20 @@ function pushTabArgs(args: string[], tab: ExternalTab) {
     args.push("-d", tab.cwd);
   }
   args.push("--title", tab.title);
+
+  const shellKey = tab.shell ?? "powershell";
+  const info = SHELL_EXE[shellKey] ?? SHELL_EXE.powershell;
+
   if (tab.startupCmd && tab.startupCmd.trim()) {
-    args.push("powershell", "-NoExit", "-Command", tab.startupCmd);
+    args.push(info.exe);
+    if (info.noExitFlag) args.push(info.noExitFlag);
+    if (shellKey === "cmd") {
+      args.push(tab.startupCmd);
+    } else {
+      args.push("-Command", tab.startupCmd);
+    }
   } else {
-    args.push("powershell");
+    args.push(info.exe);
   }
 }
 

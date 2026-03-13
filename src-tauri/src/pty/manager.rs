@@ -30,11 +30,22 @@ impl PtyManager {
         }
     }
 
+    fn resolve_shell(shell: &str) -> (&'static str, Option<&'static str>) {
+        match shell {
+            "cmd" => ("cmd.exe", Some("/Q")),
+            "pwsh" => ("pwsh.exe", Some("-NoLogo")),
+            "wsl" => ("wsl.exe", None),
+            "bash" => ("bash.exe", None),
+            _ => ("powershell.exe", Some("-NoLogo")),
+        }
+    }
+
     pub fn create(
         &self,
         session_id: &str,
         cwd: Option<&str>,
         env_vars: Option<HashMap<String, String>>,
+        shell: Option<&str>,
         app_handle: AppHandle,
     ) -> Result<(), String> {
         let pty_system = native_pty_system();
@@ -47,8 +58,11 @@ impl PtyManager {
             })
             .map_err(|e| e.to_string())?;
 
-        let mut cmd = CommandBuilder::new("powershell.exe");
-        cmd.arg("-NoLogo");
+        let (exe, arg) = Self::resolve_shell(shell.unwrap_or("powershell"));
+        let mut cmd = CommandBuilder::new(exe);
+        if let Some(a) = arg {
+            cmd.arg(a);
+        }
 
         if let Some(dir) = cwd {
             cmd.cwd(dir);
