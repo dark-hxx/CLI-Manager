@@ -4,16 +4,26 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getTerminalTheme, getTerminalBackground } from "../lib/terminalThemes";
 
 interface Props {
   sessionId: string;
   fontSize?: number;
   fontFamily?: string;
+  resolvedTheme?: "dark" | "light";
+  terminalThemeName?: string;
 }
 
-export function XTermTerminal({ sessionId, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace" }: Props) {
+export function XTermTerminal({ sessionId, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+
+  // Update theme when resolvedTheme or terminalThemeName changes (without recreating terminal)
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = getTerminalTheme(terminalThemeName, resolvedTheme);
+    }
+  }, [resolvedTheme, terminalThemeName]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -26,28 +36,7 @@ export function XTermTerminal({ sessionId, fontSize = 14, fontFamily = "Cascadia
       fontSize,
       fontFamily,
       scrollback: 1000,
-      theme: {
-        background: "#1a1b26",
-        foreground: "#c0caf5",
-        cursor: "#c0caf5",
-        selectionBackground: "#364a82",
-        black: "#15161e",
-        red: "#f7768e",
-        green: "#9ece6a",
-        yellow: "#e0af68",
-        blue: "#7aa2f7",
-        magenta: "#bb9af7",
-        cyan: "#7dcfff",
-        white: "#a9b1d6",
-        brightBlack: "#414868",
-        brightRed: "#f7768e",
-        brightGreen: "#9ece6a",
-        brightYellow: "#e0af68",
-        brightBlue: "#7aa2f7",
-        brightMagenta: "#bb9af7",
-        brightCyan: "#7dcfff",
-        brightWhite: "#c0caf5",
-      },
+      theme: getTerminalTheme(terminalThemeName, resolvedTheme),
     });
 
     const fitAddon = new FitAddon();
@@ -105,7 +94,7 @@ export function XTermTerminal({ sessionId, fontSize = 14, fontFamily = "Cascadia
     <div
       ref={containerRef}
       className="w-full h-full"
-      style={{ backgroundColor: "#1a1b26" }}
+      style={{ backgroundColor: getTerminalBackground(terminalThemeName, resolvedTheme) }}
     />
   );
 }

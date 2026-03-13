@@ -2,11 +2,14 @@ import { useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import "./App.css";
 
 function App() {
   const loadSettings = useSettingsStore((s) => s.load);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
+
+  useKeyboardShortcuts();
 
   useEffect(() => {
     loadSettings();

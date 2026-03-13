@@ -1,12 +1,19 @@
-import { useState, useEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from "react";
 import { useProjectStore } from "../stores/projectStore";
-import { useTerminalStore } from "../stores/terminalStore";
+import { useTerminalStore, type SessionStatus } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { Project, TreeNode as TNode, Group } from "../lib/types";
 import { ConfigModal } from "./ConfigModal";
 import { ThemeToggle } from "./ThemeToggle";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { SettingsModal } from "./SettingsModal";
 import { openWindowsTerminal } from "../lib/externalTerminal";
+
+const STATUS_COLORS: Record<SessionStatus, string> = {
+  running: "#9ece6a",
+  exited: "#ff9e64",
+  error: "#f7768e",
+};
 
 // --- SVG Icons ---
 
@@ -90,6 +97,15 @@ function IconPlus() {
   );
 }
 
+function IconGear() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="2.5" />
+      <path d="M8 1.5V3M8 13V14.5M1.5 8H3M13 8H14.5M3.05 3.05L4.1 4.1M11.9 11.9L12.95 12.95M12.95 3.05L11.9 4.1M4.1 11.9L3.05 12.95" />
+    </svg>
+  );
+}
+
 // --- Inline rename input ---
 
 function InlineRename({
@@ -159,6 +175,7 @@ function TreeNodeItem({
   onCancelNewGroup,
   collapsedIds,
   toggleCollapsed,
+  getProjectStatus,
 }: {
   node: TNode;
   depth: number;
@@ -180,6 +197,7 @@ function TreeNodeItem({
   onCancelNewGroup: () => void;
   collapsedIds: Set<string>;
   toggleCollapsed: (id: string) => void;
+  getProjectStatus: (projectId: string) => SessionStatus | null;
 }) {
   const paddingLeft = 8 + depth * 16;
 
@@ -187,6 +205,7 @@ function TreeNodeItem({
     const p = node.project;
     const isSelected = selectedId === p.id;
     const isMultiSelected = selectedProjectIds.has(p.id);
+    const status = getProjectStatus(p.id);
 
     return (
       <div
@@ -208,7 +227,17 @@ function TreeNodeItem({
         onContextMenu={(e) => onContextMenuProject(e, p)}
       >
         <span style={{ color: "var(--accent)", flexShrink: 0 }}>
-          <IconTerminal />
+          {status ? (
+            <span
+              className="inline-block w-2.5 h-2.5 rounded-full"
+              style={{ backgroundColor: STATUS_COLORS[status] }}
+              role="status"
+              aria-label={`Project ${status}`}
+              title={status}
+            />
+          ) : (
+            <IconTerminal />
+          )}
         </span>
         <span className="flex-1 min-w-0 flex items-center gap-1">
           <span className="block truncate">{p.name}</span>
@@ -370,6 +399,7 @@ function TreeNodeItem({
               onCancelNewGroup={onCancelNewGroup}
               collapsedIds={collapsedIds}
               toggleCollapsed={toggleCollapsed}
+              getProjectStatus={getProjectStatus}
             />
           ))}
         </div>
@@ -392,6 +422,8 @@ function countDescendants(node: TNode): number {
 export function Sidebar() {
   const { tree, projects, groups, searchQuery, setSearchQuery, fetchAll, deleteProject, createGroup, renameGroup, deleteGroup } = useProjectStore();
   const createSession = useTerminalStore((s) => s.createSession);
+  const sessions = useTerminalStore((s) => s.sessions);
+  const sessionStatuses = useTerminalStore((s) => s.sessionStatuses);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
   const updateSetting = useSettingsStore((s) => s.update);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -405,6 +437,7 @@ export function Sidebar() {
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [newGroupParentId, setNewGroupParentId] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     fetchAll();
@@ -430,6 +463,19 @@ export function Sidebar() {
       window.removeEventListener("keydown", keyHandler);
     };
   }, [contextMenu]);
+
+  // Derive project status from active terminal sessions
+  const getProjectStatus = useCallback((projectId: string): SessionStatus | null => {
+    const projectSessions = sessions.filter((s) => s.projectId === projectId);
+    if (projectSessions.length === 0) return null;
+    for (const s of projectSessions) {
+      if ((sessionStatuses[s.id] ?? "running") === "running") return "running";
+    }
+    for (const s of projectSessions) {
+      if (sessionStatuses[s.id] === "error") return "error";
+    }
+    return "exited";
+  }, [sessions, sessionStatuses]);
 
   const toggleCollapsed = (id: string) => {
     setCollapsedIds((prev) => {
@@ -740,6 +786,7 @@ export function Sidebar() {
               onCancelNewGroup={handleCancelNewGroup}
               collapsedIds={collapsedIds}
               toggleCollapsed={toggleCollapsed}
+              getProjectStatus={getProjectStatus}
             />
           );
         })}
@@ -754,7 +801,17 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-3 py-2 border-t" style={{ borderColor: "var(--border)" }}>
-        <ThemeToggle />
+        <div className="flex items-center justify-between">
+          <ThemeToggle />
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center justify-center w-7 h-7 rounded-md hover:opacity-80 transition-opacity"
+            style={{ color: "var(--text-muted)", backgroundColor: "var(--bg-tertiary)" }}
+            title="设置"
+          >
+            <IconGear />
+          </button>
+        </div>
         <div className="flex items-center justify-between mt-3">
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>外部 PowerShell</span>
           <button
@@ -868,6 +925,7 @@ export function Sidebar() {
           onClose={() => setConfirmAction(null)}
         />
       )}
+      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
     </aside>
   );
 }

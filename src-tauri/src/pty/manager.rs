@@ -1,23 +1,32 @@
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
-    child: Box<dyn portable_pty::Child + Send>,
+    child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct PtyProcessStatus {
+    pub status: String,
+    pub exit_code: Option<i32>,
 }
 
 pub struct PtyManager {
     sessions: Mutex<HashMap<String, PtySession>>,
+    statuses: Arc<Mutex<HashMap<String, PtyProcessStatus>>>,
 }
 
 impl PtyManager {
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            statuses: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -56,7 +65,21 @@ impl PtyManager {
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
-        let event_name = format!("pty-output-{session_id}");
+        let child = Arc::new(Mutex::new(child));
+        let output_event = format!("pty-output-{session_id}");
+        let status_event = format!("pty-status-{session_id}");
+        let status_map = self.statuses.clone();
+        let child_for_thread = child.clone();
+        let session_id_owned = session_id.to_string();
+
+        self.statuses.lock().unwrap().insert(
+            session_id.to_string(),
+            PtyProcessStatus {
+                status: "running".to_string(),
+                exit_code: None,
+            },
+        );
+
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -64,11 +87,35 @@ impl PtyManager {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app_handle.emit(&event_name, data);
+                        let _ = app_handle.emit(&output_event, data);
                     }
                     Err(_) => break,
                 }
             }
+
+            // Process exited — check exit status
+            let new_status = match child_for_thread.lock().unwrap().try_wait() {
+                Ok(Some(exit)) => PtyProcessStatus {
+                    status: "exited".to_string(),
+                    exit_code: Some(exit.exit_code() as i32),
+                },
+                Ok(None) => PtyProcessStatus {
+                    status: "exited".to_string(),
+                    exit_code: None,
+                },
+                Err(_) => PtyProcessStatus {
+                    status: "error".to_string(),
+                    exit_code: None,
+                },
+            };
+
+            if let Ok(mut statuses) = status_map.lock() {
+                if let Some(entry) = statuses.get_mut(&session_id_owned) {
+                    *entry = new_status.clone();
+                }
+            }
+
+            let _ = app_handle.emit(&status_event, new_status);
         });
 
         let session = PtySession {
@@ -113,10 +160,18 @@ impl PtyManager {
     }
 
     pub fn close(&self, session_id: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(mut session) = sessions.remove(session_id) {
-            let _ = session.child.kill();
+        let session = {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.remove(session_id)
+        };
+        if let Some(session) = session {
+            let _ = session.child.lock().unwrap().kill();
         }
+        self.statuses.lock().unwrap().remove(session_id);
         Ok(())
+    }
+
+    pub fn status_all(&self) -> HashMap<String, PtyProcessStatus> {
+        self.statuses.lock().unwrap().clone()
     }
 }

@@ -55,3 +55,26 @@ export interface TerminalSession {
   projectId?: string;
   title: string;
 }
+
+export interface CommandTemplate {
+  id: string;
+  project_id: string | null;
+  name: string;
+  command: string;
+  description: string;
+  sort_order: number;
+}
+
+export interface CreateTemplateInput {
+  project_id?: string | null;
+  name: string;
+  command: string;
+  description?: string;
+}
+
+export interface UpdateTemplateInput {
+  name?: string;
+  command?: string;
+  description?: string;
+  sort_order?: number;
+}

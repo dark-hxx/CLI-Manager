@@ -1,4 +1,4 @@
-use crate::pty::manager::PtyManager;
+use crate::pty::manager::{PtyManager, PtyProcessStatus};
 use std::collections::HashMap;
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -40,4 +40,11 @@ pub async fn pty_close(
     session_id: String,
 ) -> Result<(), String> {
     pty_manager.close(&session_id)
+}
+
+#[tauri::command]
+pub async fn pty_status(
+    pty_manager: tauri::State<'_, PtyManager>,
+) -> Result<HashMap<String, PtyProcessStatus>, String> {
+    Ok(pty_manager.status_all())
 }

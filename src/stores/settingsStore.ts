@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 
 export type ThemeMode = "dark" | "light" | "system";
+export type ShortcutAction = "newTerminal" | "closeTerminal" | "nextTab" | "prevTab";
+export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 
 interface Settings {
   theme: ThemeMode;
@@ -10,6 +12,8 @@ interface Settings {
   defaultShell: string;
   sidebarWidth: number;
   useExternalTerminal: boolean;
+  terminalThemeName: string;
+  keyboardShortcuts: KeyboardShortcutMap;
 }
 
 interface SettingsStore extends Settings {
@@ -27,6 +31,13 @@ const DEFAULTS: Settings = {
   defaultShell: "powershell.exe",
   sidebarWidth: 280,
   useExternalTerminal: false,
+  terminalThemeName: "auto",
+  keyboardShortcuts: {
+    newTerminal: "Ctrl+Shift+T",
+    closeTerminal: "Ctrl+W",
+    nextTab: "Ctrl+Tab",
+    prevTab: "Ctrl+Shift+Tab",
+  },
 };
 
 function getSystemTheme(): "dark" | "light" {

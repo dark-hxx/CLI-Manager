@@ -1,8 +1,15 @@
 import { useEffect, useState, useRef, type MouseEvent as ReactMouseEvent } from "react";
-import { useTerminalStore } from "../stores/terminalStore";
+import { useTerminalStore, type SessionStatus } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { XTermTerminal } from "./XTermTerminal";
+import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { openWindowsTerminal } from "../lib/externalTerminal";
+
+const STATUS_COLORS: Record<SessionStatus, string> = {
+  running: "#9ece6a",
+  exited: "#ff9e64",
+  error: "#f7768e",
+};
 
 function IconTerminal() {
   return (
@@ -23,8 +30,10 @@ function IconPlus() {
 }
 
 export function TerminalTabs() {
-  const { sessions, activeSessionId, setActive, closeSession, createSession } = useTerminalStore();
+  const { sessions, activeSessionId, sessionStatuses, setActive, closeSession, createSession } = useTerminalStore();
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
+  const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
+  const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const [contextMenu, setContextMenu] = useState<null | { sessionId: string; x: number; y: number }>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -74,41 +83,55 @@ export function TerminalTabs() {
     <div className="flex flex-col h-full">
       {/* Tab bar */}
       <div
-        className="flex items-center h-9 border-b overflow-x-auto"
+        className="flex items-center h-9 border-b"
         style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
       >
-        {sessions.map((s) => (
-          <div
-            key={s.id}
-            className="flex items-center gap-2 px-3 h-full text-[11px] font-medium cursor-pointer border-r shrink-0"
-            style={{
-              borderColor: "var(--border)",
-              backgroundColor: s.id === activeSessionId ? "var(--bg-primary)" : "transparent",
-              color: s.id === activeSessionId ? "var(--text-primary)" : "var(--text-muted)",
-            }}
-            onClick={() => setActive(s.id)}
-            onContextMenu={(e) => handleContextMenu(e, s.id)}
-          >
-            <span className="truncate max-w-[140px] tracking-wide">{s.title}</span>
-            <button
-              onClick={(e) => { e.stopPropagation(); closeSession(s.id); }}
-              className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded border opacity-60 hover:opacity-100 transition-opacity"
-              style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}
+        {/* Scrollable tabs area */}
+        <div className="flex-1 flex items-center h-full overflow-x-auto min-w-0">
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-center gap-2 px-3 h-full text-[11px] font-medium cursor-pointer border-r shrink-0"
+              style={{
+                borderColor: "var(--border)",
+                backgroundColor: s.id === activeSessionId ? "var(--bg-primary)" : "transparent",
+                color: s.id === activeSessionId ? "var(--text-primary)" : "var(--text-muted)",
+              }}
+              onClick={() => setActive(s.id)}
+              onContextMenu={(e) => handleContextMenu(e, s.id)}
             >
-              &times;
-            </button>
-          </div>
-        ))}
-        <button
-          onClick={handleNewTab}
-          className="ml-2 mr-2 flex items-center gap-1.5 px-2.5 h-6 rounded-md text-xs border hover:opacity-100 transition-opacity"
-          style={{ color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)", opacity: 0.9 }}
-          title="New terminal"
-        >
-          <IconPlus />
-          <IconTerminal />
-          <span>New</span>
-        </button>
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: STATUS_COLORS[sessionStatuses[s.id] ?? "running"] }}
+                role="status"
+                aria-label={`Terminal ${sessionStatuses[s.id] ?? "running"}`}
+                title={sessionStatuses[s.id] ?? "running"}
+              />
+              <span className="truncate max-w-[140px] tracking-wide">{s.title}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); closeSession(s.id); }}
+                className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded border opacity-60 hover:opacity-100 transition-opacity"
+                style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+        </div>
+        {/* Action buttons — outside scroll container so dropdowns are not clipped */}
+        <div className="flex items-center shrink-0 px-2 gap-2">
+          <button
+            onClick={handleNewTab}
+            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md text-xs border hover:opacity-100 transition-opacity"
+            style={{ color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)", opacity: 0.9 }}
+            title="New terminal"
+          >
+            <IconPlus />
+            <IconTerminal />
+            <span>New</span>
+          </button>
+          <CommandTemplatePanel />
+        </div>
       </div>
 
       {/* Context menu */}
@@ -143,7 +166,7 @@ export function TerminalTabs() {
             className="absolute inset-0"
             style={{ display: s.id === activeSessionId ? "block" : "none" }}
           >
-            <XTermTerminal sessionId={s.id} />
+            <XTermTerminal sessionId={s.id} resolvedTheme={resolvedTheme} terminalThemeName={terminalThemeName} />
           </div>
         ))}
         {sessions.length === 0 && !useExternalTerminal && (
