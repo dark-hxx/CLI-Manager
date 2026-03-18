@@ -2,24 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useTerminalStore } from "../stores/terminalStore";
-
-function IconHistory() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="8" cy="8" r="6" />
-      <path d="M8 4.5V8L10.5 9.5" />
-    </svg>
-  );
-}
-
-function IconSearch() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="M10.5 10.5L14 14" />
-    </svg>
-  );
-}
+import { Clock, Search } from "lucide-react";
 
 export function CommandHistoryPanel() {
   const [open, setOpen] = useState(false);
@@ -64,21 +47,21 @@ export function CommandHistoryPanel() {
         style={{ color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)", opacity: 0.9 }}
         title="Command History"
       >
-        <IconHistory />
+        <Clock size={14} strokeWidth={1.5} />
         <span>History</span>
       </button>
 
       {open && (
         <div
           className="absolute right-0 top-full mt-1 w-80 rounded-lg border shadow-lg z-50 overflow-hidden"
-          style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
+          style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "slide-down var(--animate-duration-fast) ease-out" }}
         >
           <div className="p-2 border-b" style={{ borderColor: "var(--border)" }}>
             <div
               className="flex items-center gap-2 px-2 py-1 rounded border"
               style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}
             >
-              <IconSearch />
+              <Search size={12} strokeWidth={1.5} />
               <input
                 type="text"
                 placeholder="搜索命令..."

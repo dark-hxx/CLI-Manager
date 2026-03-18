@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Sidebar } from "./components/Sidebar";
+import { Toaster } from "sonner";
+import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
 import { CommandPalette } from "./components/CommandPalette";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -27,6 +28,17 @@ function App() {
         <TerminalTabs />
       </main>
       <CommandPalette />
+      <Toaster
+        theme={resolvedTheme}
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            backgroundColor: "var(--bg-secondary)",
+            color: "var(--text-primary)",
+            border: "1px solid var(--border)",
+          },
+        }}
+      />
     </div>
   );
 }

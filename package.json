@@ -1,7 +1,7 @@
 {
   "name": "cli-manager",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,8 +23,10 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^0.577.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "sonner": "^2.0.7",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

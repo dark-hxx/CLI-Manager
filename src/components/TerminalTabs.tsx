@@ -9,30 +9,14 @@ import { SplitTerminalView } from "./SplitTerminalView";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { openWindowsTerminal } from "../lib/externalTerminal";
+import { Terminal, Plus } from "lucide-react";
+import { EmptyState } from "./ui/EmptyState";
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
   running: "#9ece6a",
   exited: "#ff9e64",
   error: "#f7768e",
 };
-
-function IconTerminal() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="3" width="12" height="10" rx="2" />
-      <path d="M5 6.5L7 8L5 9.5" />
-      <path d="M8.5 9.5H11" />
-    </svg>
-  );
-}
-
-function IconPlus() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 3V13M3 8H13" />
-    </svg>
-  );
-}
 
 interface SortableTabProps {
   id: string;
@@ -183,8 +167,8 @@ export function TerminalTabs() {
             style={{ color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)", opacity: 0.9 }}
             title="New terminal"
           >
-            <IconPlus />
-            <IconTerminal />
+            <Plus size={12} strokeWidth={2} />
+            <Terminal size={14} strokeWidth={1.5} />
             <span>New</span>
           </button>
           <CommandTemplatePanel />
@@ -194,21 +178,21 @@ export function TerminalTabs() {
 
       {/* Context menu */}
       {contextMenu && (
-        <div className="context-menu" style={{ left: menuX, top: menuY }} ref={contextMenuRef}>
+        <div className="context-menu" style={{ left: menuX, top: menuY }} ref={contextMenuRef} role="menu">
           <button
-            className="context-menu-item"
+            className="context-menu-item" role="menuitem"
             onClick={() => { closeSession(contextMenu.sessionId); setContextMenu(null); }}
           >
             关闭终端
           </button>
           <button
-            className="context-menu-item"
+            className="context-menu-item" role="menuitem"
             onClick={() => { handleCloseOthers(contextMenu.sessionId); setContextMenu(null); }}
           >
             关闭其它终端
           </button>
           <button
-            className="context-menu-item"
+            className="context-menu-item" role="menuitem"
             onClick={() => { handleNewTab(); setContextMenu(null); }}
           >
             新建终端
@@ -216,7 +200,7 @@ export function TerminalTabs() {
           <div className="my-1 border-t" style={{ borderColor: "var(--border)" }} />
           {splits[contextMenu.sessionId] ? (
             <button
-              className="context-menu-item"
+              className="context-menu-item" role="menuitem"
               onClick={() => { unsplitTerminal(contextMenu.sessionId); setContextMenu(null); }}
             >
               取消分屏
@@ -224,7 +208,7 @@ export function TerminalTabs() {
           ) : (
             <>
               <button
-                className="context-menu-item"
+                className="context-menu-item" role="menuitem"
                 onClick={() => {
                   const session = sessions.find((s) => s.id === contextMenu.sessionId);
                   const project = session?.projectId ? projects.find((p) => p.id === session.projectId) : undefined;
@@ -235,7 +219,7 @@ export function TerminalTabs() {
                 水平分屏
               </button>
               <button
-                className="context-menu-item"
+                className="context-menu-item" role="menuitem"
                 onClick={() => {
                   const session = sessions.find((s) => s.id === contextMenu.sessionId);
                   const project = session?.projectId ? projects.find((p) => p.id === session.projectId) : undefined;
@@ -263,20 +247,12 @@ export function TerminalTabs() {
         ))}
         {sessions.length === 0 && !useExternalTerminal && (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <div className="flex items-center justify-center mb-2" style={{ color: "var(--text-muted)" }}>
-                <IconTerminal />
-              </div>
-              <p className="text-sm mb-2" style={{ color: "var(--text-muted)" }}>No active terminals</p>
-              <button
-                onClick={handleNewTab}
-                className="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded"
-                style={{ backgroundColor: "var(--accent)", color: "#fff" }}
-              >
-                <IconTerminal />
-                Open Terminal
-              </button>
-            </div>
+            <EmptyState
+              icon={<Terminal size={40} strokeWidth={1} />}
+              title="无活跃终端"
+              description="Ctrl+Shift+T 新建终端，或从左侧项目列表双击启动"
+              action={{ label: "打开终端", onClick: handleNewTab }}
+            />
           </div>
         )}
       </div>

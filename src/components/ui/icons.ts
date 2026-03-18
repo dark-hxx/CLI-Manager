@@ -1,0 +1,15 @@
+export {
+  Folder,
+  FolderPlus,
+  Terminal,
+  TerminalSquare,
+  Pencil,
+  Trash2,
+  Play,
+  ChevronRight,
+  Search,
+  Plus,
+  Settings,
+  Clock,
+  X,
+} from "lucide-react";

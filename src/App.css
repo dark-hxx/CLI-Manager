@@ -1,6 +1,51 @@
 @import "tailwindcss";
 @import "@xterm/xterm/css/xterm.css";
 
+/* Design Tokens — Tailwind CSS 4 @theme */
+@theme {
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-tertiary: var(--bg-tertiary);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-border: var(--border);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --animate-duration-fast: 150ms;
+  --animate-duration-normal: 250ms;
+
+  --animate-fade-in: fade-in var(--animate-duration-normal) ease-out;
+  --animate-fade-out: fade-out var(--animate-duration-normal) ease-in;
+  --animate-slide-down: slide-down var(--animate-duration-fast) ease-out;
+  --animate-scale-in: scale-in var(--animate-duration-normal) ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Dark theme (default) */
 :root,
 [data-theme="dark"] {
@@ -53,15 +98,15 @@ body {
   justify-content: center;
   width: 22px;
   height: 22px;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 6px;
   background-color: transparent;
-  opacity: 0.75;
-  transition: background-color 150ms, opacity 150ms, border-color 150ms;
+  opacity: 0.5;
+  transition: background-color var(--animate-duration-fast), opacity var(--animate-duration-fast);
 }
 
 .icon-btn:hover {
-  background-color: var(--bg-tertiary);
+  background-color: var(--bg-secondary);
   opacity: 1;
 }
 
@@ -74,6 +119,7 @@ body {
   border-radius: 8px;
   background-color: var(--bg-secondary);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  animation: slide-down var(--animate-duration-fast) ease-out;
 }
 
 .context-menu-item {
@@ -86,7 +132,7 @@ body {
   cursor: pointer;
   border-radius: 6px;
   color: var(--text-secondary);
-  transition: background-color 120ms, color 120ms;
+  transition: background-color var(--animate-duration-fast), color var(--animate-duration-fast);
 }
 
 .context-menu-item:hover {
@@ -114,7 +160,7 @@ body {
   border: 1px solid var(--border);
   background-color: var(--bg-tertiary);
   color: var(--text-secondary);
-  transition: background-color 120ms, opacity 120ms;
+  transition: background-color var(--animate-duration-fast), opacity var(--animate-duration-fast);
 }
 
 .mini-btn:hover {
@@ -133,7 +179,7 @@ body {
   border-radius: 999px;
   border: 1px solid var(--border);
   background-color: var(--bg-tertiary);
-  transition: background-color 150ms, border-color 150ms;
+  transition: background-color var(--animate-duration-fast), border-color var(--animate-duration-fast);
 }
 
 .switch[data-on="true"] {
@@ -149,7 +195,7 @@ body {
   height: 14px;
   border-radius: 999px;
   background-color: #fff;
-  transition: transform 150ms;
+  transition: transform var(--animate-duration-fast);
 }
 
 .switch[data-on="true"] .switch-thumb {

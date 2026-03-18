@@ -22,6 +22,25 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const inputBuffer = useRef("");
+  const fitRafRef = useRef<number | null>(null);
+  const isComposingRef = useRef(false);
+  const isActiveRef = useRef(isActive);
+  const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
+
+  const scheduleFit = (force = false) => {
+    if (fitRafRef.current !== null) {
+      cancelAnimationFrame(fitRafRef.current);
+    }
+    fitRafRef.current = requestAnimationFrame(() => {
+      fitRafRef.current = null;
+      const container = containerRef.current;
+      const fitAddon = fitAddonRef.current;
+      if (!container || !fitAddon) return;
+      if (!force && (!isActiveRef.current || isComposingRef.current)) return;
+      if (container.offsetWidth <= 0 || container.offsetHeight <= 0) return;
+      fitAddon.fit();
+    });
+  };
 
   // Update theme when resolvedTheme or terminalThemeName changes (without recreating terminal)
   useEffect(() => {
@@ -32,14 +51,10 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
   // Refit terminal when tab becomes active
   useEffect(() => {
+    isActiveRef.current = isActive;
     if (isActive && fitAddonRef.current && containerRef.current) {
-      // Small delay to ensure display:block has taken effect and layout is computed
-      const timer = setTimeout(() => {
-        if (containerRef.current && containerRef.current.offsetWidth > 0) {
-          fitAddonRef.current?.fit();
-        }
-      }, 50);
-      return () => clearTimeout(timer);
+      // Wait one frame to ensure display:block has taken effect and layout is stable.
+      scheduleFit(true);
     }
   }, [isActive]);
 
@@ -150,11 +165,31 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       unlisten = fn;
     });
 
-    // Resize observer — skip fit when container is hidden (display:none)
-    const resizeObserver = new ResizeObserver(() => {
-      if (containerRef.current && containerRef.current.offsetWidth > 0 && containerRef.current.offsetHeight > 0) {
-        fitAddon.fit();
+    const textarea = containerRef.current.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
+
+    const onCompositionStart = () => {
+      isComposingRef.current = true;
+    };
+    const onCompositionEnd = () => {
+      isComposingRef.current = false;
+      scheduleFit(true);
+    };
+
+    textarea?.addEventListener("compositionstart", onCompositionStart);
+    textarea?.addEventListener("compositionend", onCompositionEnd);
+
+    // Resize observer — skip fit when container is hidden or IME composition is active.
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      const lastSize = lastObservedSizeRef.current;
+      if (lastSize && Math.abs(lastSize.width - width) < 2 && Math.abs(lastSize.height - height) < 2) {
+        return;
       }
+      lastObservedSizeRef.current = { width, height };
+      scheduleFit();
     });
     resizeObserver.observe(containerRef.current);
 
@@ -165,7 +200,13 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     }
 
     return () => {
+      textarea?.removeEventListener("compositionstart", onCompositionStart);
+      textarea?.removeEventListener("compositionend", onCompositionEnd);
       resizeObserver.disconnect();
+      if (fitRafRef.current !== null) {
+        cancelAnimationFrame(fitRafRef.current);
+        fitRafRef.current = null;
+      }
       unlisten?.();
       terminal.dispose();
       terminalRef.current = null;

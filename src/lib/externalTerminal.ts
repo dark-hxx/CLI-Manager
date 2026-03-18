@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { logError } from "./logger";
 
 export interface ExternalTab {
@@ -20,7 +21,7 @@ export async function openWindowsTerminal(tabs: ExternalTab[]) {
       })),
     });
   } catch (err) {
-    console.error("Failed to open Windows Terminal:", err);
+    toast.error("无法打开外部终端", { description: String(err) });
     logError("Failed to open Windows Terminal", err);
   }
 }

@@ -1,12 +1,36 @@
 # Changelog
 
-## [V0.0.4] - 2026-03-17
+## [V0.0.4] - 2026-03-18
+
+### UI 优化（按 `ui-optimization.md` 实施）
+
+#### 设计系统与视觉统一
+- `App.css` 重构为 Tailwind CSS 4 `@theme` Token 模式，统一主题色与动画时长变量
+- 新增 `lucide-react` 图标体系，替换主要内联 SVG，统一图标尺寸与线宽风格
+- `App.tsx` 挂载 `sonner` 的 `<Toaster />`，建立全局通知能力（含主题适配）
+
+#### 侧边栏架构重构
+- `Sidebar.tsx` 拆分为 `src/components/sidebar/` 模块化结构（`index.tsx` + `TreeNodeItem.tsx` + `TreeContext.tsx`）
+- 新增树操作上下文 `TreeContext`，减少层层透传回调，提升可维护性
+- 新增侧边栏拖拽调宽（180-500px）并持久化到 `settingsStore.sidebarWidth`
+
+#### 交互体验增强
+- 新增 `src/components/ui/EmptyState.tsx` 与 `src/components/ui/Skeleton.tsx`，用于终端空态与项目区加载态
+- `TerminalTabs.tsx` 终端空态升级，提供显式引导动作
+- `ConfigModal.tsx` / `ConfirmDialog.tsx` / `SettingsModal.tsx` / `CommandPalette.tsx` 等组件统一进入动画
+- `src-tauri/tauri.conf.json` 增加窗口最小尺寸（`minWidth: 800`, `minHeight: 500`）
 
 ### Bug 修复
-- **[High]** 终端 Tab 切换后内容混乱 — 切换 Tab 时 `display:none` 导致 ResizeObserver 向 PTY 发送错误尺寸（0 cols/rows），Shell 输出格式错乱，需等待十几秒才恢复
-  - `XTermTerminal.tsx` — ResizeObserver 回调增加 `offsetWidth/offsetHeight > 0` 守卫，隐藏 Tab 不再触发错误 resize
-  - `XTermTerminal.tsx` — 新增 `isActive` prop，Tab 激活时延迟 50ms 主动调用 `fitAddon.fit()` 恢复正确尺寸
-  - `SplitTerminalView.tsx` / `TerminalTabs.tsx` — 透传 `isActive` prop 至终端组件
+- **[High]** 终端 Tab 切换后内容混乱
+  - `XTermTerminal.tsx`：ResizeObserver 回调增加可见尺寸守卫，隐藏 Tab 不再向 PTY 发送 `0 cols/rows`
+  - `XTermTerminal.tsx`：新增激活态重算逻辑，Tab 切回时主动 `fit()` 恢复终端网格
+  - `SplitTerminalView.tsx` / `TerminalTabs.tsx`：透传 `isActive` 至终端组件
+- **[High]** 内置终端在底部输入中文时，候选框触发界面抽搐变形
+  - `XTermTerminal.tsx`：`fit()` 改为 `requestAnimationFrame` 合并调度，避免高频重复重排
+  - `XTermTerminal.tsx`：ResizeObserver 增加尺寸去重（微小抖动不触发 fit）
+  - `XTermTerminal.tsx`：输入法组合输入（`compositionstart/end`）期间暂停自动 fit，结束后一次性重算
+- **[Medium]** 外部终端启动失败缺少可见反馈
+  - `externalTerminal.ts`：启动异常从控制台日志升级为 `toast.error` 用户提示
 
 ## [V0.0.3] - 2026-03-16
 

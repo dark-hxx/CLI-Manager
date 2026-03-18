@@ -198,12 +198,12 @@ export function CommandPalette() {
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
-      style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+      style={{ backgroundColor: "rgba(0,0,0,0.4)", animation: "fade-in var(--animate-duration-fast) ease-out" }}
       onClick={(e) => { if (e.target === e.currentTarget) close(); }}
     >
       <div
         className="w-full max-w-lg rounded-lg border shadow-2xl overflow-hidden"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
+        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "scale-in var(--animate-duration-normal) ease-out" }}
       >
         <div className="p-3 border-b" style={{ borderColor: "var(--border)" }}>
           <input

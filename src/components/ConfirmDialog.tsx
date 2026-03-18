@@ -35,13 +35,13 @@ export function ConfirmDialog({
   return (
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+      style={{ backgroundColor: "rgba(0,0,0,0.5)", animation: "fade-in var(--animate-duration-fast) ease-out" }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         className="w-[360px] rounded-lg p-5 border"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
+        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "scale-in var(--animate-duration-normal) ease-out" }}
       >
         <h3 className="text-base font-semibold mb-2">{title}</h3>
         {message && (

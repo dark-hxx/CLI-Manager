@@ -4,31 +4,7 @@ import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useProjectStore } from "../stores/projectStore";
 import type { CommandTemplate, Project } from "../lib/types";
-
-function IconCommand() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5 6.5L7 8L5 9.5" />
-      <path d="M8.5 9.5H11" />
-    </svg>
-  );
-}
-
-function IconPlus() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 3V13M3 8H13" />
-    </svg>
-  );
-}
-
-function IconTrash() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 4H13M6 4V3H10V4M5 4V13H11V4" />
-    </svg>
-  );
-}
+import { TerminalSquare, Plus, Trash2 } from "lucide-react";
 
 /** Resolve template variables: ${projectPath}, ${projectName} */
 function resolveCommand(command: string, project?: Project): string {
@@ -112,14 +88,14 @@ export function CommandTemplatePanel() {
         style={{ color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)", opacity: 0.9 }}
         title="Command templates"
       >
-        <IconCommand />
+        <TerminalSquare size={14} strokeWidth={1.5} />
         <span>Templates</span>
       </button>
 
       {open && (
         <div
           className="absolute top-8 left-0 z-50 w-72 rounded-lg border shadow-lg overflow-hidden"
-          style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
+          style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "slide-down var(--animate-duration-fast) ease-out" }}
         >
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: "var(--border)" }}>
@@ -131,7 +107,7 @@ export function CommandTemplatePanel() {
               className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border"
               style={{ borderColor: "var(--border)", color: "var(--accent)" }}
             >
-              <IconPlus /> 新增
+              <Plus size={10} strokeWidth={2} /> 新增
             </button>
           </div>
 
@@ -229,7 +205,7 @@ export function CommandTemplatePanel() {
                     className="hidden group-hover:block shrink-0"
                     style={{ color: "var(--danger)", opacity: 0.7 }}
                   >
-                    <IconTrash />
+                    <Trash2 size={12} strokeWidth={1.5} />
                   </button>
                 </div>
               ))

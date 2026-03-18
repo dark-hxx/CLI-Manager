@@ -45,12 +45,12 @@ export function SettingsModal({ open, onClose }: Props) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+      style={{ backgroundColor: "rgba(0,0,0,0.5)", animation: "fade-in var(--animate-duration-fast) ease-out" }}
       onClick={onClose}
     >
       <div
         className="w-[640px] h-[460px] rounded-xl border shadow-2xl flex overflow-hidden"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
+        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "scale-in var(--animate-duration-normal) ease-out" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Left tab nav */}
