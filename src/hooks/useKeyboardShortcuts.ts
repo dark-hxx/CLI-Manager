@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useCommandPaletteStore } from "../components/CommandPalette";
+import { useHistoryStore } from "../stores/historyStore";
 
 /** Convert a KeyboardEvent to a combo string like "Ctrl+Shift+T" */
 export function eventToCombo(e: KeyboardEvent): string {
@@ -38,6 +39,21 @@ export function useKeyboardShortcuts() {
       if (combo === shortcuts.commandPalette) {
         e.preventDefault();
         useCommandPaletteStore.getState().toggle();
+        return;
+      }
+
+      // Global history search
+      if (combo === "Ctrl+K") {
+        e.preventDefault();
+        void useHistoryStore.getState().openHistory();
+        useHistoryStore.getState().triggerGlobalSearchFocus();
+        return;
+      }
+
+      // In-session history search
+      if (combo === "Ctrl+F" && useHistoryStore.getState().isOpen) {
+        e.preventDefault();
+        useHistoryStore.getState().triggerSessionSearchFocus();
         return;
       }
 

@@ -5,6 +5,7 @@ import { useProjectStore } from "../stores/projectStore";
 import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useHistoryStore } from "../stores/historyStore";
 
 export const useCommandPaletteStore = create<{
   isOpen: boolean;
@@ -72,6 +73,17 @@ export function CommandPalette() {
       description: "打开新的终端标签",
       category: "操作",
       action: () => createSession(undefined, undefined, "Terminal"),
+    });
+
+    result.push({
+      id: "action:open-history",
+      label: "打开历史会话",
+      description: "查看 Claude / Codex 会话历史",
+      category: "操作",
+      action: () => {
+        void useHistoryStore.getState().openHistory();
+        useHistoryStore.getState().triggerGlobalSearchFocus();
+      },
     });
 
     if (activeSessionId) {

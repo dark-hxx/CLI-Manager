@@ -1,5 +1,32 @@
 # Changelog
 
+## [V0.0.5] - 2026-03-20
+
+### Phase P0 验收（CLI History Hub）
+
+#### 历史会话后端能力
+- 新增 `src-tauri/src/commands/history.rs`，提供 `history_list_sessions`、`history_get_session`、`history_search` 三个 Tauri commands
+- 支持扫描 Claude 与 Codex 的本地会话 JSONL 文件，提取消息、标题、时间、分支等摘要信息
+- `src-tauri/src/commands/mod.rs` / `src-tauri/src/lib.rs` 注册历史命令
+- SQLite migration v6：新增 `session_meta` 表与索引（别名、收藏、标签等会话元数据）
+
+#### 历史会话前端工作区
+- 新增 `src/stores/historyStore.ts`，统一管理历史工作区状态、会话列表、全局搜索、会话详情与元数据更新
+- 新增 `src/components/HistoryWorkspace.tsx`，支持：
+  - 来源筛选（Claude/Codex）
+  - 全局搜索命中跳转
+  - 会话内搜索高亮与上下跳转
+  - 别名/标签编辑与收藏
+- `src/components/TerminalTabs.tsx` 集成 History 入口按钮并支持切换历史工作区
+- `src/components/CommandPalette.tsx` 新增“打开历史会话”动作
+- `src/hooks/useKeyboardShortcuts.ts` 新增：
+  - `Ctrl+K` 打开历史会话并聚焦全局搜索
+  - `Ctrl+F` 在历史工作区内聚焦会话内搜索
+- `src/lib/types.ts` 新增 History 相关类型定义
+
+#### 其他
+- `src-tauri/.gitignore` 增加 `/target-check*/`，避免临时校验目录入库
+
 ## [V0.0.4] - 2026-03-18
 
 ### UI 优化（按 `ui-optimization.md` 实施）

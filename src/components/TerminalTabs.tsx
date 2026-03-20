@@ -8,9 +8,11 @@ import { useProjectStore } from "../stores/projectStore";
 import { SplitTerminalView } from "./SplitTerminalView";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
+import { HistoryWorkspace } from "./HistoryWorkspace";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { Terminal, Plus } from "lucide-react";
+import { Terminal, Plus, Search } from "lucide-react";
 import { EmptyState } from "./ui/EmptyState";
+import { useHistoryStore } from "../stores/historyStore";
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
   running: "#9ece6a",
@@ -77,6 +79,8 @@ export function TerminalTabs() {
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
+  const historyOpen = useHistoryStore((s) => s.isOpen);
+  const toggleHistory = useHistoryStore((s) => s.toggleHistory);
   const [contextMenu, setContextMenu] = useState<null | { sessionId: string; x: number; y: number }>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -173,6 +177,22 @@ export function TerminalTabs() {
           </button>
           <CommandTemplatePanel />
           <CommandHistoryPanel />
+          <button
+            onClick={() => {
+              void toggleHistory();
+            }}
+            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md text-xs border hover:opacity-100 transition-opacity"
+            style={{
+              color: historyOpen ? "var(--text-primary)" : "var(--text-muted)",
+              borderColor: "var(--border)",
+              backgroundColor: historyOpen ? "var(--bg-primary)" : "var(--bg-tertiary)",
+              opacity: 0.95,
+            }}
+            title="历史会话"
+          >
+            <Search size={13} strokeWidth={1.8} />
+            <span>History</span>
+          </button>
         </div>
       </div>
 
@@ -235,17 +255,21 @@ export function TerminalTabs() {
       )}
 
       {/* Terminal panel */}
-      <div className="flex-1 relative">
-        {sessions.map((s) => (
-          <div
-            key={s.id}
-            className="absolute inset-0"
-            style={{ display: s.id === activeSessionId ? "block" : "none" }}
-          >
-            <SplitTerminalView sessionId={s.id} split={splits[s.id]} isActive={s.id === activeSessionId} resolvedTheme={resolvedTheme} terminalThemeName={terminalThemeName} />
-          </div>
-        ))}
-        {sessions.length === 0 && !useExternalTerminal && (
+      <div className="flex-1 min-h-0 relative overflow-hidden">
+        {historyOpen ? (
+          <HistoryWorkspace />
+        ) : (
+          sessions.map((s) => (
+            <div
+              key={s.id}
+              className="absolute inset-0"
+              style={{ display: s.id === activeSessionId ? "block" : "none" }}
+            >
+              <SplitTerminalView sessionId={s.id} split={splits[s.id]} isActive={s.id === activeSessionId} resolvedTheme={resolvedTheme} terminalThemeName={terminalThemeName} />
+            </div>
+          ))
+        )}
+        {sessions.length === 0 && !useExternalTerminal && !historyOpen && (
           <div className="flex items-center justify-center h-full">
             <EmptyState
               icon={<Terminal size={40} strokeWidth={1} />}

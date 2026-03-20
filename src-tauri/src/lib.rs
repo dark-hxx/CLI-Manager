@@ -93,6 +93,26 @@ fn migrations() -> Vec<Migration> {
             sql: "ALTER TABLE projects ADD COLUMN shell TEXT NOT NULL DEFAULT 'powershell';",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "create_session_meta_table",
+            sql: "
+                CREATE TABLE IF NOT EXISTS session_meta (
+                    session_key TEXT PRIMARY KEY,
+                    session_id  TEXT NOT NULL,
+                    source      TEXT NOT NULL,
+                    project_key TEXT NOT NULL,
+                    file_path   TEXT NOT NULL,
+                    alias       TEXT NOT NULL DEFAULT '',
+                    starred     INTEGER NOT NULL DEFAULT 0,
+                    tags_json   TEXT NOT NULL DEFAULT '[]',
+                    updated_at  TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_session_meta_source ON session_meta(source);
+                CREATE INDEX IF NOT EXISTS idx_session_meta_updated ON session_meta(updated_at DESC);
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -153,6 +173,9 @@ pub fn run() {
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,
             commands::shell::open_windows_terminal,
+            commands::history::history_list_sessions,
+            commands::history::history_get_session,
+            commands::history::history_search,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

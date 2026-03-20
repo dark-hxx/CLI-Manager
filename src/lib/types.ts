@@ -89,6 +89,62 @@ export interface CommandHistoryEntry {
   executed_at: string;
 }
 
+export type HistorySource = "claude" | "codex";
+export type HistorySourceFilter = "all" | HistorySource;
+
+export interface HistorySessionSummary {
+  session_id: string;
+  source: HistorySource;
+  project_key: string;
+  title: string;
+  file_path: string;
+  created_at: number;
+  updated_at: number;
+  message_count: number;
+  branch?: string | null;
+}
+
+export interface HistoryMessage {
+  role: string;
+  content: string;
+  timestamp?: string | null;
+}
+
+export interface HistorySessionDetail extends HistorySessionSummary {
+  messages: HistoryMessage[];
+}
+
+export interface HistorySearchHit {
+  session_id: string;
+  source: HistorySource;
+  project_key: string;
+  title: string;
+  file_path: string;
+  role: string;
+  snippet: string;
+  timestamp?: string | null;
+}
+
+export interface SessionMeta {
+  session_key: string;
+  session_id: string;
+  source: HistorySource;
+  project_key: string;
+  file_path: string;
+  alias: string;
+  starred: number;
+  tags_json: string;
+  updated_at: string;
+}
+
+export interface HistorySessionView extends HistorySessionSummary {
+  sessionKey: string;
+  alias: string;
+  starred: boolean;
+  tags: string[];
+  displayTitle: string;
+}
+
 export const SHELL_OPTIONS = [
   { value: "powershell", label: "PowerShell" },
   { value: "cmd", label: "CMD" },
