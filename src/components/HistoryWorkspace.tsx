@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { RefreshCw, Search, Star } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
+import { BookCopy, GitCompare, RefreshCw, Search, Star } from "lucide-react";
 import { useHistoryStore } from "../stores/historyStore";
 import type { HistorySearchHit, HistorySessionView } from "../lib/types";
 import { EmptyState } from "./ui/EmptyState";
 import { toast } from "sonner";
+import { useSettingsStore } from "../stores/settingsStore";
+import { PromptLibrary } from "./prompts/PromptLibrary";
+import { DiffModal } from "./history/DiffModal";
 
 function formatTime(ts: number): string {
   if (!Number.isFinite(ts) || ts <= 0) return "-";
@@ -52,6 +63,29 @@ function makeSessionLabel(session: HistorySessionView): string {
   return session.project_key;
 }
 
+type TimeGroupLabel = "Today" | "Yesterday" | "This Week" | "This Month" | "Earlier";
+
+function toGroupLabel(ts: number, nowTs: number): TimeGroupLabel {
+  if (!Number.isFinite(ts) || ts <= 0) return "Earlier";
+  const todayStart = new Date(nowTs);
+  todayStart.setHours(0, 0, 0, 0);
+  const todayMs = todayStart.getTime();
+  if (ts >= todayMs) return "Today";
+
+  const yesterdayMs = todayMs - 24 * 60 * 60 * 1000;
+  if (ts >= yesterdayMs) return "Yesterday";
+
+  const day = todayStart.getDay();
+  const mondayOffset = day === 0 ? 6 : day - 1;
+  const weekMs = todayMs - mondayOffset * 24 * 60 * 60 * 1000;
+  if (ts >= weekMs) return "This Week";
+
+  const monthMs = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1).getTime();
+  if (ts >= monthMs) return "This Month";
+
+  return "Earlier";
+}
+
 function roleBadge(role: string): { label: string; color: string; bg: string; border: string } {
   const normalized = role.toLowerCase();
   if (normalized === "user") {
@@ -97,6 +131,8 @@ export function HistoryWorkspace() {
   const globalQuery = useHistoryStore((s) => s.globalQuery);
   const sessionQuery = useHistoryStore((s) => s.sessionQuery);
   const searchHits = useHistoryStore((s) => s.searchHits);
+  const focusedMessageIndex = useHistoryStore((s) => s.focusedMessageIndex);
+  const focusedMessageSeq = useHistoryStore((s) => s.focusedMessageSeq);
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
   const focusSessionSearchSeq = useHistoryStore((s) => s.focusSessionSearchSeq);
   const closeHistory = useHistoryStore((s) => s.closeHistory);
@@ -106,15 +142,25 @@ export function HistoryWorkspace() {
   const setGlobalQuery = useHistoryStore((s) => s.setGlobalQuery);
   const runGlobalSearch = useHistoryStore((s) => s.runGlobalSearch);
   const setSessionQuery = useHistoryStore((s) => s.setSessionQuery);
+  const openSessionAtMessage = useHistoryStore((s) => s.openSessionAtMessage);
+  const clearFocusedMessage = useHistoryStore((s) => s.clearFocusedMessage);
   const updateMeta = useHistoryStore((s) => s.updateMeta);
+  const historySidebarWidth = useSettingsStore((s) => s.historySidebarWidth);
+  const updateSetting = useSettingsStore((s) => s.update);
 
   const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const sessionSearchRef = useRef<HTMLInputElement | null>(null);
   const messageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const isResizing = useRef(false);
+  const resizeFrameRef = useRef<number | null>(null);
+  const resizingWidthRef = useRef(historySidebarWidth);
 
   const [aliasDraft, setAliasDraft] = useState("");
   const [tagsDraft, setTagsDraft] = useState("");
   const [matchCursor, setMatchCursor] = useState(0);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
 
   const activeView = useMemo(
     () => sessions.find((item) => item.sessionKey === activeSessionKey) ?? null,
@@ -122,6 +168,47 @@ export function HistoryWorkspace() {
   );
 
   const activeTagText = useMemo(() => (activeView ? activeView.tags.join(", ") : ""), [activeView]);
+  const startResize = useCallback(
+    (e: ReactMouseEvent) => {
+      e.preventDefault();
+      isResizing.current = true;
+      resizingWidthRef.current = historySidebarWidth;
+      const onMove = (ev: MouseEvent) => {
+        if (!isResizing.current) return;
+        const left = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+        const rawWidth = ev.clientX - left;
+        const nextWidth = Math.max(220, Math.min(520, rawWidth));
+        resizingWidthRef.current = nextWidth;
+        if (resizeFrameRef.current !== null) return;
+        resizeFrameRef.current = window.requestAnimationFrame(() => {
+          resizeFrameRef.current = null;
+          if (sidebarRef.current) {
+            sidebarRef.current.style.width = `${resizingWidthRef.current}px`;
+          }
+        });
+      };
+      const onUp = () => {
+        isResizing.current = false;
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+          resizeFrameRef.current = null;
+        }
+        if (sidebarRef.current) {
+          sidebarRef.current.style.width = `${resizingWidthRef.current}px`;
+        }
+        void updateSetting("historySidebarWidth", resizingWidthRef.current);
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [historySidebarWidth, updateSetting]
+  );
 
   useEffect(() => {
     void loadSessions().catch((err) => {
@@ -156,8 +243,8 @@ export function HistoryWorkspace() {
   const normalizedGlobal = globalQuery.trim().toLowerCase();
 
   const filteredSessions = useMemo(() => {
-    if (!normalizedGlobal) return sessions;
     return sessions.filter((item) => {
+      if (!normalizedGlobal) return true;
       const title = item.displayTitle.toLowerCase();
       const project = item.project_key.toLowerCase();
       const tags = item.tags.join(" ").toLowerCase();
@@ -168,6 +255,21 @@ export function HistoryWorkspace() {
       );
     });
   }, [sessions, normalizedGlobal]);
+
+  const groupedSessions = useMemo(() => {
+    const order: TimeGroupLabel[] = ["Today", "Yesterday", "This Week", "This Month", "Earlier"];
+    const map = new Map<TimeGroupLabel, HistorySessionView[]>();
+    const nowTs = Date.now();
+    for (const item of filteredSessions) {
+      const label = toGroupLabel(item.updated_at, nowTs);
+      const list = map.get(label) ?? [];
+      list.push(item);
+      map.set(label, list);
+    }
+    return order
+      .map((label) => ({ label, items: map.get(label) ?? [] }))
+      .filter((group) => group.items.length > 0);
+  }, [filteredSessions]);
 
   const matchIndices = useMemo(() => {
     const query = sessionQuery.trim().toLowerCase();
@@ -191,6 +293,12 @@ export function HistoryWorkspace() {
     const target = messageRefs.current[targetIdx];
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [matchCursor, matchIndices]);
+
+  useEffect(() => {
+    if (focusedMessageIndex === null) return;
+    const target = messageRefs.current[focusedMessageIndex];
+    target?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focusedMessageSeq, focusedMessageIndex, activeSession?.session_id]);
 
   const saveMeta = async () => {
     if (!activeView) return;
@@ -223,9 +331,19 @@ export function HistoryWorkspace() {
     const key = makeHitKey(hit);
     try {
       await openSession(key);
+      clearFocusedMessage();
       setSessionQuery(globalQuery.trim());
     } catch (err) {
       toast.error("打开搜索命中失败", { description: String(err) });
+    }
+  };
+
+  const jumpToMessage = async (messageIndex: number) => {
+    if (!activeView) return;
+    try {
+      await openSessionAtMessage(activeView.sessionKey, messageIndex);
+    } catch (err) {
+      toast.error("定位消息失败", { description: String(err) });
     }
   };
 
@@ -242,8 +360,13 @@ export function HistoryWorkspace() {
   return (
     <div className="flex h-full min-h-0 min-w-0 overflow-hidden">
       <aside
-        className="border-r flex flex-col min-h-0 min-w-[220px] w-[clamp(220px,32vw,360px)] max-w-[45%]"
-        style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}
+        ref={sidebarRef}
+        className="relative border-r flex flex-col min-h-0 min-w-[220px] max-w-[70%]"
+        style={{
+          width: historySidebarWidth,
+          borderColor: "var(--border)",
+          backgroundColor: "var(--bg-secondary)",
+        }}
       >
         <div className="p-3 border-b" style={{ borderColor: "var(--border)" }}>
           <div className="flex flex-wrap items-center gap-2">
@@ -355,34 +478,50 @@ export function HistoryWorkspace() {
           )}
 
           {!loadingSessions &&
-            filteredSessions.map((item) => (
-              <button
-                key={item.sessionKey}
-                onClick={() => {
-                  void openSession(item.sessionKey).catch((err) => {
-                    toast.error("打开会话失败", { description: String(err) });
-                  });
-                }}
-                className="w-full text-left px-3 py-2 border-b hover:opacity-90 transition-opacity"
-                style={{
-                  borderColor: "var(--border)",
-                  backgroundColor:
-                    item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : "transparent",
-                }}
-              >
-                <div className="flex items-center gap-1.5">
-                  {item.starred && <Star size={12} style={{ color: "var(--warning)" }} fill="currentColor" />}
-                  <span className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)" }}>
-                    {item.displayTitle}
-                  </span>
+            groupedSessions.map((group) => (
+              <div key={group.label}>
+                <div
+                  className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide border-y"
+                  style={{
+                    color: "var(--text-muted)",
+                    borderColor: "var(--border)",
+                    backgroundColor: "var(--bg-tertiary)",
+                  }}
+                >
+                  {group.label}
                 </div>
-                <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                  {item.source} · {makeSessionLabel(item)} · {item.message_count} 条消息
-                </div>
-                <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                  更新于 {formatTime(item.updated_at)}
-                </div>
-              </button>
+                {group.items.map((item) => (
+                  <button
+                    key={item.sessionKey}
+                    onClick={() => {
+                      void openSession(item.sessionKey).catch((err) => {
+                        toast.error("打开会话失败", { description: String(err) });
+                      });
+                    }}
+                    className="w-full text-left px-3 py-2 border-b hover:opacity-90 transition-opacity"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor:
+                        item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : "transparent",
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {item.starred && (
+                        <Star size={12} style={{ color: "var(--warning)" }} fill="currentColor" />
+                      )}
+                      <span className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)" }}>
+                        {item.displayTitle}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      {item.source} · {makeSessionLabel(item)} · {item.message_count} 条消息
+                    </div>
+                    <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      更新于 {formatTime(item.updated_at)}
+                    </div>
+                  </button>
+                ))}
+              </div>
             ))}
 
           {!loadingSessions && filteredSessions.length === 0 && (
@@ -391,10 +530,16 @@ export function HistoryWorkspace() {
             </div>
           )}
         </div>
+
+        <div
+          onMouseDown={startResize}
+          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-[var(--accent)] transition-colors"
+          style={{ opacity: 0.35 }}
+        />
       </aside>
 
       <section
-        className="flex-1 min-h-0 min-w-0 grid grid-rows-[auto_1fr] overflow-hidden"
+        className="relative flex-1 min-h-0 min-w-0 grid grid-rows-[auto_1fr] overflow-hidden"
         style={{ backgroundColor: "var(--bg-primary)" }}
       >
         {!activeView && (
@@ -419,21 +564,49 @@ export function HistoryWorkspace() {
                     {activeView.source} · {makeSessionLabel(activeView)} · 更新于 {formatTime(activeView.updated_at)}
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    void toggleStar();
-                  }}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs shrink-0"
-                  style={{
-                    borderColor: "var(--border)",
-                    backgroundColor: "var(--bg-secondary)",
-                    color: activeView.starred ? "var(--warning)" : "var(--text-secondary)",
-                  }}
-                  title="收藏"
-                >
-                  <Star size={12} fill={activeView.starred ? "currentColor" : "none"} />
-                  {activeView.starred ? "已收藏" : "收藏"}
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => setPromptOpen(true)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: "var(--bg-secondary)",
+                      color: "var(--text-secondary)",
+                    }}
+                    title="历史 Prompt 库"
+                  >
+                    <BookCopy size={12} />
+                    历史Prompt
+                  </button>
+                  <button
+                    onClick={() => setDiffOpen(true)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: "var(--bg-secondary)",
+                      color: "var(--text-secondary)",
+                    }}
+                    title="Diff 视图"
+                  >
+                    <GitCompare size={12} />
+                    Diff
+                  </button>
+                  <button
+                    onClick={() => {
+                      void toggleStar();
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: "var(--bg-secondary)",
+                      color: activeView.starred ? "var(--warning)" : "var(--text-secondary)",
+                    }}
+                    title="收藏"
+                  >
+                    <Star size={12} fill={activeView.starred ? "currentColor" : "none"} />
+                    {activeView.starred ? "已收藏" : "收藏"}
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
@@ -528,6 +701,7 @@ export function HistoryWorkspace() {
               {!loadingSessionDetail &&
                 activeSession?.messages.map((msg, idx) => {
                   const isMatched = matchIndices.includes(idx);
+                  const isFocused = focusedMessageIndex === idx;
                   const badge = roleBadge(msg.role);
                   return (
                     <div
@@ -537,7 +711,11 @@ export function HistoryWorkspace() {
                       }}
                       className="rounded-md border p-2"
                       style={{
-                        borderColor: isMatched ? "var(--accent)" : "var(--border)",
+                        borderColor: isFocused
+                          ? "var(--warning)"
+                          : isMatched
+                            ? "var(--accent)"
+                            : "var(--border)",
                         backgroundColor: "var(--bg-secondary)",
                       }}
                     >
@@ -569,6 +747,25 @@ export function HistoryWorkspace() {
             </div>
           </>
         )}
+
+        <PromptLibrary
+          open={promptOpen}
+          sessions={sessions}
+          activeSessionKey={activeSessionKey}
+          onClose={() => setPromptOpen(false)}
+          onJumpToPrompt={async (sessionKey, messageIndex) => {
+            await openSessionAtMessage(sessionKey, messageIndex);
+          }}
+        />
+
+        <DiffModal
+          open={diffOpen}
+          messages={activeSession?.messages ?? []}
+          onClose={() => setDiffOpen(false)}
+          onJumpToMessage={(messageIndex) => {
+            void jumpToMessage(messageIndex);
+          }}
+        />
       </section>
     </div>
   );

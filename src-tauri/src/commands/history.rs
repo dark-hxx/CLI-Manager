@@ -72,6 +72,20 @@ pub struct HistorySearchResult {
     pub timestamp: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPromptItem {
+    pub session_id: String,
+    pub source: String,
+    pub project_key: String,
+    pub file_path: String,
+    pub session_title: String,
+    pub updated_at: i64,
+    pub message_index: usize,
+    pub prompt: String,
+    pub timestamp: Option<String>,
+}
+
 #[tauri::command]
 pub async fn history_list_sessions(
     source: Option<String>,
@@ -182,6 +196,112 @@ pub async fn history_search(
     }
 
     Ok(hits)
+}
+
+#[tauri::command]
+pub async fn history_list_prompts(
+    scope: Option<String>,
+    source: Option<String>,
+    project_key: Option<String>,
+    file_path: Option<String>,
+    query: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<HistoryPromptItem>, String> {
+    let scope = scope
+        .as_deref()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "global".to_string());
+    let target_project = project_key
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let target_file = file_path
+        .map(|v| v.trim().replace('\\', "/").to_lowercase())
+        .filter(|v| !v.is_empty());
+    let normalized_query = query
+        .map(|q| q.trim().to_lowercase())
+        .filter(|q| !q.is_empty());
+    let max_items = limit.unwrap_or(200).clamp(1, 2000);
+    let files = collect_session_files(source.as_deref());
+    let mut prompts = Vec::new();
+
+    for file_ref in files {
+        if let Some(project) = &target_project {
+            if &file_ref.project_key != project {
+                continue;
+            }
+        }
+
+        if scope == "session" {
+            let Some(target) = target_file.as_ref() else {
+                continue;
+            };
+            let current = path_to_key(&file_ref.path).to_lowercase();
+            if &current != target {
+                continue;
+            }
+        }
+
+        let detail = match build_session_detail(&file_ref) {
+            Ok(detail) => detail,
+            Err(err) => {
+                debug!(
+                    "history_list_prompts skip unreadable file: path={}, err={}",
+                    file_ref.path.to_string_lossy(),
+                    err
+                );
+                continue;
+            }
+        };
+        let session_id = detail.session_id;
+        let source = detail.source;
+        let project_key = detail.project_key;
+        let file_path = detail.file_path;
+        let session_title = detail.title;
+        let updated_at = detail.updated_at;
+
+        for (message_index, msg) in detail.messages.into_iter().enumerate() {
+            if msg.role != "user" {
+                continue;
+            }
+            let prompt = normalize_text(&msg.content);
+            if prompt.is_empty() {
+                continue;
+            }
+            if let Some(q) = &normalized_query {
+                let prompt_lower = prompt.to_lowercase();
+                let title_lower = session_title.to_lowercase();
+                if !prompt_lower.contains(q) && !title_lower.contains(q) {
+                    continue;
+                }
+            }
+            prompts.push(HistoryPromptItem {
+                session_id: session_id.clone(),
+                source: source.clone(),
+                project_key: project_key.clone(),
+                file_path: file_path.clone(),
+                session_title: session_title.clone(),
+                updated_at,
+                message_index,
+                prompt,
+                timestamp: msg.timestamp,
+            });
+            if prompts.len() >= max_items {
+                break;
+            }
+        }
+
+        if prompts.len() >= max_items {
+            break;
+        }
+    }
+
+    prompts.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then(b.message_index.cmp(&a.message_index))
+    });
+    Ok(prompts)
 }
 
 fn build_session_summary(file_ref: &SessionFileRef) -> HistorySessionSummary {
@@ -473,20 +593,43 @@ fn read_session_messages(path: &Path) -> Result<Vec<HistoryMessage>, String> {
 fn parse_message(value: &Value) -> Option<HistoryMessage> {
     if let Some(root_type) = value.get("type").and_then(Value::as_str) {
         if root_type == "response_item" {
-            if value
-                .get("payload")
+            let payload = value.get("payload");
+            let payload_type = payload
                 .and_then(|v| v.get("type"))
                 .and_then(Value::as_str)
-                != Some("message")
-            {
+                .unwrap_or_default();
+            if payload_type == "message" {
+                if let Some(payload_value) = payload {
+                    return parse_message(payload_value);
+                }
                 return None;
             }
+
+            if matches!(payload_type, "custom_tool_call" | "tool_call" | "function_call") {
+                if let Some(payload_value) = payload {
+                    if let Some(message) = parse_message(payload_value) {
+                        if looks_like_patch(&message.content) {
+                            return Some(message);
+                        }
+                    }
+                }
+            }
+            return None;
+        } else if root_type == "file-history-snapshot" {
+            let content = extract_content(value)?;
+            if !looks_like_patch(&content) {
+                return None;
+            }
+            return Some(HistoryMessage {
+                role: "tool".to_string(),
+                content,
+                timestamp: extract_timestamp(value),
+            });
         } else if matches!(
             root_type,
             "event_msg"
                 | "turn_context"
                 | "session_meta"
-                | "file-history-snapshot"
                 | "system"
                 | "summary"
         ) {
@@ -652,6 +795,12 @@ fn extract_branch(value: &Value) -> Option<String> {
 
 fn normalize_text(text: &str) -> String {
     text.replace('\u{0000}', "").trim().to_string()
+}
+
+fn looks_like_patch(text: &str) -> bool {
+    text.contains("*** Begin Patch")
+        || text.contains("diff --git ")
+        || (text.contains("@@") && (text.contains("+++ ") || text.contains("--- ")))
 }
 
 fn excerpt(text: &str, max_chars: usize) -> String {

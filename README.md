@@ -12,6 +12,8 @@
 - **终端 Tab 拖拽排序**：终端标签支持拖拽调整顺序。
 - **命令面板**：`Ctrl+P` 打开全局命令面板，模糊搜索项目/命令模板/操作，键盘导航快速执行。
 - **历史会话工作区**：统一查看 Claude/Codex 历史会话，支持来源筛选、全局搜索、会话内搜索、别名/标签/收藏管理。
+- **历史会话时间分组**：按 Today / Yesterday / This Week / This Month / Earlier 分组展示。
+- **Diff 视图**：支持查看会话中的代码改动（Unified Diff + Codex Begin Patch），并可跳回触发消息。
 - **外部终端模式**：开关控制，使用 Windows Terminal（`wt`）在一个窗口内打开多个 Tab，支持按项目 Shell 配置启动。
 - **多 Shell 支持**：每个项目可独立配置 Shell 类型（PowerShell / CMD / PowerShell Core / WSL / Bash）。
 - **项目配置**：独立配置路径、CLI 工具、Shell、启动命令、环境变量。
@@ -50,3 +52,12 @@ npx tsc --noEmit
 cd src-tauri && cargo check
 cd src-tauri && cargo test
 ```
+
+## 最近更新（2026-03-24）
+
+- 历史会话：新增时间分组与侧栏宽度记忆；移除不稳定的分支筛选。
+- Diff 视图：兼容 Unified Diff 与 Codex `*** Begin Patch`，并增加行级高亮和跳回消息定位。
+- Diff 交互：修复代码块横向滚动体验，避免整页横向空白拖动。
+- 历史会话拖拽：修复左右布局拖拽卡顿与“无法拖动”问题。
+- 命令模板：支持全局/项目/会话三级作用域（会话级模板单次会话有效）。
+- 说明：本节按要求不将 `P1-1 Prompt Library（三级作用域）` 计入本次验收摘要。

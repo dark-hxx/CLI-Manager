@@ -45,8 +45,9 @@ export function CommandPalette() {
   const listRef = useRef<HTMLDivElement>(null);
 
   const projects = useProjectStore((s) => s.projects);
-  const templates = useTemplateStore((s) => s.templates);
+  const getTemplatesForContext = useTemplateStore((s) => s.getForContext);
   const fetchTemplates = useTemplateStore((s) => s.fetchTemplates);
+  const sessions = useTerminalStore((s) => s.sessions);
   const createSession = useTerminalStore((s) => s.createSession);
   const activeSessionId = useTerminalStore((s) => s.activeSessionId);
   const splits = useTerminalStore((s) => s.splits);
@@ -54,6 +55,10 @@ export function CommandPalette() {
   const unsplitTerminal = useTerminalStore((s) => s.unsplitTerminal);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
+
+  const activeProjectId =
+    sessions.find((item) => item.id === activeSessionId)?.projectId ?? null;
+  const templates = getTemplatesForContext(activeProjectId, activeSessionId);
 
   useEffect(() => {
     if (isOpen) {

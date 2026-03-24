@@ -12,6 +12,7 @@ interface Settings {
   fontFamily: string;
   defaultShell: string;
   sidebarWidth: number;
+  historySidebarWidth: number;
   useExternalTerminal: boolean;
   debugMode: boolean;
   terminalThemeName: string;
@@ -32,6 +33,7 @@ const DEFAULTS: Settings = {
   fontFamily: "Cascadia Code, Consolas, monospace",
   defaultShell: "powershell.exe",
   sidebarWidth: 280,
+  historySidebarWidth: 300,
   useExternalTerminal: false,
   debugMode: false,
   terminalThemeName: "auto",

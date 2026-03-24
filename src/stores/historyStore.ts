@@ -2,10 +2,12 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../lib/db";
 import type {
+  HistoryPromptItem,
   HistorySearchHit,
   HistorySessionDetail,
   HistorySessionSummary,
   HistorySessionView,
+  PromptScope,
   HistorySource,
   HistorySourceFilter,
   SessionMeta,
@@ -24,6 +26,7 @@ interface HistoryStore {
   loadingSessions: boolean;
   loadingSessionDetail: boolean;
   searching: boolean;
+  loadingPrompts: boolean;
   sourceFilter: HistorySourceFilter;
   sessions: HistorySessionView[];
   activeSessionKey: string | null;
@@ -31,6 +34,9 @@ interface HistoryStore {
   globalQuery: string;
   sessionQuery: string;
   searchHits: HistorySearchHit[];
+  prompts: HistoryPromptItem[];
+  focusedMessageIndex: number | null;
+  focusedMessageSeq: number;
   metaMap: SessionMetaMap;
   focusGlobalSearchSeq: number;
   focusSessionSearchSeq: number;
@@ -44,6 +50,15 @@ interface HistoryStore {
   setGlobalQuery: (query: string) => void;
   runGlobalSearch: (query: string) => Promise<void>;
   setSessionQuery: (query: string) => void;
+  loadPrompts: (options: {
+    scope: PromptScope;
+    query?: string;
+    projectKey?: string | null;
+    sessionKey?: string | null;
+    limit?: number;
+  }) => Promise<void>;
+  openSessionAtMessage: (sessionKey: string, messageIndex: number) => Promise<void>;
+  clearFocusedMessage: () => void;
   updateMeta: (sessionKey: string, patch: MetaPatchInput) => Promise<void>;
   triggerGlobalSearchFocus: () => void;
   triggerSessionSearchFocus: () => void;
@@ -126,6 +141,21 @@ function normalizeHit(raw: unknown): HistorySearchHit {
   };
 }
 
+function normalizePrompt(raw: unknown): HistoryPromptItem {
+  const rec = (raw ?? {}) as Record<string, unknown>;
+  return {
+    session_id: asString(rec.session_id ?? rec.sessionId),
+    source: asString(rec.source) as HistorySource,
+    project_key: asString(rec.project_key ?? rec.projectKey),
+    file_path: asString(rec.file_path ?? rec.filePath),
+    session_title: asString(rec.session_title ?? rec.sessionTitle),
+    updated_at: asNumber(rec.updated_at ?? rec.updatedAt),
+    message_index: asNumber(rec.message_index ?? rec.messageIndex),
+    prompt: asString(rec.prompt),
+    timestamp: asString(rec.timestamp ?? "") || null,
+  };
+}
+
 function normalizeSourceFilter(filter: HistorySourceFilter): HistorySource | null {
   if (filter === "all") return null;
   return filter;
@@ -195,6 +225,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   loadingSessions: false,
   loadingSessionDetail: false,
   searching: false,
+  loadingPrompts: false,
   sourceFilter: "all",
   sessions: [],
   activeSessionKey: null,
@@ -202,6 +233,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   globalQuery: "",
   sessionQuery: "",
   searchHits: [],
+  prompts: [],
+  focusedMessageIndex: null,
+  focusedMessageSeq: 0,
   metaMap: {},
   focusGlobalSearchSeq: 0,
   focusSessionSearchSeq: 0,
@@ -282,6 +316,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         metaMap,
         activeSessionKey: nextActiveKey,
         activeSession: activeExists ? get().activeSession : null,
+        focusedMessageIndex: null,
       });
       if (nextActiveKey && !activeExists) {
         await get().openSession(nextActiveKey);
@@ -294,7 +329,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   openSession: async (sessionKey) => {
     const target = get().sessions.find((item) => item.sessionKey === sessionKey);
     if (!target) return;
-    set({ activeSessionKey: sessionKey, loadingSessionDetail: true });
+    set({ activeSessionKey: sessionKey, loadingSessionDetail: true, focusedMessageIndex: null });
     try {
       const detailRaw = await invoke<unknown>("history_get_session", {
         filePath: target.file_path,
@@ -337,6 +372,43 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
   setSessionQuery: (query) => {
     set({ sessionQuery: query });
+  },
+
+  loadPrompts: async ({ scope, query, projectKey, sessionKey, limit }) => {
+    set({ loadingPrompts: true });
+    try {
+      const source = normalizeSourceFilter(get().sourceFilter);
+      const session = sessionKey
+        ? get().sessions.find((item) => item.sessionKey === sessionKey) ?? null
+        : null;
+      const promptsRaw = await invoke<unknown[]>("history_list_prompts", {
+        scope,
+        source,
+        query: query?.trim() || null,
+        projectKey: projectKey?.trim() || null,
+        filePath: session?.file_path ?? null,
+        limit: limit ?? 300,
+      });
+      const prompts = (promptsRaw ?? []).map((item) => normalizePrompt(item));
+      set({ prompts });
+    } finally {
+      set({ loadingPrompts: false });
+    }
+  },
+
+  openSessionAtMessage: async (sessionKey, messageIndex) => {
+    if (get().activeSessionKey !== sessionKey) {
+      await get().openSession(sessionKey);
+    }
+    const normalizedIndex = Number.isFinite(messageIndex) && messageIndex >= 0 ? messageIndex : 0;
+    set((state) => ({
+      focusedMessageIndex: normalizedIndex,
+      focusedMessageSeq: state.focusedMessageSeq + 1,
+    }));
+  },
+
+  clearFocusedMessage: () => {
+    set({ focusedMessageIndex: null });
   },
 
   updateMeta: async (sessionKey, patch) => {

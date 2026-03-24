@@ -15,7 +15,15 @@ function resolveCommand(command: string, project?: Project): string {
 }
 
 export function CommandTemplatePanel() {
-  const { templates, fetchTemplates, createTemplate, deleteTemplate } = useTemplateStore();
+  const {
+    fetchTemplates,
+    getForContext,
+    createTemplate,
+    createSessionTemplate,
+    deleteTemplate,
+    deleteSessionTemplate,
+    pruneSessionTemplates,
+  } = useTemplateStore();
   const { sessions, activeSessionId } = useTerminalStore();
   const { projects } = useProjectStore();
   const [open, setOpen] = useState(false);
@@ -23,12 +31,17 @@ export function CommandTemplatePanel() {
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [description, setDescription] = useState("");
+  const [scope, setScope] = useState<"global" | "project" | "session">("global");
   const [projectId, setProjectId] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchTemplates();
   }, [fetchTemplates]);
+
+  useEffect(() => {
+    pruneSessionTemplates(sessions.map((item) => item.id));
+  }, [sessions, pruneSessionTemplates]);
 
   useEffect(() => {
     if (!open) return;
@@ -47,10 +60,8 @@ export function CommandTemplatePanel() {
     ? projects.find((p) => p.id === activeSession.projectId)
     : undefined;
 
-  // Show templates relevant to the active project
-  const visibleTemplates = templates.filter(
-    (t) => t.project_id === null || t.project_id === activeSession?.projectId
-  );
+  // Show templates relevant to the active project and session.
+  const visibleTemplates = getForContext(activeSession?.projectId ?? null, activeSessionId);
 
   const handleRun = async (template: CommandTemplate) => {
     if (!activeSessionId) return;
@@ -61,17 +72,36 @@ export function CommandTemplatePanel() {
 
   const handleCreate = async () => {
     if (!name.trim() || !command.trim()) return;
-    await createTemplate({
-      project_id: projectId,
-      name: name.trim(),
-      command: command.trim(),
-      description: description.trim(),
-    });
+    if (scope === "session") {
+      if (!activeSessionId) return;
+      await createSessionTemplate(activeSessionId, {
+        project_id: activeSession?.projectId ?? null,
+        session_id: activeSessionId,
+        name: name.trim(),
+        command: command.trim(),
+        description: description.trim(),
+      });
+    } else {
+      await createTemplate({
+        project_id: scope === "project" ? projectId : null,
+        name: name.trim(),
+        command: command.trim(),
+        description: description.trim(),
+      });
+    }
     setName("");
     setCommand("");
     setDescription("");
+    setScope("global");
     setProjectId(null);
     setShowForm(false);
+  };
+
+  const scopeLabel = (template: CommandTemplate) => {
+    if (template.session_id) return "会话";
+    if (!template.project_id) return "全局";
+    const project = projects.find((item) => item.id === template.project_id);
+    return project ? `项目:${project.name}` : "项目";
   };
 
   const inputStyle = {
@@ -139,16 +169,33 @@ export function CommandTemplatePanel() {
                 style={inputStyle}
               />
               <select
-                value={projectId ?? ""}
-                onChange={(e) => setProjectId(e.target.value || null)}
+                value={scope}
+                onChange={(e) => setScope(e.target.value as "global" | "project" | "session")}
                 className="w-full px-2 py-1 text-xs rounded border outline-none"
                 style={inputStyle}
               >
-                <option value="">全局模板</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
+                <option value="global">全局模板</option>
+                <option value="project">项目模板</option>
+                <option value="session">会话模板（单次终端）</option>
               </select>
+              {scope === "project" && (
+                <select
+                  value={projectId ?? ""}
+                  onChange={(e) => setProjectId(e.target.value || null)}
+                  className="w-full px-2 py-1 text-xs rounded border outline-none"
+                  style={inputStyle}
+                >
+                  <option value="">请选择项目</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              )}
+              {scope === "session" && (
+                <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  {activeSessionId ? `绑定到当前会话 ${activeSessionId}` : "请先打开会话终端"}
+                </div>
+              )}
               <div className="flex justify-end gap-1">
                 <button
                   onClick={() => setShowForm(false)}
@@ -159,8 +206,13 @@ export function CommandTemplatePanel() {
                 </button>
                 <button
                   onClick={handleCreate}
+                  disabled={(scope === "project" && !projectId) || (scope === "session" && !activeSessionId)}
                   className="px-2 py-0.5 text-[10px] rounded"
-                  style={{ backgroundColor: "var(--accent)", color: "#fff" }}
+                  style={{
+                    backgroundColor: "var(--accent)",
+                    color: "#fff",
+                    opacity: (scope === "project" && !projectId) || (scope === "session" && !activeSessionId) ? 0.5 : 1,
+                  }}
                 >
                   保存
                 </button>
@@ -186,22 +238,27 @@ export function CommandTemplatePanel() {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-medium truncate" style={{ color: "var(--text-primary)" }}>
-                        {t.name}
-                      </span>
-                      {t.project_id && (
+                        <span className="text-xs font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                          {t.name}
+                        </span>
                         <span className="text-[9px] px-1 rounded-full border shrink-0"
                           style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>
-                          项目
+                          {scopeLabel(t)}
                         </span>
-                      )}
                     </div>
                     <div className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>
                       {t.command}
                     </div>
                   </div>
                   <button
-                    onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (t.session_id) {
+                        deleteSessionTemplate(t.session_id, t.id);
+                      } else {
+                        void deleteTemplate(t.id);
+                      }
+                    }}
                     className="hidden group-hover:block shrink-0"
                     style={{ color: "var(--danger)", opacity: 0.7 }}
                   >
@@ -215,7 +272,7 @@ export function CommandTemplatePanel() {
           {/* Footer hint */}
           {!activeSessionId && (
             <div className="px-3 py-1 text-[10px] border-t" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>
-              请先打开终端再运行模板
+              当前无活跃终端，仅可管理全局/项目模板
             </div>
           )}
         </div>

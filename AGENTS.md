@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CLI-Manager 是一款 Windows 桌面应用，用于集中管理基于 PowerShell 的多个开发项目的 CLI 工具（如 claude、codex）。
 
+## 最近变更（2026-03-24）
+
+- 历史会话列表增强：新增时间分组（Today/Yesterday/This Week/This Month/Earlier）、来源筛选与历史侧栏宽度记忆。
+- 历史会话交互优化：修复左右拖拽卡顿，拖动过程使用帧节流更新，松手后再持久化设置；并修复拖拽宽度计算错误导致的“无法拖动”问题。
+- 历史会话筛选调整：移除“分支筛选”（历史日志中的分支字段存在 `HEAD` 等不稳定值，易误导）。
+- Diff 视图增强：支持 Unified Diff 与 Codex `*** Begin Patch` 风格；支持从 diff 块跳回触发消息；新增行级高亮（新增/删除/hunk/header）。
+- Diff 滚动体验修复：代码块保留独立横向滚动容器与可见滚动条样式，避免整页横向空白拖动。
+- 后端历史解析增强：放宽 Codex tool-call patch 提取（`custom_tool_call`、`file-history-snapshot`）以提高 diff 命中率。
+- 模板作用域增强：命令模板支持全局/项目/会话（会话级模板仅在当前会话有效，随会话生命周期清理）。
+- 说明：本次摘要按要求不包含 `P1-1 Prompt Library（三级作用域）` 作为验收项。
+
 ## 技术栈
 
 - **框架**: Tauri 2.x

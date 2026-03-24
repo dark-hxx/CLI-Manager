@@ -201,3 +201,26 @@ body {
 .switch[data-on="true"] .switch-thumb {
   transform: translateX(20px);
 }
+
+.diff-code-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.diff-code-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+
+.diff-code-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.diff-code-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 999px;
+}
+
+.diff-code-inner {
+  width: max-content;
+  min-width: 100%;
+}

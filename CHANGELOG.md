@@ -1,5 +1,34 @@
 # Changelog
 
+## [V0.0.6] - 2026-03-24
+
+### Phase P1 核心增强（不含 P1-1 Prompt Library）
+
+#### 历史会话列表与交互
+- `src/components/HistoryWorkspace.tsx`：新增会话时间分组（Today/Yesterday/This Week/This Month/Earlier）
+- `src/stores/settingsStore.ts`：新增 `historySidebarWidth`，历史侧栏宽度可持久化
+- `src/components/HistoryWorkspace.tsx`：优化左右拖拽性能（拖动过程帧节流，松手后持久化）
+- `src/components/HistoryWorkspace.tsx`：修复拖拽宽度计算问题（相对容器左边界计算），恢复可拖动性
+- `src/components/HistoryWorkspace.tsx`：移除分支筛选（历史日志分支值稳定性不足）
+
+#### Diff 视图增强
+- 新增 `src/components/history/DiffModal.tsx`：支持 Unified Diff 与 Codex `*** Begin Patch` 风格展示
+- `src/components/HistoryWorkspace.tsx`：接入 Diff 入口与“跳回触发消息”联动
+- `src/components/history/DiffModal.tsx`：新增行级高亮（新增/删除/hunk/header）
+- `src/components/history/DiffModal.tsx` + `src/App.css`：修复横向滚动体验，代码块内独立滚动并保留可见滚动条样式
+
+#### 历史解析兼容增强（Codex）
+- `src-tauri/src/commands/history.rs`：增强 `parse_message`，支持从 `custom_tool_call` / `tool_call` / `file-history-snapshot` 中提取 patch 内容
+- `src-tauri/src/commands/history.rs`：新增 `looks_like_patch` 规则，提升 diff 命中率并降低无关内容噪声
+
+#### 模板作用域增强
+- `src/stores/templateStore.ts`：新增会话级模板（内存态）与生命周期清理逻辑
+- `src/components/CommandTemplatePanel.tsx`：模板创建支持全局/项目/会话作用域
+- `src/components/CommandPalette.tsx`：模板检索按当前项目 + 当前会话上下文合并
+
+#### 说明
+- 本版本变更摘要按要求不包含 `P1-1 Prompt Library（三级作用域）` 作为验收项。
+
 ## [V0.0.5] - 2026-03-20
 
 ### Phase P0 验收（CLI History Hub）

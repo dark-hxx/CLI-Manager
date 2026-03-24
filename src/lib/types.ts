@@ -62,6 +62,7 @@ export interface TerminalSession {
 export interface CommandTemplate {
   id: string;
   project_id: string | null;
+  session_id?: string | null;
   name: string;
   command: string;
   description: string;
@@ -70,6 +71,7 @@ export interface CommandTemplate {
 
 export interface CreateTemplateInput {
   project_id?: string | null;
+  session_id?: string | null;
   name: string;
   command: string;
   description?: string;
@@ -122,6 +124,20 @@ export interface HistorySearchHit {
   file_path: string;
   role: string;
   snippet: string;
+  timestamp?: string | null;
+}
+
+export type PromptScope = "global" | "project" | "session";
+
+export interface HistoryPromptItem {
+  session_id: string;
+  source: HistorySource;
+  project_key: string;
+  file_path: string;
+  session_title: string;
+  updated_at: number;
+  message_index: number;
+  prompt: string;
   timestamp?: string | null;
 }
 
