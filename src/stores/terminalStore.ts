@@ -88,7 +88,10 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     if (startupCmd) {
       setTimeout(() => {
-        invoke("pty_write", { sessionId, data: startupCmd + "\r" }).catch(console.error);
+        invoke("pty_write", { sessionId, data: startupCmd + "\r" }).catch((err) => {
+          toast.error("启动命令写入失败", { description: String(err) });
+          logError("Failed to write startup command", { sessionId, startupCmd, err });
+        });
       }, 500);
     }
 

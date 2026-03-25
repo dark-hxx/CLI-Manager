@@ -8,15 +8,15 @@ interface Props {
 export function Skeleton({ className = "", style }: Props) {
   return (
     <div
-      className={`rounded-md ${className}`}
-      style={{ backgroundColor: "var(--bg-tertiary)", animation: "pulse 1.5s ease-in-out infinite", ...style }}
+      className={`animate-pulse rounded-md bg-bg-tertiary ${className}`}
+      style={style}
     />
   );
 }
 
 export function SidebarSkeleton() {
   return (
-    <div className="px-3 py-2 space-y-2" style={{ animation: "fade-in var(--animate-duration-normal) ease-out" }}>
+    <div className="animate-fade-in space-y-2 px-3 py-2">
       {[1, 2, 3, 4, 5].map((i) => (
         <div key={i} className="flex items-center gap-2 py-1.5 px-2">
           <Skeleton className="w-3.5 h-3.5 rounded-full shrink-0" />

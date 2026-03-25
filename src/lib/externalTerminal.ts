@@ -21,7 +21,13 @@ export async function openWindowsTerminal(tabs: ExternalTab[]) {
       })),
     });
   } catch (err) {
-    toast.error("无法打开外部终端", { description: String(err) });
+    const message = String(err);
+    const isWindowsTerminalNotFound = /program notfound|wt\.exe\) not found|not found/i.test(message);
+    toast.error("无法打开外部终端", {
+      description: isWindowsTerminalNotFound
+        ? "未找到 Windows Terminal（wt.exe）。请先安装 Windows Terminal，或在设置中关闭“外部终端”。"
+        : message,
+    });
     logError("Failed to open Windows Terminal", err);
   }
 }

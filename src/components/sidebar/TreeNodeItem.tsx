@@ -5,7 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { TreeNode as TNode } from "../../lib/types";
 import type { SessionStatus } from "../../stores/terminalStore";
 import { useTreeActions } from "./TreeContext";
-import { Folder, FolderPlus, Terminal, Pencil, Trash2, Play, ChevronRight, Plus, AlertTriangle } from "lucide-react";
+import { Folder, FolderPlus, Terminal, Pencil, Trash2, Play, ChevronRight, Plus, AlertTriangle } from "../icons";
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
   running: "#9ece6a",
@@ -69,7 +69,14 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
     const pathInvalid = actions.isPathInvalid(p.id);
 
     return (
-      <div ref={setNodeRef} style={{ ...sortableStyle }} {...attributes} role="treeitem" aria-selected={isSelected || isMultiSelected}>
+      <div
+        ref={setNodeRef}
+        style={{ ...sortableStyle }}
+        {...attributes}
+        role="treeitem"
+        aria-level={depth + 1}
+        aria-selected={isSelected || isMultiSelected}
+      >
         <div
           className="flex items-center gap-2 py-1.5 rounded-md cursor-pointer text-sm group/item transition-colors"
           style={{
@@ -128,7 +135,14 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
   // Renaming mode
   if (actions.renamingGroupId === g.id) {
     return (
-      <div ref={setNodeRef} style={{ ...sortableStyle }} {...attributes}>
+      <div
+        ref={setNodeRef}
+        style={{ ...sortableStyle }}
+        {...attributes}
+        role="treeitem"
+        aria-level={depth + 1}
+        aria-expanded="true"
+      >
         <div className="flex items-center gap-1.5 px-2 py-1.5">
           <ChevronRight size={12} strokeWidth={2} style={{ transform: "rotate(90deg)" }} />
           <InlineRename initial={g.name} onConfirm={(name) => actions.onRenameConfirm(g.id, name)} onCancel={actions.onCancelRename} />
@@ -138,7 +152,14 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
   }
 
   return (
-    <div ref={setNodeRef} style={{ ...sortableStyle }} {...attributes} role="group" aria-expanded={isOpen}>
+    <div
+      ref={setNodeRef}
+      style={{ ...sortableStyle }}
+      {...attributes}
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={isOpen}
+    >
       <div
         className="flex items-center gap-1.5 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider cursor-pointer group/grp transition-colors"
         style={{ paddingLeft, paddingRight: 8, color: "var(--text-muted)" }}
@@ -168,16 +189,20 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
         </div>
       )}
 
-      {isOpen && node.children.length > 0 && (
-        <DndContext sensors={[]} collisionDetection={closestCenter} onDragEnd={(event: DragEndEvent) => actions.onDragEnd(g.id, event)}>
-          <SortableContext items={node.children.map((c) => c.type === "group" ? c.group.id : c.project.id)} strategy={verticalListSortingStrategy}>
-            <div className="border-l ml-3" style={{ borderColor: "var(--border)" }}>
-              {node.children.map((child) => (
-                <TreeNodeItem key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`} node={child} depth={depth + 1} />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
+      {node.children.length > 0 && (
+        <div className="tree-collapse" data-open={isOpen ? "true" : "false"}>
+          <div className="tree-collapse-inner" role="group">
+            <DndContext sensors={[]} collisionDetection={closestCenter} onDragEnd={(event: DragEndEvent) => actions.onDragEnd(g.id, event)}>
+              <SortableContext items={node.children.map((c) => c.type === "group" ? c.group.id : c.project.id)} strategy={verticalListSortingStrategy}>
+                <div className="border-l ml-3" style={{ borderColor: "var(--border)" }}>
+                  {node.children.map((child) => (
+                    <TreeNodeItem key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`} node={child} depth={depth + 1} />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </div>
+        </div>
       )}
     </div>
   );

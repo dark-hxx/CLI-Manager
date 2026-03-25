@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
-import { useSettingsStore, type ThemeMode, type ShortcutAction, type KeyboardShortcutMap } from "../stores/settingsStore";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSettingsStore, type ThemeMode, type LightThemePalette, type DarkThemePalette, type ShortcutAction, type KeyboardShortcutMap } from "../stores/settingsStore";
 import { TERMINAL_THEME_PRESETS } from "../lib/terminalThemes";
 import { useTemplateStore } from "../stores/templateStore";
 import { useProjectStore } from "../stores/projectStore";
 import { eventToCombo } from "../hooks/useKeyboardShortcuts";
-import type { CommandTemplate } from "../lib/types";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+import { SHELL_OPTIONS, type CommandTemplate } from "../lib/types";
+import { normalizeShellKey } from "../lib/shell";
 
 type SettingsTab = "general" | "terminal-theme" | "shortcuts" | "templates";
 
@@ -29,6 +31,81 @@ const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: "system", label: "跟随系统" },
 ];
 
+const LIGHT_PALETTE_OPTIONS: {
+  value: LightThemePalette;
+  label: string;
+  description: string;
+  swatches: [string, string, string];
+}[] = [
+  {
+    value: "warm-paper",
+    label: "暖米纸",
+    description: "温暖纸感，橙棕强调",
+    swatches: ["#f8f4ec", "#2d261d", "#c46a2d"],
+  },
+  {
+    value: "cream-green",
+    label: "奶油绿",
+    description: "清新中性，绿色强调",
+    swatches: ["#f6f7f1", "#1f2a20", "#3f7a4f"],
+  },
+  {
+    value: "ink-red",
+    label: "黑白朱砂",
+    description: "高对比中性，红色强调",
+    swatches: ["#f7f7f5", "#1f1f1c", "#c43d2f"],
+  },
+];
+
+const DARK_PALETTE_OPTIONS: {
+  value: DarkThemePalette;
+  label: string;
+  description: string;
+  swatches: [string, string, string];
+}[] = [
+  {
+    value: "night-indigo",
+    label: "夜靛蓝",
+    description: "经典冷色，蓝系强调",
+    swatches: ["#1a1b26", "#c0caf5", "#7aa2f7"],
+  },
+  {
+    value: "forest-night",
+    label: "森林夜",
+    description: "深绿氛围，清爽不刺眼",
+    swatches: ["#111714", "#d8e5dc", "#52a36e"],
+  },
+  {
+    value: "graphite-red",
+    label: "石墨红",
+    description: "中性黑灰，朱红强调",
+    swatches: ["#171616", "#e6dfdb", "#c95b4a"],
+  },
+];
+
+const FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
+  {
+    value: "Cascadia Code, Consolas, monospace",
+    label: "Cascadia Code（推荐）",
+  },
+  {
+    value: "\"JetBrains Mono\", \"Cascadia Code\", Consolas, monospace",
+    label: "JetBrains Mono",
+  },
+  {
+    value: "\"Fira Code\", \"Cascadia Code\", Consolas, monospace",
+    label: "Fira Code",
+  },
+  {
+    value: "Consolas, monospace",
+    label: "Consolas",
+  },
+  {
+    value: "\"Courier New\", monospace",
+    label: "Courier New",
+  },
+];
+
 // Color swatches to display for each theme preset
 const SWATCH_KEYS = ["background", "foreground", "red", "green", "blue", "cyan"] as const;
 
@@ -39,19 +116,39 @@ interface Props {
 
 export function SettingsModal({ open, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const [mounted, setMounted] = useState(open);
+  const [closing, setClosing] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(dialogRef, mounted && !closing);
 
-  if (!open) return null;
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mounted) return;
+    setClosing(true);
+    const timer = setTimeout(() => {
+      setMounted(false);
+      setClosing(false);
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [open, mounted]);
+
+  if (!mounted) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)", animation: "fade-in var(--animate-duration-fast) ease-out" }}
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/50 ${closing ? "animate-fade-out" : "animate-fade-in"}`}
       onClick={onClose}
     >
       <div
-        className="w-[640px] h-[460px] rounded-xl border shadow-2xl flex overflow-hidden"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "scale-in var(--animate-duration-normal) ease-out" }}
+        ref={dialogRef}
+        className={`flex h-[460px] w-[640px] overflow-hidden rounded-xl border border-border bg-bg-secondary shadow-2xl ${closing ? "animate-scale-out" : "animate-scale-in"}`}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
       >
         {/* Left tab nav */}
         <div
@@ -86,6 +183,7 @@ export function SettingsModal({ open, onClose }: Props) {
             </span>
             <button
               onClick={onClose}
+              aria-label="关闭设置窗口"
               className="w-6 h-6 flex items-center justify-center rounded hover:opacity-80"
               style={{ color: "var(--text-muted)" }}
             >
@@ -110,6 +208,8 @@ export function SettingsModal({ open, onClose }: Props) {
 
 function GeneralTab() {
   const theme = useSettingsStore((s) => s.theme);
+  const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
+  const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const fontSize = useSettingsStore((s) => s.fontSize);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
   const defaultShell = useSettingsStore((s) => s.defaultShell);
@@ -123,6 +223,10 @@ function GeneralTab() {
     borderColor: "var(--border)",
     color: "var(--text-primary)",
   };
+  const isCustomFontFamily = !FONT_FAMILY_OPTIONS.some((opt) => opt.value === fontFamily);
+  const normalizedDefaultShell = normalizeShellKey(defaultShell);
+  const shellSelectValue = normalizedDefaultShell ?? defaultShell;
+  const isCustomShellValue = !normalizedDefaultShell;
 
   return (
     <div className="space-y-5">
@@ -148,6 +252,82 @@ function GeneralTab() {
         </div>
       </div>
 
+      <div>
+        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+          浅色配色方案
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          {LIGHT_PALETTE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => update("lightThemePalette", option.value)}
+              className="rounded-lg border p-2 text-left transition-colors"
+              style={{
+                borderColor: lightThemePalette === option.value ? "var(--accent)" : "var(--border)",
+                backgroundColor: lightThemePalette === option.value ? "var(--bg-tertiary)" : "transparent",
+              }}
+            >
+              <div className="flex items-center gap-1.5">
+                {option.swatches.map((color) => (
+                  <span
+                    key={color}
+                    className="h-3.5 w-3.5 rounded-full border"
+                    style={{ backgroundColor: color, borderColor: "var(--border)" }}
+                  />
+                ))}
+              </div>
+              <div className="mt-1 text-[11px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                {option.label}
+              </div>
+              <div className="mt-0.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {option.description}
+              </div>
+            </button>
+          ))}
+        </div>
+        <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
+          仅在“浅色模式”或“跟随系统且当前为浅色”时生效。
+        </div>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+          暗色配色方案
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          {DARK_PALETTE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => update("darkThemePalette", option.value)}
+              className="rounded-lg border p-2 text-left transition-colors"
+              style={{
+                borderColor: darkThemePalette === option.value ? "var(--accent)" : "var(--border)",
+                backgroundColor: darkThemePalette === option.value ? "var(--bg-tertiary)" : "transparent",
+              }}
+            >
+              <div className="flex items-center gap-1.5">
+                {option.swatches.map((color) => (
+                  <span
+                    key={color}
+                    className="h-3.5 w-3.5 rounded-full border"
+                    style={{ backgroundColor: color, borderColor: "var(--border)" }}
+                  />
+                ))}
+              </div>
+              <div className="mt-1 text-[11px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                {option.label}
+              </div>
+              <div className="mt-0.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {option.description}
+              </div>
+            </button>
+          ))}
+        </div>
+        <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
+          仅在“深色模式”或“跟随系统且当前为深色”时生效。
+        </div>
+      </div>
+
       {/* Font size */}
       <div>
         <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>
@@ -169,13 +349,20 @@ function GeneralTab() {
         <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>
           字体族
         </label>
-        <input
-          type="text"
+        <select
           value={fontFamily}
           onChange={(e) => update("fontFamily", e.target.value)}
           className="w-full px-2 py-1.5 text-xs rounded border outline-none"
           style={inputStyle}
-        />
+          aria-label="终端字体族"
+        >
+          {isCustomFontFamily && <option value={fontFamily}>当前自定义（保留）</option>}
+          {FONT_FAMILY_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Default shell */}
@@ -183,13 +370,20 @@ function GeneralTab() {
         <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>
           默认 Shell
         </label>
-        <input
-          type="text"
-          value={defaultShell}
+        <select
+          value={shellSelectValue}
           onChange={(e) => update("defaultShell", e.target.value)}
           className="w-full px-2 py-1.5 text-xs rounded border outline-none"
           style={inputStyle}
-        />
+          aria-label="默认 Shell"
+        >
+          {isCustomShellValue && <option value={defaultShell}>当前自定义（保留）</option>}
+          {SHELL_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* External terminal */}
@@ -199,6 +393,8 @@ function GeneralTab() {
           className="switch"
           data-on={useExternalTerminal ? "true" : "false"}
           onClick={() => update("useExternalTerminal", !useExternalTerminal)}
+          aria-label={useExternalTerminal ? "关闭外部 PowerShell" : "开启外部 PowerShell"}
+          aria-pressed={useExternalTerminal}
         >
           <span className="switch-thumb" />
         </button>
@@ -217,6 +413,8 @@ function GeneralTab() {
           data-on={debugMode ? "true" : "false"}
           onClick={() => update("debugMode", !debugMode)}
           title="开启或关闭调试日志"
+          aria-label={debugMode ? "关闭调试模式" : "开启调试模式"}
+          aria-pressed={debugMode}
         >
           <span className="switch-thumb" />
         </button>

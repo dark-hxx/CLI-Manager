@@ -1,32 +1,97 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useTerminalStore } from "../stores/terminalStore";
-import { Clock, Search } from "lucide-react";
+import { Clock, Search } from "./icons";
+import { Portal } from "./ui/Portal";
+import { EmptyState } from "./ui/EmptyState";
+import { Skeleton } from "./ui/Skeleton";
+import { toast } from "sonner";
+import { logError } from "../lib/logger";
+
+interface PanelPosition {
+  left: number;
+  top: number;
+}
 
 export function CommandHistoryPanel() {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelLoading, setPanelLoading] = useState(false);
+  const [panelPosition, setPanelPosition] = useState<PanelPosition>({ left: 0, top: 0 });
   const { entries, searchQuery, setSearchQuery, fetchAll } = useCommandHistoryStore();
   const activeSessionId = useTerminalStore((s) => s.activeSessionId);
 
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const panelWidth = 320;
+    const estimatedHeight = 320;
+    const nextLeft = Math.max(8, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - 8));
+    const preferredTop = rect.bottom + 6;
+    const nextTop = preferredTop + estimatedHeight <= window.innerHeight - 8
+      ? preferredTop
+      : Math.max(8, rect.top - estimatedHeight - 6);
+
+    setPanelPosition({ left: nextLeft, top: nextTop });
+  }, []);
+
   useEffect(() => {
-    if (open) fetchAll();
-  }, [open, fetchAll]);
+    if (!open) return;
+    let cancelled = false;
+    setPanelLoading(true);
+    updatePosition();
+    void Promise.all([
+      fetchAll(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 180);
+      }),
+    ]).finally(() => {
+      if (!cancelled) setPanelLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, fetchAll, updatePosition]);
 
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (panelRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setOpen(false);
     };
+    const reposition = () => updatePosition();
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
+    document.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open, updatePosition]);
 
-  const handleReplay = (command: string) => {
-    if (!activeSessionId) return;
-    invoke("pty_write", { sessionId: activeSessionId, data: command + "\r" }).catch(console.error);
-    setOpen(false);
+  const handleReplay = async (command: string) => {
+    if (!activeSessionId) {
+      toast.error("当前无活跃终端");
+      return;
+    }
+    try {
+      await invoke("pty_write", { sessionId: activeSessionId, data: command + "\r" });
+      setOpen(false);
+    } catch (err) {
+      toast.error("重放命令失败", { description: String(err) });
+      logError("Failed to replay command history", {
+        sessionId: activeSessionId,
+        command,
+        err,
+      });
+    }
   };
 
   const handleSearchChange = (q: string) => {
@@ -40,69 +105,79 @@ export function CommandHistoryPanel() {
   };
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-2.5 h-6 rounded-md text-xs border hover:opacity-100 transition-opacity"
-        style={{ color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)", opacity: 0.9 }}
+        ref={triggerRef}
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex h-6 items-center gap-1.5 rounded-md border border-border bg-bg-tertiary px-2.5 text-xs text-text-muted opacity-90 transition-opacity hover:opacity-100"
         title="Command History"
+        aria-label={open ? "关闭命令历史面板" : "打开命令历史面板"}
+        aria-controls="command-history-panel"
+        aria-expanded={open}
       >
         <Clock size={14} strokeWidth={1.5} />
         <span>History</span>
       </button>
 
       {open && (
-        <div
-          className="absolute right-0 top-full mt-1 w-80 rounded-lg border shadow-lg z-50 overflow-hidden"
-          style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "slide-down var(--animate-duration-fast) ease-out" }}
-        >
-          <div className="p-2 border-b" style={{ borderColor: "var(--border)" }}>
-            <div
-              className="flex items-center gap-2 px-2 py-1 rounded border"
-              style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}
-            >
-              <Search size={12} strokeWidth={1.5} />
-              <input
-                type="text"
-                placeholder="搜索命令..."
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                className="flex-1 bg-transparent text-xs outline-none"
-                style={{ color: "var(--text-primary)" }}
-                autoFocus
-              />
+        <Portal>
+          <div
+            ref={panelRef}
+            id="command-history-panel"
+            className="fixed z-40 mt-1 w-80 overflow-hidden rounded-lg border border-border bg-bg-secondary shadow-lg animate-slide-down"
+            style={{ left: panelPosition.left, top: panelPosition.top }}
+          >
+            <div className="border-b border-border p-2">
+              <div className="flex items-center gap-2 rounded border border-border bg-bg-tertiary px-2 py-1">
+                <Search size={12} strokeWidth={1.5} />
+                <input
+                  type="text"
+                  placeholder="搜索命令..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="flex-1 bg-transparent text-xs text-text-primary outline-none"
+                  aria-label="搜索命令历史"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="max-h-64 overflow-y-auto">
+              {panelLoading ? (
+                <div className="space-y-2 px-3 py-3">
+                  {[1, 2, 3, 4].map((item) => (
+                    <div key={item} className="space-y-1 border-b border-border pb-2 last:border-b-0">
+                      <Skeleton className="h-3 w-full" />
+                      <Skeleton className="h-2.5 w-1/3" />
+                    </div>
+                  ))}
+                </div>
+              ) : entries.length === 0 ? (
+                <EmptyState
+                  icon={<Clock size={20} strokeWidth={1.5} />}
+                  title={searchQuery ? "无匹配命令" : "暂无命令历史"}
+                  description={searchQuery ? "尝试更短关键词重新搜索。" : "先在终端执行一条命令，历史会自动记录。"}
+                  className="px-3 py-6"
+                />
+              ) : (
+                entries.map((entry) => (
+                  <button
+                    key={entry.id}
+                    onClick={() => {
+                      void handleReplay(entry.command);
+                    }}
+                    className="flex w-full items-start gap-2 border-b border-border px-3 py-1.5 text-left text-xs text-text-secondary transition-opacity hover:opacity-80"
+                    title="点击重放此命令"
+                  >
+                    <code className="flex-1 truncate font-mono text-text-primary">{entry.command}</code>
+                    <span className="shrink-0 text-[10px] text-text-muted">{formatTime(entry.executed_at)}</span>
+                  </button>
+                ))
+              )}
             </div>
           </div>
-
-          <div className="max-h-64 overflow-y-auto">
-            {entries.length === 0 ? (
-              <div className="px-3 py-4 text-center text-xs" style={{ color: "var(--text-muted)" }}>
-                {searchQuery ? "无匹配命令" : "暂无命令历史"}
-              </div>
-            ) : (
-              entries.map((entry) => (
-                <button
-                  key={entry.id}
-                  onClick={() => handleReplay(entry.command)}
-                  className="w-full text-left px-3 py-1.5 text-xs hover:opacity-80 transition-opacity flex items-start gap-2 border-b"
-                  style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-                  title="点击重放此命令"
-                >
-                  <code
-                    className="flex-1 truncate font-mono"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    {entry.command}
-                  </code>
-                  <span className="shrink-0 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                    {formatTime(entry.executed_at)}
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
+        </Portal>
       )}
-    </div>
+    </>
   );
 }

@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 interface Props {
   open: boolean;
@@ -21,31 +22,52 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
 }: Props) {
+  const [mounted, setMounted] = useState(open);
+  const [closing, setClosing] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(dialogRef, mounted && !closing);
+
   useEffect(() => {
-    if (!open) return;
+    if (open) {
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mounted) return;
+    setClosing(true);
+    const timer = setTimeout(() => {
+      setMounted(false);
+      setClosing(false);
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [open, mounted]);
+
+  useEffect(() => {
+    if (!open || closing) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  }, [open, onClose, closing]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center z-50"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)", animation: "fade-in var(--animate-duration-fast) ease-out" }}
+      className={`fixed inset-0 z-50 flex items-center justify-center ${closing ? "animate-fade-out bg-black/50" : "animate-fade-in bg-black/50"}`}
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
-        className="w-[360px] rounded-lg p-5 border"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "scale-in var(--animate-duration-normal) ease-out" }}
+        className={`w-[360px] rounded-lg border border-border bg-bg-secondary p-5 ${closing ? "animate-scale-out" : "animate-scale-in"}`}
+        role="dialog"
+        aria-modal="true"
       >
         <h3 className="text-base font-semibold mb-2">{title}</h3>
         {message && (
-          <p className="text-sm mb-4" style={{ color: "var(--text-secondary)" }}>
+          <p className="mb-4 text-sm text-text-secondary">
             {message}
           </p>
         )}
@@ -53,16 +75,14 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded border"
-            style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+            className="rounded border border-border px-3 py-1.5 text-sm text-text-secondary"
           >
             {cancelText}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="px-3 py-1.5 text-sm rounded"
-            style={{ backgroundColor: danger ? "var(--danger)" : "var(--accent)", color: "#fff" }}
+            className={`rounded px-3 py-1.5 text-sm text-white ${danger ? "bg-danger" : "bg-accent"}`}
           >
             {confirmText}
           </button>

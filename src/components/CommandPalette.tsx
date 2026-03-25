@@ -6,6 +6,8 @@ import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useHistoryStore } from "../stores/historyStore";
+import { toast } from "sonner";
+import { logError } from "../lib/logger";
 
 export const useCommandPaletteStore = create<{
   isOpen: boolean;
@@ -169,7 +171,16 @@ export function CommandPalette() {
         category: "命令模板",
         action: () => {
           const sid = useTerminalStore.getState().activeSessionId;
-          if (sid) invoke("pty_write", { sessionId: sid, data: t.command + "\r" }).catch(console.error);
+          if (sid) {
+            invoke("pty_write", { sessionId: sid, data: t.command + "\r" }).catch((err) => {
+              toast.error("执行模板命令失败", { description: String(err) });
+              logError("CommandPalette failed to run template", {
+                templateId: t.id,
+                sessionId: sid,
+                err,
+              });
+            });
+          }
         },
       });
     }

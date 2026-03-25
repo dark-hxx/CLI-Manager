@@ -10,9 +10,10 @@ import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { HistoryWorkspace } from "./HistoryWorkspace";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { Terminal, Plus, Search } from "lucide-react";
+import { Terminal, Plus, Search } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
+import { Portal } from "./ui/Portal";
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
   running: "#9ece6a",
@@ -36,9 +37,6 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    borderColor: "var(--border)",
-    backgroundColor: isActive ? "var(--bg-primary)" : "transparent",
-    color: isActive ? "var(--text-primary)" : "var(--text-muted)",
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 10 : undefined,
   };
@@ -47,7 +45,7 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 px-3 h-full text-[11px] font-medium cursor-pointer border-r shrink-0"
+      className={`flex h-full shrink-0 cursor-pointer items-center gap-2 border-r border-border px-3 text-[11px] font-medium ${isActive ? "bg-bg-primary text-text-primary" : "bg-transparent text-text-muted"}`}
       onClick={onActivate}
       onContextMenu={onContextMenu}
       {...attributes}
@@ -64,8 +62,9 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
       <button
         onClick={(e) => { e.stopPropagation(); onClose(); }}
         onPointerDown={(e) => e.stopPropagation()}
-        className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded border opacity-60 hover:opacity-100 transition-opacity"
-        style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}
+        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded border border-border text-text-muted opacity-60 transition-opacity hover:opacity-100"
+        aria-label={`关闭终端 ${title}`}
+        title={`关闭终端 ${title}`}
       >
         &times;
       </button>
@@ -77,8 +76,12 @@ export function TerminalTabs() {
   const { sessions, activeSessionId, sessionStatuses, splits, setActive, closeSession, createSession, reorderSessions, splitTerminal, unsplitTerminal } = useTerminalStore();
   const projects = useProjectStore((s) => s.projects);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
+  const fontSize = useSettingsStore((s) => s.fontSize);
+  const fontFamily = useSettingsStore((s) => s.fontFamily);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
+  const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
+  const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const historyOpen = useHistoryStore((s) => s.isOpen);
   const toggleHistory = useHistoryStore((s) => s.toggleHistory);
   const [contextMenu, setContextMenu] = useState<null | { sessionId: string; x: number; y: number }>(null);
@@ -141,8 +144,7 @@ export function TerminalTabs() {
     <div className="flex flex-col h-full">
       {/* Tab bar */}
       <div
-        className="flex items-center h-9 border-b"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
+        className="flex h-9 items-center bg-bg-secondary"
       >
         {/* Scrollable tabs area */}
         <div className="flex-1 flex items-center h-full overflow-x-auto min-w-0">
@@ -167,9 +169,9 @@ export function TerminalTabs() {
         <div className="flex items-center shrink-0 px-2 gap-2">
           <button
             onClick={handleNewTab}
-            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md text-xs border hover:opacity-100 transition-opacity"
-            style={{ color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)", opacity: 0.9 }}
+            className="flex h-6 items-center gap-1.5 rounded-md border border-border bg-bg-tertiary px-2.5 text-xs text-text-muted opacity-90 transition-opacity hover:opacity-100"
             title="New terminal"
+            aria-label="新建终端"
           >
             <Plus size={12} strokeWidth={2} />
             <Terminal size={14} strokeWidth={1.5} />
@@ -181,14 +183,11 @@ export function TerminalTabs() {
             onClick={() => {
               void toggleHistory();
             }}
-            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md text-xs border hover:opacity-100 transition-opacity"
-            style={{
-              color: historyOpen ? "var(--text-primary)" : "var(--text-muted)",
-              borderColor: "var(--border)",
-              backgroundColor: historyOpen ? "var(--bg-primary)" : "var(--bg-tertiary)",
-              opacity: 0.95,
-            }}
+            className={`flex h-6 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs opacity-95 transition-opacity hover:opacity-100 ${historyOpen ? "bg-bg-primary text-text-primary" : "bg-bg-tertiary text-text-muted"}`}
             title="历史会话"
+            aria-label={historyOpen ? "关闭历史会话面板" : "打开历史会话面板"}
+            aria-controls="history-workspace"
+            aria-expanded={historyOpen}
           >
             <Search size={13} strokeWidth={1.8} />
             <span>History</span>
@@ -198,60 +197,62 @@ export function TerminalTabs() {
 
       {/* Context menu */}
       {contextMenu && (
-        <div className="context-menu" style={{ left: menuX, top: menuY }} ref={contextMenuRef} role="menu">
-          <button
-            className="context-menu-item" role="menuitem"
-            onClick={() => { closeSession(contextMenu.sessionId); setContextMenu(null); }}
-          >
-            关闭终端
-          </button>
-          <button
-            className="context-menu-item" role="menuitem"
-            onClick={() => { handleCloseOthers(contextMenu.sessionId); setContextMenu(null); }}
-          >
-            关闭其它终端
-          </button>
-          <button
-            className="context-menu-item" role="menuitem"
-            onClick={() => { handleNewTab(); setContextMenu(null); }}
-          >
-            新建终端
-          </button>
-          <div className="my-1 border-t" style={{ borderColor: "var(--border)" }} />
-          {splits[contextMenu.sessionId] ? (
+        <Portal>
+          <div className="context-menu" style={{ left: menuX, top: menuY }} ref={contextMenuRef} role="menu">
             <button
               className="context-menu-item" role="menuitem"
-              onClick={() => { unsplitTerminal(contextMenu.sessionId); setContextMenu(null); }}
+              onClick={() => { closeSession(contextMenu.sessionId); setContextMenu(null); }}
             >
-              取消分屏
+              关闭终端
             </button>
-          ) : (
-            <>
+            <button
+              className="context-menu-item" role="menuitem"
+              onClick={() => { handleCloseOthers(contextMenu.sessionId); setContextMenu(null); }}
+            >
+              关闭其它终端
+            </button>
+            <button
+              className="context-menu-item" role="menuitem"
+              onClick={() => { handleNewTab(); setContextMenu(null); }}
+            >
+              新建终端
+            </button>
+            <div className="my-1 border-t border-border" />
+            {splits[contextMenu.sessionId] ? (
               <button
                 className="context-menu-item" role="menuitem"
-                onClick={() => {
-                  const session = sessions.find((s) => s.id === contextMenu.sessionId);
-                  const project = session?.projectId ? projects.find((p) => p.id === session.projectId) : undefined;
-                  splitTerminal(contextMenu.sessionId, "horizontal", project?.path, project?.shell);
-                  setContextMenu(null);
-                }}
+                onClick={() => { unsplitTerminal(contextMenu.sessionId); setContextMenu(null); }}
               >
-                水平分屏
+                取消分屏
               </button>
-              <button
-                className="context-menu-item" role="menuitem"
-                onClick={() => {
-                  const session = sessions.find((s) => s.id === contextMenu.sessionId);
-                  const project = session?.projectId ? projects.find((p) => p.id === session.projectId) : undefined;
-                  splitTerminal(contextMenu.sessionId, "vertical", project?.path, project?.shell);
-                  setContextMenu(null);
-                }}
-              >
-                垂直分屏
-              </button>
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <button
+                  className="context-menu-item" role="menuitem"
+                  onClick={() => {
+                    const session = sessions.find((s) => s.id === contextMenu.sessionId);
+                    const project = session?.projectId ? projects.find((p) => p.id === session.projectId) : undefined;
+                    splitTerminal(contextMenu.sessionId, "horizontal", project?.path, project?.shell);
+                    setContextMenu(null);
+                  }}
+                >
+                  水平分屏
+                </button>
+                <button
+                  className="context-menu-item" role="menuitem"
+                  onClick={() => {
+                    const session = sessions.find((s) => s.id === contextMenu.sessionId);
+                    const project = session?.projectId ? projects.find((p) => p.id === session.projectId) : undefined;
+                    splitTerminal(contextMenu.sessionId, "vertical", project?.path, project?.shell);
+                    setContextMenu(null);
+                  }}
+                >
+                  垂直分屏
+                </button>
+              </>
+            )}
+          </div>
+        </Portal>
       )}
 
       {/* Terminal panel */}
@@ -265,7 +266,17 @@ export function TerminalTabs() {
               className="absolute inset-0"
               style={{ display: s.id === activeSessionId ? "block" : "none" }}
             >
-              <SplitTerminalView sessionId={s.id} split={splits[s.id]} isActive={s.id === activeSessionId} resolvedTheme={resolvedTheme} terminalThemeName={terminalThemeName} />
+              <SplitTerminalView
+                sessionId={s.id}
+                split={splits[s.id]}
+                isActive={s.id === activeSessionId}
+                fontSize={fontSize}
+                fontFamily={fontFamily}
+                resolvedTheme={resolvedTheme}
+                terminalThemeName={terminalThemeName}
+                lightThemePalette={lightThemePalette}
+                darkThemePalette={darkThemePalette}
+              />
             </div>
           ))
         )}

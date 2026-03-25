@@ -6,6 +6,9 @@ export interface TerminalThemePreset {
   theme: ITheme;
 }
 
+export type LightTerminalPalette = "warm-paper" | "cream-green" | "ink-red";
+export type DarkTerminalPalette = "night-indigo" | "forest-night" | "graphite-red";
+
 const tokyoNightDark: ITheme = {
   background: "#1a1b26",
   foreground: "#c0caf5",
@@ -50,6 +53,121 @@ const tokyoNightLight: ITheme = {
   brightMagenta: "#5a4a78",
   brightCyan: "#0f4b6e",
   brightWhite: "#343b58",
+};
+
+const forestNightDark: ITheme = {
+  background: "#111714",
+  foreground: "#d8e5dc",
+  cursor: "#d8e5dc",
+  selectionBackground: "#2a3a31",
+  black: "#0d1410",
+  red: "#dc6e74",
+  green: "#6bc28f",
+  yellow: "#d8b15f",
+  blue: "#6ea88f",
+  magenta: "#7c9b84",
+  cyan: "#66a79a",
+  white: "#c8d8ce",
+  brightBlack: "#4b5f55",
+  brightRed: "#e6848a",
+  brightGreen: "#7dd0a0",
+  brightYellow: "#e2be74",
+  brightBlue: "#81b8a2",
+  brightMagenta: "#8eab96",
+  brightCyan: "#79b8aa",
+  brightWhite: "#e6efe9",
+};
+
+const graphiteRedDark: ITheme = {
+  background: "#171616",
+  foreground: "#e6dfdb",
+  cursor: "#e6dfdb",
+  selectionBackground: "#3a3232",
+  black: "#121111",
+  red: "#e06a6a",
+  green: "#64b487",
+  yellow: "#d3a053",
+  blue: "#b48a77",
+  magenta: "#c08a7a",
+  cyan: "#8ea091",
+  white: "#d2c8c3",
+  brightBlack: "#5b4f4f",
+  brightRed: "#e97f7f",
+  brightGreen: "#79c49a",
+  brightYellow: "#ddb168",
+  brightBlue: "#c09a89",
+  brightMagenta: "#ca9b8e",
+  brightCyan: "#9db0a3",
+  brightWhite: "#f1eae6",
+};
+
+const warmPaperLight: ITheme = {
+  background: "#fffdf8",
+  foreground: "#3a3126",
+  cursor: "#5b4f41",
+  selectionBackground: "#e7dcc8",
+  black: "#2d261d",
+  red: "#c84a4a",
+  green: "#2f8f62",
+  yellow: "#b8842a",
+  blue: "#8b6b45",
+  magenta: "#a35b3a",
+  cyan: "#6f7b57",
+  white: "#6f6252",
+  brightBlack: "#8a7b6a",
+  brightRed: "#d66161",
+  brightGreen: "#3ea574",
+  brightYellow: "#c9973e",
+  brightBlue: "#9b7a53",
+  brightMagenta: "#b86a46",
+  brightCyan: "#7f8e66",
+  brightWhite: "#2d261d",
+};
+
+const creamGreenLight: ITheme = {
+  background: "#fdfdf9",
+  foreground: "#223224",
+  cursor: "#3f5141",
+  selectionBackground: "#dce5d8",
+  black: "#1f2a20",
+  red: "#b84b4b",
+  green: "#2d8a5f",
+  yellow: "#a77d2f",
+  blue: "#3f7a4f",
+  magenta: "#5a6a3f",
+  cyan: "#3e6f63",
+  white: "#54645a",
+  brightBlack: "#6e7f70",
+  brightRed: "#c76060",
+  brightGreen: "#43a174",
+  brightYellow: "#b88d41",
+  brightBlue: "#4f8d60",
+  brightMagenta: "#6e7f4d",
+  brightCyan: "#4f8276",
+  brightWhite: "#1f2a20",
+};
+
+const inkRedLight: ITheme = {
+  background: "#ffffff",
+  foreground: "#2a2722",
+  cursor: "#494943",
+  selectionBackground: "#ebe7df",
+  black: "#1f1f1c",
+  red: "#b63a3a",
+  green: "#2b8a5a",
+  yellow: "#b07a22",
+  blue: "#7a5140",
+  magenta: "#8a4a40",
+  cyan: "#5f6d55",
+  white: "#59564e",
+  brightBlack: "#7b7b72",
+  brightRed: "#c74a4a",
+  brightGreen: "#3ea070",
+  brightYellow: "#c08d35",
+  brightBlue: "#8c604d",
+  brightMagenta: "#9b5a4e",
+  brightCyan: "#738266",
+  brightWhite: "#1f1f1c",
 };
 
 const dracula: ITheme = {
@@ -239,6 +357,11 @@ const githubLight: ITheme = {
 export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
   { id: "tokyoNightDark", name: "Tokyo Night Dark", theme: tokyoNightDark },
   { id: "tokyoNightLight", name: "Tokyo Night Light", theme: tokyoNightLight },
+  { id: "forestNightDark", name: "Forest Night Dark", theme: forestNightDark },
+  { id: "graphiteRedDark", name: "Graphite Red Dark", theme: graphiteRedDark },
+  { id: "warmPaperLight", name: "Warm Paper Light", theme: warmPaperLight },
+  { id: "creamGreenLight", name: "Cream Green Light", theme: creamGreenLight },
+  { id: "inkRedLight", name: "Ink Red Light", theme: inkRedLight },
   { id: "dracula", name: "Dracula", theme: dracula },
   { id: "monokai", name: "Monokai", theme: monokai },
   { id: "nord", name: "Nord", theme: nord },
@@ -251,18 +374,40 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
 
 const themeMap = new Map(TERMINAL_THEME_PRESETS.map((p) => [p.id, p.theme]));
 
-/**
- * Resolve a terminal theme by name.
- * - "auto" → pick based on app resolvedTheme (dark → tokyoNightDark, light → tokyoNightLight)
- * - other → lookup by ID, fallback to auto behavior
- */
-export function getTerminalTheme(themeName: string, resolvedTheme: "dark" | "light"): ITheme {
-  if (themeName === "auto") {
-    return resolvedTheme === "dark" ? tokyoNightDark : tokyoNightLight;
-  }
-  return themeMap.get(themeName) ?? (resolvedTheme === "dark" ? tokyoNightDark : tokyoNightLight);
+function resolveAutoLightTheme(lightPalette: LightTerminalPalette = "warm-paper"): ITheme {
+  if (lightPalette === "cream-green") return creamGreenLight;
+  if (lightPalette === "ink-red") return inkRedLight;
+  return warmPaperLight;
 }
 
-export function getTerminalBackground(themeName: string, resolvedTheme: "dark" | "light"): string {
-  return getTerminalTheme(themeName, resolvedTheme).background!;
+function resolveAutoDarkTheme(darkPalette: DarkTerminalPalette = "night-indigo"): ITheme {
+  if (darkPalette === "forest-night") return forestNightDark;
+  if (darkPalette === "graphite-red") return graphiteRedDark;
+  return tokyoNightDark;
+}
+
+/**
+ * Resolve a terminal theme by name.
+ * - "auto" → pick based on app resolvedTheme (dark → tokyoNightDark, light → selected light palette)
+ * - other → lookup by ID, fallback to auto behavior
+ */
+export function getTerminalTheme(
+  themeName: string,
+  resolvedTheme: "dark" | "light",
+  lightPalette: LightTerminalPalette = "warm-paper",
+  darkPalette: DarkTerminalPalette = "night-indigo"
+): ITheme {
+  if (themeName === "auto") {
+    return resolvedTheme === "dark" ? resolveAutoDarkTheme(darkPalette) : resolveAutoLightTheme(lightPalette);
+  }
+  return themeMap.get(themeName) ?? (resolvedTheme === "dark" ? resolveAutoDarkTheme(darkPalette) : resolveAutoLightTheme(lightPalette));
+}
+
+export function getTerminalBackground(
+  themeName: string,
+  resolvedTheme: "dark" | "light",
+  lightPalette: LightTerminalPalette = "warm-paper",
+  darkPalette: DarkTerminalPalette = "night-indigo"
+): string {
+  return getTerminalTheme(themeName, resolvedTheme, lightPalette, darkPalette).background!;
 }

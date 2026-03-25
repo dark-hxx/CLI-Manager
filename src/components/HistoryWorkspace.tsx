@@ -1,123 +1,20 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-} from "react";
-import { BookCopy, GitCompare, RefreshCw, Search, Star } from "lucide-react";
-import { useHistoryStore } from "../stores/historyStore";
-import type { HistorySearchHit, HistorySessionView } from "../lib/types";
-import { EmptyState } from "./ui/EmptyState";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { toast } from "sonner";
+import { useHistoryStore } from "../stores/historyStore";
+import type { HistorySearchHit, HistorySessionView, HistorySourceFilter } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
 import { PromptLibrary } from "./prompts/PromptLibrary";
 import { DiffModal } from "./history/DiffModal";
+import { HistoryListPane } from "./history/HistoryListPane";
+import { SessionDetailPane } from "./history/SessionDetailPane";
+import { toGroupLabel, type TimeGroupLabel } from "./history/historyViewUtils";
 
-function formatTime(ts: number): string {
-  if (!Number.isFinite(ts) || ts <= 0) return "-";
-  return new Date(ts).toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function highlightText(text: string, query: string): ReactNode {
-  const trimmed = query.trim();
-  if (!trimmed) return text;
-  const regex = new RegExp(`(${escapeRegExp(trimmed)})`, "ig");
-  const parts = text.split(regex);
-  const normalized = trimmed.toLowerCase();
-  return parts.map((part, idx) => {
-    if (part.toLowerCase() === normalized) {
-      return (
-        <mark
-          key={`${part}-${idx}`}
-          className="px-0.5 rounded-sm"
-          style={{ backgroundColor: "var(--warning)", color: "var(--bg-primary)" }}
-        >
-          {part}
-        </mark>
-      );
-    }
-    return <span key={`${part}-${idx}`}>{part}</span>;
-  });
-}
+const SESSION_PAGE_SIZE = 200;
+const MESSAGE_PAGE_SIZE = 160;
+const LOAD_MORE_THRESHOLD_PX = 220;
 
 function makeHitKey(hit: HistorySearchHit): string {
   return `${hit.source}:${hit.session_id}:${hit.file_path}`;
-}
-
-function makeSessionLabel(session: HistorySessionView): string {
-  if (session.branch && session.branch.trim()) {
-    return `${session.project_key} · ${session.branch}`;
-  }
-  return session.project_key;
-}
-
-type TimeGroupLabel = "Today" | "Yesterday" | "This Week" | "This Month" | "Earlier";
-
-function toGroupLabel(ts: number, nowTs: number): TimeGroupLabel {
-  if (!Number.isFinite(ts) || ts <= 0) return "Earlier";
-  const todayStart = new Date(nowTs);
-  todayStart.setHours(0, 0, 0, 0);
-  const todayMs = todayStart.getTime();
-  if (ts >= todayMs) return "Today";
-
-  const yesterdayMs = todayMs - 24 * 60 * 60 * 1000;
-  if (ts >= yesterdayMs) return "Yesterday";
-
-  const day = todayStart.getDay();
-  const mondayOffset = day === 0 ? 6 : day - 1;
-  const weekMs = todayMs - mondayOffset * 24 * 60 * 60 * 1000;
-  if (ts >= weekMs) return "This Week";
-
-  const monthMs = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1).getTime();
-  if (ts >= monthMs) return "This Month";
-
-  return "Earlier";
-}
-
-function roleBadge(role: string): { label: string; color: string; bg: string; border: string } {
-  const normalized = role.toLowerCase();
-  if (normalized === "user") {
-    return {
-      label: "USER",
-      color: "#1d4ed8",
-      bg: "rgba(59, 130, 246, 0.12)",
-      border: "rgba(59, 130, 246, 0.35)",
-    };
-  }
-  if (normalized === "assistant") {
-    return {
-      label: "ASSISTANT",
-      color: "#047857",
-      bg: "rgba(16, 185, 129, 0.12)",
-      border: "rgba(16, 185, 129, 0.3)",
-    };
-  }
-  if (normalized === "system") {
-    return {
-      label: "SYSTEM",
-      color: "#7c3aed",
-      bg: "rgba(124, 58, 237, 0.12)",
-      border: "rgba(124, 58, 237, 0.35)",
-    };
-  }
-  return {
-    label: normalized.toUpperCase(),
-    color: "var(--text-secondary)",
-    bg: "var(--bg-tertiary)",
-    border: "var(--border)",
-  };
 }
 
 export function HistoryWorkspace() {
@@ -150,7 +47,10 @@ export function HistoryWorkspace() {
 
   const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const sessionSearchRef = useRef<HTMLInputElement | null>(null);
+  const sessionListRef = useRef<HTMLDivElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const pendingScrollMessageRef = useRef<number | null>(null);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const isResizing = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
@@ -161,6 +61,8 @@ export function HistoryWorkspace() {
   const [matchCursor, setMatchCursor] = useState(0);
   const [promptOpen, setPromptOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [visibleSessionCount, setVisibleSessionCount] = useState(SESSION_PAGE_SIZE);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(MESSAGE_PAGE_SIZE);
 
   const activeView = useMemo(
     () => sessions.find((item) => item.sessionKey === activeSessionKey) ?? null,
@@ -168,6 +70,7 @@ export function HistoryWorkspace() {
   );
 
   const activeTagText = useMemo(() => (activeView ? activeView.tags.join(", ") : ""), [activeView]);
+
   const startResize = useCallback(
     (e: ReactMouseEvent) => {
       e.preventDefault();
@@ -229,15 +132,13 @@ export function HistoryWorkspace() {
   }, [globalQuery, runGlobalSearch, sourceFilter]);
 
   useEffect(() => {
-    if (!globalSearchRef.current) return;
-    globalSearchRef.current.focus();
-    globalSearchRef.current.select();
+    globalSearchRef.current?.focus();
+    globalSearchRef.current?.select();
   }, [focusGlobalSearchSeq]);
 
   useEffect(() => {
-    if (!sessionSearchRef.current) return;
-    sessionSearchRef.current.focus();
-    sessionSearchRef.current.select();
+    sessionSearchRef.current?.focus();
+    sessionSearchRef.current?.select();
   }, [focusSessionSearchSeq]);
 
   const normalizedGlobal = globalQuery.trim().toLowerCase();
@@ -256,11 +157,22 @@ export function HistoryWorkspace() {
     });
   }, [sessions, normalizedGlobal]);
 
+  useEffect(() => {
+    setVisibleSessionCount(Math.min(SESSION_PAGE_SIZE, filteredSessions.length));
+  }, [filteredSessions.length]);
+
+  const visibleFilteredSessions = useMemo(
+    () => filteredSessions.slice(0, visibleSessionCount),
+    [filteredSessions, visibleSessionCount]
+  );
+
+  const hasMoreSessions = visibleSessionCount < filteredSessions.length;
+
   const groupedSessions = useMemo(() => {
     const order: TimeGroupLabel[] = ["Today", "Yesterday", "This Week", "This Month", "Earlier"];
     const map = new Map<TimeGroupLabel, HistorySessionView[]>();
     const nowTs = Date.now();
-    for (const item of filteredSessions) {
+    for (const item of visibleFilteredSessions) {
       const label = toGroupLabel(item.updated_at, nowTs);
       const list = map.get(label) ?? [];
       list.push(item);
@@ -269,7 +181,15 @@ export function HistoryWorkspace() {
     return order
       .map((label) => ({ label, items: map.get(label) ?? [] }))
       .filter((group) => group.items.length > 0);
-  }, [filteredSessions]);
+  }, [visibleFilteredSessions]);
+
+  const handleSessionListScroll = useCallback(() => {
+    const container = sessionListRef.current;
+    if (!container || !hasMoreSessions) return;
+    const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (remaining > LOAD_MORE_THRESHOLD_PX) return;
+    setVisibleSessionCount((prev) => Math.min(filteredSessions.length, prev + SESSION_PAGE_SIZE));
+  }, [filteredSessions.length, hasMoreSessions]);
 
   const matchIndices = useMemo(() => {
     const query = sessionQuery.trim().toLowerCase();
@@ -288,17 +208,62 @@ export function HistoryWorkspace() {
   }, [sessionQuery, activeSession?.session_id]);
 
   useEffect(() => {
+    setVisibleMessageCount(MESSAGE_PAGE_SIZE);
+    pendingScrollMessageRef.current = null;
+    messageRefs.current = {};
+  }, [activeSession?.session_id]);
+
+  const visibleMessages = useMemo(
+    () => (activeSession?.messages ?? []).slice(0, visibleMessageCount),
+    [activeSession?.messages, visibleMessageCount]
+  );
+
+  const hasMoreMessages = visibleMessageCount < (activeSession?.messages.length ?? 0);
+
+  const ensureMessageRendered = useCallback(
+    (index: number) => {
+      if (index < 0) return false;
+      const total = activeSession?.messages.length ?? 0;
+      if (index >= total) return false;
+      if (index >= visibleMessageCount) {
+        pendingScrollMessageRef.current = index;
+        setVisibleMessageCount((prev) => Math.min(total, Math.max(prev, index + 40)));
+        return false;
+      }
+      return true;
+    },
+    [activeSession?.messages.length, visibleMessageCount]
+  );
+
+  useEffect(() => {
+    const pendingIndex = pendingScrollMessageRef.current;
+    if (pendingIndex === null || pendingIndex >= visibleMessageCount) return;
+    pendingScrollMessageRef.current = null;
+    requestAnimationFrame(() => {
+      messageRefs.current[pendingIndex]?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }, [visibleMessageCount]);
+
+  useEffect(() => {
     if (matchIndices.length === 0) return;
     const targetIdx = matchIndices[Math.min(matchCursor, matchIndices.length - 1)];
-    const target = messageRefs.current[targetIdx];
-    target?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [matchCursor, matchIndices]);
+    if (!ensureMessageRendered(targetIdx)) return;
+    messageRefs.current[targetIdx]?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [ensureMessageRendered, matchCursor, matchIndices]);
 
   useEffect(() => {
     if (focusedMessageIndex === null) return;
-    const target = messageRefs.current[focusedMessageIndex];
-    target?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [focusedMessageSeq, focusedMessageIndex, activeSession?.session_id]);
+    if (!ensureMessageRendered(focusedMessageIndex)) return;
+    messageRefs.current[focusedMessageIndex]?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [ensureMessageRendered, focusedMessageSeq, focusedMessageIndex, activeSession?.session_id]);
+
+  const handleMessageListScroll = useCallback(() => {
+    const container = messageListRef.current;
+    if (!container || !hasMoreMessages) return;
+    const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (remaining > LOAD_MORE_THRESHOLD_PX) return;
+    setVisibleMessageCount((prev) => Math.min(activeSession?.messages.length ?? 0, prev + MESSAGE_PAGE_SIZE));
+  }, [activeSession?.messages.length, hasMoreMessages]);
 
   const saveMeta = async () => {
     if (!activeView) return;
@@ -307,10 +272,7 @@ export function HistoryWorkspace() {
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
     try {
-      await updateMeta(activeView.sessionKey, {
-        alias: aliasDraft,
-        tags,
-      });
+      await updateMeta(activeView.sessionKey, { alias: aliasDraft, tags });
       toast.success("会话元数据已保存");
     } catch (err) {
       toast.error("保存失败", { description: String(err) });
@@ -338,6 +300,15 @@ export function HistoryWorkspace() {
     }
   };
 
+  const openSessionSafe = useCallback(
+    (sessionKey: string) => {
+      void openSession(sessionKey).catch((err) => {
+        toast.error("打开会话失败", { description: String(err) });
+      });
+    },
+    [openSession]
+  );
+
   const jumpToMessage = async (messageIndex: number) => {
     if (!activeView) return;
     try {
@@ -358,395 +329,80 @@ export function HistoryWorkspace() {
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 overflow-hidden">
-      <aside
-        ref={sidebarRef}
-        className="relative border-r flex flex-col min-h-0 min-w-[220px] max-w-[70%]"
-        style={{
-          width: historySidebarWidth,
-          borderColor: "var(--border)",
-          backgroundColor: "var(--bg-secondary)",
+    <div id="history-workspace" className="flex h-full min-h-0 min-w-0 overflow-hidden">
+      <HistoryListPane
+        historySidebarWidth={historySidebarWidth}
+        sidebarRef={sidebarRef}
+        sessionListRef={sessionListRef}
+        sourceFilter={sourceFilter}
+        globalQuery={globalQuery}
+        activeSessionKey={activeSessionKey}
+        loadingSessions={loadingSessions}
+        searching={searching}
+        normalizedGlobal={normalizedGlobal}
+        groupedSessions={groupedSessions}
+        filteredSessionCount={filteredSessions.length}
+        hasMoreSessions={hasMoreSessions}
+        visibleSessionCount={visibleSessionCount}
+        searchHits={searchHits}
+        globalSearchRef={globalSearchRef}
+        onClose={closeHistory}
+        onRefresh={() => {
+          void loadSessions().catch((err) => {
+            toast.error("刷新失败", { description: String(err) });
+          });
         }}
-      >
-        <div className="p-3 border-b" style={{ borderColor: "var(--border)" }}>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={closeHistory}
-              className="text-xs rounded-md border px-2 py-1 shrink-0"
-              style={{
-                borderColor: "var(--border)",
-                color: "var(--text-secondary)",
-                backgroundColor: "var(--bg-tertiary)",
-              }}
-            >
-              关闭
-            </button>
-            <select
-              className="text-xs rounded-md border px-2 py-1 outline-none shrink-0"
-              style={{
-                borderColor: "var(--border)",
-                backgroundColor: "var(--bg-tertiary)",
-                color: "var(--text-primary)",
-              }}
-              value={sourceFilter}
-              onChange={(e) => {
-                void setSourceFilter(e.target.value as "all" | "claude" | "codex");
-              }}
-            >
-              <option value="all">全部来源</option>
-              <option value="claude">Claude</option>
-              <option value="codex">Codex</option>
-            </select>
-            <button
-              onClick={() => {
-                void loadSessions().catch((err) => {
-                  toast.error("刷新失败", { description: String(err) });
-                });
-              }}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border shrink-0"
-              style={{
-                borderColor: "var(--border)",
-                color: "var(--text-secondary)",
-                backgroundColor: "var(--bg-tertiary)",
-              }}
-              title="刷新会话列表"
-            >
-              <RefreshCw size={12} />
-              刷新
-            </button>
-          </div>
-          <div
-            className="mt-2 flex items-center gap-2 px-2 py-1 rounded-md border"
-            style={{
-              borderColor: "var(--border)",
-              backgroundColor: "var(--bg-tertiary)",
-              color: "var(--text-secondary)",
-            }}
-          >
-            <Search size={13} />
-            <input
-              ref={globalSearchRef}
-              value={globalQuery}
-              onChange={(e) => setGlobalQuery(e.target.value)}
-              placeholder="全局搜索（标题/消息/标签）"
-              className="flex-1 bg-transparent text-xs outline-none"
-              style={{ color: "var(--text-primary)" }}
-            />
-          </div>
-          <div className="mt-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
-            Ctrl+K 打开全局搜索
-          </div>
-        </div>
+        onSourceFilterChange={(value) => {
+          void setSourceFilter(value as HistorySourceFilter);
+        }}
+        onGlobalQueryChange={setGlobalQuery}
+        onOpenSession={openSessionSafe}
+        onOpenHit={(hit) => {
+          void openByHit(hit);
+        }}
+        onLoadMoreSessions={() =>
+          setVisibleSessionCount((prev) => Math.min(filteredSessions.length, prev + SESSION_PAGE_SIZE))
+        }
+        onSessionListScroll={handleSessionListScroll}
+        onStartResize={startResize}
+      />
 
-        <div className="flex-1 overflow-y-auto">
-          {loadingSessions && (
-            <div className="px-3 py-4 text-xs" style={{ color: "var(--text-muted)" }}>
-              正在加载会话...
-            </div>
-          )}
-
-          {!loadingSessions && normalizedGlobal && searching && (
-            <div className="px-3 py-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
-              正在搜索...
-            </div>
-          )}
-
-          {!loadingSessions && normalizedGlobal && searchHits.length > 0 && (
-            <div className="pb-2 border-b" style={{ borderColor: "var(--border)" }}>
-              <div className="px-3 py-2 text-[11px] font-semibold" style={{ color: "var(--text-muted)" }}>
-                搜索命中 {searchHits.length} 条
-              </div>
-              {searchHits.map((hit, idx) => (
-                <button
-                  key={`${hit.file_path}-${idx}`}
-                  onClick={() => {
-                    void openByHit(hit);
-                  }}
-                  className="w-full text-left px-3 py-2 border-t hover:opacity-90"
-                  style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-                >
-                  <div className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)" }}>
-                    {hit.title}
-                  </div>
-                  <div className="text-[11px] truncate mt-0.5">{hit.snippet}</div>
-                  <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
-                    {hit.source} · {hit.project_key} · {hit.role}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {!loadingSessions &&
-            groupedSessions.map((group) => (
-              <div key={group.label}>
-                <div
-                  className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide border-y"
-                  style={{
-                    color: "var(--text-muted)",
-                    borderColor: "var(--border)",
-                    backgroundColor: "var(--bg-tertiary)",
-                  }}
-                >
-                  {group.label}
-                </div>
-                {group.items.map((item) => (
-                  <button
-                    key={item.sessionKey}
-                    onClick={() => {
-                      void openSession(item.sessionKey).catch((err) => {
-                        toast.error("打开会话失败", { description: String(err) });
-                      });
-                    }}
-                    className="w-full text-left px-3 py-2 border-b hover:opacity-90 transition-opacity"
-                    style={{
-                      borderColor: "var(--border)",
-                      backgroundColor:
-                        item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : "transparent",
-                    }}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      {item.starred && (
-                        <Star size={12} style={{ color: "var(--warning)" }} fill="currentColor" />
-                      )}
-                      <span className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)" }}>
-                        {item.displayTitle}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      {item.source} · {makeSessionLabel(item)} · {item.message_count} 条消息
-                    </div>
-                    <div className="mt-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      更新于 {formatTime(item.updated_at)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ))}
-
-          {!loadingSessions && filteredSessions.length === 0 && (
-            <div className="px-3 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-              未找到匹配会话
-            </div>
-          )}
-        </div>
-
-        <div
-          onMouseDown={startResize}
-          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-[var(--accent)] transition-colors"
-          style={{ opacity: 0.35 }}
+      <section className="relative grid min-h-0 min-w-0 flex-1 grid-rows-[auto_1fr] overflow-hidden bg-bg-primary">
+        <SessionDetailPane
+          activeView={activeView}
+          activeSession={activeSession}
+          loadingSessionDetail={loadingSessionDetail}
+          aliasDraft={aliasDraft}
+          tagsDraft={tagsDraft}
+          sessionQuery={sessionQuery}
+          matchIndices={matchIndices}
+          matchCursor={matchCursor}
+          focusedMessageIndex={focusedMessageIndex}
+          visibleMessages={visibleMessages}
+          visibleMessageCount={visibleMessageCount}
+          hasMoreMessages={hasMoreMessages}
+          totalMessageCount={activeSession?.messages.length ?? 0}
+          messageListRef={messageListRef}
+          sessionSearchRef={sessionSearchRef}
+          messageRefs={messageRefs}
+          onMessageListScroll={handleMessageListScroll}
+          onAliasDraftChange={setAliasDraft}
+          onTagsDraftChange={setTagsDraft}
+          onSessionQueryChange={setSessionQuery}
+          onSaveMeta={() => {
+            void saveMeta();
+          }}
+          onJumpPrev={jumpPrev}
+          onJumpNext={jumpNext}
+          onOpenPrompt={() => setPromptOpen(true)}
+          onOpenDiff={() => setDiffOpen(true)}
+          onToggleStar={() => {
+            void toggleStar();
+          }}
+          onLoadMoreMessages={() =>
+            setVisibleMessageCount((prev) => Math.min(activeSession?.messages.length ?? 0, prev + MESSAGE_PAGE_SIZE))
+          }
         />
-      </aside>
-
-      <section
-        className="relative flex-1 min-h-0 min-w-0 grid grid-rows-[auto_1fr] overflow-hidden"
-        style={{ backgroundColor: "var(--bg-primary)" }}
-      >
-        {!activeView && (
-          <div className="row-span-2 flex items-center justify-center min-h-0">
-            <EmptyState
-              icon={<Search size={34} strokeWidth={1.5} />}
-              title="未选择会话"
-              description="从左侧选择会话查看详情"
-            />
-          </div>
-        )}
-
-        {activeView && (
-          <>
-            <div className="p-3 border-b shrink-0 overflow-y-auto min-h-0" style={{ borderColor: "var(--border)" }}>
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h3 className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>
-                    {activeView.displayTitle}
-                  </h3>
-                  <div className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
-                    {activeView.source} · {makeSessionLabel(activeView)} · 更新于 {formatTime(activeView.updated_at)}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => setPromptOpen(true)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs"
-                    style={{
-                      borderColor: "var(--border)",
-                      backgroundColor: "var(--bg-secondary)",
-                      color: "var(--text-secondary)",
-                    }}
-                    title="历史 Prompt 库"
-                  >
-                    <BookCopy size={12} />
-                    历史Prompt
-                  </button>
-                  <button
-                    onClick={() => setDiffOpen(true)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs"
-                    style={{
-                      borderColor: "var(--border)",
-                      backgroundColor: "var(--bg-secondary)",
-                      color: "var(--text-secondary)",
-                    }}
-                    title="Diff 视图"
-                  >
-                    <GitCompare size={12} />
-                    Diff
-                  </button>
-                  <button
-                    onClick={() => {
-                      void toggleStar();
-                    }}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs"
-                    style={{
-                      borderColor: "var(--border)",
-                      backgroundColor: "var(--bg-secondary)",
-                      color: activeView.starred ? "var(--warning)" : "var(--text-secondary)",
-                    }}
-                    title="收藏"
-                  >
-                    <Star size={12} fill={activeView.starred ? "currentColor" : "none"} />
-                    {activeView.starred ? "已收藏" : "收藏"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                <input
-                  value={aliasDraft}
-                  onChange={(e) => setAliasDraft(e.target.value)}
-                  placeholder="会话别名（重命名）"
-                  className="px-2 py-1 rounded-md border text-xs outline-none"
-                  style={{
-                    borderColor: "var(--border)",
-                    backgroundColor: "var(--bg-secondary)",
-                    color: "var(--text-primary)",
-                  }}
-                />
-                <input
-                  value={tagsDraft}
-                  onChange={(e) => setTagsDraft(e.target.value)}
-                  placeholder="标签，逗号分隔"
-                  className="px-2 py-1 rounded-md border text-xs outline-none"
-                  style={{
-                    borderColor: "var(--border)",
-                    backgroundColor: "var(--bg-secondary)",
-                    color: "var(--text-primary)",
-                  }}
-                />
-              </div>
-              <div className="mt-2">
-                <button
-                  onClick={() => {
-                    void saveMeta();
-                  }}
-                  className="text-xs px-2.5 py-1 rounded-md"
-                  style={{ backgroundColor: "var(--accent)", color: "#fff" }}
-                >
-                  保存元数据
-                </button>
-              </div>
-
-              <div
-                className="mt-2 px-2 py-1 rounded-md border"
-                style={{
-                  borderColor: "var(--border)",
-                  backgroundColor: "var(--bg-secondary)",
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <Search size={12} style={{ color: "var(--text-muted)" }} />
-                  <input
-                    ref={sessionSearchRef}
-                    value={sessionQuery}
-                    onChange={(e) => setSessionQuery(e.target.value)}
-                    placeholder="会话内搜索"
-                    className="flex-1 min-w-0 bg-transparent text-xs outline-none"
-                    style={{ color: "var(--text-primary)" }}
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-end gap-2">
-                  <button
-                    onClick={jumpPrev}
-                    className="text-[11px] px-2 py-0.5 rounded border shrink-0"
-                    style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-                    title="上一个匹配"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    onClick={jumpNext}
-                    className="text-[11px] px-2 py-0.5 rounded border shrink-0"
-                    style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-                    title="下一个匹配"
-                  >
-                    ↓
-                  </button>
-                  <span className="text-[10px] shrink-0" style={{ color: "var(--text-muted)" }}>
-                    {matchIndices.length === 0 ? "0" : `${Math.min(matchCursor + 1, matchIndices.length)}/${matchIndices.length}`}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-2">
-              {loadingSessionDetail && (
-                <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  正在读取会话详情...
-                </div>
-              )}
-              {!loadingSessionDetail && activeSession?.messages.length === 0 && (
-                <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  当前会话没有可显示的消息
-                </div>
-              )}
-              {!loadingSessionDetail &&
-                activeSession?.messages.map((msg, idx) => {
-                  const isMatched = matchIndices.includes(idx);
-                  const isFocused = focusedMessageIndex === idx;
-                  const badge = roleBadge(msg.role);
-                  return (
-                    <div
-                      key={`${msg.role}-${idx}`}
-                      ref={(el) => {
-                        messageRefs.current[idx] = el;
-                      }}
-                      className="rounded-md border p-2"
-                      style={{
-                        borderColor: isFocused
-                          ? "var(--warning)"
-                          : isMatched
-                            ? "var(--accent)"
-                            : "var(--border)",
-                        backgroundColor: "var(--bg-secondary)",
-                      }}
-                    >
-                      <div
-                        className="text-[11px] mb-1 flex items-center justify-between"
-                        style={{ color: "var(--text-muted)" }}
-                      >
-                        <span
-                          className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
-                          style={{
-                            color: badge.color,
-                            backgroundColor: badge.bg,
-                            border: `1px solid ${badge.border}`,
-                          }}
-                        >
-                          {badge.label}
-                        </span>
-                        <span>{msg.timestamp ?? "-"}</span>
-                      </div>
-                      <pre
-                        className="text-xs whitespace-pre-wrap break-words font-mono m-0 overflow-x-auto"
-                        style={{ color: "var(--text-primary)" }}
-                      >
-                        {highlightText(msg.content, sessionQuery)}
-                      </pre>
-                    </div>
-                  );
-                })}
-            </div>
-          </>
-        )}
 
         <PromptLibrary
           open={promptOpen}

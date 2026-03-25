@@ -1,16 +1,31 @@
 import { useRef, useCallback } from "react";
 import { XTermTerminal } from "./XTermTerminal";
 import { useTerminalStore, type SplitState } from "../stores/terminalStore";
+import type { LightThemePalette, DarkThemePalette } from "../stores/settingsStore";
 
 interface Props {
   sessionId: string;
   split: SplitState | undefined;
   isActive?: boolean;
+  fontSize: number;
+  fontFamily: string;
   resolvedTheme: "dark" | "light";
   terminalThemeName: string;
+  lightThemePalette: LightThemePalette;
+  darkThemePalette: DarkThemePalette;
 }
 
-export function SplitTerminalView({ sessionId, split, isActive, resolvedTheme, terminalThemeName }: Props) {
+export function SplitTerminalView({
+  sessionId,
+  split,
+  isActive,
+  fontSize,
+  fontFamily,
+  resolvedTheme,
+  terminalThemeName,
+  lightThemePalette,
+  darkThemePalette,
+}: Props) {
   const setSplitRatio = useTerminalStore((s) => s.setSplitRatio);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -46,7 +61,18 @@ export function SplitTerminalView({ sessionId, split, isActive, resolvedTheme, t
   );
 
   if (!split) {
-    return <XTermTerminal sessionId={sessionId} isActive={isActive} resolvedTheme={resolvedTheme} terminalThemeName={terminalThemeName} />;
+    return (
+      <XTermTerminal
+        sessionId={sessionId}
+        isActive={isActive}
+        fontSize={fontSize}
+        fontFamily={fontFamily}
+        resolvedTheme={resolvedTheme}
+        terminalThemeName={terminalThemeName}
+        lightThemePalette={lightThemePalette}
+        darkThemePalette={darkThemePalette}
+      />
+    );
   }
 
   const isH = split.direction === "horizontal";
@@ -56,7 +82,16 @@ export function SplitTerminalView({ sessionId, split, isActive, resolvedTheme, t
   return (
     <div ref={containerRef} className="w-full h-full flex" style={{ flexDirection: isH ? "row" : "column" }}>
       <div className="overflow-hidden" style={{ [isH ? "width" : "height"]: first }}>
-        <XTermTerminal sessionId={sessionId} isActive={isActive} resolvedTheme={resolvedTheme} terminalThemeName={terminalThemeName} />
+        <XTermTerminal
+          sessionId={sessionId}
+          isActive={isActive}
+          fontSize={fontSize}
+          fontFamily={fontFamily}
+          resolvedTheme={resolvedTheme}
+          terminalThemeName={terminalThemeName}
+          lightThemePalette={lightThemePalette}
+          darkThemePalette={darkThemePalette}
+        />
       </div>
       <div
         onMouseDown={handleDragStart}
@@ -68,7 +103,16 @@ export function SplitTerminalView({ sessionId, split, isActive, resolvedTheme, t
         }}
       />
       <div className="overflow-hidden" style={{ [isH ? "width" : "height"]: second }}>
-        <XTermTerminal sessionId={split.secondSessionId} isActive={isActive} resolvedTheme={resolvedTheme} terminalThemeName={terminalThemeName} />
+        <XTermTerminal
+          sessionId={split.secondSessionId}
+          isActive={isActive}
+          fontSize={fontSize}
+          fontFamily={fontFamily}
+          resolvedTheme={resolvedTheme}
+          terminalThemeName={terminalThemeName}
+          lightThemePalette={lightThemePalette}
+          darkThemePalette={darkThemePalette}
+        />
       </div>
     </div>
   );

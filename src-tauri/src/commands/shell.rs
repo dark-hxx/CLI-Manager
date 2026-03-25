@@ -1,4 +1,6 @@
-use log::{error, info};
+use log::{error, info, warn};
+use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(serde::Deserialize)]
@@ -51,6 +53,41 @@ fn push_tab_args(args: &mut Vec<String>, tab: &ExternalTab) {
     args.push(exe.into());
 }
 
+fn windows_terminal_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![PathBuf::from("wt"), PathBuf::from("wt.exe")];
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(local_app_data)
+                .join("Microsoft")
+                .join("WindowsApps")
+                .join("wt.exe"),
+        );
+    }
+    candidates
+}
+
+fn spawn_windows_terminal(args: &[String]) -> Result<PathBuf, std::io::Error> {
+    let candidates = windows_terminal_candidates();
+    let mut last_err: Option<std::io::Error> = None;
+
+    for candidate in candidates {
+        match Command::new(&candidate).args(args).spawn() {
+            Ok(_) => return Ok(candidate),
+            Err(err) => {
+                warn!("Failed to spawn {:?}: {}", candidate, err);
+                last_err = Some(err);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(
+            ErrorKind::NotFound,
+            "Windows Terminal executable (wt.exe) not found",
+        )
+    }))
+}
+
 #[tauri::command]
 pub async fn open_windows_terminal(tabs: Vec<ExternalTab>) -> Result<(), String> {
     if tabs.is_empty() {
@@ -67,13 +104,14 @@ pub async fn open_windows_terminal(tabs: Vec<ExternalTab>) -> Result<(), String>
 
     info!("open_windows_terminal: wt {}", args.join(" "));
 
-    Command::new("wt")
-        .args(&args)
-        .spawn()
-        .map_err(|e| {
-            error!("Failed to spawn wt.exe: {}", e);
+    spawn_windows_terminal(&args).map_err(|e| {
+        error!("Failed to open Windows Terminal: {}", e);
+        if e.kind() == ErrorKind::NotFound {
+            "Failed to open Windows Terminal: Windows Terminal (wt.exe) not found. Please install Windows Terminal or disable external terminal mode in Settings.".to_string()
+        } else {
             format!("Failed to open Windows Terminal: {}", e)
-        })?;
+        }
+    })?;
 
     Ok(())
 }

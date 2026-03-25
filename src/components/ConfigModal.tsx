@@ -1,17 +1,23 @@
-import { useState, useRef, useEffect } from "react";
+﻿import { useState, useRef, useEffect, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../stores/projectStore";
 import type { Project, Group } from "../lib/types";
 import { SHELL_OPTIONS } from "../lib/types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ChevronDown } from "./icons";
+import { Portal } from "./ui/Portal";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 interface Props {
   project?: Project;
   defaultGroupId?: string | null;
   onClose: () => void;
 }
+
+const inputClass = "w-full rounded border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary outline-none";
 
 export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
   const { createProject, updateProject, groups } = useProjectStore();
@@ -29,14 +35,37 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmEdit, setShowConfirmEdit] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+  const dialogRef = useRef<HTMLFormElement | null>(null);
+  useFocusTrap(dialogRef, !closing);
+
+  const requestClose = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      onClose();
+    }, 180);
+  }, [closing, onClose]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") requestClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, [requestClose]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleBrowse = async () => {
     const selected = await open({ directory: true, title: "选择项目目录" });
@@ -49,12 +78,33 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
     }
   };
 
+  const validatePath = useCallback(async (rawPath: string) => {
+    try {
+      const results = await invoke<boolean[]>("check_paths_exist", { paths: [rawPath] });
+      return Boolean(results[0]);
+    } catch (err) {
+      logError("Path validation failed in ConfigModal", { rawPath, err });
+      return false;
+    }
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !path.trim()) {
       setError("名称和路径为必填项");
+      toast.error("保存失败", { description: "名称和路径为必填项" });
       return;
     }
+
+    const normalizedPath = path.trim();
+    const pathOk = await validatePath(normalizedPath);
+    if (!pathOk) {
+      const description = "路径不存在或不可访问";
+      setError(description);
+      toast.error("路径校验失败", { description });
+      return;
+    }
+
     setError("");
     if (isEdit) {
       setShowConfirmEdit(true);
@@ -76,6 +126,7 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
           env_vars: envVarsText.trim(),
           shell,
         });
+        toast.success("终端修改成功");
       } else {
         await createProject({
           name: name.trim(),
@@ -86,8 +137,9 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
           env_vars: envVarsText.trim() || undefined,
           shell,
         });
+        toast.success("终端创建成功");
       }
-      onClose();
+      requestClose();
     } catch (err) {
       const description = String(err);
       setError(description);
@@ -105,58 +157,51 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
     }
   };
 
-  const inputStyle = {
-    backgroundColor: "var(--bg-tertiary)",
-    borderColor: "var(--border)",
-    color: "var(--text-primary)",
-  };
-
   const selectedGroupName = groupId
     ? groups.find((g) => g.id === groupId)?.name ?? "未知分组"
     : "不分组";
 
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center z-50"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)", animation: "fade-in var(--animate-duration-fast) ease-out" }}
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/50 ${closing ? "animate-fade-out" : "animate-fade-in"}`}
+      onClick={requestClose}
     >
       <form
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="w-[420px] rounded-lg p-5 border"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)", animation: "scale-in var(--animate-duration-normal) ease-out" }}
+        className={`w-[420px] rounded-lg border border-border bg-bg-secondary p-5 ${closing ? "animate-scale-out" : "animate-scale-in"}`}
+        role="dialog"
+        aria-modal="true"
       >
-        <h2 className="text-base font-semibold mb-4">
+        <h2 className="mb-4 text-base font-semibold text-text-primary">
           {isEdit ? "编辑终端" : "新增终端"}
         </h2>
 
         {error && (
-          <div className="text-xs mb-3 px-2 py-1.5 rounded" style={{ backgroundColor: "rgba(247,118,142,0.15)", color: "var(--danger)" }}>
+          <div className="mb-3 rounded bg-danger/15 px-2 py-1.5 text-xs text-danger">
             {error}
           </div>
         )}
 
         <div className="space-y-3">
-          <Field label="名称 *" value={name} onChange={setName} style={inputStyle} />
+          <Field label="名称 *" value={name} onChange={setName} />
 
           {/* Path with folder picker */}
           <div>
-            <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>路径 *</label>
+            <label className="mb-1 block text-xs text-text-muted">路径 *</label>
             <div className="flex gap-1">
               <input
                 type="text"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
                 placeholder="C:\\我的项目\\my-app"
-                className="flex-1 px-2 py-1.5 text-sm rounded border outline-none"
-                style={inputStyle}
+                className={`${inputClass} flex-1`}
               />
               <button
                 type="button"
                 onClick={handleBrowse}
-                className="px-2 py-1.5 text-xs rounded border shrink-0"
-                style={{ borderColor: "var(--border)", color: "var(--text-secondary)", backgroundColor: "var(--bg-tertiary)" }}
+                className="shrink-0 rounded border border-border bg-bg-tertiary px-2 py-1.5 text-xs text-text-secondary"
               >
                 浏览
               </button>
@@ -165,25 +210,23 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
 
           {/* Group selector */}
           <div>
-            <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>分组</label>
+            <label className="mb-1 block text-xs text-text-muted">分组</label>
             <GroupSelector
               groups={groups}
               value={groupId}
               onChange={setGroupId}
               displayName={selectedGroupName}
-              inputStyle={inputStyle}
             />
           </div>
 
-          <Field label="CLI 工具" value={cliTool} onChange={setCliTool} style={inputStyle} placeholder="claude / codex / custom" />
+          <Field label="CLI 工具" value={cliTool} onChange={setCliTool} placeholder="claude / codex / custom" />
 
           <div>
-            <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Shell</label>
+            <label className="mb-1 block text-xs text-text-muted">Shell</label>
             <select
               value={shell}
               onChange={(e) => setShell(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm rounded border outline-none"
-              style={inputStyle}
+              className={inputClass}
             >
               {SHELL_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -191,34 +234,29 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
             </select>
           </div>
 
-          <Field label="启动命令" value={startupCmd} onChange={setStartupCmd} style={inputStyle} placeholder="npm run dev" />
+          <Field label="启动命令" value={startupCmd} onChange={setStartupCmd} placeholder="npm run dev" />
           <div>
-            <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>
-              环境变量（JSON）
-            </label>
+            <label className="mb-1 block text-xs text-text-muted">环境变量（JSON）</label>
             <textarea
               value={envVarsText}
               onChange={(e) => setEnvVarsText(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm rounded border outline-none resize-none h-16"
-              style={inputStyle}
+              className="h-16 w-full resize-none rounded border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary outline-none"
             />
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 mt-4">
+        <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded border"
-            style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+            onClick={requestClose}
+            className="rounded border border-border px-3 py-1.5 text-sm text-text-secondary"
           >
             取消
           </button>
           <button
             type="submit"
             disabled={submitting}
-            className="px-3 py-1.5 text-sm rounded disabled:opacity-50"
-            style={{ backgroundColor: "var(--accent)", color: "#fff" }}
+            className="rounded bg-accent px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
             {submitting ? "保存中..." : isEdit ? "保存" : "新增"}
           </button>
@@ -230,7 +268,10 @@ export function ConfigModal({ project, defaultGroupId, onClose }: Props) {
         title="确认修改终端？"
         message="将保存当前修改内容。"
         confirmText="确认保存"
-        onConfirm={() => { setShowConfirmEdit(false); saveProject(); }}
+        onConfirm={() => {
+          setShowConfirmEdit(false);
+          void saveProject();
+        }}
         onClose={() => setShowConfirmEdit(false)}
       />
     </div>
@@ -244,26 +285,55 @@ function GroupSelector({
   value,
   onChange,
   displayName,
-  inputStyle,
 }: {
   groups: Group[];
   value: string | null;
   onChange: (id: string | null) => void;
   displayName: string;
-  inputStyle: React.CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelPosition, setPanelPosition] = useState({ left: 0, top: 0 });
+
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const panelWidth = rect.width;
+    const estimatedHeight = 220;
+    const nextLeft = Math.max(8, Math.min(rect.left, window.innerWidth - panelWidth - 8));
+    const preferredTop = rect.bottom + 4;
+    const nextTop = preferredTop + estimatedHeight <= window.innerHeight - 8
+      ? preferredTop
+      : Math.max(8, rect.top - estimatedHeight - 4);
+
+    setPanelPosition({ left: nextLeft, top: nextTop });
+  }, []);
 
   useEffect(() => {
+    if (!open) return;
+    updatePosition();
+
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (panelRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setOpen(false);
     };
+
+    const reposition = () => updatePosition();
+
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
+    document.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open, updatePosition]);
 
   // Build flat indented list
   const groupMap = new Map<string | null, Group[]>();
@@ -288,81 +358,72 @@ function GroupSelector({
   flatten(null, 0);
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full px-2 py-1.5 text-sm rounded border outline-none text-left flex items-center justify-between"
-        style={inputStyle}
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between rounded border border-border bg-bg-tertiary px-2 py-1.5 text-left text-sm text-text-primary outline-none"
       >
         <span className={value ? "" : "opacity-50"}>{displayName}</span>
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M4 6L8 10L12 6" />
-        </svg>
+        <ChevronDown size={12} strokeWidth={1.8} className="text-text-muted" />
       </button>
 
       {open && (
-        <div
-          className="absolute z-10 left-0 right-0 mt-1 rounded-md border max-h-48 overflow-y-auto"
-          style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border)" }}
-        >
-          {/* No group option */}
-          <button
-            type="button"
-            onClick={() => { onChange(null); setOpen(false); }}
-            className="w-full text-left px-2 py-1.5 text-sm hover:opacity-80 transition-opacity"
-            style={{
-              color: !value ? "var(--accent)" : "var(--text-secondary)",
-              backgroundColor: !value ? "var(--bg-tertiary)" : "transparent",
-            }}
+        <Portal>
+          <div
+            ref={panelRef}
+            className="fixed z-[55] max-h-48 overflow-y-auto rounded-md border border-border bg-bg-secondary animate-slide-down"
+            style={{ left: panelPosition.left, top: panelPosition.top, width: triggerRef.current?.offsetWidth ?? 200 }}
           >
-            不分组
-          </button>
-
-          {flatList.map(({ group: g, depth }) => (
+            {/* No group option */}
             <button
-              key={g.id}
               type="button"
-              onClick={() => { onChange(g.id); setOpen(false); }}
-              className="w-full text-left py-1.5 text-sm hover:opacity-80 transition-opacity"
-              style={{
-                paddingLeft: 8 + depth * 16,
-                paddingRight: 8,
-                color: value === g.id ? "var(--accent)" : "var(--text-secondary)",
-                backgroundColor: value === g.id ? "var(--bg-tertiary)" : "transparent",
-              }}
+              onClick={() => { onChange(null); setOpen(false); }}
+              className={`w-full px-2 py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${!value ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
             >
-              {g.name}
+              不分组
             </button>
-          ))}
 
-          {flatList.length === 0 && (
-            <div className="px-2 py-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
-              暂无分组
-            </div>
-          )}
-        </div>
+            {flatList.map(({ group: g, depth }) => (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => { onChange(g.id); setOpen(false); }}
+                className={`w-full py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${value === g.id ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
+                style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
+              >
+                {g.name}
+              </button>
+            ))}
+
+            {flatList.length === 0 && (
+              <div className="px-2 py-1.5 text-xs text-text-muted">暂无分组</div>
+            )}
+          </div>
+        </Portal>
       )}
-    </div>
+    </>
   );
 }
 
 function Field({
-  label, value, onChange, style, placeholder,
+  label, value, onChange, placeholder,
 }: {
-  label: string; value: string; onChange: (v: string) => void;
-  style: React.CSSProperties; placeholder?: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
 }) {
   return (
     <div>
-      <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>{label}</label>
+      <label className="mb-1 block text-xs text-text-muted">{label}</label>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full px-2 py-1.5 text-sm rounded border outline-none"
-        style={style}
+        className={inputClass}
       />
     </div>
   );

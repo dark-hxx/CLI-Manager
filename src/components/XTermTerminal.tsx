@@ -7,6 +7,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getTerminalTheme, getTerminalBackground } from "../lib/terminalThemes";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useTerminalStore } from "../stores/terminalStore";
+import type { LightThemePalette, DarkThemePalette } from "../stores/settingsStore";
+import { toast } from "sonner";
+import { logError } from "../lib/logger";
 
 interface Props {
   sessionId: string;
@@ -15,9 +18,11 @@ interface Props {
   fontFamily?: string;
   resolvedTheme?: "dark" | "light";
   terminalThemeName?: string;
+  lightThemePalette?: LightThemePalette;
+  darkThemePalette?: DarkThemePalette;
 }
 
-export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto" }: Props) {
+export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -42,12 +47,17 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     });
   };
 
+  const reportPtyWriteError = (stage: string, err: unknown) => {
+    toast.error("终端写入失败", { description: String(err) });
+    logError("PTY write failed in XTermTerminal", { sessionId, stage, err });
+  };
+
   // Update theme when resolvedTheme or terminalThemeName changes (without recreating terminal)
   useEffect(() => {
     if (terminalRef.current) {
-      terminalRef.current.options.theme = getTerminalTheme(terminalThemeName, resolvedTheme);
+      terminalRef.current.options.theme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
     }
-  }, [resolvedTheme, terminalThemeName]);
+  }, [resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette]);
 
   // Refit terminal when tab becomes active
   useEffect(() => {
@@ -69,7 +79,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       fontSize,
       fontFamily,
       scrollback: 1000,
-      theme: getTerminalTheme(terminalThemeName, resolvedTheme),
+      theme: getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette),
     });
 
     const fitAddon = new FitAddon();
@@ -120,10 +130,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         e.preventDefault();
         navigator.clipboard.readText().then((text) => {
           if (text) {
-            invoke("pty_write", { sessionId, data: text }).catch(console.error);
+            invoke("pty_write", { sessionId, data: text }).catch((err) => reportPtyWriteError("paste", err));
             inputBuffer.current += text;
           }
-        }).catch(console.error);
+        }).catch((err) => {
+          logError("Failed to read clipboard text", { sessionId, err });
+        });
         return false;
       }
       return true;
@@ -134,7 +146,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
 
     terminal.onData((data) => {
-      invoke("pty_write", { sessionId, data }).catch(console.error);
+      invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("onData", err));
 
       if (data === "\r") {
         const cmd = inputBuffer.current;
@@ -154,7 +166,9 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
     // Sync resize to PTY
     terminal.onResize(({ cols, rows }) => {
-      invoke("pty_resize", { sessionId, cols, rows }).catch(console.error);
+      invoke("pty_resize", { sessionId, cols, rows }).catch((err) => {
+        logError("PTY resize failed in XTermTerminal", { sessionId, cols, rows, err });
+      });
     });
 
     // Listen for PTY output
@@ -196,7 +210,9 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     // Initial resize sync
     const dims = fitAddon.proposeDimensions();
     if (dims) {
-      invoke("pty_resize", { sessionId, cols: dims.cols, rows: dims.rows }).catch(console.error);
+      invoke("pty_resize", { sessionId, cols: dims.cols, rows: dims.rows }).catch((err) => {
+        logError("Initial PTY resize failed in XTermTerminal", { sessionId, dims, err });
+      });
     }
 
     return () => {
@@ -212,13 +228,13 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [sessionId, fontSize, fontFamily]);
+  }, [sessionId, fontSize, fontFamily, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette]);
 
   return (
     <div
       ref={containerRef}
       className="w-full h-full"
-      style={{ backgroundColor: getTerminalBackground(terminalThemeName, resolvedTheme) }}
+      style={{ backgroundColor: getTerminalBackground(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette) }}
     />
   );
 }

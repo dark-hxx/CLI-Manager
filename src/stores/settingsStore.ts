@@ -3,11 +3,15 @@ import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 
 export type ThemeMode = "dark" | "light" | "system";
+export type LightThemePalette = "warm-paper" | "cream-green" | "ink-red";
+export type DarkThemePalette = "night-indigo" | "forest-night" | "graphite-red";
 export type ShortcutAction = "newTerminal" | "closeTerminal" | "nextTab" | "prevTab" | "commandPalette";
 export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 
 interface Settings {
   theme: ThemeMode;
+  lightThemePalette: LightThemePalette;
+  darkThemePalette: DarkThemePalette;
   fontSize: number;
   fontFamily: string;
   defaultShell: string;
@@ -29,6 +33,8 @@ interface SettingsStore extends Settings {
 
 const DEFAULTS: Settings = {
   theme: "system",
+  lightThemePalette: "warm-paper",
+  darkThemePalette: "night-indigo",
   fontSize: 14,
   fontFamily: "Cascadia Code, Consolas, monospace",
   defaultShell: "powershell.exe",

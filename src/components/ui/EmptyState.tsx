@@ -5,16 +5,17 @@ interface Props {
   title: string;
   description?: string;
   action?: { label: string; onClick: () => void };
+  className?: string;
 }
 
-export function EmptyState({ icon, title, description, action }: Props) {
+export function EmptyState({ icon, title, description, action, className = "" }: Props) {
   return (
-    <div className="flex flex-col items-center py-8 px-4 gap-2" style={{ color: "var(--text-muted)", animation: "fade-in var(--animate-duration-normal) ease-out" }}>
-      <span style={{ opacity: 0.4 }}>{icon}</span>
-      <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>{title}</p>
+    <div className={`flex animate-fade-in flex-col items-center gap-2 px-4 py-8 text-text-muted ${className}`}>
+      <span className="opacity-40">{icon}</span>
+      <p className="text-sm font-medium text-text-secondary">{title}</p>
       {description && <p className="text-xs text-center leading-relaxed">{description}</p>}
       {action && (
-        <button onClick={action.onClick} className="mt-2 text-xs px-3 py-1.5 rounded-md" style={{ backgroundColor: "var(--accent)", color: "#fff" }}>
+        <button onClick={action.onClick} className="mt-2 rounded-md bg-accent px-3 py-1.5 text-xs text-white">
           {action.label}
         </button>
       )}
