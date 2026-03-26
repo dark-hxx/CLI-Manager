@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased] - 2026-03-26
+## [V0.0.6] - 2026-03-26
 
-### UI Refactor（M0-M5 + 主界面风格重构）
+### UI Refactor
 - 设置系统完成容器拆分：新增 `src/components/settings/` 下布局、导航、顶部栏与四个页面（通用/终端主题/快捷键/命令模板），`SettingsModal` 改为页面级容器。
 - 设置弹层改为全屏覆盖并保留系统标题栏区域，修复打开设置后右侧大面积留白与布局错位问题；`SettingsModal` 通过 `Portal` 挂载，避免受侧栏容器裁剪影响。
 - 主界面按 `prototype/风格/DESIGN.md` 重构视觉体系：落地 Surface Layering、No-Line Rule、Primary 渐变 CTA、Glass 浮层与统一状态层级。
@@ -18,24 +18,24 @@
 - 终端主题预设补充元数据（`family` / `tone`）用于主题页分类展示与筛选。
 - 命令模板作用域支持强化（全局/项目/会话）并补充相关设置页交互收口。
 
-## [V0.0.4] - 2026-03-25
+## [V0.0.5] - 2026-03-25
 
-### Phase P3 分析看板图表升级（S1~S4）
+### 分析看板图表升级（S1~S4）
 
-#### S1：趋势 + Token 构成（C1/C2/C3）
+#### S1：趋势 + Token 构成
 - 新增 `src/components/stats/StatsTrendChart.tsx`：会话/消息趋势组合图，支持 hover、键盘聚焦与日期下钻。
 - 新增 `src/components/stats/StatsTokenDonut.tsx`：输入/输出 Token 环形构成图。
 - `src/components/stats/StatsPanel.tsx`：接入 C1/C2/C3 到主分析区。
 
-#### S2：项目与模型构成（C4/C5）
+#### S2：项目与模型构成
 - 新增 `src/components/stats/StatsProjectBar.tsx`：项目活跃 TopN 横向柱图，支持点击柱条按项目过滤。
 - 新增 `src/components/stats/StatsModelComposition.tsx`：模型构成图（前 5 模型 + 其他合并）。
 - `src/components/stats/StatsPanel.tsx`：接入 C4/C5 图表组件。
 
-#### S3：热力图统一交互（C6）
+#### S3：热力图统一交互
 - `src/components/stats/TimelineHeatmap.tsx`：统一图表交互样式（hover/selected 高亮、键盘方向键导航、Enter/Space 下钻、增强 a11y 标签）。
 
-#### S4：后端扩展并落地 V2（C7~C10）
+#### S4：后端扩展并落地
 - `src-tauri/src/commands/history.rs`：扩展 `history_get_stats` 返回字段：
   - `daily_series`
   - `source_distribution`
@@ -49,9 +49,7 @@
   - `src/components/stats/StatsHourlyActivityChart.tsx`（C10 活跃时段分布）
 - `src/components/stats/StatsPanel.tsx`：接入 C7~C10。
 
-## [V0.0.4] - 2026-03-24
-
-### Phase P2 分析看板
+### 分析看板
 
 #### 历史统计后端
 - `src-tauri/src/commands/history.rs`：新增 `history_get_stats`，支持按来源/项目/时间范围聚合历史会话统计。
@@ -71,7 +69,7 @@
 - `src/App.tsx`：全局挂载 `StatsPanel`，避免只覆盖侧边栏区域。
 - `src/components/HistoryWorkspace.tsx`：移除历史详情区内的看板入口，防止入口重复。
 
-### Phase P1 核心增强（不含 P1-1 Prompt Library）
+### 核心增强
 
 #### 历史会话列表与交互
 - `src/components/HistoryWorkspace.tsx`：新增会话时间分组（Today/Yesterday/This Week/This Month/Earlier）
@@ -86,7 +84,7 @@
 - `src/components/history/DiffModal.tsx`：新增行级高亮（新增/删除/hunk/header）
 - `src/components/history/DiffModal.tsx` + `src/App.css`：修复横向滚动体验，代码块内独立滚动并保留可见滚动条样式
 
-#### 历史解析兼容增强（Codex）
+#### 历史解析兼容增强
 - `src-tauri/src/commands/history.rs`：增强 `parse_message`，支持从 `custom_tool_call` / `tool_call` / `file-history-snapshot` 中提取 patch 内容
 - `src-tauri/src/commands/history.rs`：新增 `looks_like_patch` 规则，提升 diff 命中率并降低无关内容噪声
 
@@ -95,7 +93,7 @@
 - `src/components/CommandTemplatePanel.tsx`：模板创建支持全局/项目/会话作用域
 - `src/components/CommandPalette.tsx`：模板检索按当前项目 + 当前会话上下文合并
 
-### Phase P0 验收（CLI History Hub）
+### 验收
 
 #### 历史会话后端能力
 - 新增 `src-tauri/src/commands/history.rs`，提供 `history_list_sessions`、`history_get_session`、`history_search` 三个 Tauri commands
@@ -154,7 +152,7 @@
 
 ## [V0.0.3] - 2026-03-16
 
-### P2 功能扩展
+### 功能扩展
 
 #### 3.2 终端分屏
 - 新增 `src/components/SplitTerminalView.tsx` — 分屏渲染组件，支持水平/垂直分割，可拖拽分隔条调整比例（20%-80%）
@@ -188,7 +186,7 @@
 
 ## [V0.0.2] - 2026-03-13
 
-### P1 功能扩展
+### 功能扩展
 
 #### 2.1 命令历史记录与搜索
 - 新增 `src/stores/commandHistoryStore.ts` — 命令历史 Zustand store，SQLite 持久化，最大 1000 条 FIFO 清理
@@ -224,7 +222,7 @@
 - 修改 `src/lib/types.ts` — Project 接口新增 `shell` 字段，新增 `SHELL_OPTIONS` 常量
 - 修改 `src/lib/externalTerminal.ts` — 支持按项目配置启动不同 Shell 的外部终端
 
-### P1 Bug 修复
+### Bug 修复
 - **[High]** `externalTerminal.ts` — 外部终端硬编码 powershell，改为根据项目 shell 配置动态选择
 - **[Medium]** `Sidebar.tsx` — "外部 PowerShell" 标签改为 "外部终端"，匹配多 Shell 支持
 
@@ -254,7 +252,7 @@
 ### Bug 修复
 - **[High]** `TerminalTabs.tsx` — 将 New/Templates 按钮移出 `overflow-x-auto` 滚动容器，修复下拉面板被裁剪导致 Templates 按钮"无法点击"的问题，同时保证按钮在标签过多时不会被挤走
 
-### P0 功能扩展
+### 功能扩展
 
 #### 1.1 命令模板系统
 - 新增 `src/stores/templateStore.ts` — 命令模板 Zustand store，支持 SQLite CRUD
