@@ -376,16 +376,32 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
 
 const themeMap = new Map(TERMINAL_THEME_PRESETS.map((p) => [p.id, p.theme]));
 
+function resolveAutoLightThemeId(lightPalette: LightTerminalPalette = "warm-paper"): string {
+  if (lightPalette === "cream-green") return "creamGreenLight";
+  if (lightPalette === "ink-red") return "inkRedLight";
+  return "warmPaperLight";
+}
+
+function resolveAutoDarkThemeId(darkPalette: DarkTerminalPalette = "night-indigo"): string {
+  if (darkPalette === "forest-night") return "forestNightDark";
+  if (darkPalette === "graphite-red") return "graphiteRedDark";
+  return "tokyoNightDark";
+}
+
 function resolveAutoLightTheme(lightPalette: LightTerminalPalette = "warm-paper"): ITheme {
-  if (lightPalette === "cream-green") return creamGreenLight;
-  if (lightPalette === "ink-red") return inkRedLight;
-  return warmPaperLight;
+  return themeMap.get(resolveAutoLightThemeId(lightPalette)) ?? warmPaperLight;
 }
 
 function resolveAutoDarkTheme(darkPalette: DarkTerminalPalette = "night-indigo"): ITheme {
-  if (darkPalette === "forest-night") return forestNightDark;
-  if (darkPalette === "graphite-red") return graphiteRedDark;
-  return tokyoNightDark;
+  return themeMap.get(resolveAutoDarkThemeId(darkPalette)) ?? tokyoNightDark;
+}
+
+export function resolveAutoTerminalThemeId(
+  resolvedTheme: "dark" | "light",
+  lightPalette: LightTerminalPalette = "warm-paper",
+  darkPalette: DarkTerminalPalette = "night-indigo"
+): string {
+  return resolvedTheme === "dark" ? resolveAutoDarkThemeId(darkPalette) : resolveAutoLightThemeId(lightPalette);
 }
 
 /**

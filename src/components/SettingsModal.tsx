@@ -21,7 +21,7 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   general: {
     label: "通用",
     title: "通用设置",
-    description: "管理主题、配色、字体、默认 Shell、外部终端和调试模式。",
+    description: "首屏可完成主题、配色、终端、字体与侧栏密度配置。",
     searchPlaceholder: "搜索通用设置（预留）",
   },
   "terminal-theme": {

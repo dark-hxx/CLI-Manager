@@ -189,8 +189,12 @@
   --inverse-on-surface: #e8edf2;
   --inverse-on-surface-variant: #9aa4af;
   --interactive-focus-ring: color-mix(in srgb, var(--primary) 28%, transparent);
+  --interactive-default-bg: transparent;
   --interactive-hover-bg: color-mix(in srgb, var(--surface-container-high) 84%, var(--primary) 16%);
   --interactive-active-bg: color-mix(in srgb, var(--surface-container-highest) 88%, var(--primary) 12%);
+  --interactive-selected-bg: color-mix(in srgb, var(--surface-container-highest) 72%, var(--primary) 28%);
+  --interactive-selected-border: color-mix(in srgb, var(--primary) 62%, var(--border) 38%);
+  --interactive-disabled-opacity: 0.45;
   --interactive-shadow: 0 10px 26px color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
@@ -289,11 +293,14 @@ samp,
 }
 
 .ui-interactive {
+  background-color: var(--interactive-default-bg);
   transition:
     background-color var(--animate-duration-fast),
     color var(--animate-duration-fast),
     box-shadow var(--animate-duration-fast),
-    opacity var(--animate-duration-fast);
+    opacity var(--animate-duration-fast),
+    border-color var(--animate-duration-fast),
+    transform var(--animate-duration-fast);
 }
 
 .ui-interactive:hover {
@@ -303,6 +310,54 @@ samp,
 .ui-interactive:active {
   background-color: var(--interactive-active-bg);
   box-shadow: var(--interactive-shadow);
+}
+
+.ui-interactive[data-selected="true"],
+.ui-interactive[aria-selected="true"] {
+  background-color: var(--interactive-selected-bg);
+  color: var(--on-surface);
+  box-shadow: inset 0 0 0 1px var(--interactive-selected-border);
+}
+
+.ui-interactive:disabled,
+.ui-interactive[data-disabled="true"] {
+  opacity: var(--interactive-disabled-opacity);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.ui-selection-card {
+  background-color: var(--surface-container-low);
+  border-color: color-mix(in srgb, var(--border) 82%, transparent);
+  color: var(--on-surface-variant);
+}
+
+.ui-selection-card[data-selected="true"] {
+  border-color: var(--interactive-selected-border);
+  color: var(--on-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--interactive-selected-border),
+    0 0 0 6px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.ui-tab-trigger {
+  color: var(--on-surface-variant);
+}
+
+.ui-tab-trigger[data-selected="true"] {
+  color: var(--on-surface);
+}
+
+.ui-tree-node {
+  color: var(--on-surface-variant);
+}
+
+.ui-tree-node[data-selected="true"] {
+  color: var(--on-surface);
+}
+
+.ui-tree-group {
+  letter-spacing: 0.06em;
 }
 
 .ui-focus-ring:focus-visible {
@@ -630,12 +685,33 @@ samp,
   border-radius: 999px;
   border: 0;
   background-color: var(--surface-container-high);
-  transition: background-color var(--animate-duration-fast), border-color var(--animate-duration-fast);
+  transition:
+    background-color var(--animate-duration-fast),
+    border-color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    opacity var(--animate-duration-fast);
+}
+
+.switch:hover {
+  background-color: var(--interactive-hover-bg);
+}
+
+.switch:active {
+  background-color: var(--interactive-active-bg);
+}
+
+.switch:disabled {
+  opacity: var(--interactive-disabled-opacity);
+  cursor: not-allowed;
 }
 
 .switch[data-on="true"] {
-  background-color: var(--accent);
-  border-color: var(--accent);
+  background-color: var(--interactive-selected-bg);
+  border: 1px solid var(--interactive-selected-border);
+}
+
+.switch[data-on="true"]:hover {
+  background-color: color-mix(in srgb, var(--interactive-selected-bg) 86%, var(--primary) 14%);
 }
 
 .switch-thumb {
@@ -719,7 +795,32 @@ samp,
   border-radius: 12px;
   margin: 0 12px 12px;
   overflow: hidden;
+  isolation: isolate;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.ui-terminal-well::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity var(--animate-duration-normal) var(--ease-standard);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-container-low) 82%, transparent), transparent 28%),
+    radial-gradient(120% 38% at 50% 0%, color-mix(in srgb, var(--terminal-bridge-color, #0c0e10) 40%, transparent), transparent 72%);
+}
+
+.ui-terminal-well[data-terminal-mode="independent"] {
+  outline: 1px solid color-mix(in srgb, var(--terminal-bridge-color, #0c0e10) 42%, var(--border) 58%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 -16px 28px color-mix(in srgb, var(--terminal-bridge-color, #0c0e10) 18%, transparent);
+}
+
+.ui-terminal-well[data-terminal-mode="independent"]::before {
+  opacity: 1;
 }
 
 .ui-flat-action {
@@ -757,4 +858,9 @@ samp,
 .ui-primary-action:hover:not(:disabled) {
   filter: brightness(1.04);
   color: var(--on-primary);
+}
+
+.ui-history-primary {
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border) 58%);
+  color: var(--on-surface);
 }

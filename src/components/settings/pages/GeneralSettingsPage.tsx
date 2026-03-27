@@ -3,6 +3,7 @@ import {
   useSettingsStore,
   type DarkThemePalette,
   type LightThemePalette,
+  type SidebarDensity,
   type ThemeMode,
 } from "../../../stores/settingsStore";
 import { SHELL_OPTIONS } from "../../../lib/types";
@@ -74,6 +75,11 @@ const FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
   { value: "\"Courier New\", monospace", label: "Courier New" },
 ];
 
+const SIDEBAR_DENSITY_OPTIONS: { value: SidebarDensity; label: string; description: string }[] = [
+  { value: "comfortable", label: "舒适", description: "默认间距，强调可读性" },
+  { value: "compact", label: "紧凑", description: "减少行高与缩进，显示更多条目" },
+];
+
 function PaletteCard({
   active,
   label,
@@ -90,19 +96,8 @@ function PaletteCard({
   return (
     <button
       onClick={onClick}
-      className={`ui-interactive ui-focus-ring relative overflow-hidden rounded-xl border p-3 text-left transition-[transform,box-shadow,border-color,background-color] ${
-        active
-          ? "bg-surface-container-lowest border-transparent"
-          : "bg-surface-container-low border-border hover:bg-surface-container-high"
-      }`}
-      style={
-        active
-          ? {
-              boxShadow:
-                "0 0 0 2px var(--primary), 0 0 0 6px color-mix(in srgb, var(--primary) 22%, transparent)",
-            }
-          : undefined
-      }
+      className="ui-interactive ui-focus-ring ui-selection-card relative overflow-hidden rounded-xl border p-3 text-left transition-[transform,box-shadow,border-color,background-color]"
+      data-selected={active ? "true" : "false"}
       aria-pressed={active}
     >
       {active && (
@@ -143,6 +138,7 @@ export function GeneralSettingsPage() {
   const fontSize = useSettingsStore((s) => s.fontSize);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
   const defaultShell = useSettingsStore((s) => s.defaultShell);
+  const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
   const debugMode = useSettingsStore((s) => s.debugMode);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -157,103 +153,107 @@ export function GeneralSettingsPage() {
   const isCustomShellValue = !normalizedDefaultShell;
 
   return (
-    <div className="space-y-6">
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="mb-3 text-sm font-semibold text-on-surface">应用主题</div>
-        <div className="grid grid-cols-3 gap-2">
-          {THEME_OPTIONS.map((opt) => {
-            const active = theme === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => setTheme(opt.value)}
-                className={`ui-interactive ui-focus-ring rounded-xl border px-3 py-2 text-sm ${
-                  active ? "ui-primary-gradient border-transparent" : "ui-surface-low border-border text-on-surface-variant"
-                }`}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="mb-3 text-sm font-semibold text-on-surface">浅色配色方案</div>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          {LIGHT_PALETTE_OPTIONS.map((option) => (
-            <PaletteCard
-              key={option.value}
-              active={lightThemePalette === option.value}
-              label={option.label}
-              description={option.description}
-              swatches={option.swatches}
-              onClick={() => update("lightThemePalette", option.value)}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="mb-3 text-sm font-semibold text-on-surface">暗色配色方案</div>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          {DARK_PALETTE_OPTIONS.map((option) => (
-            <PaletteCard
-              key={option.value}
-              active={darkThemePalette === option.value}
-              label={option.label}
-              description={option.description}
-              swatches={option.swatches}
-              onClick={() => update("darkThemePalette", option.value)}
-            />
-          ))}
-        </div>
-      </section>
-
+    <div className="space-y-4">
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <div className="ui-surface-card rounded-2xl border border-border p-4">
-          <div className="text-sm font-semibold text-on-surface">字体大小</div>
-          <div className="mt-3 flex items-center gap-3">
-            <input
-              type="range"
-              min={10}
-              max={24}
-              step={1}
-              value={fontSize}
-              onChange={(e) => update("fontSize", Number(e.target.value))}
-              className="w-full accent-accent"
-              aria-label="字体大小滑杆"
-            />
-            <input
-              type="number"
-              min={10}
-              max={24}
-              value={fontSize}
-              onChange={(e) => update("fontSize", Math.min(24, Math.max(10, Number(e.target.value))))}
-              className="ui-focus-ring w-16 rounded-lg border border-border bg-surface-container-high px-2 py-1 text-xs text-on-surface outline-none"
-            />
+          <div className="text-sm font-semibold text-on-surface">外观</div>
+          <div className="mt-3">
+            <label className="mb-1 block text-xs text-on-surface-variant">应用主题</label>
+            <div className="grid grid-cols-3 gap-2">
+              {THEME_OPTIONS.map((opt) => {
+                const active = theme === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => setTheme(opt.value)}
+                    className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border px-3 py-2 text-sm"
+                    data-selected={active ? "true" : "false"}
+                    aria-pressed={active}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
           <div className="mt-4">
-            <label className="mb-1 block text-xs text-on-surface-variant">字体族</label>
-            <select
-              value={fontFamily}
-              onChange={(e) => update("fontFamily", e.target.value)}
-              className="ui-focus-ring w-full rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none"
-              aria-label="终端字体族"
-            >
-              {isCustomFontFamily && <option value={fontFamily}>当前自定义（保留）</option>}
-              {FONT_FAMILY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
+            <label className="mb-1 block text-xs text-on-surface-variant">浅色配色</label>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              {LIGHT_PALETTE_OPTIONS.map((option) => (
+                <PaletteCard
+                  key={option.value}
+                  active={lightThemePalette === option.value}
+                  label={option.label}
+                  description={option.description}
+                  swatches={option.swatches}
+                  onClick={() => update("lightThemePalette", option.value)}
+                />
               ))}
-            </select>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-1 block text-xs text-on-surface-variant">暗色配色</label>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              {DARK_PALETTE_OPTIONS.map((option) => (
+                <PaletteCard
+                  key={option.value}
+                  active={darkThemePalette === option.value}
+                  label={option.label}
+                  description={option.description}
+                  swatches={option.swatches}
+                  onClick={() => update("darkThemePalette", option.value)}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
         <div className="ui-surface-card rounded-2xl border border-border p-4">
-          <div className="text-sm font-semibold text-on-surface">终端行为</div>
+          <div className="text-sm font-semibold text-on-surface">终端与侧栏</div>
           <div className="mt-3 space-y-3">
+            <div>
+              <label className="mb-1 block text-xs text-on-surface-variant">字体大小</label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={10}
+                  max={24}
+                  step={1}
+                  value={fontSize}
+                  onChange={(e) => update("fontSize", Number(e.target.value))}
+                  className="w-full accent-accent"
+                  aria-label="字体大小滑杆"
+                />
+                <input
+                  type="number"
+                  min={10}
+                  max={24}
+                  value={fontSize}
+                  onChange={(e) => update("fontSize", Math.min(24, Math.max(10, Number(e.target.value))))}
+                  className="ui-focus-ring w-16 rounded-lg border border-border bg-surface-container-high px-2 py-1 text-xs text-on-surface outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-on-surface-variant">字体族</label>
+              <select
+                value={fontFamily}
+                onChange={(e) => update("fontFamily", e.target.value)}
+                className="ui-focus-ring w-full rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none"
+                aria-label="终端字体族"
+              >
+                {isCustomFontFamily && <option value={fontFamily}>当前自定义（保留）</option>}
+                {FONT_FAMILY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <label className="mb-1 block text-xs text-on-surface-variant">默认 Shell</label>
               <select
@@ -271,10 +271,31 @@ export function GeneralSettingsPage() {
               </select>
             </div>
 
+            <div>
+              <label className="mb-1 block text-xs text-on-surface-variant">侧栏密度</label>
+              <div className="grid grid-cols-2 gap-2">
+                {SIDEBAR_DENSITY_OPTIONS.map((opt) => {
+                  const active = sidebarDensity === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => update("sidebarDensity", opt.value)}
+                      className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border px-3 py-2 text-left"
+                      data-selected={active ? "true" : "false"}
+                      aria-pressed={active}
+                    >
+                      <div className="text-xs font-semibold">{opt.label}</div>
+                      <div className="mt-0.5 text-[11px] text-on-surface-variant">{opt.description}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="flex items-center justify-between">
               <span className="text-xs text-on-surface-variant">外部 PowerShell</span>
               <button
-                className="switch"
+                className="switch ui-focus-ring"
                 data-on={useExternalTerminal ? "true" : "false"}
                 onClick={() => update("useExternalTerminal", !useExternalTerminal)}
                 aria-label={useExternalTerminal ? "关闭外部 PowerShell" : "开启外部 PowerShell"}
@@ -287,7 +308,7 @@ export function GeneralSettingsPage() {
             <div className="flex items-center justify-between">
               <span className="text-xs text-on-surface-variant">调试模式</span>
               <button
-                className="switch"
+                className="switch ui-focus-ring"
                 data-on={debugMode ? "true" : "false"}
                 onClick={() => update("debugMode", !debugMode)}
                 aria-label={debugMode ? "关闭调试模式" : "开启调试模式"}

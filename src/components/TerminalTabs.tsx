@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState, useRef, useCallback, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -14,6 +14,7 @@ import { Terminal, Plus, Search } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
 import { Portal } from "./ui/Portal";
+import { getTerminalBackground } from "../lib/terminalThemes";
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
   running: "#9ece6a",
@@ -45,9 +46,11 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
     <div
       ref={setNodeRef}
       style={style}
-      className={`ui-interactive mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[11px] font-medium ${isActive ? "bg-surface-container-highest text-on-surface" : "bg-transparent text-on-surface-variant"}`}
+      className="ui-interactive ui-tab-trigger mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[11px] font-medium"
+      data-selected={isActive ? "true" : "false"}
       onClick={onActivate}
       onContextMenu={onContextMenu}
+      aria-selected={isActive}
       {...attributes}
       {...listeners}
     >
@@ -79,6 +82,7 @@ export function TerminalTabs() {
   const fontSize = useSettingsStore((s) => s.fontSize);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
+  const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
@@ -139,6 +143,16 @@ export function TerminalTabs() {
   const menuY = contextMenu ? Math.min(contextMenu.y, window.innerHeight - 200) : 0;
 
   const sessionIds = sessions.map((s) => s.id);
+  const effectiveTerminalThemeName = terminalThemeMode === "follow-app" ? "auto" : terminalThemeName;
+  const terminalBridgeColor = getTerminalBackground(
+    effectiveTerminalThemeName,
+    resolvedTheme,
+    lightThemePalette,
+    darkThemePalette
+  );
+  const terminalWellStyle: CSSProperties = {
+    "--terminal-bridge-color": terminalBridgeColor,
+  } as CSSProperties;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -168,27 +182,27 @@ export function TerminalTabs() {
           <button
             onClick={handleNewTab}
             className="ui-flat-action text-xs"
-            title="New terminal"
+            title="新建终端"
             aria-label="新建终端"
           >
             <Plus size={12} strokeWidth={2} />
             <Terminal size={14} strokeWidth={1.5} />
-            <span>New</span>
+            <span>新建</span>
           </button>
           <CommandTemplatePanel />
-          <CommandHistoryPanel />
+          <CommandHistoryPanel compact />
           <button
             onClick={() => {
               void toggleHistory();
             }}
-            className={`ui-flat-action text-xs ${historyOpen ? "ui-primary-action" : ""}`}
-            title="历史会话"
+            className={`ui-flat-action text-xs ${historyOpen ? "ui-primary-action" : "ui-history-primary"}`}
+            title="历史会话（Ctrl+K）"
             aria-label={historyOpen ? "关闭历史会话面板" : "打开历史会话面板"}
             aria-controls="history-workspace"
             aria-expanded={historyOpen}
           >
             <Search size={13} strokeWidth={1.8} />
-            <span>History</span>
+            <span>会话历史</span>
           </button>
         </div>
       </div>
@@ -260,7 +274,11 @@ export function TerminalTabs() {
             <HistoryWorkspace />
           </div>
         ) : (
-          <div className="ui-terminal-well relative h-full min-h-0">
+          <div
+            className="ui-terminal-well relative h-full min-h-0"
+            data-terminal-mode={terminalThemeMode}
+            style={terminalWellStyle}
+          >
             {sessions.map((s) => (
               <div
                 key={s.id}
@@ -274,7 +292,7 @@ export function TerminalTabs() {
                   fontSize={fontSize}
                   fontFamily={fontFamily}
                   resolvedTheme={resolvedTheme}
-                  terminalThemeName={terminalThemeName}
+                  terminalThemeName={effectiveTerminalThemeName}
                   lightThemePalette={lightThemePalette}
                   darkThemePalette={darkThemePalette}
                 />

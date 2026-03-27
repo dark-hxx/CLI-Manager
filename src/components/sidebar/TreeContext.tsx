@@ -10,6 +10,7 @@ export interface TreeActions {
   collapsedIds: Set<string>;
   renamingGroupId: string | null;
   onSelectProject: (e: ReactMouseEvent, p: Project) => void;
+  onSelectProjectByKeyboard: (p: Project) => void;
   onOpenProject: (p: Project) => void;
   onEditProject: (p: Project) => void;
   onDeleteProject: (p: Project) => void;

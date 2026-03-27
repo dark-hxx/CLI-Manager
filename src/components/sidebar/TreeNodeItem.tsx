@@ -53,15 +53,27 @@ function countDescendants(node: TNode): number {
   return count;
 }
 
-export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
+interface TreeNodeItemProps {
+  node: TNode;
+  depth: number;
+  density: "compact" | "comfortable";
+  focusedNodeKey: string | null;
+  onFocusNode: (key: string) => void;
+}
+
+export function TreeNodeItem({ node, depth, density, focusedNodeKey, onFocusNode }: TreeNodeItemProps) {
   const actions = useTreeActions();
   const itemId = node.type === "project" ? node.project.id : node.group.id;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: itemId });
   const sortableStyle = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
-  const paddingLeft = 8 + depth * 16;
+  const compact = density === "compact";
+  const indentBase = compact ? 6 : 8;
+  const indentStep = compact ? 14 : 16;
+  const paddingLeft = indentBase + depth * indentStep;
 
   if (node.type === "project") {
     const p = node.project;
+    const treeKey = `p:${p.id}`;
     const isSelected = actions.selectedId === p.id;
     const isMultiSelected = actions.selectedProjectIds.has(p.id);
     const status = actions.getProjectStatus(p.id);
@@ -73,18 +85,18 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
         style={{ ...sortableStyle }}
         {...attributes}
         role="treeitem"
+        data-tree-key={treeKey}
         aria-level={depth + 1}
         aria-selected={isSelected || isMultiSelected}
+        tabIndex={focusedNodeKey === treeKey ? 0 : -1}
+        onFocus={() => onFocusNode(treeKey)}
       >
         <div
-          className="flex items-center gap-2 py-1.5 rounded-md cursor-pointer text-sm group/item transition-colors"
-          style={{
-            paddingLeft, paddingRight: 8,
-            backgroundColor: isSelected || isMultiSelected ? "var(--surface-container-highest)" : "transparent",
-            color: isSelected || isMultiSelected ? "var(--on-surface)" : "var(--on-surface-variant)",
-          }}
-          onMouseEnter={(e) => { if (!isSelected && !isMultiSelected) e.currentTarget.style.backgroundColor = "var(--surface-container-high)"; }}
-          onMouseLeave={(e) => { if (!isSelected && !isMultiSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+          className={`ui-tree-node ui-focus-ring flex items-center rounded-md cursor-pointer group/item ${
+            compact ? "gap-1.5 py-1 text-[12px]" : "gap-2 py-1.5 text-sm"
+          }`}
+          data-selected={isSelected || isMultiSelected ? "true" : "false"}
+          style={{ paddingLeft, paddingRight: 8 }}
           onClick={(e) => actions.onSelectProject(e, p)}
           onDoubleClick={() => actions.onOpenProject(p)}
           onContextMenu={(e) => actions.onContextMenuProject(e, p)}
@@ -128,6 +140,7 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
 
   // Group node
   const g = node.group;
+  const treeKey = `g:${g.id}`;
   const isOpen = !actions.collapsedIds.has(g.id);
   const childCount = countDescendants(node);
 
@@ -139,10 +152,14 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
         style={{ ...sortableStyle }}
         {...attributes}
         role="treeitem"
+        data-tree-key={treeKey}
         aria-level={depth + 1}
         aria-expanded="true"
+        aria-selected={false}
+        tabIndex={focusedNodeKey === treeKey ? 0 : -1}
+        onFocus={() => onFocusNode(treeKey)}
       >
-        <div className="flex items-center gap-1.5 px-2 py-1.5">
+        <div className={`flex items-center px-2 ${compact ? "gap-1 py-1" : "gap-1.5 py-1.5"}`}>
           <ChevronRight size={12} strokeWidth={2} style={{ transform: "rotate(90deg)" }} />
           <InlineRename initial={g.name} onConfirm={(name) => actions.onRenameConfirm(g.id, name)} onCancel={actions.onCancelRename} />
         </div>
@@ -156,14 +173,19 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
       style={{ ...sortableStyle }}
       {...attributes}
       role="treeitem"
+      data-tree-key={treeKey}
       aria-level={depth + 1}
       aria-expanded={isOpen}
+      aria-selected={false}
+      tabIndex={focusedNodeKey === treeKey ? 0 : -1}
+      onFocus={() => onFocusNode(treeKey)}
     >
       <div
-        className="flex items-center gap-1.5 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider cursor-pointer group/grp transition-colors"
+        className={`ui-tree-node ui-tree-group ui-focus-ring flex items-center rounded-md font-semibold uppercase tracking-wider cursor-pointer group/grp ${
+          compact ? "gap-1 py-1 text-[11px]" : "gap-1.5 py-1.5 text-xs"
+        }`}
+        data-selected="false"
         style={{ paddingLeft, paddingRight: 8, color: "var(--on-surface-variant)" }}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "var(--surface-container-high)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
         onClick={() => actions.toggleCollapsed(g.id)}
         onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
         {...listeners}
@@ -182,7 +204,10 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
       </div>
 
       {actions.newGroupParentId === g.id && (
-        <div className="flex items-center gap-1.5 py-1.5" style={{ paddingLeft: paddingLeft + 16, paddingRight: 8 }}>
+        <div
+          className={`flex items-center ${compact ? "gap-1 py-1" : "gap-1.5 py-1.5"}`}
+          style={{ paddingLeft: paddingLeft + indentStep, paddingRight: 8 }}
+        >
           <span style={{ color: "var(--accent)", flexShrink: 0 }}><Folder size={16} strokeWidth={1.5} /></span>
           <InlineRename initial="" onConfirm={(name) => actions.onCreateGroup(g.id, name)} onCancel={actions.onCancelNewGroup} />
         </div>
@@ -193,9 +218,16 @@ export function TreeNodeItem({ node, depth }: { node: TNode; depth: number }) {
           <div className="tree-collapse-inner" role="group">
             <DndContext sensors={[]} collisionDetection={closestCenter} onDragEnd={(event: DragEndEvent) => actions.onDragEnd(g.id, event)}>
               <SortableContext items={node.children.map((c) => c.type === "group" ? c.group.id : c.project.id)} strategy={verticalListSortingStrategy}>
-                <div className="ml-3 space-y-0.5">
+                <div className={`${compact ? "ml-2.5 space-y-0.5" : "ml-3 space-y-0.5"}`}>
                   {node.children.map((child) => (
-                    <TreeNodeItem key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`} node={child} depth={depth + 1} />
+                    <TreeNodeItem
+                      key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`}
+                      node={child}
+                      depth={depth + 1}
+                      density={density}
+                      focusedNodeKey={focusedNodeKey}
+                      onFocusNode={onFocusNode}
+                    />
                   ))}
                 </div>
               </SortableContext>

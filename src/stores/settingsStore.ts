@@ -1,10 +1,13 @@
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
+import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type LightThemePalette = "warm-paper" | "cream-green" | "ink-red";
 export type DarkThemePalette = "night-indigo" | "forest-night" | "graphite-red";
+export type TerminalThemeMode = "follow-app" | "independent";
+export type SidebarDensity = "compact" | "comfortable";
 export type ShortcutAction = "newTerminal" | "closeTerminal" | "nextTab" | "prevTab" | "commandPalette";
 export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 
@@ -19,7 +22,9 @@ interface Settings {
   historySidebarWidth: number;
   useExternalTerminal: boolean;
   debugMode: boolean;
+  terminalThemeMode: TerminalThemeMode;
   terminalThemeName: string;
+  sidebarDensity: SidebarDensity;
   keyboardShortcuts: KeyboardShortcutMap;
 }
 
@@ -29,6 +34,7 @@ interface SettingsStore extends Settings {
   load: () => Promise<void>;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => Promise<void>;
   setTheme: (mode: ThemeMode) => Promise<void>;
+  setTerminalThemeMode: (mode: TerminalThemeMode) => Promise<void>;
 }
 
 const DEFAULTS: Settings = {
@@ -42,7 +48,9 @@ const DEFAULTS: Settings = {
   historySidebarWidth: 300,
   useExternalTerminal: false,
   debugMode: false,
+  terminalThemeMode: "follow-app",
   terminalThemeName: "auto",
+  sidebarDensity: "comfortable",
   keyboardShortcuts: {
     newTerminal: "Ctrl+Shift+T",
     closeTerminal: "Ctrl+W",
@@ -92,10 +100,23 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
     const theme = (entries.theme as ThemeMode) ?? DEFAULTS.theme;
     const debugMode = (entries.debugMode as boolean) ?? DEFAULTS.debugMode;
+    const storedTerminalThemeMode = entries.terminalThemeMode as TerminalThemeMode | undefined;
+    const resolvedTheme = resolveTheme(theme);
+    const lightThemePalette = (entries.lightThemePalette as LightThemePalette | undefined) ?? DEFAULTS.lightThemePalette;
+    const darkThemePalette = (entries.darkThemePalette as DarkThemePalette | undefined) ?? DEFAULTS.darkThemePalette;
+    let terminalThemeName = (entries.terminalThemeName as string | undefined) ?? DEFAULTS.terminalThemeName;
+    const terminalThemeMode =
+      storedTerminalThemeMode ??
+      (terminalThemeName !== "auto" ? "independent" : "follow-app");
+    if (terminalThemeMode === "independent" && terminalThemeName === "auto") {
+      terminalThemeName = resolveAutoTerminalThemeId(resolvedTheme, lightThemePalette, darkThemePalette);
+    }
+    entries.terminalThemeName = terminalThemeName;
+    entries.terminalThemeMode = terminalThemeMode;
     if (entries.keyboardShortcuts) {
       entries.keyboardShortcuts = { ...DEFAULTS.keyboardShortcuts, ...entries.keyboardShortcuts };
     }
-    set({ ...entries, resolvedTheme: resolveTheme(theme), loaded: true });
+    set({ ...entries, resolvedTheme, loaded: true });
     void applyDebugMode(debugMode);
 
     // Listen for system theme changes
@@ -120,5 +141,23 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const s = await getStore();
     await s.set("theme", mode);
     set({ theme: mode, resolvedTheme: resolveTheme(mode) });
+  },
+
+  setTerminalThemeMode: async (mode) => {
+    const s = await getStore();
+    const current = get();
+    let nextThemeName = current.terminalThemeName;
+
+    if (mode === "independent" && nextThemeName === "auto") {
+      nextThemeName = resolveAutoTerminalThemeId(
+        current.resolvedTheme,
+        current.lightThemePalette,
+        current.darkThemePalette
+      );
+      await s.set("terminalThemeName", nextThemeName);
+    }
+
+    await s.set("terminalThemeMode", mode);
+    set({ terminalThemeMode: mode, terminalThemeName: nextThemeName });
   },
 }));

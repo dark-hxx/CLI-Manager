@@ -14,7 +14,11 @@ interface PanelPosition {
   top: number;
 }
 
-export function CommandHistoryPanel() {
+interface CommandHistoryPanelProps {
+  compact?: boolean;
+}
+
+export function CommandHistoryPanel({ compact = false }: CommandHistoryPanelProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -109,14 +113,15 @@ export function CommandHistoryPanel() {
       <button
         ref={triggerRef}
         onClick={() => setOpen((prev) => !prev)}
-        className="ui-flat-action text-xs"
-        title="Command History"
+        className={compact ? "ui-focus-ring ui-icon-action" : "ui-flat-action text-xs"}
+        data-active={open ? "true" : "false"}
+        title="命令历史"
         aria-label={open ? "关闭命令历史面板" : "打开命令历史面板"}
         aria-controls="command-history-panel"
         aria-expanded={open}
       >
         <Clock size={14} strokeWidth={1.5} />
-        <span>History</span>
+        {!compact && <span>命令历史</span>}
       </button>
 
       {open && (

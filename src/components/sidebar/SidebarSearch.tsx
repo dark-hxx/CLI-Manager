@@ -2,6 +2,7 @@ import { Play, Search, X } from "../icons";
 
 interface SidebarSearchProps {
   collapsed: boolean;
+  density: "compact" | "comfortable";
   searchQuery: string;
   selectedCount: number;
   filteredCount: number;
@@ -14,6 +15,7 @@ interface SidebarSearchProps {
 
 export function SidebarSearch({
   collapsed,
+  density,
   searchQuery,
   selectedCount,
   filteredCount,
@@ -23,21 +25,24 @@ export function SidebarSearch({
   onClearSelected,
   onExpandSidebar,
 }: SidebarSearchProps) {
+  const compact = density === "compact";
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center gap-1.5 px-2 py-1">
+      <div className={`flex flex-col items-center ${compact ? "gap-1 px-1.5 py-0.5" : "gap-1.5 px-2 py-1"}`}>
         <button
           onClick={onExpandSidebar}
-          className="ui-flat-action h-8 w-8 px-0"
+          className={`ui-flat-action px-0 ${compact ? "h-7 w-7" : "h-8 w-8"}`}
           title="展开并搜索"
+          aria-label="展开并搜索项目"
         >
           <Search size={14} strokeWidth={1.6} />
         </button>
         <button
           onClick={onStartSelected}
           disabled={selectedCount === 0}
-          className="ui-flat-action h-8 w-8 px-0"
+          className={`ui-flat-action px-0 ${compact ? "h-7 w-7" : "h-8 w-8"}`}
           title="启动已选"
+          aria-label="启动已选项目"
         >
           <Play size={13} strokeWidth={1.7} />
         </button>
@@ -46,8 +51,8 @@ export function SidebarSearch({
   }
 
   return (
-    <div className="px-3 py-2">
-      <div className="flex items-center gap-2 rounded-xl bg-surface-container-highest px-2.5 py-1.5">
+    <div className={compact ? "px-2.5 py-1.5" : "px-3 py-2"}>
+      <div className={`flex items-center rounded-xl bg-surface-container-highest ${compact ? "gap-1.5 px-2 py-1.5" : "gap-2 px-2.5 py-1.5"}`}>
         <span className="text-on-surface-variant">
           <Search size={14} strokeWidth={1.5} />
         </span>
@@ -57,14 +62,16 @@ export function SidebarSearch({
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           className="flex-1 bg-transparent text-sm text-on-surface outline-none"
+          aria-label="搜索项目"
         />
       </div>
-      <div className="mt-2 flex items-center gap-2">
+      <div className={`mt-2 flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
         <button
           onClick={onStartFiltered}
           disabled={filteredCount === 0}
           className="mini-btn"
           title="启动筛选结果"
+          aria-label="启动筛选结果"
         >
           启动筛选
         </button>
@@ -73,11 +80,12 @@ export function SidebarSearch({
           disabled={selectedCount === 0}
           className="mini-btn"
           title="启动已选"
+          aria-label="启动已选项目"
         >
           启动已选 ({selectedCount})
         </button>
         {selectedCount > 0 && (
-          <button onClick={onClearSelected} className="mini-btn" title="清空已选">
+          <button onClick={onClearSelected} className="mini-btn" title="清空已选" aria-label="清空已选项目">
             <span className="inline-flex items-center gap-1">
               <X size={11} strokeWidth={2} />
               清空

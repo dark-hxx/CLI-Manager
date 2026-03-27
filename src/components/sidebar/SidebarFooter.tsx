@@ -81,7 +81,7 @@ export function SidebarFooter({
       <div className="mt-3 flex items-center justify-between">
         <span className="text-xs text-on-surface-variant">外部终端</span>
         <button
-          className="switch"
+          className="switch ui-focus-ring"
           data-on={useExternalTerminal ? "true" : "false"}
           onClick={onToggleExternalTerminal}
           title="使用 Windows Terminal 打开"

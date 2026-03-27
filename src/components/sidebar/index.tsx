@@ -55,6 +55,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
   const sessions = useTerminalStore((s) => s.sessions);
   const sessionStatuses = useTerminalStore((s) => s.sessionStatuses);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
+  const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
   const persistedSidebarWidth = useSettingsStore((s) => s.sidebarWidth);
   const updateSetting = useSettingsStore((s) => s.update);
 
@@ -409,6 +410,11 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
     setSelectedProjectIds(new Set([project.id]));
   }, []);
 
+  const handleSelectProjectByKeyboard = useCallback((project: Project) => {
+    setSelectedId(project.id);
+    setSelectedProjectIds(new Set([project.id]));
+  }, []);
+
   const handleToggleSelection = useCallback((project: Project) => {
     setSelectedProjectIds((prev) => {
       const next = new Set(prev);
@@ -495,6 +501,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
       collapsedIds,
       renamingGroupId,
       onSelectProject: handleSelectProject,
+      onSelectProjectByKeyboard: handleSelectProjectByKeyboard,
       onOpenProject: handleOpen,
       onEditProject: setEditingProject,
       onDeleteProject: handleRequestDeleteProject,
@@ -521,6 +528,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
       collapsedIds,
       renamingGroupId,
       handleSelectProject,
+      handleSelectProjectByKeyboard,
       handleOpen,
       handleRequestDeleteProject,
       handleAddProjectToGroup,
@@ -590,10 +598,12 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
       className={`ui-sidebar-shell relative flex shrink-0 select-none flex-col ${
         sidebarResizing ? "transition-none" : "transition-[width] duration-150"
       }`}
+      data-sidebar-density={sidebarDensity}
       style={{ width: sidebarWidth }}
     >
       <SidebarHeader
         collapsed={sidebarCollapsed}
+        density={sidebarDensity}
         onToggleCollapse={toggleSidebarCollapsed}
         onCreateGroup={() => {
           ensureSidebarExpanded();
@@ -608,6 +618,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
 
       <SidebarSearch
         collapsed={sidebarCollapsed}
+        density={sidebarDensity}
         searchQuery={searchQuery}
         selectedCount={selectedProjects.length}
         filteredCount={filteredProjects.length}
@@ -628,6 +639,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
           initialLoading={initialLoading}
           loadError={loadError}
           collapsed={sidebarCollapsed}
+          density={sidebarDensity}
           newGroupParentId={newGroupParentId}
           onCreateRootGroup={(name) => handleCreateGroup(null, name)}
           onCancelRootGroup={handleCancelNewGroup}
