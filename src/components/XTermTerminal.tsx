@@ -65,6 +65,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     if (isActive && fitAddonRef.current && containerRef.current) {
       // Wait one frame to ensure display:block has taken effect and layout is stable.
       scheduleFit(true);
+      terminalRef.current?.focus();
     }
   }, [isActive]);
 
@@ -95,6 +96,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     fitAddon.fit();
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    terminal.focus();
 
     const copySelection = async () => {
       const selection = terminal.getSelection();
