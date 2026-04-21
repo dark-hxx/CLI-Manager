@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast, Toaster } from "sonner";
+import { isTauri } from "@tauri-apps/api/core";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
@@ -13,7 +15,7 @@ import { useTerminalStore } from "./stores/terminalStore";
 import { useSyncStore } from "./stores/syncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useHistoryStore } from "./stores/historyStore";
-import { createPerfMarker } from "./lib/logger";
+import { createPerfMarker, logWarn } from "./lib/logger";
 import "./App.css";
 
 const appStartAt =
@@ -21,6 +23,9 @@ const appStartAt =
     ? performance.now()
     : Date.now();
 let firstScreenPerfReported = false;
+const COMPACT_WINDOW_WIDTH = 350;
+const WINDOW_MIN_HEIGHT = 500;
+const IN_TAURI = isTauri();
 
 function App() {
   const loadSettings = useSettingsStore((s) => s.load);
@@ -31,7 +36,9 @@ function App() {
   const loadHistorySessions = useHistoryStore((s) => s.loadSessions);
   const openHistoryWorkspace = useHistoryStore((s) => s.openHistory);
   const openHistorySession = useHistoryStore((s) => s.openSession);
+  const viewMode = useSettingsStore((s) => s.viewMode);
   const [statsOpen, setStatsOpen] = useState(false);
+  const restoreWindowWidthRef = useRef<number | null>(null);
 
   useKeyboardShortcuts();
 
@@ -78,6 +85,37 @@ function App() {
       unlistenPromise?.then((fn) => fn()).catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    const appWindow = getCurrentWindow();
+    void (async () => {
+      try {
+        if (viewMode !== "compact") {
+          if (restoreWindowWidthRef.current && restoreWindowWidthRef.current > COMPACT_WINDOW_WIDTH) {
+            await appWindow.setSize(
+              new LogicalSize(restoreWindowWidthRef.current, Math.max(window.innerHeight, WINDOW_MIN_HEIGHT))
+            );
+          }
+          await appWindow.setMinSize(new LogicalSize(800, WINDOW_MIN_HEIGHT));
+          restoreWindowWidthRef.current = null;
+          return;
+        }
+        if (restoreWindowWidthRef.current == null) {
+          restoreWindowWidthRef.current = window.innerWidth;
+        }
+        await appWindow.setMinSize(new LogicalSize(COMPACT_WINDOW_WIDTH, WINDOW_MIN_HEIGHT));
+        if (await appWindow.isMaximized()) {
+          await appWindow.unmaximize();
+        }
+        await appWindow.setSize(
+          new LogicalSize(COMPACT_WINDOW_WIDTH, Math.max(window.innerHeight, WINDOW_MIN_HEIGHT))
+        );
+      } catch (err) {
+        logWarn("Failed to shrink window for compact mode", err);
+      }
+    })();
+  }, [viewMode]);
 
   const handleOpenStats = useCallback(() => {
     const stopPerf = createPerfMarker("stats.open", {
@@ -127,6 +165,7 @@ function App() {
         stopPerf({
           resolvedTheme,
           statsPrefetched: historySessions.length > 0,
+          viewMode,
         });
       });
     });
@@ -134,7 +173,7 @@ function App() {
       window.cancelAnimationFrame(raf1);
       window.cancelAnimationFrame(raf2);
     };
-  }, [resolvedTheme, historySessions.length]);
+  }, [resolvedTheme, historySessions.length, viewMode]);
 
   return (
     <div className="ui-workspace-shell flex h-screen flex-col">
@@ -142,12 +181,18 @@ function App() {
         跳转到主内容
       </a>
       <WindowTitleBar />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar onOpenStats={handleOpenStats} />
-        <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
-          <TerminalTabs />
-        </main>
-      </div>
+      {viewMode === "compact" ? (
+        <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
+          <Sidebar onOpenStats={handleOpenStats} compactMode />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <Sidebar onOpenStats={handleOpenStats} />
+          <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
+            <TerminalTabs />
+          </main>
+        </div>
+      )}
       <CommandPalette />
       <StatsPanel
         open={statsOpen}

@@ -8,6 +8,7 @@ export type LightThemePalette = "warm-paper" | "cream-green" | "ink-red";
 export type DarkThemePalette = "night-indigo" | "forest-night" | "graphite-red";
 export type TerminalThemeMode = "follow-app" | "independent";
 export type SidebarDensity = "compact" | "comfortable";
+export type ViewMode = "standard" | "compact";
 export type ShortcutAction = "newTerminal" | "closeTerminal" | "nextTab" | "prevTab" | "commandPalette";
 export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 
@@ -25,6 +26,7 @@ interface Settings {
   terminalThemeMode: TerminalThemeMode;
   terminalThemeName: string;
   sidebarDensity: SidebarDensity;
+  viewMode: ViewMode;
   keyboardShortcuts: KeyboardShortcutMap;
 }
 
@@ -51,6 +53,7 @@ const DEFAULTS: Settings = {
   terminalThemeMode: "follow-app",
   terminalThemeName: "auto",
   sidebarDensity: "comfortable",
+  viewMode: "standard",
   keyboardShortcuts: {
     newTerminal: "Ctrl+Shift+T",
     closeTerminal: "Ctrl+W",

@@ -8,6 +8,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { useHistoryStore } from "../stores/historyStore";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
+import { openWindowsTerminal } from "../lib/externalTerminal";
 
 export const useCommandPaletteStore = create<{
   isOpen: boolean;
@@ -57,6 +58,7 @@ export function CommandPalette() {
   const unsplitTerminal = useTerminalStore((s) => s.unsplitTerminal);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
+  const viewMode = useSettingsStore((s) => s.viewMode);
 
   const activeProjectId =
     sessions.find((item) => item.id === activeSessionId)?.projectId ?? null;
@@ -74,13 +76,15 @@ export function CommandPalette() {
   const items = useMemo<PaletteItem[]>(() => {
     const result: PaletteItem[] = [];
 
-    result.push({
-      id: "action:new-terminal",
-      label: "新建终端",
-      description: "打开新的终端标签",
-      category: "操作",
-      action: () => createSession(undefined, undefined, "Terminal"),
-    });
+    if (viewMode !== "compact") {
+      result.push({
+        id: "action:new-terminal",
+        label: "新建终端",
+        description: "打开新的终端标签",
+        category: "操作",
+        action: () => createSession(undefined, undefined, "Terminal"),
+      });
+    }
 
     result.push({
       id: "action:open-history",
@@ -93,7 +97,7 @@ export function CommandPalette() {
       },
     });
 
-    if (activeSessionId) {
+    if (viewMode !== "compact" && activeSessionId) {
       const hasSplit = !!splits[activeSessionId];
       if (!hasSplit) {
         result.push({
@@ -149,6 +153,15 @@ export function CommandPalette() {
         action: () => {
           const cmd = p.startup_cmd || p.cli_tool || undefined;
           const shell = p.shell && p.shell !== "powershell" ? p.shell : undefined;
+          if (viewMode === "compact") {
+            void openWindowsTerminal([{
+              cwd: p.path,
+              title: p.cli_tool ? `${p.name} (${p.cli_tool})` : p.name,
+              startupCmd: cmd,
+              shell: p.shell || undefined,
+            }]);
+            return;
+          }
           let envVars: Record<string, string> | undefined;
           try {
             const parsed = JSON.parse(p.env_vars || "{}");
@@ -163,30 +176,32 @@ export function CommandPalette() {
       });
     }
 
-    for (const t of templates) {
-      result.push({
-        id: `template:${t.id}`,
-        label: t.name,
-        description: t.command,
-        category: "命令模板",
-        action: () => {
-          const sid = useTerminalStore.getState().activeSessionId;
-          if (sid) {
-            invoke("pty_write", { sessionId: sid, data: t.command + "\r" }).catch((err) => {
-              toast.error("执行模板命令失败", { description: String(err) });
-              logError("CommandPalette failed to run template", {
-                templateId: t.id,
-                sessionId: sid,
-                err,
+    if (viewMode !== "compact") {
+      for (const t of templates) {
+        result.push({
+          id: `template:${t.id}`,
+          label: t.name,
+          description: t.command,
+          category: "命令模板",
+          action: () => {
+            const sid = useTerminalStore.getState().activeSessionId;
+            if (sid) {
+              invoke("pty_write", { sessionId: sid, data: t.command + "\r" }).catch((err) => {
+                toast.error("执行模板命令失败", { description: String(err) });
+                logError("CommandPalette failed to run template", {
+                  templateId: t.id,
+                  sessionId: sid,
+                  err,
+                });
               });
-            });
-          }
-        },
-      });
+            }
+          },
+        });
+      }
     }
 
     return result;
-  }, [projects, templates, activeSessionId, splits, resolvedTheme, createSession, splitTerminal, unsplitTerminal, setTheme]);
+  }, [projects, templates, activeSessionId, splits, resolvedTheme, createSession, splitTerminal, unsplitTerminal, setTheme, viewMode]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items;
