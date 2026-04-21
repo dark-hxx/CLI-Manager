@@ -81,6 +81,7 @@ const SIDEBAR_DENSITY_OPTIONS: { value: SidebarDensity; label: string; descripti
   { value: "compact", label: "紧凑", description: "减少行高与缩进，显示更多条目" },
 ];
 
+
 function PaletteCard({
   active,
   label,
@@ -305,6 +306,7 @@ export function GeneralSettingsPage() {
                 <span className="switch-thumb" />
               </button>
             </div>
+
 
             <div className="flex items-center justify-between">
               <span className="text-xs text-on-surface-variant">调试模式</span>

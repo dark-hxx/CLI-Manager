@@ -19,6 +19,7 @@ import { SidebarFooter } from "./SidebarFooter";
 
 interface SidebarProps {
   onOpenStats?: () => void;
+  compactMode?: boolean;
 }
 
 const SIDEBAR_COLLAPSED_WIDTH = 60;
@@ -36,7 +37,7 @@ function normalizePersistedSidebarWidth(width: number): number {
   return clampExpandedSidebarWidth(width);
 }
 
-export function Sidebar({ onOpenStats }: SidebarProps) {
+export function Sidebar({ onOpenStats, compactMode = false }: SidebarProps) {
   const {
     tree,
     projects,
@@ -55,9 +56,10 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
   const sessions = useTerminalStore((s) => s.sessions);
   const sessionStatuses = useTerminalStore((s) => s.sessionStatuses);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
+  const viewMode = useSettingsStore((s) => s.viewMode);
   const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
-  const persistedSidebarWidth = useSettingsStore((s) => s.sidebarWidth);
   const updateSetting = useSettingsStore((s) => s.update);
+  const persistedSidebarWidth = useSettingsStore((s) => s.sidebarWidth);
 
   const initialSidebarWidth = normalizePersistedSidebarWidth(persistedSidebarWidth);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
@@ -101,6 +103,10 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (compactMode) {
+      setSidebarCollapsed(false);
+      return;
+    }
     if (isResizingRef.current) return;
     const normalized = normalizePersistedSidebarWidth(persistedSidebarWidth);
     setSidebarWidth(normalized);
@@ -109,7 +115,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
     if (normalized > SIDEBAR_COLLAPSED_WIDTH) {
       lastExpandedWidthRef.current = normalized;
     }
-  }, [persistedSidebarWidth]);
+  }, [compactMode, persistedSidebarWidth]);
 
   useEffect(() => {
     return () => {
@@ -178,6 +184,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
   }, [sidebarCollapsed, expandSidebar]);
 
   useEffect(() => {
+    if (compactMode) return;
     const syncViewportCollapse = () => {
       if (window.innerWidth < SIDEBAR_AUTO_COLLAPSE_BREAKPOINT) {
         if (!sidebarCollapsed) {
@@ -200,7 +207,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
     return () => {
       window.removeEventListener("resize", syncViewportCollapse);
     };
-  }, [sidebarCollapsed, collapseSidebar, expandSidebar]);
+  }, [compactMode, sidebarCollapsed, collapseSidebar, expandSidebar]);
 
   const startResize = useCallback(
     (e: ReactMouseEvent) => {
@@ -346,6 +353,18 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
     });
   }, []);
 
+  const openProjectExternally = useCallback(async (items: Project[]) => {
+    if (items.length === 0) return;
+    await openWindowsTerminal(
+      items.map((project) => ({
+        cwd: project.path,
+        title: project.cli_tool ? `${project.name} (${project.cli_tool})` : project.name,
+        startupCmd: project.startup_cmd || project.cli_tool || undefined,
+        shell: project.shell || undefined,
+      }))
+    );
+  }, []);
+
   const openProjectInternal = async (project: Project) => {
     const title = project.cli_tool ? `${project.name} (${project.cli_tool})` : project.name;
     let envVars: Record<string, string> | undefined;
@@ -365,15 +384,8 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
 
   const openProjects = async (items: Project[]) => {
     if (items.length === 0) return;
-    if (useExternalTerminal) {
-      await openWindowsTerminal(
-        items.map((project) => ({
-          cwd: project.path,
-          title: project.cli_tool ? `${project.name} (${project.cli_tool})` : project.name,
-          startupCmd: project.startup_cmd || project.cli_tool || undefined,
-          shell: project.shell || undefined,
-        }))
-      );
+    if (compactMode || useExternalTerminal) {
+      await openProjectExternally(items);
       return;
     }
 
@@ -386,7 +398,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
     async (project: Project) => {
       await openProjects([project]);
     },
-    [useExternalTerminal, createSession]
+    [openProjects]
   );
 
   const handleCloneProject = useCallback((project: Project) => {
@@ -486,7 +498,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
       walk(groupId);
       await openProjects(projects.filter((p) => p.group_id && groupIds.has(p.group_id)));
     },
-    [groups, projects, useExternalTerminal, createSession]
+    [groups, projects, openProjectExternally, compactMode, useExternalTerminal, createSession]
   );
 
   const filteredProjects = searchQuery
@@ -602,14 +614,14 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
 
   return (
     <aside
-      className={`ui-sidebar-shell relative flex shrink-0 select-none flex-col ${
-        sidebarResizing ? "transition-none" : "transition-[width] duration-150"
-      }`}
+      className={`ui-sidebar-shell relative flex select-none flex-col ${
+        compactMode ? "min-w-0 flex-1" : "shrink-0"
+      } ${sidebarResizing ? "transition-none" : "transition-[width] duration-150"}`}
       data-sidebar-density={sidebarDensity}
-      style={{ width: sidebarWidth }}
+      style={{ width: compactMode ? "100%" : sidebarWidth }}
     >
       <SidebarHeader
-        collapsed={sidebarCollapsed}
+        collapsed={compactMode ? false : sidebarCollapsed}
         density={sidebarDensity}
         onToggleCollapse={toggleSidebarCollapsed}
         onCreateGroup={() => {
@@ -624,7 +636,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
       />
 
       <SidebarSearch
-        collapsed={sidebarCollapsed}
+        collapsed={compactMode ? false : sidebarCollapsed}
         density={sidebarDensity}
         searchQuery={searchQuery}
         selectedCount={selectedProjects.length}
@@ -645,7 +657,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
           tree={tree}
           initialLoading={initialLoading}
           loadError={loadError}
-          collapsed={sidebarCollapsed}
+          collapsed={compactMode ? false : sidebarCollapsed}
           density={sidebarDensity}
           newGroupParentId={newGroupParentId}
           onCreateRootGroup={(name) => handleCreateGroup(null, name)}
@@ -663,10 +675,14 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
       </TreeContext.Provider>
 
       <SidebarFooter
-        collapsed={sidebarCollapsed}
+        collapsed={compactMode ? false : sidebarCollapsed}
         useExternalTerminal={useExternalTerminal}
+        compactModeEnabled={viewMode === "compact"}
         onToggleExternalTerminal={() => {
           void updateSetting("useExternalTerminal", !useExternalTerminal);
+        }}
+        onToggleCompactMode={() => {
+          void updateSetting("viewMode", viewMode === "compact" ? "standard" : "compact");
         }}
         onOpenStats={onOpenStats}
         onOpenSettings={() => setShowSettings(true)}
@@ -685,7 +701,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
                     setContextMenu(null);
                   }}
                 >
-                  打开终端
+                  {compactMode ? "打开外部终端" : "打开终端"}
                 </button>
                 <button
                   className="context-menu-item"
@@ -749,7 +765,7 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
                     setContextMenu(null);
                   }}
                 >
-                  启动本目录
+                  {compactMode ? "打开本目录到外部终端" : "启动本目录"}
                 </button>
                 <button
                   className="context-menu-item"
@@ -828,11 +844,13 @@ export function Sidebar({ onOpenStats }: SidebarProps) {
         <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
       </Portal>
 
-      <div
-        onMouseDown={startResize}
-        className="absolute bottom-0 right-0 top-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-surface-container-highest"
-        style={{ opacity: 0.8 }}
-      />
+      {!compactMode && (
+        <div
+          onMouseDown={startResize}
+          className="absolute bottom-0 right-0 top-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-surface-container-highest"
+          style={{ opacity: 0.8 }}
+        />
+      )}
     </aside>
   );
 }

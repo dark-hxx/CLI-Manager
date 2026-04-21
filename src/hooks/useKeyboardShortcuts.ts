@@ -29,6 +29,7 @@ export function useKeyboardShortcuts() {
   const closeSession = useTerminalStore((s) => s.closeSession);
   const createSession = useTerminalStore((s) => s.createSession);
   const shortcuts = useSettingsStore((s) => s.keyboardShortcuts);
+  const viewMode = useSettingsStore((s) => s.viewMode);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -71,18 +72,21 @@ export function useKeyboardShortcuts() {
       }
 
       if (combo === shortcuts.newTerminal) {
+        if (viewMode === "compact") return;
         e.preventDefault();
         createSession(undefined, undefined, "Terminal");
         return;
       }
 
       if (combo === shortcuts.closeTerminal) {
+        if (viewMode === "compact") return;
         e.preventDefault();
         if (activeSessionId) closeSession(activeSessionId);
         return;
       }
 
       if (combo === shortcuts.nextTab) {
+        if (viewMode === "compact") return;
         e.preventDefault();
         if (sessions.length < 2) return;
         const idx = sessions.findIndex((s) => s.id === activeSessionId);
@@ -92,6 +96,7 @@ export function useKeyboardShortcuts() {
       }
 
       if (combo === shortcuts.prevTab) {
+        if (viewMode === "compact") return;
         e.preventDefault();
         if (sessions.length < 2) return;
         const idx = sessions.findIndex((s) => s.id === activeSessionId);
@@ -103,5 +108,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [sessions, activeSessionId, setActive, closeSession, createSession, shortcuts]);
+  }, [sessions, activeSessionId, setActive, closeSession, createSession, shortcuts, viewMode]);
 }

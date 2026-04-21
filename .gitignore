@@ -32,3 +32,6 @@ dist-ssr
 src-tauri/target/
 
 prototype/
+.cursor
+.trellis
+.serena
