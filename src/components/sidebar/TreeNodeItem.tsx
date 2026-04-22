@@ -92,37 +92,49 @@ export function TreeNodeItem({ node, depth, density, focusedNodeKey, onFocusNode
         onFocus={() => onFocusNode(treeKey)}
       >
         <div
-          className={`ui-tree-node ui-focus-ring flex items-center rounded-md cursor-pointer group/item ${
-            compact ? "gap-1.5 py-1 text-[12px]" : "gap-2 py-1.5 text-[13px]"
+          className={`ui-tree-node ui-tree-project ui-focus-ring flex items-center rounded-xl cursor-pointer group/item ${
+            compact ? "gap-2 py-1.5 text-[12px]" : "gap-2.5 py-2 text-[13px]"
           }`}
           data-selected={isSelected || isMultiSelected ? "true" : "false"}
-          style={{ paddingLeft, paddingRight: 8 }}
+          data-status={status ?? "idle"}
+          data-invalid={pathInvalid ? "true" : "false"}
+          style={{ paddingLeft, paddingRight: compact ? 8 : 10 }}
           onClick={(e) => actions.onSelectProject(e, p)}
           onDoubleClick={() => actions.onOpenProject(p)}
           onContextMenu={(e) => actions.onContextMenuProject(e, p)}
           {...listeners}
         >
-          <span style={{ color: "var(--accent)", flexShrink: 0 }}>
+          <span className="ui-tree-leading-icon">
             {status ? (
-              <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[status] }} role="status" aria-label={`Project ${status}`} title={status} />
+              <span
+                className="ui-tree-status-dot inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: STATUS_COLORS[status], color: STATUS_COLORS[status] }}
+                role="status"
+                aria-label={`Project ${status}`}
+                title={status}
+              />
             ) : (
               <Terminal size={14} strokeWidth={1.5} />
             )}
           </span>
-          <span className="flex-1 min-w-0 flex items-center gap-1">
-            <span className="block truncate">{p.name}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className="block truncate font-medium">{p.name}</span>
             {p.cli_tool && (
-              <span className="inline-flex shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-[10px] font-medium leading-tight text-primary">
+              <span className="ui-tree-meta-chip inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-tight">
                 {p.cli_tool}
               </span>
             )}
             {pathInvalid && (
-              <span className="inline-flex shrink-0" style={{ color: "var(--danger)" }} title="路径不存在">
+              <span
+                className="ui-tree-warning-chip inline-flex shrink-0 items-center justify-center rounded-full"
+                title="路径不存在"
+                aria-label="路径不存在"
+              >
                 <AlertTriangle size={12} strokeWidth={1.5} />
               </span>
             )}
           </span>
-          <span className="hidden group-hover/item:flex items-center gap-0.5 shrink-0">
+          <span className="ui-tree-item-actions hidden shrink-0 items-center gap-0.5 group-hover/item:flex group-focus-within/item:flex">
             <button onClick={(e) => { e.stopPropagation(); actions.onOpenProject(p); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="Open terminal">
               <Play size={14} strokeWidth={1.5} />
             </button>
@@ -183,61 +195,66 @@ export function TreeNodeItem({ node, depth, density, focusedNodeKey, onFocusNode
       tabIndex={focusedNodeKey === treeKey ? 0 : -1}
       onFocus={() => onFocusNode(treeKey)}
     >
-      <div
-        className={`ui-tree-node ui-tree-group ui-focus-ring flex items-center rounded-md font-semibold cursor-pointer group/grp ${
-          compact ? "gap-1 py-1 text-[11px]" : "gap-1.5 py-1.5 text-[12px]"
-        }`}
-        data-selected="false"
-        style={{ paddingLeft, paddingRight: 8, color: "var(--on-surface-variant)" }}
-        onClick={() => actions.toggleCollapsed(g.id)}
-        onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
-        {...listeners}
-      >
-        <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
-        <span style={{ color: "var(--accent)", flexShrink: 0 }}><Folder size={16} strokeWidth={1.5} /></span>
-        <span className="flex-1 text-left truncate">{g.name}</span>
-        <span className="rounded-full bg-surface-container-high px-1.5 text-[11px] font-medium text-on-surface-variant">{childCount}</span>
-        <span className="hidden group-hover/grp:flex items-center gap-0.5 shrink-0">
-          <button onClick={(e) => { e.stopPropagation(); actions.onStartGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="启动本目录"><Play size={14} strokeWidth={1.5} /></button>
-          <button onClick={(e) => { e.stopPropagation(); actions.onAddSubGroup(g.id); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Add sub-group"><FolderPlus size={14} strokeWidth={1.5} /></button>
-          <button onClick={(e) => { e.stopPropagation(); actions.onAddProjectToGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="Add project"><Plus size={12} strokeWidth={2} /></button>
-          <button onClick={(e) => { e.stopPropagation(); actions.onRenameGroup(g.id, g.name); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Rename"><Pencil size={14} strokeWidth={1.5} /></button>
-          <button onClick={(e) => { e.stopPropagation(); actions.onDeleteGroup(g.id, g.name); }} className="icon-btn" style={{ color: "var(--danger)", opacity: 0.7 }} title="Delete group"><Trash2 size={14} strokeWidth={1.5} /></button>
-        </span>
-      </div>
-
-      {actions.newGroupParentId === g.id && (
+      <div className={`ui-tree-group-shell ${compact ? "my-0.5" : "my-1"}`} style={{ marginLeft: depth === 0 ? 0 : 2 }}>
         <div
-          className={`flex items-center ${compact ? "gap-1 py-1" : "gap-1.5 py-1.5"}`}
-          style={{ paddingLeft: paddingLeft + indentStep, paddingRight: 8 }}
+          className={`ui-tree-node ui-tree-group ui-focus-ring flex items-center rounded-xl font-semibold cursor-pointer group/grp ${
+            compact ? "gap-1.5 py-1.5 text-[11px]" : "gap-2 py-2 text-[12px]"
+          }`}
+          data-selected="false"
+          data-open={isOpen ? "true" : "false"}
+          style={{ paddingLeft, paddingRight: compact ? 8 : 10, color: "var(--on-surface-variant)" }}
+          onClick={() => actions.toggleCollapsed(g.id)}
+          onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
+          {...listeners}
         >
-          <span style={{ color: "var(--accent)", flexShrink: 0 }}><Folder size={16} strokeWidth={1.5} /></span>
-          <InlineRename initial="" onConfirm={(name) => actions.onCreateGroup(g.id, name)} onCancel={actions.onCancelNewGroup} />
+          <span className="ui-tree-chevron inline-flex items-center justify-center">
+            <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
+          </span>
+          <span className="ui-tree-leading-icon"><Folder size={16} strokeWidth={1.5} /></span>
+          <span className="flex-1 text-left truncate">{g.name}</span>
+          <span className="ui-tree-count-badge rounded-full px-1.5 text-[11px] font-medium">{childCount}</span>
+          <span className="ui-tree-item-actions hidden shrink-0 items-center gap-0.5 group-hover/grp:flex group-focus-within/grp:flex">
+            <button onClick={(e) => { e.stopPropagation(); actions.onStartGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="启动本目录"><Play size={14} strokeWidth={1.5} /></button>
+            <button onClick={(e) => { e.stopPropagation(); actions.onAddSubGroup(g.id); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Add sub-group"><FolderPlus size={14} strokeWidth={1.5} /></button>
+            <button onClick={(e) => { e.stopPropagation(); actions.onAddProjectToGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="Add project"><Plus size={12} strokeWidth={2} /></button>
+            <button onClick={(e) => { e.stopPropagation(); actions.onRenameGroup(g.id, g.name); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Rename"><Pencil size={14} strokeWidth={1.5} /></button>
+            <button onClick={(e) => { e.stopPropagation(); actions.onDeleteGroup(g.id, g.name); }} className="icon-btn" style={{ color: "var(--danger)", opacity: 0.7 }} title="Delete group"><Trash2 size={14} strokeWidth={1.5} /></button>
+          </span>
         </div>
-      )}
 
-      {node.children.length > 0 && (
-        <div className="tree-collapse" data-open={isOpen ? "true" : "false"}>
-          <div className="tree-collapse-inner" role="group">
-            <DndContext sensors={[]} collisionDetection={closestCenter} onDragEnd={(event: DragEndEvent) => actions.onDragEnd(g.id, event)}>
-              <SortableContext items={node.children.map((c) => c.type === "group" ? c.group.id : c.project.id)} strategy={verticalListSortingStrategy}>
-                <div className={`${compact ? "ml-2.5 space-y-0.5" : "ml-3 space-y-0.5"}`}>
-                  {node.children.map((child) => (
-                    <TreeNodeItem
-                      key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`}
-                      node={child}
-                      depth={depth + 1}
-                      density={density}
-                      focusedNodeKey={focusedNodeKey}
-                      onFocusNode={onFocusNode}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-            </DndContext>
+        {actions.newGroupParentId === g.id && (
+          <div
+            className={`flex items-center ${compact ? "gap-1.5 py-1.5" : "gap-2 py-2"}`}
+            style={{ paddingLeft: paddingLeft + indentStep, paddingRight: compact ? 8 : 10 }}
+          >
+            <span className="ui-tree-leading-icon"><Folder size={16} strokeWidth={1.5} /></span>
+            <InlineRename initial="" onConfirm={(name) => actions.onCreateGroup(g.id, name)} onCancel={actions.onCancelNewGroup} />
           </div>
-        </div>
-      )}
+        )}
+
+        {node.children.length > 0 && (
+          <div className="tree-collapse" data-open={isOpen ? "true" : "false"}>
+            <div className="tree-collapse-inner" role="group">
+              <DndContext sensors={[]} collisionDetection={closestCenter} onDragEnd={(event: DragEndEvent) => actions.onDragEnd(g.id, event)}>
+                <SortableContext items={node.children.map((c) => c.type === "group" ? c.group.id : c.project.id)} strategy={verticalListSortingStrategy}>
+                  <div className={`${compact ? "ml-2 space-y-0.5 pb-1" : "ml-2.5 space-y-0.5 pb-1.5"}`}>
+                    {node.children.map((child) => (
+                      <TreeNodeItem
+                        key={child.type === "group" ? `g:${child.group.id}` : `p:${child.project.id}`}
+                        node={child}
+                        depth={depth + 1}
+                        density={density}
+                        focusedNodeKey={focusedNodeKey}
+                        onFocusNode={onFocusNode}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

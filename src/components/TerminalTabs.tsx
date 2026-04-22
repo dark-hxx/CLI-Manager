@@ -178,10 +178,10 @@ export function TerminalTabs() {
           </DndContext>
         </div>
         {/* Action buttons — outside scroll container so dropdowns are not clipped */}
-        <div className="flex items-center shrink-0 px-2 gap-2">
+        <div className="flex shrink-0 items-center gap-2 px-2.5">
           <button
             onClick={handleNewTab}
-            className="ui-flat-action text-[12px]"
+            className="ui-flat-action ui-toolbar-button ui-primary-action"
             title="新建终端"
             aria-label="新建终端"
           >
@@ -195,7 +195,7 @@ export function TerminalTabs() {
             onClick={() => {
               void toggleHistory();
             }}
-            className={`ui-flat-action text-[12px] ${historyOpen ? "ui-primary-action" : "ui-history-primary"}`}
+            className={`ui-flat-action ui-toolbar-button ${historyOpen ? "ui-primary-action" : "ui-history-primary"}`}
             title="历史会话（Ctrl+K）"
             aria-label={historyOpen ? "关闭历史会话面板" : "打开历史会话面板"}
             aria-controls="history-workspace"

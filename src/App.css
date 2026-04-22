@@ -436,14 +436,149 @@ samp,
 
 .ui-tree-node {
   color: var(--on-surface-variant);
+  transition:
+    background-color var(--animate-duration-fast),
+    color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    border-color var(--animate-duration-fast),
+    transform var(--animate-duration-fast),
+    opacity var(--animate-duration-fast);
 }
 
 .ui-tree-node[data-selected="true"] {
   color: var(--on-surface);
 }
 
+.ui-tree-project {
+  position: relative;
+  border: 1px solid transparent;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 62%, transparent);
+}
+
+.ui-tree-project:hover {
+  background-color: color-mix(in srgb, var(--surface-container-high) 74%, transparent);
+  border-color: color-mix(in srgb, var(--border) 42%, transparent);
+}
+
+.ui-tree-project[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border) 58%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 14%, var(--surface-container-lowest) 86%), color-mix(in srgb, var(--surface-container-high) 88%, var(--primary) 12%));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent),
+    0 10px 24px color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+[data-theme="light"] .ui-tree-project[data-selected="true"] {
+  background: var(--surface-container-low);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+[data-theme="light"] .ui-tree-project,
+[data-theme="light"] .ui-tree-project:hover {
+  background-color: var(--surface-container-lowest);
+}
+
+[data-theme="light"] .ui-tree-group-shell {
+  background: var(--surface-container-lowest);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 8%, transparent);
+}
+
+[data-theme="light"] .ui-tree-group:hover,
+[data-theme="light"] .ui-tree-group[data-open="true"] {
+  background-color: var(--surface-container-low);
+}
+
+.ui-tree-project[data-invalid="true"]:not([data-selected="true"]) {
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
+.ui-tree-group-shell {
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-container-low) 66%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 12%, transparent);
+}
+
 .ui-tree-group {
   letter-spacing: 0.03em;
+  border: 1px solid transparent;
+}
+
+.ui-tree-group:hover,
+.ui-tree-group[data-open="true"] {
+  background-color: color-mix(in srgb, var(--surface-container-high) 72%, transparent);
+}
+
+.ui-tree-group[data-open="true"] {
+  border-color: color-mix(in srgb, var(--border) 24%, transparent);
+}
+
+.ui-tree-leading-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--surface-container-highest) 88%, transparent);
+  color: var(--accent);
+}
+
+.ui-tree-chevron {
+  color: var(--text-muted);
+}
+
+.ui-tree-status-dot {
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.ui-tree-meta-chip {
+  background-color: color-mix(in srgb, var(--primary) 14%, var(--surface-container-high) 86%);
+  color: var(--primary);
+}
+
+.ui-tree-warning-chip {
+  width: 18px;
+  height: 18px;
+  color: var(--danger);
+  background-color: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.ui-tree-count-badge {
+  background-color: color-mix(in srgb, var(--surface-container-highest) 84%, transparent);
+  color: var(--text-secondary);
+}
+
+.ui-tree-item-actions {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(4px);
+  transition:
+    opacity var(--animate-duration-fast),
+    transform var(--animate-duration-fast),
+    visibility var(--animate-duration-fast);
+}
+
+.ui-tree-node:hover .ui-tree-item-actions,
+.ui-tree-node:focus-within .ui-tree-item-actions {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.ui-tree-item-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 72%, transparent);
+}
+
+.ui-tree-collapsed-item {
+  border: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface-container-lowest) 14%, transparent);
 }
 
 .ui-focus-ring:focus-visible {
@@ -515,6 +650,13 @@ samp,
   z-index: 2;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+}
+
+[data-theme="light"] .window-titlebar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: var(--surface-container-lowest);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 24%, transparent);
 }
 
 .titlebar-btn {
@@ -872,15 +1014,25 @@ samp,
     linear-gradient(180deg, color-mix(in srgb, var(--surface-container-low) 68%, transparent), transparent 42%);
 }
 
+[data-theme="light"] .ui-workspace-shell,
 [data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-workspace-shell {
-  background-image:
-    radial-gradient(circle at 12% -8%, color-mix(in srgb, var(--primary) 12%, transparent) 0%, transparent 42%),
-    radial-gradient(circle at 100% 22%, color-mix(in srgb, var(--warning) 8%, transparent) 0%, transparent 30%),
-    linear-gradient(180deg, color-mix(in srgb, #ffffff 76%, transparent), transparent 46%);
+  background-image: none;
+  background-color: var(--surface);
+}
+
+[data-theme="light"] .ui-main-shell,
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-main-shell {
+  background-image: none;
+  background-color: var(--surface);
 }
 
 .ui-sidebar-shell {
   background-color: var(--surface-container-low);
+}
+
+[data-theme="light"] .ui-sidebar-shell {
+  background-color: var(--surface-container-lowest);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 12%, transparent);
 }
 
 [data-theme="dark"][data-dark-palette="investment-platform"] .ui-sidebar-shell,
@@ -933,6 +1085,25 @@ samp,
   opacity: 1;
 }
 
+[data-theme="light"] .ui-terminal-chrome {
+  background-color: var(--surface-container-lowest);
+  outline-color: color-mix(in srgb, var(--border) 14%, transparent);
+}
+
+[data-theme="light"] .ui-terminal-well {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 8%, transparent);
+}
+
+[data-theme="light"] .ui-terminal-well::before,
+[data-theme="light"] .ui-terminal-well[data-terminal-mode="independent"]::before {
+  display: none;
+}
+
+[data-theme="light"] .ui-terminal-well[data-terminal-mode="independent"] {
+  outline-color: color-mix(in srgb, var(--border) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 10%, transparent);
+}
+
 .ui-flat-action {
   display: inline-flex;
   align-items: center;
@@ -950,7 +1121,9 @@ samp,
   transition:
     background-color var(--animate-duration-fast),
     color var(--animate-duration-fast),
-    box-shadow var(--animate-duration-fast);
+    box-shadow var(--animate-duration-fast),
+    border-color var(--animate-duration-fast),
+    transform var(--animate-duration-fast);
 }
 
 .ui-flat-action:hover:not(:disabled) {
@@ -979,11 +1152,51 @@ samp,
   letter-spacing: 0.005em;
 }
 
+[data-theme="light"] .ui-primary-action,
 [data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-primary-action {
+  background-image: none;
+  background-color: var(--primary);
+  color: var(--on-primary);
   letter-spacing: 0.01em;
+}
+
+[data-theme="light"] .ui-flat-action:hover:not(:disabled),
+[data-theme="light"] .ui-icon-action:hover:not(:disabled),
+[data-theme="light"] .ui-toolbar-button:hover:not(:disabled) {
+  box-shadow: none;
+}
+
+[data-theme="light"] .ui-toolbar-button:hover:not(:disabled) {
+  transform: none;
 }
 
 .ui-history-primary {
   border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border) 58%);
   color: var(--on-surface);
+}
+
+.ui-toolbar-button {
+  min-height: 32px;
+  border: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
+  border-radius: 12px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.ui-toolbar-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ui-toolbar-button.ui-primary-action {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border) 58%);
+}
+
+.ui-toolbar-button-compact {
+  min-height: 28px;
+  border-radius: 10px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
 }

@@ -297,7 +297,7 @@ export function ProjectTree({
             return (
               <button
                 key={item.key}
-                className={`ui-flat-action mx-auto my-0.5 px-0 text-primary ${collapsedButtonSize}`}
+                className={`ui-flat-action ui-tree-collapsed-item mx-auto my-0.5 px-0 text-primary ${collapsedButtonSize}`}
                 title={item.label}
                 aria-label={`目录 ${item.label}`}
                 onContextMenu={(e) => actions.onContextMenuGroup(e, groupNode.group.id, groupNode.group.name)}
@@ -316,7 +316,7 @@ export function ProjectTree({
           return (
             <button
               key={item.key}
-              className={`mx-auto my-0.5 flex ${collapsedButtonSize} items-center justify-center rounded-md font-semibold transition-colors ${compactTextSize} ${
+              className={`ui-tree-collapsed-item mx-auto my-0.5 flex ${collapsedButtonSize} items-center justify-center rounded-xl font-semibold transition-colors ${compactTextSize} ${
                 selected
                   ? "ui-primary-action text-white"
                   : "bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest"

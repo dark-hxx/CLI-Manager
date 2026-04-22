@@ -195,7 +195,7 @@ export function CommandTemplatePanel() {
       <button
         ref={triggerRef}
         onClick={() => setOpen((prev) => !prev)}
-        className="ui-flat-action text-xs"
+        className="ui-flat-action ui-toolbar-button"
         title="Command templates"
         aria-label="打开命令模板面板"
         aria-expanded={open}
