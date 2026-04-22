@@ -46,7 +46,7 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
     <div
       ref={setNodeRef}
       style={style}
-      className="ui-interactive ui-tab-trigger mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[11px] font-medium"
+      className="ui-interactive ui-tab-trigger mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
       data-selected={isActive ? "true" : "false"}
       onClick={onActivate}
       onContextMenu={onContextMenu}
@@ -61,7 +61,7 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
         aria-label={`Terminal ${status}`}
         title={status}
       />
-      <span className="truncate max-w-[140px] tracking-wide">{title}</span>
+      <span className="max-w-[140px] truncate tracking-[0.01em]">{title}</span>
       <button
         onClick={(e) => { e.stopPropagation(); onClose(); }}
         onPointerDown={(e) => e.stopPropagation()}
@@ -181,7 +181,7 @@ export function TerminalTabs() {
         <div className="flex items-center shrink-0 px-2 gap-2">
           <button
             onClick={handleNewTab}
-            className="ui-flat-action text-xs"
+            className="ui-flat-action text-[12px]"
             title="新建终端"
             aria-label="新建终端"
           >
@@ -195,7 +195,7 @@ export function TerminalTabs() {
             onClick={() => {
               void toggleHistory();
             }}
-            className={`ui-flat-action text-xs ${historyOpen ? "ui-primary-action" : "ui-history-primary"}`}
+            className={`ui-flat-action text-[12px] ${historyOpen ? "ui-primary-action" : "ui-history-primary"}`}
             title="历史会话（Ctrl+K）"
             aria-label={historyOpen ? "关闭历史会话面板" : "打开历史会话面板"}
             aria-controls="history-workspace"

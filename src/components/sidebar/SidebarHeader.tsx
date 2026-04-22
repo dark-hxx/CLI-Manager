@@ -49,7 +49,7 @@ export function SidebarHeader({
 
   return (
     <div className={`flex items-center justify-between ${compact ? "px-2.5 pb-1 pt-2.5" : "px-3 pb-1 pt-3"}`}>
-      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-on-surface-variant">Projects</span>
+      <span className="text-[12px] font-semibold tracking-[0.03em] text-on-surface-variant">Projects</span>
       <div className={`flex items-center ${compact ? "gap-0.5" : "gap-1"}`}>
         <button
           onClick={onToggleCollapse}
@@ -69,7 +69,7 @@ export function SidebarHeader({
         </button>
         <button
           onClick={onCreateProject}
-          className={`ui-flat-action ui-primary-action ${compact ? "h-7 px-2 text-[11px]" : "px-2.5 text-xs"}`}
+          className={`ui-flat-action ui-primary-action ${compact ? "h-7 px-2 text-[12px]" : "px-2.5 text-[12px]"}`}
           aria-label="新建终端"
         >
           + 新建

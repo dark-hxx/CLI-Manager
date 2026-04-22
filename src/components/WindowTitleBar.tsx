@@ -56,7 +56,7 @@ export function WindowTitleBar() {
   return (
     <header className="window-titlebar flex h-9 shrink-0 items-center bg-surface-container-low">
       <div
-        className="flex min-w-0 flex-1 items-center gap-2 px-3 text-xs"
+        className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]"
         data-tauri-drag-region
         onDoubleClick={() => runWindowAction(() => getCurrentWindow().toggleMaximize())}
       >
@@ -66,7 +66,7 @@ export function WindowTitleBar() {
           className="h-4 w-4 shrink-0 rounded-[3px]"
           draggable={false}
         />
-        <span className="truncate font-medium tracking-[0.01em] text-on-surface">CLI-Manager</span>
+        <span className="truncate text-[13px] font-semibold tracking-[0.005em] text-on-surface">CLI-Manager</span>
       </div>
       {IN_TAURI && (
         <div className="flex items-center">

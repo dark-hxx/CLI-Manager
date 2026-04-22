@@ -148,7 +148,7 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
         className="h-[min(86vh,860px)] w-full max-w-6xl overflow-hidden rounded-lg border border-border bg-bg-primary flex flex-col"
       >
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+          <div className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-text-primary">
             <BarChart3 size={15} />
             分析看板
           </div>
@@ -205,10 +205,10 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
             刷新
           </button>
 
-          <div className="ml-auto text-xs font-medium text-text-secondary">
+          <div className="ml-auto text-[12px] font-medium text-text-secondary">
             来源：{sourceLabel} ｜ 范围：最近 {rangeDays} 天
           </div>
-          <div className="w-full text-xs font-medium text-text-secondary">
+          <div className="w-full text-[12px] font-medium text-text-secondary">
             最近刷新：{formatDateTime(statsUpdatedAt)}
           </div>
         </div>
@@ -217,7 +217,7 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
           {loadingStats && !stats && <StatsSkeleton />}
 
           {!loadingStats && statsError && (
-            <div className="rounded-md border border-border bg-bg-secondary p-3 text-xs text-danger space-y-2">
+            <div className="rounded-xl border border-border bg-bg-secondary p-3 text-[12px] text-danger space-y-2">
               <div>统计加载失败：{statsError}</div>
               <button
                 onClick={() => {
@@ -240,49 +240,49 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
           {stats && (
             <>
               {loadingStats && (
-                <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                <div className="text-[12px] font-medium" style={{ color: "var(--text-muted)" }}>
                   正在更新统计...
                 </div>
               )}
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
+                <div className="rounded-xl border border-border bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">
                     会话数
                   </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
+                  <div className="mt-1 text-[20px] font-semibold text-text-primary">
                     {formatCount(stats.total_sessions)}
                   </div>
                 </div>
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
+                <div className="rounded-xl border border-border bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">
                     消息数
                   </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
+                  <div className="mt-1 text-[20px] font-semibold text-text-primary">
                     {formatCount(stats.total_messages)}
                   </div>
                 </div>
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
+                <div className="rounded-xl border border-border bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">
                     输入 Token
                   </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
+                  <div className="mt-1 text-[20px] font-semibold text-text-primary">
                     {formatCount(stats.total_input_tokens)}
                   </div>
                 </div>
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
+                <div className="rounded-xl border border-border bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">
                     输出 Token
                   </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
+                  <div className="mt-1 text-[20px] font-semibold text-text-primary">
                     {formatCount(stats.total_output_tokens)}
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-md border border-border bg-bg-secondary p-3">
-                <div className="mb-2 text-xs font-semibold text-text-primary">统计口径说明</div>
-                <div className="space-y-1.5 text-xs leading-5 text-text-secondary">
+              <div className="rounded-xl border border-border bg-bg-secondary p-4">
+                <div className="mb-2 text-[13px] font-semibold text-text-primary">统计口径说明</div>
+                <div className="space-y-1.5 text-[12px] leading-6 text-text-secondary">
                   <div>会话数/消息数：按当前来源、项目与时间范围过滤后聚合。</div>
                   <div>Token：来自历史日志 `usage` 字段汇总（缺失 usage 的消息按 0 计）。</div>
                   <div>当前口径：来源 {sourceLabel}，项目 {projectLabel}，时间 最近 {rangeDays} 天。</div>
@@ -332,17 +332,17 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                 onSelectDay={(day) => setSelectedDayStart(day.day_start_utc)}
               />
 
-              <div className="rounded-md border border-border bg-bg-secondary p-3">
-                <div className="mb-2 text-xs font-semibold text-text-primary">
+              <div className="rounded-xl border border-border bg-bg-secondary p-4">
+                <div className="mb-2 text-[13px] font-semibold text-text-primary">
                   {selectedDay ? `${formatDay(selectedDay.day_start_utc)} 会话` : "选择热力图日期查看会话"}
                 </div>
                 {!selectedDay && (
-                  <div className="text-[11px] text-text-muted">
+                  <div className="text-[12px] font-medium text-text-muted">
                     点击上方热力图方块后，这里会展示当天会话清单
                   </div>
                 )}
                 {selectedDay && selectedDay.session_refs.length === 0 && (
-                  <div className="text-[11px] text-text-muted">
+                  <div className="text-[12px] font-medium text-text-muted">
                     当天无会话
                   </div>
                 )}
@@ -355,7 +355,7 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                     }}
                     className="ui-list-row w-full border-b border-border py-2 text-left last:border-b-0"
                   >
-                    <div className="truncate text-xs font-semibold text-text-primary">
+                    <div className="truncate text-[13px] font-semibold text-text-primary">
                       {session.title}
                     </div>
                     <div className="ui-dev-label mt-0.5 text-[11px] text-text-muted">

@@ -31,6 +31,17 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
 
+  --font-size-app-title: 15px;
+  --font-size-section-title: 13px;
+  --font-size-body: 13px;
+  --font-size-meta: 12px;
+  --font-size-micro: 11px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --line-height-body: 1.55;
+  --line-height-meta: 1.45;
+
   --animate-duration-fast: 150ms;
   --animate-duration-normal: 250ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
@@ -72,7 +83,7 @@
 :root,
 [data-theme="dark"],
 [data-theme="dark"][data-dark-palette="night-indigo"] {
-  --font-ui-sans: "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-ui-sans: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-ui-mono: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas", "SFMono-Regular", "Courier New", monospace;
   --bg-primary: #1a1b26;
   --bg-secondary: #24283b;
@@ -118,6 +129,22 @@
   --danger: #e06a6a;
   --success: #64b487;
   --warning: #d3a053;
+}
+
+/* Dark theme - Investment Platform */
+[data-theme="dark"][data-dark-palette="investment-platform"] {
+  --bg-primary: #0f172a;
+  --bg-secondary: #111c31;
+  --bg-tertiary: #172033;
+  --text-primary: #f8fafc;
+  --text-secondary: #dbe7f5;
+  --text-muted: #94a3b8;
+  --accent: #f59e0b;
+  --accent-hover: #fbbf24;
+  --border: #334155;
+  --danger: #f87171;
+  --success: #34d399;
+  --warning: #fbbf24;
 }
 
 /* Light theme - Warm Paper (default) */
@@ -169,6 +196,22 @@
   --warning: #b07a22;
 }
 
+/* Light theme - SaaS Analytics Dashboard */
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #eef4fb;
+  --text-primary: #1e293b;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --accent: #2563eb;
+  --accent-hover: #3b82f6;
+  --border: #d6e0ea;
+  --danger: #dc2626;
+  --success: #0f766e;
+  --warning: #f97316;
+}
+
 /* Digital Atelier semantic tokens (compat layer on top of existing vars) */
 :root,
 [data-theme="dark"],
@@ -205,6 +248,38 @@
   --surface-container-highest: #dfe3e7;
 }
 
+[data-theme="dark"][data-dark-palette="investment-platform"] {
+  --surface-container-lowest: color-mix(in srgb, var(--bg-primary) 88%, #020617 12%);
+  --surface-container-low: color-mix(in srgb, var(--bg-secondary) 90%, #0b1120 10%);
+  --surface-container-high: color-mix(in srgb, var(--bg-tertiary) 92%, #0f172a 8%);
+  --surface-container-highest: color-mix(in srgb, var(--bg-tertiary) 70%, var(--border) 30%);
+  --primary-dim: color-mix(in srgb, var(--primary) 72%, #1e293b 28%);
+  --primary-gradient-start: color-mix(in srgb, var(--primary) 82%, #fef3c7 18%);
+  --primary-gradient-end: color-mix(in srgb, var(--primary) 54%, #8b5cf6 46%);
+  --interactive-focus-ring: color-mix(in srgb, var(--primary) 28%, transparent);
+  --interactive-hover-bg: color-mix(in srgb, var(--surface-container-high) 78%, var(--primary) 22%);
+  --interactive-active-bg: color-mix(in srgb, var(--surface-container-highest) 74%, var(--primary) 26%);
+  --interactive-selected-bg: color-mix(in srgb, var(--surface-container-highest) 58%, var(--primary) 42%);
+  --interactive-selected-border: color-mix(in srgb, var(--primary) 58%, var(--border) 42%);
+  --interactive-shadow: 0 14px 30px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] {
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f6f9fc;
+  --surface-container-high: #edf3fa;
+  --surface-container-highest: #e2eaf4;
+  --primary-dim: color-mix(in srgb, var(--primary) 76%, #0f172a 24%);
+  --primary-gradient-start: color-mix(in srgb, var(--primary) 78%, #dbeafe 22%);
+  --primary-gradient-end: color-mix(in srgb, #0f172a 20%, var(--warning) 80%);
+  --interactive-focus-ring: color-mix(in srgb, var(--primary) 18%, transparent);
+  --interactive-hover-bg: color-mix(in srgb, var(--surface-container-high) 84%, var(--primary) 16%);
+  --interactive-active-bg: color-mix(in srgb, var(--surface-container-highest) 84%, var(--primary) 16%);
+  --interactive-selected-bg: color-mix(in srgb, var(--surface-container-highest) 62%, var(--primary) 38%);
+  --interactive-selected-border: color-mix(in srgb, var(--primary) 58%, var(--border) 42%);
+  --interactive-shadow: 0 12px 24px color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -212,10 +287,21 @@ html, body, #root {
   overflow: hidden;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-ui-sans);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
 }
 
 code,
@@ -230,7 +316,7 @@ samp,
 
 .ui-dev-label {
   font-family: var(--font-ui-mono);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
 }
 
 .ui-surface-base {
@@ -357,7 +443,7 @@ samp,
 }
 
 .ui-tree-group {
-  letter-spacing: 0.06em;
+  letter-spacing: 0.03em;
 }
 
 .ui-focus-ring:focus-visible {
@@ -497,7 +583,8 @@ samp,
   width: 100%;
   text-align: left;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
   border: none;
   background: transparent;
   cursor: pointer;
@@ -529,7 +616,8 @@ samp,
 
 .mini-btn {
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-micro);
+  line-height: var(--line-height-meta);
   border-radius: 8px;
   border: 0;
   background-color: var(--surface-container-high);
@@ -557,8 +645,8 @@ samp,
   border: 0;
   border-radius: 10px;
   padding: 4px 8px;
-  font-size: 12px;
-  line-height: 1.2;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
   background-color: var(--surface-container-high);
   color: var(--on-surface-variant);
   transition:
@@ -604,8 +692,8 @@ samp,
 
 .ui-segmented-btn {
   padding: 4px 8px;
-  font-size: 12px;
-  line-height: 1.2;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
   border: none;
   background: transparent;
   color: var(--on-surface-variant);
@@ -645,11 +733,13 @@ samp,
 .ui-icon-action:hover:not(:disabled) {
   background-color: var(--interactive-hover-bg);
   color: var(--on-surface);
+  box-shadow: var(--interactive-shadow);
 }
 
 .ui-icon-action[data-active="true"] {
   border-color: var(--primary);
-  background-color: var(--primary);
+  background-image: linear-gradient(135deg, var(--primary-gradient-start), var(--primary-gradient-end));
+  box-shadow: var(--interactive-shadow);
   color: #fff;
 }
 
@@ -683,7 +773,7 @@ samp,
   width: 40px;
   height: 20px;
   border-radius: 999px;
-  border: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
   background-color: var(--surface-container-high);
   transition:
     background-color var(--animate-duration-fast),
@@ -722,7 +812,8 @@ samp,
   height: 14px;
   border-radius: 999px;
   background-color: #fff;
-  transition: transform var(--animate-duration-fast);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 24%, transparent);
+  transition: transform var(--animate-duration-fast), background-color var(--animate-duration-fast);
 }
 
 .switch[data-on="true"] .switch-thumb {
@@ -774,8 +865,27 @@ samp,
     radial-gradient(circle at 102% 32%, color-mix(in srgb, var(--surface-container-high) 78%, transparent) 0%, transparent 44%);
 }
 
+[data-theme="dark"][data-dark-palette="investment-platform"] .ui-workspace-shell {
+  background-image:
+    radial-gradient(circle at 14% -10%, color-mix(in srgb, var(--primary) 18%, transparent) 0%, transparent 42%),
+    radial-gradient(circle at 100% 24%, color-mix(in srgb, #8b5cf6 10%, transparent) 0%, transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-container-low) 68%, transparent), transparent 42%);
+}
+
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-workspace-shell {
+  background-image:
+    radial-gradient(circle at 12% -8%, color-mix(in srgb, var(--primary) 12%, transparent) 0%, transparent 42%),
+    radial-gradient(circle at 100% 22%, color-mix(in srgb, var(--warning) 8%, transparent) 0%, transparent 30%),
+    linear-gradient(180deg, color-mix(in srgb, #ffffff 76%, transparent), transparent 46%);
+}
+
 .ui-sidebar-shell {
   background-color: var(--surface-container-low);
+}
+
+[data-theme="dark"][data-dark-palette="investment-platform"] .ui-sidebar-shell,
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-sidebar-shell {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 24%, transparent);
 }
 
 .ui-main-shell {
@@ -832,6 +942,9 @@ samp,
   border: 0;
   border-radius: 10px;
   padding: 0 10px;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-meta);
   background-color: var(--surface-container-highest);
   color: var(--on-surface-variant);
   transition:
@@ -843,6 +956,7 @@ samp,
 .ui-flat-action:hover:not(:disabled) {
   background-color: var(--interactive-hover-bg);
   color: var(--on-surface);
+  box-shadow: var(--interactive-shadow);
 }
 
 .ui-flat-action:disabled {
@@ -857,7 +971,16 @@ samp,
 
 .ui-primary-action:hover:not(:disabled) {
   filter: brightness(1.04);
+  box-shadow: var(--interactive-shadow);
   color: var(--on-primary);
+}
+
+[data-theme="dark"][data-dark-palette="investment-platform"] .ui-primary-action {
+  letter-spacing: 0.005em;
+}
+
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-primary-action {
+  letter-spacing: 0.01em;
 }
 
 .ui-history-primary {

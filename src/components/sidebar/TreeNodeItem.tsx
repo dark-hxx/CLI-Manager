@@ -93,7 +93,7 @@ export function TreeNodeItem({ node, depth, density, focusedNodeKey, onFocusNode
       >
         <div
           className={`ui-tree-node ui-focus-ring flex items-center rounded-md cursor-pointer group/item ${
-            compact ? "gap-1.5 py-1 text-[12px]" : "gap-2 py-1.5 text-sm"
+            compact ? "gap-1.5 py-1 text-[12px]" : "gap-2 py-1.5 text-[13px]"
           }`}
           data-selected={isSelected || isMultiSelected ? "true" : "false"}
           style={{ paddingLeft, paddingRight: 8 }}
@@ -112,7 +112,7 @@ export function TreeNodeItem({ node, depth, density, focusedNodeKey, onFocusNode
           <span className="flex-1 min-w-0 flex items-center gap-1">
             <span className="block truncate">{p.name}</span>
             {p.cli_tool && (
-              <span className="inline-flex shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-[9px] leading-tight text-primary">
+              <span className="inline-flex shrink-0 rounded-full bg-surface-container-high px-1.5 py-0.5 text-[10px] font-medium leading-tight text-primary">
                 {p.cli_tool}
               </span>
             )}
@@ -184,8 +184,8 @@ export function TreeNodeItem({ node, depth, density, focusedNodeKey, onFocusNode
       onFocus={() => onFocusNode(treeKey)}
     >
       <div
-        className={`ui-tree-node ui-tree-group ui-focus-ring flex items-center rounded-md font-semibold uppercase tracking-wider cursor-pointer group/grp ${
-          compact ? "gap-1 py-1 text-[11px]" : "gap-1.5 py-1.5 text-xs"
+        className={`ui-tree-node ui-tree-group ui-focus-ring flex items-center rounded-md font-semibold cursor-pointer group/grp ${
+          compact ? "gap-1 py-1 text-[11px]" : "gap-1.5 py-1.5 text-[12px]"
         }`}
         data-selected="false"
         style={{ paddingLeft, paddingRight: 8, color: "var(--on-surface-variant)" }}
@@ -196,7 +196,7 @@ export function TreeNodeItem({ node, depth, density, focusedNodeKey, onFocusNode
         <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
         <span style={{ color: "var(--accent)", flexShrink: 0 }}><Folder size={16} strokeWidth={1.5} /></span>
         <span className="flex-1 text-left truncate">{g.name}</span>
-        <span className="rounded-full bg-surface-container-high px-1.5 text-[10px] font-normal text-on-surface-variant">{childCount}</span>
+        <span className="rounded-full bg-surface-container-high px-1.5 text-[11px] font-medium text-on-surface-variant">{childCount}</span>
         <span className="hidden group-hover/grp:flex items-center gap-0.5 shrink-0">
           <button onClick={(e) => { e.stopPropagation(); actions.onStartGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title="启动本目录"><Play size={14} strokeWidth={1.5} /></button>
           <button onClick={(e) => { e.stopPropagation(); actions.onAddSubGroup(g.id); }} className="icon-btn" style={{ color: "var(--text-muted)", opacity: 0.7 }} title="Add sub-group"><FolderPlus size={14} strokeWidth={1.5} /></button>

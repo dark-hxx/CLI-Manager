@@ -75,7 +75,7 @@ export function HistoryListPane({
           </button>
 
           <select
-            className="ui-input shrink-0 px-2 py-1 text-xs"
+            className="ui-input shrink-0 px-2 py-1 text-[12px]"
             value={sourceFilter}
             onChange={(e) => onSourceFilterChange(e.target.value as HistorySourceFilter)}
             aria-label="历史来源过滤"
@@ -104,11 +104,11 @@ export function HistoryListPane({
             onChange={(e) => onGlobalQueryChange(e.target.value)}
             aria-label="全局搜索历史会话"
             placeholder="全局搜索（标题/消息/标签）"
-            className="flex-1 bg-transparent text-xs outline-none"
+            className="flex-1 bg-transparent text-[12px] outline-none"
           />
         </div>
 
-        <div className="mt-1 text-[11px] text-text-muted">Ctrl+K 打开全局搜索</div>
+        <div className="mt-1 text-[12px] text-text-muted">Ctrl+K 打开全局搜索</div>
       </div>
 
       <div ref={sessionListRef} onScroll={onSessionListScroll} className="flex-1 overflow-y-auto">
@@ -125,7 +125,7 @@ export function HistoryListPane({
         {!loadingSessions &&
           groupedSessions.map((group) => (
             <div key={group.label}>
-              <div className="ui-dev-label border-y border-border bg-bg-tertiary px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+              <div className="ui-dev-label border-y border-border bg-bg-tertiary px-3 py-1.5 text-[11px] font-semibold tracking-[0.04em] text-text-muted">
                 {group.label}
               </div>
               {group.items.map((item) => (
@@ -137,12 +137,12 @@ export function HistoryListPane({
                 >
                   <div className="flex items-center gap-1.5">
                     {item.starred && <Star size={12} style={{ color: "var(--warning)" }} fill="currentColor" />}
-                    <span className="truncate text-xs font-semibold text-text-primary">{item.displayTitle}</span>
+                    <span className="truncate text-[13px] font-semibold text-text-primary">{item.displayTitle}</span>
                   </div>
-                  <div className="ui-dev-label mt-1 text-[10px] text-text-muted">
+                  <div className="ui-dev-label mt-1 text-[11px] text-text-muted">
                     {item.source} · {makeSessionLabel(item)} · {item.message_count} 条消息
                   </div>
-                  <div className="ui-dev-label mt-1 text-[10px] text-text-muted">更新于 {formatTime(item.updated_at)}</div>
+                  <div className="ui-dev-label mt-1 text-[11px] text-text-muted">更新于 {formatTime(item.updated_at)}</div>
                 </button>
               ))}
             </div>

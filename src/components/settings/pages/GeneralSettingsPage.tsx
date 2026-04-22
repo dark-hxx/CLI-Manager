@@ -40,6 +40,12 @@ const LIGHT_PALETTE_OPTIONS: {
     description: "高对比中性，红色强调",
     swatches: ["#f7f7f5", "#1f1f1c", "#c43d2f"],
   },
+  {
+    value: "saas-analytics-dashboard",
+    label: "SaaS Dashboard",
+    description: "冷静浅色，适合数据驾驶舱与 Bento 卡片层级",
+    swatches: ["#f8fbff", "#1e293b", "#3b82f6"],
+  },
 ];
 
 const DARK_PALETTE_OPTIONS: {
@@ -66,6 +72,12 @@ const DARK_PALETTE_OPTIONS: {
     description: "中性黑灰，朱红强调",
     swatches: ["#171616", "#e6dfdb", "#c95b4a"],
   },
+  {
+    value: "investment-platform",
+    label: "Investment Platform",
+    description: "深海军蓝与琥珀金，克制的专业金融终端气质",
+    swatches: ["#0f172a", "#f8fafc", "#f59e0b"],
+  },
 ];
 
 const FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
@@ -80,7 +92,6 @@ const SIDEBAR_DENSITY_OPTIONS: { value: SidebarDensity; label: string; descripti
   { value: "comfortable", label: "舒适", description: "默认间距，强调可读性" },
   { value: "compact", label: "紧凑", description: "减少行高与缩进，显示更多条目" },
 ];
-
 
 function PaletteCard({
   active,
@@ -126,7 +137,7 @@ function PaletteCard({
       <div className={`mt-2 text-sm font-semibold ${active ? "text-on-surface" : "text-on-surface-variant"}`}>
         {label}
       </div>
-      <div className={`mt-1 text-xs ${active ? "text-on-surface-variant" : "text-text-muted"}`}>
+      <div className={`mt-1 text-xs leading-5 ${active ? "text-on-surface-variant" : "text-text-muted"}`}>
         {description}
       </div>
     </button>
@@ -216,7 +227,7 @@ export function GeneralSettingsPage() {
           <div className="text-sm font-semibold text-on-surface">终端与侧栏</div>
           <div className="mt-3 space-y-3">
             <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">字体大小</label>
+              <label className="mb-1 block text-xs text-on-surface-variant">终端字体大小</label>
               <div className="flex items-center gap-3">
                 <input
                   type="range"
@@ -226,7 +237,7 @@ export function GeneralSettingsPage() {
                   value={fontSize}
                   onChange={(e) => update("fontSize", Number(e.target.value))}
                   className="w-full accent-accent"
-                  aria-label="字体大小滑杆"
+                  aria-label="终端字体大小滑杆"
                 />
                 <input
                   type="number"
@@ -237,10 +248,11 @@ export function GeneralSettingsPage() {
                   className="ui-focus-ring w-16 rounded-lg border border-border bg-surface-container-high px-2 py-1 text-xs text-on-surface outline-none"
                 />
               </div>
+              <div className="mt-1 text-[11px] text-text-muted">仅影响内置终端，不改变应用界面字体。</div>
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">字体族</label>
+              <label className="mb-1 block text-xs text-on-surface-variant">终端字体族</label>
               <select
                 value={fontFamily}
                 onChange={(e) => update("fontFamily", e.target.value)}
@@ -286,8 +298,8 @@ export function GeneralSettingsPage() {
                       data-selected={active ? "true" : "false"}
                       aria-pressed={active}
                     >
-                      <div className="text-xs font-semibold">{opt.label}</div>
-                      <div className="mt-0.5 text-[11px] text-on-surface-variant">{opt.description}</div>
+                      <div className="text-sm font-semibold">{opt.label}</div>
+                      <div className="mt-0.5 text-[11px] leading-4 text-on-surface-variant">{opt.description}</div>
                     </button>
                   );
                 })}
@@ -307,7 +319,6 @@ export function GeneralSettingsPage() {
               </button>
             </div>
 
-
             <div className="flex items-center justify-between">
               <span className="text-xs text-on-surface-variant">调试模式</span>
               <button
@@ -325,7 +336,7 @@ export function GeneralSettingsPage() {
       </section>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="mb-2 text-sm font-semibold text-on-surface">实时预览</div>
+        <div className="mb-2 text-sm font-semibold text-on-surface">终端实时预览</div>
         <div
           className="rounded-xl border border-border p-4 font-mono"
           style={{ backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}
