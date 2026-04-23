@@ -12,7 +12,7 @@ interface SettingsNavProps<T extends string> {
 export function SettingsNav<T extends string>({ tabs, activeTab, onChange }: SettingsNavProps<T>) {
   return (
     <aside className="ui-surface-low flex w-[220px] shrink-0 flex-col border-r border-border p-3">
-      <span className="px-2 pb-3 text-[11px] font-bold uppercase tracking-widest text-on-surface-variant">
+      <span className="px-2 pb-3 text-[12px] font-semibold tracking-[0.04em] text-on-surface-variant">
         设置
       </span>
       <nav className="ui-no-divider-list">

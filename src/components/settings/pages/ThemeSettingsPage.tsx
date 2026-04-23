@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
 import {
   TERMINAL_THEME_PRESETS,
   getTerminalTheme,
@@ -87,12 +88,12 @@ export function ThemeSettingsPage() {
 
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="text-sm font-semibold text-on-surface">独立主题库</div>
-          <input
+          <Input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索主题..."
-            className="ui-focus-ring w-52 rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none"
+            className="w-52 text-xs"
             aria-label="终端主题搜索"
             disabled={terminalThemeMode !== "independent"}
           />

@@ -329,7 +329,7 @@ export function HistoryWorkspace() {
   };
 
   return (
-    <div id="history-workspace" className="flex h-full min-h-0 min-w-0 overflow-hidden">
+    <div id="history-workspace" className="ui-history-shell flex h-full min-h-0 min-w-0 overflow-hidden rounded-2xl">
       <HistoryListPane
         historySidebarWidth={historySidebarWidth}
         sidebarRef={sidebarRef}
@@ -367,7 +367,7 @@ export function HistoryWorkspace() {
         onStartResize={startResize}
       />
 
-      <section className="relative grid min-h-0 min-w-0 flex-1 grid-rows-[auto_1fr] overflow-hidden bg-bg-primary">
+      <section className="ui-history-detail relative grid min-h-0 min-w-0 flex-1 grid-rows-[auto_1fr] overflow-hidden">
         <SessionDetailPane
           activeView={activeView}
           activeSession={activeSession}

@@ -51,8 +51,43 @@ export function SidebarSearch({
   }
 
   return (
-    <div className={compact ? "px-2.5 py-1.5" : "px-3 py-2"}>
-      <div className={`flex items-center rounded-xl bg-surface-container-highest ${compact ? "gap-1.5 px-2 py-1.5" : "gap-2 px-2.5 py-1.5"}`}>
+    <div className={compact ? "px-2.5 py-1.5" : "px-2.5 py-2"}>
+      <div className={`mb-2 flex flex-wrap items-center ${compact ? "gap-1.5" : "gap-2"}`}>
+        <button
+          onClick={onStartFiltered}
+          disabled={filteredCount === 0}
+          className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact ui-primary-action"
+          title="启动筛选结果"
+          aria-label="启动筛选结果"
+        >
+          <Play size={12} strokeWidth={1.8} />
+          启动筛选
+        </button>
+        <button
+          onClick={onStartSelected}
+          disabled={selectedCount === 0}
+          className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+          title="启动已选"
+          aria-label="启动已选项目"
+        >
+          <Play size={12} strokeWidth={1.8} />
+          启动已选 ({selectedCount})
+        </button>
+        {selectedCount > 0 && (
+          <button
+            onClick={onClearSelected}
+            className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+            title="清空已选"
+            aria-label="清空已选项目"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <X size={11} strokeWidth={2} />
+              清空
+            </span>
+          </button>
+        )}
+      </div>
+      <div className={`ui-sidebar-search-shell ${compact ? "gap-1.5 px-2 py-1.5" : "gap-2 px-2.5 py-1.5"}`}>
         <span className="text-on-surface-variant">
           <Search size={14} strokeWidth={1.5} />
         </span>
@@ -64,34 +99,6 @@ export function SidebarSearch({
           className="flex-1 bg-transparent text-sm text-on-surface outline-none"
           aria-label="搜索项目"
         />
-      </div>
-      <div className={`mt-2 flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
-        <button
-          onClick={onStartFiltered}
-          disabled={filteredCount === 0}
-          className="mini-btn"
-          title="启动筛选结果"
-          aria-label="启动筛选结果"
-        >
-          启动筛选
-        </button>
-        <button
-          onClick={onStartSelected}
-          disabled={selectedCount === 0}
-          className="mini-btn"
-          title="启动已选"
-          aria-label="启动已选项目"
-        >
-          启动已选 ({selectedCount})
-        </button>
-        {selectedCount > 0 && (
-          <button onClick={onClearSelected} className="mini-btn" title="清空已选" aria-label="清空已选项目">
-            <span className="inline-flex items-center gap-1">
-              <X size={11} strokeWidth={2} />
-              清空
-            </span>
-          </button>
-        )}
       </div>
     </div>
   );

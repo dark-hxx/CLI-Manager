@@ -614,79 +614,85 @@ export function Sidebar({ onOpenStats, compactMode = false }: SidebarProps) {
 
   return (
     <aside
-      className={`ui-sidebar-shell relative flex select-none flex-col ${
+      className={`ui-sidebar-shell relative flex select-none flex-col overflow-hidden ${
         compactMode ? "min-w-0 flex-1" : "shrink-0"
       } ${sidebarResizing ? "transition-none" : "transition-[width] duration-150"}`}
       data-sidebar-density={sidebarDensity}
       style={{ width: compactMode ? "100%" : sidebarWidth }}
     >
-      <SidebarHeader
-        collapsed={compactMode ? false : sidebarCollapsed}
-        density={sidebarDensity}
-        onToggleCollapse={toggleSidebarCollapsed}
-        onCreateGroup={() => {
-          ensureSidebarExpanded();
-          setNewGroupParentId("__root__");
-        }}
-        onCreateProject={() => {
-          ensureSidebarExpanded();
-          setAddToGroupId(null);
-          setShowAdd(true);
-        }}
-      />
-
-      <SidebarSearch
-        collapsed={compactMode ? false : sidebarCollapsed}
-        density={sidebarDensity}
-        searchQuery={searchQuery}
-        selectedCount={selectedProjects.length}
-        filteredCount={filteredProjects.length}
-        onSearchChange={setSearchQuery}
-        onStartFiltered={() => {
-          void openProjects(filteredProjects);
-        }}
-        onStartSelected={() => {
-          void openProjects(selectedProjects);
-        }}
-        onClearSelected={() => setSelectedProjectIds(new Set())}
-        onExpandSidebar={expandSidebar}
-      />
-
-      <TreeContext.Provider value={treeActions}>
-        <ProjectTree
-          tree={tree}
-          initialLoading={initialLoading}
-          loadError={loadError}
+      <div className="ui-sidebar-top">
+        <SidebarHeader
           collapsed={compactMode ? false : sidebarCollapsed}
           density={sidebarDensity}
-          newGroupParentId={newGroupParentId}
-          onCreateRootGroup={(name) => handleCreateGroup(null, name)}
-          onCancelRootGroup={handleCancelNewGroup}
-          onQuickAddProject={() => {
+          onToggleCollapse={toggleSidebarCollapsed}
+          onCreateGroup={() => {
+            ensureSidebarExpanded();
+            setNewGroupParentId("__root__");
+          }}
+          onCreateProject={() => {
             ensureSidebarExpanded();
             setAddToGroupId(null);
             setShowAdd(true);
           }}
-          onRetry={() => {
-            setInitialLoading(true);
-            void loadProjects();
-          }}
         />
-      </TreeContext.Provider>
 
-      <SidebarFooter
-        collapsed={compactMode ? false : sidebarCollapsed}
-        useExternalTerminal={useExternalTerminal}
-        compactModeEnabled={viewMode === "compact"}
-        onToggleExternalTerminal={() => {
-          void updateSetting("useExternalTerminal", !useExternalTerminal);
-        }}
-        onToggleCompactMode={() => {
-          void updateSetting("viewMode", viewMode === "compact" ? "standard" : "compact");
-        }}
-        onOpenStats={onOpenStats}
-        onOpenSettings={() => setShowSettings(true)}
-      />
+        <SidebarSearch
+          collapsed={compactMode ? false : sidebarCollapsed}
+          density={sidebarDensity}
+          searchQuery={searchQuery}
+          selectedCount={selectedProjects.length}
+          filteredCount={filteredProjects.length}
+          onSearchChange={setSearchQuery}
+          onStartFiltered={() => {
+            void openProjects(filteredProjects);
+          }}
+          onStartSelected={() => {
+            void openProjects(selectedProjects);
+          }}
+          onClearSelected={() => setSelectedProjectIds(new Set())}
+          onExpandSidebar={expandSidebar}
+        />
+      </div>
+
+      <div className="min-h-0 flex-1">
+        <TreeContext.Provider value={treeActions}>
+          <ProjectTree
+            tree={tree}
+            initialLoading={initialLoading}
+            loadError={loadError}
+            collapsed={compactMode ? false : sidebarCollapsed}
+            density={sidebarDensity}
+            newGroupParentId={newGroupParentId}
+            onCreateRootGroup={(name) => handleCreateGroup(null, name)}
+            onCancelRootGroup={handleCancelNewGroup}
+            onQuickAddProject={() => {
+              ensureSidebarExpanded();
+              setAddToGroupId(null);
+              setShowAdd(true);
+            }}
+            onRetry={() => {
+              setInitialLoading(true);
+              void loadProjects();
+            }}
+          />
+        </TreeContext.Provider>
+      </div>
+
+      <div className="ui-sidebar-footer">
+        <SidebarFooter
+          collapsed={compactMode ? false : sidebarCollapsed}
+          useExternalTerminal={useExternalTerminal}
+          compactModeEnabled={viewMode === "compact"}
+          onToggleExternalTerminal={() => {
+            void updateSetting("useExternalTerminal", !useExternalTerminal);
+          }}
+          onToggleCompactMode={() => {
+            void updateSetting("viewMode", viewMode === "compact" ? "standard" : "compact");
+          }}
+          onOpenStats={onOpenStats}
+          onOpenSettings={() => setShowSettings(true)}
+        />
+      </div>
 
       {contextMenu && (
         <Portal>
@@ -847,7 +853,7 @@ export function Sidebar({ onOpenStats, compactMode = false }: SidebarProps) {
       {!compactMode && (
         <div
           onMouseDown={startResize}
-          className="absolute bottom-0 right-0 top-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-surface-container-highest"
+          className="ui-sidebar-resize-handle absolute bottom-0 right-0 top-0 z-10 w-1.5 cursor-col-resize transition-colors"
           style={{ opacity: 0.8 }}
         />
       )}

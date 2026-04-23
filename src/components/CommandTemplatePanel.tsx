@@ -7,6 +7,8 @@ import type { CommandTemplate, Project } from "../lib/types";
 import { TerminalSquare, Plus, Trash2 } from "./icons";
 import { Portal } from "./ui/Portal";
 import { EmptyState } from "./ui/EmptyState";
+import { Input } from "./ui/input";
+import { Select } from "./ui/select";
 import { Skeleton } from "./ui/Skeleton";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
@@ -195,7 +197,7 @@ export function CommandTemplatePanel() {
       <button
         ref={triggerRef}
         onClick={() => setOpen((prev) => !prev)}
-        className="ui-flat-action text-xs"
+        className="ui-flat-action ui-toolbar-button"
         title="Command templates"
         aria-label="打开命令模板面板"
         aria-expanded={open}
@@ -228,47 +230,47 @@ export function CommandTemplatePanel() {
             {/* New template form */}
             {showForm && (
               <div className="space-y-1.5 px-3 py-2">
-                <input
+                <Input
                   type="text"
                   placeholder="名称"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="ui-focus-ring w-full rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface outline-none"
+                  className="h-7 text-xs"
                 />
-                <input
+                <Input
                   type="text"
                   placeholder="命令（支持 ${projectPath}, ${projectName}）"
                   value={command}
                   onChange={(e) => setCommand(e.target.value)}
-                  className="ui-focus-ring w-full rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface outline-none"
+                  className="h-7 text-xs"
                 />
-                <input
+                <Input
                   type="text"
                   placeholder="描述（可选）"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="ui-focus-ring w-full rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface outline-none"
+                  className="h-7 text-xs"
                 />
-                <select
+                <Select
                   value={scope}
                   onChange={(e) => setScope(e.target.value as "global" | "project" | "session")}
-                  className="ui-focus-ring w-full rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface outline-none"
+                  className="h-7 text-xs"
                 >
                   <option value="global">全局模板</option>
                   <option value="project">项目模板</option>
                   <option value="session">会话模板（单次终端）</option>
-                </select>
+                </Select>
                 {scope === "project" && (
-                  <select
+                  <Select
                     value={projectId ?? ""}
                     onChange={(e) => setProjectId(e.target.value || null)}
-                    className="ui-focus-ring w-full rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface outline-none"
+                    className="h-7 text-xs"
                   >
                     <option value="">请选择项目</option>
                     {projects.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
-                  </select>
+                  </Select>
                 )}
                 {scope === "session" && (
                   <div className="text-[10px] text-on-surface-variant">

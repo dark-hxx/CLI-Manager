@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { BarChart3, RefreshCw, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import type { HistorySessionSummary, HistorySessionView } from "../../lib/types";
 import { useHistoryStore } from "../../stores/historyStore";
 import { TimelineHeatmap } from "./TimelineHeatmap";
@@ -54,22 +57,22 @@ function makeSessionKey(summary: HistorySessionSummary): string {
 function StatsSkeleton() {
   return (
     <div className="space-y-3 animate-fade-in">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="rounded-md border border-border bg-bg-secondary p-2 space-y-2">
+          <Card key={i} className="bg-bg-secondary p-2 space-y-2 rounded-md">
             <Skeleton className="h-2.5 w-1/2" />
             <Skeleton className="h-5 w-2/3" />
-          </div>
+          </Card>
         ))}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {[1, 2].map((i) => (
-          <div key={i} className="rounded-md border border-border bg-bg-secondary p-3 space-y-2">
+          <Card key={i} className="bg-bg-secondary p-3 space-y-2 rounded-md">
             <Skeleton className="h-3 w-1/3" />
             <Skeleton className="h-2.5 w-full" />
             <Skeleton className="h-2.5 w-5/6" />
             <Skeleton className="h-2.5 w-2/3" />
-          </div>
+          </Card>
         ))}
       </div>
     </div>
@@ -144,29 +147,27 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div
-        className="h-[min(86vh,860px)] w-full max-w-6xl overflow-hidden rounded-lg border border-border bg-bg-primary flex flex-col"
-      >
-        <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
-            <BarChart3 size={15} />
-            分析看板
+      <Card className="ui-stats-panel h-[min(86vh,860px)] w-full max-w-6xl overflow-hidden rounded-2xl bg-bg-primary flex flex-col">
+        <div className="ui-stats-panel-header flex items-center justify-between border-b border-border px-3 py-2">
+          <div>
+            <div className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-text-primary">
+              <span className="ui-stats-panel-badge">
+                <BarChart3 size={15} />
+              </span>
+              分析看板
+            </div>
+            <div className="ui-dev-label mt-1 text-[11px] text-text-muted">会话趋势、Token 构成与活跃分布</div>
           </div>
-          <button
-            onClick={onClose}
-            aria-label="关闭分析看板"
-            className="ui-btn h-7 w-7 p-0"
-            title="关闭"
-          >
+          <Button onClick={onClose} aria-label="关闭分析看板" size="icon" variant="ghost" title="关闭">
             <X size={14} />
-          </button>
+          </Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-          <select
+          <Select
             value={projectKey}
             onChange={(e) => setProjectKey(e.target.value)}
-            className="ui-input shrink-0 px-2 py-1 text-xs"
+            className="h-8 w-auto min-w-[124px] shrink-0 text-xs"
             aria-label="项目过滤"
           >
             <option value="">全部项目</option>
@@ -175,20 +176,20 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                 {project}
               </option>
             ))}
-          </select>
+          </Select>
 
-          <select
+          <Select
             value={rangeDays}
             onChange={(e) => setRangeDays(Number(e.target.value) || 30)}
-            className="ui-input shrink-0 px-2 py-1 text-xs"
+            className="h-8 w-auto min-w-[110px] shrink-0 text-xs"
             aria-label="时间范围"
           >
             <option value={7}>最近 7 天</option>
             <option value={30}>最近 30 天</option>
             <option value={90}>最近 90 天</option>
-          </select>
+          </Select>
 
-          <button
+          <Button
             onClick={() => {
               void loadStats({
                 projectKey: projectKey || null,
@@ -199,27 +200,25 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
               });
             }}
             aria-label="刷新统计"
-            className="ui-btn text-xs"
+            size="sm"
           >
             <RefreshCw size={12} className={loadingStats ? "animate-spin" : ""} />
             刷新
-          </button>
+          </Button>
 
-          <div className="ml-auto text-xs font-medium text-text-secondary">
+          <div className="ml-auto text-[12px] font-medium text-text-secondary">
             来源：{sourceLabel} ｜ 范围：最近 {rangeDays} 天
           </div>
-          <div className="w-full text-xs font-medium text-text-secondary">
-            最近刷新：{formatDateTime(statsUpdatedAt)}
-          </div>
+          <div className="w-full text-[12px] font-medium text-text-secondary">最近刷新：{formatDateTime(statsUpdatedAt)}</div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
           {loadingStats && !stats && <StatsSkeleton />}
 
           {!loadingStats && statsError && (
-            <div className="rounded-md border border-border bg-bg-secondary p-3 text-xs text-danger space-y-2">
+            <Card className="bg-bg-secondary p-3 text-[12px] text-danger space-y-2">
               <div>统计加载失败：{statsError}</div>
-              <button
+              <Button
                 onClick={() => {
                   void loadStats({
                     projectKey: projectKey || null,
@@ -229,67 +228,51 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                     // error state is already managed in store
                   });
                 }}
-                className="ui-btn text-xs"
+                size="sm"
               >
                 <RefreshCw size={12} />
                 重试
-              </button>
-            </div>
+              </Button>
+            </Card>
           )}
 
           {stats && (
             <>
               {loadingStats && (
-                <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                <div className="text-[12px] font-medium" style={{ color: "var(--text-muted)" }}>
                   正在更新统计...
                 </div>
               )}
 
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
-                    会话数
-                  </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
-                    {formatCount(stats.total_sessions)}
-                  </div>
-                </div>
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
-                    消息数
-                  </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
-                    {formatCount(stats.total_messages)}
-                  </div>
-                </div>
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
-                    输入 Token
-                  </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
-                    {formatCount(stats.total_input_tokens)}
-                  </div>
-                </div>
-                <div className="rounded-md border border-border bg-bg-secondary p-2">
-                  <div className="text-[11px] text-text-muted">
-                    输出 Token
-                  </div>
-                  <div className="mt-1 text-base font-semibold text-text-primary">
-                    {formatCount(stats.total_output_tokens)}
-                  </div>
-                </div>
+              <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                <Card className="ui-stats-metric-card bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">会话数</div>
+                  <div className="ui-stats-metric-value mt-1 text-[20px] font-semibold text-text-primary">{formatCount(stats.total_sessions)}</div>
+                </Card>
+                <Card className="ui-stats-metric-card bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">消息数</div>
+                  <div className="ui-stats-metric-value mt-1 text-[20px] font-semibold text-text-primary">{formatCount(stats.total_messages)}</div>
+                </Card>
+                <Card className="ui-stats-metric-card bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">输入 Token</div>
+                  <div className="ui-stats-metric-value mt-1 text-[20px] font-semibold text-text-primary">{formatCount(stats.total_input_tokens)}</div>
+                </Card>
+                <Card className="ui-stats-metric-card bg-bg-secondary p-3">
+                  <div className="text-[12px] font-medium text-text-muted">输出 Token</div>
+                  <div className="ui-stats-metric-value mt-1 text-[20px] font-semibold text-text-primary">{formatCount(stats.total_output_tokens)}</div>
+                </Card>
               </div>
 
-              <div className="rounded-md border border-border bg-bg-secondary p-3">
-                <div className="mb-2 text-xs font-semibold text-text-primary">统计口径说明</div>
-                <div className="space-y-1.5 text-xs leading-5 text-text-secondary">
+              <Card className="bg-bg-secondary p-4">
+                <div className="mb-2 text-[13px] font-semibold text-text-primary">统计口径说明</div>
+                <div className="space-y-1.5 text-[12px] leading-6 text-text-secondary">
                   <div>会话数/消息数：按当前来源、项目与时间范围过滤后聚合。</div>
                   <div>Token：来自历史日志 `usage` 字段汇总（缺失 usage 的消息按 0 计）。</div>
                   <div>当前口径：来源 {sourceLabel}，项目 {projectLabel}，时间 最近 {rangeDays} 天。</div>
                 </div>
-              </div>
+              </Card>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
                 <div className="lg:col-span-2">
                   <StatsTrendChart
                     days={stats.heatmap}
@@ -303,7 +286,7 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                 />
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <StatsProjectBar
                   items={stats.project_ranking}
                   selectedProjectKey={projectKey}
@@ -316,12 +299,12 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                 <StatsModelComposition items={stats.model_distribution} />
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <StatsTokenTrendChart items={stats.daily_series} />
                 <StatsSourceComparisonChart items={stats.source_distribution} />
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <StatsProjectEfficiencyScatter items={stats.project_efficiency} />
                 <StatsHourlyActivityChart items={stats.hourly_activity} />
               </div>
@@ -332,19 +315,15 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                 onSelectDay={(day) => setSelectedDayStart(day.day_start_utc)}
               />
 
-              <div className="rounded-md border border-border bg-bg-secondary p-3">
-                <div className="mb-2 text-xs font-semibold text-text-primary">
+              <Card className="bg-bg-secondary p-4">
+                <div className="mb-2 text-[13px] font-semibold text-text-primary">
                   {selectedDay ? `${formatDay(selectedDay.day_start_utc)} 会话` : "选择热力图日期查看会话"}
                 </div>
                 {!selectedDay && (
-                  <div className="text-[11px] text-text-muted">
-                    点击上方热力图方块后，这里会展示当天会话清单
-                  </div>
+                  <div className="text-[12px] font-medium text-text-muted">点击上方热力图方块后，这里会展示当天会话清单</div>
                 )}
                 {selectedDay && selectedDay.session_refs.length === 0 && (
-                  <div className="text-[11px] text-text-muted">
-                    当天无会话
-                  </div>
+                  <div className="text-[12px] font-medium text-text-muted">当天无会话</div>
                 )}
 
                 {visibleDaySessions.map((session) => (
@@ -355,9 +334,7 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                     }}
                     className="ui-list-row w-full border-b border-border py-2 text-left last:border-b-0"
                   >
-                    <div className="truncate text-xs font-semibold text-text-primary">
-                      {session.title}
-                    </div>
+                    <div className="truncate text-[13px] font-semibold text-text-primary">{session.title}</div>
                     <div className="ui-dev-label mt-0.5 text-[11px] text-text-muted">
                       {session.source} · {session.project_key} · {session.message_count} 条消息
                     </div>
@@ -365,18 +342,15 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                 ))}
 
                 {selectedDay && dayVisibleCount < selectedDay.session_refs.length && (
-                  <button
-                    onClick={() => setDayVisibleCount((prev) => prev + DAY_SESSION_PAGE_SIZE)}
-                    className="ui-btn mt-2 w-full text-xs"
-                  >
+                  <Button onClick={() => setDayVisibleCount((prev) => prev + DAY_SESSION_PAGE_SIZE)} className="mt-2 w-full" size="sm">
                     加载更多 ({dayVisibleCount}/{selectedDay.session_refs.length})
-                  </button>
+                  </Button>
                 )}
-              </div>
+              </Card>
             </>
           )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

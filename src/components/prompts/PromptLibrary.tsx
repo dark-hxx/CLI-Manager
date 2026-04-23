@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Select } from "@/components/ui/select";
 import { Copy, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import type { HistorySessionView, PromptScope } from "../../lib/types";
@@ -143,26 +144,21 @@ export function PromptLibrary({
           </button>
 
           {scope === "project" && (
-            <select
+            <Select
               value={projectKey}
               onChange={(e) => setProjectKey(e.target.value)}
-              className="text-xs rounded-md border px-2 py-1 outline-none"
-              style={{
-                borderColor: "var(--border)",
-                backgroundColor: "var(--bg-secondary)",
-                color: "var(--text-primary)",
-              }}
+              className="h-7 min-w-[120px] rounded-md bg-bg-secondary text-xs"
             >
               {projectOptions.map((item) => (
                 <option key={item} value={item}>
                   {item}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
 
           <div
-            className="ml-auto min-w-[220px] flex items-center gap-2 rounded-md border px-2 py-1"
+            className="ui-search-focus-shell ml-auto min-w-[220px] flex items-center gap-2 rounded-md border px-2 py-1"
             style={{
               borderColor: "var(--border)",
               backgroundColor: "var(--bg-secondary)",

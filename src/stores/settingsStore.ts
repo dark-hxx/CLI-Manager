@@ -4,8 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
 
 export type ThemeMode = "dark" | "light" | "system";
-export type LightThemePalette = "warm-paper" | "cream-green" | "ink-red";
-export type DarkThemePalette = "night-indigo" | "forest-night" | "graphite-red";
+export type LightThemePalette = "warm-paper" | "cream-green" | "ink-red" | "saas-analytics-dashboard";
+export type DarkThemePalette = "night-indigo" | "forest-night" | "graphite-red" | "investment-platform";
 export type TerminalThemeMode = "follow-app" | "independent";
 export type SidebarDensity = "compact" | "comfortable";
 export type ViewMode = "standard" | "compact";
@@ -63,12 +63,40 @@ const DEFAULTS: Settings = {
   },
 };
 
+const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
+  "luxury-commerce": "saas-analytics-dashboard",
+};
+
+const LEGACY_DARK_PALETTE_MAP: Partial<Record<string, DarkThemePalette>> = {
+  "crypto-wallet": "investment-platform",
+};
+
+const LEGACY_TERMINAL_THEME_MAP: Partial<Record<string, string>> = {
+  luxuryCommerceLight: "saasAnalyticsDashboardLight",
+  cryptoWalletDark: "investmentPlatformDark",
+};
+
 function getSystemTheme(): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function resolveTheme(mode: ThemeMode): "dark" | "light" {
   return mode === "system" ? getSystemTheme() : mode;
+}
+
+function migrateLightThemePalette(value: unknown): LightThemePalette | undefined {
+  if (typeof value !== "string") return undefined;
+  return (LEGACY_LIGHT_PALETTE_MAP[value] ?? value) as LightThemePalette;
+}
+
+function migrateDarkThemePalette(value: unknown): DarkThemePalette | undefined {
+  if (typeof value !== "string") return undefined;
+  return (LEGACY_DARK_PALETTE_MAP[value] ?? value) as DarkThemePalette;
+}
+
+function migrateTerminalThemeName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return LEGACY_TERMINAL_THEME_MAP[value] ?? value;
 }
 
 let store: Store | null = null;
@@ -101,28 +129,60 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         (entries as Record<string, unknown>)[key] = val;
       }
     }
+
     const theme = (entries.theme as ThemeMode) ?? DEFAULTS.theme;
     const debugMode = (entries.debugMode as boolean) ?? DEFAULTS.debugMode;
     const storedTerminalThemeMode = entries.terminalThemeMode as TerminalThemeMode | undefined;
     const resolvedTheme = resolveTheme(theme);
-    const lightThemePalette = (entries.lightThemePalette as LightThemePalette | undefined) ?? DEFAULTS.lightThemePalette;
-    const darkThemePalette = (entries.darkThemePalette as DarkThemePalette | undefined) ?? DEFAULTS.darkThemePalette;
-    let terminalThemeName = (entries.terminalThemeName as string | undefined) ?? DEFAULTS.terminalThemeName;
+
+    const storedLightThemePalette = entries.lightThemePalette;
+    const lightThemePalette = migrateLightThemePalette(storedLightThemePalette) ?? DEFAULTS.lightThemePalette;
+    if (
+      typeof storedLightThemePalette === "string" &&
+      lightThemePalette !== storedLightThemePalette
+    ) {
+      await s.set("lightThemePalette", lightThemePalette);
+    }
+    entries.lightThemePalette = lightThemePalette;
+
+    const storedDarkThemePalette = entries.darkThemePalette;
+    const darkThemePalette = migrateDarkThemePalette(storedDarkThemePalette) ?? DEFAULTS.darkThemePalette;
+    if (
+      typeof storedDarkThemePalette === "string" &&
+      darkThemePalette !== storedDarkThemePalette
+    ) {
+      await s.set("darkThemePalette", darkThemePalette);
+    }
+    entries.darkThemePalette = darkThemePalette;
+
+    const storedTerminalThemeName = entries.terminalThemeName;
+    let terminalThemeName = migrateTerminalThemeName(storedTerminalThemeName) ?? DEFAULTS.terminalThemeName;
+    if (
+      typeof storedTerminalThemeName === "string" &&
+      terminalThemeName !== storedTerminalThemeName
+    ) {
+      await s.set("terminalThemeName", terminalThemeName);
+    }
+
     const terminalThemeMode =
       storedTerminalThemeMode ??
       (terminalThemeName !== "auto" ? "independent" : "follow-app");
+
     if (terminalThemeMode === "independent" && terminalThemeName === "auto") {
       terminalThemeName = resolveAutoTerminalThemeId(resolvedTheme, lightThemePalette, darkThemePalette);
+      await s.set("terminalThemeName", terminalThemeName);
     }
+
     entries.terminalThemeName = terminalThemeName;
     entries.terminalThemeMode = terminalThemeMode;
+
     if (entries.keyboardShortcuts) {
       entries.keyboardShortcuts = { ...DEFAULTS.keyboardShortcuts, ...entries.keyboardShortcuts };
     }
+
     set({ ...entries, resolvedTheme, loaded: true });
     void applyDebugMode(debugMode);
 
-    // Listen for system theme changes
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       const current = get().theme;
       if (current === "system") {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Input } from "@/components/ui/input";
 import { useSyncStore } from "../../../stores/syncStore";
 import { Cloud, Download, Upload, AlertTriangle, Check, Eye, EyeOff } from "../../icons";
 import { toast } from "sonner";
@@ -192,35 +193,36 @@ export function SyncSettingsPage() {
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-sm text-on-surface-variant">服务器地址</label>
-            <input
+            <Input
               type="url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://dav.example.com/webdav"
-              className="w-full rounded-lg border border-border bg-surface-container-highest px-3 py-2 text-sm text-on-surface outline-none focus:border-primary"
+              className="h-9 text-sm"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="mb-1.5 block text-sm text-on-surface-variant">用户名</label>
-              <input
+              <Input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="username"
-                className="w-full rounded-lg border border-border bg-surface-container-highest px-3 py-2 text-sm text-on-surface outline-none focus:border-primary"
+                className="h-9 text-sm"
               />
             </div>
             <div>
               <label className="mb-1.5 block text-sm text-on-surface-variant">密码</label>
               <div className="relative">
-                <input
+                <Input
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full rounded-lg border border-border bg-surface-container-highest px-3 py-2 pr-10 text-sm text-on-surface outline-none focus:border-primary"
+                  className="h-9 pr-10 text-sm"
+                  aria-label="WebDAV 密码"
                 />
                 <button
                   type="button"

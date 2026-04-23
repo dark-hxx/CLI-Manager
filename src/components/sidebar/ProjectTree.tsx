@@ -297,7 +297,7 @@ export function ProjectTree({
             return (
               <button
                 key={item.key}
-                className={`ui-flat-action mx-auto my-0.5 px-0 text-primary ${collapsedButtonSize}`}
+                className={`ui-flat-action ui-tree-collapsed-item mx-auto my-0.5 px-0 text-primary ${collapsedButtonSize}`}
                 title={item.label}
                 aria-label={`目录 ${item.label}`}
                 onContextMenu={(e) => actions.onContextMenuGroup(e, groupNode.group.id, groupNode.group.name)}
@@ -316,11 +316,8 @@ export function ProjectTree({
           return (
             <button
               key={item.key}
-              className={`mx-auto my-0.5 flex ${collapsedButtonSize} items-center justify-center rounded-md font-semibold transition-colors ${compactTextSize} ${
-                selected
-                  ? "ui-primary-action text-white"
-                  : "bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest"
-              }`}
+              className={`ui-tree-collapsed-item mx-auto my-0.5 flex ${collapsedButtonSize} items-center justify-center rounded-xl font-semibold transition-colors ${compactTextSize}`}
+              data-selected={selected ? "true" : "false"}
               title={project.name}
               aria-label={`打开项目 ${project.name}`}
               onClick={() => actions.onOpenProject(project)}
@@ -345,7 +342,7 @@ export function ProjectTree({
             ref={(ref) => {
               ref?.focus();
             }}
-            className="ui-focus-ring flex-1 rounded-md bg-surface-container-highest px-1.5 py-1 text-xs text-on-surface outline-none"
+            className="ui-tree-inline-input ui-focus-ring h-8 flex-1 px-2 text-xs text-on-surface outline-none"
             onBlur={(e) => {
               const value = e.currentTarget.value.trim();
               if (value) onCreateRootGroup(value);

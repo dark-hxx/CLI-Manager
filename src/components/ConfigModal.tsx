@@ -7,6 +7,9 @@ import { SHELL_OPTIONS } from "../lib/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ChevronDown } from "./icons";
 import { Portal } from "./ui/Portal";
+import { Input } from "./ui/input";
+import { Select } from "./ui/select";
+import { Textarea } from "./ui/textarea";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -17,8 +20,6 @@ interface Props {
   defaultGroupId?: string | null;
   onClose: () => void;
 }
-
-const inputClass = "w-full rounded border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary outline-none";
 
 export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Props) {
   const { createProject, updateProject, groups } = useProjectStore();
@@ -195,12 +196,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
           <div>
             <label className="mb-1 block text-xs text-text-muted">路径 *</label>
             <div className="flex gap-1">
-              <input
+              <Input
                 type="text"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
                 placeholder="C:\\我的项目\\my-app"
-                className={`${inputClass} flex-1`}
+                className="flex-1 text-sm"
               />
               <button
                 type="button"
@@ -227,24 +228,24 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
 
           <div>
             <label className="mb-1 block text-xs text-text-muted">Shell</label>
-            <select
+            <Select
               value={shell}
               onChange={(e) => setShell(e.target.value)}
-              className={inputClass}
+              className="text-sm"
             >
               {SHELL_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <Field label="启动命令" value={startupCmd} onChange={setStartupCmd} placeholder="npm run dev" />
           <div>
             <label className="mb-1 block text-xs text-text-muted">环境变量（JSON）</label>
-            <textarea
+            <Textarea
               value={envVarsText}
               onChange={(e) => setEnvVarsText(e.target.value)}
-              className="h-16 w-full resize-none rounded border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary outline-none"
+              className="h-16 resize-none text-sm"
             />
           </div>
         </div>
@@ -422,12 +423,12 @@ function Field({
   return (
     <div>
       <label className="mb-1 block text-xs text-text-muted">{label}</label>
-      <input
+      <Input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={inputClass}
+        className="text-sm"
       />
     </div>
   );

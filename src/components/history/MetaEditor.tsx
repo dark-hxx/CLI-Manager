@@ -1,4 +1,5 @@
-﻿import { Search } from "lucide-react";
+﻿import { Input } from "@/components/ui/input";
+import { Search } from "lucide-react";
 import type { RefObject } from "react";
 
 interface MetaEditorProps {
@@ -33,19 +34,19 @@ export function MetaEditor({
   return (
     <>
       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <input
+        <Input
           value={aliasDraft}
           onChange={(e) => onAliasDraftChange(e.target.value)}
           aria-label="会话别名"
           placeholder="会话别名（重命名）"
-          className="ui-input px-2 py-1 text-xs outline-none"
+          className="h-7 px-2 text-xs"
         />
-        <input
+        <Input
           value={tagsDraft}
           onChange={(e) => onTagsDraftChange(e.target.value)}
           aria-label="会话标签（逗号分隔）"
           placeholder="标签，逗号分隔"
-          className="ui-input px-2 py-1 text-xs outline-none"
+          className="h-7 px-2 text-xs"
         />
       </div>
 

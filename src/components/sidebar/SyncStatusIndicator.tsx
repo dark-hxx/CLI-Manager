@@ -72,17 +72,17 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
   }
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between gap-2">
       <button
         onClick={onOpenSettings}
-        className={`flex items-center gap-1 ${getStatusColor()} hover:text-on-surface transition-colors`}
+        className={`ui-sidebar-sync-link ${getStatusColor()}`}
         title={hasPassword ? undefined : "点击配置云同步"}
         aria-label={hasPassword ? undefined : "配置云同步"}
       >
         <Cloud size={12} strokeWidth={1.5} />
         <span className="text-xs">{getStatusText()}</span>
       </button>
-      <div className="flex items-center gap-0.5">
+      <div className="ui-sidebar-sync-actions">
         <button
           onClick={handleUpload}
           disabled={hasPassword && status === "syncing"}

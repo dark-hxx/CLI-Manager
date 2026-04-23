@@ -8,8 +8,8 @@ export interface TerminalThemePreset {
   tone?: "light" | "dark";
 }
 
-export type LightTerminalPalette = "warm-paper" | "cream-green" | "ink-red";
-export type DarkTerminalPalette = "night-indigo" | "forest-night" | "graphite-red";
+export type LightTerminalPalette = "warm-paper" | "cream-green" | "ink-red" | "saas-analytics-dashboard";
+export type DarkTerminalPalette = "night-indigo" | "forest-night" | "graphite-red" | "investment-platform";
 
 const tokyoNightDark: ITheme = {
   background: "#1a1b26",
@@ -170,6 +170,52 @@ const inkRedLight: ITheme = {
   brightMagenta: "#9b5a4e",
   brightCyan: "#738266",
   brightWhite: "#1f1f1c",
+};
+
+const saasAnalyticsDashboardLight: ITheme = {
+  background: "#f8fbff",
+  foreground: "#1e293b",
+  cursor: "#1e293b",
+  selectionBackground: "#dbeafe",
+  black: "#1e293b",
+  red: "#dc2626",
+  green: "#0f766e",
+  yellow: "#d97706",
+  blue: "#2563eb",
+  magenta: "#7c3aed",
+  cyan: "#0891b2",
+  white: "#64748b",
+  brightBlack: "#94a3b8",
+  brightRed: "#ef4444",
+  brightGreen: "#14b8a6",
+  brightYellow: "#f59e0b",
+  brightBlue: "#3b82f6",
+  brightMagenta: "#8b5cf6",
+  brightCyan: "#06b6d4",
+  brightWhite: "#0f172a",
+};
+
+const investmentPlatformDark: ITheme = {
+  background: "#0f172a",
+  foreground: "#f8fafc",
+  cursor: "#f8fafc",
+  selectionBackground: "#1d4ed8",
+  black: "#020617",
+  red: "#f87171",
+  green: "#34d399",
+  yellow: "#f59e0b",
+  blue: "#38bdf8",
+  magenta: "#8b5cf6",
+  cyan: "#22d3ee",
+  white: "#cbd5e1",
+  brightBlack: "#475569",
+  brightRed: "#fca5a5",
+  brightGreen: "#6ee7b7",
+  brightYellow: "#fbbf24",
+  brightBlue: "#7dd3fc",
+  brightMagenta: "#c4b5fd",
+  brightCyan: "#67e8f9",
+  brightWhite: "#f8fafc",
 };
 
 const dracula: ITheme = {
@@ -361,9 +407,11 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
   { id: "tokyoNightLight", name: "Tokyo Night Light", theme: tokyoNightLight, family: "tokyo-night", tone: "light" },
   { id: "forestNightDark", name: "Forest Night Dark", theme: forestNightDark, family: "atelier", tone: "dark" },
   { id: "graphiteRedDark", name: "Graphite Red Dark", theme: graphiteRedDark, family: "atelier", tone: "dark" },
+  { id: "investmentPlatformDark", name: "Investment Platform Dark", theme: investmentPlatformDark, family: "atelier", tone: "dark" },
   { id: "warmPaperLight", name: "Warm Paper Light", theme: warmPaperLight, family: "atelier", tone: "light" },
   { id: "creamGreenLight", name: "Cream Green Light", theme: creamGreenLight, family: "atelier", tone: "light" },
   { id: "inkRedLight", name: "Ink Red Light", theme: inkRedLight, family: "atelier", tone: "light" },
+  { id: "saasAnalyticsDashboardLight", name: "SaaS Analytics Dashboard Light", theme: saasAnalyticsDashboardLight, family: "atelier", tone: "light" },
   { id: "dracula", name: "Dracula", theme: dracula, family: "classic", tone: "dark" },
   { id: "monokai", name: "Monokai", theme: monokai, family: "classic", tone: "dark" },
   { id: "nord", name: "Nord", theme: nord, family: "nord", tone: "dark" },
@@ -379,12 +427,14 @@ const themeMap = new Map(TERMINAL_THEME_PRESETS.map((p) => [p.id, p.theme]));
 function resolveAutoLightThemeId(lightPalette: LightTerminalPalette = "warm-paper"): string {
   if (lightPalette === "cream-green") return "creamGreenLight";
   if (lightPalette === "ink-red") return "inkRedLight";
+  if (lightPalette === "saas-analytics-dashboard") return "saasAnalyticsDashboardLight";
   return "warmPaperLight";
 }
 
 function resolveAutoDarkThemeId(darkPalette: DarkTerminalPalette = "night-indigo"): string {
   if (darkPalette === "forest-night") return "forestNightDark";
   if (darkPalette === "graphite-red") return "graphiteRedDark";
+  if (darkPalette === "investment-platform") return "investmentPlatformDark";
   return "tokyoNightDark";
 }
 
@@ -404,11 +454,6 @@ export function resolveAutoTerminalThemeId(
   return resolvedTheme === "dark" ? resolveAutoDarkThemeId(darkPalette) : resolveAutoLightThemeId(lightPalette);
 }
 
-/**
- * Resolve a terminal theme by name.
- * - "auto" → pick based on app resolvedTheme (dark → tokyoNightDark, light → selected light palette)
- * - other → lookup by ID, fallback to auto behavior
- */
 export function getTerminalTheme(
   themeName: string,
   resolvedTheme: "dark" | "light",

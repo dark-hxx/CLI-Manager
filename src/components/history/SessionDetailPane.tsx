@@ -78,7 +78,7 @@ export function SessionDetailPane({
 
   return (
     <>
-      <div className="[grid-row:1] min-h-0 shrink-0 overflow-y-auto border-b border-border p-3">
+      <div className="ui-history-detail-top [grid-row:1] min-h-0 shrink-0 overflow-y-auto p-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-text-primary">{activeView.displayTitle}</h3>
@@ -87,18 +87,28 @@ export function SessionDetailPane({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <button onClick={onOpenPrompt} aria-label="打开历史 Prompt 库" className="ui-btn" title="历史 Prompt 库">
+            <button
+              onClick={onOpenPrompt}
+              aria-label="打开历史 Prompt 库"
+              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+              title="历史 Prompt 库"
+            >
               <BookCopy size={12} />
               历史Prompt
             </button>
-            <button onClick={onOpenDiff} aria-label="打开 Diff 视图" className="ui-btn" title="Diff 视图">
+            <button
+              onClick={onOpenDiff}
+              aria-label="打开 Diff 视图"
+              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+              title="Diff 视图"
+            >
               <GitCompare size={12} />
               Diff
             </button>
             <button
               onClick={onToggleStar}
               aria-label={activeView.starred ? "取消收藏会话" : "收藏会话"}
-              className="ui-btn"
+              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
               style={{ color: activeView.starred ? "var(--warning)" : undefined }}
               title="收藏"
             >
@@ -124,7 +134,7 @@ export function SessionDetailPane({
         />
       </div>
 
-      <div ref={messageListRef} onScroll={onMessageListScroll} className="[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3 space-y-2">
+      <div ref={messageListRef} onScroll={onMessageListScroll} className="[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3 space-y-2.5">
         {loadingSessionDetail && <div className="text-xs text-text-muted">正在读取会话详情...</div>}
 
         {!loadingSessionDetail && activeSession?.messages.length === 0 && (
@@ -142,7 +152,7 @@ export function SessionDetailPane({
                 ref={(el) => {
                   messageRefs.current[idx] = el;
                 }}
-                className="rounded-md border border-border bg-bg-secondary p-2"
+                className="ui-history-message-card p-2.5"
                 style={{
                   borderColor: isFocused ? "var(--warning)" : isMatched ? "var(--accent)" : "var(--border)",
                 }}

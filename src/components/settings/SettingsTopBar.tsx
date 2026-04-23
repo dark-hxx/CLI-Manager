@@ -1,3 +1,4 @@
+import { Input } from "@/components/ui/input";
 import { Search } from "../icons";
 
 interface SettingsTopBarProps {
@@ -31,12 +32,12 @@ export function SettingsTopBar({
               strokeWidth={1.75}
               className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant"
             />
-            <input
+            <Input
               type="text"
               value={searchValue}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder={searchPlaceholder}
-              className="w-full rounded-xl border border-border bg-surface-container-high py-1.5 pl-8 pr-3 text-xs text-on-surface outline-none"
+              className="h-8 rounded-xl border-border bg-surface-container-high pl-8 pr-3 text-xs"
               aria-label="设置搜索"
             />
           </div>

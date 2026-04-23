@@ -46,7 +46,7 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
     <div
       ref={setNodeRef}
       style={style}
-      className="ui-interactive ui-tab-trigger mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[11px] font-medium"
+      className="ui-interactive ui-tab-trigger mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
       data-selected={isActive ? "true" : "false"}
       onClick={onActivate}
       onContextMenu={onContextMenu}
@@ -61,7 +61,7 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, onConte
         aria-label={`Terminal ${status}`}
         title={status}
       />
-      <span className="truncate max-w-[140px] tracking-wide">{title}</span>
+      <span className="max-w-[140px] truncate tracking-[0.01em]">{title}</span>
       <button
         onClick={(e) => { e.stopPropagation(); onClose(); }}
         onPointerDown={(e) => e.stopPropagation()}
@@ -155,11 +155,9 @@ export function TerminalTabs() {
   } as CSSProperties;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Tab bar */}
-      <div className="ui-terminal-chrome flex h-10 items-center">
-        {/* Scrollable tabs area */}
-        <div className="flex-1 flex items-center h-full overflow-x-auto min-w-0">
+    <div className="ui-terminal-tabs-shell flex h-full min-h-0 flex-col">
+      <div className="ui-terminal-chrome">
+        <div className="ui-terminal-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto px-1.5">
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={sessionIds} strategy={horizontalListSortingStrategy}>
               {sessions.map((s) => (
@@ -177,11 +175,10 @@ export function TerminalTabs() {
             </SortableContext>
           </DndContext>
         </div>
-        {/* Action buttons — outside scroll container so dropdowns are not clipped */}
-        <div className="flex items-center shrink-0 px-2 gap-2">
+        <div className="ui-terminal-actions flex h-full shrink-0 items-center gap-2 px-2.5">
           <button
             onClick={handleNewTab}
-            className="ui-flat-action text-xs"
+            className="ui-flat-action ui-toolbar-button ui-primary-action"
             title="新建终端"
             aria-label="新建终端"
           >
@@ -195,7 +192,7 @@ export function TerminalTabs() {
             onClick={() => {
               void toggleHistory();
             }}
-            className={`ui-flat-action text-xs ${historyOpen ? "ui-primary-action" : "ui-history-primary"}`}
+            className={`ui-flat-action ui-toolbar-button ${historyOpen ? "ui-primary-action" : "ui-history-primary"}`}
             title="历史会话（Ctrl+K）"
             aria-label={historyOpen ? "关闭历史会话面板" : "打开历史会话面板"}
             aria-controls="history-workspace"
@@ -267,8 +264,7 @@ export function TerminalTabs() {
         </Portal>
       )}
 
-      {/* Terminal panel */}
-      <div className="flex-1 min-h-0 overflow-hidden px-3 pb-3">
+      <div className="flex-1 min-h-0 overflow-hidden px-3 pb-3 pt-3">
         {historyOpen ? (
           <div className="ui-surface-card h-full min-h-0 overflow-hidden">
             <HistoryWorkspace />

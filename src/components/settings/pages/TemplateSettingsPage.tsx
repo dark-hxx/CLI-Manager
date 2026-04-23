@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { useTemplateStore } from "../../../stores/templateStore";
 import { useProjectStore } from "../../../stores/projectStore";
 import { useTerminalStore } from "../../../stores/terminalStore";
@@ -249,48 +251,48 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs text-on-surface-variant">名称</label>
-            <input
+            <Input
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
               placeholder="例如：启动后端服务"
-              className="ui-focus-ring w-full rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none"
+              className="text-xs"
             />
           </div>
 
           <div>
             <label className="mb-1 block text-xs text-on-surface-variant">命令</label>
-            <input
+            <Input
               value={form.command}
               onChange={(e) => setForm((prev) => ({ ...prev, command: e.target.value }))}
               placeholder="支持 ${projectPath}, ${projectName}"
-              className="ui-focus-ring w-full rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none"
+              className="text-xs"
             />
           </div>
 
           <div>
             <label className="mb-1 block text-xs text-on-surface-variant">描述</label>
-            <input
+            <Input
               value={form.description}
               onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
               placeholder="可选"
-              className="ui-focus-ring w-full rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none"
+              className="text-xs"
             />
           </div>
 
           <div>
             <label className="mb-1 block text-xs text-on-surface-variant">作用域</label>
-            <select
+            <Select
               value={form.scope}
               onChange={(e) => setForm((prev) => ({ ...prev, scope: e.target.value as Scope }))}
               disabled={mode === "edit"}
-              className="ui-focus-ring w-full rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none disabled:opacity-70"
+              className="text-xs disabled:opacity-70"
             >
               <option value="global">全局</option>
               <option value="project">项目</option>
               <option value="session" disabled={!activeSessionId}>
                 会话
               </option>
-            </select>
+            </Select>
             {!activeSessionId && form.scope === "session" && (
               <div className="mt-1 text-[11px] text-warning">当前无活跃会话，不能创建会话模板。</div>
             )}
@@ -304,11 +306,11 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
           {form.scope === "project" && (
             <div>
               <label className="mb-1 block text-xs text-on-surface-variant">目标项目</label>
-              <select
+              <Select
                 value={form.projectId ?? ""}
                 onChange={(e) => setForm((prev) => ({ ...prev, projectId: e.target.value || null }))}
                 disabled={mode === "edit"}
-                className="ui-focus-ring w-full rounded-lg border border-border bg-surface-container-high px-2 py-1.5 text-xs text-on-surface outline-none disabled:opacity-70"
+                className="text-xs disabled:opacity-70"
               >
                 <option value="">请选择项目</option>
                 {projects.map((project) => (
@@ -316,7 +318,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
                     {project.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           )}
 

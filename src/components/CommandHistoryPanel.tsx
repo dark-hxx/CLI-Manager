@@ -133,7 +133,7 @@ export function CommandHistoryPanel({ compact = false }: CommandHistoryPanelProp
             style={{ left: panelPosition.left, top: panelPosition.top }}
           >
             <div className="p-2">
-              <div className="flex items-center gap-2 rounded-lg bg-surface-container-highest px-2 py-1">
+              <div className="ui-search-focus-shell flex items-center gap-2 rounded-lg bg-surface-container-highest px-2 py-1">
                 <Search size={12} strokeWidth={1.5} />
                 <input
                   type="text"
