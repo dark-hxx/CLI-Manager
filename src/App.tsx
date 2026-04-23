@@ -24,7 +24,7 @@ const appStartAt =
     : Date.now();
 let firstScreenPerfReported = false;
 const COMPACT_WINDOW_WIDTH = 350;
-const WINDOW_MIN_HEIGHT = 500;
+const WINDOW_MIN_HEIGHT = 600;
 const IN_TAURI = isTauri();
 
 function App() {

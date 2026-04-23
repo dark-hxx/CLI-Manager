@@ -654,7 +654,7 @@ export function Sidebar({ onOpenStats, compactMode = false }: SidebarProps) {
         />
       </div>
 
-      <div className="min-h-0 flex-1">
+      <div className={`${compactMode ? "min-h-[220px]" : "min-h-0"} flex-1 overflow-hidden`}>
         <TreeContext.Provider value={treeActions}>
           <ProjectTree
             tree={tree}
@@ -678,7 +678,7 @@ export function Sidebar({ onOpenStats, compactMode = false }: SidebarProps) {
         </TreeContext.Provider>
       </div>
 
-      <div className="ui-sidebar-footer">
+      <div className="ui-sidebar-footer shrink-0">
         <SidebarFooter
           collapsed={compactMode ? false : sidebarCollapsed}
           useExternalTerminal={useExternalTerminal}
