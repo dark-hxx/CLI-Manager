@@ -17,8 +17,32 @@ interface UpdateState {
   downloadProgress: number;
   error: string | null;
   fetchVersion: () => Promise<void>;
-  checkUpdate: () => Promise<void>;
+  checkUpdate: (options?: { silent?: boolean }) => Promise<UpdateInfo | null>;
   reset: () => void;
+}
+
+function parseVersion(version: string | null): number[] | null {
+  const normalized = version?.trim().replace(/^[vV]/, "");
+  if (!normalized) return null;
+
+  const match = normalized.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!match) return null;
+
+  return [match[1], match[2] ?? "0", match[3] ?? "0"].map(Number);
+}
+
+function isNewerVersion(latestVersion: string, currentVersion: string | null): boolean {
+  const latestParts = parseVersion(latestVersion);
+  const currentParts = parseVersion(currentVersion);
+
+  if (!latestParts || !currentParts) return false;
+
+  for (let i = 0; i < latestParts.length; i++) {
+    if (latestParts[i] > currentParts[i]) return true;
+    if (latestParts[i] < currentParts[i]) return false;
+  }
+
+  return false;
 }
 
 export const useUpdateStore = create<UpdateState>((set, get) => ({
@@ -39,7 +63,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 
-  checkUpdate: async () => {
+  checkUpdate: async (options) => {
+    const silent = options?.silent ?? false;
     set({ checking: true, error: null });
 
     try {
@@ -56,25 +81,29 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       const latestVersion = data.tag_name?.replace(/^[vV]/, "") || "";
       const currentVersion = get().currentVersion;
 
-      if (latestVersion && latestVersion !== currentVersion) {
+      if (isNewerVersion(latestVersion, currentVersion)) {
+        const updateInfo: UpdateInfo = {
+          version: latestVersion,
+          releaseDate: data.published_at || "",
+          releaseNotes: (data.body || "").slice(0, 500),
+          downloadUrl: data.html_url || "",
+        };
         set({
           checking: false,
           updateAvailable: true,
-          updateInfo: {
-            version: latestVersion,
-            releaseDate: data.published_at || "",
-            releaseNotes: (data.body || "").slice(0, 500),
-            downloadUrl: data.html_url || "",
-          },
+          updateInfo,
         });
+        return updateInfo;
       } else {
         set({ checking: false, updateAvailable: false, updateInfo: null });
+        return null;
       }
     } catch (e) {
       set({
         checking: false,
-        error: e instanceof Error ? e.message : "检查更新失败",
+        error: silent ? null : e instanceof Error ? e.message : "检查更新失败",
       });
+      return null;
     }
   },
 

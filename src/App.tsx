@@ -15,7 +15,9 @@ import { useTerminalStore } from "./stores/terminalStore";
 import { useSyncStore } from "./stores/syncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useHistoryStore } from "./stores/historyStore";
+import { useUpdateStore } from "./stores/updateStore";
 import { createPerfMarker, logWarn } from "./lib/logger";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 const appStartAt =
@@ -23,6 +25,7 @@ const appStartAt =
     ? performance.now()
     : Date.now();
 let firstScreenPerfReported = false;
+let startupUpdateChecked = false;
 const COMPACT_WINDOW_WIDTH = 350;
 const WINDOW_MIN_HEIGHT = 600;
 const IN_TAURI = isTauri();
@@ -60,6 +63,28 @@ function App() {
       const { projects, projectHealth } = useProjectStore.getState();
       const projectMap = new Map(projects.map((p) => [p.id, p]));
       await useTerminalStore.getState().restoreSessions(projectMap, projectHealth);
+
+      if (!startupUpdateChecked) {
+        startupUpdateChecked = true;
+        void (async () => {
+          const updateStore = useUpdateStore.getState();
+          await updateStore.fetchVersion();
+          const updateInfo = await updateStore.checkUpdate({ silent: true });
+          if (!updateInfo) return;
+          toast.info(`发现新版本 V${updateInfo.version}`, {
+            description: "点击前往 Release 页面下载更新",
+            action: updateInfo.downloadUrl
+              ? {
+                  label: "前往更新",
+                  onClick: () => {
+                    void openUrl(updateInfo.downloadUrl);
+                  },
+                }
+              : undefined,
+            duration: 12000,
+          });
+        })();
+      }
     };
     init().catch((err) => {
       toast.error("初始化失败", { description: String(err) });

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getTerminalTheme, getTerminalBackground } from "../lib/terminalThemes";
@@ -22,12 +21,18 @@ interface Props {
   darkThemePalette?: DarkThemePalette;
 }
 
+const ACTIVE_OUTPUT_FLUSH_MS = 33;
+const INACTIVE_OUTPUT_FLUSH_MS = 250;
+
 export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const inputBuffer = useRef("");
   const fitRafRef = useRef<number | null>(null);
+  const outputFlushTimerRef = useRef<number | null>(null);
+  const lastOutputFlushAtRef = useRef(0);
+  const outputQueueRef = useRef<string[]>([]);
   const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -62,6 +67,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   // Refit terminal when tab becomes active
   useEffect(() => {
     isActiveRef.current = isActive;
+    if (terminalRef.current) {
+      terminalRef.current.options.cursorBlink = isActive;
+      if (!isActive) {
+        terminalRef.current.blur();
+      }
+    }
     if (isActive && fitAddonRef.current && containerRef.current) {
       // Wait one frame to ensure display:block has taken effect and layout is stable.
       scheduleFit(true);
@@ -75,7 +86,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     const terminal = new Terminal({
       cols: 80,
       rows: 24,
-      cursorBlink: true,
+      cursorBlink: isActive,
       cursorStyle: "block",
       fontSize,
       fontFamily,
@@ -87,16 +98,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     terminal.loadAddon(fitAddon);
     terminal.open(containerRef.current);
 
-    try {
-      terminal.loadAddon(new WebglAddon());
-    } catch {
-      // WebGL not supported, fall back to canvas
-    }
-
     fitAddon.fit();
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
-    terminal.focus();
+    if (isActive) {
+      terminal.focus();
+    }
 
     const copySelection = async () => {
       const selection = terminal.getSelection();
@@ -173,15 +180,47 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       });
     });
 
+    const flushOutput = () => {
+      outputFlushTimerRef.current = null;
+      lastOutputFlushAtRef.current = performance.now();
+      const payloads = outputQueueRef.current;
+      outputQueueRef.current = [];
+      if (payloads.length === 0) return;
+
+      const chunks = payloads.map((payload) => atob(payload));
+      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      if (totalLength === 0) return;
+
+      const bytes = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        for (let i = 0; i < chunk.length; i++) {
+          bytes[offset + i] = chunk.charCodeAt(i);
+        }
+        offset += chunk.length;
+      }
+      terminal.write(bytes);
+    };
+
+    const scheduleOutputFlush = (payload: string) => {
+      outputQueueRef.current.push(payload);
+      if (outputFlushTimerRef.current !== null) return;
+      const minDelay = isActiveRef.current ? ACTIVE_OUTPUT_FLUSH_MS : INACTIVE_OUTPUT_FLUSH_MS;
+      const elapsed = performance.now() - lastOutputFlushAtRef.current;
+      const delay = Math.max(0, minDelay - elapsed);
+      outputFlushTimerRef.current = window.setTimeout(flushOutput, delay);
+    };
+
     // Listen for PTY output (Base64 encoded to preserve control characters)
     let unlisten: UnlistenFn | null = null;
+    let disposed = false;
     listen<string>(`pty-output-${sessionId}`, (event) => {
-      // Decode Base64 to Uint8Array, then decode UTF-8 for xterm.js
-      const binaryString = atob(event.payload);
-      const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
-      const text = new TextDecoder("utf-8").decode(bytes);
-      terminal.write(text);
+      scheduleOutputFlush(event.payload);
     }).then((fn) => {
+      if (disposed) {
+        fn();
+        return;
+      }
       unlisten = fn;
     });
 
@@ -222,6 +261,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     }
 
     return () => {
+      disposed = true;
       textarea?.removeEventListener("compositionstart", onCompositionStart);
       textarea?.removeEventListener("compositionend", onCompositionEnd);
       resizeObserver.disconnect();
@@ -229,6 +269,11 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         cancelAnimationFrame(fitRafRef.current);
         fitRafRef.current = null;
       }
+      if (outputFlushTimerRef.current !== null) {
+        window.clearTimeout(outputFlushTimerRef.current);
+        outputFlushTimerRef.current = null;
+      }
+      outputQueueRef.current = [];
       unlisten?.();
       terminal.dispose();
       terminalRef.current = null;
