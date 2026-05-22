@@ -39,3 +39,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: 发布 V0.1.4 版本与 CHANGELOG
+
+**Date**: 2026-05-22
+**Task**: 发布 V0.1.4 版本与 CHANGELOG
+**Branch**: `master`
+
+### Summary
+
+汇总 V0.1.3 之后的 4 个 commit 写入 CHANGELOG（PTY 边界修复 / 性能优化 / Catppuccin+Gruvbox 5 套终端主题 / 工程内务），同步 4 处版本字段 0.1.3→0.1.4（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）。另行提交本地 TODO 文件到 .trellis/workspace/hxx/TODO.md（终端换行快捷键可配置 + Tab 关闭按钮放大）。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `20b134f` | (see git log) |
+| `742573a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
