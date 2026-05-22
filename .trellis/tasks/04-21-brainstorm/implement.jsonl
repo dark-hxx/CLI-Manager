@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "精简模式涉及 App 与 Sidebar 组件组合和视觉结构"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "精简模式需要扩展 settingsStore 持久化状态"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新增设置字段需要保持类型安全"}
