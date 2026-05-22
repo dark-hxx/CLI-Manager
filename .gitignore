@@ -36,7 +36,6 @@ src-tauri/target/
 
 prototype/
 .cursor
-.trellis
 .serena
 .gitnexus
 CLAUDE.md

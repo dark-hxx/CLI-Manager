@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "XTermTerminal.tsx 修改需遵循组件规范（hooks 顺序、effect 清理、ref 生命周期）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "TextDecoder stream 模式与 WebglAddon onContextLoss 改动需符合项目代码质量基线"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务横跨 Rust PTY 后端 + 前端 xterm 渲染，需对照跨层契约（base64 字节流 + UTF-8 边界保证）思考"}

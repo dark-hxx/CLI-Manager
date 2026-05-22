@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "审查 XTermTerminal.tsx 与 manager.rs 改动是否达到质量门槛（无 any、错误处理、无副作用泄漏）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验证 Rust↔TS 跨层字节流契约：后端是否保证 UTF-8 + ANSI 边界，前端是否仍做防御性 streaming decode"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "确认 safe_emit_boundary 是纯函数且可复用、未与 reader 线程耦合"}
