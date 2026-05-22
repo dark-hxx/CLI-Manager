@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { useFocusTrap } from "../hooks/useFocusTrap";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "./ui/dialog";
+import { Button } from "./ui/button";
 
 interface Props {
   open: boolean;
@@ -22,72 +28,30 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
 }: Props) {
-  const [mounted, setMounted] = useState(open);
-  const [closing, setClosing] = useState(false);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  useFocusTrap(dialogRef, mounted && !closing);
-
-  useEffect(() => {
-    if (open) {
-      setMounted(true);
-      setClosing(false);
-      return;
-    }
-    if (!mounted) return;
-    setClosing(true);
-    const timer = setTimeout(() => {
-      setMounted(false);
-      setClosing(false);
-    }, 180);
-    return () => clearTimeout(timer);
-  }, [open, mounted]);
-
-  useEffect(() => {
-    if (!open || closing) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose, closing]);
-
-  if (!mounted) return null;
-
   return (
-    <div
-      className={`fixed inset-0 z-50 flex items-center justify-center ${closing ? "animate-fade-out bg-black/50" : "animate-fade-in bg-black/50"}`}
-      onClick={onClose}
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
     >
-      <div
-        ref={dialogRef}
-        onClick={(e) => e.stopPropagation()}
-        className={`w-[360px] rounded-lg border border-border bg-bg-secondary p-5 ${closing ? "animate-scale-out" : "animate-scale-in"}`}
-        role="dialog"
-        aria-modal="true"
-      >
-        <h3 className="text-base font-semibold mb-2">{title}</h3>
+      <DialogContent className="max-w-[360px]" showCloseButton={false}>
+        <DialogTitle>{title}</DialogTitle>
         {message && (
-          <p className="mb-4 text-sm text-text-secondary">
-            {message}
-          </p>
+          <DialogDescription className="mt-2 mb-2">{message}</DialogDescription>
         )}
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-border px-3 py-1.5 text-sm text-text-secondary"
-          >
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
             {cancelText}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={danger ? "destructive" : "default"}
             onClick={onConfirm}
-            className={`rounded px-3 py-1.5 text-sm text-white ${danger ? "bg-danger" : "bg-accent"}`}
           >
             {confirmText}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

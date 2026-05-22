@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
-import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useState, useEffect } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Dialog } from "./ui/dialog";
 import { SettingsLayout } from "./settings/SettingsLayout";
 import { GeneralSettingsPage } from "./settings/pages/GeneralSettingsPage";
 import { ThemeSettingsPage } from "./settings/pages/ThemeSettingsPage";
@@ -7,6 +8,7 @@ import { ShortcutSettingsPage } from "./settings/pages/ShortcutSettingsPage";
 import { TemplateSettingsPage } from "./settings/pages/TemplateSettingsPage";
 import { SyncSettingsPage } from "./settings/pages/SyncSettingsPage";
 import { useSettingsStore } from "../stores/settingsStore";
+import { cn } from "@/lib/utils";
 
 type SettingsTab = "general" | "terminal-theme" | "shortcuts" | "templates" | "sync";
 
@@ -60,43 +62,11 @@ interface Props {
 export function SettingsModal({ open, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [searchValue, setSearchValue] = useState("");
-  const [mounted, setMounted] = useState(open);
-  const [closing, setClosing] = useState(false);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
-  useFocusTrap(dialogRef, mounted && !closing);
-
-  useEffect(() => {
-    if (open) {
-      setMounted(true);
-      setClosing(false);
-      return;
-    }
-    if (!mounted) return;
-    setClosing(true);
-    const timer = setTimeout(() => {
-      setMounted(false);
-      setClosing(false);
-    }, 180);
-    return () => clearTimeout(timer);
-  }, [open, mounted]);
 
   useEffect(() => {
     setSearchValue("");
   }, [activeTab]);
-
-  useEffect(() => {
-    if (!mounted || closing) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onClose();
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [mounted, closing, onClose]);
-
-  if (!mounted) return null;
 
   const tabs = SETTINGS_TAB_ORDER.map((id) => ({ id, label: SETTINGS_TAB_CONFIG[id].label }));
   const activeConfig = SETTINGS_TAB_CONFIG[activeTab];
@@ -110,37 +80,44 @@ export function SettingsModal({ open, onClose }: Props) {
   })();
 
   return (
-    <div
-      className={`fixed inset-x-0 bottom-0 top-9 z-50 ${
-        closing ? "animate-fade-out" : "animate-fade-in"
-      }`}
-      style={{ fontFamily: uiFontFamily }}
-      onClick={onClose}
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
     >
-      <div
-        ref={dialogRef}
-        className={`ui-surface-base flex h-full w-full overflow-hidden ${
-          closing ? "animate-scale-out" : "animate-scale-in"
-        }`}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="设置窗口"
-      >
-        <SettingsLayout
-          tabs={tabs}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          title={activeConfig.title}
-          description={activeConfig.description}
-          searchValue={searchValue}
-          searchPlaceholder={activeConfig.searchPlaceholder}
-          onSearchChange={setSearchValue}
-          onClose={onClose}
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          className={cn(
+            "fixed inset-x-0 bottom-0 top-9 z-50",
+            "data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
+          )}
+        />
+        <DialogPrimitive.Content
+          className={cn(
+            "ui-surface-base fixed inset-x-0 bottom-0 top-9 z-50",
+            "flex h-auto w-full overflow-hidden outline-none",
+            "data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out"
+          )}
+          style={{ fontFamily: uiFontFamily }}
+          aria-label="设置窗口"
         >
-          {activeContent}
-        </SettingsLayout>
-      </div>
-    </div>
+          <DialogPrimitive.Title className="sr-only">设置</DialogPrimitive.Title>
+          <SettingsLayout
+            tabs={tabs}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            title={activeConfig.title}
+            description={activeConfig.description}
+            searchValue={searchValue}
+            searchPlaceholder={activeConfig.searchPlaceholder}
+            onSearchChange={setSearchValue}
+            onClose={onClose}
+          >
+            {activeContent}
+          </SettingsLayout>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </Dialog>
   );
 }
