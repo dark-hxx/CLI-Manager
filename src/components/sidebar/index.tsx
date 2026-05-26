@@ -19,7 +19,6 @@ import { SidebarFooter } from "./SidebarFooter";
 import type { SettingsTab } from "../SettingsModal";
 
 interface SidebarProps {
-  onOpenStats?: () => void;
   onOpenSettings: (tab?: SettingsTab) => void;
   compactMode?: boolean;
 }
@@ -39,7 +38,7 @@ function normalizePersistedSidebarWidth(width: number): number {
   return clampExpandedSidebarWidth(width);
 }
 
-export function Sidebar({ onOpenStats, onOpenSettings, compactMode = false }: SidebarProps) {
+export function Sidebar({ onOpenSettings, compactMode = false }: SidebarProps) {
   const {
     tree,
     projects,
@@ -68,7 +67,6 @@ export function Sidebar({ onOpenStats, onOpenSettings, compactMode = false }: Si
   const sessions = useTerminalStore((s) => s.sessions);
   const sessionStatuses = useTerminalStore((s) => s.sessionStatuses);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
-  const viewMode = useSettingsStore((s) => s.viewMode);
   const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
   const updateSetting = useSettingsStore((s) => s.update);
   const persistedSidebarWidth = useSettingsStore((s) => s.sidebarWidth);
@@ -743,15 +741,6 @@ export function Sidebar({ onOpenStats, onOpenSettings, compactMode = false }: Si
       <div className="ui-sidebar-footer shrink-0">
         <SidebarFooter
           collapsed={compactMode ? false : sidebarCollapsed}
-          useExternalTerminal={useExternalTerminal}
-          compactModeEnabled={viewMode === "compact"}
-          onToggleExternalTerminal={() => {
-            void updateSetting("useExternalTerminal", !useExternalTerminal);
-          }}
-          onToggleCompactMode={() => {
-            void updateSetting("viewMode", viewMode === "compact" ? "standard" : "compact");
-          }}
-          onOpenStats={onOpenStats}
           onOpenSettings={onOpenSettings}
         />
       </div>

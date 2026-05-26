@@ -11,8 +11,6 @@ import {
   type SidebarDensity,
   type ThemeMode,
 } from "../../../stores/settingsStore";
-import { SHELL_OPTIONS } from "../../../lib/types";
-import { normalizeShellKey } from "../../../lib/shell";
 import { AboutSection } from "../AboutSection";
 
 const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
@@ -109,9 +107,18 @@ const DARK_PALETTE_OPTIONS: {
   },
 ];
 
+const SIDEBAR_DENSITY_OPTIONS: { value: SidebarDensity; label: string; description: string }[] = [
+  { value: "comfortable", label: "舒适", description: "默认间距，强调可读性" },
+  { value: "compact", label: "紧凑", description: "减少行高与缩进，显示更多条目" },
+];
+
+const CLOSE_BEHAVIOR_OPTIONS: { value: CloseBehavior; label: string }[] = [
+  { value: "ask", label: "每次询问" },
+  { value: "minimize", label: "最小化到托盘" },
+  { value: "exit", label: "直接退出" },
+];
+
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
-const FONT_SIZE_MIN = 10;
-const FONT_SIZE_MAX = 24;
 
 const LIGHT_TEXT_COLORS: Record<LightThemePalette, string> = {
   "warm-paper": "#2e3336",
@@ -138,19 +145,6 @@ function getDefaultUiTextColor(
 ) {
   return resolvedTheme === "dark" ? DARK_TEXT_COLORS[darkPalette] : LIGHT_TEXT_COLORS[lightPalette];
 }
-
-function clampFontSize(value: number) {
-  if (!Number.isFinite(value)) return FONT_SIZE_MIN;
-  return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, value));
-}
-
-const FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
-  { value: "Cascadia Code, Consolas, monospace", label: "Cascadia Code（推荐）" },
-  { value: "\"JetBrains Mono\", \"Cascadia Code\", Consolas, monospace", label: "JetBrains Mono" },
-  { value: "\"Fira Code\", \"Cascadia Code\", Consolas, monospace", label: "Fira Code" },
-  { value: "Consolas, monospace", label: "Consolas" },
-  { value: "\"Courier New\", monospace", label: "Courier New" },
-];
 
 const UI_FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
   {
@@ -202,17 +196,6 @@ const UI_FONT_FAMILY_OPTIONS: { value: string; label: string }[] = [
     value: "\"Courier New\", \"PingFang SC\", \"Microsoft YaHei\", monospace",
     label: "Courier New",
   },
-];
-
-const SIDEBAR_DENSITY_OPTIONS: { value: SidebarDensity; label: string; description: string }[] = [
-  { value: "comfortable", label: "舒适", description: "默认间距，强调可读性" },
-  { value: "compact", label: "紧凑", description: "减少行高与缩进，显示更多条目" },
-];
-
-const CLOSE_BEHAVIOR_OPTIONS: { value: CloseBehavior; label: string }[] = [
-  { value: "ask", label: "每次询问" },
-  { value: "minimize", label: "最小化到托盘" },
-  { value: "exit", label: "直接退出" },
 ];
 
 function PaletteCard({
@@ -271,28 +254,19 @@ export function GeneralSettingsPage() {
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
-  const fontSize = useSettingsStore((s) => s.fontSize);
-  const fontFamily = useSettingsStore((s) => s.fontFamily);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
-  const defaultShell = useSettingsStore((s) => s.defaultShell);
   const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
   const viewMode = useSettingsStore((s) => s.viewMode);
-  const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
-  const debugMode = useSettingsStore((s) => s.debugMode);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
+  const debugMode = useSettingsStore((s) => s.debugMode);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const update = useSettingsStore((s) => s.update);
   const [uiTextColorDraft, setUiTextColorDraft] = useState(uiTextColor);
-  const [fontSizeDraft, setFontSizeDraft] = useState(fontSize);
 
   useEffect(() => {
     setUiTextColorDraft(uiTextColor);
   }, [uiTextColor]);
-
-  useEffect(() => {
-    setFontSizeDraft(fontSize);
-  }, [fontSize]);
 
   const defaultUiTextColor = getDefaultUiTextColor(resolvedTheme, lightThemePalette, darkThemePalette);
   const normalizedUiTextColorDraft = uiTextColorDraft.trim();
@@ -305,29 +279,14 @@ export function GeneralSettingsPage() {
       void update("uiTextColor", next);
     }
   };
-  const commitFontSize = (value = fontSizeDraft) => {
-    const next = clampFontSize(value);
-    setFontSizeDraft(next);
-    if (next !== fontSize) {
-      void update("fontSize", next);
-    }
-  };
-
-  const isCustomFontFamily = useMemo(
-    () => !FONT_FAMILY_OPTIONS.some((opt) => opt.value === fontFamily),
-    [fontFamily]
-  );
   const isCustomUiFontFamily = useMemo(
     () => !UI_FONT_FAMILY_OPTIONS.some((opt) => opt.value === uiFontFamily),
     [uiFontFamily]
   );
-  const normalizedDefaultShell = normalizeShellKey(defaultShell);
-  const shellSelectValue = normalizedDefaultShell ?? defaultShell;
-  const isCustomShellValue = !normalizedDefaultShell;
 
   return (
     <div className="space-y-4">
-      <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <section>
         <Card className="p-4">
           <div className="text-sm font-semibold text-on-surface">外观</div>
 
@@ -398,7 +357,7 @@ export function GeneralSettingsPage() {
               ))}
             </Select>
             <div className="mt-1 text-[11px] text-text-muted">
-              影响除终端外的应用整体界面字体；终端字体在下方"终端与侧栏"中单独设置。
+              影响除终端外的应用整体界面字体；终端字体在「终端设置」中单独配置。
             </div>
           </div>
 
@@ -458,74 +417,23 @@ export function GeneralSettingsPage() {
             </div>
           </div>
         </Card>
+      </section>
 
+      <section>
         <Card className="p-4">
-          <div className="text-sm font-semibold text-on-surface">终端与侧栏</div>
-          <div className="mt-3 space-y-3">
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">终端字体大小</label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={FONT_SIZE_MIN}
-                  max={FONT_SIZE_MAX}
-                  step={1}
-                  value={fontSizeDraft}
-                  onChange={(e) => setFontSizeDraft(Number(e.target.value))}
-                  onPointerUp={() => commitFontSize()}
-                  onKeyUp={() => commitFontSize()}
-                  onBlur={() => commitFontSize()}
-                  className="w-full accent-accent"
-                  aria-label="终端字体大小滑杆"
-                />
-                <Input
-                  type="number"
-                  min={FONT_SIZE_MIN}
-                  max={FONT_SIZE_MAX}
-                  value={fontSizeDraft}
-                  onChange={(e) => setFontSizeDraft(Number(e.target.value))}
-                  onBlur={() => commitFontSize()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      commitFontSize();
-                    }
-                  }}
-                  className="w-16 text-xs"
-                />
+          <div className="text-sm font-semibold text-on-surface">侧栏与行为</div>
+          <div className="mt-3 space-y-4">
+            <div className="flex items-center justify-between gap-4 rounded-2xl border border-primary bg-surface-container-low px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold text-on-surface">精简模式</div>
+                <div className="mt-1 text-[11px] text-text-muted">隐藏内嵌终端，把项目列表作为启动器。</div>
               </div>
-              <div className="mt-1 text-[11px] text-text-muted">仅影响内置终端，不改变应用界面字体。</div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">终端字体族</label>
-              <Select
-                value={fontFamily}
-                onChange={(e) => update("fontFamily", e.target.value)}
-                aria-label="终端字体族"
-              >
-                {isCustomFontFamily && <option value={fontFamily}>当前自定义（保留）</option>}
-                {FONT_FAMILY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-on-surface-variant">默认 Shell</label>
-              <Select
-                value={shellSelectValue}
-                onChange={(e) => update("defaultShell", e.target.value)}
-                aria-label="默认 Shell"
-              >
-                {isCustomShellValue && <option value={defaultShell}>当前自定义（保留）</option>}
-                {SHELL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </Select>
+              <Switch
+                className="shrink-0"
+                checked={viewMode === "compact"}
+                onCheckedChange={() => update("viewMode", viewMode === "compact" ? "standard" : "compact")}
+                aria-label={viewMode === "compact" ? "关闭精简模式" : "开启精简模式"}
+              />
             </div>
 
             <div>
@@ -549,37 +457,6 @@ export function GeneralSettingsPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <div className="text-xs text-on-surface-variant">精简模式</div>
-                <div className="mt-1 text-[11px] text-text-muted">隐藏内嵌终端，把项目列表作为启动器。</div>
-              </div>
-              <Switch
-                className="shrink-0"
-                checked={viewMode === "compact"}
-                onCheckedChange={() => update("viewMode", viewMode === "compact" ? "standard" : "compact")}
-                aria-label={viewMode === "compact" ? "关闭精简模式" : "开启精简模式"}
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-on-surface-variant">外部 PowerShell</span>
-              <Switch
-                checked={useExternalTerminal}
-                onCheckedChange={() => update("useExternalTerminal", !useExternalTerminal)}
-                aria-label={useExternalTerminal ? "关闭外部 PowerShell" : "开启外部 PowerShell"}
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-on-surface-variant">调试模式</span>
-              <Switch
-                checked={debugMode}
-                onCheckedChange={() => update("debugMode", !debugMode)}
-                aria-label={debugMode ? "关闭调试模式" : "开启调试模式"}
-              />
-            </div>
-
             <div>
               <label className="mb-1 block text-xs text-on-surface-variant">关闭按钮行为</label>
               <Select
@@ -595,21 +472,14 @@ export function GeneralSettingsPage() {
               </Select>
               <div className="mt-1 text-[11px] text-text-muted">控制点击窗口关闭按钮时的动作。</div>
             </div>
-          </div>
-        </Card>
-      </section>
 
-      <section>
-        <Card className="p-4">
-          <div className="mb-2 text-sm font-semibold text-on-surface">终端实时预览</div>
-          <div
-            className="rounded-xl border border-border p-4 font-mono"
-            style={{ backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}
-          >
-            <div style={{ fontFamily, fontSize: `${fontSize}px` }}>
-              <div>$ cli-manager --doctor</div>
-              <div className="opacity-80">Environment ready. Launching workspace...</div>
-              <div className="mt-1 text-success">✓ Terminal initialized</div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-xs text-on-surface-variant">调试模式</span>
+              <Switch
+                checked={debugMode}
+                onCheckedChange={() => update("debugMode", !debugMode)}
+                aria-label={debugMode ? "关闭调试模式" : "开启调试模式"}
+              />
             </div>
           </div>
         </Card>

@@ -12,7 +12,28 @@
 
 ## Component Structure
 
-(To be filled by the team)
+### Convention: Keep settings tab ids stable when only renaming UI labels
+
+**What**: In `SettingsModal`, `SettingsTab` ids are part of the internal navigation contract. When a change only renames or reorganizes a settings page, keep the existing tab id and update only the visible label/title/description.
+
+**Why**: Settings tabs are passed through props such as `onOpenSettings(tab?: SettingsTab)`. Renaming an id like `"terminal-theme"` to `"terminal-settings"` creates unnecessary type and call-site churn without changing persisted settings or runtime behavior.
+
+**Example**:
+
+```tsx
+// Good: stable id, renamed UI copy only
+const SETTINGS_TAB_CONFIG = {
+  "terminal-theme": {
+    label: "终端设置",
+    title: "终端设置",
+  },
+};
+
+// Bad: id churn for a display-only rename
+type SettingsTab = "general" | "terminal-settings" | "shortcuts";
+```
+
+**Tests**: After changing settings page labels or layout, assert that existing callers can still open the page through the old `SettingsTab` literal and run `npx tsc --noEmit`.
 
 ---
 

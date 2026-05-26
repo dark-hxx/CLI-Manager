@@ -7,7 +7,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
 import { CommandPalette } from "./components/CommandPalette";
-import { StatsPanel } from "./components/stats/StatsPanel";
 import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
@@ -17,7 +16,6 @@ import { useSessionStore } from "./stores/sessionStore";
 import { useTerminalStore } from "./stores/terminalStore";
 import { useSyncStore } from "./stores/syncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
-import { useHistoryStore } from "./stores/historyStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { createPerfMarker, logWarn } from "./lib/logger";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -40,14 +38,9 @@ function App() {
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
-  const historySessions = useHistoryStore((s) => s.sessions);
-  const loadHistorySessions = useHistoryStore((s) => s.loadSessions);
-  const openHistoryWorkspace = useHistoryStore((s) => s.openHistory);
-  const openHistorySession = useHistoryStore((s) => s.openSession);
   const viewMode = useSettingsStore((s) => s.viewMode);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const updateSetting = useSettingsStore((s) => s.update);
-  const [statsOpen, setStatsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
@@ -296,37 +289,6 @@ function App() {
     })();
   }, [viewMode, settingsOpen]);
 
-  const handleOpenStats = useCallback(() => {
-    const stopPerf = createPerfMarker("stats.open", {
-      sessionsBefore: historySessions.length,
-    });
-    void (async () => {
-      try {
-        if (historySessions.length === 0) {
-          await loadHistorySessions();
-        }
-        setStatsOpen(true);
-        stopPerf({ sessionsAfter: useHistoryStore.getState().sessions.length });
-      } catch (err) {
-        stopPerf({ error: String(err) });
-        toast.error("加载历史会话失败", { description: String(err) });
-      }
-    })();
-  }, [historySessions.length, loadHistorySessions]);
-
-  const handleOpenSessionFromStats = useCallback(
-    async (sessionKey: string) => {
-      try {
-        await openHistoryWorkspace();
-        await openHistorySession(sessionKey);
-      } catch (err) {
-        toast.error("跳转历史会话失败", { description: String(err) });
-        throw err;
-      }
-    },
-    [openHistoryWorkspace, openHistorySession]
-  );
-
   useEffect(() => {
     if (firstScreenPerfReported) return;
     let raf1 = 0;
@@ -343,7 +305,6 @@ function App() {
         firstScreenPerfReported = true;
         stopPerf({
           resolvedTheme,
-          statsPrefetched: historySessions.length > 0,
           viewMode,
         });
       });
@@ -352,7 +313,7 @@ function App() {
       window.cancelAnimationFrame(raf1);
       window.cancelAnimationFrame(raf2);
     };
-  }, [resolvedTheme, historySessions.length, viewMode]);
+  }, [resolvedTheme, viewMode]);
 
   return (
     <div className="ui-workspace-shell flex h-screen flex-col">
@@ -363,7 +324,6 @@ function App() {
       {viewMode === "compact" ? (
         <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
           <Sidebar
-            onOpenStats={handleOpenStats}
             onOpenSettings={(tab) => {
               setSettingsInitialTab(tab ?? "general");
               setSettingsOpen(true);
@@ -374,7 +334,6 @@ function App() {
       ) : (
         <div className="flex min-h-0 flex-1">
           <Sidebar
-            onOpenStats={handleOpenStats}
             onOpenSettings={(tab) => {
               setSettingsInitialTab(tab ?? "general");
               setSettingsOpen(true);
@@ -386,12 +345,6 @@ function App() {
         </div>
       )}
       <CommandPalette />
-      <StatsPanel
-        open={statsOpen}
-        sessions={historySessions}
-        onClose={() => setStatsOpen(false)}
-        onOpenSession={handleOpenSessionFromStats}
-      />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialTab={settingsInitialTab} />
       <CloseConfirmDialog
         open={closeDialogOpen}
