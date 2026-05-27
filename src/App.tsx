@@ -13,7 +13,6 @@ import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useProjectStore } from "./stores/projectStore";
 import { useSessionStore } from "./stores/sessionStore";
-import { useTerminalStore } from "./stores/terminalStore";
 import { useSyncStore } from "./stores/syncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdateStore } from "./stores/updateStore";
@@ -62,13 +61,11 @@ function App() {
         useSessionStore.getState().load(),
       ]);
 
-      // 2. 加载项目列表（必须在恢复终端会话之前）
+      // 2. 加载项目列表
       await useProjectStore.getState().fetchAll();
 
-      // 3. 恢复终端会话
-      const { projects, projectHealth } = useProjectStore.getState();
-      const projectMap = new Map(projects.map((p) => [p.id, p]));
-      await useTerminalStore.getState().restoreSessions(projectMap, projectHealth);
+      // 3. 启动时不恢复历史终端，避免重建 PTY 并重跑 startupCmd。
+      await useSessionStore.getState().clear();
 
       if (!startupUpdateChecked) {
         startupUpdateChecked = true;
