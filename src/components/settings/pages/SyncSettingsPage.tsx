@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useSyncStore, type SyncMode } from "../../../stores/syncStore";
+import {
+  useSyncStore,
+  type AutoSyncAction,
+  type SyncDataDomain,
+  type SyncMode,
+  type SyncPreview,
+} from "../../../stores/syncStore";
 import {
   Cloud,
   Download,
@@ -19,6 +25,18 @@ const SYNC_MODE_OPTIONS: { value: SyncMode; label: string; description: string }
   { value: "local", label: "本地同步", description: "将配置打包为 zip 保存到本地目录" },
 ];
 
+const AUTO_SYNC_OPTIONS: { value: AutoSyncAction; label: string }[] = [
+  { value: "off", label: "关闭" },
+  { value: "upload", label: "上传" },
+  { value: "download", label: "下载" },
+];
+
+const DOMAIN_OPTIONS: { value: SyncDataDomain; label: string }[] = [
+  { value: "projects", label: "项目" },
+  { value: "groups", label: "分组" },
+  { value: "command_templates", label: "命令模板" },
+];
+
 export function SyncSettingsPage() {
   const {
     webdavUrl,
@@ -30,12 +48,20 @@ export function SyncSettingsPage() {
     loaded,
     syncMode,
     localSyncDir,
+    deviceName,
+    knownDeviceNames,
+    autoSyncOnStartup,
+    autoSyncOnClose,
     load,
     setConfig,
     clearPassword,
     testConnection,
+    setDeviceName,
+    setAutoSyncOnStartup,
+    setAutoSyncOnClose,
     upload,
     download,
+    getPreview,
     resolveConflict,
     clearConflict,
     setSyncMode,
@@ -49,7 +75,15 @@ export function SyncSettingsPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [showDownloadConfirm, setShowDownloadConfirm] = useState(false);
+  const [deviceNameInput, setDeviceNameInput] = useState("");
+  const [preview, setPreview] = useState<SyncPreview | null>(null);
+  const [previewMode, setPreviewMode] = useState<"upload" | "download" | null>(null);
+  const [previewDeviceName, setPreviewDeviceName] = useState("");
+  const [selectedDomains, setSelectedDomains] = useState<SyncDataDomain[]>([
+    "projects",
+    "groups",
+    "command_templates",
+  ]);
   const [showImportConfirm, setShowImportConfirm] = useState<string | null>(null);
 
   useEffect(() => {
@@ -62,8 +96,10 @@ export function SyncSettingsPage() {
     if (loaded) {
       setUrl(webdavUrl);
       setUsername(webdavUsername);
+      setDeviceNameInput(deviceName);
+      setPreviewDeviceName(deviceName);
     }
-  }, [loaded, webdavUrl, webdavUsername]);
+  }, [loaded, webdavUrl, webdavUsername, deviceName]);
 
   const handleTest = async () => {
     if (!url.trim() || !username.trim() || !password.trim()) {
@@ -101,45 +137,61 @@ export function SyncSettingsPage() {
     }
   };
 
-  const handleUpload = async () => {
+  const handleSaveDeviceName = async () => {
+    try {
+      await setDeviceName(deviceNameInput);
+      toast.success("设备名称已保存");
+    } catch (error) {
+      toast.error("保存失败", { description: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const openPreview = async (mode: "upload" | "download") => {
     if (!hasPassword) {
       toast.error("请先配置并测试 WebDAV 连接");
       return;
     }
     try {
-      await upload();
-      if (useSyncStore.getState().status === "success") {
+      const nextPreview = await getPreview(previewDeviceName || deviceName);
+      if (mode === "download" && nextPreview.remote.missing) {
+        toast.error("无法从云端同步");
+        return;
+      }
+      setPreview(nextPreview);
+      setPreviewMode(mode);
+      setSelectedDomains(["projects", "groups", "command_templates"]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(mode === "upload" ? "读取同步摘要失败" : "读取云端快照失败", { description: message });
+    }
+  };
+
+  const confirmPreviewAction = async () => {
+    if (!previewMode) return;
+    if (previewMode === "download" && preview?.remote.missing) {
+      toast.error("无法从云端同步");
+      return;
+    }
+    try {
+      if (previewMode === "upload") {
+        await upload();
         toast.success("上传成功");
       } else {
-        toast.error("上传失败，请检查网络连接和 WebDAV 配置");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error("上传失败", { description: message });
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!hasPassword) {
-      toast.error("请先配置并测试 WebDAV 连接");
-      return;
-    }
-    setShowDownloadConfirm(true);
-  };
-
-  const confirmDownload = async () => {
-    setShowDownloadConfirm(false);
-    try {
-      await download();
-      if (useSyncStore.getState().status === "success") {
+        await download(true, { deviceName: previewDeviceName || deviceName, domains: selectedDomains });
         toast.success("下载成功");
-      } else {
-        toast.error("下载失败，请检查网络连接和 WebDAV 配置");
       }
+      setPreview(null);
+      setPreviewMode(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      toast.error("下载失败", { description: message });
+      toast.error(previewMode === "upload" ? "上传失败" : "下载失败", { description: message });
     }
+  };
+
+  const toggleDomain = (domain: SyncDataDomain) => {
+    setSelectedDomains((current) =>
+      current.includes(domain) ? current.filter((item) => item !== domain) : [...current, domain]
+    );
   };
 
   const handlePickLocalDir = async () => {
@@ -338,6 +390,26 @@ export function SyncSettingsPage() {
                 </div>
               </div>
 
+              <div>
+                <label className="mb-1.5 block text-sm text-on-surface-variant">当前设备名称</label>
+                <div className="flex gap-2">
+                  <Input
+                    type="text"
+                    value={deviceNameInput}
+                    onChange={(e) => setDeviceNameInput(e.target.value)}
+                    placeholder="当前设备"
+                    className="h-9 text-sm"
+                  />
+                  <button
+                    onClick={handleSaveDeviceName}
+                    className="whitespace-nowrap rounded-lg bg-surface-container-highest px-4 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80"
+                  >
+                    保存设备名
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-on-surface-variant">云端快照会按设备名称隔离，避免不同设备路径互相覆盖。</p>
+              </div>
+
               <div className="flex gap-2">
                 <button
                   onClick={handleTest}
@@ -381,26 +453,66 @@ export function SyncSettingsPage() {
               </div>
             )}
 
+            <div className="mb-4 grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1.5 block text-sm text-on-surface-variant">应用打开时</label>
+                <select
+                  value={autoSyncOnStartup}
+                  onChange={(e) => void setAutoSyncOnStartup(e.target.value as AutoSyncAction)}
+                  className="h-9 w-full rounded-lg border border-border bg-surface-container-low px-3 text-sm text-on-surface"
+                >
+                  {AUTO_SYNC_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm text-on-surface-variant">应用关闭时</label>
+                <select
+                  value={autoSyncOnClose}
+                  onChange={(e) => void setAutoSyncOnClose(e.target.value as AutoSyncAction)}
+                  className="h-9 w-full rounded-lg border border-border bg-surface-container-low px-3 text-sm text-on-surface"
+                >
+                  {AUTO_SYNC_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="mb-1.5 block text-sm text-on-surface-variant">恢复设备快照</label>
+              <select
+                value={previewDeviceName}
+                onChange={(e) => setPreviewDeviceName(e.target.value)}
+                className="h-9 w-full rounded-lg border border-border bg-surface-container-low px-3 text-sm text-on-surface"
+              >
+                {knownDeviceNames.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex items-center gap-4">
               <button
-                onClick={handleUpload}
+                onClick={() => void openPreview("upload")}
                 disabled={!hasPassword || status === "syncing"}
                 className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 {status === "syncing" ? (
-                  <span className="animate-spin">⏳</span>
+                  <span className="animate-spin">同步中</span>
                 ) : (
                   <Upload size={16} />
                 )}
                 上传到云端
               </button>
               <button
-                onClick={handleDownload}
+                onClick={() => void openPreview("download")}
                 disabled={!hasPassword || status === "syncing"}
                 className="flex items-center gap-2 rounded-lg bg-surface-container-highest px-4 py-2 text-sm font-medium text-on-surface transition-opacity hover:opacity-80 disabled:opacity-50"
               >
                 {status === "syncing" ? (
-                  <span className="animate-spin">⏳</span>
+                  <span className="animate-spin">同步中</span>
                 ) : (
                   <Download size={16} />
                 )}
@@ -511,31 +623,81 @@ export function SyncSettingsPage() {
         </>
       )}
 
-      {/* Download Confirmation Dialog */}
-      {showDownloadConfirm && (
+      {preview && previewMode && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 max-w-sm rounded-lg bg-surface-container-high p-4 shadow-lg">
+          <div className="mx-4 max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-surface-container-high p-4 shadow-lg">
             <div className="flex items-start gap-3">
               <AlertTriangle size={20} className="mt-0.5 shrink-0 text-yellow-500" />
               <div>
-                <h3 className="font-medium text-on-surface">确认下载</h3>
+                <h3 className="font-medium text-on-surface">
+                  {previewMode === "upload" ? "确认上传到云端" : "确认从云端下载"}
+                </h3>
                 <p className="mt-1 text-sm text-on-surface-variant">
-                  从云端下载将覆盖本地所有项目、分组和模板配置，此操作不可撤销。
+                  执行前请核对本地与云端摘要。{previewMode === "upload" ? "云端快照缺失时将创建当前设备快照。" : "下载可按数据域选择覆盖范围。"}
                 </p>
               </div>
             </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {[preview.local, preview.remote].map((item, index) => (
+                <div key={index === 0 ? "local" : "remote"} className="rounded-lg bg-surface-container-low p-3 text-sm">
+                  <div className="font-medium text-on-surface">{index === 0 ? "本地内容" : "云端内容"}</div>
+                  <div className="mt-1 text-on-surface-variant">设备：{item.deviceName}</div>
+                  <div className="text-on-surface-variant">
+                    时间：{item.missing ? "云端暂无快照" : new Date(item.lastModified).toLocaleString("zh-CN")}
+                  </div>
+                  {item.missing && (
+                    <div className="mt-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-2 py-1 text-xs text-yellow-600 dark:text-yellow-400">
+                      当前设备云端快照为空，确认上传后会新建快照。
+                    </div>
+                  )}
+                  <div className="mt-2 text-xs text-on-surface-variant">
+                    {item.projects} 个项目 · {item.groups} 个分组 · {item.commandTemplates} 个模板
+                  </div>
+                  <div className="mt-2 space-y-1 text-xs text-on-surface-variant">
+                    <div>项目：{item.projectNames.join("、") || "无"}</div>
+                    <div>分组：{item.groupNames.join("、") || "无"}</div>
+                    <div>模板：{item.templateNames.join("、") || "无"}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {previewMode === "download" && (
+              <div className="mt-4 rounded-lg bg-surface-container-low p-3">
+                <div className="mb-2 text-sm font-medium text-on-surface">选择覆盖范围</div>
+                <div className="flex flex-wrap gap-2">
+                  {DOMAIN_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleDomain(option.value)}
+                      data-selected={selectedDomains.includes(option.value) ? "true" : "false"}
+                      className="ui-interactive ui-focus-ring ui-selection-card rounded-lg border px-3 py-2 text-sm"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 flex justify-end gap-2">
               <button
-                onClick={() => setShowDownloadConfirm(false)}
+                onClick={() => {
+                  setPreview(null);
+                  setPreviewMode(null);
+                }}
                 className="rounded-lg px-4 py-2 text-sm text-on-surface-variant transition-opacity hover:opacity-80"
               >
                 取消
               </button>
               <button
-                onClick={confirmDownload}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                onClick={() => void confirmPreviewAction()}
+                disabled={previewMode === "download" && selectedDomains.length === 0}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                确认下载
+                确认执行
               </button>
             </div>
           </div>

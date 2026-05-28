@@ -1,6 +1,6 @@
 use crate::sync::{
-    detect_conflict, download, local_export, local_import, test_connection, upload, ConflictInfo,
-    SyncData,
+    default_device_name, detect_conflict, download, list_device_snapshots, local_export,
+    local_import, test_connection, upload, ConflictInfo, DeviceSnapshotInfo, SyncData,
 };
 use crate::webdav::WebDavConfig;
 use chrono::{DateTime, Utc};
@@ -33,6 +33,31 @@ pub struct SyncDownloadResult {
     pub has_conflict: bool,
     pub conflict_info: Option<ConflictInfo>,
     pub data: Option<SyncData>,
+}
+
+#[derive(serde::Serialize)]
+pub struct DeviceNameResult {
+    pub device_name: String,
+}
+
+#[tauri::command]
+pub async fn sync_get_default_device_name() -> Result<DeviceNameResult, String> {
+    Ok(DeviceNameResult {
+        device_name: default_device_name(),
+    })
+}
+
+#[tauri::command]
+pub async fn sync_list_device_snapshots(
+    config: SyncConfigInput,
+    device_names: Vec<String>,
+) -> Result<Vec<DeviceSnapshotInfo>, String> {
+    let webdav_config = WebDavConfig {
+        url: config.url,
+        username: config.username,
+        password: config.password,
+    };
+    list_device_snapshots(webdav_config, device_names).await
 }
 
 #[tauri::command]
@@ -97,6 +122,7 @@ pub async fn sync_download(
     config: SyncConfigInput,
     local_data: Option<SyncData>,
     force: bool,
+    device_name: Option<String>,
 ) -> Result<SyncDownloadResult, String> {
     let webdav_config = WebDavConfig {
         url: config.url,
@@ -104,7 +130,7 @@ pub async fn sync_download(
         password: config.password,
     };
 
-    let remote_data = download(webdav_config).await?;
+    let remote_data = download(webdav_config, device_name, false).await?;
 
     // Check for conflict if local data is provided
     if let Some(local) = local_data {
@@ -119,7 +145,7 @@ pub async fn sync_download(
                 .ok();
 
             if let (Some(local_t), Some(remote_t)) = (local_modified, remote_modified) {
-                if local_t > remote_t && local.device_id != remote_data.device_id {
+                if local_t > remote_t {
                     let conflict = detect_conflict(&local, &remote_data);
                     return Ok(SyncDownloadResult {
                         success: false,

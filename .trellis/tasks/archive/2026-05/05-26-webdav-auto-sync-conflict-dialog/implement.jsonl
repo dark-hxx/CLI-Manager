@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/webdav-sync-contracts.md","reason":"WebDAV upload/download payload shape, remote path, size limit, and Rust check contract for sync boundary changes."}
+{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"Tauri command/file boundary safety guidance for any new WebDAV snapshot/listing or system-name command."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand and tauri-plugin-store persisted settings patterns, including migration rules for new sync settings."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component conventions for the sync settings UI and comparison dialog."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript strict typing rules for new sync action/device/snapshot types."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"React effect guidance for app startup/close auto-sync side effects."}

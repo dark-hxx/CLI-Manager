@@ -262,6 +262,8 @@ pub fn run() {
             commands::history::history_search,
             commands::history::history_list_prompts,
             commands::history::history_get_stats,
+            commands::sync::sync_get_default_device_name,
+            commands::sync::sync_list_device_snapshots,
             commands::sync::sync_test_connection,
             commands::sync::sync_upload,
             commands::sync::sync_download,

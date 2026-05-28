@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/webdav-sync-contracts.md","reason":"Verify WebDAV sync changes preserve payload boundaries, response limits, and cargo check expectations."}
+{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"Review any new Tauri commands and user-controlled names/paths for boundary safety."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check persisted sync settings use safe defaults and migration-style validation."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Check new TypeScript sync types avoid loose any/assertions and model action/device/snapshot states precisely."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review UI/state changes for maintainability, minimal scope, and quality expectations."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check frontend, Tauri command, Rust sync module, and WebDAV behavior remain consistent across layers."}

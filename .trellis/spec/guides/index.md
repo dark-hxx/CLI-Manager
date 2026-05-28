@@ -24,6 +24,7 @@ These guides help you **ask the right questions before coding**.
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Tauri User File Security Checklist](./tauri-user-file-security-checklist.md) | Verify boundary defenses on user paths and asset/fs scopes | Adding a Tauri command that accepts a path, or broadening assetProtocol/fs scope |
+| [Version Update Checklist](./version-update-checklist.md) | Keep npm, Tauri, and Rust app versions aligned | Before bumping CLI-Manager release version |
 
 ---
 
