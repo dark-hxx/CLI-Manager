@@ -3,7 +3,7 @@ import { useShallow } from "zustand/shallow";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useTerminalStore, type SessionStatus } from "../stores/terminalStore";
+import { useTerminalStore, type TabNotificationState } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
 import { SplitTerminalView } from "./SplitTerminalView";
@@ -23,23 +23,31 @@ import {
 } from "./ui/context-menu";
 import { getTerminalBackground } from "../lib/terminalThemes";
 
-const STATUS_COLORS: Record<SessionStatus, string> = {
-  running: "#9ece6a",
-  exited: "#ff9e64",
-  error: "#f7768e",
+const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
+  none: "#565f89",
+  attention: "#ff9e64",
+  done: "#9ece6a",
+  failed: "#f7768e",
+};
+
+const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, string> = {
+  none: "无 Claude 通知",
+  attention: "Claude Code 需要处理",
+  done: "Claude Code 已完成",
+  failed: "Claude Code 执行异常",
 };
 
 interface SortableTabProps {
   id: string;
   title: string;
   isActive: boolean;
-  status: SessionStatus;
+  notification: TabNotificationState;
   onActivate: () => void;
   onClose: () => void;
   menuContent: ReactNode;
 }
 
-function SortableTab({ id, title, isActive, status, onActivate, onClose, menuContent }: SortableTabProps) {
+function SortableTab({ id, title, isActive, notification, onActivate, onClose, menuContent }: SortableTabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
 
   const style = {
@@ -64,10 +72,10 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, menuCon
         >
           <span
             className="w-2 h-2 rounded-full shrink-0"
-            style={{ backgroundColor: STATUS_COLORS[status] }}
+            style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification] }}
             role="status"
-            aria-label={`Terminal ${status}`}
-            title={status}
+            aria-label={TAB_NOTIFICATION_LABELS[notification]}
+            title={TAB_NOTIFICATION_LABELS[notification]}
           />
           <span className="max-w-[140px] truncate tracking-[0.01em]">{title}</span>
           <button
@@ -87,11 +95,11 @@ function SortableTab({ id, title, isActive, status, onActivate, onClose, menuCon
 }
 
 export function TerminalTabs() {
-  const { sessions, activeSessionId, sessionStatuses, splits } = useTerminalStore(
+  const { sessions, activeSessionId, tabNotifications, splits } = useTerminalStore(
     useShallow((s) => ({
       sessions: s.sessions,
       activeSessionId: s.activeSessionId,
-      sessionStatuses: s.sessionStatuses,
+      tabNotifications: s.tabNotifications,
       splits: s.splits,
     }))
   );
@@ -177,7 +185,7 @@ export function TerminalTabs() {
                     id={s.id}
                     title={s.title}
                     isActive={s.id === activeSessionId}
-                    status={sessionStatuses[s.id] ?? "running"}
+                    notification={tabNotifications[s.id] ?? "none"}
                     onActivate={() => setActive(s.id)}
                     onClose={() => closeSession(s.id)}
                     menuContent={

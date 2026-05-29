@@ -1,9 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod claude_hook;
 mod commands;
 mod pty;
-mod webdav;
 mod sync;
+mod webdav;
 
 use log::LevelFilter;
 use tauri::{
@@ -11,8 +12,8 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
-use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind, TimezoneStrategy};
+use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 
 fn migrations() -> Vec<Migration> {
     vec![
@@ -187,9 +188,14 @@ pub fn run() {
         })
         .setup(move |app| {
             log::set_max_level(log_level);
+            app.manage(claude_hook::ClaudeHookBridge::start(app.handle().clone()));
             log::info!(
                 "CLI-Manager started (log_level={})",
-                if log_level == LevelFilter::Debug { "debug" } else { "info" }
+                if log_level == LevelFilter::Debug {
+                    "debug"
+                } else {
+                    "info"
+                }
             );
 
             let show_item = MenuItem::with_id(app, "tray_show", "显示", true, None::<&str>)?;
@@ -197,7 +203,11 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
             TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().cloned().ok_or("missing default window icon")?)
+                .icon(
+                    app.default_window_icon()
+                        .cloned()
+                        .ok_or("missing default window icon")?,
+                )
                 .tooltip("CLI-Manager")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -273,6 +283,10 @@ pub fn run() {
             commands::background::save_background_image,
             commands::background::cleanup_unused_backgrounds,
             commands::background::background_image_exists,
+            commands::hook_settings::hook_settings_get_status,
+            commands::hook_settings::hook_settings_install,
+            commands::hook_settings::hook_settings_uninstall,
+            commands::hook_settings::hook_settings_select_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

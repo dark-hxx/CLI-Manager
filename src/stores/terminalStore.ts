@@ -9,6 +9,18 @@ import { useSessionStore } from "./sessionStore";
 import { normalizeShellKey } from "../lib/shell";
 
 export type SessionStatus = "running" | "exited" | "error";
+export type ClaudeHookEventName = "Notification" | "Stop" | "StopFailure";
+export type TabNotificationState = "none" | "attention" | "done" | "failed";
+
+export interface ClaudeHookPayload {
+  tabId: string;
+  event: ClaudeHookEventName;
+  title?: string | null;
+  message?: string | null;
+  sessionId?: string | null;
+  cwd?: string | null;
+  timestamp?: string | null;
+}
 
 export interface SplitState {
   direction: "horizontal" | "vertical";
@@ -26,11 +38,13 @@ interface TerminalStore {
   activeSessionId: string | null;
   sessionStatuses: Record<string, SessionStatus>;
   statusListeners: Record<string, UnlistenFn>;
+  tabNotifications: Record<string, TabNotificationState>;
   splits: Record<string, SplitState>;
   hiddenBackgroundSessionIds: Set<string>;
   createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
+  handleClaudeHookEvent: (payload: ClaudeHookPayload) => string | null;
   reorderSessions: (fromId: string, toId: string) => void;
   splitTerminal: (sessionId: string, direction: "horizontal" | "vertical", cwd?: string, shell?: string) => Promise<void>;
   unsplitTerminal: (sessionId: string) => Promise<void>;
@@ -77,11 +91,25 @@ function logTerminalExitStatus(session: TerminalSession, payload: PtyStatusPaylo
   });
 }
 
+function mapClaudeHookEvent(event: ClaudeHookEventName): TabNotificationState {
+  if (event === "Notification") return "attention";
+  if (event === "StopFailure") return "failed";
+  return "done";
+}
+
+function resolvePrimaryTabId(tabId: string, splits: Record<string, SplitState>): string {
+  for (const [primaryId, split] of Object.entries(splits)) {
+    if (split.secondSessionId === tabId) return primaryId;
+  }
+  return tabId;
+}
+
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   sessionStatuses: {},
   statusListeners: {},
+  tabNotifications: {},
   splits: {},
   hiddenBackgroundSessionIds: new Set<string>(),
 
@@ -173,14 +201,17 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const remaining = get().sessions.filter((s) => s.id !== id);
     const newStatuses = { ...get().sessionStatuses };
     const newListeners = { ...get().statusListeners };
+    const newNotifications = { ...get().tabNotifications };
     const newSplits = { ...get().splits };
 
     delete newStatuses[id];
     delete newListeners[id];
+    delete newNotifications[id];
     delete newSplits[id];
     if (split) {
       delete newStatuses[split.secondSessionId];
       delete newListeners[split.secondSessionId];
+      delete newNotifications[split.secondSessionId];
     }
 
     // Drop in-memory background overrides for closed sessions (R8).
@@ -202,6 +233,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       activeSessionId: newActiveId,
       sessionStatuses: newStatuses,
       statusListeners: newListeners,
+      tabNotifications: newNotifications,
       splits: newSplits,
       ...(newHidden !== prevHidden ? { hiddenBackgroundSessionIds: newHidden } : {}),
     });
@@ -220,8 +252,26 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   },
 
   setActive: (id) => {
-    set({ activeSessionId: id });
+    const notifications = get().tabNotifications;
+    set({
+      activeSessionId: id,
+      ...(notifications[id] === "attention"
+        ? { tabNotifications: { ...notifications, [id]: "none" } }
+        : {}),
+    });
     scheduleSaveActiveId(id);
+  },
+
+  handleClaudeHookEvent: (payload) => {
+    const tabId = resolvePrimaryTabId(payload.tabId, get().splits);
+    if (!get().sessions.some((session) => session.id === tabId)) return null;
+    set((state) => ({
+      tabNotifications: {
+        ...state.tabNotifications,
+        [tabId]: mapClaudeHookEvent(payload.event),
+      },
+    }));
+    return tabId;
   },
 
   reorderSessions: (fromId, toId) => {
@@ -312,12 +362,19 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     const newStatuses = { ...get().sessionStatuses };
     const newListeners = { ...get().statusListeners };
+    const newNotifications = { ...get().tabNotifications };
     const newSplits = { ...get().splits };
     delete newStatuses[split.secondSessionId];
     delete newListeners[split.secondSessionId];
+    delete newNotifications[split.secondSessionId];
     delete newSplits[sessionId];
 
-    set({ sessionStatuses: newStatuses, statusListeners: newListeners, splits: newSplits });
+    set({
+      sessionStatuses: newStatuses,
+      statusListeners: newListeners,
+      tabNotifications: newNotifications,
+      splits: newSplits,
+    });
 
     // 更新持久化 splits
     const primaryIndex = get().sessions.findIndex((s) => s.id === sessionId);

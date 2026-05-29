@@ -1,5 +1,19 @@
 # Changelog
 
+## [V0.1.8] - 2026-05-29
+
+### Claude Hook 标签通知
+
+- 新增 Claude Code Hook 桥接：应用启动本地回环通知服务，为每个 PTY 会话注入 `CLI_MANAGER_TAB_ID`、`CLI_MANAGER_NOTIFY_PORT` 与 `CLI_MANAGER_NOTIFY_TOKEN`，接收 `Notification` / `Stop` / `StopFailure` 事件并映射到对应终端标签。
+- 终端标签状态点从进程状态切换为 Claude 通知状态，支持“需要处理 / 已完成 / 执行异常”三种提示；切换到目标标签后自动清除该标签通知。
+- 右上角新增 Claude Hook 悬浮通知卡片，支持查看目标标签、忽略、关闭单条通知；多条通知按从上到下固定间距排列，不再依赖鼠标悬浮展开。
+
+### Hook 设置
+
+- 设置页新增「Hook 设置」入口，可选择 Claude 配置目录，一键安装或删除 `notify-cli-manager-approval.ps1` 与 `notify-cli-manager-finished.ps1`。
+- 安装逻辑会合并写入 Claude `settings.json` 的 `Notification`、`Stop`、`StopFailure` hook，不删除用户自定义 hook；删除时只清理 CLI-Manager 自己的脚本与命令。
+- Hook 设置页展示 Claude 配置目录、hooks 目录、settings.json 路径与安装状态，并统一 Notification 脚本和 Stop / StopFailure 脚本检测框尺寸。
+
 ## [V0.1.6] - 2026-05-27
 
 ### WebDAV 同步增强

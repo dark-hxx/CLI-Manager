@@ -6,9 +6,10 @@ import { ThemeSettingsPage } from "./settings/pages/ThemeSettingsPage";
 import { ShortcutSettingsPage } from "./settings/pages/ShortcutSettingsPage";
 import { TemplateSettingsPage } from "./settings/pages/TemplateSettingsPage";
 import { SyncSettingsPage } from "./settings/pages/SyncSettingsPage";
+import { HookSettingsPage } from "./settings/pages/HookSettingsPage";
 import { useSettingsStore } from "../stores/settingsStore";
 
-export type SettingsTab = "general" | "terminal-theme" | "shortcuts" | "templates" | "sync";
+export type SettingsTab = "general" | "terminal-theme" | "shortcuts" | "templates" | "sync" | "hooks";
 
 interface SettingsTabConfig {
   label: string;
@@ -17,7 +18,7 @@ interface SettingsTabConfig {
   searchPlaceholder: string;
 }
 
-const SETTINGS_TAB_ORDER: SettingsTab[] = ["general", "terminal-theme", "shortcuts", "templates", "sync"];
+const SETTINGS_TAB_ORDER: SettingsTab[] = ["general", "terminal-theme", "shortcuts", "templates", "sync", "hooks"];
 
 const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   general: {
@@ -49,6 +50,12 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     title: "同步",
     description: "选择云端（WebDAV）或本地目录方式同步配置。",
     searchPlaceholder: "搜索同步设置（预留）",
+  },
+  hooks: {
+    label: "Hook 设置",
+    title: "Hook 设置",
+    description: "安装或移除 Claude Code 到 CLI-Manager 标签通知的桥接脚本。",
+    searchPlaceholder: "搜索 Hook 设置（预留）",
   },
 };
 
@@ -108,6 +115,7 @@ export function SettingsModal({ open, onClose, initialTab }: Props) {
     if (activeTab === "shortcuts") return <ShortcutSettingsPage searchValue={searchValue} />;
     if (activeTab === "templates") return <TemplateSettingsPage searchValue={searchValue} />;
     if (activeTab === "sync") return <SyncSettingsPage />;
+    if (activeTab === "hooks") return <HookSettingsPage />;
     return null;
   })();
 

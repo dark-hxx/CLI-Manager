@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { toast, Toaster } from "sonner";
 import { isTauri } from "@tauri-apps/api/core";
 import { LogicalSize } from "@tauri-apps/api/dpi";
@@ -10,12 +10,15 @@ import { CommandPalette } from "./components/CommandPalette";
 import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
+import { AlertTriangle, Check, X } from "./components/icons";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useProjectStore } from "./stores/projectStore";
 import { useSessionStore } from "./stores/sessionStore";
 import { useSyncStore } from "./stores/syncStore";
+import { useHistoryStore } from "./stores/historyStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdateStore } from "./stores/updateStore";
+import { useTerminalStore, type ClaudeHookPayload } from "./stores/terminalStore";
 import { createPerfMarker, logWarn } from "./lib/logger";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
@@ -29,6 +32,180 @@ let startupUpdateChecked = false;
 const COMPACT_WINDOW_WIDTH = 350;
 const WINDOW_MIN_HEIGHT = 600;
 const IN_TAURI = isTauri();
+const CLAUDE_HOOK_TOAST_PREFIX = "claude-hook-notification";
+let claudeHookToastSequence = 0;
+const claudeHookToastItemsByTab = new Map<string, ClaudeHookToastItem[]>();
+
+type ClaudeHookToastVariant = "approval" | "finished" | "failed";
+
+type ClaudeHookToastCardCssProperties = CSSProperties & {
+  "--claude-hook-toast-stack-index": number;
+  "--claude-hook-toast-stack-margin": string;
+  "--claude-hook-toast-stack-x": string;
+  "--claude-hook-toast-stack-y": string;
+};
+
+interface ClaudeHookToastStyle {
+  variant: ClaudeHookToastVariant;
+  icon: typeof AlertTriangle;
+  eyebrow: string;
+  actionLabel: string;
+}
+
+interface ClaudeHookToastItem {
+  id: string;
+  title: string;
+  message?: string;
+  tabTitle: string;
+  style: ClaudeHookToastStyle;
+}
+
+function createClaudeHookToastGroupId(tabId: string): string {
+  return `${CLAUDE_HOOK_TOAST_PREFIX}-${tabId}`;
+}
+
+function createClaudeHookToastItemId(tabId: string): string {
+  claudeHookToastSequence += 1;
+  return `${createClaudeHookToastGroupId(tabId)}-item-${claudeHookToastSequence}`;
+}
+
+function clearClaudeHookToastItemsForTab(tabId: string): void {
+  claudeHookToastItemsByTab.delete(tabId);
+}
+
+function dismissClaudeHookToastsForTab(tabId: string): void {
+  clearClaudeHookToastItemsForTab(tabId);
+  toast.dismiss(createClaudeHookToastGroupId(tabId));
+}
+
+function removeClaudeHookToastItem(tabId: string, itemId: string): void {
+  const items = claudeHookToastItemsByTab.get(tabId);
+  if (!items) return;
+
+  const nextItems = items.filter((item) => item.id !== itemId);
+  if (nextItems.length === 0) {
+    dismissClaudeHookToastsForTab(tabId);
+    return;
+  }
+
+  claudeHookToastItemsByTab.set(tabId, nextItems);
+  renderClaudeHookToastGroup(tabId);
+}
+
+function getClaudeHookToastCardStyle(index: number): ClaudeHookToastCardCssProperties {
+  return {
+    "--claude-hook-toast-stack-index": index,
+    "--claude-hook-toast-stack-margin": index === 0 ? "0px" : "10px",
+    "--claude-hook-toast-stack-x": "0px",
+    "--claude-hook-toast-stack-y": "0px",
+  };
+}
+
+function getClaudeHookToastStyle(payload: ClaudeHookPayload): ClaudeHookToastStyle {
+  if (payload.event === "Stop") {
+    return { variant: "finished", icon: Check, eyebrow: "任务完成", actionLabel: "查看" };
+  }
+  if (payload.event === "StopFailure") {
+    return { variant: "failed", icon: AlertTriangle, eyebrow: "执行失败", actionLabel: "查看" };
+  }
+  return { variant: "approval", icon: AlertTriangle, eyebrow: "需要处理", actionLabel: "去处理" };
+}
+
+function getClaudeHookToastTitle(payload: ClaudeHookPayload, tabTitle: string): string {
+  if (payload.title) return payload.title;
+  if (payload.event === "Stop") return `${tabTitle} 已完成`;
+  if (payload.event === "StopFailure") return `${tabTitle} 执行失败`;
+  return `${tabTitle} 需要处理`;
+}
+
+function renderClaudeHookToastGroup(tabId: string): void {
+  const items = claudeHookToastItemsByTab.get(tabId);
+  if (!items || items.length === 0) {
+    dismissClaudeHookToastsForTab(tabId);
+    return;
+  }
+
+  toast.custom(
+    () => (
+      <div className="claude-hook-toast-stack" data-tab-id={tabId}>
+        {items.map((item, index) => {
+          const Icon = item.style.icon;
+          return (
+            <div
+              key={item.id}
+              className="claude-hook-toast"
+              data-variant={item.style.variant}
+              style={getClaudeHookToastCardStyle(index)}
+            >
+              <div className="claude-hook-toast__icon" aria-hidden="true">
+                <Icon size={16} strokeWidth={2.4} />
+              </div>
+              <div className="claude-hook-toast__content">
+                <div className="claude-hook-toast__eyebrow">{item.style.eyebrow}</div>
+                <div className="claude-hook-toast__title">{item.title}</div>
+                <div className="claude-hook-toast__source" title={item.tabTitle}>
+                  来自：{item.tabTitle}
+                </div>
+                {item.message ? <div className="claude-hook-toast__description">{item.message}</div> : null}
+                <div className="claude-hook-toast__actions">
+                  <button
+                    type="button"
+                    className="claude-hook-toast__action"
+                    onClick={() => {
+                      useHistoryStore.getState().closeHistory();
+                      useTerminalStore.getState().setActive(tabId);
+                      dismissClaudeHookToastsForTab(tabId);
+                    }}
+                  >
+                    {item.style.actionLabel}
+                  </button>
+                  <button
+                    type="button"
+                    className="claude-hook-toast__ignore"
+                    onClick={() => dismissClaudeHookToastsForTab(tabId)}
+                  >
+                    忽略
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="claude-hook-toast__close"
+                aria-label="关闭通知"
+                onClick={() => removeClaudeHookToastItem(tabId, item.id)}
+              >
+                <X size={20} strokeWidth={2.2} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    ),
+    {
+      id: createClaudeHookToastGroupId(tabId),
+      duration: Infinity,
+      position: "top-right",
+      onDismiss: () => clearClaudeHookToastItemsForTab(tabId),
+      onAutoClose: () => clearClaudeHookToastItemsForTab(tabId),
+    }
+  );
+}
+
+function showClaudeHookToast(payload: ClaudeHookPayload, tabId: string): void {
+  const terminalStore = useTerminalStore.getState();
+  const tabTitle = terminalStore.sessions.find((session) => session.id === tabId)?.title ?? "Claude 终端";
+  const item: ClaudeHookToastItem = {
+    id: createClaudeHookToastItemId(tabId),
+    title: getClaudeHookToastTitle(payload, tabTitle),
+    message: payload.message ?? undefined,
+    tabTitle,
+    style: getClaudeHookToastStyle(payload),
+  };
+
+  const items = claudeHookToastItemsByTab.get(tabId) ?? [];
+  claudeHookToastItemsByTab.set(tabId, [...items, item]);
+  renderClaudeHookToastGroup(tabId);
+}
 
 function App() {
   const loadSettings = useSettingsStore((s) => s.load);
@@ -60,6 +237,20 @@ function App() {
   }, []);
 
   useKeyboardShortcuts();
+
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    const unlistenPromise = listen<ClaudeHookPayload>("claude-hook-notification", (event) => {
+      const tabId = useTerminalStore.getState().handleClaudeHookEvent(event.payload);
+      if (tabId) {
+        showClaudeHookToast(event.payload, tabId);
+      }
+    });
+
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
 
   useEffect(() => {
     const init = async () => {
