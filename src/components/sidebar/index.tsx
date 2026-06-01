@@ -65,6 +65,8 @@ export function Sidebar({ onOpenSettings, compactMode = false }: SidebarProps) {
   const moveProjectToGroup = useProjectStore((s) => s.moveProjectToGroup);
   const createSession = useTerminalStore((s) => s.createSession);
   const sessions = useTerminalStore((s) => s.sessions);
+  const activeSessionId = useTerminalStore((s) => s.activeSessionId);
+  const setActiveSession = useTerminalStore((s) => s.setActive);
   const sessionStatuses = useTerminalStore((s) => s.sessionStatuses);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
   const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
@@ -100,6 +102,33 @@ export function Sidebar({ onOpenSettings, compactMode = false }: SidebarProps) {
     | { kind: "delete-project"; project: Project }
     | { kind: "delete-group"; groupId: string; groupName: string }
   >(null);
+
+  const activeSessionProjectId = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId)?.projectId ?? null,
+    [activeSessionId, sessions]
+  );
+
+  useEffect(() => {
+    if (!activeSessionProjectId) return;
+    setSelectedId(activeSessionProjectId);
+    setSelectedProjectIds((prev) => {
+      if (prev.size === 1 && prev.has(activeSessionProjectId)) return prev;
+      return new Set([activeSessionProjectId]);
+    });
+  }, [activeSessionProjectId]);
+
+  const activateFirstProjectSession = useCallback(
+    (projectId: string): boolean => {
+      const session = sessions.find((item) => item.projectId === projectId);
+      if (!session) return false;
+      if (session.id !== activeSessionId) {
+        setActiveSession(session.id);
+      }
+      return true;
+    },
+    [activeSessionId, sessions, setActiveSession]
+  );
+
   const [contextMenu, setContextMenu] = useState<
     | null
     | { kind: "project"; project: Project; x: number; y: number }
@@ -478,12 +507,14 @@ export function Sidebar({ onOpenSettings, compactMode = false }: SidebarProps) {
       return;
     }
     setSelectedProjectIds(new Set([project.id]));
-  }, []);
+    activateFirstProjectSession(project.id);
+  }, [activateFirstProjectSession]);
 
   const handleSelectProjectByKeyboard = useCallback((project: Project) => {
     setSelectedId(project.id);
     setSelectedProjectIds(new Set([project.id]));
-  }, []);
+    activateFirstProjectSession(project.id);
+  }, [activateFirstProjectSession]);
 
   const handleToggleSelection = useCallback((project: Project) => {
     setSelectedProjectIds((prev) => {

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"检查双向联动是否遵守状态归属：activeSessionId 来自 terminalStore，树选中态仍为 Sidebar 局部状态。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查组件交互是否符合现有左树/终端 tab 组件职责，不引入额外抽象。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查新增逻辑的 projectId/session 查找是否类型安全且无非空断言滥用。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查改动是否最小、可读、没有重复 setState 或循环联动风险。"}

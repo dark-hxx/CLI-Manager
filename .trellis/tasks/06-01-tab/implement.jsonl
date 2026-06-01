@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"双向联动需要遵守 Zustand 全局状态与局部 UI state 的边界，避免把左树临时选中态无谓提升为全局状态。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"实现发生在 React 组件层，需要遵守现有组件职责、热更新和交互改动约束。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"变更涉及 TerminalSession/projectId 等 TypeScript 类型推导，需保持严格类型安全。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"实现需保持最小改动、避免重复状态和无意义重渲染。"}
