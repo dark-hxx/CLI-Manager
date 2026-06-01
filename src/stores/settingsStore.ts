@@ -95,6 +95,9 @@ interface Settings {
   keyboardShortcuts: KeyboardShortcutMap;
   terminalNewlineShortcut: TerminalNewlineShortcut;
   terminalBackground: TerminalBackgroundSettings;
+  hookPopupNotificationsEnabled: boolean;
+  hookPopupAutoCloseEnabled: boolean;
+  hookPopupAutoCloseSeconds: number;
 }
 
 interface SettingsStore extends Settings {
@@ -141,6 +144,9 @@ const DEFAULTS: Settings = {
     blur: 0,
     overlayDarken: 30,
   },
+  hookPopupNotificationsEnabled: true,
+  hookPopupAutoCloseEnabled: true,
+  hookPopupAutoCloseSeconds: 60,
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -307,6 +313,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
 
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
+
+    entries.hookPopupNotificationsEnabled =
+      typeof entries.hookPopupNotificationsEnabled === "boolean"
+        ? entries.hookPopupNotificationsEnabled
+        : DEFAULTS.hookPopupNotificationsEnabled;
+    entries.hookPopupAutoCloseEnabled =
+      typeof entries.hookPopupAutoCloseEnabled === "boolean"
+        ? entries.hookPopupAutoCloseEnabled
+        : DEFAULTS.hookPopupAutoCloseEnabled;
+    entries.hookPopupAutoCloseSeconds = clampNumber(
+      entries.hookPopupAutoCloseSeconds,
+      5,
+      3600,
+      DEFAULTS.hookPopupAutoCloseSeconds
+    );
 
     // 检测背景图是否仍存在；若不存在，仅在内存中清空 imagePath，保留 settings.json
     // 中的原配置，便于后续提示用户「之前选的图丢了」。

@@ -9,12 +9,14 @@ import { useSessionStore } from "./sessionStore";
 import { normalizeShellKey } from "../lib/shell";
 
 export type SessionStatus = "running" | "exited" | "error";
-export type ClaudeHookEventName = "Notification" | "Stop" | "StopFailure";
+export type CliHookSource = "claude" | "codex";
+export type CliHookEventName = "Notification" | "Stop" | "StopFailure" | "PermissionRequest";
 export type TabNotificationState = "none" | "attention" | "done" | "failed";
 
-export interface ClaudeHookPayload {
+export interface CliHookPayload {
   tabId: string;
-  event: ClaudeHookEventName;
+  source?: CliHookSource | null;
+  event: CliHookEventName;
   title?: string | null;
   message?: string | null;
   sessionId?: string | null;
@@ -44,7 +46,7 @@ interface TerminalStore {
   createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
-  handleClaudeHookEvent: (payload: ClaudeHookPayload) => string | null;
+  handleCliHookEvent: (payload: CliHookPayload) => string | null;
   reorderSessions: (fromId: string, toId: string) => void;
   splitTerminal: (sessionId: string, direction: "horizontal" | "vertical", cwd?: string, shell?: string) => Promise<void>;
   unsplitTerminal: (sessionId: string) => Promise<void>;
@@ -91,8 +93,8 @@ function logTerminalExitStatus(session: TerminalSession, payload: PtyStatusPaylo
   });
 }
 
-function mapClaudeHookEvent(event: ClaudeHookEventName): TabNotificationState {
-  if (event === "Notification") return "attention";
+function mapCliHookEvent(event: CliHookEventName): TabNotificationState {
+  if (event === "Notification" || event === "PermissionRequest") return "attention";
   if (event === "StopFailure") return "failed";
   return "done";
 }
@@ -262,13 +264,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     scheduleSaveActiveId(id);
   },
 
-  handleClaudeHookEvent: (payload) => {
+  handleCliHookEvent: (payload) => {
     const tabId = resolvePrimaryTabId(payload.tabId, get().splits);
     if (!get().sessions.some((session) => session.id === tabId)) return null;
     set((state) => ({
       tabNotifications: {
         ...state.tabNotifications,
-        [tabId]: mapClaudeHookEvent(payload.event),
+        [tabId]: mapCliHookEvent(payload.event),
       },
     }));
     return tabId;

@@ -31,10 +31,10 @@ const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
 };
 
 const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, string> = {
-  none: "无 Claude 通知",
-  attention: "Claude Code 需要处理",
-  done: "Claude Code 已完成",
-  failed: "Claude Code 执行异常",
+  none: "无 CLI 通知",
+  attention: "CLI 需要处理",
+  done: "CLI 任务已完成",
+  failed: "CLI 执行异常",
 };
 
 interface SortableTabProps {

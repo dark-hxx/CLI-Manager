@@ -1,5 +1,19 @@
 # Changelog
 
+## [V0.1.9] - 2026-06-01
+
+### Codex Hook 通知
+
+- 新增 Codex CLI hook 桥接，复用本地回环通知服务接收 `PermissionRequest` / `Stop` 事件，并按来源区分 `claude` / `codex` 通知来源。
+- 终端标签通知逻辑扩展为兼容 Claude 与 Codex，切换到目标标签后自动清理对应通知。
+- 新增 Codex hook 安装/卸载逻辑，写入 `~/.codex/hooks.json` 与 `~/.codex/config.toml`，并生成 `notify-cli-manager-codex-attention.ps1` / `notify-cli-manager-codex-finished.ps1`。
+
+### Hook 设置调整
+
+- Hook 设置页拆分为 Claude / Codex 两套配置状态与操作，分别展示路径、安装状态和安装/删除入口。
+- Claude Hook 安装逻辑继续只处理 `settings.json` 内的 `Notification` / `Stop` / `StopFailure`，避免覆盖用户自定义 hook。
+- Hook bridge 日志文案统一为 CLI hook，便于区分来源。
+
 ## [V0.1.8] - 2026-05-29
 
 ### Claude Hook 标签通知

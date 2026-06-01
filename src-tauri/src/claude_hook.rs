@@ -22,6 +22,7 @@ pub struct ClaudeHookBridge {
 #[serde(rename_all = "camelCase")]
 struct ClaudeHookRequest {
     tab_id: String,
+    source: Option<String>,
     event: String,
     title: Option<String>,
     message: Option<String>,
@@ -34,6 +35,7 @@ struct ClaudeHookRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeHookPayload {
     tab_id: String,
+    source: String,
     event: String,
     title: Option<String>,
     message: Option<String>,
@@ -50,11 +52,11 @@ impl ClaudeHookBridge {
                 let token = Uuid::new_v4().to_string();
                 let thread_token = token.clone();
                 thread::spawn(move || run_listener(listener, app_handle, thread_token));
-                info!("claude hook bridge listening: 127.0.0.1:{}", port);
+                info!("cli hook bridge listening: 127.0.0.1:{}", port);
                 Self { port, token }
             }
             Err(err) => {
-                error!("claude hook bridge failed to bind: {}", err);
+                error!("cli hook bridge failed to bind: {}", err);
                 Self::disabled()
             }
         }
@@ -85,7 +87,7 @@ fn run_listener(listener: TcpListener, app_handle: AppHandle, token: String) {
                 let token = token.clone();
                 thread::spawn(move || handle_stream(stream, app_handle, &token));
             }
-            Err(err) => warn!("claude hook bridge accept failed: {}", err),
+            Err(err) => warn!("cli hook bridge accept failed: {}", err),
         }
     }
 }
@@ -119,7 +121,7 @@ fn handle_stream(mut stream: TcpStream, app_handle: AppHandle, token: &str) {
     let payload = match serde_json::from_slice::<ClaudeHookRequest>(&request.body) {
         Ok(payload) => payload,
         Err(err) => {
-            debug!("claude hook bridge payload parse failed: {}", err);
+            debug!("cli hook bridge payload parse failed: {}", err);
             write_response(&mut stream, "400 Bad Request", "invalid json");
             return;
         }
@@ -132,6 +134,7 @@ fn handle_stream(mut stream: TcpStream, app_handle: AppHandle, token: &str) {
 
     let payload = ClaudeHookPayload {
         tab_id: payload.tab_id,
+        source: normalize_source(payload.source.as_deref()).to_string(),
         event: payload.event,
         title: payload.title,
         message: payload.message,
@@ -141,7 +144,7 @@ fn handle_stream(mut stream: TcpStream, app_handle: AppHandle, token: &str) {
     };
 
     if let Err(err) = app_handle.emit(EVENT_NAME, payload) {
-        warn!("claude hook bridge emit failed: {}", err);
+        warn!("cli hook bridge emit failed: {}", err);
         write_response(&mut stream, "500 Internal Server Error", "emit failed");
         return;
     }
@@ -232,10 +235,23 @@ fn is_valid_payload(payload: &ClaudeHookRequest) -> bool {
     if tab_id.is_empty() || tab_id.len() > 128 {
         return false;
     }
-    matches!(
-        payload.event.as_str(),
-        "Notification" | "Stop" | "StopFailure"
-    )
+
+    match normalize_source(payload.source.as_deref()) {
+        "claude" => matches!(
+            payload.event.as_str(),
+            "Notification" | "Stop" | "StopFailure"
+        ),
+        "codex" => matches!(payload.event.as_str(), "PermissionRequest" | "Stop"),
+        _ => false,
+    }
+}
+
+fn normalize_source(source: Option<&str>) -> &str {
+    match source {
+        Some("codex") => "codex",
+        Some("claude") | None => "claude",
+        _ => "",
+    }
 }
 
 fn write_response(stream: &mut TcpStream, status: &str, body: &str) {

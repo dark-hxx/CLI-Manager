@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Check frontend spec compliance after React/settings UI changes."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check frontend quality constraints and avoid hot-path allocations/regressions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify settings persist and hook event behavior remains consistent across layers."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify existing UI/store patterns were reused without duplication."}

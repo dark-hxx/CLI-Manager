@@ -286,6 +286,8 @@ pub fn run() {
             commands::hook_settings::hook_settings_get_status,
             commands::hook_settings::hook_settings_install,
             commands::hook_settings::hook_settings_uninstall,
+            commands::hook_settings::hook_settings_install_codex,
+            commands::hook_settings::hook_settings_uninstall_codex,
             commands::hook_settings::hook_settings_select_dir,
         ])
         .run(tauri::generate_context!())

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index for React/settings UI changes."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality constraints for UI/state changes."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Settings affect persisted store, UI controls, and hook event rendering."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing settings store and UI controls instead of adding duplicate mechanisms."}
