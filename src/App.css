@@ -749,7 +749,21 @@ samp,
   color: var(--on-surface);
 }
 
-.ui-terminal-tab-close:hover {
+.ui-terminal-tab-close {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ui-tab-trigger[data-selected="true"] .ui-terminal-tab-close,
+.ui-tab-trigger:hover .ui-terminal-tab-close,
+.ui-tab-trigger:focus-within .ui-terminal-tab-close {
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+.ui-terminal-tab-close:hover,
+.ui-terminal-tab-close:focus-visible {
+  opacity: 1;
   background-color: color-mix(in srgb, var(--interactive-hover-bg) 88%, #000 12%);
   color: var(--on-surface);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-hover-bg) 72%, #000 28%);
@@ -765,11 +779,51 @@ samp,
 }
 
 .ui-terminal-tab-scroll {
+  --tab-scroll-left-fade: 0px;
+  --tab-scroll-right-fade: 0px;
   scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--tab-scroll-left-fade),
+    #000 calc(100% - var(--tab-scroll-right-fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--tab-scroll-left-fade),
+    #000 calc(100% - var(--tab-scroll-right-fade)),
+    transparent 100%
+  );
+}
+
+.ui-terminal-tab-scroll[data-can-scroll-left="true"] {
+  --tab-scroll-left-fade: 18px;
+}
+
+.ui-terminal-tab-scroll[data-can-scroll-right="true"] {
+  --tab-scroll-right-fade: 18px;
 }
 
 .ui-terminal-tab-scroll::-webkit-scrollbar {
   display: none;
+}
+
+.ui-terminal-tab-scroll-button {
+  width: 30px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 0;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 68%, transparent);
+}
+
+.ui-terminal-tab-scroll-button-left {
+  border-right: 1px solid color-mix(in srgb, var(--border) 14%, transparent);
+}
+
+.ui-terminal-tab-scroll-button-right {
+  border-left: 1px solid color-mix(in srgb, var(--border) 14%, transparent);
 }
 
 .ui-terminal-actions {

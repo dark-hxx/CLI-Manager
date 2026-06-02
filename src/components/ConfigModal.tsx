@@ -6,7 +6,6 @@ import type { Project, Group } from "../lib/types";
 import { SHELL_OPTIONS } from "../lib/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ChevronDown } from "./icons";
-import { Portal } from "./ui/Portal";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import { Textarea } from "./ui/textarea";
@@ -26,6 +25,8 @@ interface Props {
   defaultGroupId?: string | null;
   onClose: () => void;
 }
+
+const CLI_TOOL_OPTIONS = ["claude", "codex"] as const;
 
 export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Props) {
   const { createProject, updateProject, groups } = useProjectStore();
@@ -196,7 +197,22 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
                 />
               </div>
 
-              <Field label="CLI 工具" value={cliTool} onChange={setCliTool} placeholder="claude / codex / custom" />
+              <div>
+                <label className="mb-1 block text-xs text-text-muted">CLI 工具</label>
+                <Input
+                  type="text"
+                  value={cliTool}
+                  onChange={(e) => setCliTool(e.target.value)}
+                  placeholder="claude / codex / custom"
+                  list="cli-tool-options"
+                  className="text-sm"
+                />
+                <datalist id="cli-tool-options">
+                  {CLI_TOOL_OPTIONS.map((tool) => (
+                    <option key={tool} value={tool} />
+                  ))}
+                </datalist>
+              </div>
 
               <div>
                 <label className="mb-1 block text-xs text-text-muted">Shell</label>
@@ -265,27 +281,9 @@ function GroupSelector({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [panelPosition, setPanelPosition] = useState({ left: 0, top: 0 });
-
-  const updatePosition = useCallback(() => {
-    const trigger = triggerRef.current;
-    if (!trigger) return;
-
-    const rect = trigger.getBoundingClientRect();
-    const panelWidth = rect.width;
-    const estimatedHeight = 220;
-    const nextLeft = Math.max(8, Math.min(rect.left, window.innerWidth - panelWidth - 8));
-    const preferredTop = rect.bottom + 4;
-    const nextTop = preferredTop + estimatedHeight <= window.innerHeight - 8
-      ? preferredTop
-      : Math.max(8, rect.top - estimatedHeight - 4);
-
-    setPanelPosition({ left: nextLeft, top: nextTop });
-  }, []);
 
   useEffect(() => {
     if (!open) return;
-    updatePosition();
 
     const handler = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -294,17 +292,11 @@ function GroupSelector({
       setOpen(false);
     };
 
-    const reposition = () => updatePosition();
-
     document.addEventListener("mousedown", handler);
-    document.addEventListener("scroll", reposition, true);
-    window.addEventListener("resize", reposition);
     return () => {
       document.removeEventListener("mousedown", handler);
-      document.removeEventListener("scroll", reposition, true);
-      window.removeEventListener("resize", reposition);
     };
-  }, [open, updatePosition]);
+  }, [open]);
 
   // Build flat indented list
   const groupMap = new Map<string | null, Group[]>();
@@ -329,7 +321,7 @@ function GroupSelector({
   flatten(null, 0);
 
   return (
-    <>
+    <div className="relative">
       <button
         ref={triggerRef}
         type="button"
@@ -341,40 +333,37 @@ function GroupSelector({
       </button>
 
       {open && (
-        <Portal>
-          <div
-            ref={panelRef}
-            className="fixed z-[55] max-h-48 overflow-y-auto rounded-md border border-border bg-bg-secondary animate-slide-down"
-            style={{ left: panelPosition.left, top: panelPosition.top, width: triggerRef.current?.offsetWidth ?? 200 }}
+        <div
+          ref={panelRef}
+          className="absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-bg-secondary animate-slide-down"
+        >
+          {/* No group option */}
+          <button
+            type="button"
+            onClick={() => { onChange(null); setOpen(false); }}
+            className={`w-full px-2 py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${!value ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
           >
-            {/* No group option */}
+            不分组
+          </button>
+
+          {flatList.map(({ group: g, depth }) => (
             <button
+              key={g.id}
               type="button"
-              onClick={() => { onChange(null); setOpen(false); }}
-              className={`w-full px-2 py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${!value ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
+              onClick={() => { onChange(g.id); setOpen(false); }}
+              className={`w-full py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${value === g.id ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
+              style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
             >
-              不分组
+              {g.name}
             </button>
+          ))}
 
-            {flatList.map(({ group: g, depth }) => (
-              <button
-                key={g.id}
-                type="button"
-                onClick={() => { onChange(g.id); setOpen(false); }}
-                className={`w-full py-1.5 text-left text-sm transition-opacity hover:opacity-80 ${value === g.id ? "bg-bg-tertiary text-accent" : "text-text-secondary"}`}
-                style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
-              >
-                {g.name}
-              </button>
-            ))}
-
-            {flatList.length === 0 && (
-              <div className="px-2 py-1.5 text-xs text-text-muted">暂无分组</div>
-            )}
-          </div>
-        </Portal>
+          {flatList.length === 0 && (
+            <div className="px-2 py-1.5 text-xs text-text-muted">暂无分组</div>
+          )}
+        </div>
       )}
-    </>
+    </div>
   );
 }
 

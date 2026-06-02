@@ -1,4 +1,4 @@
-import { useCallback, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useShallow } from "zustand/shallow";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -11,7 +11,7 @@ import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { HistoryWorkspace } from "./HistoryWorkspace";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { Terminal, Plus, Search, X } from "./icons";
+import { ChevronDown, ChevronRight, Terminal, Plus, Search, X } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
 import {
@@ -21,6 +21,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "./ui/context-menu";
+import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { getTerminalBackground } from "../lib/terminalThemes";
 
 const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
@@ -44,11 +45,20 @@ interface SortableTabProps {
   notification: TabNotificationState;
   onActivate: () => void;
   onClose: () => void;
+  onRegisterElement: (id: string, element: HTMLDivElement | null) => void;
   menuContent: ReactNode;
 }
 
-function SortableTab({ id, title, isActive, notification, onActivate, onClose, menuContent }: SortableTabProps) {
+function SortableTab({ id, title, isActive, notification, onActivate, onClose, onRegisterElement, menuContent }: SortableTabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+
+  const setTabRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      setNodeRef(element);
+      onRegisterElement(id, element);
+    },
+    [id, onRegisterElement, setNodeRef]
+  );
 
   const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
   const style = {
@@ -62,9 +72,9 @@ function SortableTab({ id, title, isActive, notification, onActivate, onClose, m
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          ref={setNodeRef}
+          ref={setTabRef}
           style={style}
-          className="ui-interactive ui-tab-trigger mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
+          className="ui-interactive ui-tab-trigger mx-1 flex h-7 min-w-[118px] max-w-[180px] shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
           data-selected={isActive ? "true" : "false"}
           onClick={onActivate}
           aria-selected={isActive}
@@ -82,7 +92,7 @@ function SortableTab({ id, title, isActive, notification, onActivate, onClose, m
           <button
             onClick={(e) => { e.stopPropagation(); onClose(); }}
             onPointerDown={(e) => e.stopPropagation()}
-            className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant opacity-75 transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
+            className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
             aria-label={`关闭终端 ${title}`}
             title={`关闭终端 ${title}`}
           >
@@ -126,8 +136,43 @@ export function TerminalTabs() {
   const terminalBackgroundImagePath = useSettingsStore((s) => s.terminalBackground.imagePath);
   const historyOpen = useHistoryStore((s) => s.isOpen);
   const toggleHistory = useHistoryStore((s) => s.toggleHistory);
+  const tabScrollRef = useRef<HTMLDivElement | null>(null);
+  const tabElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const [tabListOpen, setTabListOpen] = useState(false);
+  const [tabScrollState, setTabScrollState] = useState({
+    hasOverflow: false,
+    canScrollLeft: false,
+    canScrollRight: false,
+  });
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const updateTabScrollState = useCallback(() => {
+    const element = tabScrollRef.current;
+    if (!element) return;
+
+    const maxScrollLeft = element.scrollWidth - element.clientWidth;
+    const next = {
+      hasOverflow: maxScrollLeft > 1,
+      canScrollLeft: element.scrollLeft > 1,
+      canScrollRight: element.scrollLeft < maxScrollLeft - 1,
+    };
+    setTabScrollState((current) => (
+      current.hasOverflow === next.hasOverflow
+        && current.canScrollLeft === next.canScrollLeft
+        && current.canScrollRight === next.canScrollRight
+        ? current
+        : next
+    ));
+  }, []);
+
+  const registerTabElement = useCallback((id: string, element: HTMLDivElement | null) => {
+    if (element) {
+      tabElementsRef.current.set(id, element);
+    } else {
+      tabElementsRef.current.delete(id);
+    }
+  }, []);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -143,6 +188,26 @@ export function TerminalTabs() {
     }
     await createSession(undefined, undefined, "Terminal");
   }, [useExternalTerminal, createSession]);
+
+  const handleSelectFromList = useCallback((sessionId: string) => {
+    setActive(sessionId);
+    setTabListOpen(false);
+  }, [setActive]);
+
+  const scrollTabs = useCallback(
+    (direction: "left" | "right") => {
+      const element = tabScrollRef.current;
+      if (!element) return;
+
+      const distance = Math.max(Math.floor(element.clientWidth * 0.72), 160);
+      element.scrollBy({
+        left: direction === "left" ? -distance : distance,
+        behavior: "smooth",
+      });
+      window.requestAnimationFrame(updateTabScrollState);
+    },
+    [updateTabScrollState]
+  );
 
   const handleCloseOthers = useCallback(
     (sessionId: string) => {
@@ -172,10 +237,60 @@ export function TerminalTabs() {
     "--terminal-bridge-color": terminalBridgeColor,
   } as CSSProperties;
 
+  useEffect(() => {
+    const element = tabScrollRef.current;
+    if (!element) return;
+
+    updateTabScrollState();
+    element.addEventListener("scroll", updateTabScrollState, { passive: true });
+
+    const resizeObserver = new ResizeObserver(updateTabScrollState);
+    resizeObserver.observe(element);
+
+    return () => {
+      element.removeEventListener("scroll", updateTabScrollState);
+      resizeObserver.disconnect();
+    };
+  }, [updateTabScrollState]);
+
+  useEffect(() => {
+    updateTabScrollState();
+  }, [sessions.length, updateTabScrollState]);
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const element = tabElementsRef.current.get(activeSessionId);
+    if (!element) return;
+
+    element.scrollIntoView({ block: "nearest", inline: "nearest" });
+    window.requestAnimationFrame(updateTabScrollState);
+  }, [activeSessionId, sessions.length, updateTabScrollState]);
+
+  useEffect(() => {
+    if (!tabScrollState.hasOverflow && tabListOpen) setTabListOpen(false);
+  }, [tabListOpen, tabScrollState.hasOverflow]);
+
   return (
     <div className="ui-terminal-tabs-shell flex h-full min-h-0 flex-col">
       <div className="ui-terminal-chrome">
-        <div className="ui-terminal-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto px-1.5">
+        {tabScrollState.hasOverflow && (
+          <button
+            type="button"
+            onClick={() => scrollTabs("left")}
+            disabled={!tabScrollState.canScrollLeft}
+            className="ui-focus-ring ui-icon-action ui-terminal-tab-scroll-button ui-terminal-tab-scroll-button-left"
+            title="向左滚动终端 Tab"
+            aria-label="向左滚动终端 Tab"
+          >
+            <ChevronRight size={14} strokeWidth={1.8} className="rotate-180" />
+          </button>
+        )}
+        <div
+          ref={tabScrollRef}
+          className="ui-terminal-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto px-1.5"
+          data-can-scroll-left={tabScrollState.canScrollLeft ? "true" : "false"}
+          data-can-scroll-right={tabScrollState.canScrollRight ? "true" : "false"}
+        >
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={sessionIds} strategy={horizontalListSortingStrategy}>
               {sessions.map((s) => {
@@ -189,6 +304,7 @@ export function TerminalTabs() {
                     notification={tabNotifications[s.id] ?? "none"}
                     onActivate={() => setActive(s.id)}
                     onClose={() => closeSession(s.id)}
+                    onRegisterElement={registerTabElement}
                     menuContent={
                       <>
                         <ContextMenuItem
@@ -244,7 +360,66 @@ export function TerminalTabs() {
             </SortableContext>
           </DndContext>
         </div>
+        {tabScrollState.hasOverflow && (
+          <button
+            type="button"
+            onClick={() => scrollTabs("right")}
+            disabled={!tabScrollState.canScrollRight}
+            className="ui-focus-ring ui-icon-action ui-terminal-tab-scroll-button ui-terminal-tab-scroll-button-right"
+            title="向右滚动终端 Tab"
+            aria-label="向右滚动终端 Tab"
+          >
+            <ChevronRight size={14} strokeWidth={1.8} />
+          </button>
+        )}
         <div className="ui-terminal-actions flex h-full shrink-0 items-center gap-2 px-2.5">
+          {tabScrollState.hasOverflow && (
+            <Popover open={tabListOpen} onOpenChange={setTabListOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  className="ui-focus-ring ui-icon-action"
+                  data-active={tabListOpen ? "true" : "false"}
+                  title="更多终端 Tab"
+                  aria-label="打开终端 Tab 列表"
+                  aria-expanded={tabListOpen}
+                  aria-controls="terminal-tab-list"
+                >
+                  <ChevronDown size={14} strokeWidth={1.8} />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent id="terminal-tab-list" align="end" className="w-72">
+                <div className="flex items-center justify-between px-3 py-2">
+                  <span className="text-xs font-semibold text-on-surface">终端 Tab</span>
+                  <span className="text-[10px] text-on-surface-variant">{sessions.length}</span>
+                </div>
+                <div className="max-h-72 overflow-y-auto p-1.5">
+                  {sessions.map((session) => {
+                    const notification = tabNotifications[session.id] ?? "none";
+                    const isActive = session.id === activeSessionId;
+                    return (
+                      <button
+                        key={session.id}
+                        onClick={() => handleSelectFromList(session.id)}
+                        className="ui-interactive flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-on-surface-variant"
+                        data-selected={isActive ? "true" : "false"}
+                        aria-current={isActive ? "page" : undefined}
+                        title={session.title}
+                      >
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification] }}
+                          aria-label={TAB_NOTIFICATION_LABELS[notification]}
+                          title={TAB_NOTIFICATION_LABELS[notification]}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-on-surface">{session.title}</span>
+                        {isActive && <span className="shrink-0 text-[10px] text-primary">当前</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
           <button
             onClick={handleNewTab}
             className="ui-flat-action ui-toolbar-button ui-primary-action"
