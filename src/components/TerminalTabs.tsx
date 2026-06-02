@@ -11,7 +11,7 @@ import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { HistoryWorkspace } from "./HistoryWorkspace";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { ChevronDown, Terminal, Plus, Search, X } from "./icons";
+import { ChevronDown, ChevronRight, Terminal, Plus, Search, X } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
 import {
@@ -74,7 +74,7 @@ function SortableTab({ id, title, isActive, notification, onActivate, onClose, o
         <div
           ref={setTabRef}
           style={style}
-          className="ui-interactive ui-tab-trigger mx-1 flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
+          className="ui-interactive ui-tab-trigger mx-1 flex h-7 min-w-[118px] max-w-[180px] shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
           data-selected={isActive ? "true" : "false"}
           onClick={onActivate}
           aria-selected={isActive}
@@ -92,7 +92,7 @@ function SortableTab({ id, title, isActive, notification, onActivate, onClose, o
           <button
             onClick={(e) => { e.stopPropagation(); onClose(); }}
             onPointerDown={(e) => e.stopPropagation()}
-            className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant opacity-75 transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
+            className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
             aria-label={`关闭终端 ${title}`}
             title={`关闭终端 ${title}`}
           >
@@ -194,6 +194,21 @@ export function TerminalTabs() {
     setTabListOpen(false);
   }, [setActive]);
 
+  const scrollTabs = useCallback(
+    (direction: "left" | "right") => {
+      const element = tabScrollRef.current;
+      if (!element) return;
+
+      const distance = Math.max(Math.floor(element.clientWidth * 0.72), 160);
+      element.scrollBy({
+        left: direction === "left" ? -distance : distance,
+        behavior: "smooth",
+      });
+      window.requestAnimationFrame(updateTabScrollState);
+    },
+    [updateTabScrollState]
+  );
+
   const handleCloseOthers = useCallback(
     (sessionId: string) => {
       sessions.filter((s) => s.id !== sessionId).forEach((s) => closeSession(s.id));
@@ -258,6 +273,18 @@ export function TerminalTabs() {
   return (
     <div className="ui-terminal-tabs-shell flex h-full min-h-0 flex-col">
       <div className="ui-terminal-chrome">
+        {tabScrollState.hasOverflow && (
+          <button
+            type="button"
+            onClick={() => scrollTabs("left")}
+            disabled={!tabScrollState.canScrollLeft}
+            className="ui-focus-ring ui-icon-action ui-terminal-tab-scroll-button ui-terminal-tab-scroll-button-left"
+            title="向左滚动终端 Tab"
+            aria-label="向左滚动终端 Tab"
+          >
+            <ChevronRight size={14} strokeWidth={1.8} className="rotate-180" />
+          </button>
+        )}
         <div
           ref={tabScrollRef}
           className="ui-terminal-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto px-1.5"
@@ -333,6 +360,18 @@ export function TerminalTabs() {
             </SortableContext>
           </DndContext>
         </div>
+        {tabScrollState.hasOverflow && (
+          <button
+            type="button"
+            onClick={() => scrollTabs("right")}
+            disabled={!tabScrollState.canScrollRight}
+            className="ui-focus-ring ui-icon-action ui-terminal-tab-scroll-button ui-terminal-tab-scroll-button-right"
+            title="向右滚动终端 Tab"
+            aria-label="向右滚动终端 Tab"
+          >
+            <ChevronRight size={14} strokeWidth={1.8} />
+          </button>
+        )}
         <div className="ui-terminal-actions flex h-full shrink-0 items-center gap-2 px-2.5">
           {tabScrollState.hasOverflow && (
             <Popover open={tabListOpen} onOpenChange={setTabListOpen}>
