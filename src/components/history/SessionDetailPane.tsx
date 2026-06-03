@@ -1,5 +1,6 @@
-﻿import { BookCopy, Copy, GitCompare, Star } from "lucide-react";
-import { useMemo } from "react";
+﻿import { useVirtualizer } from "@tanstack/react-virtual";
+import { BookCopy, Copy, GitCompare, Star } from "lucide-react";
+import { useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import type { HistoryMessage, HistorySessionDetail, HistorySessionView } from "../../lib/types";
 import { EmptyState } from "../ui/EmptyState";
@@ -18,6 +19,7 @@ interface SessionDetailPaneProps {
   matchIndices: number[];
   matchCursor: number;
   focusedMessageIndex: number | null;
+  focusedMessageSeq: number;
   visibleMessages: HistoryMessage[];
   visibleMessageCount: number;
   hasMoreMessages: boolean;
@@ -48,6 +50,7 @@ export function SessionDetailPane({
   matchIndices,
   matchCursor,
   focusedMessageIndex,
+  focusedMessageSeq,
   visibleMessages,
   visibleMessageCount,
   hasMoreMessages,
@@ -70,6 +73,26 @@ export function SessionDetailPane({
   // matchIndices.includes(idx) 在 visibleMessages.map 内对每个可见消息做 O(N) 扫描，
   // 当匹配数 N 和可见消息数 M 都达到几百时累计 O(N·M)。改 Set 后是 O(1) lookup。
   const matchSet = useMemo(() => new Set(matchIndices), [matchIndices]);
+  const activeMatchIndex = matchIndices[Math.min(matchCursor, Math.max(0, matchIndices.length - 1))];
+  const messageVirtualizer = useVirtualizer({
+    count: visibleMessages.length,
+    getScrollElement: () => messageListRef.current,
+    estimateSize: () => 220,
+    overscan: 6,
+    getItemKey: (index) => `${visibleMessages[index]?.role ?? "message"}:${index}`,
+  });
+
+  useEffect(() => {
+    if (activeMatchIndex === undefined) return;
+    if (activeMatchIndex < visibleMessages.length) {
+      messageVirtualizer.scrollToIndex(activeMatchIndex, { align: "center" });
+    }
+  }, [activeMatchIndex, messageVirtualizer, visibleMessages.length]);
+
+  useEffect(() => {
+    if (focusedMessageIndex === null || focusedMessageIndex >= visibleMessages.length) return;
+    messageVirtualizer.scrollToIndex(focusedMessageIndex, { align: "center" });
+  }, [focusedMessageIndex, focusedMessageSeq, messageVirtualizer, visibleMessages.length]);
 
   if (!activeView) {
     return (
@@ -176,49 +199,57 @@ export function SessionDetailPane({
         />
       </div>
 
-      <div ref={messageListRef} onScroll={onMessageListScroll} className="[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3 space-y-2.5">
+      <div ref={messageListRef} onScroll={onMessageListScroll} className="[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3">
         {loadingSessionDetail && <div className="text-xs text-text-muted">正在读取会话详情...</div>}
 
         {!loadingSessionDetail && activeSession?.messages.length === 0 && (
           <div className="text-xs text-text-muted">当前会话没有可显示的消息</div>
         )}
 
-        {!loadingSessionDetail &&
-          visibleMessages.map((msg, idx) => {
-            const isMatched = matchSet.has(idx);
-            const isFocused = focusedMessageIndex === idx;
-            const badge = roleBadge(msg.role);
-            return (
-              <div
-                key={`${msg.role}-${idx}`}
-                ref={(el) => {
-                  messageRefs.current[idx] = el;
-                }}
-                className="ui-history-message-card p-2.5"
-                style={{
-                  borderColor: isFocused ? "var(--warning)" : isMatched ? "var(--accent)" : "var(--border)",
-                }}
-              >
-                <div className="ui-dev-label mb-1 flex items-center justify-between text-[11px] text-text-muted">
-                  <span
-                    className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
-                    style={{
-                      color: badge.color,
-                      backgroundColor: badge.bg,
-                      border: `1px solid ${badge.border}`,
-                    }}
-                  >
-                    {badge.label}
-                  </span>
-                  <span>{msg.timestamp ?? "-"}</span>
+        {!loadingSessionDetail && visibleMessages.length > 0 && (
+          <div className="relative w-full" style={{ height: messageVirtualizer.getTotalSize() }}>
+            {messageVirtualizer.getVirtualItems().map((virtualRow) => {
+              const msg = visibleMessages[virtualRow.index];
+              if (!msg) return null;
+              const isMatched = matchSet.has(virtualRow.index);
+              const isFocused = focusedMessageIndex === virtualRow.index;
+              const badge = roleBadge(msg.role);
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={(el) => {
+                    messageRefs.current[virtualRow.index] = el;
+                    if (el) messageVirtualizer.measureElement(el);
+                  }}
+                  className="ui-history-message-card absolute left-0 top-0 w-full p-2.5"
+                  style={{
+                    borderColor: isFocused ? "var(--warning)" : isMatched ? "var(--accent)" : "var(--border)",
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <div className="ui-dev-label mb-1 flex items-center justify-between text-[11px] text-text-muted">
+                    <span
+                      className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
+                      style={{
+                        color: badge.color,
+                        backgroundColor: badge.bg,
+                        border: `1px solid ${badge.border}`,
+                      }}
+                    >
+                      {badge.label}
+                    </span>
+                    <span>{msg.timestamp ?? "-"}</span>
+                  </div>
+                  <HistoryMarkdownContent content={msg.content} query={sessionQuery} />
                 </div>
-                <HistoryMarkdownContent content={msg.content} query={sessionQuery} />
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+        )}
 
         {!loadingSessionDetail && hasMoreMessages && (
-          <button onClick={onLoadMoreMessages} className="ui-btn w-full" aria-label="加载更多消息">
+          <button onClick={onLoadMoreMessages} className="ui-btn mt-2.5 w-full" aria-label="加载更多消息">
             加载更多消息 ({visibleMessageCount}/{totalMessageCount})
           </button>
         )}

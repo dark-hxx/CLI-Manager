@@ -1,14 +1,24 @@
-﻿import { Select } from "@/components/ui/select";
+import { Select } from "@/components/ui/select";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { RefreshCw, Search, Star } from "lucide-react";
-import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
+import { useMemo, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
 import type { HistorySearchHit, HistorySessionView, HistorySourceFilter } from "../../lib/types";
-import { SearchHitsPanel } from "./SearchHitsPanel";
 import { formatTime, makeSessionLabel } from "./historyViewUtils";
 
 interface SessionGroup {
   label: string;
   items: HistorySessionView[];
 }
+
+type HistoryListRow =
+  | { type: "loading"; id: string }
+  | { type: "searching"; id: string }
+  | { type: "searchHeader"; id: string; count: number }
+  | { type: "searchHit"; id: string; hit: HistorySearchHit }
+  | { type: "group"; id: string; label: string }
+  | { type: "session"; id: string; item: HistorySessionView }
+  | { type: "empty"; id: string }
+  | { type: "loadMore"; id: string };
 
 interface HistoryListPaneProps {
   historySidebarWidth: number;
@@ -39,6 +49,13 @@ interface HistoryListPaneProps {
   onStartResize: (e: ReactMouseEvent) => void;
 }
 
+function rowHeight(row: HistoryListRow): number {
+  if (row.type === "group" || row.type === "searchHeader" || row.type === "searching") return 32;
+  if (row.type === "loading" || row.type === "empty" || row.type === "loadMore") return 56;
+  if (row.type === "searchHit") return 72;
+  return 76;
+}
+
 export function HistoryListPane({
   historySidebarWidth,
   sidebarRef,
@@ -67,6 +84,44 @@ export function HistoryListPane({
   onSessionListScroll,
   onStartResize,
 }: HistoryListPaneProps) {
+  const rows = useMemo<HistoryListRow[]>(() => {
+    if (loadingSessions) return [{ type: "loading", id: "loading" }];
+
+    const next: HistoryListRow[] = [];
+    if (normalizedGlobal && searching) {
+      next.push({ type: "searching", id: "searching" });
+    }
+    if (normalizedGlobal && searchHits.length > 0) {
+      next.push({ type: "searchHeader", id: "search-header", count: searchHits.length });
+      searchHits.forEach((hit, index) => {
+        next.push({ type: "searchHit", id: `hit:${hit.file_path}:${index}`, hit });
+      });
+    }
+
+    for (const group of groupedSessions) {
+      next.push({ type: "group", id: `group:${group.label}`, label: group.label });
+      for (const item of group.items) {
+        next.push({ type: "session", id: `session:${item.sessionKey}`, item });
+      }
+    }
+
+    if (filteredSessionCount === 0) {
+      next.push({ type: "empty", id: "empty" });
+    }
+    if (hasMoreSessions) {
+      next.push({ type: "loadMore", id: "load-more" });
+    }
+    return next;
+  }, [filteredSessionCount, groupedSessions, hasMoreSessions, loadingSessions, normalizedGlobal, searchHits, searching]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => sessionListRef.current,
+    estimateSize: (index) => rowHeight(rows[index] ?? { type: "loading", id: "fallback" }),
+    overscan: 10,
+    getItemKey: (index) => rows[index]?.id ?? index,
+  });
+
   return (
     <aside
       ref={sidebarRef}
@@ -121,62 +176,91 @@ export function HistoryListPane({
       </div>
 
       <div ref={sessionListRef} onScroll={onSessionListScroll} className="flex-1 overflow-y-auto">
-        {loadingSessions && <div className="px-3 py-4 text-xs text-text-muted">正在加载会话...</div>}
+        <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const row = rows[virtualRow.index];
+            if (!row) return null;
+            return (
+              <div
+                key={virtualRow.key}
+                className="absolute left-0 top-0 w-full"
+                style={{
+                  height: virtualRow.size,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {row.type === "loading" && <div className="px-3 py-4 text-xs text-text-muted">正在加载会话...</div>}
 
-        {!loadingSessions && normalizedGlobal && searching && (
-          <div className="px-3 py-2 text-[11px] text-text-muted">正在搜索...</div>
-        )}
+                {row.type === "searching" && (
+                  <div className="px-3 py-2 text-[11px] text-text-muted">正在搜索...</div>
+                )}
 
-        {!loadingSessions && normalizedGlobal && (
-          <SearchHitsPanel searchHits={searchHits} onOpenHit={onOpenHit} />
-        )}
+                {row.type === "searchHeader" && (
+                  <div className="px-3 py-2 text-[11px] font-semibold text-text-muted">
+                    搜索命中 {row.count} 条
+                  </div>
+                )}
 
-        {!loadingSessions &&
-          groupedSessions.map((group) => (
-            <div key={group.label}>
-              <div className="ui-history-section-label ui-dev-label px-3 py-1.5 text-[11px] font-semibold tracking-[0.04em] text-text-muted">
-                {group.label}
+                {row.type === "searchHit" && (
+                  <button
+                    onClick={() => onOpenHit(row.hit)}
+                    className="ui-list-row w-full border-t border-border px-3 py-2 text-left"
+                  >
+                    <div className="truncate text-xs font-semibold text-text-primary">{row.hit.title}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-text-secondary">{row.hit.snippet}</div>
+                    <div className="ui-dev-label mt-1 text-[10px] text-text-muted">
+                      {row.hit.source} · {row.hit.project_key} · {row.hit.role}
+                    </div>
+                  </button>
+                )}
+
+                {row.type === "group" && (
+                  <div className="ui-history-section-label ui-dev-label px-3 py-1.5 text-[11px] font-semibold tracking-[0.04em] text-text-muted">
+                    {row.label}
+                  </div>
+                )}
+
+                {row.type === "session" && (
+                  <button
+                    onClick={() => onOpenSession(row.item.sessionKey)}
+                    className="ui-list-row w-full border-b border-border px-3 py-2 text-left"
+                    style={{ backgroundColor: row.item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : "transparent" }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {row.item.starred && <Star size={12} style={{ color: "var(--warning)" }} fill="currentColor" />}
+                      <span className="truncate text-[13px] font-semibold text-text-primary">{row.item.displayTitle}</span>
+                    </div>
+                    <div className="ui-dev-label mt-1 text-[11px] text-text-muted">
+                      {row.item.source} · {makeSessionLabel(row.item)} · {row.item.message_count} 条消息
+                    </div>
+                    <div className="ui-dev-label mt-1 text-[11px] text-text-muted">更新于 {formatTime(row.item.updated_at)}</div>
+                  </button>
+                )}
+
+                {row.type === "empty" && (
+                  <div className="px-3 py-6 text-center text-xs text-text-muted">未找到匹配会话</div>
+                )}
+
+                {row.type === "loadMore" && (
+                  <div className="p-2">
+                    <button
+                      onClick={onLoadMoreSessions}
+                      className="ui-btn w-full"
+                      aria-label="加载更多历史会话"
+                      disabled={loadingMoreSessions}
+                    >
+                      {loadingMoreSessions
+                        ? "正在加载更多..."
+                        : loadMoreSessionMode === "local"
+                          ? `显示更多匹配会话（${visibleSessionCount}/${filteredSessionCount}）`
+                          : `继续扫描更多历史（已载入 ${filteredSessionCount} 条）`}
+                    </button>
+                  </div>
+                )}
               </div>
-              {group.items.map((item) => (
-                <button
-                  key={item.sessionKey}
-                  onClick={() => onOpenSession(item.sessionKey)}
-                  className="ui-list-row w-full border-b border-border px-3 py-2 text-left"
-                  style={{ backgroundColor: item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : "transparent" }}
-                >
-                  <div className="flex items-center gap-1.5">
-                    {item.starred && <Star size={12} style={{ color: "var(--warning)" }} fill="currentColor" />}
-                    <span className="truncate text-[13px] font-semibold text-text-primary">{item.displayTitle}</span>
-                  </div>
-                  <div className="ui-dev-label mt-1 text-[11px] text-text-muted">
-                    {item.source} · {makeSessionLabel(item)} · {item.message_count} 条消息
-                  </div>
-                  <div className="ui-dev-label mt-1 text-[11px] text-text-muted">更新于 {formatTime(item.updated_at)}</div>
-                </button>
-              ))}
-            </div>
-          ))}
-
-        {!loadingSessions && filteredSessionCount === 0 && (
-          <div className="px-3 py-6 text-center text-xs text-text-muted">未找到匹配会话</div>
-        )}
-
-        {!loadingSessions && hasMoreSessions && (
-          <div className="p-2">
-            <button
-              onClick={onLoadMoreSessions}
-              className="ui-btn w-full"
-              aria-label="加载更多历史会话"
-              disabled={loadingMoreSessions}
-            >
-              {loadingMoreSessions
-                ? "正在加载更多..."
-                : loadMoreSessionMode === "local"
-                  ? `显示更多匹配会话（${visibleSessionCount}/${filteredSessionCount}）`
-                  : `继续扫描更多历史（已载入 ${filteredSessionCount} 条）`}
-            </button>
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
 
       <div

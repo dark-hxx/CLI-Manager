@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo } from "react";
+import { useState, useEffect, useMemo, useRef, memo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -162,7 +162,7 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
   const g = node.group;
   const treeKey = `g:${g.id}`;
   const isOpen = !actions.collapsedIds.has(g.id);
-  const childCount = countDescendants(node);
+  const childCount = useMemo(() => countDescendants(node), [node]);
   const { setNodeRef: setIntoRef, isOver: isOverInto } = useDroppable({ id: `into:${g.id}` });
 
   if (actions.renamingGroupId === g.id) {
@@ -239,8 +239,8 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
           </div>
         )}
 
-        {node.children.length > 0 && (
-          <div className="tree-collapse" data-open={isOpen ? "true" : "false"}>
+        {isOpen && node.children.length > 0 && (
+          <div className="tree-collapse" data-open="true">
             <div className="tree-collapse-inner" role="group">
               <SortableContext items={node.children.map((c) => c.type === "group" ? c.group.id : c.project.id)} strategy={verticalListSortingStrategy}>
                 <div className={`${compact ? "ml-2 space-y-0.5 pb-0.5" : "ml-2.5 space-y-0.5 pb-1"}`}>

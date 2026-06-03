@@ -1,4 +1,5 @@
-import { Fragment, useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { create } from "zustand";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -33,14 +34,17 @@ interface PaletteItem {
   action: () => void;
 }
 
-function fuzzyMatch(text: string, query: string): boolean {
+type PaletteRow =
+  | { type: "header"; id: string; category: string }
+  | { type: "item"; id: string; item: PaletteItem; itemIndex: number };
+
+function fuzzyMatch(text: string, queryLower: string): boolean {
   const lower = text.toLowerCase();
-  const q = query.toLowerCase();
   let qi = 0;
-  for (let i = 0; i < lower.length && qi < q.length; i++) {
-    if (lower[i] === q[qi]) qi++;
+  for (let i = 0; i < lower.length && qi < queryLower.length; i++) {
+    if (lower[i] === queryLower[qi]) qi++;
   }
-  return qi === q.length;
+  return qi === queryLower.length;
 }
 
 export function CommandPalette() {
@@ -205,22 +209,48 @@ export function CommandPalette() {
     return result;
   }, [projects, templates, activeSessionId, splits, resolvedTheme, createSession, splitTerminal, unsplitTerminal, setTheme, viewMode]);
 
+  const queryLower = useMemo(() => query.trim().toLowerCase(), [query]);
+
   const filtered = useMemo(() => {
-    if (!query.trim()) return items;
+    if (!queryLower) return items;
     return items.filter(
-      (item) => fuzzyMatch(item.label, query) || (item.description && fuzzyMatch(item.description, query)),
+      (item) => fuzzyMatch(item.label, queryLower) || (item.description && fuzzyMatch(item.description, queryLower)),
     );
-  }, [items, query]);
+  }, [items, queryLower]);
+
+  const paletteRows = useMemo<PaletteRow[]>(() => {
+    const rows: PaletteRow[] = [];
+    let lastCategory = "";
+    filtered.forEach((item, itemIndex) => {
+      if (item.category !== lastCategory) {
+        rows.push({ type: "header", id: `header:${item.category}:${itemIndex}`, category: item.category });
+        lastCategory = item.category;
+      }
+      rows.push({ type: "item", id: item.id, item, itemIndex });
+    });
+    return rows;
+  }, [filtered]);
+
+  const selectedRowIndex = useMemo(
+    () => paletteRows.findIndex((row) => row.type === "item" && row.itemIndex === selectedIndex),
+    [paletteRows, selectedIndex]
+  );
+
+  const rowVirtualizer = useVirtualizer({
+    count: paletteRows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: (index) => (paletteRows[index]?.type === "header" ? 36 : 40),
+    overscan: 8,
+    getItemKey: (index) => paletteRows[index]?.id ?? index,
+  });
 
   useEffect(() => {
     if (selectedIndex >= filtered.length) setSelectedIndex(Math.max(0, filtered.length - 1));
   }, [filtered.length, selectedIndex]);
 
   useEffect(() => {
-    if (!listRef.current) return;
-    const el = listRef.current.querySelector(`[data-idx="${selectedIndex}"]`) as HTMLElement;
-    el?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex]);
+    if (selectedRowIndex >= 0) rowVirtualizer.scrollToIndex(selectedRowIndex, { align: "auto" });
+  }, [rowVirtualizer, selectedRowIndex]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -270,32 +300,45 @@ export function CommandPalette() {
                 无匹配结果
               </div>
             )}
-            {filtered.map((item, i) => {
-              const showHeader = i === 0 || item.category !== filtered[i - 1].category;
-              return (
-                <Fragment key={item.id}>
-                  {showHeader && (
-                    <div className="mb-1 mt-2 rounded-md border border-border/60 bg-surface-container-high px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-on-surface first:mt-0">
-                      {item.category}
+            {filtered.length > 0 && (
+              <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const row = paletteRows[virtualRow.index];
+                  if (!row) return null;
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      className="absolute left-0 top-0 w-full"
+                      style={{
+                        height: virtualRow.size,
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                    >
+                      {row.type === "header" ? (
+                        <div className="rounded-md border border-border/60 bg-surface-container-high px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-on-surface">
+                          {row.category}
+                        </div>
+                      ) : (
+                        <div
+                          data-idx={row.itemIndex}
+                          data-selected={row.itemIndex === selectedIndex}
+                          className="ui-interactive flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-on-surface-variant"
+                          onMouseEnter={() => setSelectedIndex(row.itemIndex)}
+                          onClick={() => { close(); row.item.action(); }}
+                        >
+                          <span className="min-w-0 flex-1 truncate font-medium text-on-surface">{row.item.label}</span>
+                          {row.item.description && (
+                            <span className="ml-auto max-w-[45%] truncate text-[10px] text-on-surface-variant">
+                              {row.item.description}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <div
-                    data-idx={i}
-                    data-selected={i === selectedIndex}
-                    className="ui-interactive flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-on-surface-variant"
-                    onMouseEnter={() => setSelectedIndex(i)}
-                    onClick={() => { close(); item.action(); }}
-                  >
-                    <span className="min-w-0 flex-1 truncate font-medium text-on-surface">{item.label}</span>
-                    {item.description && (
-                      <span className="ml-auto max-w-[45%] truncate text-[10px] text-on-surface-variant">
-                        {item.description}
-                      </span>
-                    )}
-                  </div>
-                </Fragment>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

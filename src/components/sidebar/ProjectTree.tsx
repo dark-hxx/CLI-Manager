@@ -1,6 +1,7 @@
 import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors, type CollisionDetection, type DragStartEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { TreeNode as TNode } from "../../lib/types";
 import { SidebarSkeleton } from "../ui/Skeleton";
 import { EmptyState } from "../ui/EmptyState";
@@ -53,7 +54,17 @@ const treeCollisionDetection: CollisionDetection = (args) => {
   const filtered = collisions.filter((c) => c.id !== activeId);
   if (filtered.length === 0) return [];
 
-  const pointerY = args.pointerCoordinates?.y;
+  const pointer = args.pointerCoordinates;
+  if (pointer) {
+    const containingInto = filtered.find((c) => {
+      if (typeof c.id !== "string" || !c.id.startsWith("into:")) return false;
+      const rect = c.data?.droppableContainer?.rect?.current;
+      return !!rect && pointer.x >= rect.left && pointer.x <= rect.right && pointer.y >= rect.top && pointer.y <= rect.bottom;
+    });
+    if (containingInto) return [containingInto];
+  }
+
+  const pointerY = pointer?.y;
   const intoIds = new Set<string>();
   for (const c of filtered) {
     if (typeof c.id === "string" && c.id.startsWith("into:")) intoIds.add(c.id);
@@ -159,10 +170,19 @@ export function ProjectTree({
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [focusedNodeKey, setFocusedNodeKey] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const collapsedListRef = useRef<HTMLDivElement | null>(null);
   const visibleNodes = useMemo(
     () => flattenVisibleTree(tree, actions.collapsedIds),
     [actions.collapsedIds, tree]
   );
+  const compactItems = useMemo(() => flattenTree(tree), [tree]);
+  const collapsedRowVirtualizer = useVirtualizer({
+    count: compactItems.length,
+    getScrollElement: () => collapsedListRef.current,
+    estimateSize: () => (density === "compact" ? 32 : 36),
+    overscan: 8,
+    getItemKey: (index) => compactItems[index]?.key ?? index,
+  });
   const visibleNodeIndex = useMemo(() => {
     const map = new Map<string, number>();
     visibleNodes.forEach((node, idx) => map.set(node.key, idx));
@@ -312,11 +332,10 @@ export function ProjectTree({
   }
 
   if (collapsed) {
-    const compactItems = flattenTree(tree);
     const collapsedButtonSize = density === "compact" ? "h-7 w-7" : "h-8 w-8";
     const compactTextSize = density === "compact" ? "text-[11px]" : "text-xs";
     return (
-      <div className={`h-full overflow-y-auto ${density === "compact" ? "px-0.5 pb-1.5 pt-0.5" : "px-1 pb-2 pt-1"}`}>
+      <div ref={collapsedListRef} className={`h-full overflow-y-auto ${density === "compact" ? "px-0.5 pb-1.5 pt-0.5" : "px-1 pb-2 pt-1"}`}>
         {compactItems.length === 0 && (
           <div className={`flex flex-col items-center text-text-muted ${density === "compact" ? "gap-1.5 py-2.5" : "gap-2 py-3"}`}>
             <Terminal size={20} strokeWidth={1.2} className="opacity-50" />
@@ -330,43 +349,58 @@ export function ProjectTree({
             </button>
           </div>
         )}
-        {compactItems.map((item) => {
-          if (item.type === "group") {
-            const groupNode = item.node.type === "group" ? item.node : null;
-            if (!groupNode) return null;
-            return (
-              <button
-                key={item.key}
-                className={`ui-flat-action ui-tree-collapsed-item mx-auto my-0.5 px-0 text-primary ${collapsedButtonSize}`}
-                title={item.label}
-                aria-label={`目录 ${item.label}`}
-                onContextMenu={(e) => actions.onContextMenuGroup(e, groupNode.group.id, groupNode.group.name)}
-              >
-                <Folder size={16} strokeWidth={1.5} />
-              </button>
-            );
-          }
-
-          const projectNode = item.node.type === "project" ? item.node : null;
-          if (!projectNode) return null;
-          const project = projectNode.project;
-          const projectInitial = project.name.trim().charAt(0).toUpperCase() || "P";
-          const selected =
-            actions.selectedId === project.id || actions.selectedProjectIds.has(project.id);
-          return (
-            <button
-              key={item.key}
-              className={`ui-tree-collapsed-item mx-auto my-0.5 flex ${collapsedButtonSize} items-center justify-center rounded-xl font-semibold transition-colors ${compactTextSize}`}
-              data-selected={selected ? "true" : "false"}
-              title={project.name}
-              aria-label={`打开项目 ${project.name}`}
-              onClick={() => actions.onOpenProject(project)}
-              onContextMenu={(e) => actions.onContextMenuProject(e, project)}
-            >
-              {projectInitial}
-            </button>
-          );
-        })}
+        {compactItems.length > 0 && (
+          <div className="relative w-full" style={{ height: collapsedRowVirtualizer.getTotalSize() }}>
+            {collapsedRowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const item = compactItems[virtualRow.index];
+              if (!item) return null;
+              return (
+                <div
+                  key={virtualRow.key}
+                  className="absolute left-0 top-0 w-full"
+                  style={{
+                    height: virtualRow.size,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {item.type === "group" ? (
+                    <button
+                      className={`ui-flat-action ui-tree-collapsed-item mx-auto my-0.5 px-0 text-primary ${collapsedButtonSize}`}
+                      title={item.label}
+                      aria-label={`目录 ${item.label}`}
+                      onContextMenu={(e) => {
+                        const groupNode = item.node.type === "group" ? item.node : null;
+                        if (groupNode) actions.onContextMenuGroup(e, groupNode.group.id, groupNode.group.name);
+                      }}
+                    >
+                      <Folder size={16} strokeWidth={1.5} />
+                    </button>
+                  ) : (
+                    (() => {
+                      const projectNode = item.node.type === "project" ? item.node : null;
+                      if (!projectNode) return null;
+                      const project = projectNode.project;
+                      const projectInitial = project.name.trim().charAt(0).toUpperCase() || "P";
+                      const selected = actions.selectedId === project.id || actions.selectedProjectIds.has(project.id);
+                      return (
+                        <button
+                          className={`ui-tree-collapsed-item mx-auto my-0.5 flex ${collapsedButtonSize} items-center justify-center rounded-xl font-semibold transition-colors ${compactTextSize}`}
+                          data-selected={selected ? "true" : "false"}
+                          title={project.name}
+                          aria-label={`打开项目 ${project.name}`}
+                          onClick={() => actions.onOpenProject(project)}
+                          onContextMenu={(e) => actions.onContextMenuProject(e, project)}
+                        >
+                          {projectInitial}
+                        </button>
+                      );
+                    })()
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   }

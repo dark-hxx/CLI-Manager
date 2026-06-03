@@ -15,6 +15,7 @@ const FONT_SIZE_MIN = 8;
 const FONT_SIZE_MAX = 32;
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
+const ACTIVE_WRITE_FRAME_BUDGET = 64 * 1024;
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
 
@@ -40,6 +41,8 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const inactiveBufferRef = useRef<string[]>([]);
   const inactiveBufferSizeRef = useRef(0);
+  const activeWriteQueueRef = useRef<string[]>([]);
+  const activeWriteRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
   const INACTIVE_BUFFER_MAX = 256 * 1024;
   const runtimeOscBufferRef = useRef("");
@@ -190,6 +193,39 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     return processed + text.slice(lastIndex);
   };
 
+  const flushActiveWriteQueue = () => {
+    activeWriteRafRef.current = null;
+    if (!isActiveRef.current || activeWriteQueueRef.current.length === 0) return;
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+
+    let budget = ACTIVE_WRITE_FRAME_BUDGET;
+    while (budget > 0 && activeWriteQueueRef.current.length > 0) {
+      const chunk = activeWriteQueueRef.current[0];
+      if (chunk.length <= budget) {
+        terminal.write(chunk);
+        activeWriteQueueRef.current.shift();
+        budget -= chunk.length;
+        continue;
+      }
+      terminal.write(chunk.slice(0, budget));
+      activeWriteQueueRef.current[0] = chunk.slice(budget);
+      budget = 0;
+    }
+
+    if (activeWriteQueueRef.current.length > 0) {
+      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
+    }
+  };
+
+  const enqueueActiveWrite = (text: string) => {
+    if (!text) return;
+    activeWriteQueueRef.current.push(processCursorVisibility(text));
+    if (activeWriteRafRef.current === null) {
+      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
+    }
+  };
+
   // Hot-update theme / fontSize / fontFamily without recreating the terminal.
   // `isTransparent` is in the dep array so toggling the background image
   // immediately recomputes the theme (otherwise the WebGL clear color stays
@@ -225,7 +261,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         const combined = inactiveBufferRef.current.join("");
         inactiveBufferRef.current = [];
         inactiveBufferSizeRef.current = 0;
-        terminalRef.current.write(processCursorVisibility(combined));
+        enqueueActiveWrite(combined);
       }
       // Wait one frame to ensure display:block has taken effect and layout is stable.
       scheduleFit(true);
@@ -433,7 +469,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       const combined = pendingChunks.length === 1 ? pendingChunks[0] : pendingChunks.join("");
       pendingChunks = [];
       if (isActiveRef.current) {
-        terminal.write(processCursorVisibility(combined));
+        enqueueActiveWrite(combined);
       } else {
         stashInactiveText(combined);
       }
@@ -567,7 +603,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         cancelAnimationFrame(writeRafId);
         writeRafId = null;
       }
+      if (activeWriteRafRef.current !== null) {
+        cancelAnimationFrame(activeWriteRafRef.current);
+        activeWriteRafRef.current = null;
+      }
       pendingChunks = [];
+      activeWriteQueueRef.current = [];
       inactiveBufferRef.current = [];
       inactiveBufferSizeRef.current = 0;
       unlisten?.();

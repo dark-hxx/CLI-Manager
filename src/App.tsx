@@ -29,6 +29,8 @@ const appStartAt =
     ? performance.now()
     : Date.now();
 let firstScreenPerfReported = false;
+let startupBaseReady = false;
+let deferredStartupTasksStarted = false;
 let startupUpdateChecked = false;
 const COMPACT_WINDOW_WIDTH = 350;
 const WINDOW_MIN_HEIGHT = 600;
@@ -147,6 +149,44 @@ function showClaudeHookToast(payload: CliHookPayload, tabId: string): void {
   );
 }
 
+function runDeferredStartupTasks(): void {
+  if (!startupBaseReady || !firstScreenPerfReported || deferredStartupTasksStarted) return;
+  deferredStartupTasksStarted = true;
+
+  window.setTimeout(() => {
+    void (async () => {
+      const result = await useSyncStore.getState().runAutoSync("startup");
+      if (result === "conflict") {
+        toast.warning("自动同步暂停", { description: "检测到云端与本地都有更新，请进入同步设置手动处理。" });
+      } else if (result === "error") {
+        toast.error("启动自动同步失败", { description: "请检查 WebDAV 配置或网络连接。" });
+      }
+    })();
+
+    if (!startupUpdateChecked) {
+      startupUpdateChecked = true;
+      void (async () => {
+        const updateStore = useUpdateStore.getState();
+        await updateStore.fetchVersion();
+        const updateInfo = await updateStore.checkUpdate({ silent: true });
+        if (!updateInfo) return;
+        toast.info(`发现新版本 V${updateInfo.version}`, {
+          description: "点击前往 Release 页面下载更新",
+          action: updateInfo.downloadUrl
+            ? {
+                label: "前往更新",
+                onClick: () => {
+                  void openUrl(updateInfo.downloadUrl);
+                },
+              }
+            : undefined,
+          duration: 12000,
+        });
+      })();
+    }
+  }, 0);
+}
+
 function App() {
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -230,36 +270,8 @@ function App() {
       // 3. 启动时不恢复历史终端，避免重建 PTY 并重跑 startupCmd。
       await useSessionStore.getState().clear();
 
-      void (async () => {
-        const result = await useSyncStore.getState().runAutoSync("startup");
-        if (result === "conflict") {
-          toast.warning("自动同步暂停", { description: "检测到云端与本地都有更新，请进入同步设置手动处理。" });
-        } else if (result === "error") {
-          toast.error("启动自动同步失败", { description: "请检查 WebDAV 配置或网络连接。" });
-        }
-      })();
-
-      if (!startupUpdateChecked) {
-        startupUpdateChecked = true;
-        void (async () => {
-          const updateStore = useUpdateStore.getState();
-          await updateStore.fetchVersion();
-          const updateInfo = await updateStore.checkUpdate({ silent: true });
-          if (!updateInfo) return;
-          toast.info(`发现新版本 V${updateInfo.version}`, {
-            description: "点击前往 Release 页面下载更新",
-            action: updateInfo.downloadUrl
-              ? {
-                  label: "前往更新",
-                  onClick: () => {
-                    void openUrl(updateInfo.downloadUrl);
-                  },
-                }
-              : undefined,
-            duration: 12000,
-          });
-        })();
-      }
+      startupBaseReady = true;
+      runDeferredStartupTasks();
     };
     init().catch((err) => {
       toast.error("初始化失败", { description: String(err) });
@@ -489,6 +501,7 @@ function App() {
           resolvedTheme,
           viewMode,
         });
+        runDeferredStartupTasks();
       });
     });
     return () => {
