@@ -20,7 +20,7 @@ jobs:
           - platform: macos-14
             args: "--target aarch64-apple-darwin"
             rust-target: aarch64-apple-darwin
-          - platform: macos-14-large
+          - platform: macos-13
             args: "--target x86_64-apple-darwin"
             rust-target: x86_64-apple-darwin
           - platform: ubuntu-22.04
@@ -69,7 +69,18 @@ jobs:
             | Linux | `.deb` / `.AppImage` |
 
             > - Windows 首次安装可能触发 SmartScreen 提示，点击"仍要运行"继续
-            > - macOS 首次打开需在"系统设置 → 隐私与安全性"中允许运行
+            > - macOS 应用未经 Apple 签名/公证，首次打开可能提示"已损坏"或"无法验证开发者"
+
+            ### macOS 安装说明
+
+            如果已拖入"应用程序"目录，执行：
+
+            ```bash
+            xattr -cr /Applications/CLI-Manager.app
+            open /Applications/CLI-Manager.app
+            ```
+
+            也可以在 Finder 中右键应用图标，选择"打开"，或在"系统设置 → 隐私与安全性"中点击"仍要打开"。
 
             ## 变更日志
 
