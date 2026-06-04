@@ -20,9 +20,6 @@ jobs:
           - platform: macos-14
             args: "--target aarch64-apple-darwin"
             rust-target: aarch64-apple-darwin
-          - platform: macos-13
-            args: "--target x86_64-apple-darwin"
-            rust-target: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ""
             rust-target: ""
@@ -65,7 +62,6 @@ jobs:
             |------|------|
             | Windows | `.msi` 安装包 |
             | macOS (Apple Silicon) | `.dmg` 磁盘映像 |
-            | macOS (Intel) | `.dmg` 磁盘映像 |
             | Linux | `.deb` / `.AppImage` |
 
             > - Windows 首次安装可能触发 SmartScreen 提示，点击"仍要运行"继续
