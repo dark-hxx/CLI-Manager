@@ -870,7 +870,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
           </button>
         </div>
       )}
-      <div ref={containerRef} className="h-full w-full overflow-hidden" />
+      <div ref={containerRef} className="h-full w-full overflow-hidden pl-2" />
     </div>
   );
 }
