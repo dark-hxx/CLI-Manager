@@ -50,8 +50,8 @@ export const useCommandHistoryStore = create<CommandHistoryStore>((set, get) => 
       command: trimmed,
       executed_at: executedAt,
     };
-    const q = get().searchQuery;
-    if (!q || trimmed.toLowerCase().includes(q.toLowerCase())) {
+    const query = get().searchQuery.trim().toLowerCase();
+    if (!query || trimmed.toLowerCase().includes(query)) {
       set({ entries: [newEntry, ...existing].slice(0, 100) });
     }
 
@@ -95,12 +95,12 @@ export const useCommandHistoryStore = create<CommandHistoryStore>((set, get) => 
 
   fetchAll: async () => {
     const db = await getDb();
-    const q = get().searchQuery;
+    const query = get().searchQuery.trim();
     let entries: CommandHistoryEntry[];
-    if (q) {
+    if (query) {
       entries = await db.select<CommandHistoryEntry[]>(
         "SELECT * FROM command_history WHERE command LIKE $1 ORDER BY executed_at DESC LIMIT 100",
-        [`%${q}%`]
+        [`%${query}%`]
       );
     } else {
       entries = await db.select<CommandHistoryEntry[]>(

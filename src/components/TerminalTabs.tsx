@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useShallow } from "zustand/shallow";
 import {
   DndContext,
@@ -25,7 +25,6 @@ import { SplitTerminalView } from "./SplitTerminalView";
 import { XTermTerminal } from "./XTermTerminal";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
-import { HistoryWorkspace } from "./HistoryWorkspace";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { Terminal, Plus, Search, X, Maximize2, Minimize2, ChevronDown, ChevronRight } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
@@ -43,6 +42,10 @@ import {
 } from "./ui/context-menu";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { getTerminalTheme } from "../lib/terminalThemes";
+
+const HistoryWorkspace = lazy(() =>
+  import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
+);
 
 const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
   none: "#565f89",
@@ -1311,7 +1314,9 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
             className={`absolute min-h-0 overflow-hidden ${fullscreen ? "inset-x-0 bottom-0 top-0" : "inset-x-3 bottom-3 top-3"}`}
             style={{ display: historyActive ? "block" : "none" }}
           >
-            <HistoryWorkspace active={historyActive} />
+            <Suspense fallback={null}>
+              <HistoryWorkspace active={historyActive} />
+            </Suspense>
           </div>
         )}
         <div

@@ -190,6 +190,38 @@ if (sequence === "\x1b[?25l") {
 
 **Prevention**: For high-frequency TUI redraw issues, inspect application-emitted ANSI cursor visibility sequences before changing xterm appearance options. Pass hide through immediately, debounce show, and keep output processing in the PTY write path instead of adding CLI-specific UI state.
 
+### Common Mistake: Letting xterm helper textarea follow non-IME redraw cursors
+
+**Symptom**: During high-frequency TUI progress redraws, such as Claude Code `/compact`, the hidden input proxy appears to make the terminal input anchor jump with the progress cursor.
+
+**Cause**: xterm syncs `.xterm-helper-textarea` to the terminal cursor on cursor moves. This is required for IME composition, but outside composition it can create browser scroll/anchor churn during progress-bar redraws.
+
+**Fix**: In `XTermTerminal`, keep the helper textarea pinned to xterm's offscreen default while not composing; on `compositionstart`, cancel that pin so xterm can place the textarea at the real cursor for IME candidate positioning; after `compositionend`, pin it again.
+
+**Correct**:
+
+```tsx
+if (!isComposingRef.current) {
+  textarea.style.left = "-9999em";
+  textarea.style.top = "0px";
+  textarea.style.width = "0px";
+  textarea.style.height = "0px";
+}
+```
+
+**Wrong**:
+
+```tsx
+// Do not hide, remove, or disable the helper textarea.
+textarea.style.display = "none";
+```
+
+**Tests / manual checks**:
+
+- [ ] Claude Code `/compact` progress redraw does not make the input anchor jump.
+- [ ] Normal keyboard input, Enter, and paste still reach the PTY.
+- [ ] Chinese/IME composition still positions the candidate window correctly.
+
 ### Convention: xterm Windows PTY and paste handling
 
 **What**: Internal xterm instances backed by the app's Windows PTY must use xterm's Windows compatibility and native paste path.

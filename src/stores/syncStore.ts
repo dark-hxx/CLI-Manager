@@ -3,6 +3,7 @@ import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb, batchInsert } from "../lib/db";
 import { useProjectStore } from "./projectStore";
+import { logInfo } from "../lib/logger";
 
 export type SyncStatus = "idle" | "syncing" | "success" | "error" | "conflict";
 export type SyncMode = "cloud" | "local";
@@ -769,7 +770,7 @@ async function applySyncData(
       [deviceId, data.last_modified, data.last_modified]
     );
 
-    console.log("Sync data applied successfully");
+    logInfo("Sync data applied successfully");
   } catch (error) {
     console.error("Failed to apply sync data, restoring backup:", error);
 
@@ -784,7 +785,7 @@ async function applySyncData(
       await insertProjects(backupProjects, backupGroupIds);
       await insertTemplates(backupTemplates, backupProjectIds);
 
-      console.log("Backup restored successfully");
+      logInfo("Backup restored successfully");
     } catch (restoreError) {
       console.error("Failed to restore backup:", restoreError);
     }

@@ -578,6 +578,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     const viewport = terminalContainer.querySelector(".xterm-viewport") as HTMLElement | null;
     let compositionScrollRafId: number | null = null;
     let containerScrollResetRafId: number | null = null;
+    let helperTextareaAnchorRafId: number | null = null;
     let compositionScrollLock: { element: HTMLElement; scrollTop: number; scrollLeft: number }[] = [];
 
     const captureCompositionScroll = () => {
@@ -624,15 +625,51 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       });
     };
 
+    const pinHelperTextareaAnchor = () => {
+      if (!textarea || isComposingRef.current) return;
+      textarea.style.left = "-9999em";
+      textarea.style.top = "0px";
+      textarea.style.width = "0px";
+      textarea.style.height = "0px";
+      textarea.style.lineHeight = "";
+    };
+
+    const scheduleHelperTextareaAnchorPin = () => {
+      pinHelperTextareaAnchor();
+      if (helperTextareaAnchorRafId !== null) {
+        cancelAnimationFrame(helperTextareaAnchorRafId);
+      }
+      helperTextareaAnchorRafId = requestAnimationFrame(() => {
+        helperTextareaAnchorRafId = null;
+        pinHelperTextareaAnchor();
+      });
+    };
+
+    const releaseHelperTextareaAnchorPin = () => {
+      if (helperTextareaAnchorRafId !== null) {
+        cancelAnimationFrame(helperTextareaAnchorRafId);
+        helperTextareaAnchorRafId = null;
+      }
+      if (!textarea) return;
+      textarea.style.left = "";
+      textarea.style.top = "";
+      textarea.style.width = "";
+      textarea.style.height = "";
+      textarea.style.lineHeight = "";
+    };
+
+    scheduleHelperTextareaAnchorPin();
     terminalContainer.addEventListener("scroll", scheduleTerminalContainerScrollReset, { passive: true });
     const cursorMoveDisposable = terminal.onCursorMove(() => {
       if (!isActiveRef.current || isComposingRef.current) return;
       if (!textarea || document.activeElement !== textarea) return;
       scheduleTerminalContainerScrollReset();
+      scheduleHelperTextareaAnchorPin();
     });
 
     const onCompositionStart = () => {
       isComposingRef.current = true;
+      releaseHelperTextareaAnchorPin();
       captureCompositionScroll();
       scheduleCompositionScrollRestore();
     };
@@ -642,6 +679,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     const onCompositionEnd = () => {
       isComposingRef.current = false;
       scheduleCompositionScrollRestore();
+      scheduleHelperTextareaAnchorPin();
       scheduleFit(true);
     };
 
@@ -701,6 +739,10 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (containerScrollResetRafId !== null) {
         cancelAnimationFrame(containerScrollResetRafId);
         containerScrollResetRafId = null;
+      }
+      if (helperTextareaAnchorRafId !== null) {
+        cancelAnimationFrame(helperTextareaAnchorRafId);
+        helperTextareaAnchorRafId = null;
       }
       if (writeRafId !== null) {
         cancelAnimationFrame(writeRafId);

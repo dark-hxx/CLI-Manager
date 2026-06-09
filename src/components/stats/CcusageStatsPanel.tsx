@@ -575,6 +575,7 @@ function summarizeField(value: unknown): string {
 function summarizeCcusagePayload(payload: unknown): CcusageSummary {
   const root = asRecord(ccusageDailyPayload(payload));
   const totals = asRecord(root?.totals) ?? asRecord(root?.summary);
+  const totalsSource = totals ?? root;
   const dailyCandidates = asArray(root?.daily);
   const dataCandidates = asArray(root?.data);
   const projectCandidates = projectDailyRecords(root?.projects);
@@ -665,24 +666,24 @@ function summarizeCcusagePayload(payload: unknown): CcusageSummary {
     : [];
 
   return {
-    inputTokens: firstNumberField(totals, ["inputTokens", "totalInputTokens"]) ?? fallbackTotals.inputTokens,
-    outputTokens: firstNumberField(totals, ["outputTokens", "totalOutputTokens"]) ?? fallbackTotals.outputTokens,
+    inputTokens: firstNumberField(totalsSource, ["inputTokens", "totalInputTokens"]) ?? fallbackTotals.inputTokens,
+    outputTokens: firstNumberField(totalsSource, ["outputTokens", "totalOutputTokens"]) ?? fallbackTotals.outputTokens,
     cacheCreationTokens:
-      firstNumberField(totals, [
+      firstNumberField(totalsSource, [
         "cacheCreationTokens",
         "cacheCreationInputTokens",
         "totalCacheCreationTokens",
         "totalCacheCreationInputTokens",
       ]) ?? fallbackTotals.cacheCreationTokens,
     cacheReadTokens:
-      firstNumberField(totals, [
+      firstNumberField(totalsSource, [
         "cacheReadTokens",
         "cacheReadInputTokens",
         "totalCacheReadTokens",
         "totalCacheReadInputTokens",
       ]) ?? fallbackTotals.cacheReadTokens,
-    totalTokens: firstNumberField(totals, ["totalTokens"]) ?? fallbackTotals.totalTokens,
-    totalCost: firstNumberField(totals, ["totalCost", "totalCostUSD", "costUSD"]) ?? fallbackTotals.totalCost,
+    totalTokens: totalsSource ? tokenTotal(totalsSource) : fallbackTotals.totalTokens,
+    totalCost: firstNumberField(totalsSource, ["totalCost", "totalCostUSD", "costUSD"]) ?? fallbackTotals.totalCost,
     modelCount: models.length,
     daily,
     models: models.slice(0, 10),
@@ -896,6 +897,49 @@ function KpiStrip({ summary }: { summary: CcusageSummary }) {
   );
 }
 
+function PeakDaySummaryCard({ summary }: { summary: CcusageSummary }) {
+  const peak = getPeakDay(summary.daily);
+  const peakShare = peak && summary.totalTokens > 0 ? (peak.totalTokens / summary.totalTokens) * 100 : 0;
+  const metrics = peak
+    ? [
+        { label: "Token", value: formatCompactCount(peak.totalTokens), detail: formatCount(peak.totalTokens) },
+        { label: "费用", value: formatCost(peak.totalCost), detail: "本地估算" },
+        { label: "输入", value: formatCompactCount(peak.inputTokens), detail: formatCount(peak.inputTokens) },
+        { label: "输出", value: formatCompactCount(peak.outputTokens), detail: formatCount(peak.outputTokens) },
+      ]
+    : [];
+
+  return (
+    <section className="rounded-xl bg-bg-secondary px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[13px] font-semibold text-text-primary">峰值日摘要</div>
+          <div className="mt-1 text-[12px] text-text-muted">
+            {peak ? `${peak.date} · 占当前窗口 ${formatPercent(peakShare)}` : "当前时间窗口暂无峰值日数据。"}
+          </div>
+        </div>
+        {peak && (
+          <div className="rounded-full bg-bg-primary px-3 py-1 text-[11px] font-medium text-text-secondary">
+            {peak.models.length > 0 ? `模型 ${formatCount(peak.models.length)}` : "模型未拆分"}
+          </div>
+        )}
+      </div>
+
+      {peak && (
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {metrics.map((item) => (
+            <div key={item.label} className="rounded-lg bg-bg-primary px-3 py-2">
+              <div className="text-[11px] text-text-muted">{item.label}</div>
+              <div className="mt-1 text-[15px] font-semibold text-text-primary">{item.value}</div>
+              <div className="mt-0.5 text-[10px] text-text-muted">{item.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TokenCompositionStrip({ summary }: { summary: CcusageSummary }) {
   const parts = [
     { key: "input", label: "输入", value: summary.inputTokens, color: "#2F8F62" },
@@ -1070,6 +1114,7 @@ function TimeWindowSelector({
 function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[]; granularity: string }) {
   const peak = useMemo(() => getPeakDay(items), [items]);
   const hasItems = items.length > 0;
+  const peakLabel = granularity === "小时" ? "峰值小时" : granularity === "月" ? "峰值月份" : "最高使用日";
   const option = useMemo<EChartsOption>(() => {
     const dates = items.map((item) => item.date);
     const tokenAxisMax = niceAxisMax(Math.max(0, ...items.flatMap((item) => [item.totalTokens, item.inputTokens, item.outputTokens])));
@@ -1100,7 +1145,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
               return `<div style="display:flex;align-items:center;justify-content:space-between;gap:18px;line-height:22px;"><span style="display:inline-flex;align-items:center;gap:6px;text-align:left;">${marker}<span>${name}</span></span><strong style="min-width:88px;text-align:right;">${display}</strong></div>`;
             })
             .join("");
-          return `<div style="min-width:190px;"><div style="font-weight:700;margin-bottom:6px;">${day.date}${peak?.date === day.date ? " · 最高使用日" : ""}</div>${seriesRows}<div style="margin-top:6px;color:#CBD5E1;">模型：${day.models.length || "-"}</div></div>`;
+          return `<div style="min-width:190px;"><div style="font-weight:700;margin-bottom:6px;">${day.date}${peak?.date === day.date ? ` · ${peakLabel}` : ""}</div>${seriesRows}<div style="margin-top:6px;color:#CBD5E1;">模型：${day.models.length || "-"}</div></div>`;
         },
       },
       legend: {
@@ -1165,15 +1210,15 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
                 symbol: "pin",
                 symbolSize: 56,
                 itemStyle: { color: "#F97316" },
-                label: { color: "#FFFFFF", fontSize: 10, lineHeight: 12, fontWeight: 700, formatter: "最高\n{c}" },
-                data: [{ name: "最高使用日", coord: [peak.date, peak.totalTokens], value: formatCompactCount(peak.totalTokens) }],
+                label: { color: "#FFFFFF", fontSize: 10, lineHeight: 12, fontWeight: 700, formatter: "峰值\n{c}" },
+                data: [{ name: peakLabel, coord: [peak.date, peak.totalTokens], value: formatCompactCount(peak.totalTokens) }],
               }
             : undefined,
           markLine: peak
             ? {
                 symbol: "none",
                 lineStyle: { color: "#F97316", type: "dashed", width: 1.4 },
-                label: { color: "#F97316", formatter: "最高使用日" },
+                label: { color: "#F97316", formatter: peakLabel },
                 data: [{ xAxis: peak.date }],
               }
             : undefined,
@@ -1204,7 +1249,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
         },
       ],
     };
-  }, [items, peak, granularity]);
+  }, [items, peak, granularity, peakLabel]);
 
   return (
     <section className="rounded-2xl bg-bg-secondary p-4 lg:p-5">
@@ -1214,7 +1259,7 @@ function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[
           <div className="mt-1 text-[11px] text-text-muted">折线展示 Token 主趋势，费用以弱柱状辅助对照。</div>
         </div>
         <div className="ml-auto rounded-full bg-bg-primary px-3 py-1 text-[11px] font-medium text-text-secondary">
-          {peak ? `最高使用日：${peak.date} · ${formatCount(peak.totalTokens)} Token` : "暂无逐日数据"}
+          {peak ? `${peakLabel}：${peak.date} · ${formatCount(peak.totalTokens)} Token` : "暂无逐日数据"}
         </div>
       </div>
 
@@ -1262,14 +1307,21 @@ function DailyUsageHeatmap({ items, granularity }: { items: CcusageDailyItem[]; 
         <>
           <div className="overflow-x-auto rounded-lg bg-bg-primary p-3">
             <div className="grid w-max gap-1" style={{ gridTemplateColumns: `repeat(${columns}, 14px)` }}>
-              {items.map((item) => (
-                <div
-                  key={item.date}
-                  className="h-[14px] w-[14px] rounded-[3px] border border-black/10"
-                  style={{ backgroundColor: heatmapCellColor(item.totalTokens, maxTokens) }}
-                  title={`${item.date} · ${formatCount(item.totalTokens)} Token · ${formatCost(item.totalCost)}`}
-                />
-              ))}
+              {items.map((item) => {
+                const isPeak = peak?.date === item.date;
+                return (
+                  <div
+                    key={item.date}
+                    className="h-[14px] w-[14px] rounded-[3px] border"
+                    style={{
+                      backgroundColor: heatmapCellColor(item.totalTokens, maxTokens),
+                      borderColor: isPeak ? "#F97316" : "rgba(0, 0, 0, 0.10)",
+                      boxShadow: isPeak ? "0 0 0 2px rgba(249, 115, 22, 0.32)" : "none",
+                    }}
+                    title={`${item.date} · ${formatCount(item.totalTokens)} Token · ${formatCost(item.totalCost)}${isPeak ? " · 峰值" : ""}`}
+                  />
+                );
+              })}
             </div>
           </div>
           <div className="mt-2 flex items-center justify-between text-[10px] text-text-muted">
@@ -1535,7 +1587,7 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
                   需要准备 Bun/bunx
                 </div>
                 <div className="mt-2 space-y-1.5 text-[12px] leading-6 text-text-secondary">
-                  <div>ccusage 会读取 daily 和 session 两类本地统计；daily 用于年/月/自定义，session 用于日视图小时聚合。</div>
+                  <div>ccusage 会读取 daily 和 blocks 本地统计；daily 用于年/月/自定义，blocks 用于日视图小时聚合。</div>
                   <div>Bun：{toolStatus?.bunVersion ?? "未检测到"}；bunx：{toolStatus?.bunxVersion ?? "未检测到"}。</div>
                   <div>点击安装前会再次确认；安装命令使用 npm 国内镜像源，不会把 ccusage 写入本项目依赖。</div>
                 </div>
@@ -1567,6 +1619,7 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
                 )}
                 <KpiStrip summary={summary} />
                 <ReportContextNote reportKind={report.reportKind} sourceLabel={sourceOption.label} schemaLabel={summary.schemaLabel} />
+                <PeakDaySummaryCard summary={summary} />
                 <TokenCompositionStrip summary={summary} />
 
                 <DailyUsageTrendChart items={chartItems} granularity={chartGranularity} />
