@@ -1,7 +1,8 @@
+use crate::shell_resolver::silent_command;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const REGISTRY_MIRROR: &str = "https://registry.npmmirror.com";
@@ -45,11 +46,11 @@ fn output_text(output: &Output) -> String {
 
 fn command_output(program: &str, args: &[&str], envs: &[(&str, String)]) -> Result<Output, String> {
     let mut command = if cfg!(windows) {
-        let mut command = Command::new("cmd");
+        let mut command = silent_command("cmd");
         command.arg("/C").arg(program);
         command
     } else {
-        Command::new(program)
+        silent_command(program)
     };
 
     command.args(args);

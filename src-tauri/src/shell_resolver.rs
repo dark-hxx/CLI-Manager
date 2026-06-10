@@ -12,6 +12,29 @@ const GIT_BASH_CANDIDATES: [&str; 4] = [
     r"C:\Program Files (x86)\Git\usr\bin\bash.exe",
 ];
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// 构造"静默执行"的 Command：Windows 下附加 CREATE_NO_WINDOW，避免后台命令闪出控制台窗口。
+///
+/// 约定：本应用内任何不需要可见窗口的进程 spawn 必须复用本 helper，
+/// 直接用 `Command::new` 会导致闪窗问题复发。
+/// 有意打开可见窗口的场景（如 `commands/shell.rs` 中 spawn `wt.exe`）除外。
+#[cfg(windows)]
+pub fn silent_command(program: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+/// 非 Windows 平台行为与 `Command::new` 完全一致。
+#[cfg(not(windows))]
+pub fn silent_command(program: &str) -> Command {
+    Command::new(program)
+}
+
 pub fn resolve_git_bash_exe() -> Option<PathBuf> {
     fixed_path_candidate()
         .or_else(path_git_candidate)
@@ -75,7 +98,7 @@ fn uninstall_key_candidate() -> Option<PathBuf> {
     ];
 
     UNINSTALL_KEYS.iter().find_map(|key| {
-        let output = Command::new("reg")
+        let output = silent_command("reg")
             .args(["query", key, "/s", "/f", "Git", "/d"])
             .output()
             .ok()?;
@@ -100,7 +123,7 @@ fn reg_query_value(key: &str, value: Option<&str>) -> Option<String> {
         args.push("/ve");
     }
 
-    let output = Command::new("reg").args(args).output().ok()?;
+    let output = silent_command("reg").args(args).output().ok()?;
     if !output.status.success() {
         return None;
     }
