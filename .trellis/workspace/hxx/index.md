@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-06-08
+- **Total Sessions**: 7
+- **Last Active**: 2026-06-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~208 | Active |
+| `journal-1.md` | ~243 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-06-10 | Settings UI 修复收尾与侧边栏项目树 UX 优化 | `75e1ede`, `0383611`, `f51eb81` | `master` |
 | 6 | 2026-06-08 | Fix Windows PowerShell paste and scrollback | `d15495d` | `fix/windows-terminal-powershell-paste` |
 | 5 | 2026-06-04 | Hook 自定义目录联动历史统计与历史列表分割修复 | `349dffc`, `648bbe9` | `master` |
 | 4 | 2026-05-25 | fix font color coverage to derive secondary/muted tokens | `7cde1c6` | `master` |

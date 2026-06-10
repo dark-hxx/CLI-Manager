@@ -206,3 +206,38 @@ Fixed Windows PowerShell terminal history disappearing after resize/tab changes 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Settings UI 修复收尾与侧边栏项目树 UX 优化
+
+**Date**: 2026-06-10
+**Task**: Settings UI 修复收尾与侧边栏项目树 UX 优化
+**Branch**: `master`
+
+### Summary
+
+提交 settings UI 重构修复（主色 10 级色阶+primaryShade、快捷键页按钮组替换 SegmentedControl、主题页 sticky 预览、scrollbar-gutter）与死代码/未用依赖/shell 插件清理；实现侧边栏项目树优化：目录折叠状态持久化到 settingsStore（含失效记录自愈清理）、行内悬浮按钮精简为仅启动、右键菜单加图标+分隔线分组并收紧密度；CHANGELOG 记录 V0.2.8 条目。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `75e1ede` | (see git log) |
+| `0383611` | (see git log) |
+| `f51eb81` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
