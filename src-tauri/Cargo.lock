@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "cli-manager"
-version = "0.2.8"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
