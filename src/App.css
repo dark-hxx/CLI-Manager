@@ -1506,6 +1506,82 @@ samp,
   cursor: not-allowed;
 }
 
+.terminal-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--menu-bg) 92%, transparent);
+  outline: 1px solid var(--menu-border);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--menu-bg) 55%, transparent);
+  color: var(--menu-fg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: slide-down var(--animate-duration-fast) var(--ease-standard);
+}
+
+.terminal-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 5px;
+  color: var(--menu-fg);
+  white-space: nowrap;
+  transition: background-color var(--animate-duration-fast);
+}
+
+.terminal-context-menu-item:hover:not(:disabled) {
+  background-color: var(--menu-hover);
+}
+
+.terminal-context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.terminal-context-menu-hint {
+  opacity: 0.55;
+  font-size: 11px;
+}
+
+.terminal-context-menu-separator {
+  height: 1px;
+  margin: 3px 6px;
+  background-color: color-mix(in srgb, var(--menu-fg) 18%, transparent);
+}
+
+/* 终端风格皮肤：作用于 Tab 右键菜单（含子菜单），配色跟随当前终端主题色 */
+.context-menu.terminal-skin {
+  background-color: color-mix(in srgb, var(--menu-bg) 92%, transparent);
+  outline: 1px solid var(--menu-border);
+  color: var(--menu-fg);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.context-menu.terminal-skin .context-menu-item {
+  color: var(--menu-fg);
+}
+
+.context-menu.terminal-skin .context-menu-item:hover,
+.context-menu.terminal-skin .context-menu-item[data-highlighted] {
+  background-color: var(--menu-hover);
+  color: var(--menu-fg);
+}
+
+.context-menu.terminal-skin [role="separator"] {
+  background-color: color-mix(in srgb, var(--menu-fg) 18%, transparent);
+}
+
 .ui-btn {
   display: inline-flex;
   align-items: center;

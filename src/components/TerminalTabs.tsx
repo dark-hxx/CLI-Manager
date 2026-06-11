@@ -47,6 +47,20 @@ const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
 );
 
+const normalizeTabMenuHex = (value: string | undefined, fallback: string) => (
+  value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback
+);
+
+const tabMenuHexToRgba = (value: string | undefined, alpha: number, fallback: string) => {
+  const normalized = normalizeTabMenuHex(value, "");
+  if (!normalized) return fallback;
+  const hex = normalized.slice(1);
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
 const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
   none: "#565f89",
   running: "#8b5cf6",
@@ -171,6 +185,8 @@ interface SortableTabProps {
   onSubmitEdit: (title: string) => void;
   onCancelEdit: () => void;
   menuContent: (getAnchor: () => DOMRect | undefined) => ReactNode;
+  menuClassName?: string;
+  menuStyle?: CSSProperties;
 }
 
 function SortableTab({
@@ -187,6 +203,8 @@ function SortableTab({
   onSubmitEdit,
   onCancelEdit,
   menuContent,
+  menuClassName,
+  menuStyle,
 }: SortableTabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, data: { paneId } });
   const tabElementRef = useRef<HTMLDivElement | null>(null);
@@ -309,7 +327,7 @@ function SortableTab({
           </button>
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent>{menuContent(getTabAnchor)}</ContextMenuContent>
+      <ContextMenuContent className={menuClassName} style={menuStyle}>{menuContent(getTabAnchor)}</ContextMenuContent>
     </ContextMenu>
   );
 }
@@ -353,6 +371,10 @@ interface PaneTabBarProps {
   editingSessionId: string | null;
   tabNotifications: Record<string, TabNotificationState>;
   tabStatusDetails: Record<string, { updatedAt: string | null }>;
+  resolvedTheme: "dark" | "light";
+  terminalThemeName: string;
+  lightThemePalette: ReturnType<typeof useSettingsStore.getState>["lightThemePalette"];
+  darkThemePalette: ReturnType<typeof useSettingsStore.getState>["darkThemePalette"];
   terminalBackgroundEnabled: boolean;
   terminalBackgroundImagePath: string | null;
   hiddenBackgroundSessionIds: Set<string>;
@@ -395,8 +417,21 @@ function PaneTabBar({
   onShowBackground,
   toolbarActions,
   variant = "pane",
+  resolvedTheme,
+  terminalThemeName,
+  lightThemePalette,
+  darkThemePalette,
 }: PaneTabBarProps) {
   const { setNodeRef, isOver } = useDroppable({ id: `${PANE_DROP_PREFIX}${pane.id}` });
+  const tabMenuTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
+  const tabMenuForeground = normalizeTabMenuHex(tabMenuTheme.foreground, resolvedTheme === "dark" ? "#d8dee9" : "#1e293b");
+  const tabMenuBackground = normalizeTabMenuHex(tabMenuTheme.background, resolvedTheme === "dark" ? "#0c0e10" : "#ffffff");
+  const tabMenuStyle: CSSProperties = {
+    "--menu-fg": tabMenuForeground,
+    "--menu-bg": tabMenuBackground,
+    "--menu-border": tabMenuHexToRgba(tabMenuForeground, 0.18, "rgba(255, 255, 255, 0.18)"),
+    "--menu-hover": tabMenuHexToRgba(tabMenuForeground, 0.12, "rgba(255, 255, 255, 0.12)"),
+  } as CSSProperties;
   const tabScrollRef = useRef<HTMLDivElement | null>(null);
   const tabScrollUpdateTimeoutRef = useRef<number | null>(null);
   const [tabListOpen, setTabListOpen] = useState(false);
@@ -607,6 +642,8 @@ function PaneTabBar({
               onStartEdit={() => onStartEdit(session.id)}
               onSubmitEdit={(title) => onSubmitEdit(session.id, title)}
               onCancelEdit={onCancelEdit}
+              menuClassName="terminal-skin"
+              menuStyle={tabMenuStyle}
               menuContent={(getAnchor) => (
                 <>
                   <ContextMenuItem onSelect={() => onCloseSession(session.id)}>关闭终端</ContextMenuItem>
@@ -623,19 +660,19 @@ function PaneTabBar({
                   )}
                   <ContextMenuSeparator />
                   <ContextMenuItem onSelect={() => onOpenSplitPicker(session.id, "horizontal", getAnchor())}>
-                    Split Right
+                    向右分屏
                   </ContextMenuItem>
                   <ContextMenuItem onSelect={() => onOpenSplitPicker(session.id, "vertical", getAnchor())}>
-                    Split Down
+                    向下分屏
                   </ContextMenuItem>
-                  {allPanes.length > 1 && <ContextMenuItem onSelect={() => onUnsplit(session.id)}>Unsplit</ContextMenuItem>}
+                  {allPanes.length > 1 && <ContextMenuItem onSelect={() => onUnsplit(session.id)}>取消分屏</ContextMenuItem>}
                   {otherPanes.length > 0 && (
                     <ContextMenuSub>
-                      <ContextMenuSubTrigger>Move to Other Split</ContextMenuSubTrigger>
-                      <ContextMenuSubContent>
+                      <ContextMenuSubTrigger>移动到其他分屏</ContextMenuSubTrigger>
+                      <ContextMenuSubContent className="terminal-skin" style={tabMenuStyle}>
                         {otherPanes.map((targetPane, index) => (
                           <ContextMenuItem key={targetPane.id} onSelect={() => onMoveToPane(session.id, targetPane.id)}>
-                            Pane {index + 1}
+                            分屏 {index + 1}
                           </ContextMenuItem>
                         ))}
                       </ContextMenuSubContent>
@@ -812,6 +849,10 @@ function PaneLeafView({
           onHideBackground={onHideBackground}
           onShowBackground={onShowBackground}
           toolbarActions={toolbarActions}
+          resolvedTheme={resolvedTheme}
+          terminalThemeName={terminalThemeName}
+          lightThemePalette={lightThemePalette}
+          darkThemePalette={darkThemePalette}
         />
       )}
       <div
@@ -835,6 +876,25 @@ function PaneLeafView({
               terminalThemeName={terminalThemeName}
               lightThemePalette={lightThemePalette}
               darkThemePalette={darkThemePalette}
+              onNewTab={onNewTab}
+              onCloseSession={() => onCloseSession(session.id)}
+              onCloseOthers={
+                pane.sessionIds.length > 1
+                  ? () => pane.sessionIds.filter((id) => id !== session.id).forEach(onCloseSession)
+                  : undefined
+              }
+              onCloseToLeft={
+                pane.sessionIds.indexOf(session.id) > 0
+                  ? () => pane.sessionIds.slice(0, pane.sessionIds.indexOf(session.id)).forEach(onCloseSession)
+                  : undefined
+              }
+              onCloseToRight={
+                pane.sessionIds.indexOf(session.id) < pane.sessionIds.length - 1
+                  ? () => pane.sessionIds.slice(pane.sessionIds.indexOf(session.id) + 1).forEach(onCloseSession)
+                  : undefined
+              }
+              onSplitRight={() => onOpenSplitPicker(session.id, "horizontal")}
+              onSplitDown={() => onOpenSplitPicker(session.id, "vertical")}
             />
           </div>
         ))}

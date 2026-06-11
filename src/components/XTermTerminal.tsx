@@ -8,6 +8,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/shallow";
 import { applyTransparency, getTerminalTheme, getTerminalBackground } from "../lib/terminalThemes";
 import { backgroundAssetUrl } from "../lib/assetUrl";
+import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
@@ -43,7 +44,37 @@ const hexToRgba = (value: string | undefined, alpha: number, fallback: string) =
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-interface Props {
+const copyTextToClipboard = async (text: string) => {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+};
+
+interface TerminalContextMenuActions {
+  onNewTab?: () => void;
+  onCloseSession?: () => void;
+  onCloseOthers?: () => void;
+  onCloseToLeft?: () => void;
+  onCloseToRight?: () => void;
+  onSplitRight?: () => void;
+  onSplitDown?: () => void;
+}
+
+interface Props extends TerminalContextMenuActions {
   sessionId: string;
   isActive?: boolean;
   fontSize?: number;
@@ -54,7 +85,7 @@ interface Props {
   darkThemePalette?: DarkThemePalette;
 }
 
-export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo" }: Props) {
+export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo", onNewTab, onCloseSession, onCloseOthers, onCloseToLeft, onCloseToRight, onSplitRight, onSplitDown }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -91,6 +122,8 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   const [searchTerm, setSearchTerm] = useState("");
   const [searchMatched, setSearchMatched] = useState<boolean | null>(null);
   const [searchResult, setSearchResult] = useState<SearchResultState>(EMPTY_SEARCH_RESULT);
+  const [menuState, setMenuState] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -365,22 +398,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     const copySelection = async () => {
       const selection = terminal.getSelection();
       if (!selection) return;
-      try {
-        await navigator.clipboard.writeText(selection);
-      } catch {
-        const textarea = document.createElement("textarea");
-        textarea.value = selection;
-        textarea.setAttribute("readonly", "true");
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        try {
-          document.execCommand("copy");
-        } finally {
-          document.body.removeChild(textarea);
-        }
-      }
+      await copyTextToClipboard(selection);
     };
 
     const markAttentionInputHandled = () => useTerminalStore.getState().markAttentionInputHandled(sessionId);
@@ -402,6 +420,14 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     };
 
     pasteTarget.addEventListener("paste", onPaste, pasteListenerOptions);
+
+    const contextMenuTarget = containerRef.current;
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setMenuState({ x: e.clientX, y: e.clientY, hasSelection: terminal.hasSelection() });
+    };
+    contextMenuTarget.addEventListener("contextmenu", onContextMenu);
 
     const isCodexNewlineSession = () => {
       const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
@@ -808,6 +834,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       cancelled = true;
       cancelPendingCursorShow();
       pasteTarget.removeEventListener("paste", onPaste, pasteListenerOptions);
+      contextMenuTarget.removeEventListener("contextmenu", onContextMenu);
       textarea?.removeEventListener("compositionstart", onCompositionStart);
       textarea?.removeEventListener("compositionupdate", onCompositionUpdate);
       textarea?.removeEventListener("compositionend", onCompositionEnd);
@@ -942,6 +969,70 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     window.requestAnimationFrame(() => terminalRef.current?.focus());
   };
 
+  const closeContextMenu = () => setMenuState(null);
+
+  const handleMenuCopy = () => {
+    const terminal = terminalRef.current;
+    closeContextMenu();
+    if (!terminal) return;
+    void copyTextToClipboard(terminal.getSelection());
+    terminal.clearSelection();
+    terminal.focus();
+  };
+
+  const handleMenuPaste = () => {
+    const terminal = terminalRef.current;
+    closeContextMenu();
+    if (!terminal) return;
+    navigator.clipboard.readText().then((text) => {
+      if (!text) return;
+      useTerminalStore.getState().markAttentionInputHandled(sessionId);
+      terminal.paste(text);
+      terminal.focus();
+    }).catch((err) => {
+      logError("Failed to read clipboard text", { sessionId, err });
+    });
+  };
+
+  const handleMenuSelectAll = () => {
+    const terminal = terminalRef.current;
+    closeContextMenu();
+    if (!terminal) return;
+    terminal.selectAll();
+    terminal.focus();
+  };
+
+  const runMenuAction = (action?: () => void) => {
+    closeContextMenu();
+    action?.();
+  };
+
+  const hasManageActions = Boolean(
+    onNewTab || onCloseSession || onCloseOthers || onCloseToLeft || onCloseToRight || onSplitRight || onSplitDown
+  );
+
+  useEffect(() => {
+    if (!menuState) return;
+    const close = () => setMenuState(null);
+    const onPointerDown = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setMenuState(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuState(null);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("scroll", close, true);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("scroll", close, true);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuState]);
+
   // When the background image is active, an opaque wrapper background would
   // cover the pseudo-element image layer and break the transparency model.
   const wrapperStyle: CSSProperties = showBackgroundImage
@@ -1038,6 +1129,136 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         </div>
       )}
       <div ref={containerRef} className="h-full w-full overflow-hidden pl-2" />
+      {menuState && (
+        <Portal>
+          <div
+            ref={menuRef}
+            className="terminal-context-menu"
+            role="menu"
+            style={{
+              left: Math.max(8, Math.min(menuState.x, window.innerWidth - 190)),
+              top: Math.max(8, Math.min(menuState.y, window.innerHeight - 320)),
+              "--menu-fg": searchForeground,
+              "--menu-bg": searchBackground,
+              "--menu-border": hexToRgba(searchForeground, 0.18, "rgba(255, 255, 255, 0.18)"),
+              "--menu-hover": hexToRgba(searchForeground, 0.12, "rgba(255, 255, 255, 0.12)"),
+              fontFamily,
+            } as CSSProperties}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="terminal-context-menu-item"
+              disabled={!menuState.hasSelection}
+              onClick={handleMenuCopy}
+            >
+              <span>复制</span>
+              <span className="terminal-context-menu-hint">Ctrl+C</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="terminal-context-menu-item"
+              onClick={handleMenuPaste}
+            >
+              <span>粘贴</span>
+              <span className="terminal-context-menu-hint">Ctrl+V</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="terminal-context-menu-item"
+              onClick={handleMenuSelectAll}
+            >
+              <span>全选</span>
+            </button>
+            {hasManageActions && (
+              <>
+                <div className="terminal-context-menu-separator" role="separator" />
+                {onNewTab && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="terminal-context-menu-item"
+                    onClick={() => runMenuAction(onNewTab)}
+                  >
+                    <span>新建终端</span>
+                  </button>
+                )}
+                {onCloseSession && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="terminal-context-menu-item"
+                    onClick={() => runMenuAction(onCloseSession)}
+                  >
+                    <span>关闭终端</span>
+                  </button>
+                )}
+                {onCloseOthers && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="terminal-context-menu-item"
+                    onClick={() => runMenuAction(onCloseOthers)}
+                  >
+                    <span>关闭其它终端</span>
+                  </button>
+                )}
+                {onCloseToLeft && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="terminal-context-menu-item"
+                    onClick={() => runMenuAction(onCloseToLeft)}
+                  >
+                    <span>关闭左侧终端</span>
+                  </button>
+                )}
+                {onCloseToRight && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="terminal-context-menu-item"
+                    onClick={() => runMenuAction(onCloseToRight)}
+                  >
+                    <span>关闭右侧终端</span>
+                  </button>
+                )}
+                {(onSplitRight || onSplitDown) && <div className="terminal-context-menu-separator" role="separator" />}
+                {onSplitRight && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="terminal-context-menu-item"
+                    onClick={() => runMenuAction(onSplitRight)}
+                  >
+                    <span>向右分屏</span>
+                  </button>
+                )}
+                {onSplitDown && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="terminal-context-menu-item"
+                    onClick={() => runMenuAction(onSplitDown)}
+                  >
+                    <span>向下分屏</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </Portal>
+      )}
     </div>
   );
 }
