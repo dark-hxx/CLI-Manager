@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index and pre-development checklist for terminal component change"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"xterm helper textarea, IME composition, Windows PTY, and paste handling conventions"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Validation expectations for terminal UI/input changes"}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking triggers and pre-modification expectations"}

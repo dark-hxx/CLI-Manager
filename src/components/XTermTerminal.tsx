@@ -702,9 +702,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (!textarea || isComposingRef.current) return;
       textarea.style.left = "-9999em";
       textarea.style.top = "0px";
-      textarea.style.width = "0px";
-      textarea.style.height = "0px";
-      textarea.style.lineHeight = "";
+      // Keep the hidden input measurable: xterm's IME fallback for active IME
+      // punctuation reads textarea diffs after keyCode 229, and some IMEs drop
+      // the first character when the helper textarea is 0x0.
+      textarea.style.width = "1px";
+      textarea.style.height = "1px";
+      textarea.style.lineHeight = "1px";
     };
 
     const scheduleHelperTextareaAnchorPin = () => {

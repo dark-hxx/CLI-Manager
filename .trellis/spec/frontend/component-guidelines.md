@@ -232,7 +232,7 @@ if (sequence === "\x1b[?25l") {
 
 **Cause**: xterm syncs `.xterm-helper-textarea` to the terminal cursor on cursor moves. This is required for IME composition, but outside composition it can create browser scroll/anchor churn during progress-bar redraws.
 
-**Fix**: In `XTermTerminal`, keep the helper textarea pinned to xterm's offscreen default while not composing. During IME composition, do not blindly trust xterm's progress-cursor position: after xterm updates `.composition-view` and `.xterm-helper-textarea`, re-anchor both elements near the stable bottom input row, including a post-timeout pass to cover xterm's delayed composition update. After `compositionend`, pin the helper textarea offscreen again.
+**Fix**: In `XTermTerminal`, keep the helper textarea pinned to xterm's offscreen default while not composing, but keep it at least `1x1`; xterm's IME fallback for active-IME punctuation reads textarea diffs after keyCode 229, and some IMEs drop the first character when the helper textarea is `0x0`. During IME composition, do not blindly trust xterm's progress-cursor position: after xterm updates `.composition-view` and `.xterm-helper-textarea`, re-anchor both elements near the stable bottom input row, including a post-timeout pass to cover xterm's delayed composition update. After `compositionend`, pin the helper textarea offscreen again.
 
 **Correct**:
 
@@ -240,8 +240,9 @@ if (sequence === "\x1b[?25l") {
 if (!isComposingRef.current) {
   textarea.style.left = "-9999em";
   textarea.style.top = "0px";
-  textarea.style.width = "0px";
-  textarea.style.height = "0px";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.lineHeight = "1px";
 }
 ```
 

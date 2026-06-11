@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Manual checks required for xterm helper textarea, IME composition, paste, and keyboard input"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Static validation and manual runtime UI verification policy"}
+{"file":".trellis/spec/guides/index.md","reason":"Shared validation and change-scope thinking guidance"}
