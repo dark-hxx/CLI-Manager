@@ -31,21 +31,21 @@ const MODEL_PRICING: ModelPricing[] = [
   { modelId: "o4-mini", inputPerMillion: 1.1, outputPerMillion: 4.4, cacheReadPerMillion: 0.275, cacheCreationPerMillion: 0.0 },
 ];
 
-// 模型上下文窗口映射表（单位：tokens）
+// 模型上下文窗口映射表（单位：tokens）。优先使用日志中携带的精确 context_window，缺失时才回退到这里。
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  "claude-opus-4-8": 200_000,
-  "claude-opus-4-7": 200_000,
-  "claude-opus-4-6": 200_000,
+  "claude-opus-4-8": 1_000_000,
+  "claude-opus-4-7": 1_000_000,
+  "claude-opus-4-6": 1_000_000,
   "claude-opus-4-1": 200_000,
   "claude-opus-4": 200_000,
-  "claude-sonnet-4-6": 200_000,
+  "claude-sonnet-4-6": 1_000_000,
   "claude-sonnet-4-5": 200_000,
   "claude-sonnet-4-2": 200_000,
   "claude-sonnet-4": 200_000,
   "claude-haiku-4-5": 200_000,
   "claude-haiku-4-2": 200_000,
   "claude-haiku-4": 200_000,
-  "claude-fable-5": 200_000,
+  "claude-fable-5": 1_000_000,
   "claude-3-5-sonnet-20241022": 200_000,
   "claude-3-5-sonnet-20240620": 200_000,
   "claude-3-5-haiku-20241022": 200_000,
@@ -59,11 +59,16 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
 function normalizeModelId(model: string): string | null {
   const lower = model.toLowerCase().trim();
 
-  // 移除 [1m] 后缀
-  const withoutSuffix = lower.replace(/\[1m\]$/, "");
+  // 移除 UI 展示用后缀，如 "(xhigh)" / " (high)"
+  const withoutEffort = lower.replace(/\s*\([^)]*\)$/, "");
 
-  // 移除 us.anthropic.com 前缀
-  const withoutRegion = withoutSuffix.replace(/^us\.anthropic\.com\//, "");
+  // 移除 [1m] 后缀
+  const withoutSuffix = withoutEffort.replace(/\[1m\]$/, "");
+
+  // 移除 us.anthropic.com/ 或 us.anthropic. 前缀
+  const withoutRegion = withoutSuffix
+    .replace(/^us\.anthropic\.com\//, "")
+    .replace(/^us\.anthropic\./, "");
 
   // 移除 anthropic. 前缀
   const withoutVendor = withoutRegion.replace(/^anthropic\./, "");

@@ -508,8 +508,19 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   },
 
   handleCliHookEvent: (payload) => {
+    const rawTabId = payload.tabId;
     const tabId = resolvePrimaryTabId(payload.tabId, get().splits);
     if (!get().sessions.some((session) => session.id === tabId)) return null;
+    const cliSessionId = payload.sessionId?.trim();
+    if (cliSessionId && get().sessions.some((session) => session.id === rawTabId)) {
+      set((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === rawTabId && session.cliSessionId !== cliSessionId
+            ? { ...session, cliSessionId }
+            : session
+        ),
+      }));
+    }
     const updatedAt = payload.timestamp ?? new Date().toISOString();
     const status = mapCliHookEvent(payload.event);
     if (!status) return tabId;

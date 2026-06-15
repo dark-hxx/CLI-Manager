@@ -137,13 +137,26 @@ const TREND_POINT_LIMIT = 40;
 
 export function TrendCard({ session }: { session: HistorySessionDetail | null }) {
   const points: number[] = [];
+  const backendTrend = session?.usage?.token_trend ?? [];
+  let sourceLabel = "每条消息 输入+输出";
   if (session) {
-    for (const msg of session.messages) {
-      const tokens = (msg.input_tokens ?? 0) + (msg.output_tokens ?? 0);
-      if (tokens > 0) points.push(tokens);
+    if (backendTrend.length > 0) {
+      sourceLabel = "每次请求 Token 增量";
+      for (const point of backendTrend) {
+        const tokens =
+          point.total_tokens
+          || point.input_tokens + point.output_tokens + point.cache_read_tokens + point.cache_creation_tokens;
+        if (tokens > 0) points.push(tokens);
+      }
+    } else {
+      for (const msg of session.messages) {
+        const tokens = (msg.input_tokens ?? 0) + (msg.output_tokens ?? 0);
+        if (tokens > 0) points.push(tokens);
+      }
     }
   }
   const recent = points.slice(-TREND_POINT_LIMIT);
+  const peakTokens = recent.length > 0 ? Math.max(...recent) : 0;
 
   return (
     <StatCard
@@ -151,12 +164,21 @@ export function TrendCard({ session }: { session: HistorySessionDetail | null })
       title="Token 趋势"
       headerRight={recent.length >= 2 ? <HeaderPill color={TERM.cyan}>{recent.length} 条</HeaderPill> : undefined}
     >
-      <Sparkline points={recent} color={TERM.cyan} height={40} />
+      {recent.length >= 2 ? (
+        <Sparkline points={recent} color={TERM.cyan} height={40} />
+      ) : (
+        <div
+          className="flex items-center justify-center rounded-md text-[10px]"
+          style={{ height: 40, color: TERM.dim, backgroundColor: TERM.cardInner }}
+        >
+          {recent.length === 1 ? `仅 1 个趋势点：${formatCompactCount(peakTokens)}` : "暂无趋势数据"}
+        </div>
+      )}
       {recent.length >= 2 && (
         <div className="mt-1 flex justify-between text-[10px]" style={{ color: TERM.dim }}>
-          <span>每条消息 输入+输出</span>
+          <span>{sourceLabel}</span>
           <span>
-            峰值 {formatCompactCount(Math.max(...recent))}
+            峰值 {formatCompactCount(peakTokens)}
           </span>
         </div>
       )}

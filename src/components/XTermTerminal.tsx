@@ -21,13 +21,6 @@ const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
 const ACTIVE_WRITE_FRAME_BUDGET = 64 * 1024;
 const SEARCH_HIGHLIGHT_LIMIT = 1000;
-// IME anchor trust thresholds: if no PTY write landed within this window the
-// live buffer cursor is parked at the app's input caret and can be trusted.
-const CURSOR_TRUST_IDLE_MS = 150;
-// After a write burst settles, wait this long before sampling the parked cursor.
-const QUIET_CURSOR_SAMPLE_DELAY_MS = 60;
-// A quiet-cursor sample older than this is stale (viewport may have scrolled).
-const QUIET_CURSOR_MAX_AGE_MS = 5000;
 // Box-drawing glyphs used by TUI input boxes (Claude Code / Codex draw "│ > … │").
 const TUI_BORDER_CHAR_PATTERN = /^[│┃║▏▎▍▌▋▊▉█┆┊╎╏]$/u;
 const TUI_BORDER_PREFIX_PATTERN = /^[\s│┃║▏▎▍▌▋▊▉█┆┊╎╏]+/u;
@@ -156,9 +149,6 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   const activeWriteQueueRef = useRef<string[]>([]);
   const activeWriteRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
-  const lastTerminalWriteAtRef = useRef(0);
-  const quietCursorCellRef = useRef<{ x: number; y: number; at: number } | null>(null);
-  const quietCursorSampleTimerRef = useRef<number | null>(null);
   const INACTIVE_BUFFER_MAX = 256 * 1024;
   const runtimeOscBufferRef = useRef("");
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
@@ -372,45 +362,26 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     return processed + text.slice(lastIndex);
   };
 
-  // TUI apps (Claude Code/Codex) park the hardware cursor at their input caret
-  // between redraw frames. Record write activity and, once a burst settles,
-  // sample that parked position — it is the trustworthy IME anchor when
-  // compositionstart fires mid-redraw and the live cursor sits on a tail line.
-  const noteTerminalWriteActivity = () => {
-    lastTerminalWriteAtRef.current = performance.now();
-    if (quietCursorSampleTimerRef.current !== null) {
-      window.clearTimeout(quietCursorSampleTimerRef.current);
-    }
-    quietCursorSampleTimerRef.current = window.setTimeout(() => {
-      quietCursorSampleTimerRef.current = null;
-      const terminal = terminalRef.current;
-      if (!terminal || isComposingRef.current) return;
-      const buffer = terminal.buffer.active;
-      quietCursorCellRef.current = {
-        x: Math.min(Math.max(0, buffer.cursorX), Math.max(0, terminal.cols - 1)),
-        y: Math.min(Math.max(0, buffer.cursorY), Math.max(0, terminal.rows - 1)),
-        at: performance.now(),
-      };
-    }, QUIET_CURSOR_SAMPLE_DELAY_MS);
-  };
-
   const flushActiveWriteQueue = () => {
     activeWriteRafRef.current = null;
     if (!isActiveRef.current || activeWriteQueueRef.current.length === 0) return;
     const terminal = terminalRef.current;
     if (!terminal) return;
-    noteTerminalWriteActivity();
+
+    const writeTerminalChunk = (chunk: string) => {
+      terminal.write(chunk);
+    };
 
     let budget = ACTIVE_WRITE_FRAME_BUDGET;
     while (budget > 0 && activeWriteQueueRef.current.length > 0) {
       const chunk = activeWriteQueueRef.current[0];
       if (chunk.length <= budget) {
-        terminal.write(chunk);
+        writeTerminalChunk(chunk);
         activeWriteQueueRef.current.shift();
         budget -= chunk.length;
         continue;
       }
-      terminal.write(chunk.slice(0, budget));
+      writeTerminalChunk(chunk.slice(0, budget));
       activeWriteQueueRef.current[0] = chunk.slice(budget);
       budget = 0;
     }
@@ -844,35 +815,23 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         return { x: clampX(text.length + 1), y: row };
       };
 
-      const now = performance.now();
-      // Terminal quiet: the app has parked the cursor where it accepts input.
-      if (now - lastTerminalWriteAtRef.current > CURSOR_TRUST_IDLE_MS) return cursor;
-
-      // Output streaming, but the cursor sits on an input-looking row; trust it.
-      if (getInputAnchorCell(cursor.y)) return cursor;
-
-      // Cursor likely caught mid-redraw on a tail/status line. Reuse the parked
-      // position sampled after the previous write burst settled.
-      const quietCell = quietCursorCellRef.current;
-      if (quietCell && now - quietCell.at <= QUIET_CURSOR_MAX_AGE_MS) {
-        return { x: clampX(quietCell.x), y: clampY(quietCell.y) };
+      // The current input box is always the bottom-most one on screen: both
+      // TUIs (Claude Code / Codex) and plain shells keep it pinned to the
+      // bottom. Scanning up from the last row makes the anchor immune to the
+      // hardware cursor — which the TUI flings to spinner/tail lines or hides
+      // outright — and to decoy "> " rows higher up (e.g. echoed history
+      // messages); a cursor-centered nearest-row scan would wrongly latch onto
+      // those when the cursor drifts mid-redraw.
+      for (let row = terminal.rows - 1; row >= 0; row -= 1) {
+        const anchor = getInputAnchorCell(row);
+        if (!anchor) continue;
+        // Cursor sitting on the input row itself: trust its exact column so a
+        // mid-line caret in a plain shell keeps the IME glued to the caret.
+        return cursor.y === row ? cursor : anchor;
       }
 
-      // Last resort: nearest row that looks like an input prompt.
-      for (let offset = 1; offset < terminal.rows; offset += 1) {
-        const upperRow = cursor.y - offset;
-        if (upperRow >= 0) {
-          const anchor = getInputAnchorCell(upperRow);
-          if (anchor) return anchor;
-        }
-
-        const lowerRow = cursor.y + offset;
-        if (lowerRow < terminal.rows) {
-          const anchor = getInputAnchorCell(lowerRow);
-          if (anchor) return anchor;
-        }
-      }
-
+      // No input box on screen (full-screen TUI without a prompt): the hardware
+      // cursor is the only signal left.
       return cursor;
     };
 
@@ -1062,10 +1021,6 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (compositionAnchorTimeoutId !== null) {
         window.clearTimeout(compositionAnchorTimeoutId);
         compositionAnchorTimeoutId = null;
-      }
-      if (quietCursorSampleTimerRef.current !== null) {
-        window.clearTimeout(quietCursorSampleTimerRef.current);
-        quietCursorSampleTimerRef.current = null;
       }
       if (writeRafId !== null) {
         cancelAnimationFrame(writeRafId);

@@ -280,6 +280,25 @@ textarea.style.display = "none";
 - [ ] Normal keyboard input, Enter, and paste still reach the PTY.
 - [ ] Chinese/IME composition still positions the candidate window correctly.
 
+### Gotcha: xterm `write` is asynchronous for buffer cursor reads
+
+**Symptom**: IME fallback cursor sampling still occasionally anchors to a Claude/Codex status or animation row even though sampling waits for a short quiet period after output.
+
+**Cause**: `terminal.write(data)` queues parser work; `terminal.buffer.active.cursorX/cursorY` is not guaranteed to reflect that write until the optional write callback fires. Starting a quiet-cursor sample before the callback can still sample the pre-write or mid-redraw cursor.
+
+**Fix**: Any cursor-dependent logic that is caused by PTY output must be scheduled from the `terminal.write(..., callback)` callback. Guard stale callbacks if the terminal instance can be disposed.
+
+```tsx
+const writeTerminalChunk = (chunk: string) => {
+  terminal.write(chunk, () => {
+    if (terminalRef.current !== terminal) return;
+    noteTerminalWriteActivity();
+  });
+};
+```
+
+**Prevention**: When reading `terminal.buffer.active` after output writes, first check xterm's `write` callback contract. Do not use timers started before `terminal.write()` as evidence that the buffer cursor has already parked at the input caret.
+
 ### Convention: xterm Windows PTY and paste handling
 
 **What**: Internal xterm instances backed by the app's Windows PTY must use xterm's Windows compatibility and native paste path.

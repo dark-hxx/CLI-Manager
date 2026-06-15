@@ -31,10 +31,8 @@ const DAY_SESSION_PAGE_SIZE = 120;
 const ALL_PROJECTS_VALUE = "__all_projects__";
 const DATE_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MONTH_INPUT_PATTERN = /^(\d{4})-(\d{2})$/;
-const WEEK_INPUT_PATTERN = /^(\d{4})-W(\d{2})$/;
 const YEAR_INPUT_PATTERN = /^(\d{4})$/;
 const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface DateRangeInput {
   startDate: string;
@@ -56,7 +54,7 @@ interface StatsTimeWindowState {
 
 const STATS_TIME_WINDOW_OPTIONS: { value: StatsTimeWindowMode; label: string }[] = [
   { value: "day", label: "日" },
-  { value: "week", label: "周" },
+  { value: "week", label: "近7天" },
   { value: "month", label: "月" },
   { value: "year", label: "年" },
   { value: "custom", label: "自定义" },
@@ -125,56 +123,27 @@ function formatDateInput(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function startOfLocalWeek(date: Date): Date {
-  const daysSinceMonday = (date.getDay() + 6) % 7;
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() - daysSinceMonday);
-}
-
-function getCurrentWeekDateRange(): DateRangeInput {
-  const now = new Date();
-  const monday = startOfLocalWeek(now);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+function getRecentSevenDaysDateRange(): DateRangeInput {
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
   return {
-    startDate: formatDateInput(monday),
-    endDate: formatDateInput(today),
+    startDate: formatDateInput(start),
+    endDate: formatDateInput(end),
   };
-}
-
-function formatWeekInput(date: Date): string {
-  const current = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const day = current.getUTCDay() || 7;
-  current.setUTCDate(current.getUTCDate() + 4 - day);
-  const year = current.getUTCFullYear();
-  const yearStart = new Date(Date.UTC(year, 0, 1));
-  const week = Math.ceil(((current.getTime() - yearStart.getTime()) / DAY_MS + 1) / 7);
-  return `${year}-W${String(week).padStart(2, "0")}`;
-}
-
-function parseWeekInput(value: string): Date | null {
-  const match = WEEK_INPUT_PATTERN.exec(value);
-  if (!match) return null;
-
-  const year = Number(match[1]);
-  const week = Number(match[2]);
-  if (week < 1 || week > 53) return null;
-
-  const jan4 = new Date(year, 0, 4);
-  const weekOneMonday = startOfLocalWeek(jan4);
-  const monday = new Date(weekOneMonday.getFullYear(), weekOneMonday.getMonth(), weekOneMonday.getDate() + (week - 1) * 7);
-  return formatWeekInput(monday) === value ? monday : null;
 }
 
 function getDefaultStatsTimeWindow(): StatsTimeWindowState {
   const now = new Date();
-  const currentWeek = getCurrentWeekDateRange();
+  const recentSevenDays = getRecentSevenDaysDateRange();
   return {
     mode: "week",
     day: formatDateInput(now),
-    week: formatWeekInput(now),
+    week: "",
     month: formatDateInput(now).slice(0, 7),
     year: String(now.getFullYear()),
-    customStart: currentWeek.startDate,
-    customEnd: currentWeek.endDate,
+    customStart: recentSevenDays.startDate,
+    customEnd: recentSevenDays.endDate,
   };
 }
 
@@ -192,7 +161,14 @@ function resolveStatsTimeWindow(window: StatsTimeWindowState): StatsTimeWindowSt
 }
 
 function nextStatsTimeWindowForMode(mode: StatsTimeWindowMode, current: StatsTimeWindowState): StatsTimeWindowState {
-  return resolveStatsTimeWindow({ ...current, mode });
+  const resolved = resolveStatsTimeWindow({ ...current, mode });
+  if (mode !== "week") return resolved;
+  const recentSevenDays = getRecentSevenDaysDateRange();
+  return {
+    ...resolved,
+    customStart: recentSevenDays.startDate,
+    customEnd: recentSevenDays.endDate,
+  };
 }
 
 function dateRangeFromStatsTimeWindow(window: StatsTimeWindowState): DateRangeInput {
@@ -200,10 +176,7 @@ function dateRangeFromStatsTimeWindow(window: StatsTimeWindowState): DateRangeIn
     return { startDate: window.day, endDate: window.day };
   }
   if (window.mode === "week") {
-    const monday = parseWeekInput(window.week);
-    if (!monday) return { startDate: "", endDate: "" };
-    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
-    return { startDate: formatDateInput(monday), endDate: formatDateInput(sunday) };
+    return getRecentSevenDaysDateRange();
   }
   if (window.mode === "month") {
     const match = MONTH_INPUT_PATTERN.exec(window.month);
@@ -233,7 +206,7 @@ function dateRangeFromStatsTimeWindow(window: StatsTimeWindowState): DateRangeIn
 
 function statsTimeWindowLabel(window: StatsTimeWindowState, range: DateRangeInput): string {
   if (window.mode === "day") return window.day;
-  if (window.mode === "week") return `${window.week}（${range.startDate} 至 ${range.endDate}）`;
+  if (window.mode === "week") return `最近 7 天（${range.startDate} 至 ${range.endDate}）`;
   if (window.mode === "month") return `${window.month} 月`;
   if (window.mode === "year") return `${window.year} 年`;
   return `${range.startDate} 至 ${range.endDate}`;
@@ -1005,13 +978,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
             )}
 
             {timeWindow.mode === "week" && (
-              <input
-                type="week"
-                value={resolvedTimeWindow.week}
-                onChange={(e) => setTimeWindow((prev) => ({ ...prev, week: e.target.value }))}
-                className={timeInputClass}
-                aria-label="统计周"
-              />
+              <span className={`${controlClass} inline-flex items-center`}>最近 7 天</span>
             )}
 
             {timeWindow.mode === "month" && (

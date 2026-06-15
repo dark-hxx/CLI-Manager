@@ -62,6 +62,7 @@ export interface TerminalSession {
   shell?: string | null;
   envVars?: Record<string, string>;
   startupCmd?: string;
+  cliSessionId?: string;
 }
 
 export interface PersistedSplit {
@@ -136,6 +137,14 @@ export interface HistoryToolCount {
   count: number;
 }
 
+export interface HistoryTokenTrendPoint {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+}
+
 export interface HistorySessionUsage {
   input_tokens: number;
   output_tokens: number;
@@ -145,6 +154,7 @@ export interface HistorySessionUsage {
   dominant_model?: string | null;
   context_window?: number | null;
   last_context_tokens?: number | null;
+  token_trend: HistoryTokenTrendPoint[];
   tool_call_count?: number;
   mcp_calls?: HistoryToolCount[];
   skill_calls?: HistoryToolCount[];

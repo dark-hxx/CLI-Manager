@@ -17,6 +17,7 @@ import type {
   HistoryStatsProjectEfficiencyItem,
   HistoryStatsProjectItem,
   HistoryStatsSourceItem,
+  HistoryTokenTrendPoint,
   HistoryToolCount,
   PromptScope,
   HistorySource,
@@ -242,10 +243,33 @@ function normalizeSessionUsage(raw: unknown): HistorySessionDetail["usage"] {
     dominant_model: asString(rec.dominant_model ?? rec.dominantModel ?? "") || null,
     context_window: asNumber(rec.context_window ?? rec.contextWindow) || null,
     last_context_tokens: asNumber(rec.last_context_tokens ?? rec.lastContextTokens) || null,
+    token_trend: normalizeTokenTrend(rec.token_trend ?? rec.tokenTrend),
     tool_call_count: asNumber(rec.tool_call_count ?? rec.toolCallCount),
     mcp_calls: normalizeToolCounts(rec.mcp_calls ?? rec.mcpCalls),
     skill_calls: normalizeToolCounts(rec.skill_calls ?? rec.skillCalls),
   };
+}
+
+function normalizeTokenTrend(raw: unknown): HistoryTokenTrendPoint[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const rec = (item ?? {}) as Record<string, unknown>;
+      const input = asNumber(rec.input_tokens ?? rec.inputTokens);
+      const output = asNumber(rec.output_tokens ?? rec.outputTokens);
+      const cacheRead = asNumber(rec.cache_read_tokens ?? rec.cacheReadTokens);
+      const cacheCreation = asNumber(rec.cache_creation_tokens ?? rec.cacheCreationTokens);
+      const total = asNumber(rec.total_tokens ?? rec.totalTokens)
+        || input + output + cacheRead + cacheCreation;
+      return {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: cacheRead,
+        cache_creation_tokens: cacheCreation,
+        total_tokens: total,
+      };
+    })
+    .filter((item) => item.total_tokens > 0);
 }
 
 function normalizeToolCounts(raw: unknown): HistoryToolCount[] {
@@ -483,18 +507,28 @@ export interface TodayProjectStats {
 export async function fetchLatestProjectSessionDetail(
   projectPath: string,
   prev?: { filePath: string; updatedAt: number },
-  source?: HistorySource | null
+  source?: HistorySource | null,
+  cliSessionId?: string | null
 ): Promise<HistorySessionDetail | "unchanged" | null> {
   try {
-    const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
-      source: source ?? null,
-      ...getHistoryPathArgs(),
-      projectPath,
-      query: null,
-      limit: 1,
-      offset: 0,
-    });
-    const summary = (summariesRaw ?? []).map((item) => normalizeSummary(item))[0];
+    const loadSummary = async (query: string | null): Promise<HistorySessionSummary | null> => {
+      const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
+        source: source ?? null,
+        ...getHistoryPathArgs(),
+        projectPath,
+        query,
+        limit: 1,
+        offset: 0,
+      });
+      return (summariesRaw ?? []).map((item) => normalizeSummary(item))[0] ?? null;
+    };
+    const sessionQuery = cliSessionId?.trim() || null;
+    // 有 CLI 会话 ID 时严格按该会话查找；命中不到也不回退到项目最近会话，
+    // 否则同项目多个终端会互相串显另一个窗口的会话数据。
+    // 仅在完全没有 CLI 会话 ID（无 hook 环境）时才回退项目最近会话。
+    const summary = sessionQuery
+      ? await loadSummary(sessionQuery)
+      : await loadSummary(null);
     if (!summary) return null;
     if (prev && summary.file_path === prev.filePath && summary.updated_at === prev.updatedAt) {
       return "unchanged";

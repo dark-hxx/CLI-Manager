@@ -67,6 +67,7 @@ struct SessionStatsScan {
     context_window: Option<u64>,
     /// 最近一次请求占用的上下文 token 数。
     last_context_tokens: Option<u64>,
+    token_trend: Vec<HistoryTokenTrendPoint>,
     /// 工具调用总次数（Claude tool_use 块 / Codex function_call）。
     tool_call_count: u64,
     /// MCP 服务器 -> 调用次数（工具名 mcp__<server>__<tool>）。
@@ -162,14 +163,33 @@ struct HistoryStatsAggregationCache {
     entries: HashMap<String, CachedHistoryStatsAggregation>,
 }
 
+#[derive(Clone)]
+struct HistoryStatsSessionFact {
+    summary: HistorySessionSummary,
+    stats: SessionStatsScan,
+}
+
+#[derive(Clone)]
+struct CachedHistoryStatsDailyIndex {
+    days: BTreeMap<i64, Vec<HistoryStatsSessionFact>>,
+    cached_at: i64,
+}
+
+#[derive(Default)]
+struct HistoryStatsDailyIndexCache {
+    entries: HashMap<String, CachedHistoryStatsDailyIndex>,
+}
+
 const HOUR_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * HOUR_MS;
 const MAX_STATS_RANGE_DAYS: usize = 366;
 const HISTORY_STATS_AGGREGATION_CACHE_MAX: usize = 32;
+const HISTORY_STATS_DAILY_INDEX_CACHE_MAX: usize = 16;
 static SESSION_STATS_CACHE: OnceLock<Mutex<SessionStatsCache>> = OnceLock::new();
 static SESSION_PROJECT_CACHE: OnceLock<Mutex<SessionProjectCache>> = OnceLock::new();
 static SESSION_FILES_CACHE: OnceLock<Mutex<SessionFilesCache>> = OnceLock::new();
 static HISTORY_STATS_AGGREGATION_CACHE: OnceLock<Mutex<HistoryStatsAggregationCache>> = OnceLock::new();
+static HISTORY_STATS_DAILY_INDEX_CACHE: OnceLock<Mutex<HistoryStatsDailyIndexCache>> = OnceLock::new();
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -207,6 +227,16 @@ pub struct HistoryToolCount {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HistoryTokenTrendPoint {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub total_tokens: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HistorySessionUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -216,6 +246,7 @@ pub struct HistorySessionUsage {
     pub dominant_model: Option<String>,
     pub context_window: Option<u64>,
     pub last_context_tokens: Option<u64>,
+    pub token_trend: Vec<HistoryTokenTrendPoint>,
     pub tool_call_count: u64,
     pub mcp_calls: Vec<HistoryToolCount>,
     pub skill_calls: Vec<HistoryToolCount>,
@@ -911,20 +942,78 @@ pub async fn history_get_stats(
         }
     }
 
-    let response = build_history_stats_response(
-        index.entries,
+    let daily_index_key = make_history_stats_daily_index_cache_key(
+        &roots,
         source_filter.as_deref(),
         target_project.as_deref(),
         bounds,
+        index.generation,
     );
+    let daily_index = if !force {
+        stats_daily_index_cache_get(&daily_index_key).unwrap_or_else(|| {
+            let daily_index = build_history_stats_daily_index(
+                index.entries,
+                source_filter.as_deref(),
+                target_project.as_deref(),
+                bounds,
+            );
+            stats_daily_index_cache_set(daily_index_key, daily_index.clone());
+            daily_index
+        })
+    } else {
+        let daily_index = build_history_stats_daily_index(
+            index.entries,
+            source_filter.as_deref(),
+            target_project.as_deref(),
+            bounds,
+        );
+        stats_daily_index_cache_set(daily_index_key, daily_index.clone());
+        daily_index
+    };
+
+    let response = build_history_stats_response(&daily_index.days, bounds);
     stats_aggregation_cache_set(cache_key, response.clone());
     Ok(response)
 }
 
-fn build_history_stats_response(
+fn build_history_stats_daily_index(
     entries: Vec<HistoryIndexEntry>,
     source_filter: Option<&str>,
     target_project: Option<&str>,
+    bounds: StatsTimeBounds,
+) -> CachedHistoryStatsDailyIndex {
+    let mut days: BTreeMap<i64, Vec<HistoryStatsSessionFact>> = BTreeMap::new();
+    let day_offset = stats_day_start_offset(bounds);
+
+    for entry in entries {
+        if let Some(filter) = source_filter {
+            if entry.file_ref.source != filter {
+                continue;
+            }
+        }
+        if let Some(project) = target_project {
+            if entry.file_ref.project_key != project {
+                continue;
+            }
+        }
+
+        let computed = entry.computed;
+        let summary = summary_from_computation(&entry.file_ref, &computed);
+        let day_start = stats_day_start_with_offset(summary.updated_at, day_offset);
+        days.entry(day_start).or_default().push(HistoryStatsSessionFact {
+            summary,
+            stats: computed.stats,
+        });
+    }
+
+    CachedHistoryStatsDailyIndex {
+        days,
+        cached_at: now_millis(),
+    }
+}
+
+fn build_history_stats_response(
+    daily_index: &BTreeMap<i64, Vec<HistoryStatsSessionFact>>,
     bounds: StatsTimeBounds,
 ) -> HistoryStatsResponse {
     let mut total_sessions = 0usize;
@@ -941,59 +1030,51 @@ fn build_history_stats_response(
     let mut day_map: BTreeMap<i64, DayStatsAggregate> = BTreeMap::new();
     let mut hourly_map: Vec<HourStatsAggregate> = vec![HourStatsAggregate::default(); 24];
 
-    for entry in entries {
-        if let Some(filter) = source_filter {
-            if entry.file_ref.source != filter {
-                continue;
-            }
-        }
-        if let Some(project) = target_project {
-            if entry.file_ref.project_key != project {
-                continue;
-            }
-        }
-
-        let computed = entry.computed;
-        let summary = summary_from_computation(&entry.file_ref, &computed);
-        if summary.updated_at < bounds.start_at || summary.updated_at > bounds.end_at {
+    for day_idx in 0..bounds.range_days {
+        let day_start = bounds.start_day + day_idx as i64 * DAY_MS;
+        let Some(facts) = daily_index.get(&day_start) else {
             continue;
-        }
-        let day_start = stats_day_start(summary.updated_at, bounds);
+        };
 
-        total_sessions += 1;
-        total_messages += summary.message_count;
-        total_input_tokens = total_input_tokens.saturating_add(computed.stats.input_tokens);
-        total_output_tokens = total_output_tokens.saturating_add(computed.stats.output_tokens);
-        total_cache_read_tokens =
-            total_cache_read_tokens.saturating_add(computed.stats.cache_read_tokens);
-        total_cache_creation_tokens =
-            total_cache_creation_tokens.saturating_add(computed.stats.cache_creation_tokens);
-        total_cost_usd += computed.stats.total_cost_usd;
-        total_unpriced_tokens =
-            total_unpriced_tokens.saturating_add(computed.stats.unpriced_tokens);
-        let hour = hour_of_day_for_stats(summary.updated_at, bounds);
-        hourly_map[hour].sessions += 1;
-        hourly_map[hour].messages += summary.message_count;
-        hourly_map[hour].input_tokens = hourly_map[hour]
-            .input_tokens
-            .saturating_add(computed.stats.input_tokens);
-        hourly_map[hour].output_tokens = hourly_map[hour]
-            .output_tokens
-            .saturating_add(computed.stats.output_tokens);
-        hourly_map[hour].cache_read_tokens = hourly_map[hour]
-            .cache_read_tokens
-            .saturating_add(computed.stats.cache_read_tokens);
-        hourly_map[hour].cache_creation_tokens = hourly_map[hour]
-            .cache_creation_tokens
-            .saturating_add(computed.stats.cache_creation_tokens);
-        hourly_map[hour].total_cost_usd += computed.stats.total_cost_usd;
-        hourly_map[hour].unpriced_tokens = hourly_map[hour]
-            .unpriced_tokens
-            .saturating_add(computed.stats.unpriced_tokens);
-        hourly_map[hour].session_refs.push(summary.clone());
+        for fact in facts {
+            if fact.summary.updated_at < bounds.start_at || fact.summary.updated_at > bounds.end_at {
+                continue;
+            }
 
-        let project_entry =
-            project_map
+            let summary = &fact.summary;
+            let stats = &fact.stats;
+
+            total_sessions += 1;
+            total_messages += summary.message_count;
+            total_input_tokens = total_input_tokens.saturating_add(stats.input_tokens);
+            total_output_tokens = total_output_tokens.saturating_add(stats.output_tokens);
+            total_cache_read_tokens = total_cache_read_tokens.saturating_add(stats.cache_read_tokens);
+            total_cache_creation_tokens = total_cache_creation_tokens.saturating_add(stats.cache_creation_tokens);
+            total_cost_usd += stats.total_cost_usd;
+            total_unpriced_tokens = total_unpriced_tokens.saturating_add(stats.unpriced_tokens);
+
+            let hour = hour_of_day_for_stats(summary.updated_at, bounds);
+            hourly_map[hour].sessions += 1;
+            hourly_map[hour].messages += summary.message_count;
+            hourly_map[hour].input_tokens = hourly_map[hour]
+                .input_tokens
+                .saturating_add(stats.input_tokens);
+            hourly_map[hour].output_tokens = hourly_map[hour]
+                .output_tokens
+                .saturating_add(stats.output_tokens);
+            hourly_map[hour].cache_read_tokens = hourly_map[hour]
+                .cache_read_tokens
+                .saturating_add(stats.cache_read_tokens);
+            hourly_map[hour].cache_creation_tokens = hourly_map[hour]
+                .cache_creation_tokens
+                .saturating_add(stats.cache_creation_tokens);
+            hourly_map[hour].total_cost_usd += stats.total_cost_usd;
+            hourly_map[hour].unpriced_tokens = hourly_map[hour]
+                .unpriced_tokens
+                .saturating_add(stats.unpriced_tokens);
+            hourly_map[hour].session_refs.push(summary.clone());
+
+            let project_entry = project_map
                 .entry(summary.project_key.clone())
                 .or_insert(HistoryStatsProjectItem {
                     project_key: summary.project_key.clone(),
@@ -1006,114 +1087,53 @@ fn build_history_stats_response(
                     total_cost_usd: 0.0,
                     unpriced_tokens: 0,
                 });
-        project_entry.sessions += 1;
-        project_entry.messages += summary.message_count;
-        project_entry.input_tokens = project_entry
-            .input_tokens
-            .saturating_add(computed.stats.input_tokens);
-        project_entry.output_tokens = project_entry
-            .output_tokens
-            .saturating_add(computed.stats.output_tokens);
-        project_entry.cache_read_tokens = project_entry
-            .cache_read_tokens
-            .saturating_add(computed.stats.cache_read_tokens);
-        project_entry.cache_creation_tokens = project_entry
-            .cache_creation_tokens
-            .saturating_add(computed.stats.cache_creation_tokens);
-        project_entry.total_cost_usd += computed.stats.total_cost_usd;
-        project_entry.unpriced_tokens = project_entry
-            .unpriced_tokens
-            .saturating_add(computed.stats.unpriced_tokens);
+            project_entry.sessions += 1;
+            project_entry.messages += summary.message_count;
+            project_entry.input_tokens = project_entry.input_tokens.saturating_add(stats.input_tokens);
+            project_entry.output_tokens = project_entry.output_tokens.saturating_add(stats.output_tokens);
+            project_entry.cache_read_tokens = project_entry
+                .cache_read_tokens
+                .saturating_add(stats.cache_read_tokens);
+            project_entry.cache_creation_tokens = project_entry
+                .cache_creation_tokens
+                .saturating_add(stats.cache_creation_tokens);
+            project_entry.total_cost_usd += stats.total_cost_usd;
+            project_entry.unpriced_tokens = project_entry
+                .unpriced_tokens
+                .saturating_add(stats.unpriced_tokens);
 
-        let source_entry = source_map.entry(summary.source.clone()).or_insert(HistoryStatsSourceItem {
-            source: summary.source.clone(),
-            sessions: 0,
-            messages: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            total_cost_usd: 0.0,
-            unpriced_tokens: 0,
-        });
-        source_entry.sessions += 1;
-        source_entry.messages += summary.message_count;
-        source_entry.input_tokens = source_entry
-            .input_tokens
-            .saturating_add(computed.stats.input_tokens);
-        source_entry.output_tokens = source_entry
-            .output_tokens
-            .saturating_add(computed.stats.output_tokens);
-        source_entry.cache_read_tokens = source_entry
-            .cache_read_tokens
-            .saturating_add(computed.stats.cache_read_tokens);
-        source_entry.cache_creation_tokens = source_entry
-            .cache_creation_tokens
-            .saturating_add(computed.stats.cache_creation_tokens);
-        source_entry.total_cost_usd += computed.stats.total_cost_usd;
-        source_entry.unpriced_tokens = source_entry
-            .unpriced_tokens
-            .saturating_add(computed.stats.unpriced_tokens);
-
-        let model_name = computed
-            .stats
-            .dominant_model
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        let model_entry = model_map.entry(model_name.clone()).or_insert(HistoryStatsModelItem {
-            model: model_name,
-            sessions: 0,
-            ratio: 0.0,
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            total_cost_usd: 0.0,
-            unpriced_tokens: 0,
-        });
-        model_entry.sessions += 1;
-        let model_usage = computed
-            .stats
-            .model_usage
-            .get(&model_entry.model)
-            .copied()
-            .unwrap_or(UsageStatsScan {
-                input_tokens: computed.stats.input_tokens,
-                output_tokens: computed.stats.output_tokens,
-                cache_read_tokens: computed.stats.cache_read_tokens,
-                cache_creation_tokens: computed.stats.cache_creation_tokens,
-                total_cost_usd: computed.stats.total_cost_usd,
-                unpriced_tokens: computed.stats.unpriced_tokens,
+            let source_entry = source_map.entry(summary.source.clone()).or_insert(HistoryStatsSourceItem {
+                source: summary.source.clone(),
+                sessions: 0,
+                messages: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                total_cost_usd: 0.0,
+                unpriced_tokens: 0,
             });
-        model_entry.input_tokens = model_entry
-            .input_tokens
-            .saturating_add(model_usage.input_tokens);
-        model_entry.output_tokens = model_entry
-            .output_tokens
-            .saturating_add(model_usage.output_tokens);
-        model_entry.cache_read_tokens = model_entry
-            .cache_read_tokens
-            .saturating_add(model_usage.cache_read_tokens);
-        model_entry.cache_creation_tokens = model_entry
-            .cache_creation_tokens
-            .saturating_add(model_usage.cache_creation_tokens);
-        model_entry.total_cost_usd += model_usage.total_cost_usd;
-        model_entry.unpriced_tokens = model_entry
-            .unpriced_tokens
-            .saturating_add(model_usage.unpriced_tokens);
+            source_entry.sessions += 1;
+            source_entry.messages += summary.message_count;
+            source_entry.input_tokens = source_entry.input_tokens.saturating_add(stats.input_tokens);
+            source_entry.output_tokens = source_entry.output_tokens.saturating_add(stats.output_tokens);
+            source_entry.cache_read_tokens = source_entry
+                .cache_read_tokens
+                .saturating_add(stats.cache_read_tokens);
+            source_entry.cache_creation_tokens = source_entry
+                .cache_creation_tokens
+                .saturating_add(stats.cache_creation_tokens);
+            source_entry.total_cost_usd += stats.total_cost_usd;
+            source_entry.unpriced_tokens = source_entry
+                .unpriced_tokens
+                .saturating_add(stats.unpriced_tokens);
 
-        for (model_name, usage) in &computed.stats.model_usage {
-            if *model_name
-                == computed
-                    .stats
-                    .dominant_model
-                    .as_deref()
-                    .unwrap_or("unknown")
-            {
-                continue;
-            }
-            let entry = model_map.entry(model_name.clone()).or_insert(HistoryStatsModelItem {
-                model: model_name.clone(),
+            let model_name = stats
+                .dominant_model
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            let model_entry = model_map.entry(model_name.clone()).or_insert(HistoryStatsModelItem {
+                model: model_name,
                 sessions: 0,
                 ratio: 0.0,
                 input_tokens: 0,
@@ -1123,48 +1143,78 @@ fn build_history_stats_response(
                 total_cost_usd: 0.0,
                 unpriced_tokens: 0,
             });
-            entry.input_tokens = entry.input_tokens.saturating_add(usage.input_tokens);
-            entry.output_tokens = entry.output_tokens.saturating_add(usage.output_tokens);
-            entry.cache_read_tokens = entry
+            model_entry.sessions += 1;
+            let model_usage = stats.model_usage.get(&model_entry.model).copied().unwrap_or(UsageStatsScan {
+                input_tokens: stats.input_tokens,
+                output_tokens: stats.output_tokens,
+                cache_read_tokens: stats.cache_read_tokens,
+                cache_creation_tokens: stats.cache_creation_tokens,
+                total_cost_usd: stats.total_cost_usd,
+                unpriced_tokens: stats.unpriced_tokens,
+            });
+            model_entry.input_tokens = model_entry.input_tokens.saturating_add(model_usage.input_tokens);
+            model_entry.output_tokens = model_entry.output_tokens.saturating_add(model_usage.output_tokens);
+            model_entry.cache_read_tokens = model_entry
                 .cache_read_tokens
-                .saturating_add(usage.cache_read_tokens);
-            entry.cache_creation_tokens = entry
+                .saturating_add(model_usage.cache_read_tokens);
+            model_entry.cache_creation_tokens = model_entry
                 .cache_creation_tokens
-                .saturating_add(usage.cache_creation_tokens);
-            entry.total_cost_usd += usage.total_cost_usd;
-            entry.unpriced_tokens = entry.unpriced_tokens.saturating_add(usage.unpriced_tokens);
-        }
+                .saturating_add(model_usage.cache_creation_tokens);
+            model_entry.total_cost_usd += model_usage.total_cost_usd;
+            model_entry.unpriced_tokens = model_entry
+                .unpriced_tokens
+                .saturating_add(model_usage.unpriced_tokens);
 
-        let day_entry = day_map.entry(day_start).or_insert(DayStatsAggregate {
-            sessions: 0,
-            messages: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            total_cost_usd: 0.0,
-            unpriced_tokens: 0,
-            session_refs: Vec::new(),
-        });
-        day_entry.sessions += 1;
-        day_entry.messages += summary.message_count;
-        day_entry.input_tokens = day_entry
-            .input_tokens
-            .saturating_add(computed.stats.input_tokens);
-        day_entry.output_tokens = day_entry
-            .output_tokens
-            .saturating_add(computed.stats.output_tokens);
-        day_entry.cache_read_tokens = day_entry
-            .cache_read_tokens
-            .saturating_add(computed.stats.cache_read_tokens);
-        day_entry.cache_creation_tokens = day_entry
-            .cache_creation_tokens
-            .saturating_add(computed.stats.cache_creation_tokens);
-        day_entry.total_cost_usd += computed.stats.total_cost_usd;
-        day_entry.unpriced_tokens = day_entry
-            .unpriced_tokens
-            .saturating_add(computed.stats.unpriced_tokens);
-        day_entry.session_refs.push(summary);
+            for (model_name, usage) in &stats.model_usage {
+                if *model_name == stats.dominant_model.as_deref().unwrap_or("unknown") {
+                    continue;
+                }
+                let entry = model_map.entry(model_name.clone()).or_insert(HistoryStatsModelItem {
+                    model: model_name.clone(),
+                    sessions: 0,
+                    ratio: 0.0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    total_cost_usd: 0.0,
+                    unpriced_tokens: 0,
+                });
+                entry.input_tokens = entry.input_tokens.saturating_add(usage.input_tokens);
+                entry.output_tokens = entry.output_tokens.saturating_add(usage.output_tokens);
+                entry.cache_read_tokens = entry.cache_read_tokens.saturating_add(usage.cache_read_tokens);
+                entry.cache_creation_tokens = entry
+                    .cache_creation_tokens
+                    .saturating_add(usage.cache_creation_tokens);
+                entry.total_cost_usd += usage.total_cost_usd;
+                entry.unpriced_tokens = entry.unpriced_tokens.saturating_add(usage.unpriced_tokens);
+            }
+
+            let day_entry = day_map.entry(day_start).or_insert(DayStatsAggregate {
+                sessions: 0,
+                messages: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                total_cost_usd: 0.0,
+                unpriced_tokens: 0,
+                session_refs: Vec::new(),
+            });
+            day_entry.sessions += 1;
+            day_entry.messages += summary.message_count;
+            day_entry.input_tokens = day_entry.input_tokens.saturating_add(stats.input_tokens);
+            day_entry.output_tokens = day_entry.output_tokens.saturating_add(stats.output_tokens);
+            day_entry.cache_read_tokens = day_entry
+                .cache_read_tokens
+                .saturating_add(stats.cache_read_tokens);
+            day_entry.cache_creation_tokens = day_entry
+                .cache_creation_tokens
+                .saturating_add(stats.cache_creation_tokens);
+            day_entry.total_cost_usd += stats.total_cost_usd;
+            day_entry.unpriced_tokens = day_entry.unpriced_tokens.saturating_add(stats.unpriced_tokens);
+            day_entry.session_refs.push(summary.clone());
+        }
     }
 
     let mut project_ranking: Vec<HistoryStatsProjectItem> = project_map.into_values().collect();
@@ -1189,10 +1239,7 @@ fn build_history_stats_response(
     model_distribution.sort_by(|a, b| {
         b.sessions
             .cmp(&a.sessions)
-            .then_with(|| {
-                history_stats_total_tokens(b)
-                    .cmp(&history_stats_total_tokens(a))
-            })
+            .then_with(|| history_stats_total_tokens(b).cmp(&history_stats_total_tokens(a)))
             .then(a.model.cmp(&b.model))
     });
 
@@ -1369,11 +1416,36 @@ fn resolve_stats_time_bounds(
     })
 }
 
-fn stats_day_start(ts: i64, bounds: StatsTimeBounds) -> i64 {
-    if !bounds.explicit {
-        return day_start_utc(ts);
+fn stats_day_start_offset(bounds: StatsTimeBounds) -> i64 {
+    if bounds.explicit {
+        ((bounds.start_day % DAY_MS) + DAY_MS) % DAY_MS
+    } else {
+        0
     }
-    bounds.start_day + ((ts - bounds.start_at) / DAY_MS) * DAY_MS
+}
+
+fn stats_day_start_with_offset(ts: i64, day_offset: i64) -> i64 {
+    if ts <= 0 {
+        return day_offset;
+    }
+    ts - (((ts - day_offset) % DAY_MS) + DAY_MS) % DAY_MS
+}
+
+fn make_history_stats_daily_index_cache_key(
+    roots: &HistoryRoots,
+    source_filter: Option<&str>,
+    target_project: Option<&str>,
+    bounds: StatsTimeBounds,
+    index_generation: u64,
+) -> String {
+    format!(
+        "{}|source={}|project={}|day_offset={}|gen={}",
+        roots.cache_key(),
+        source_filter.unwrap_or("__all__"),
+        target_project.unwrap_or("__all__"),
+        stats_day_start_offset(bounds),
+        index_generation
+    )
 }
 
 fn make_history_stats_aggregation_cache_key(
@@ -1428,6 +1500,34 @@ fn stats_aggregation_cache_set(key: String, response: HistoryStatsResponse) {
     }
 }
 
+fn get_stats_daily_index_cache() -> &'static Mutex<HistoryStatsDailyIndexCache> {
+    HISTORY_STATS_DAILY_INDEX_CACHE
+        .get_or_init(|| Mutex::new(HistoryStatsDailyIndexCache::default()))
+}
+
+fn stats_daily_index_cache_get(key: &str) -> Option<CachedHistoryStatsDailyIndex> {
+    let cache = get_stats_daily_index_cache().lock().ok()?;
+    cache.entries.get(key).cloned()
+}
+
+fn stats_daily_index_cache_set(key: String, daily_index: CachedHistoryStatsDailyIndex) {
+    if let Ok(mut cache) = get_stats_daily_index_cache().lock() {
+        if !cache.entries.contains_key(&key)
+            && cache.entries.len() >= HISTORY_STATS_DAILY_INDEX_CACHE_MAX
+        {
+            if let Some(oldest_key) = cache
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.cached_at)
+                .map(|(key, _)| key.clone())
+            {
+                cache.entries.remove(&oldest_key);
+            }
+        }
+        cache.entries.insert(key, daily_index);
+    }
+}
+
 fn get_stats_cache() -> &'static Mutex<SessionStatsCache> {
     SESSION_STATS_CACHE.get_or_init(|| Mutex::new(SessionStatsCache::default()))
 }
@@ -1455,6 +1555,9 @@ fn invalidate_history_caches() {
         cache.entries.clear();
     }
     if let Ok(mut cache) = get_stats_aggregation_cache().lock() {
+        cache.entries.clear();
+    }
+    if let Ok(mut cache) = get_stats_daily_index_cache().lock() {
         cache.entries.clear();
     }
     if let Ok(mut index) = get_history_index().write() {
@@ -1780,6 +1883,7 @@ fn build_session_detail(file_ref: &SessionFileRef) -> Result<HistorySessionDetai
         dominant_model: computed.stats.dominant_model.clone(),
         context_window: computed.stats.context_window,
         last_context_tokens: computed.stats.last_context_tokens,
+        token_trend: computed.stats.token_trend.clone(),
         tool_call_count: computed.stats.tool_call_count,
         mcp_calls: sorted_tool_counts(&computed.stats.mcp_calls),
         skill_calls: sorted_tool_counts(&computed.stats.skill_calls),
@@ -2160,6 +2264,7 @@ fn scan_session_combined(path: &Path) -> (SessionSummaryScan, SessionStatsScan) 
     let mut codex_prev_totals: Option<CodexCumulativeUsage> = None;
     let mut context_window: Option<u64> = None;
     let mut last_context_tokens: Option<u64> = None;
+    let mut token_trend: Vec<HistoryTokenTrendPoint> = Vec::new();
     let mut tool_call_count = 0u64;
     let mut mcp_calls: HashMap<String, u64> = HashMap::new();
     let mut skill_calls: HashMap<String, u64> = HashMap::new();
@@ -2238,6 +2343,7 @@ fn scan_session_combined(path: &Path) -> (SessionSummaryScan, SessionStatsScan) 
                 continue;
             }
         }
+        token_trend.push(usage_trend_point(usage));
 
         input_tokens = input_tokens.saturating_add(usage.input_tokens);
         output_tokens = output_tokens.saturating_add(usage.output_tokens);
@@ -2292,6 +2398,7 @@ fn scan_session_combined(path: &Path) -> (SessionSummaryScan, SessionStatsScan) 
             model_usage,
             context_window,
             last_context_tokens,
+            token_trend,
             tool_call_count,
             mcp_calls,
             skill_calls,
@@ -2491,8 +2598,9 @@ fn extract_codex_context_info(value: &Value) -> (Option<u64>, Option<u64>) {
 }
 
 /// 统计工具调用：Claude content 块的 tool_use（按块 id 去重，流式重复行只计一次）、
-/// Codex 的 function_call / custom_tool_call（按 call_id 去重）。
-/// MCP 工具名形如 mcp__<server>__<tool>，按 server 聚合；Skill 工具取 input.skill。
+/// Codex 的 function_call / custom_tool_call / mcp_tool_call 事件（按 call_id 去重）。
+/// MCP 按 server 聚合：Claude 工具名形如 mcp__<server>__<tool>，Codex 可在 namespace
+/// 或 invocation.server 里携带 server；Skill 工具取 input.skill。
 fn collect_tool_calls(
     value: &Value,
     seen_call_ids: &mut HashSet<String>,
@@ -2500,18 +2608,20 @@ fn collect_tool_calls(
     mcp_calls: &mut HashMap<String, u64>,
     skill_calls: &mut HashMap<String, u64>,
 ) {
-    let mut record = |name: &str, call_id: Option<&str>, input: Option<&Value>| {
+    let mut record =
+        |name: &str, call_id: Option<&str>, input: Option<&Value>, mcp_server: Option<&str>| {
         if let Some(id) = call_id.map(str::trim).filter(|id| !id.is_empty()) {
             if !seen_call_ids.insert(id.to_string()) {
                 return;
             }
         }
         *tool_call_count += 1;
-        if let Some(rest) = name.strip_prefix("mcp__") {
-            let server = rest.split("__").next().unwrap_or(rest);
-            if !server.is_empty() {
-                *mcp_calls.entry(server.to_string()).or_insert(0) += 1;
-            }
+        let mcp_server = mcp_server
+            .map(str::trim)
+            .filter(|server| !server.is_empty())
+            .or_else(|| extract_mcp_server(name));
+        if let Some(server) = mcp_server {
+            *mcp_calls.entry(server.to_string()).or_insert(0) += 1;
         } else if name == "Skill" {
             if let Some(skill) = input
                 .and_then(|input| input.get("skill"))
@@ -2538,6 +2648,7 @@ fn collect_tool_calls(
                     name,
                     block.get("id").and_then(Value::as_str),
                     block.get("input"),
+                    None,
                 );
             }
         }
@@ -2547,10 +2658,42 @@ fn collect_tool_calls(
         let payload_type = payload.get("type").and_then(Value::as_str);
         if matches!(payload_type, Some("function_call") | Some("custom_tool_call")) {
             if let Some(name) = payload.get("name").and_then(Value::as_str) {
-                record(name, payload.get("call_id").and_then(Value::as_str), None);
+                record(
+                    name,
+                    payload.get("call_id").and_then(Value::as_str),
+                    None,
+                    payload
+                        .get("namespace")
+                        .and_then(Value::as_str)
+                        .and_then(extract_mcp_server),
+                );
+            }
+        } else if payload_type
+            .map(|value| value.starts_with("mcp_tool_call"))
+            .unwrap_or(false)
+        {
+            if let Some(invocation) = payload.get("invocation") {
+                if let Some(server) = invocation.get("server").and_then(Value::as_str) {
+                    let name = invocation
+                        .get("tool")
+                        .and_then(Value::as_str)
+                        .unwrap_or(server);
+                    record(
+                        name,
+                        payload.get("call_id").and_then(Value::as_str),
+                        None,
+                        Some(server),
+                    );
+                }
             }
         }
     }
+}
+
+fn extract_mcp_server(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix("mcp__")?;
+    let server = rest.split("__").next().unwrap_or(rest).trim();
+    (!server.is_empty()).then_some(server)
 }
 
 /// 提取斜杠命令标记 `<command-name>/foo</command-name>` 中的命令名（去掉前导 "/"）。
@@ -2756,6 +2899,16 @@ fn usage_total_tokens(usage: UsageTokenScan) -> u64 {
         .saturating_add(usage.output_tokens)
         .saturating_add(usage.cache_read_tokens)
         .saturating_add(usage.cache_creation_tokens)
+}
+
+fn usage_trend_point(usage: UsageTokenScan) -> HistoryTokenTrendPoint {
+    HistoryTokenTrendPoint {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cache_read_tokens: usage.cache_read_tokens,
+        cache_creation_tokens: usage.cache_creation_tokens,
+        total_tokens: usage_total_tokens(usage),
+    }
 }
 
 fn history_stats_total_tokens(item: &HistoryStatsModelItem) -> u64 {
@@ -3673,6 +3826,9 @@ mod tests {
         assert_eq!(stats.cache_creation_tokens, 5);
         assert_eq!(stats.unpriced_tokens, 0);
         assert_eq!(stats.dominant_model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(stats.token_trend.len(), 2);
+        assert_eq!(stats.token_trend[0].total_tokens, 165);
+        assert_eq!(stats.token_trend[1].total_tokens, 300);
     }
 
     #[test]
@@ -3700,6 +3856,15 @@ mod tests {
         assert_eq!(stats.unpriced_tokens, 0);
         assert!(stats.model_usage.contains_key("gpt-5.5"));
         assert!(stats.total_cost_usd > 0.0);
+        assert_eq!(stats.token_trend.len(), 2);
+        assert_eq!(stats.token_trend[0].input_tokens, 600);
+        assert_eq!(stats.token_trend[0].cache_read_tokens, 400);
+        assert_eq!(stats.token_trend[0].output_tokens, 100);
+        assert_eq!(stats.token_trend[0].total_tokens, 1100);
+        assert_eq!(stats.token_trend[1].input_tokens, 800);
+        assert_eq!(stats.token_trend[1].cache_read_tokens, 1200);
+        assert_eq!(stats.token_trend[1].output_tokens, 200);
+        assert_eq!(stats.token_trend[1].total_tokens, 2200);
     }
 
     #[test]
@@ -3766,13 +3931,21 @@ mod tests {
                 r#"{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>"}}"#, "\n",
                 // Codex function_call
                 r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"c1"}}"#, "\n",
+                // Codex MCP function_call：MCP server 在 namespace，不在 name
+                r#"{"type":"response_item","payload":{"type":"function_call","name":"impact","namespace":"mcp__gitnexus","call_id":"c2"}}"#, "\n",
+                // Codex MCP 结束事件：同 call_id 已在开始事件计数，不应重复
+                r#"{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"c2","invocation":{"server":"gitnexus","tool":"impact","arguments":{}}}}"#, "\n",
+                // Codex MCP 结束事件也可能单独出现，应能按 invocation.server 计数
+                r#"{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"c3","invocation":{"server":"context7","tool":"query_docs","arguments":{}}}}"#, "\n",
             ),
         );
 
         let (_, stats) = scan_session_combined(&file);
 
-        assert_eq!(stats.tool_call_count, 4);
+        assert_eq!(stats.tool_call_count, 6);
         assert_eq!(stats.mcp_calls.get("exa"), Some(&1));
+        assert_eq!(stats.mcp_calls.get("gitnexus"), Some(&1));
+        assert_eq!(stats.mcp_calls.get("context7"), Some(&1));
         assert_eq!(stats.skill_calls.get("goal"), Some(&1));
         assert_eq!(stats.skill_calls.get("compact"), Some(&1));
     }
