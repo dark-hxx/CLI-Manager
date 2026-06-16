@@ -1,0 +1,5 @@
+{"type":"spec","path":".trellis/tasks/06-16-provider-settings-codex-json-snippets/prd.md","why":"需求文档，明确三项增强功能"}
+{"type":"source","path":"src-tauri/src/commands/ccswitch.rs","why":"待修改后端核心，扩展配置解析逻辑、新增配置片段命令"}
+{"type":"source","path":"src-tauri/src/lib.rs","why":"需要注册新增的 ccswitch_list_config_snippets 命令"}
+{"type":"source","path":"src/components/settings/pages/ProviderSettingsPage.tsx","why":"待修改前端主体，新增原始配置查看、配置片段组件"}
+{"type":"source","path":"src/components/SettingsModal.tsx","why":"可能需要调整导航以支持配置片段入口"}
