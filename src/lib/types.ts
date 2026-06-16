@@ -158,6 +158,7 @@ export interface HistorySessionUsage {
   tool_call_count?: number;
   mcp_calls?: HistoryToolCount[];
   skill_calls?: HistoryToolCount[];
+  builtin_calls?: HistoryToolCount[];
 }
 
 export interface HistorySessionDetail extends HistorySessionSummary {

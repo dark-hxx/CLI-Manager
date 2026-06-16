@@ -247,6 +247,7 @@ function normalizeSessionUsage(raw: unknown): HistorySessionDetail["usage"] {
     tool_call_count: asNumber(rec.tool_call_count ?? rec.toolCallCount),
     mcp_calls: normalizeToolCounts(rec.mcp_calls ?? rec.mcpCalls),
     skill_calls: normalizeToolCounts(rec.skill_calls ?? rec.skillCalls),
+    builtin_calls: normalizeToolCounts(rec.builtin_calls ?? rec.builtinCalls),
   };
 }
 

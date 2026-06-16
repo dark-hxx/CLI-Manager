@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/history-stats-contracts.md", "reason": "校验总数口径不变、去重、缺字段兜底、cargo test 覆盖"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量检查：tsc/build、空态与 NaN 防护"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "校验新增字段可选性与归一化兜底"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "校验跨层字段一致性"}

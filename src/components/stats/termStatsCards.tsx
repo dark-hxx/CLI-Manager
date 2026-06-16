@@ -258,6 +258,7 @@ export function ToolsCard({ session }: { session: HistorySessionDetail | null })
   const toolCalls = usage?.tool_call_count ?? 0;
   const mcpCalls = usage?.mcp_calls ?? [];
   const skillCalls = usage?.skill_calls ?? [];
+  const builtinCalls = usage?.builtin_calls ?? [];
   // 未绑定空态（session 为 null）补徽章占位，顶部与有数据时一致
   const isEmpty = !session;
 
@@ -273,12 +274,15 @@ export function ToolsCard({ session }: { session: HistorySessionDetail | null })
         ) : undefined
       }
     >
-      {mcpCalls.length === 0 && skillCalls.length === 0 ? (
+      {mcpCalls.length === 0 && skillCalls.length === 0 && builtinCalls.length === 0 ? (
         <div className="text-[11px]" style={{ color: TERM.dim }}>
-          {toolCalls > 0 ? `${formatCompactCount(toolCalls)} 次内置工具调用，未使用 MCP / Skill` : "暂无工具调用"}
+          暂无工具调用
         </div>
       ) : (
         <>
+          {builtinCalls.length > 0 && (
+            <ToolCountList label="内置工具" color={TERM.green} items={builtinCalls} />
+          )}
           {mcpCalls.length > 0 && <ToolCountList label="MCP" color={TERM.cyan} items={mcpCalls} />}
           {skillCalls.length > 0 && (
             <ToolCountList label="Skill / 命令" color={TERM.magenta} items={skillCalls} />

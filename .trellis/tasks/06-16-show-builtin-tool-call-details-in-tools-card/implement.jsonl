@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/history-stats-contracts.md", "reason": "工具计数去重、缺字段兜底、总数口径不变、cargo test 要求的核心契约"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规约入口与 history 命令约定"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规约入口"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新增 builtin_calls 字段需可选、归一化兜底防 NaN"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "historyStore normalizeDetail 透传字段、snake_case 归一化"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "ToolsCard 渲染与复用 ToolCountList 的组件规范"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨 Rust→TS→React 三层字段贯通"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "内置工具分组应复用现有 ToolCountList，避免新造组件"}

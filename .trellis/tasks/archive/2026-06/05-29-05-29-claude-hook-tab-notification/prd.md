@@ -13,7 +13,6 @@ Make Claude Code hook notifications visible inside CLI-Manager terminal tabs so 
   - `CLI_MANAGER_NOTIFY_PORT`
   - `CLI_MANAGER_NOTIFY_TOKEN`
 - Add a local-only hook receiver in CLI-Manager that accepts hook events from a new independent hook script.
-- Add a new `notify-cli-manager.ps1` hook bridge script without modifying the existing `notify.ps1`.
 - Map hook events to tab notification state:
   - `Notification` -> attention state.
   - `Stop` -> done state.

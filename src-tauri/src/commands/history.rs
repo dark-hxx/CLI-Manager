@@ -74,6 +74,8 @@ struct SessionStatsScan {
     mcp_calls: HashMap<String, u64>,
     /// Skill / 斜杠命令 -> 调用次数。
     skill_calls: HashMap<String, u64>,
+    /// 内置工具 -> 调用次数（既非 MCP 也非 Skill 的工具，如 Read / Edit / Bash）。
+    builtin_calls: HashMap<String, u64>,
 }
 
 #[derive(Clone, Default)]
@@ -250,6 +252,7 @@ pub struct HistorySessionUsage {
     pub tool_call_count: u64,
     pub mcp_calls: Vec<HistoryToolCount>,
     pub skill_calls: Vec<HistoryToolCount>,
+    pub builtin_calls: Vec<HistoryToolCount>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1928,6 +1931,7 @@ fn build_session_detail(file_ref: &SessionFileRef) -> Result<HistorySessionDetai
         tool_call_count: computed.stats.tool_call_count,
         mcp_calls: sorted_tool_counts(&computed.stats.mcp_calls),
         skill_calls: sorted_tool_counts(&computed.stats.skill_calls),
+        builtin_calls: sorted_tool_counts(&computed.stats.builtin_calls),
     };
     Ok(HistorySessionDetail {
         session_id: computed.session_id,
@@ -2315,6 +2319,7 @@ fn scan_session_inner(
     let mut tool_call_count = 0u64;
     let mut mcp_calls: HashMap<String, u64> = HashMap::new();
     let mut skill_calls: HashMap<String, u64> = HashMap::new();
+    let mut builtin_calls: HashMap<String, u64> = HashMap::new();
     // tool_use 块按块 id 去重：流式重复行携带相同块，避免重复计数。
     let mut seen_tool_call_ids: HashSet<String> = HashSet::new();
     // collect_messages 时收集的消息列表；其去重用独立的 msg_seen_usage_keys，
@@ -2373,6 +2378,7 @@ fn scan_session_inner(
             &mut tool_call_count,
             &mut mcp_calls,
             &mut skill_calls,
+            &mut builtin_calls,
         );
         if trimmed.contains("<command-name>") {
             if let Some(command) = extract_command_name(trimmed) {
@@ -2470,6 +2476,7 @@ fn scan_session_inner(
             tool_call_count,
             mcp_calls,
             skill_calls,
+            builtin_calls,
         },
         messages,
     )
@@ -2678,6 +2685,7 @@ fn collect_tool_calls(
     tool_call_count: &mut u64,
     mcp_calls: &mut HashMap<String, u64>,
     skill_calls: &mut HashMap<String, u64>,
+    builtin_calls: &mut HashMap<String, u64>,
 ) {
     let mut record =
         |name: &str, call_id: Option<&str>, input: Option<&Value>, mcp_server: Option<&str>| {
@@ -2702,6 +2710,9 @@ fn collect_tool_calls(
             {
                 *skill_calls.entry(skill.to_string()).or_insert(0) += 1;
             }
+        } else {
+            // 既非 MCP 也非 Skill 的内置工具（如 Read / Edit / Bash / shell）
+            *builtin_calls.entry(name.to_string()).or_insert(0) += 1;
         }
     };
 
@@ -4023,6 +4034,10 @@ mod tests {
         assert_eq!(stats.mcp_calls.get("context7"), Some(&1));
         assert_eq!(stats.skill_calls.get("goal"), Some(&1));
         assert_eq!(stats.skill_calls.get("compact"), Some(&1));
+        // 内置工具：Read (t1) + shell (c1)；Skill 工具本身不计入 builtin
+        assert_eq!(stats.builtin_calls.get("Read"), Some(&1));
+        assert_eq!(stats.builtin_calls.get("shell"), Some(&1));
+        assert_eq!(stats.builtin_calls.len(), 2);
     }
 
     #[test]

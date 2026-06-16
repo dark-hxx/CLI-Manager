@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Badge, Box, Button, Card, Group, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Play, Settings, AlertTriangle, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X } from "lucide-react";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
@@ -52,43 +53,107 @@ function getErrorMessage(error: unknown): string {
 function PathRow({ label, value }: { label: string; value: string | null }) {
   const formatted = formatPath(value);
   const hasValue = Boolean(value && value.trim());
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    if (!hasValue || !value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  const getIcon = () => {
+    if (label.includes('目录')) return <Folder size={16} />;
+    if (label.includes('json') || label.includes('toml')) return <FileCode size={16} />;
+    return <FileCode size={16} />;
+  };
 
   return (
-    <Group gap="md" wrap="nowrap" className="min-w-0 rounded-md bg-surface-container-lowest/70 px-3 py-2">
-      <Text size="xs" c="var(--text-muted)" w={96} className="shrink-0">
-        {label}
-      </Text>
-      <Text
-        component="code"
-        size="xs"
-        ff="var(--font-ui-mono)"
-        c={hasValue ? "var(--on-surface)" : "var(--text-muted)"}
-        className="min-w-0 flex-1 break-all leading-5"
-        title={formatted}
-      >
-        {formatted}
-      </Text>
-    </Group>
+    <Card className="border border-border/50 bg-surface-container-lowest" p="sm" radius="md">
+      <Group gap="xs" wrap="nowrap" align="flex-start">
+        <Box
+          style={{
+            color: hasValue ? "var(--primary)" : "var(--text-muted)",
+            marginTop: 2,
+          }}
+        >
+          {getIcon()}
+        </Box>
+        <Stack gap={4} className="min-w-0 flex-1">
+          <Text size="xs" fw={500} c="var(--on-surface-variant)">
+            {label}
+          </Text>
+          <Text
+            component="code"
+            size="xs"
+            ff="var(--font-ui-mono)"
+            c={hasValue ? "var(--on-surface)" : "var(--text-muted)"}
+            className="min-w-0 break-all leading-5"
+            title={formatted}
+          >
+            {formatted}
+          </Text>
+        </Stack>
+        {hasValue && (
+          <Button
+            variant="subtle"
+            color="gray"
+            size="compact-xs"
+            onClick={handleCopy}
+            className="shrink-0"
+            aria-label="复制路径"
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </Button>
+        )}
+      </Group>
+    </Card>
   );
 }
 
-function CheckRow({ label, checked }: { label: string; checked: boolean }) {
+interface HookCardProps {
+  icon: React.ReactNode;
+  label: string;
+  checked: boolean;
+}
+
+function HookCard({ icon, label, checked }: HookCardProps) {
   return (
-    <Group gap="xs" wrap="nowrap" className="min-w-0 rounded-md bg-surface-container-lowest/70 px-2.5 py-1.5">
-      <Box
-        component="span"
-        w={6}
-        h={6}
-        className="shrink-0"
-        style={{ borderRadius: 999, backgroundColor: checked ? "var(--success)" : "var(--text-muted)" }}
-      />
-      <Text size="xs" c="var(--on-surface-variant)" truncate className="min-w-0 flex-1" title={label}>
-        {label}
-      </Text>
-      <Text size="xs" fw={600} c={checked ? "var(--success)" : "var(--text-muted)"} className="shrink-0">
-        {checked ? "已安装" : "未完整"}
-      </Text>
-    </Group>
+    <Card
+      className="border transition-colors"
+      p="md"
+      radius="lg"
+      style={{
+        borderColor: checked ? "var(--success)" : "var(--border)",
+        backgroundColor: checked ? "var(--success-container)" : "var(--surface-container-low)",
+      }}
+    >
+      <Stack gap="xs" align="center">
+        <Box
+          style={{
+            color: checked ? "var(--success)" : "var(--text-muted)",
+            fontSize: 32,
+          }}
+        >
+          {icon}
+        </Box>
+        <Text size="xs" fw={500} c={checked ? "var(--on-success-container)" : "var(--on-surface-variant)"} ta="center" lh={1.4}>
+          {label}
+        </Text>
+        <Badge
+          variant="filled"
+          color={checked ? "green" : "gray"}
+          radius="xl"
+          size="xs"
+        >
+          {checked ? "已安装" : "未安装"}
+        </Badge>
+      </Stack>
+    </Card>
   );
 }
 
@@ -148,6 +213,10 @@ export function HookSettingsPage() {
   const hookPopupAutoCloseSeconds = useSettingsStore((s) => s.hookPopupAutoCloseSeconds);
   const updateSetting = useSettingsStore((s) => s.update);
   const [autoCloseSecondsDraft, setAutoCloseSecondsDraft] = useState(String(hookPopupAutoCloseSeconds));
+  const [claudePathsOpen, setClaudePathsOpen] = useState(false);
+  const [claudeInfoOpen, setClaudeInfoOpen] = useState(false);
+  const [codexPathsOpen, setCodexPathsOpen] = useState(false);
+  const [codexInfoOpen, setCodexInfoOpen] = useState(false);
 
   useEffect(() => {
     setAutoCloseSecondsDraft(String(hookPopupAutoCloseSeconds));
@@ -363,7 +432,7 @@ export function HookSettingsPage() {
       </Card>
 
       <Card className="ui-surface-card" p="md">
-        <Stack gap="md">
+        <Stack gap="lg">
           <Group justify="space-between" align="flex-start" gap="md">
             <Box>
               <Text size="sm" fw={600} c="var(--on-surface)">
@@ -375,31 +444,117 @@ export function HookSettingsPage() {
             </Box>
             <StatusPill status={claudeStatus} />
           </Group>
-          <Card className="bg-surface-container-low" p="xs" radius="lg">
-            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
-              <PathRow label="Claude 配置目录" value={claude?.configDir ?? selectedDir} />
-              <PathRow label="hooks 目录" value={claude?.hooksDir ?? null} />
-              <PathRow label="settings.json" value={claude?.configPath ?? null} />
-            </SimpleGrid>
-          </Card>
 
-          <Card className="bg-surface-container-low" p="xs" radius="lg">
-            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
-              <CheckRow label="会话启动 Hook（SessionStart）" checked={claudeSessionStartInstalled} />
-              <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={claudeRunningInstalled} />
-              <CheckRow label="待审批 Hook（Notification）" checked={claudeAttentionInstalled} />
-              <CheckRow label="完成/异常 Hook（Stop / StopFailure）" checked={claudeFinishedInstalled} />
-            </SimpleGrid>
-          </Card>
+          <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+            <HookCard
+              icon={<Play />}
+              label="会话启动"
+              checked={claudeSessionStartInstalled}
+            />
+            <HookCard
+              icon={<Settings />}
+              label="运行中"
+              checked={claudeRunningInstalled}
+            />
+            <HookCard
+              icon={<AlertTriangle />}
+              label="待审批"
+              checked={claudeAttentionInstalled}
+            />
+            <HookCard
+              icon={<CheckCircle />}
+              label="完成/异常"
+              checked={claudeFinishedInstalled}
+            />
+          </SimpleGrid>
 
-          <Card className="bg-surface-container-low" p="sm" radius="lg">
-            <Text size="xs" lh={1.6} c="var(--on-surface-variant)">
-            安装只会写入 <span className="font-mono">notify-cli-manager-approval.ps1</span> 和{" "}
-            <span className="font-mono">notify-cli-manager-finished.ps1</span>，并合并修改 Claude 的{" "}
-            <span className="font-mono">settings.json</span>。删除时不会移除用户自己的 hooks，也不会删除旧的{" "}
-            <span className="font-mono">notify.ps1</span> 或 <span className="font-mono">notify-cli-manager.ps1</span>。
-            </Text>
-          </Card>
+          <Group gap="xs">
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              onClick={() => setClaudePathsOpen(!claudePathsOpen)}
+              leftSection={claudePathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            >
+              查看配置路径
+            </Button>
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              onClick={() => setClaudeInfoOpen(!claudeInfoOpen)}
+              leftSection={<HelpCircle size={14} />}
+            >
+              安装说明
+            </Button>
+          </Group>
+
+          {claudePathsOpen && (
+            <Card className="bg-surface-container-low/50" p="sm" radius="lg">
+              <Stack gap="xs">
+                <PathRow label="Claude 配置目录" value={claude?.configDir ?? selectedDir} />
+                <PathRow label="hooks 目录" value={claude?.hooksDir ?? null} />
+                <PathRow label="settings.json" value={claude?.configPath ?? null} />
+              </Stack>
+            </Card>
+          )}
+
+          {claudeInfoOpen && (
+            <Card className="bg-surface-container-low/50" p="md" radius="lg">
+              <Stack gap="md">
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box style={{ color: "var(--success)", marginTop: 2 }}>
+                    <Check size={18} />
+                  </Box>
+                  <Stack gap={4}>
+                    <Text size="xs" fw={500} c="var(--on-surface)">
+                      安装内容
+                    </Text>
+                    <Stack gap={2}>
+                      <Group gap="xs">
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
+                          notify-cli-manager-approval.ps1
+                        </Text>
+                      </Group>
+                      <Group gap="xs">
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
+                          notify-cli-manager-finished.ps1
+                        </Text>
+                      </Group>
+                      <Group gap="xs">
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)">
+                          合并修改 settings.json
+                        </Text>
+                      </Group>
+                    </Stack>
+                  </Stack>
+                </Group>
+
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box style={{ color: "var(--warning)", marginTop: 2 }}>
+                    <X size={18} />
+                  </Box>
+                  <Stack gap={4}>
+                    <Text size="xs" fw={500} c="var(--on-surface)">
+                      删除时保留
+                    </Text>
+                    <Stack gap={2}>
+                      <Text size="xs" c="var(--on-surface-variant)">
+                        • 用户自己的 hooks
+                      </Text>
+                      <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
+                        • notify.ps1 (旧版)
+                      </Text>
+
+                    </Stack>
+                  </Stack>
+                </Group>
+              </Stack>
+            </Card>
+          )}
 
           <Group gap="xs">
             <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectDir} disabled={loading || claudeWorking || codexWorking}>
@@ -419,7 +574,7 @@ export function HookSettingsPage() {
       </Card>
 
       <Card className="ui-surface-card" p="md">
-        <Stack gap="md">
+        <Stack gap="lg">
           <Group justify="space-between" align="flex-start" gap="md">
             <Box>
               <Text size="sm" fw={600} c="var(--on-surface)">
@@ -431,35 +586,122 @@ export function HookSettingsPage() {
             </Box>
             <StatusPill status={codexStatus} />
           </Group>
-          <Card className="bg-surface-container-low" p="xs" radius="lg">
-            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
-              <PathRow label="Codex 配置目录" value={codex?.configDir ?? codexSelectedDir} />
-              <PathRow label="hooks 目录" value={codex?.hooksDir ?? null} />
-              <PathRow label="hooks.json" value={codex?.configPath ?? null} />
-              <PathRow label="config.toml" value={codex?.featureConfigPath ?? null} />
-            </SimpleGrid>
-          </Card>
 
-          <Card className="bg-surface-container-low" p="xs" radius="lg">
-            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={6}>
-              <CheckRow label="会话启动 Hook（SessionStart）" checked={codexSessionStartInstalled} />
-              <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={codexRunningInstalled} />
-              <CheckRow label="待审批 Hook（PermissionRequest）" checked={codexAttentionInstalled} />
-              <CheckRow label="完成 Hook（Stop）" checked={codexFinishedInstalled} />
-              <CheckRow label="Hooks 功能（[features].hooks）" checked={Boolean(codex?.hooksFeatureInstalled)} />
-            </SimpleGrid>
-          </Card>
+          <SimpleGrid cols={{ base: 2, sm: 5 }} spacing="md">
+            <HookCard
+              icon={<Play />}
+              label="会话启动"
+              checked={codexSessionStartInstalled}
+            />
+            <HookCard
+              icon={<Settings />}
+              label="运行中"
+              checked={codexRunningInstalled}
+            />
+            <HookCard
+              icon={<AlertTriangle />}
+              label="待审批"
+              checked={codexAttentionInstalled}
+            />
+            <HookCard
+              icon={<CheckCircle />}
+              label="完成"
+              checked={codexFinishedInstalled}
+            />
+            <HookCard
+              icon={<Settings />}
+              label="Hooks 功能"
+              checked={Boolean(codex?.hooksFeatureInstalled)}
+            />
+          </SimpleGrid>
 
-          <Card className="bg-surface-container-low" p="sm" radius="lg">
-            <Text size="xs" lh={1.6} c="var(--on-surface-variant)">
-            安装会写入用户级 <span className="font-mono">~/.codex/hooks.json</span> 和{" "}
-            <span className="font-mono">~/.codex/hooks/</span> 下的 CLI-Manager 脚本，不修改项目{" "}
-            <span className="font-mono">.codex/hooks.json</span>。安装会自动写入{" "}
-            <span className="font-mono">~/.codex/config.toml</span> 并开启{" "}
-            <span className="font-mono">[features].hooks = true</span>，Codex 0.129+ 仍需要在 TUI 里执行{" "}
-            <span className="font-mono">/hooks</span> 批准脚本。
-            </Text>
-          </Card>
+          <Group gap="xs">
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              onClick={() => setCodexPathsOpen(!codexPathsOpen)}
+              leftSection={codexPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            >
+              查看配置路径
+            </Button>
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              onClick={() => setCodexInfoOpen(!codexInfoOpen)}
+              leftSection={<HelpCircle size={14} />}
+            >
+              安装说明
+            </Button>
+          </Group>
+
+          {codexPathsOpen && (
+            <Card className="bg-surface-container-low/50" p="sm" radius="lg">
+              <Stack gap="xs">
+                <PathRow label="Codex 配置目录" value={codex?.configDir ?? codexSelectedDir} />
+                <PathRow label="hooks 目录" value={codex?.hooksDir ?? null} />
+                <PathRow label="hooks.json" value={codex?.configPath ?? null} />
+                <PathRow label="config.toml" value={codex?.featureConfigPath ?? null} />
+              </Stack>
+            </Card>
+          )}
+
+          {codexInfoOpen && (
+            <Card className="bg-surface-container-low/50" p="md" radius="lg">
+              <Stack gap="md">
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box style={{ color: "var(--success)", marginTop: 2 }}>
+                    <Check size={18} />
+                  </Box>
+                  <Stack gap={4}>
+                    <Text size="xs" fw={500} c="var(--on-surface)">
+                      安装内容
+                    </Text>
+                    <Stack gap={2}>
+                      <Group gap="xs">
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
+                          ~/.codex/hooks.json
+                        </Text>
+                      </Group>
+                      <Group gap="xs">
+                        <Folder size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
+                          ~/.codex/hooks/ 下的 CLI-Manager 脚本
+                        </Text>
+                      </Group>
+                      <Group gap="xs">
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)">
+                          config.toml 中开启 <span className="font-mono">[features].hooks = true</span>
+                        </Text>
+                      </Group>
+                    </Stack>
+                  </Stack>
+                </Group>
+
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box style={{ color: "var(--warning)", marginTop: 2 }}>
+                    <AlertTriangle size={18} />
+                  </Box>
+                  <Stack gap={4}>
+                    <Text size="xs" fw={500} c="var(--on-surface)">
+                      注意事项
+                    </Text>
+                    <Stack gap={2}>
+                      <Text size="xs" c="var(--on-surface-variant)">
+                        • 不修改项目级 <span className="font-mono">.codex/hooks.json</span>
+                      </Text>
+                      <Text size="xs" c="var(--on-surface-variant)">
+                        • Codex 0.129+ 仍需在 TUI 执行 <span className="font-mono">/hooks</span> 批准脚本
+                      </Text>
+                    </Stack>
+                  </Stack>
+                </Group>
+              </Stack>
+            </Card>
+          )}
 
           <Group gap="xs">
             <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectCodexDir} disabled={loading || claudeWorking || codexWorking}>
