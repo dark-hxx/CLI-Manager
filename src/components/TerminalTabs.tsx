@@ -30,7 +30,7 @@ import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { TerminalStatsPanel } from "./terminal/TerminalStatsPanel";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { Terminal, Plus, Search, X, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3 } from "./icons";
+import { Terminal, Plus, Search, X, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, FileText } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
 import type { HistorySourceFilter, Project, TerminalSession } from "../lib/types";
@@ -49,6 +49,10 @@ import { getTerminalTheme } from "../lib/terminalThemes";
 
 const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
+);
+
+const GitChangesPanel = lazy(() =>
+  import("./git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
 );
 
 const normalizeTabMenuHex = (value: string | undefined, fallback: string) => (
@@ -1041,6 +1045,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null);
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
   const [statsPanelOpen, setStatsPanelOpen] = useState(false);
+  const [gitChangesPanelOpen, setGitChangesPanelOpen] = useState(false);
   const splitPickerOpenFrameRef = useRef<number | null>(null);
   const splitPickerOpenTimerRef = useRef<number | null>(null);
   const splitPickerOutsideGuardUntilRef = useRef(0);
@@ -1155,6 +1160,15 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     }
     setStatsPanelOpen((prev) => !prev);
   }, [statsPanelOpen]);
+
+  const handleToggleGitChangesPanel = useCallback(() => {
+    console.log("[GitChanges] 点击 Git 变更按钮");
+    setGitChangesPanelOpen((prev) => {
+      const next = !prev;
+      console.log(`[GitChanges] 面板状态切换: ${prev} -> ${next}`);
+      return next;
+    });
+  }, []);
 
   const handleOpenHistoryTab = useCallback(() => {
     if (historyOpen) {
@@ -1319,6 +1333,21 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           {showToolbarText && <span>会话历史</span>}
         </button>
       )}
+      <button
+        onClick={handleToggleGitChangesPanel}
+        className={
+          showToolbarText
+            ? `ui-flat-action ui-toolbar-button ${gitChangesPanelOpen ? "ui-primary-action" : ""}`
+            : "ui-focus-ring ui-icon-action"
+        }
+        data-active={gitChangesPanelOpen ? "true" : "false"}
+        title={gitChangesPanelOpen ? "关闭 Git 变更" : "打开 Git 变更"}
+        aria-label={gitChangesPanelOpen ? "关闭 Git 变更面板" : "打开 Git 变更面板"}
+        aria-pressed={gitChangesPanelOpen}
+      >
+        <FileText size={13} strokeWidth={1.8} />
+        {showToolbarText && <span>Git 变更</span>}
+      </button>
       <button
         onClick={handleToggleStatsPanel}
         className={
@@ -1487,6 +1516,14 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
             )}
           </div>
           <TerminalStatsPanel activeSessionId={activeSessionId} open={statsPanelOpen} />
+          {gitChangesPanelOpen && (
+            <Suspense fallback={null}>
+              <GitChangesPanel
+                open={gitChangesPanelOpen}
+                projectPath={activeSessionId ? sessions.find(s => s.id === activeSessionId)?.cwd ?? null : null}
+              />
+            </Suspense>
+          )}
         </div>
       </div>
     </div>
