@@ -146,10 +146,10 @@ const DARK_PALETTE_OPTIONS: {
     swatches: ["#1e1e2e", "#cdd6f4", "#89b4fa"],
   },
   {
-    value: "nord-night",
-    label: "Nord Night",
-    description: "极地蓝灰，冷静克制，层级清晰",
-    swatches: ["#2e3440", "#d8dee9", "#88c0d0"],
+    value: "terminal-green",
+    label: "终端监控绿",
+    description: "btop 监控风格碳黑，荧光绿强调，呼应实时统计面板",
+    swatches: ["#0a0a0a", "#e2e2e2", "#3dd68c"],
   },
   {
     value: "dracula-purple",
@@ -213,7 +213,7 @@ const DARK_TEXT_COLORS: Record<DarkThemePalette, string> = {
   "investment-platform": "#f8fafc",
   "github-dark": "#f0f3f6",
   "catppuccin-mocha": "#cdd6f4",
-  "nord-night": "#d8dee9",
+  "terminal-green": "#e2e2e2",
   "dracula-purple": "#f8f8f2",
   "carbon-black": "#f2f4f8",
 };
@@ -248,7 +248,7 @@ const DARK_BG_COLORS: Record<DarkThemePalette, string> = {
   "investment-platform": "#0f172a",
   "github-dark": "#24292f",
   "catppuccin-mocha": "#1e1e2e",
-  "nord-night": "#2e3440",
+  "terminal-green": "#0a0a0a",
   "dracula-purple": "#282a36",
   "carbon-black": "#161616",
 };

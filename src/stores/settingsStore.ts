@@ -23,7 +23,7 @@ export type DarkThemePalette =
   | "investment-platform"
   | "github-dark"
   | "catppuccin-mocha"
-  | "nord-night"
+  | "terminal-green"
   | "dracula-purple"
   | "carbon-black";
 export type TerminalThemeMode = "follow-app" | "independent";
@@ -245,6 +245,7 @@ const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
 
 const LEGACY_DARK_PALETTE_MAP: Partial<Record<string, DarkThemePalette>> = {
   "crypto-wallet": "investment-platform",
+  "nord-night": "terminal-green",
 };
 
 const LEGACY_TERMINAL_THEME_MAP: Partial<Record<string, string>> = {

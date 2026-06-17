@@ -213,20 +213,22 @@
   --warning: #f9e2af;
 }
 
-/* Dark theme - Nord Night */
-[data-theme="dark"][data-dark-palette="nord-night"] {
-  --bg-primary: #2e3440;
-  --bg-secondary: #343b49;
-  --bg-tertiary: #3b4252;
-  --text-primary: #d8dee9;
-  --text-secondary: #c8d2df;
-  --text-muted: #8f9aad;
-  --accent: #88c0d0;
-  --accent-hover: #8fbcbb;
-  --border: #4c566a;
-  --danger: #bf616a;
-  --success: #a3be8c;
-  --warning: #ebcb8b;
+/* Dark theme - 终端监控绿 (Terminal Green) */
+[data-theme="dark"][data-dark-palette="terminal-green"] {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #151515;
+  --bg-tertiary: #1d1d1d;
+  --text-primary: #e2e2e2;
+  --text-secondary: #c8c8c8;
+  --text-muted: #8a8a8a;
+  --accent: #3dd68c;
+  --accent-hover: #54e39e;
+  --border: #262626;
+  --danger: #f25e5e;
+  --success: #3dd68c;
+  --warning: #e5c453;
+  /* 卡片浮起：覆盖桥接默认（比背景更暗），避免纯黑背景下卡片塌陷糊成一片 */
+  --surface-container-lowest: #141414;
 }
 
 /* Dark theme - Dracula Purple */

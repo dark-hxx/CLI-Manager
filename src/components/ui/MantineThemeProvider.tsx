@@ -25,7 +25,7 @@ const DARK_PRIMARY_COLORS: Record<DarkThemePalette, string> = {
   "investment-platform": "#f59e0b",
   "github-dark": "#58a6ff",
   "catppuccin-mocha": "#89b4fa",
-  "nord-night": "#88c0d0",
+  "terminal-green": "#3dd68c",
   "dracula-purple": "#bd93f9",
   "carbon-black": "#78a9ff",
 };

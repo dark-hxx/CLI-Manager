@@ -5,18 +5,18 @@ import { calculateCost, inferDominantModel } from "../../lib/modelPricing";
 // 终端监控面板配色（btop / 系统监控风格，深色卡片 + 绿色点缀）
 export const TERM = {
   bg: "#0A0A0A",
-  card: "#151515",
-  cardInner: "#1D1D1D",
-  border: "#262626",
-  fg: "#E2E2E2",
-  dim: "#8A8A8A",
+  card: "#121212",
+  cardInner: "#181818",
+  border: "#2E2E2E",
+  fg: "#ECECEC",
+  dim: "#9CA0A6",
   green: "#3DD68C",
   yellow: "#E5C453",
   red: "#F25E5E",
   magenta: "#C77DBB",
   cyan: "#5AC8E0",
   blue: "#5B8DEF",
-  track: "#2A2A2A",
+  track: "#222222",
 };
 
 // 来源徽章配色：claude 黄 / codex 青
@@ -250,7 +250,7 @@ export function StatChip({
   return (
     <div
       className="flex min-w-0 flex-col gap-0.5 rounded-lg px-2 py-1.5"
-      style={{ backgroundColor: TERM.cardInner }}
+      style={{ backgroundColor: TERM.cardInner, border: `1px solid ${TERM.border}` }}
     >
       <span className="flex items-center gap-1.5 text-[10px]" style={{ color: TERM.dim }}>
         <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />

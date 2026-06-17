@@ -43,7 +43,7 @@ export type DarkTerminalPalette =
   | "investment-platform"
   | "github-dark"
   | "catppuccin-mocha"
-  | "nord-night"
+  | "terminal-green"
   | "dracula-purple"
   | "carbon-black";
 
@@ -1388,7 +1388,7 @@ function resolveAutoDarkThemeId(darkPalette: DarkTerminalPalette = "night-indigo
   if (darkPalette === "investment-platform") return "investmentPlatformDark";
   if (darkPalette === "github-dark") return "githubDark";
   if (darkPalette === "catppuccin-mocha") return "catppuccinMocha";
-  if (darkPalette === "nord-night") return "nord";
+  if (darkPalette === "terminal-green") return "carbonfox";
   if (darkPalette === "dracula-purple") return "dracula";
   if (darkPalette === "carbon-black") return "carbonfox";
   return "tokyoNightDark";
