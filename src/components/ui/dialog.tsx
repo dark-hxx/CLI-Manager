@@ -33,14 +33,15 @@ interface DialogContentProps
   extends ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
   showCloseButton?: boolean;
   overlayClassName?: string;
+  overlayStyle?: React.CSSProperties;
 }
 
 const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, showCloseButton = true, overlayClassName, ...props }, ref) => (
+>(({ className, children, showCloseButton = true, overlayClassName, overlayStyle, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay className={overlayClassName} />
+    <DialogOverlay className={overlayClassName} style={overlayStyle} />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(

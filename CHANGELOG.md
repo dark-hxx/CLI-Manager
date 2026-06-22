@@ -6,6 +6,8 @@
 
 - **修复项目列表空态横向滚动条**：项目侧边栏在空态（无项目/加载中/折叠态）时出现不必要的横向滚动条。原因是 `overflow-y: auto` 让浏览器将 `overflow-x` 隐式计算为 `auto`，空态组件宽度略微溢出即触发滚动条。给 3 处滚动容器统一添加 `overflow-x-hidden`，锁定只允许纵向滚动。
 - **终端 Tab 栏滚动增强**：Tab 数量溢出时新增左右滚动按钮与鼠标滚轮横向滚动（触控板取 deltaX、鼠标滚轮取 deltaY），并将滚动遮罩渐变由 18px 扩大到 36px，避免 Tab 标签被左/右/列表按钮遮挡。新建终端时若已滚动到最右，激活的末尾 Tab 自动吸附顶格，右滚动按钮同步禁用。
+- **修复 ccusage 安装弹框被遮挡**：开启 ccusage 统计后若未安装 bun/bunx，点击「安装 Bun/bunx」弹出的确认框被压在统计面板下方（统计面板 `z-index: 57`，而通用 `ConfirmDialog` 基座固定 `z-50`），用户无法点击确认。`ConfirmDialog` 新增可选 `zIndex` prop，`DialogContent` 同步支持 `overlayStyle` 透传到 overlay；ccusage 面板调用时传入 `zIndex={60}` 覆盖到统计面板之上，其余 5 处 `ConfirmDialog` 调用仍用默认 z-50 不受影响。
+- **ccusage 工具安装补充结果反馈**：此前点击安装后无任何提示，无法判断成败。安装成功时弹出绿色 toast 并附 Bun/bunx 版本号；命令执行成功但仍未检测到 bunx 时弹出黄色提示引导重启或检查 PATH；失败时弹出红色 toast 附错误信息。
 
 ### 文档
 

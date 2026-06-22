@@ -14,6 +14,7 @@ interface Props {
   confirmText?: string;
   cancelText?: string;
   danger?: boolean;
+  zIndex?: number;
   onConfirm: () => void;
   onClose: () => void;
 }
@@ -25,6 +26,7 @@ export function ConfirmDialog({
   confirmText = "Confirm",
   cancelText = "Cancel",
   danger = false,
+  zIndex,
   onConfirm,
   onClose,
 }: Props) {
@@ -35,7 +37,12 @@ export function ConfirmDialog({
         if (!next) onClose();
       }}
     >
-      <DialogContent className="max-w-[360px]" showCloseButton={false}>
+      <DialogContent
+        className="max-w-[360px]"
+        showCloseButton={false}
+        style={zIndex !== undefined ? { zIndex } : undefined}
+        overlayStyle={zIndex !== undefined ? { zIndex } : undefined}
+      >
         <DialogTitle>{title}</DialogTitle>
         {message && (
           <DialogDescription className="mt-2 mb-2">{message}</DialogDescription>

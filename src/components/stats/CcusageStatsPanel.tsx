@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { EChartsOption } from "echarts";
 import { BarChart3, CalendarClock, Coins, Database, Flame, Grid3x3, Layers, LineChart, PackageCheck, RefreshCw, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
@@ -1677,10 +1678,25 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
         message={`将执行固定命令 npm install -g bun --registry ${REGISTRY_MIRROR_TEXT}，这会修改当前用户的全局开发环境。`}
         confirmText="安装"
         cancelText="取消"
+        zIndex={60}
         onClose={() => setInstallConfirmOpen(false)}
         onConfirm={() => {
           setInstallConfirmOpen(false);
-          void installTools().catch(() => {});
+          void (async () => {
+            try {
+              await installTools();
+              const status = useCcusageStore.getState().toolStatus;
+              if (status?.bunxAvailable) {
+                toast.success(
+                  `Bun/bunx 安装成功（Bun ${status.bunVersion ?? "?"} / bunx ${status.bunxVersion ?? "?"}）`
+                );
+              } else {
+                toast.warning("安装命令已执行，但仍未检测到 bunx，请重启应用或检查 PATH");
+              }
+            } catch (err) {
+              toast.error(`Bun/bunx 安装失败：${String(err)}`);
+            }
+          })();
         }}
       />
     </Portal>
