@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend pre-development checklist and required cargo check after Rust/Tauri changes."}
+{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Hook/sub-agent transcript contracts for existing backend and frontend changes."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for component/store quality requirements."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Terminal tab, Git panel, settings, and stats component conventions relevant to current diff."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand terminal/session store conventions relevant to current diff."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend static check and manual UI verification requirements."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index and version/release triggers."}
+{"file":".trellis/spec/guides/version-update-checklist.md","reason":"Required checklist for synchronizing V1.1.7 version metadata."}

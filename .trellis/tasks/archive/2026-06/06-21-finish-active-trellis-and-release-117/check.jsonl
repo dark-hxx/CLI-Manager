@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Verify backend checklist compliance and cargo check."}
+{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Verify hook/sub-agent transcript contracts and required checks."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify UI/component changes follow project conventions."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify terminal/session store changes are safe and minimal."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend quality requirements and manual UI verification notes."}
+{"file":".trellis/spec/guides/version-update-checklist.md","reason":"Verify all version metadata sources are aligned to V1.1.7."}
