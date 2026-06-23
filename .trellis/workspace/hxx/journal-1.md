@@ -410,3 +410,37 @@ Fixed xterm IME composition anchor fallback so candidate windows stay near the a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: V1.1.9: 删除项目树徽章 + 批量启动终端分组 Pane
+
+**Date**: 2026-06-24
+**Task**: V1.1.9: 删除项目树徽章 + 批量启动终端分组 Pane
+**Branch**: `feature/v1.1.9`
+
+### Summary
+
+删除设置-通用中的项目树徽章功能 (#47)；新增批量启动终端分组 Pane 开关 (#38)，支持按根目录分组启动到不同 Pane，分屏方向可配置上下/左右
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a684092` | (see git log) |
+| `0467e1e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
