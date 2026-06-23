@@ -1,5 +1,7 @@
 use std::env;
-use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 pub const GIT_BASH_NOT_FOUND_MESSAGE: &str =

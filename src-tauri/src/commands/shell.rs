@@ -164,14 +164,14 @@ pub async fn open_folder_in_explorer(path: String) -> Result<(), String> {
             error!("Failed to open folder in explorer: {}", e);
             format!("无法打开文件夹: {}", e)
         })?;
+
+        info!("Opened folder in explorer: {}", path);
+        Ok(())
     }
 
     // 非 Windows 平台的占位实现
     #[cfg(not(target_os = "windows"))]
     {
-        return Err("当前平台不支持打开文件夹".to_string());
+        Err("当前平台不支持打开文件夹".to_string())
     }
-
-    info!("Opened folder in explorer: {}", path);
-    Ok(())
 }
