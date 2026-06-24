@@ -1,5 +1,11 @@
 # Changelog
 
+## [V1.1.8] - 2026-06-24
+
+### 修复
+
+- **WSL 实时统计读取不到会话**：WSL 环境下扫描 Claude 会话文件时，`find /path -name '*.jsonl'` 的 glob 模式被 zsh 的 `nomatch` 选项拦截——zsh 将未加引号的 `*.jsonl` 当作 glob 展开，若无匹配文件直接报错退出，导致 `find` 无法执行、始终返回 0 个文件。已转义 glob 通配符（`\*`）避免 shell 展开。
+
 ## [V1.1.8] - 2026-06-22
 
 ### Hook 系统通知
