@@ -272,6 +272,88 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-selected-bg) 72%, #000 28%);
 }
 
+.ui-terminal-tab-hover-card {
+  position: fixed;
+  z-index: 90;
+  box-sizing: border-box;
+  width: min(320px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  pointer-events: auto;
+  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  border-radius: 10px;
+  padding: 10px;
+  color: var(--on-surface);
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 94%, transparent);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--on-surface) 14%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.ui-terminal-tab-hover-title {
+  min-width: 0;
+  margin-bottom: 8px;
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-terminal-tab-hover-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ui-terminal-tab-hover-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ui-terminal-tab-hover-row span {
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+}
+
+.ui-terminal-tab-hover-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-terminal-tab-hover-row-action {
+  grid-template-columns: 72px minmax(0, 1fr) 24px;
+}
+
+.ui-terminal-tab-hover-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  color: var(--on-surface-variant);
+  transition: background-color var(--animate-duration-fast) var(--ease-standard), color var(--animate-duration-fast) var(--ease-standard);
+}
+
+.ui-terminal-tab-hover-copy:hover,
+.ui-terminal-tab-hover-copy:focus-visible {
+  color: var(--on-surface);
+  background-color: color-mix(in srgb, var(--interactive-hover-bg) 88%, transparent);
+  outline: none;
+}
+
 .ui-terminal-tabs-shell {
   background-color: var(--surface);
 }
