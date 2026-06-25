@@ -42,7 +42,7 @@ import {
 import { SubagentTranscriptView } from "./terminal/SubagentTranscriptView";
 import { FileEditorPane } from "./files/FileEditorPane";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
+import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check } from "./icons";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
@@ -1655,7 +1655,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       session.projectId,
       session.cwd,
       session.title,
-      session.startupCmd,
+      normalizeDirectCodexStartupCommand(session.startupCmd),
       session.envVars ? { ...session.envVars } : undefined,
       session.shell ?? undefined,
     ).then(() => {

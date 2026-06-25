@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import type { SubagentTranscriptSource, TerminalSession, Project } from "../lib/types";
 import { logError, logInfo, logWarn } from "../lib/logger";
+import { normalizeDirectCodexStartupCommand } from "../lib/projectStartupCommand";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey, type OsPlatform, type ShellKey } from "../lib/shell";
@@ -1229,6 +1230,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
       newIdMap[ps.id] = newSessionId;
 
+      const restoredStartupCmd = normalizeDirectCodexStartupCommand(ps.startupCmd);
       const restoredSession: TerminalSession = {
         id: newSessionId,
         projectId: ps.projectId,
@@ -1236,7 +1238,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         cwd: ps.cwd,
         shell: resolvedShell,
         envVars: ps.envVars,
-        startupCmd: ps.startupCmd,
+        startupCmd: restoredStartupCmd,
       };
 
       let unlisten: UnlistenFn;
@@ -1260,13 +1262,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       restoredListeners[newSessionId] = unlisten;
 
       // 执行启动命令
-      if (ps.startupCmd) {
+      if (restoredStartupCmd) {
         setTimeout(() => {
-          invoke("pty_write", { sessionId: newSessionId, data: ps.startupCmd + "\r" }).catch((err) => {
+          invoke("pty_write", { sessionId: newSessionId, data: restoredStartupCmd + "\r" }).catch((err) => {
             logError("Failed to write startup command on restore", {
               sessionId: newSessionId,
               hasStartupCmd: true,
-              startupCmdSummary: summarizeStartupCmd(ps.startupCmd),
+              startupCmdSummary: summarizeStartupCmd(restoredStartupCmd),
               err,
             });
           });
