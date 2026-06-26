@@ -112,6 +112,26 @@ enum CommonConfigTool {
     Codex,
 }
 
+#[derive(Clone, Copy)]
+enum ClaudeHookModule {
+    SessionStart,
+    Running,
+    Attention,
+    Stop,
+    Failure,
+    Subagent,
+}
+
+#[derive(Clone, Copy)]
+enum CodexHookModule {
+    SessionStart,
+    Running,
+    Attention,
+    Stop,
+    Subagent,
+    HooksFeature,
+}
+
 #[tauri::command]
 pub async fn hook_settings_get_status(
     app: AppHandle,
@@ -168,33 +188,50 @@ pub async fn hook_settings_install(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
+    module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
     let claude_dir = resolve_claude_dir(selected_dir, true)?
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
-    install_claude_hooks(&claude_dir)?;
-    sync_ccswitch_tool_common_config(
-        &app,
-        cc_switch_db_path.clone(),
-        &claude_dir,
-        CommonConfigTool::Claude,
-        CcSwitchSyncMode::Install,
-    )
-    .await;
-    if let Some(codex_dir) = codex_dir.as_ref() {
-        let codex_status = build_codex_status(Some(codex_dir.clone()))?;
-        if hook_status_has_hooks(&codex_status) {
-            sync_ccswitch_tool_common_config(
-                &app,
-                cc_switch_db_path.clone(),
-                codex_dir,
-                CommonConfigTool::Codex,
-                CcSwitchSyncMode::Install,
-            )
-            .await;
-        }
+    let requested_module = parse_claude_hook_module(module)?;
+    if let Some(module) = requested_module {
+        install_claude_hook_module(&claude_dir, module)?;
+    } else {
+        install_claude_hooks(&claude_dir)?;
     }
     let claude = build_claude_status(Some(claude_dir.clone()))?;
+    if requested_module.is_some() {
+        sync_ccswitch_for_tool_status(
+            &app,
+            cc_switch_db_path.clone(),
+            &claude_dir,
+            CommonConfigTool::Claude,
+            &claude,
+        )
+        .await;
+    } else {
+        sync_ccswitch_tool_common_config(
+            &app,
+            cc_switch_db_path.clone(),
+            &claude_dir,
+            CommonConfigTool::Claude,
+            CcSwitchSyncMode::Install,
+        )
+        .await;
+        if let Some(codex_dir) = codex_dir.as_ref() {
+            let codex_status = build_codex_status(Some(codex_dir.clone()))?;
+            if hook_status_has_hooks(&codex_status) {
+                sync_ccswitch_tool_common_config(
+                    &app,
+                    cc_switch_db_path.clone(),
+                    codex_dir,
+                    CommonConfigTool::Codex,
+                    CcSwitchSyncMode::Install,
+                )
+                .await;
+            }
+        }
+    }
     let codex = build_codex_status(codex_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
@@ -219,20 +256,37 @@ pub async fn hook_settings_uninstall(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
+    module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
     let claude_dir = resolve_claude_dir(selected_dir, true)?
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
-    uninstall_claude_hooks(&claude_dir)?;
-    sync_ccswitch_tool_common_config(
-        &app,
-        cc_switch_db_path.clone(),
-        &claude_dir,
-        CommonConfigTool::Claude,
-        CcSwitchSyncMode::Uninstall,
-    )
-    .await;
+    let requested_module = parse_claude_hook_module(module)?;
+    if let Some(module) = requested_module {
+        uninstall_claude_hook_module(&claude_dir, module)?;
+    } else {
+        uninstall_claude_hooks(&claude_dir)?;
+    }
     let claude = build_claude_status(Some(claude_dir.clone()))?;
+    if requested_module.is_some() {
+        sync_ccswitch_for_tool_status(
+            &app,
+            cc_switch_db_path.clone(),
+            &claude_dir,
+            CommonConfigTool::Claude,
+            &claude,
+        )
+        .await;
+    } else {
+        sync_ccswitch_tool_common_config(
+            &app,
+            cc_switch_db_path.clone(),
+            &claude_dir,
+            CommonConfigTool::Claude,
+            CcSwitchSyncMode::Uninstall,
+        )
+        .await;
+    }
     let codex = build_codex_status(codex_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
@@ -257,34 +311,51 @@ pub async fn hook_settings_install_codex(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
+    module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?
         .ok_or_else(|| "请先选择 Codex 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
-    install_codex_hooks(&codex_dir)?;
-    sync_ccswitch_tool_common_config(
-        &app,
-        cc_switch_db_path.clone(),
-        &codex_dir,
-        CommonConfigTool::Codex,
-        CcSwitchSyncMode::Install,
-    )
-    .await;
-    if let Some(claude_dir) = claude_dir.as_ref() {
-        let claude_status = build_claude_status(Some(claude_dir.clone()))?;
-        if hook_status_has_hooks(&claude_status) {
-            sync_ccswitch_tool_common_config(
-                &app,
-                cc_switch_db_path.clone(),
-                claude_dir,
-                CommonConfigTool::Claude,
-                CcSwitchSyncMode::Install,
-            )
-            .await;
+    let requested_module = parse_codex_hook_module(module)?;
+    if let Some(module) = requested_module {
+        install_codex_hook_module(&codex_dir, module)?;
+    } else {
+        install_codex_hooks(&codex_dir)?;
+    }
+    let codex = build_codex_status(Some(codex_dir.clone()))?;
+    if requested_module.is_some() {
+        sync_ccswitch_for_tool_status(
+            &app,
+            cc_switch_db_path.clone(),
+            &codex_dir,
+            CommonConfigTool::Codex,
+            &codex,
+        )
+        .await;
+    } else {
+        sync_ccswitch_tool_common_config(
+            &app,
+            cc_switch_db_path.clone(),
+            &codex_dir,
+            CommonConfigTool::Codex,
+            CcSwitchSyncMode::Install,
+        )
+        .await;
+        if let Some(claude_dir) = claude_dir.as_ref() {
+            let claude_status = build_claude_status(Some(claude_dir.clone()))?;
+            if hook_status_has_hooks(&claude_status) {
+                sync_ccswitch_tool_common_config(
+                    &app,
+                    cc_switch_db_path.clone(),
+                    claude_dir,
+                    CommonConfigTool::Claude,
+                    CcSwitchSyncMode::Install,
+                )
+                .await;
+            }
         }
     }
     let claude = build_claude_status(claude_dir.clone())?;
-    let codex = build_codex_status(Some(codex_dir.clone()))?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -308,21 +379,38 @@ pub async fn hook_settings_uninstall_codex(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
+    module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?
         .ok_or_else(|| "未找到 Codex 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
-    uninstall_codex_hooks(&codex_dir)?;
-    sync_ccswitch_tool_common_config(
-        &app,
-        cc_switch_db_path.clone(),
-        &codex_dir,
-        CommonConfigTool::Codex,
-        CcSwitchSyncMode::Uninstall,
-    )
-    .await;
+    let requested_module = parse_codex_hook_module(module)?;
+    if let Some(module) = requested_module {
+        uninstall_codex_hook_module(&codex_dir, module)?;
+    } else {
+        uninstall_codex_hooks(&codex_dir)?;
+    }
     let claude = build_claude_status(claude_dir.clone())?;
     let codex = build_codex_status(Some(codex_dir.clone()))?;
+    if requested_module.is_some() {
+        sync_ccswitch_for_tool_status(
+            &app,
+            cc_switch_db_path.clone(),
+            &codex_dir,
+            CommonConfigTool::Codex,
+            &codex,
+        )
+        .await;
+    } else {
+        sync_ccswitch_tool_common_config(
+            &app,
+            cc_switch_db_path.clone(),
+            &codex_dir,
+            CommonConfigTool::Codex,
+            CcSwitchSyncMode::Uninstall,
+        )
+        .await;
+    }
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -487,52 +575,193 @@ impl CommonConfigTool {
     }
 }
 
+const ALL_CLAUDE_HOOK_MODULES: [ClaudeHookModule; 6] = [
+    ClaudeHookModule::SessionStart,
+    ClaudeHookModule::Running,
+    ClaudeHookModule::Attention,
+    ClaudeHookModule::Stop,
+    ClaudeHookModule::Failure,
+    ClaudeHookModule::Subagent,
+];
+
+const ALL_CODEX_HOOK_COMMAND_MODULES: [CodexHookModule; 5] = [
+    CodexHookModule::SessionStart,
+    CodexHookModule::Running,
+    CodexHookModule::Attention,
+    CodexHookModule::Stop,
+    CodexHookModule::Subagent,
+];
+
+fn parse_claude_hook_module(module: Option<String>) -> Result<Option<ClaudeHookModule>, String> {
+    module
+        .map(|value| match value.as_str() {
+            "sessionStart" => Ok(ClaudeHookModule::SessionStart),
+            "running" => Ok(ClaudeHookModule::Running),
+            "attention" => Ok(ClaudeHookModule::Attention),
+            "stop" => Ok(ClaudeHookModule::Stop),
+            "failure" => Ok(ClaudeHookModule::Failure),
+            "subagent" => Ok(ClaudeHookModule::Subagent),
+            "hooksFeature" => Err("Claude 不支持 hooksFeature 模块".to_string()),
+            other => Err(format!("未知的 Claude Hook 模块: {other}")),
+        })
+        .transpose()
+}
+
+fn parse_codex_hook_module(module: Option<String>) -> Result<Option<CodexHookModule>, String> {
+    module
+        .map(|value| match value.as_str() {
+            "sessionStart" => Ok(CodexHookModule::SessionStart),
+            "running" => Ok(CodexHookModule::Running),
+            "attention" => Ok(CodexHookModule::Attention),
+            "stop" => Ok(CodexHookModule::Stop),
+            "subagent" => Ok(CodexHookModule::Subagent),
+            "hooksFeature" => Ok(CodexHookModule::HooksFeature),
+            "failure" => Err("Codex 不支持 failure 模块".to_string()),
+            other => Err(format!("未知的 Codex Hook 模块: {other}")),
+        })
+        .transpose()
+}
+
 fn apply_claude_hook_commands(settings: &mut Value, exe: &str) {
     remove_hook_commands(settings, &CLAUDE_HOOK_EVENTS, &CLAUDE_LEGACY_SCRIPTS);
-    add_hook_command(
-        settings,
-        "SessionStart",
-        build_command(exe, "claude", "SessionStart"),
-    );
-    add_hook_command(
-        settings,
-        "UserPromptSubmit",
-        build_command(exe, "claude", "UserPromptSubmit"),
-    );
-    add_hook_command_with_matcher(
-        settings,
-        "Notification",
-        "permission_prompt|idle_prompt",
-        build_command(exe, "claude", "Notification"),
-    );
-    add_hook_command(settings, "Stop", build_command(exe, "claude", "Stop"));
-    add_hook_command(
-        settings,
-        "StopFailure",
-        build_command(exe, "claude", "StopFailure"),
-    );
-    add_hook_command(
-        settings,
-        "SubagentStart",
-        build_command(exe, "claude", "SubagentStart"),
-    );
-    add_hook_command(
-        settings,
-        "SubagentStop",
-        build_command(exe, "claude", "SubagentStop"),
-    );
-    add_hook_command_with_matcher(
-        settings,
-        "PreToolUse",
-        "Agent|Task",
-        build_command(exe, "claude", "AgentToolStart"),
-    );
-    add_hook_command_with_matcher(
-        settings,
-        "PostToolUse",
-        "Agent|Task",
-        build_command(exe, "claude", "AgentToolStop"),
-    );
+    for module in ALL_CLAUDE_HOOK_MODULES {
+        apply_claude_hook_module(settings, exe, module);
+    }
+}
+
+fn apply_claude_hook_module(settings: &mut Value, exe: &str, module: ClaudeHookModule) {
+    match module {
+        ClaudeHookModule::SessionStart => add_hook_command(
+            settings,
+            "SessionStart",
+            build_command(exe, "claude", "SessionStart"),
+        ),
+        ClaudeHookModule::Running => add_hook_command(
+            settings,
+            "UserPromptSubmit",
+            build_command(exe, "claude", "UserPromptSubmit"),
+        ),
+        ClaudeHookModule::Attention => add_hook_command_with_matcher(
+            settings,
+            "Notification",
+            "permission_prompt|idle_prompt",
+            build_command(exe, "claude", "Notification"),
+        ),
+        ClaudeHookModule::Stop => {
+            add_hook_command(settings, "Stop", build_command(exe, "claude", "Stop"))
+        }
+        ClaudeHookModule::Failure => add_hook_command(
+            settings,
+            "StopFailure",
+            build_command(exe, "claude", "StopFailure"),
+        ),
+        ClaudeHookModule::Subagent => {
+            add_hook_command(
+                settings,
+                "SubagentStart",
+                build_command(exe, "claude", "SubagentStart"),
+            );
+            add_hook_command(
+                settings,
+                "SubagentStop",
+                build_command(exe, "claude", "SubagentStop"),
+            );
+            add_hook_command_with_matcher(
+                settings,
+                "PreToolUse",
+                "Agent|Task",
+                build_command(exe, "claude", "AgentToolStart"),
+            );
+            add_hook_command_with_matcher(
+                settings,
+                "PostToolUse",
+                "Agent|Task",
+                build_command(exe, "claude", "AgentToolStop"),
+            );
+        }
+    }
+}
+
+fn remove_claude_hook_module(settings: &mut Value, module: ClaudeHookModule) {
+    match module {
+        ClaudeHookModule::SessionStart => {
+            remove_hook_commands(settings, &["SessionStart"], &CLAUDE_LEGACY_SCRIPTS)
+        }
+        ClaudeHookModule::Running => {
+            remove_hook_commands(settings, &["UserPromptSubmit"], &CLAUDE_LEGACY_SCRIPTS)
+        }
+        ClaudeHookModule::Attention => {
+            remove_hook_commands(settings, &["Notification"], &CLAUDE_LEGACY_SCRIPTS)
+        }
+        ClaudeHookModule::Stop => {
+            remove_hook_commands(settings, &["Stop"], &CLAUDE_LEGACY_SCRIPTS)
+        }
+        ClaudeHookModule::Failure => {
+            remove_hook_commands(settings, &["StopFailure"], &CLAUDE_LEGACY_SCRIPTS)
+        }
+        ClaudeHookModule::Subagent => remove_hook_commands(
+            settings,
+            &["SubagentStart", "SubagentStop", "PreToolUse", "PostToolUse"],
+            &CLAUDE_LEGACY_SCRIPTS,
+        ),
+    }
+}
+
+fn apply_codex_hook_module(settings: &mut Value, exe: &str, module: CodexHookModule) {
+    match module {
+        CodexHookModule::SessionStart => add_hook_command(
+            settings,
+            "SessionStart",
+            build_command(exe, "codex", "SessionStart"),
+        ),
+        CodexHookModule::Running => add_hook_command(
+            settings,
+            "UserPromptSubmit",
+            build_command(exe, "codex", "UserPromptSubmit"),
+        ),
+        CodexHookModule::Attention => add_hook_command(
+            settings,
+            "PermissionRequest",
+            build_command(exe, "codex", "PermissionRequest"),
+        ),
+        CodexHookModule::Stop => {
+            add_hook_command(settings, "Stop", build_command(exe, "codex", "Stop"))
+        }
+        CodexHookModule::Subagent => {
+            add_hook_command(
+                settings,
+                "SubagentStart",
+                build_command(exe, "codex", "SubagentStart"),
+            );
+            add_hook_command(
+                settings,
+                "SubagentStop",
+                build_command(exe, "codex", "SubagentStop"),
+            );
+        }
+        CodexHookModule::HooksFeature => {}
+    }
+}
+
+fn remove_codex_hook_module(settings: &mut Value, module: CodexHookModule) {
+    match module {
+        CodexHookModule::SessionStart => {
+            remove_hook_commands(settings, &["SessionStart"], &CODEX_LEGACY_SCRIPTS)
+        }
+        CodexHookModule::Running => {
+            remove_hook_commands(settings, &["UserPromptSubmit"], &CODEX_LEGACY_SCRIPTS)
+        }
+        CodexHookModule::Attention => {
+            remove_hook_commands(settings, &["PermissionRequest"], &CODEX_LEGACY_SCRIPTS)
+        }
+        CodexHookModule::Stop => remove_hook_commands(settings, &["Stop"], &CODEX_LEGACY_SCRIPTS),
+        CodexHookModule::Subagent => remove_hook_commands(
+            settings,
+            &["SubagentStart", "SubagentStop"],
+            &CODEX_LEGACY_SCRIPTS,
+        ),
+        CodexHookModule::HooksFeature => {}
+    }
 }
 
 fn merge_common_config_hooks(
@@ -831,11 +1060,53 @@ async fn sync_ccswitch_tool_common_config(
     }
 }
 
+async fn sync_ccswitch_for_tool_status(
+    app: &AppHandle,
+    db_path: Option<String>,
+    config_dir: &Path,
+    tool: CommonConfigTool,
+    status: &ToolHookSettingsStatus,
+) {
+    let mode = if tool_status_is_fully_installed(status, tool) {
+        CcSwitchSyncMode::Install
+    } else {
+        CcSwitchSyncMode::Uninstall
+    };
+    sync_ccswitch_tool_common_config(app, db_path, config_dir, tool, mode).await;
+}
+
 fn hook_status_has_hooks(status: &ToolHookSettingsStatus) -> bool {
-    matches!(
-        status.status,
-        HookInstallStatus::Installed | HookInstallStatus::PartialInstalled
-    )
+    status.session_start_hook_installed
+        || status.running_hook_installed
+        || status.attention_hook_installed
+        || status.stop_hook_installed
+        || status.failure_hook_installed
+        || status.subagent_start_hook_installed
+        || status.hooks_feature_installed
+}
+
+fn tool_status_is_fully_installed(
+    status: &ToolHookSettingsStatus,
+    tool: CommonConfigTool,
+) -> bool {
+    match tool {
+        CommonConfigTool::Claude => {
+            status.session_start_hook_installed
+                && status.running_hook_installed
+                && status.attention_hook_installed
+                && status.stop_hook_installed
+                && status.failure_hook_installed
+                && status.subagent_start_hook_installed
+        }
+        CommonConfigTool::Codex => {
+            status.session_start_hook_installed
+                && status.running_hook_installed
+                && status.attention_hook_installed
+                && status.stop_hook_installed
+                && status.subagent_start_hook_installed
+                && status.hooks_feature_installed
+        }
+    }
 }
 
 fn combine_cc_switch_statuses(
@@ -970,60 +1241,23 @@ fn install_claude_hooks(claude_dir: &Path) -> Result<(), String> {
         ],
         &CLAUDE_LEGACY_SCRIPTS,
     );
-    // SessionStart：会话启动/恢复即回传 sessionId，绑定终端 Tab（不改 Tab 状态），
-    // 让实时统计面板无需先发指令即可填充。空 matcher 匹配全部 source。
-    add_hook_command(
-        &mut settings,
-        "SessionStart",
-        build_command(&exe, "claude", "SessionStart"),
-    );
-    add_hook_command(
-        &mut settings,
-        "UserPromptSubmit",
-        build_command(&exe, "claude", "UserPromptSubmit"),
-    );
-    // 只订阅需要用户介入的通知类型：permission_prompt（等待审批）、
-    // idle_prompt（等待输入）；auth_success 等不该把 Tab 置为 attention
-    add_hook_command_with_matcher(
-        &mut settings,
-        "Notification",
-        "permission_prompt|idle_prompt",
-        build_command(&exe, "claude", "Notification"),
-    );
-    add_hook_command(&mut settings, "Stop", build_command(&exe, "claude", "Stop"));
-    add_hook_command(
-        &mut settings,
-        "StopFailure",
-        build_command(&exe, "claude", "StopFailure"),
-    );
-    // SubagentStart：Claude 内部子 Agent 启动即上报（空 matcher 匹配全部 agent 类型），
-    // 携带 agentId/agentTranscriptPath，供前端定位并实时呈现子 Agent 转录。
-    add_hook_command(
-        &mut settings,
-        "SubagentStart",
-        build_command(&exe, "claude", "SubagentStart"),
-    );
-    add_hook_command(
-        &mut settings,
-        "SubagentStop",
-        build_command(&exe, "claude", "SubagentStop"),
-    );
-    // Agent 工具 fallback：Claude 版本没有独立 SubagentStart/Stop 字段时，
-    // 通过 PreToolUse/PostToolUse 捕获 Task/Agent 调用生命周期，前端先开 pending 面板，
-    // 只在后续发现 child JSONL 时订阅该子任务文件。
-    add_hook_command_with_matcher(
-        &mut settings,
-        "PreToolUse",
-        "Agent|Task",
-        build_command(&exe, "claude", "AgentToolStart"),
-    );
-    add_hook_command_with_matcher(
-        &mut settings,
-        "PostToolUse",
-        "Agent|Task",
-        build_command(&exe, "claude", "AgentToolStop"),
-    );
+    for module in ALL_CLAUDE_HOOK_MODULES {
+        apply_claude_hook_module(&mut settings, &exe, module);
+    }
     // 清理历史 .ps1 脚本文件（若存在），新方案不再依赖脚本文件
+    cleanup_legacy_scripts(&claude_dir.join("hooks"), &CLAUDE_LEGACY_SCRIPTS);
+    write_json(&settings_path, &settings)
+}
+
+fn install_claude_hook_module(
+    claude_dir: &Path,
+    module: ClaudeHookModule,
+) -> Result<(), String> {
+    let exe = hook_exe_for_dir(claude_dir)?;
+    let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
+    let mut settings = read_json(&settings_path)?;
+    ensure_root_object(&settings, "settings.json")?;
+    apply_claude_hook_module(&mut settings, &exe, module);
     cleanup_legacy_scripts(&claude_dir.join("hooks"), &CLAUDE_LEGACY_SCRIPTS);
     write_json(&settings_path, &settings)
 }
@@ -1052,6 +1286,18 @@ fn uninstall_claude_hooks(claude_dir: &Path) -> Result<(), String> {
     write_json(&settings_path, &settings)
 }
 
+fn uninstall_claude_hook_module(
+    claude_dir: &Path,
+    module: ClaudeHookModule,
+) -> Result<(), String> {
+    cleanup_legacy_scripts(&claude_dir.join("hooks"), &CLAUDE_LEGACY_SCRIPTS);
+    let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
+    let mut settings = read_json(&settings_path)?;
+    ensure_root_object(&settings, "settings.json")?;
+    remove_claude_hook_module(&mut settings, module);
+    write_json(&settings_path, &settings)
+}
+
 fn install_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     let exe = hook_exe_for_dir(codex_dir)?;
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
@@ -1070,35 +1316,24 @@ fn install_codex_hooks(codex_dir: &Path) -> Result<(), String> {
         ],
         &CODEX_LEGACY_SCRIPTS,
     );
-    // SessionStart：会话启动/恢复即回传 sessionId 绑定终端 Tab（不改 Tab 状态）
-    add_hook_command(
-        &mut settings,
-        "SessionStart",
-        build_command(&exe, "codex", "SessionStart"),
-    );
-    add_hook_command(
-        &mut settings,
-        "UserPromptSubmit",
-        build_command(&exe, "codex", "UserPromptSubmit"),
-    );
-    add_hook_command(
-        &mut settings,
-        "PermissionRequest",
-        build_command(&exe, "codex", "PermissionRequest"),
-    );
-    add_hook_command(&mut settings, "Stop", build_command(&exe, "codex", "Stop"));
-    add_hook_command(
-        &mut settings,
-        "SubagentStart",
-        build_command(&exe, "codex", "SubagentStart"),
-    );
-    add_hook_command(
-        &mut settings,
-        "SubagentStop",
-        build_command(&exe, "codex", "SubagentStop"),
-    );
+    for module in ALL_CODEX_HOOK_COMMAND_MODULES {
+        apply_codex_hook_module(&mut settings, &exe, module);
+    }
     ensure_codex_hooks_feature(codex_dir)?;
     // 清理历史 .ps1 脚本文件（若存在），新方案不再依赖脚本文件
+    cleanup_legacy_scripts(&codex_dir.join("hooks"), &CODEX_LEGACY_SCRIPTS);
+    write_json(&hooks_path, &settings)
+}
+
+fn install_codex_hook_module(codex_dir: &Path, module: CodexHookModule) -> Result<(), String> {
+    if matches!(module, CodexHookModule::HooksFeature) {
+        return ensure_codex_hooks_feature(codex_dir);
+    }
+    let exe = hook_exe_for_dir(codex_dir)?;
+    let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+    let mut settings = read_json(&hooks_path)?;
+    ensure_root_object(&settings, "hooks.json")?;
+    apply_codex_hook_module(&mut settings, &exe, module);
     cleanup_legacy_scripts(&codex_dir.join("hooks"), &CODEX_LEGACY_SCRIPTS);
     write_json(&hooks_path, &settings)
 }
@@ -1110,12 +1345,12 @@ fn ensure_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("读取 {} 失败: {e}", path_to_string(&config_path))),
     };
-    let next_content = set_toml_feature_hooks(&content);
+    let next_content = set_toml_feature_hooks_enabled(&content, true);
     fs::write(&config_path, next_content)
         .map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&config_path)))
 }
 
-fn set_toml_feature_hooks(content: &str) -> String {
+fn set_toml_feature_hooks_enabled(content: &str, enabled: bool) -> String {
     let mut lines: Vec<String> = content.lines().map(ToString::to_string).collect();
     let mut features_header_index = None;
     for (index, line) in lines.iter().enumerate() {
@@ -1126,6 +1361,15 @@ fn set_toml_feature_hooks(content: &str) -> String {
     }
 
     let Some(header_index) = features_header_index else {
+        if !enabled {
+            return if content.ends_with('\n') {
+                content.to_string()
+            } else if content.is_empty() {
+                String::new()
+            } else {
+                format!("{content}\n")
+            };
+        }
         if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
             lines.push(String::new());
         }
@@ -1145,9 +1389,13 @@ fn set_toml_feature_hooks(content: &str) -> String {
             .split_once('=')
             .is_some_and(|(key, _)| key.trim() == "hooks")
         {
-            lines[index] = "hooks = true".to_string();
+            lines[index] = format!("hooks = {}", if enabled { "true" } else { "false" });
             return format!("{}\n", lines.join("\n"));
         }
+    }
+
+    if !enabled {
+        return format!("{}\n", lines.join("\n"));
     }
 
     lines.insert(insert_index, "hooks = true".to_string());
@@ -1554,6 +1802,33 @@ fn uninstall_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     write_json(&hooks_path, &settings)
 }
 
+fn uninstall_codex_hook_module(
+    codex_dir: &Path,
+    module: CodexHookModule,
+) -> Result<(), String> {
+    if matches!(module, CodexHookModule::HooksFeature) {
+        return disable_codex_hooks_feature(codex_dir);
+    }
+    cleanup_legacy_scripts(&codex_dir.join("hooks"), &CODEX_LEGACY_SCRIPTS);
+    let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+    let mut settings = read_json(&hooks_path)?;
+    ensure_root_object(&settings, "hooks.json")?;
+    remove_codex_hook_module(&mut settings, module);
+    write_json(&hooks_path, &settings)
+}
+
+fn disable_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
+    let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+    let content = match fs::read_to_string(&config_path) {
+        Ok(value) => value,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("读取 {} 失败: {e}", path_to_string(&config_path))),
+    };
+    let next_content = set_toml_feature_hooks_enabled(&content, false);
+    fs::write(&config_path, next_content)
+        .map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&config_path)))
+}
+
 fn resolve_claude_dir(
     selected_dir: Option<String>,
     require_existing: bool,
@@ -1765,8 +2040,6 @@ fn status_from_checks(
     checks: ToolChecks,
 ) -> ToolHookSettingsStatus {
     let mut values = vec![
-        checks.attention_script_installed,
-        checks.finished_script_installed,
         checks.session_start_hook_installed,
         checks.running_hook_installed,
         checks.attention_hook_installed,
@@ -2158,6 +2431,51 @@ mod tests {
         assert!(!after_uninstall.contains("--event SubagentStop"));
         assert!(!after_uninstall.contains("--event AgentToolStart"));
         assert!(!after_uninstall.contains("--event AgentToolStop"));
+    }
+
+    #[tokio::test]
+    async fn install_claude_single_module_only_writes_requested_event() {
+        let tmp = TempDir::new().unwrap();
+        let claude_dir = tmp.path().join("claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        install_claude_hook_module(&claude_dir, ClaudeHookModule::Running).unwrap();
+
+        let settings = fs::read_to_string(claude_dir.join(CLAUDE_SETTINGS_FILE_NAME)).unwrap();
+        assert!(settings.contains("--event UserPromptSubmit"));
+        assert!(!settings.contains("--event SessionStart"));
+        assert!(!settings.contains("--event Stop"));
+        assert!(!settings.contains("--event SubagentStart"));
+    }
+
+    #[tokio::test]
+    async fn install_codex_hooks_feature_module_only_toggles_config() {
+        let tmp = TempDir::new().unwrap();
+        let codex_dir = tmp.path().join("codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+
+        install_codex_hook_module(&codex_dir, CodexHookModule::HooksFeature).unwrap();
+        let config_after_install =
+            fs::read_to_string(codex_dir.join(CODEX_CONFIG_FILE_NAME)).unwrap();
+        assert!(config_after_install.contains("hooks = true"));
+        assert!(!codex_dir.join(CODEX_HOOKS_FILE_NAME).exists());
+
+        uninstall_codex_hook_module(&codex_dir, CodexHookModule::HooksFeature).unwrap();
+        let config_after_uninstall =
+            fs::read_to_string(codex_dir.join(CODEX_CONFIG_FILE_NAME)).unwrap();
+        assert!(config_after_uninstall.contains("hooks = false"));
+        assert!(!codex_dir.join(CODEX_HOOKS_FILE_NAME).exists());
+    }
+
+    #[tokio::test]
+    async fn empty_codex_status_is_not_installed() {
+        let tmp = TempDir::new().unwrap();
+        let codex_dir = tmp.path().join("codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+
+        let status = build_codex_status(Some(codex_dir)).unwrap();
+
+        assert!(matches!(status.status, HookInstallStatus::NotInstalled));
     }
 
     #[tokio::test]

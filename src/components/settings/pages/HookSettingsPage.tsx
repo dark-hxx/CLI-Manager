@@ -7,6 +7,8 @@ import { useSettingsStore, type HookEventType } from "@/stores/settingsStore";
 import { useI18n, type AppLanguage } from "@/lib/i18n";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
+type HookTool = "claude" | "codex";
+type HookModule = "sessionStart" | "running" | "attention" | "stop" | "failure" | "subagent" | "hooksFeature";
 
 interface ToolHookSettingsStatus {
   configDir: string | null;
@@ -270,18 +272,47 @@ interface HookCardProps {
   notifyEnabled?: boolean;
   onToggleNotify?: () => void;
   notifyDisabled?: boolean;
+  onClick?: () => void;
+  disabled?: boolean;
+  actionLabel?: string;
 }
 
-function HookCard({ icon, label, checked, notifyEnabled, onToggleNotify, notifyDisabled }: HookCardProps) {
+function HookCard({
+  icon,
+  label,
+  checked,
+  notifyEnabled,
+  onToggleNotify,
+  notifyDisabled,
+  onClick,
+  disabled,
+  actionLabel,
+}: HookCardProps) {
   const { language } = useI18n();
+  const interactive = Boolean(onClick);
   return (
     <Card
       className="border transition-colors"
       p="md"
       radius="lg"
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive && !disabled ? 0 : undefined}
+      aria-disabled={interactive ? disabled : undefined}
+      aria-label={actionLabel}
+      title={actionLabel}
+      onClick={interactive && !disabled ? onClick : undefined}
+      onKeyDown={interactive ? (event) => {
+        if (disabled) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick?.();
+        }
+      } : undefined}
       style={{
         borderColor: checked ? "var(--success)" : "var(--border)",
         backgroundColor: checked ? "var(--success-container)" : "var(--surface-container-low)",
+        cursor: interactive && !disabled ? "pointer" : "default",
+        opacity: disabled ? 0.68 : 1,
       }}
     >
       <Stack gap={8} align="center">
@@ -399,7 +430,7 @@ function SettingsSwitchRow({
 }
 
 export function HookSettingsPage() {
-  const { language } = useI18n();
+  const { language, t } = useI18n();
   const text = (zh: string, en: string) => pickText(language, zh, en);
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
@@ -588,6 +619,57 @@ export function HookSettingsPage() {
     }
   };
 
+  const syncStatusAfterMutation = (nextStatus: HookSettingsStatus) => {
+    setStatus(nextStatus);
+    if (nextStatus.claude.configDir) setSelectedDir(nextStatus.claude.configDir);
+    if (nextStatus.codex.configDir) setCodexSelectedDir(nextStatus.codex.configDir);
+  };
+
+  const handleModuleToggle = async (
+    tool: HookTool,
+    module: HookModule,
+    installed: boolean,
+    moduleLabel: string,
+  ) => {
+    const command =
+      tool === "claude"
+        ? (installed ? "hook_settings_uninstall" : "hook_settings_install")
+        : (installed ? "hook_settings_uninstall_codex" : "hook_settings_install_codex");
+    const setWorking = tool === "claude" ? setClaudeWorking : setCodexWorking;
+    const toolLabel = tool === "claude" ? "Claude" : "Codex";
+
+    setWorking(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>(command, {
+        selectedDir: selectedDirArg,
+        codexSelectedDir: codexSelectedDirArg,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+        module,
+      });
+      syncStatusAfterMutation(nextStatus);
+      if (tool === "claude") {
+        await updateSetting("claudeHookAutoRepairKnownInstalled", false);
+        await updateSetting("claudeHookAutoRepairNoticeShown", false);
+      }
+      toast.success(
+        t(installed ? "settings.hooks.module.removed" : "settings.hooks.module.installed", {
+          tool: toolLabel,
+          module: moduleLabel,
+        })
+      );
+    } catch (error) {
+      toast.error(
+        t(installed ? "settings.hooks.module.removeFailed" : "settings.hooks.module.installFailed", {
+          tool: toolLabel,
+          module: moduleLabel,
+        }),
+        { description: getErrorMessage(error) }
+      );
+    } finally {
+      setWorking(false);
+    }
+  };
+
   const handleCommitAutoCloseSeconds = () => {
     const nextValue = Number(autoCloseSecondsDraft);
     const nextSeconds = Number.isFinite(nextValue) ? Math.round(nextValue) : hookPopupAutoCloseSeconds;
@@ -616,6 +698,25 @@ export function HookSettingsPage() {
   // Codex — 拆分为独立事件
   const codexStopInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
   const codexSubagentInstalled = Boolean(codex?.subagentStartHookInstalled);
+  const claudeToolLabel = "Claude";
+  const codexToolLabel = "Codex";
+  const claudeSessionStartLabel = text("会话启动", "Session Start");
+  const claudeRunningLabel = text("运行中", "Running");
+  const claudeAttentionLabel = text("待审批", "Awaiting Approval");
+  const claudeStopLabel = text("任务完成", "Task Completed");
+  const claudeFailureLabel = text("执行失败", "Failed");
+  const claudeSubagentLabel = text("子 Agent", "Subagent");
+  const codexSessionStartLabel = text("会话启动", "Session Start");
+  const codexRunningLabel = text("运行中", "Running");
+  const codexAttentionLabel = text("需要审批", "Approval Needed");
+  const codexStopLabel = text("完成", "Completed");
+  const codexSubagentLabel = text("子 Agent", "Subagent");
+  const codexHooksFeatureLabel = text("Hooks 功能", "Hooks Feature");
+  const buildModuleActionLabel = (toolLabel: string, moduleLabel: string, installed: boolean) =>
+    t(installed ? "settings.hooks.card.clickToUninstall" : "settings.hooks.card.clickToInstall", {
+      tool: toolLabel,
+      module: moduleLabel,
+    });
 
   // 切换一组 HookEventType 的系统通知状态
   const toggleNotifyEvents = (events: HookEventType[], enabled: boolean) => {
@@ -733,48 +834,66 @@ export function HookSettingsPage() {
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
             <HookCard
               icon={<Play />}
-              label={text("会话启动", "Session Start")}
+              label={claudeSessionStartLabel}
               checked={claudeSessionStartInstalled}
               notifyEnabled={notifyState(["SessionStart"])}
               onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("claude", "sessionStart", claudeSessionStartInstalled, claudeSessionStartLabel)}
+              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeSessionStartLabel, claudeSessionStartInstalled)}
             />
             <HookCard
               icon={<Activity />}
-              label={text("运行中", "Running")}
+              label={claudeRunningLabel}
               checked={claudeRunningInstalled}
               notifyEnabled={notifyState(["UserPromptSubmit"])}
               onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("claude", "running", claudeRunningInstalled, claudeRunningLabel)}
+              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeRunningLabel, claudeRunningInstalled)}
             />
             <HookCard
               icon={<Bell />}
-              label={text("待审批", "Awaiting Approval")}
+              label={claudeAttentionLabel}
               checked={claudeAttentionInstalled}
               notifyEnabled={notifyState(["Notification"])}
               onToggleNotify={() => toggleNotifyEvents(["Notification"], !notifyState(["Notification"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("claude", "attention", claudeAttentionInstalled, claudeAttentionLabel)}
+              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeAttentionLabel, claudeAttentionInstalled)}
             />
             <HookCard
               icon={<CheckCircle />}
-              label={text("任务完成", "Task Completed")}
+              label={claudeStopLabel}
               checked={claudeStopInstalled}
               notifyEnabled={notifyState(["Stop"])}
               onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("claude", "stop", claudeStopInstalled, claudeStopLabel)}
+              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeStopLabel, claudeStopInstalled)}
             />
             <HookCard
               icon={<XCircle size={26} />}
-              label={text("执行失败", "Failed")}
+              label={claudeFailureLabel}
               checked={claudeFailureInstalled}
               notifyEnabled={notifyState(["StopFailure"])}
               onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("claude", "failure", claudeFailureInstalled, claudeFailureLabel)}
+              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeFailureLabel, claudeFailureInstalled)}
             />
             <HookCard
               icon={<Layers size={26} />}
-              label={text("子 Agent", "Subagent")}
+              label={claudeSubagentLabel}
               checked={claudeSubagentInstalled}
+              onClick={() => void handleModuleToggle("claude", "subagent", claudeSubagentInstalled, claudeSubagentLabel)}
+              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeSubagentLabel, claudeSubagentInstalled)}
             />
           </SimpleGrid>
 
@@ -907,45 +1026,63 @@ export function HookSettingsPage() {
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
             <HookCard
               icon={<Play />}
-              label={text("会话启动", "Session Start")}
+              label={codexSessionStartLabel}
               checked={codexSessionStartInstalled}
               notifyEnabled={notifyState(["SessionStart"])}
               onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("codex", "sessionStart", codexSessionStartInstalled, codexSessionStartLabel)}
+              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(codexToolLabel, codexSessionStartLabel, codexSessionStartInstalled)}
             />
             <HookCard
               icon={<Activity />}
-              label={text("运行中", "Running")}
+              label={codexRunningLabel}
               checked={codexRunningInstalled}
               notifyEnabled={notifyState(["UserPromptSubmit"])}
               onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("codex", "running", codexRunningInstalled, codexRunningLabel)}
+              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(codexToolLabel, codexRunningLabel, codexRunningInstalled)}
             />
             <HookCard
               icon={<ShieldAlert />}
-              label={text("需要审批", "Approval Needed")}
+              label={codexAttentionLabel}
               checked={codexAttentionInstalled}
               notifyEnabled={notifyState(["PermissionRequest"])}
               onToggleNotify={() => toggleNotifyEvents(["PermissionRequest"], !notifyState(["PermissionRequest"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("codex", "attention", codexAttentionInstalled, codexAttentionLabel)}
+              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(codexToolLabel, codexAttentionLabel, codexAttentionInstalled)}
             />
             <HookCard
               icon={<CheckCircle />}
-              label={text("完成", "Completed")}
+              label={codexStopLabel}
               checked={codexStopInstalled}
               notifyEnabled={notifyState(["Stop"])}
               onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
               notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("codex", "stop", codexStopInstalled, codexStopLabel)}
+              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(codexToolLabel, codexStopLabel, codexStopInstalled)}
             />
             <HookCard
               icon={<Layers size={26} />}
-              label={text("子 Agent", "Subagent")}
+              label={codexSubagentLabel}
               checked={codexSubagentInstalled}
+              onClick={() => void handleModuleToggle("codex", "subagent", codexSubagentInstalled, codexSubagentLabel)}
+              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(codexToolLabel, codexSubagentLabel, codexSubagentInstalled)}
             />
             <HookCard
               icon={<ToggleRight />}
-              label={text("Hooks 功能", "Hooks Feature")}
+              label={codexHooksFeatureLabel}
               checked={Boolean(codex?.hooksFeatureInstalled)}
+              onClick={() => void handleModuleToggle("codex", "hooksFeature", Boolean(codex?.hooksFeatureInstalled), codexHooksFeatureLabel)}
+              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(codexToolLabel, codexHooksFeatureLabel, Boolean(codex?.hooksFeatureInstalled))}
             />
           </SimpleGrid>
 
