@@ -910,17 +910,19 @@ export function GeneralSettingsPage() {
               </Group>
             </Card>
 
-            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-              <Text size="xs" c="var(--on-surface-variant)">
-                {t("settings.general.debugMode")}
-              </Text>
-              <Switch
-                color="cliPrimary"
-                checked={debugMode}
-                onChange={(event) => void update("debugMode", event.currentTarget.checked)}
-                aria-label={debugMode ? t("settings.general.disableDebugMode") : t("settings.general.enableDebugMode")}
-              />
-            </Group>
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Text size="xs" c="var(--on-surface-variant)">
+                  {t("settings.general.debugMode")}
+                </Text>
+                <Switch
+                  color="cliPrimary"
+                  checked={debugMode}
+                  onChange={(event) => void update("debugMode", event.currentTarget.checked)}
+                  aria-label={debugMode ? t("settings.general.disableDebugMode") : t("settings.general.enableDebugMode")}
+                />
+              </Group>
+            </Card>
         </Stack>
       </section>
 
