@@ -46,6 +46,26 @@ Questions to answer:
 
 ## Common Mistakes
 
-<!-- Hook-related mistakes your team has made -->
+### Common Mistake: Returning before all hooks in visibility-gated panels
+
+**Symptom**: Switching a panel from visible to hidden throws `Rendered fewer hooks than expected` and can blank the React view.
+
+**Cause**: A component calls a hook after an early return such as `if (!open || !visible) return null;`. When the same mounted component later becomes hidden, React sees fewer hooks than the previous render.
+
+**Fix**: Keep every hook call before any render guard. It is fine to compute cheap derived values before returning `null`.
+
+```tsx
+// Wrong
+const value = useMemo(() => buildValue(input), [input]);
+if (!visible) return null;
+const other = useMemo(() => buildOther(value), [value]);
+
+// Correct
+const value = useMemo(() => buildValue(input), [input]);
+const other = useMemo(() => buildOther(value), [value]);
+if (!visible) return null;
+```
+
+**Prevention**: In tabbed or side-panel UIs where hidden tabs stay mounted, scan for any `return null` before later `use*` calls before changing visibility behavior.
 
 (To be filled by the team)

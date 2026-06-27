@@ -22,7 +22,7 @@ interface TerminalSidePanelProps {
 }
 
 const MERGED_PANEL_WIDTH_STORAGE_KEY = "cli-manager:terminal-side-panel-width";
-const MERGED_PANEL_DEFAULT_WIDTH = 220;
+const MERGED_PANEL_DEFAULT_WIDTH = 300;
 const TERMINAL_PANEL_MAX_WIDTH = 500;
 
 export const TERMINAL_STATS_PANEL_WIDTH_STORAGE_KEY = "cli-manager:terminal-stats-panel-width";
@@ -211,7 +211,7 @@ export function TerminalSidePanel({
               type="button"
               onClick={() => onTabChange(tab.key)}
               disabled={tab.disabled}
-              className="ui-focus-ring flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[11px] font-bold transition-colors"
+              className="ui-focus-ring flex flex-1 items-center justify-center gap-1 whitespace-nowrap rounded px-2 py-1 text-[11px] font-bold transition-colors"
               style={{
                 color: selected ? TERM_PANEL.cyan : TERM_PANEL.dim,
                 backgroundColor: selected ? panelColorTint(TERM_PANEL.cyan, 10) : "transparent",

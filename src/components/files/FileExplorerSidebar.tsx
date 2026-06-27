@@ -19,6 +19,7 @@ import { TERM } from "../stats/termStatsUi";
 interface FileExplorerSidebarProps {
   mode?: "sidebar" | "panel";
   onClosePanel?: () => void;
+  onBackToProjects?: () => void;
 }
 
 type InputAction =
@@ -595,7 +596,7 @@ function FileTreeRows({
   );
 }
 
-export function FileExplorerSidebar({ mode = "sidebar", onClosePanel }: FileExplorerSidebarProps) {
+export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToProjects }: FileExplorerSidebarProps) {
   const { t } = useI18n();
   const project = useFileExplorerStore((s) => s.project);
   const tree = useFileExplorerStore((s) => s.tree);
@@ -1029,6 +1030,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel }: FileExpl
   const handleClose = () => {
     if (mode === "panel") {
       onClosePanel?.();
+      return;
+    }
+    if (onBackToProjects) {
+      onBackToProjects();
       return;
     }
     closeProject();

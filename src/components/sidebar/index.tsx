@@ -138,6 +138,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     initialSidebarWidth <= SIDEBAR_COLLAPSED_WIDTH
   );
+  const [showFileExplorer, setShowFileExplorer] = useState(false);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [isMacOs, setIsMacOs] = useState(isLikelyMacOs);
 
@@ -182,6 +183,10 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       return new Set([activeSessionProjectId]);
     });
   }, [activeSessionProjectId]);
+
+  useEffect(() => {
+    if (!fileProject) setShowFileExplorer(false);
+  }, [fileProject]);
 
   // 可见项目的扁平顺序（跳过已折叠分组的子项），供 Shift 范围多选取区间
   const visibleProjectIds = useMemo(() => {
@@ -646,12 +651,17 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
         if (!confirmed) return;
       }
       await openFileProject(project);
+      setShowFileExplorer(true);
       closeHistory();
     } catch (err) {
       logError("Failed to open project file browser", err);
       toast.error(t("sidebar.toast.openProjectFilesFailed"), { description: String(err) });
     }
   }, [closeHistory, fileProject?.id, openFileProject, t]);
+
+  const handleBackToProjectTree = useCallback(() => {
+    setShowFileExplorer(false);
+  }, []);
 
   const handleOpenProjectHistory = useCallback(
     (project: Project) => {
@@ -946,8 +956,8 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       </div>
 
       <div className={`${compactMode ? "min-h-[220px]" : "min-h-0"} flex-1 overflow-hidden`}>
-        {fileProject && !sidebarCollapsed ? (
-          <FileExplorerSidebar />
+        {showFileExplorer && fileProject && !sidebarCollapsed ? (
+          <FileExplorerSidebar onBackToProjects={handleBackToProjectTree} />
         ) : (
           <TreeContext.Provider value={treeActions}>
             <ProjectTree

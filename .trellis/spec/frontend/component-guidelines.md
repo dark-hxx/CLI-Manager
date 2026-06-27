@@ -46,6 +46,39 @@ const { t } = useI18n();
 
 **Tests**: Run `npx tsc --noEmit` and `npm run build`; manually verify Settings > General language switching changes the touched UI and persists after restart. Smoke-test hover cards/tooltips, right-side action buttons, session history, stats panels, toast/system notifications, and hook notifications when those areas are touched.
 
+### Convention: Auxiliary panels do not hijack primary sidebar navigation
+
+**What**: Terminal-side auxiliary panels, such as realtime stats, Git changes, and project files, must not force the primary left sidebar into a different navigation mode. If an auxiliary panel needs to load shared data, keep the left sidebar display mode behind explicit local UI state or a dedicated left-sidebar action.
+
+**Why**: The left sidebar is the user's project navigation anchor. Opening a right-side Files panel may need file explorer data, but it should not replace the project tree or remove the user's path back to projects.
+
+**Correct**:
+
+```tsx
+const [showFileExplorer, setShowFileExplorer] = useState(false);
+
+// Left sidebar project context menu explicitly enters file mode.
+const handleOpenProjectFiles = async (project: Project) => {
+  await openFileProject(project);
+  setShowFileExplorer(true);
+};
+
+{showFileExplorer && fileProject ? (
+  <FileExplorerSidebar onBackToProjects={() => setShowFileExplorer(false)} />
+) : (
+  <ProjectTree />
+)}
+```
+
+**Wrong**:
+
+```tsx
+// Any feature that writes fileProject would unexpectedly replace the project tree.
+{fileProject ? <FileExplorerSidebar /> : <ProjectTree />}
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually verify opening the right Files panel leaves the left project tree visible, while the left context-menu Browse Files action still opens a file tree with a working return button.
+
 ### Convention: Markdown rendering goes through the shared MarkdownContent component
 
 **What**: Any UI that renders user/session/release Markdown must use `src/components/ui/MarkdownContent.tsx`. Do not import `react-markdown` directly from feature components.

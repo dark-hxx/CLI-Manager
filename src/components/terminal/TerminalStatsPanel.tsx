@@ -500,11 +500,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     pollTrigger
   );
 
-  if (!panelActive) return null;
-
-  const projectName = project?.name || latestSession?.project_key || "—";
-  const shellLabel = formatStatsShellLabel(terminalSession?.shell ?? project?.shell);
-
   // 未绑定 hook 会话时，4 张会话级卡片照常渲染但数据置空（保留图形骨架）
   const boundSession = tokensBound ? latestSession : null;
   const boundStats = tokensBound ? stats : EMPTY_TOKEN_STATS;
@@ -513,6 +508,11 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     : { ...EMPTY_TOKEN_STATS, dominantModel: stats.dominantModel };
   const latestChangesSummary = useMemo(() => buildLatestChangesSummary(boundSession), [boundSession]);
   const hasVisibleCard = terminalStatsCardOrder.some((key) => terminalStatsCardVisibility[key]);
+
+  if (!panelActive) return null;
+
+  const projectName = project?.name || latestSession?.project_key || "—";
+  const shellLabel = formatStatsShellLabel(terminalSession?.shell ?? project?.shell);
 
   const renderStatsCard = (cardKey: TerminalStatsCardKey) => {
     if (!terminalStatsCardVisibility[cardKey]) return null;
