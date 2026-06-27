@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { Copy, FolderGit2, GitBranch, RefreshCw, FolderOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import type { HistorySessionDetail, HistorySource } from "../../lib/types";
+import type { HistoryFileChangeSummary, HistorySessionDetail, HistorySource } from "../../lib/types";
 import {
   fetchLatestProjectSessionDetail,
   fetchTodayProjectStats,
@@ -11,6 +11,7 @@ import {
 } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import {
   TERM,
   StatCard,
@@ -25,8 +26,18 @@ import {
   formatRelativeTime,
   truncatePath,
 } from "../stats/termStatsUi";
-import { TokenUsageCard, ModelContextCard, TrendCard, ToolsCard, TodayUsageCard } from "../stats/termStatsCards";
+import {
+  TokenUsageCard,
+  ModelContextCard,
+  TrendCard,
+  ToolsCard,
+  TodayUsageCard,
+  LatestChangesCard,
+  type LatestChangesCardData,
+} from "../stats/termStatsCards";
 import { useI18n } from "../../lib/i18n";
+import { DiffModal } from "../history/DiffModal";
+import { parseDiffBlocksFromMessages } from "../../lib/diffParser";
 import { TerminalSquare } from "../icons";
 
 interface TerminalStatsPanelProps {
@@ -79,6 +90,97 @@ function formatStatsShellLabel(value: string | null | undefined): string {
   if (normalized === "fish") return "Fish";
   if (normalized === "sh") return "sh";
   return trimmed;
+}
+
+function countPatchLines(patch: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
+    if (line.startsWith("-") && !line.startsWith("---")) deletions += 1;
+  }
+  return { additions, deletions };
+}
+
+function buildFallbackFileChanges(session: HistorySessionDetail | null): HistoryFileChangeSummary[] {
+  if (!session) return [];
+  const groups = new Map<string, HistoryFileChangeSummary>();
+  for (const block of parseDiffBlocksFromMessages(session.messages)) {
+    const changes = countPatchLines(block.patch);
+    const operation = {
+      source: "patch",
+      tool_name: null,
+      file_path: block.filePath,
+      old_text: null,
+      new_text: null,
+      patch: block.patch,
+      additions: changes.additions,
+      deletions: changes.deletions,
+      message_index: block.messageIndex,
+      operation_group_index: block.messageIndex,
+      timestamp: block.timestamp,
+    };
+    const current = groups.get(block.filePath) ?? {
+      file_path: block.filePath,
+      status: "M",
+      additions: 0,
+      deletions: 0,
+      latest_message_index: block.messageIndex,
+      latest_operation_group_index: block.messageIndex,
+      latest_timestamp: block.timestamp,
+      operations: [],
+    };
+    current.additions += changes.additions;
+    current.deletions += changes.deletions;
+    if ((block.messageIndex ?? -1) >= (current.latest_message_index ?? -1)) {
+      current.latest_message_index = block.messageIndex;
+      current.latest_operation_group_index = block.messageIndex;
+      current.latest_timestamp = block.timestamp;
+    }
+    current.operations.push(operation);
+    groups.set(block.filePath, current);
+  }
+  return Array.from(groups.values());
+}
+
+function selectLatestFileChanges(fileChanges: HistoryFileChangeSummary[]): HistoryFileChangeSummary[] {
+  if (fileChanges.length === 0) return [];
+  const latestGroupIndex = Math.max(...fileChanges.map((item) => item.latest_operation_group_index ?? -1));
+  const latestMessageIndex = Math.max(...fileChanges.map((item) => item.latest_message_index ?? -1));
+
+  return fileChanges.flatMap((item) => {
+    const operations = item.operations.filter((operation) => {
+      if (latestGroupIndex >= 0) {
+        return (operation.operation_group_index ?? -1) === latestGroupIndex;
+      }
+      return (operation.message_index ?? -1) === latestMessageIndex;
+    });
+    if (operations.length === 0) return [];
+
+    const latestOperation = operations[operations.length - 1];
+    return [{
+      ...item,
+      additions: operations.reduce((sum, operation) => sum + operation.additions, 0),
+      deletions: operations.reduce((sum, operation) => sum + operation.deletions, 0),
+      latest_message_index: latestOperation.message_index ?? item.latest_message_index ?? null,
+      latest_operation_group_index: latestOperation.operation_group_index ?? item.latest_operation_group_index ?? null,
+      latest_timestamp: latestOperation.timestamp ?? item.latest_timestamp ?? null,
+      operations,
+    }];
+  });
+}
+
+function buildLatestChangesSummary(session: HistorySessionDetail | null): LatestChangesCardData | null {
+  if (!session) return null;
+  const fileChanges = session.file_changes?.length ? session.file_changes : buildFallbackFileChanges(session);
+  const latestFiles = selectLatestFileChanges(fileChanges);
+  if (latestFiles.length === 0) return null;
+  return {
+    fileCount: latestFiles.length,
+    additions: latestFiles.reduce((sum, item) => sum + item.additions, 0),
+    deletions: latestFiles.reduce((sum, item) => sum + item.deletions, 0),
+    files: latestFiles,
+  };
 }
 
 /**
@@ -245,6 +347,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
 
 export function TerminalStatsPanel({ activeSessionId, open, visible = true, embedded = false }: TerminalStatsPanelProps) {
   const { t } = useI18n();
+  const terminalStatsCardVisibility = useSettingsStore((state) => state.terminalStatsCardVisibility);
   const terminalSessions = useTerminalStore((state) => state.sessions);
   const projects = useProjectStore((state) => state.projects);
 
@@ -256,6 +359,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const [, setNowTick] = useState(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
   const [pollTrigger, setPollTrigger] = useState(0); // A6: 统一轮询触发器
+  const [diffFileChanges, setDiffFileChanges] = useState<HistoryFileChangeSummary[] | null>(null);
   const latestRef = useRef<HistorySessionDetail | null>(null);
   const lastPathRef = useRef<string | null>(null);
 
@@ -403,16 +507,22 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   // 未绑定 hook 会话时，4 张会话级卡片照常渲染但数据置空（保留图形骨架）
   const boundSession = tokensBound ? latestSession : null;
   const boundStats = tokensBound ? stats : EMPTY_TOKEN_STATS;
+  const latestChangesSummary = useMemo(() => buildLatestChangesSummary(boundSession), [boundSession]);
+  const hasVisibleCard = Object.values(terminalStatsCardVisibility).some(Boolean);
 
   const containerClassName = embedded
     ? "flex h-full min-h-0 flex-col gap-2 overflow-y-auto p-2 font-mono ui-thin-scroll"
     : "relative z-[1] flex w-[188px] shrink-0 flex-col gap-2 overflow-y-auto border-l border-border p-2 font-mono ui-thin-scroll";
   const Container = embedded ? "div" : "aside";
+  const containerStyle = {
+    backgroundColor: TERM.bg,
+    ...TERMINAL_PANEL_SCROLLBAR_STYLE,
+  };
 
   return (
     <Container
       className={containerClassName}
-      style={{ backgroundColor: TERM.bg, ...TERMINAL_PANEL_SCROLLBAR_STYLE }}
+      style={containerStyle}
     >
       <div className="flex items-center justify-between px-1 py-0.5">
         <span className="flex items-center gap-2 text-[11px] font-bold" style={{ color: TERM.fg }}>
@@ -442,24 +552,39 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         <EmptyHint text={t("common.loading")} />
       ) : !latestSession ? (
         <EmptyHint text={t("termStats.noSessionRecord", { source: sourceFilter ?? "CLI" })} />
+      ) : !hasVisibleCard ? (
+        <EmptyHint text={t("termStats.noVisibleCards")} />
       ) : (
         <>
-          <SessionInfoCard
-            session={latestSession}
-            statsSession={boundSession}
-            projectName={projectName}
-            projectPath={projectPath}
-            currentBranch={currentBranch}
-            shell={shellLabel}
-            sessionId={terminalSession?.cliSessionId ?? latestSession.session_id}
-          />
-          <TokenUsageCard stats={boundStats} />
-          <TrendCard session={boundSession} />
-          <ModelContextCard stats={boundStats} session={boundSession} />
-          <ToolsCard session={boundSession} />
-          <TodayUsageCard stats={todayStats} loading={loadingToday} />
+          {terminalStatsCardVisibility.session && (
+            <SessionInfoCard
+              session={latestSession}
+              statsSession={boundSession}
+              projectName={projectName}
+              projectPath={projectPath}
+              currentBranch={currentBranch}
+              shell={shellLabel}
+              sessionId={terminalSession?.cliSessionId ?? latestSession.session_id}
+            />
+          )}
+          {terminalStatsCardVisibility.tokenUsage && <TokenUsageCard stats={boundStats} />}
+          {terminalStatsCardVisibility.tokenTrend && <TrendCard session={boundSession} />}
+          {terminalStatsCardVisibility.modelContext && <ModelContextCard stats={boundStats} session={boundSession} />}
+          {terminalStatsCardVisibility.tools && <ToolsCard session={boundSession} />}
+          {terminalStatsCardVisibility.latestChanges && (
+            <LatestChangesCard
+              summary={latestChangesSummary}
+              onOpenDiff={(fileChange) => setDiffFileChanges([fileChange])}
+            />
+          )}
+          {terminalStatsCardVisibility.todayUsage && <TodayUsageCard stats={todayStats} loading={loadingToday} />}
         </>
       )}
+      <DiffModal
+        open={Boolean(diffFileChanges)}
+        fileChanges={diffFileChanges}
+        onClose={() => setDiffFileChanges(null)}
+      />
     </Container>
   );
 }

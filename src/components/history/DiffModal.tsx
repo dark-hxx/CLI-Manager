@@ -1,9 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Diff, Hunk, parseDiff, type FileData } from "react-diff-view";
+import { createPatch } from "diff";
 import "react-diff-view/style/index.css";
 import { FileCode2, GitCompareArrows, X } from "lucide-react";
-import type { HistoryMessage } from "../../lib/types";
+import type { HistoryFileChangeSummary, HistoryMessage } from "../../lib/types";
 import DiffWorker from "../../lib/diffParser.worker.ts?worker";
 import { isDiffCandidate, type ParsedDiffBlock } from "../../lib/diffParser";
 import { useI18n } from "../../lib/i18n";
@@ -11,10 +12,19 @@ import { cn } from "@/lib/utils";
 
 interface DiffModalProps {
   open: boolean;
-  messages: HistoryMessage[];
+  messages?: HistoryMessage[];
+  fileChanges?: HistoryFileChangeSummary[] | null;
   container?: HTMLElement | null;
   onClose: () => void;
-  onJumpToMessage: (messageIndex: number) => void;
+  onJumpToMessage?: (messageIndex: number) => void;
+}
+
+interface DiffRenderBlock {
+  id: string;
+  filePath: string;
+  patch: string;
+  messageIndex: number | null;
+  timestamp: string | null;
 }
 
 function classifyFallbackLine(line: string): string {
@@ -78,7 +88,7 @@ function countChanges(files: FileData[]): { additions: number; deletions: number
   return { additions, deletions };
 }
 
-function DiffBlockViewer({ block }: { block: ParsedDiffBlock }) {
+function DiffBlockViewer({ block }: { block: DiffRenderBlock }) {
   const files = useMemo(() => parseBlockFiles(block.patch), [block.patch]);
   const changes = useMemo(() => countChanges(files), [files]);
 
@@ -109,11 +119,35 @@ function DiffBlockViewer({ block }: { block: ParsedDiffBlock }) {
   );
 }
 
-export function DiffModal({ open, messages, container, onClose, onJumpToMessage }: DiffModalProps) {
+function createStructuredPatch(filePath: string, oldText: string | null, newText: string | null): string {
+  return createPatch(filePath, oldText ?? "", newText ?? "", "", "");
+}
+
+function buildStructuredBlocks(fileChanges: HistoryFileChangeSummary[] | null | undefined): DiffRenderBlock[] {
+  if (!fileChanges?.length) return [];
+  return fileChanges.flatMap((fileChange, fileIndex) =>
+    fileChange.operations.map((operation, operationIndex) => ({
+      id: `structured-${fileIndex}-${operationIndex}`,
+      filePath: fileChange.file_path,
+      patch: operation.patch || createStructuredPatch(fileChange.file_path, operation.old_text ?? null, operation.new_text ?? null),
+      messageIndex: operation.message_index ?? null,
+      timestamp: operation.timestamp ?? fileChange.latest_timestamp ?? null,
+    }))
+  );
+}
+
+export function DiffModal({
+  open,
+  messages = [],
+  fileChanges,
+  container,
+  onClose,
+  onJumpToMessage,
+}: DiffModalProps) {
   const { t } = useI18n();
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
-  const [blocks, setBlocks] = useState<ParsedDiffBlock[]>([]);
+  const [blocks, setBlocks] = useState<DiffRenderBlock[]>([]);
   const [parsing, setParsing] = useState(false);
 
   useEffect(() => {
@@ -125,6 +159,13 @@ export function DiffModal({ open, messages, container, onClose, onJumpToMessage 
 
   useEffect(() => {
     if (!open) return;
+
+    const structuredBlocks = buildStructuredBlocks(fileChanges);
+    if (structuredBlocks.length > 0) {
+      setBlocks(structuredBlocks);
+      setParsing(false);
+      return;
+    }
 
     if (!workerRef.current) {
       workerRef.current = new DiffWorker();
@@ -149,7 +190,7 @@ export function DiffModal({ open, messages, container, onClose, onJumpToMessage 
     return () => {
       worker.removeEventListener("message", onMessage);
     };
-  }, [open, messages]);
+  }, [open, fileChanges, messages]);
 
   return (
     <DialogPrimitive.Root
@@ -225,19 +266,24 @@ export function DiffModal({ open, messages, container, onClose, onJumpToMessage 
                           <span className="truncate">{block.filePath}</span>
                         </div>
                         <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                          {t("history.diff.fromMessage", { index: block.messageIndex + 1 })} · {block.timestamp ?? "-"}
+                          {block.messageIndex !== null
+                            ? t("history.diff.fromMessage", { index: block.messageIndex + 1 })
+                            : block.timestamp ?? "-"}
+                          {block.messageIndex !== null && block.timestamp ? ` · ${block.timestamp}` : ""}
                         </div>
                       </div>
-                      <button
-                        onClick={() => {
-                          onJumpToMessage(block.messageIndex);
-                          onClose();
-                        }}
-                        className="text-xs px-2 py-1 rounded-md shrink-0"
-                        style={{ backgroundColor: "var(--accent)", color: "#fff" }}
-                      >
-                        {t("history.diff.jumpBack")}
-                      </button>
+                      {block.messageIndex !== null && onJumpToMessage && (
+                        <button
+                          onClick={() => {
+                            onJumpToMessage(block.messageIndex as number);
+                            onClose();
+                          }}
+                          className="text-xs px-2 py-1 rounded-md shrink-0"
+                          style={{ backgroundColor: "var(--accent)", color: "#fff" }}
+                        >
+                          {t("history.diff.jumpBack")}
+                        </button>
+                      )}
                     </div>
                     <DiffBlockViewer block={block} />
                   </div>

@@ -213,6 +213,31 @@ export interface HistoryToolEvent {
   output_summary?: string | null;
 }
 
+export interface HistoryFileChangeOperation {
+  source: string;
+  tool_name?: string | null;
+  file_path: string;
+  old_text?: string | null;
+  new_text?: string | null;
+  patch?: string | null;
+  additions: number;
+  deletions: number;
+  message_index?: number | null;
+  operation_group_index?: number | null;
+  timestamp?: string | null;
+}
+
+export interface HistoryFileChangeSummary {
+  file_path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  latest_message_index?: number | null;
+  latest_operation_group_index?: number | null;
+  latest_timestamp?: string | null;
+  operations: HistoryFileChangeOperation[];
+}
+
 export interface HistoryTokenTrendPoint {
   input_tokens: number;
   output_tokens: number;
@@ -242,6 +267,7 @@ export interface HistorySessionDetail extends HistorySessionSummary {
   cwd?: string | null;
   usage?: HistorySessionUsage;
   tool_events?: HistoryToolEvent[];
+  file_changes?: HistoryFileChangeSummary[];
   messages: HistoryMessage[];
 }
 

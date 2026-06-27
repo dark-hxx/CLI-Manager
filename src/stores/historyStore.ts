@@ -4,6 +4,8 @@ import { getDb } from "../lib/db";
 import { createPerfMarker } from "../lib/logger";
 import { useSettingsStore } from "./settingsStore";
 import type {
+  HistoryFileChangeOperation,
+  HistoryFileChangeSummary,
   HistoryPromptItem,
   HistorySearchHit,
   HistorySessionDetail,
@@ -239,6 +241,7 @@ function normalizeDetail(raw: unknown): HistorySessionDetail {
     cwd: asString(rec.cwd ?? "") || null,
     usage: normalizeSessionUsage(rec.usage),
     tool_events: normalizeToolEvents(rec.tool_events ?? rec.toolEvents),
+    file_changes: normalizeFileChanges(rec.file_changes ?? rec.fileChanges),
     messages,
   };
 }
@@ -318,6 +321,55 @@ function normalizeToolEvents(raw: unknown): HistoryToolEvent[] {
       };
     })
     .filter((item) => item.name.length > 0);
+}
+
+function normalizeFileChangeOperations(raw: unknown): HistoryFileChangeOperation[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const rec = (item ?? {}) as Record<string, unknown>;
+      return {
+        source: asString(rec.source),
+        tool_name: asString(rec.tool_name ?? rec.toolName ?? "") || null,
+        file_path: asString(rec.file_path ?? rec.filePath),
+        old_text: asString(rec.old_text ?? rec.oldText ?? "") || null,
+        new_text: asString(rec.new_text ?? rec.newText ?? "") || null,
+        patch: asString(rec.patch ?? "") || null,
+        additions: asNumber(rec.additions),
+        deletions: asNumber(rec.deletions),
+        message_index: rec.message_index === null || rec.messageIndex === null
+          ? null
+          : asNumber(rec.message_index ?? rec.messageIndex),
+        operation_group_index: rec.operation_group_index === null || rec.operationGroupIndex === null
+          ? null
+          : asNumber(rec.operation_group_index ?? rec.operationGroupIndex),
+        timestamp: asString(rec.timestamp ?? "") || null,
+      };
+    })
+    .filter((item) => item.file_path.length > 0);
+}
+
+function normalizeFileChanges(raw: unknown): HistoryFileChangeSummary[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const rec = (item ?? {}) as Record<string, unknown>;
+      return {
+        file_path: asString(rec.file_path ?? rec.filePath),
+        status: asString(rec.status || "M"),
+        additions: asNumber(rec.additions),
+        deletions: asNumber(rec.deletions),
+        latest_message_index: rec.latest_message_index === null || rec.latestMessageIndex === null
+          ? null
+          : asNumber(rec.latest_message_index ?? rec.latestMessageIndex),
+        latest_operation_group_index: rec.latest_operation_group_index === null || rec.latestOperationGroupIndex === null
+          ? null
+          : asNumber(rec.latest_operation_group_index ?? rec.latestOperationGroupIndex),
+        latest_timestamp: asString(rec.latest_timestamp ?? rec.latestTimestamp ?? "") || null,
+        operations: normalizeFileChangeOperations(rec.operations),
+      };
+    })
+    .filter((item) => item.file_path.length > 0);
 }
 
 function normalizeHit(raw: unknown): HistorySearchHit {

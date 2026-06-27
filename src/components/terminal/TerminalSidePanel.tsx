@@ -1,8 +1,9 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { BarChart3, Folder, GitBranch } from "../icons";
-import { TERM_PANEL, panelColorTint } from "../stats/termStatsUi";
+import { TERM_PANEL, getTerminalSidePanelSkinStyle, panelColorTint } from "../stats/termStatsUi";
 import { TerminalStatsPanel } from "./TerminalStatsPanel";
 import { useI18n } from "../../lib/i18n";
+import { useSettingsStore } from "../../stores/settingsStore";
 
 const GitChangesPanel = lazy(() =>
   import("../git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
@@ -64,6 +65,7 @@ export function ResizableTerminalPanelFrame({
   resizeTitle = resizeLabel,
   children,
 }: ResizableTerminalPanelFrameProps) {
+  const terminalSidePanelSkin = useSettingsStore((s) => s.terminalSidePanelSkin);
   const [width, setWidth] = useState(() => readStoredWidth(storageKey, defaultWidth, minWidth, maxWidth));
   const [dragging, setDragging] = useState(false);
   const widthRef = useRef(width);
@@ -149,7 +151,14 @@ export function ResizableTerminalPanelFrame({
     <aside
       ref={panelRef}
       className="relative flex shrink-0 flex-col overflow-hidden border-l border-border font-mono"
-      style={{ width, minWidth, maxWidth, backgroundColor: TERM_PANEL.bg }}
+      style={{
+        width,
+        minWidth,
+        maxWidth,
+        ...getTerminalSidePanelSkinStyle(terminalSidePanelSkin),
+        backgroundColor: TERM_PANEL.bg,
+        borderColor: TERM_PANEL.border,
+      }}
     >
       <div
         role="separator"
@@ -190,7 +199,10 @@ export function TerminalSidePanel({
       resizeLabel={t("terminal.panel.resizeSideLabel")}
       resizeTitle={t("terminal.panel.resizeSideTitle")}
     >
-      <div className="flex shrink-0 gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM_PANEL.border }}>
+      <div
+        className="flex shrink-0 gap-1 border-b px-2 py-1.5"
+        style={{ borderColor: TERM_PANEL.border }}
+      >
         {tabs.map((tab) => {
           const selected = activeTab === tab.key;
           return (

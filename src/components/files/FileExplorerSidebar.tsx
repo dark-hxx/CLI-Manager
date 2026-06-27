@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getMaterialFileIcon, getMaterialFolderIcon } from "@baybreezy/file-extension-icon";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiPathBlock, formatAiRootTree, formatAiTree, formatTerminalDragPath, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
@@ -14,6 +14,7 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
 import { ChevronRight, Copy, File, FileCode, Folder, FolderPlus, Pencil, RefreshCw, Search, Trash2, X } from "../icons";
+import { TERM } from "../stats/termStatsUi";
 
 interface FileExplorerSidebarProps {
   mode?: "sidebar" | "panel";
@@ -1034,9 +1035,25 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel }: FileExpl
   };
 
   const closeLabel = mode === "panel" ? t("files.closePanel") : t("files.backToProjects");
+  const panelStyle = mode === "panel"
+    ? ({
+        "--surface-container": TERM.card,
+        "--surface-container-low": TERM.card,
+        "--surface-container-lowest": TERM.cardInner,
+        "--on-surface": TERM.fg,
+        "--on-surface-variant": TERM.dim,
+        "--text-muted": TERM.dim,
+        "--border": TERM.border,
+        "--primary": TERM.cyan,
+        "--ui-scrollbar-thumb": TERM.border,
+        "--ui-scrollbar-track": TERM.bg,
+        backgroundColor: TERM.bg,
+        color: TERM.fg,
+      } as CSSProperties)
+    : undefined;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col" style={panelStyle}>
       <div className="shrink-0 border-b border-border px-2 py-2">
         <div className="mb-2 flex items-center gap-2">
           <Folder size={15} className="text-on-surface-variant" />
@@ -1085,7 +1102,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel }: FileExpl
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            className="min-h-0 flex-1 overflow-y-auto px-1 py-1 outline-none"
+            className="min-h-0 flex-1 overflow-y-auto px-1 py-1 outline-none ui-thin-scroll"
             tabIndex={0}
             onKeyDown={handleRootKeyDown}
             onDragOver={handleRootDragOver}

@@ -114,6 +114,7 @@ struct SessionDetailParts {
     cwd: Option<String>,
     messages: Vec<HistoryMessage>,
     tool_events: Vec<HistoryToolEvent>,
+    file_changes: Vec<HistoryFileChangeSummary>,
 }
 
 #[derive(Default)]
@@ -282,6 +283,35 @@ pub struct HistoryToolEvent {
     pub output_summary: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryFileChangeOperation {
+    pub source: String,
+    pub tool_name: Option<String>,
+    pub file_path: String,
+    pub old_text: Option<String>,
+    pub new_text: Option<String>,
+    pub patch: Option<String>,
+    pub additions: u64,
+    pub deletions: u64,
+    pub message_index: Option<usize>,
+    pub operation_group_index: Option<usize>,
+    pub timestamp: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryFileChangeSummary {
+    pub file_path: String,
+    pub status: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub latest_message_index: Option<usize>,
+    pub latest_operation_group_index: Option<usize>,
+    pub latest_timestamp: Option<String>,
+    pub operations: Vec<HistoryFileChangeOperation>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryTokenTrendPoint {
@@ -326,6 +356,7 @@ pub struct HistorySessionDetail {
     pub branch: Option<String>,
     pub usage: HistorySessionUsage,
     pub tool_events: Vec<HistoryToolEvent>,
+    pub file_changes: Vec<HistoryFileChangeSummary>,
     pub messages: Vec<HistoryMessage>,
 }
 
@@ -2289,6 +2320,7 @@ fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDetailParts {
         fingerprint.updated_at,
     );
     let tool_events = scan_tool_events(&file_ref.path);
+    let file_changes = scan_file_changes(&file_ref.path);
     if let Ok(mut cache) = get_stats_cache().lock() {
         cache.entries.insert(
             path_to_key(&file_ref.path),
@@ -2303,6 +2335,7 @@ fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDetailParts {
         cwd: get_or_scan_session_project(&file_ref.path).cwd,
         messages,
         tool_events,
+        file_changes,
     }
 }
 
@@ -2336,6 +2369,7 @@ fn finalize_session_detail(file_ref: &SessionFileRef, parts: SessionDetailParts)
         branch: parts.computed.branch,
         usage,
         tool_events: parts.tool_events,
+        file_changes: parts.file_changes,
         messages: parts.messages,
     }
 }
@@ -2399,6 +2433,7 @@ fn merge_session_detail_parts(
     let mut usage_events: Vec<(i64, usize, SessionUsageEventScan)> = Vec::new();
     let mut message_rows: Vec<(bool, i64, usize, HistoryMessage)> = Vec::new();
     let mut tool_event_rows: Vec<(bool, i64, usize, HistoryToolEvent)> = Vec::new();
+    let mut file_change_rows: Vec<(bool, i64, usize, HistoryFileChangeOperation)> = Vec::new();
 
     for (part_index, part) in parts.into_iter().enumerate() {
         created_at = created_at.min(part.computed.created_at);
@@ -2468,11 +2503,30 @@ fn merge_session_detail_parts(
                 tool_event,
             ));
         }
+        for (summary_index, summary) in part.file_changes.into_iter().enumerate() {
+            for (op_index, mut operation) in summary.operations.into_iter().enumerate() {
+                if let Some(group_index) = operation.operation_group_index {
+                    operation.operation_group_index = Some(part_index * 10_000 + group_index);
+                }
+                let ts = operation
+                    .timestamp
+                    .as_deref()
+                    .and_then(parse_timestamp_millis_str)
+                    .unwrap_or(part.computed.updated_at);
+                file_change_rows.push((
+                    operation.timestamp.is_none(),
+                    ts,
+                    part_index * 100_000 + summary_index * 1_000 + op_index,
+                    operation,
+                ));
+            }
+        }
     }
 
     usage_events.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     message_rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
     tool_event_rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    file_change_rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
 
     let mut merged_stats = SessionStatsScan {
         context_window,
@@ -2550,6 +2604,12 @@ fn merge_session_detail_parts(
         .into_iter()
         .map(|(_, _, _, tool_event)| tool_event)
         .collect::<Vec<_>>();
+    let file_changes = summarize_file_change_operations(
+        file_change_rows
+            .into_iter()
+            .map(|(_, _, _, operation)| operation)
+            .collect(),
+    );
 
     SessionDetailParts {
         computed: CachedSessionComputation {
@@ -2564,6 +2624,7 @@ fn merge_session_detail_parts(
         cwd,
         messages,
         tool_events,
+        file_changes,
     }
 }
 
@@ -3653,6 +3714,621 @@ fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
         );
     }
     events
+}
+
+fn scan_file_changes(path: &Path) -> Vec<HistoryFileChangeSummary> {
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let mut operations = Vec::new();
+    let mut message_index = 0usize;
+    let mut operation_group_index = 0usize;
+    let mut seen_call_ids: HashSet<String> = HashSet::new();
+
+    for line in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+    {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+
+        let current_message_index = if parse_message(&value).is_some() {
+            let index = Some(message_index);
+            message_index += 1;
+            index
+        } else {
+            None
+        };
+
+        let timestamp = extract_timestamp(&value);
+        let extracted = collect_file_changes_from_value(
+            &value,
+            current_message_index,
+            Some(operation_group_index),
+            timestamp,
+            &mut seen_call_ids,
+        );
+        if extracted.is_empty() {
+            continue;
+        }
+        operations.extend(extracted);
+        operation_group_index += 1;
+    }
+
+    summarize_file_change_operations(operations)
+}
+
+fn collect_file_changes_from_value(
+    value: &Value,
+    message_index: Option<usize>,
+    operation_group_index: Option<usize>,
+    timestamp: Option<String>,
+    seen_call_ids: &mut HashSet<String>,
+) -> Vec<HistoryFileChangeOperation> {
+    let mut operations = Vec::new();
+
+    if let Some(blocks) = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+    {
+        for block in blocks {
+            if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+                continue;
+            }
+            let tool_name = block
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            if let Some(call_id) = block
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|call_id| !call_id.is_empty())
+            {
+                if !seen_call_ids.insert(call_id.to_string()) {
+                    continue;
+                }
+            }
+            if let Some(input) = block.get("input") {
+                operations.extend(extract_file_changes_from_input_value(
+                    tool_name,
+                    input,
+                    "tool_input",
+                    message_index,
+                    operation_group_index,
+                    timestamp.clone(),
+                ));
+            }
+        }
+    }
+
+    if let Some(payload) = value.get("payload") {
+        let payload_type = payload.get("type").and_then(Value::as_str);
+        if matches!(
+            payload_type,
+            Some("function_call") | Some("custom_tool_call")
+        ) {
+            let tool_name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            if let Some(call_id) = payload
+                .get("call_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|call_id| !call_id.is_empty())
+            {
+                if !seen_call_ids.insert(call_id.to_string()) {
+                    return operations;
+                }
+            }
+            if let Some(input) = payload.get("input") {
+                operations.extend(extract_file_changes_from_input_value(
+                    tool_name,
+                    input,
+                    "tool_input",
+                    message_index,
+                    operation_group_index,
+                    timestamp.clone(),
+                ));
+            }
+            if let Some(arguments) = payload.get("arguments").and_then(Value::as_str) {
+                operations.extend(extract_file_changes_from_arguments(
+                    tool_name,
+                    arguments,
+                    message_index,
+                    operation_group_index,
+                    timestamp.clone(),
+                ));
+            }
+        }
+    }
+
+    if value.get("type").and_then(Value::as_str) == Some("file-history-snapshot") {
+        if let Some(content) = extract_content(value) {
+            operations.extend(build_patch_file_change_operations(
+                &content,
+                None,
+                message_index,
+                operation_group_index,
+                timestamp,
+                "patch",
+            ));
+        }
+    }
+
+    operations
+}
+
+fn extract_file_changes_from_arguments(
+    tool_name: Option<&str>,
+    arguments: &str,
+    message_index: Option<usize>,
+    operation_group_index: Option<usize>,
+    timestamp: Option<String>,
+) -> Vec<HistoryFileChangeOperation> {
+    let mut operations = Vec::new();
+    if let Ok(parsed) = serde_json::from_str::<Value>(arguments) {
+        operations.extend(extract_file_changes_from_input_value(
+            tool_name,
+            &parsed,
+            "tool_input",
+            message_index,
+            operation_group_index,
+            timestamp.clone(),
+        ));
+    }
+    if operations.is_empty() && looks_like_patch(arguments) {
+        operations.extend(build_patch_file_change_operations(
+            arguments,
+            tool_name,
+            message_index,
+            operation_group_index,
+            timestamp,
+            "patch",
+        ));
+    }
+    operations
+}
+
+fn extract_file_changes_from_input_value(
+    tool_name: Option<&str>,
+    input: &Value,
+    source: &str,
+    message_index: Option<usize>,
+    operation_group_index: Option<usize>,
+    timestamp: Option<String>,
+) -> Vec<HistoryFileChangeOperation> {
+    let mut operations = Vec::new();
+
+    if let Some(file_path) = extract_file_path_from_value(input) {
+        if let Some(edits) = input.get("edits").and_then(Value::as_array) {
+            for edit in edits {
+                let old_text = extract_string_field(edit, &["old_string", "oldString"]);
+                let new_text = extract_string_field(edit, &["new_string", "newString"]);
+                if let Some(operation) = build_text_file_change_operation(
+                    file_path.clone(),
+                    tool_name.map(str::to_string),
+                    old_text,
+                    new_text,
+                    message_index,
+                    operation_group_index,
+                    timestamp.clone(),
+                    source,
+                ) {
+                    operations.push(operation);
+                }
+            }
+        }
+
+        let old_text = extract_string_field(input, &["old_string", "oldString"]);
+        let new_text = extract_string_field(input, &["new_string", "newString"])
+            .or_else(|| extract_string_field(input, &["content"]));
+        if let Some(operation) = build_text_file_change_operation(
+            file_path,
+            tool_name.map(str::to_string),
+            old_text,
+            new_text,
+            message_index,
+            operation_group_index,
+            timestamp.clone(),
+            source,
+        ) {
+            operations.push(operation);
+        }
+    }
+
+    if operations.is_empty() {
+        if let Some(text) = input.as_str() {
+            if looks_like_patch(text) {
+                operations.extend(build_patch_file_change_operations(
+                    text,
+                    tool_name,
+                    message_index,
+                    operation_group_index,
+                    timestamp,
+                    "patch",
+                ));
+            }
+        } else if let Some(command) = extract_string_field(input, &["command"]) {
+            if looks_like_patch(&command) {
+                operations.extend(build_patch_file_change_operations(
+                    &command,
+                    tool_name,
+                    message_index,
+                    operation_group_index,
+                    timestamp,
+                    "patch",
+                ));
+            }
+        } else if let Some(patch) = extract_string_field(input, &["patch", "diff"]) {
+            if looks_like_patch(&patch) {
+                operations.extend(build_patch_file_change_operations(
+                    &patch,
+                    tool_name,
+                    message_index,
+                    operation_group_index,
+                    timestamp,
+                    "patch",
+                ));
+            }
+        }
+    }
+
+    operations
+}
+
+fn build_text_file_change_operation(
+    file_path: String,
+    tool_name: Option<String>,
+    old_text: Option<String>,
+    new_text: Option<String>,
+    message_index: Option<usize>,
+    operation_group_index: Option<usize>,
+    timestamp: Option<String>,
+    source: &str,
+) -> Option<HistoryFileChangeOperation> {
+    if old_text.is_none() && new_text.is_none() {
+        return None;
+    }
+    let (additions, deletions) = count_text_changes(old_text.as_deref(), new_text.as_deref());
+    Some(HistoryFileChangeOperation {
+        source: source.to_string(),
+        tool_name,
+        file_path,
+        old_text,
+        new_text,
+        patch: None,
+        additions,
+        deletions,
+        message_index,
+        operation_group_index,
+        timestamp,
+    })
+}
+
+fn build_patch_file_change_operations(
+    patch_text: &str,
+    tool_name: Option<&str>,
+    message_index: Option<usize>,
+    operation_group_index: Option<usize>,
+    timestamp: Option<String>,
+    source: &str,
+) -> Vec<HistoryFileChangeOperation> {
+    split_patch_blocks(patch_text)
+        .into_iter()
+        .map(|patch| {
+            let (additions, deletions) = count_patch_changes(&patch);
+            HistoryFileChangeOperation {
+                source: source.to_string(),
+                tool_name: tool_name.map(str::to_string),
+                file_path: extract_patch_file_path(&patch),
+                old_text: None,
+                new_text: None,
+                patch: Some(patch),
+                additions,
+                deletions,
+                message_index,
+                operation_group_index,
+                timestamp: timestamp.clone(),
+            }
+        })
+        .collect()
+}
+
+fn summarize_file_change_operations(
+    mut operations: Vec<HistoryFileChangeOperation>,
+) -> Vec<HistoryFileChangeSummary> {
+    operations.sort_by(|left, right| {
+        left.operation_group_index
+            .cmp(&right.operation_group_index)
+            .then(left.message_index.cmp(&right.message_index))
+            .then(left.timestamp.cmp(&right.timestamp))
+            .then(left.file_path.cmp(&right.file_path))
+    });
+
+    let mut grouped: BTreeMap<String, HistoryFileChangeSummary> = BTreeMap::new();
+    for operation in operations {
+        let file_path = operation.file_path.clone();
+        let entry = grouped
+            .entry(file_path.clone())
+            .or_insert_with(|| HistoryFileChangeSummary {
+                file_path: file_path.clone(),
+                status: derive_file_change_status(&operation),
+                additions: 0,
+                deletions: 0,
+                latest_message_index: operation.message_index,
+                latest_operation_group_index: operation.operation_group_index,
+                latest_timestamp: operation.timestamp.clone(),
+                operations: Vec::new(),
+            });
+        entry.additions = entry.additions.saturating_add(operation.additions);
+        entry.deletions = entry.deletions.saturating_add(operation.deletions);
+        if is_newer_file_change(
+            operation.operation_group_index,
+            operation.message_index,
+            operation.timestamp.as_deref(),
+            entry.latest_operation_group_index,
+            entry.latest_message_index,
+            entry.latest_timestamp.as_deref(),
+        ) {
+            entry.status = derive_file_change_status(&operation);
+            entry.latest_message_index = operation.message_index;
+            entry.latest_operation_group_index = operation.operation_group_index;
+            entry.latest_timestamp = operation.timestamp.clone();
+        }
+        entry.operations.push(operation);
+    }
+
+    let mut summaries = grouped.into_values().collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .latest_operation_group_index
+            .cmp(&left.latest_operation_group_index)
+            .then(right.latest_message_index.cmp(&left.latest_message_index))
+            .then(right.latest_timestamp.cmp(&left.latest_timestamp))
+            .then(left.file_path.cmp(&right.file_path))
+    });
+    summaries
+}
+
+fn is_newer_file_change(
+    candidate_group_index: Option<usize>,
+    candidate_message_index: Option<usize>,
+    candidate_timestamp: Option<&str>,
+    current_group_index: Option<usize>,
+    current_message_index: Option<usize>,
+    current_timestamp: Option<&str>,
+) -> bool {
+    candidate_group_index
+        .cmp(&current_group_index)
+        .then(candidate_message_index.cmp(&current_message_index))
+        .then(candidate_timestamp.cmp(&current_timestamp))
+        .is_gt()
+}
+
+fn derive_file_change_status(operation: &HistoryFileChangeOperation) -> String {
+    if let Some(patch) = &operation.patch {
+        for line in patch.lines() {
+            if line.starts_with("*** Add File: ") || line.starts_with("new file mode ") {
+                return "A".to_string();
+            }
+            if line.starts_with("*** Delete File: ") || line.starts_with("deleted file mode ") {
+                return "D".to_string();
+            }
+            if let Some(path) = line.strip_prefix("--- ") {
+                if path.trim() == "/dev/null" {
+                    return "A".to_string();
+                }
+            }
+            if let Some(path) = line.strip_prefix("+++ ") {
+                if path.trim() == "/dev/null" {
+                    return "D".to_string();
+                }
+            }
+        }
+    }
+
+    match (
+        operation.old_text.as_deref().map(|text| !text.is_empty()),
+        operation.new_text.as_deref().map(|text| !text.is_empty()),
+    ) {
+        (Some(false), Some(true)) | (None, Some(true)) => "A".to_string(),
+        (Some(true), Some(false)) | (Some(true), None) => "D".to_string(),
+        _ => "M".to_string(),
+    }
+}
+
+fn extract_file_path_from_value(value: &Value) -> Option<String> {
+    extract_string_field(value, &["file_path", "filePath", "path", "target_file", "targetFile"])
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+}
+
+fn extract_string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    let object = value.as_object()?;
+    keys.iter()
+        .find_map(|key| object.get(*key))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn count_patch_changes(patch: &str) -> (u64, u64) {
+    let mut additions = 0u64;
+    let mut deletions = 0u64;
+    for line in patch.lines() {
+        if line.starts_with('+') && !line.starts_with("+++") {
+            additions += 1;
+        }
+        if line.starts_with('-') && !line.starts_with("---") {
+            deletions += 1;
+        }
+    }
+    (additions, deletions)
+}
+
+fn count_text_changes(old_text: Option<&str>, new_text: Option<&str>) -> (u64, u64) {
+    let old_text = old_text.unwrap_or_default();
+    let new_text = new_text.unwrap_or_default();
+    if old_text == new_text {
+        return (0, 0);
+    }
+    if old_text.is_empty() {
+        return (count_text_lines(new_text), 0);
+    }
+    if new_text.is_empty() {
+        return (0, count_text_lines(old_text));
+    }
+
+    let old_lines = old_text.lines().collect::<Vec<_>>();
+    let new_lines = new_text.lines().collect::<Vec<_>>();
+    if old_lines.len().saturating_mul(new_lines.len()) > 40_000 {
+        return (new_lines.len() as u64, old_lines.len() as u64);
+    }
+
+    let mut previous = vec![0usize; new_lines.len() + 1];
+    let mut current = vec![0usize; new_lines.len() + 1];
+    for old_line in &old_lines {
+        for (index, new_line) in new_lines.iter().enumerate() {
+            current[index + 1] = if old_line == new_line {
+                previous[index] + 1
+            } else {
+                previous[index + 1].max(current[index])
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+        current.fill(0);
+    }
+
+    let lcs = previous[new_lines.len()];
+    (
+        new_lines.len().saturating_sub(lcs) as u64,
+        old_lines.len().saturating_sub(lcs) as u64,
+    )
+}
+
+fn count_text_lines(text: &str) -> u64 {
+    if text.is_empty() {
+        0
+    } else {
+        text.lines().count() as u64
+    }
+}
+
+fn split_patch_blocks(content: &str) -> Vec<String> {
+    if content.contains("*** Begin Patch") || content.contains("*** Update File: ") {
+        let apply_blocks = split_apply_patch_blocks(content);
+        if !apply_blocks.is_empty() {
+            return apply_blocks;
+        }
+    }
+
+    if content.contains("diff --git ") {
+        let unified_blocks = split_unified_diff_blocks(content);
+        if !unified_blocks.is_empty() {
+            return unified_blocks;
+        }
+    }
+
+    if looks_like_patch(content) {
+        return vec![content.trim().to_string()];
+    }
+
+    Vec::new()
+}
+
+fn split_apply_patch_blocks(content: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+
+    for line in content.lines() {
+        let is_file_header = line.starts_with("*** Update File: ")
+            || line.starts_with("*** Add File: ")
+            || line.starts_with("*** Delete File: ");
+        if is_file_header && !current.is_empty() {
+            let block = current.join("\n").trim().to_string();
+            if !block.is_empty() {
+                blocks.push(block);
+            }
+            current.clear();
+        }
+        if line.starts_with("*** Begin Patch") || line.starts_with("*** End Patch") {
+            continue;
+        }
+        if is_file_header || !current.is_empty() {
+            current.push(line.to_string());
+        }
+    }
+
+    if !current.is_empty() {
+        let block = current.join("\n").trim().to_string();
+        if !block.is_empty() {
+            blocks.push(block);
+        }
+    }
+
+    blocks
+}
+
+fn split_unified_diff_blocks(content: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+
+    for line in content.lines() {
+        if line.starts_with("diff --git ") && !current.is_empty() {
+            let block = current.join("\n").trim().to_string();
+            if !block.is_empty() {
+                blocks.push(block);
+            }
+            current.clear();
+        }
+        if line.starts_with("diff --git ") || !current.is_empty() {
+            current.push(line.to_string());
+        }
+    }
+
+    if !current.is_empty() {
+        let block = current.join("\n").trim().to_string();
+        if !block.is_empty() {
+            blocks.push(block);
+        }
+    }
+
+    blocks
+}
+
+fn extract_patch_file_path(patch: &str) -> String {
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("*** Update File: ") {
+            return path.trim().to_string();
+        }
+        if let Some(path) = line.strip_prefix("*** Add File: ") {
+            return path.trim().to_string();
+        }
+        if let Some(path) = line.strip_prefix("*** Delete File: ") {
+            return path.trim().to_string();
+        }
+        if let Some(path) = line.strip_prefix("diff --git a/") {
+            if let Some((_, right)) = path.split_once(" b/") {
+                return right.trim().to_string();
+            }
+        }
+        if let Some(path) = line.strip_prefix("+++ ") {
+            let normalized = path.trim().trim_start_matches("b/").trim();
+            if !normalized.is_empty() && normalized != "/dev/null" {
+                return normalized.to_string();
+            }
+        }
+    }
+    "unknown-file".to_string()
 }
 
 /// Stream parsed messages from a session file. Callback returns `false` to break early.

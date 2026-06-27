@@ -11,7 +11,7 @@ import { StageCheckbox, type StageState } from "./StageCheckbox";
 import { STATUS_CONFIG } from "./GitStatusIcon";
 import { DiffViewerModal } from "./DiffViewerModal";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { TERM, EmptyHint } from "../stats/termStatsUi";
+import { TERM, EmptyHint, panelColorTint } from "../stats/termStatsUi";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import type { GitTreeNode, GitPullStrategy } from "../../lib/types";
 
@@ -390,7 +390,6 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
     ? "flex h-full min-h-0 flex-col overflow-hidden font-mono"
     : "relative z-[1] flex w-[184px] shrink-0 flex-col overflow-hidden border-l border-border font-mono";
   const Container = embedded ? "div" : "aside";
-
   return (
     <Container
       className={panelClassName}
@@ -409,7 +408,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               type="button"
               onClick={() => setGroupByMenuOpen(!groupByMenuOpen)}
               className="ui-focus-ring flex items-center gap-1 rounded px-1 py-0.5 text-[10px] transition-colors"
-              style={{ color: TERM.cyan, backgroundColor: `${TERM.cyan}12` }}
+              style={{ color: TERM.cyan, backgroundColor: panelColorTint(TERM.cyan, 7) }}
               title={t("git.groupBy")}
               aria-label={t("git.groupBy")}
             >
@@ -433,10 +432,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                     className="flex items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors"
                     style={{
                       color: gitGroupBy === "directory" ? TERM.cyan : TERM.fg,
-                      backgroundColor: gitGroupBy === "directory" ? `${TERM.cyan}20` : "transparent",
+                      backgroundColor: gitGroupBy === "directory" ? panelColorTint(TERM.cyan, 13) : "transparent",
                     }}
                     onMouseEnter={(e) => {
-                      if (gitGroupBy !== "directory") e.currentTarget.style.backgroundColor = `${TERM.cyan}10`;
+                      if (gitGroupBy !== "directory") e.currentTarget.style.backgroundColor = panelColorTint(TERM.cyan, 6);
                     }}
                     onMouseLeave={(e) => {
                       if (gitGroupBy !== "directory") e.currentTarget.style.backgroundColor = "transparent";
@@ -452,10 +451,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                     className="flex items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors"
                     style={{
                       color: gitGroupBy === "module" ? TERM.cyan : TERM.fg,
-                      backgroundColor: gitGroupBy === "module" ? `${TERM.cyan}20` : "transparent",
+                      backgroundColor: gitGroupBy === "module" ? panelColorTint(TERM.cyan, 13) : "transparent",
                     }}
                     onMouseEnter={(e) => {
-                      if (gitGroupBy !== "module") e.currentTarget.style.backgroundColor = `${TERM.cyan}10`;
+                      if (gitGroupBy !== "module") e.currentTarget.style.backgroundColor = panelColorTint(TERM.cyan, 6);
                     }}
                     onMouseLeave={(e) => {
                       if (gitGroupBy !== "module") e.currentTarget.style.backgroundColor = "transparent";
@@ -481,7 +480,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               type="button"
               onClick={allCollapsed ? expandAllDirs : collapseAllDirs}
               className="ui-focus-ring rounded px-1 py-0.5 text-[10px] transition-colors"
-              style={{ color: TERM.cyan, backgroundColor: `${TERM.cyan}12` }}
+              style={{ color: TERM.cyan, backgroundColor: panelColorTint(TERM.cyan, 7) }}
               title={allCollapsed ? t("git.expandTree") : t("git.collapseTree")}
               aria-label={allCollapsed ? t("git.expandTree") : t("git.collapseTree")}
             >
@@ -532,7 +531,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                 aria-label={title}
                 aria-pressed={active}
                 style={{
-                  backgroundColor: active ? `${btn.color}30` : "transparent",
+                  backgroundColor: active ? panelColorTint(btn.color, 19) : "transparent",
                   color: active ? btn.color : TERM.dim,
                   border: `1px solid ${active ? btn.color : "transparent"}`,
                 }}
@@ -656,7 +655,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                     onClick={() => void handlePull("merge")}
                     disabled={pulling}
                     className="ui-focus-ring flex items-center gap-1 rounded-l px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
-                    style={{ color: TERM.cyan, border: `1px solid ${TERM.cyan}55`, borderRight: "none" }}
+                    style={{ color: TERM.cyan, border: `1px solid ${panelColorTint(TERM.cyan, 34)}`, borderRight: "none" }}
                     title={t("git.pull.title")}
                   >
                     <Download size={12} />
@@ -667,7 +666,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                     onClick={() => setPullMenuOpen((v) => !v)}
                     disabled={pulling}
                     className="ui-focus-ring flex items-center justify-center rounded-r px-1 transition-opacity hover:opacity-80 disabled:opacity-40"
-                    style={{ color: TERM.cyan, border: `1px solid ${TERM.cyan}55` }}
+                    style={{ color: TERM.cyan, border: `1px solid ${panelColorTint(TERM.cyan, 34)}` }}
                     title={t("git.pull.method")}
                     aria-haspopup="menu"
                     aria-expanded={pullMenuOpen}
@@ -712,7 +711,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                 onClick={() => void handlePush()}
                 disabled={pushing || !canPush}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
-                style={{ color: TERM.green, border: `1px solid ${TERM.green}55` }}
+                style={{ color: TERM.green, border: `1px solid ${panelColorTint(TERM.green, 34)}` }}
                 title={hasUpstream ? t("git.push.title") : t("git.push.setUpstreamTitle")}
               >
                 <Upload size={12} />
@@ -727,7 +726,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
       {projectPath && (pendingOp || hasConflicts) && (
         <div
           className="flex shrink-0 flex-col gap-1.5 border-t px-2 py-1.5"
-          style={{ borderColor: `${STATUS_CONFIG.C.color}55`, backgroundColor: `${STATUS_CONFIG.C.color}12` }}
+          style={{ borderColor: panelColorTint(STATUS_CONFIG.C.color, 34), backgroundColor: panelColorTint(STATUS_CONFIG.C.color, 7) }}
         >
           <span className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color: STATUS_CONFIG.C.color }}>
             <GitMerge size={12} strokeWidth={2} />
@@ -746,7 +745,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
                 onClick={() => void handleRebaseContinue()}
                 disabled={pulling || hasConflicts}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
-                style={{ color: TERM.green, border: `1px solid ${TERM.green}55` }}
+                style={{ color: TERM.green, border: `1px solid ${panelColorTint(TERM.green, 34)}` }}
                 title={hasConflicts ? t("git.conflict.resolveFirst") : t("git.conflict.continueRebase")}
               >
                 <Check size={12} /> {t("git.conflict.continue")}
@@ -757,7 +756,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               onClick={() => void handlePullAbort()}
               disabled={pulling}
               className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
-              style={{ color: STATUS_CONFIG.C.color, border: `1px solid ${STATUS_CONFIG.C.color}55` }}
+              style={{ color: STATUS_CONFIG.C.color, border: `1px solid ${panelColorTint(STATUS_CONFIG.C.color, 34)}` }}
               title={t("git.conflict.abort")}
             >
               <X size={12} /> {t("git.conflict.abort")}
@@ -796,7 +795,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
               onClick={() => void handleCommit()}
               disabled={committing || committableCount === 0 || commitMsg.trim().length === 0}
               className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
-              style={{ color: TERM.green, border: `1px solid ${TERM.green}55` }}
+              style={{ color: TERM.green, border: `1px solid ${panelColorTint(TERM.green, 34)}` }}
               title={t("git.commit.title")}
             >
               <GitCommitHorizontal size={12} />

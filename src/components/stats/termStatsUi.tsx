@@ -1,30 +1,121 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import type { HistorySessionDetail } from "../../lib/types";
 import { calculateCost, inferDominantModel } from "../../lib/modelPricing";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { translateCurrent } from "../../lib/i18n";
+import type { TerminalSidePanelSkin } from "../../stores/settingsStore";
 
-// 终端监控面板配色（btop / 系统监控风格，深色卡片 + 绿色点缀）
+// 终端侧边面板语义配色。具体值由终端主题或侧边栏皮肤写入 CSS 变量。
 export const TERM = {
-  bg: "#0A0A0A",
-  card: "#121212",
-  cardInner: "#181818",
-  border: "#2E2E2E",
-  fg: "#ECECEC",
-  dim: "#9CA0A6",
-  green: "#3DD68C",
-  yellow: "#E5C453",
-  red: "#F25E5E",
-  magenta: "#C77DBB",
-  cyan: "#5AC8E0",
-  blue: "#5B8DEF",
-  track: "#222222",
+  bg: "var(--term-panel-bg, #0A0A0A)",
+  card: "var(--term-panel-card, #121212)",
+  cardInner: "var(--term-panel-card-inner, #181818)",
+  border: "var(--term-panel-border, #2E2E2E)",
+  fg: "var(--term-panel-fg, #ECECEC)",
+  dim: "var(--term-panel-dim, #9CA0A6)",
+  green: "var(--term-panel-green, #3DD68C)",
+  yellow: "var(--term-panel-yellow, #E5C453)",
+  red: "var(--term-panel-red, #F25E5E)",
+  magenta: "var(--term-panel-magenta, #C77DBB)",
+  cyan: "var(--term-panel-cyan, #5AC8E0)",
+  blue: "var(--term-panel-blue, #5B8DEF)",
+  track: "var(--term-panel-track, #222222)",
 };
+
+export const TERM_PANEL = TERM;
+
+export function panelColorTint(color: string, amount: number, base = "transparent"): string {
+  const clamped = Math.max(0, Math.min(100, amount));
+  return `color-mix(in srgb, ${color} ${clamped}%, ${base})`;
+}
+
+const SIDE_PANEL_SKIN_STYLES: Record<Exclude<TerminalSidePanelSkin, "terminal">, Record<string, string>> = {
+  "classic-terminal": {
+    "--term-panel-bg": "#0A0A0A",
+    "--term-panel-card": "#121212",
+    "--term-panel-card-inner": "#181818",
+    "--term-panel-border": "#2E2E2E",
+    "--term-panel-fg": "#ECECEC",
+    "--term-panel-dim": "#9CA0A6",
+    "--term-panel-green": "#3DD68C",
+    "--term-panel-yellow": "#E5C453",
+    "--term-panel-red": "#F25E5E",
+    "--term-panel-magenta": "#C77DBB",
+    "--term-panel-cyan": "#5AC8E0",
+    "--term-panel-blue": "#5B8DEF",
+    "--term-panel-track": "#222222",
+  },
+  "warm-paper": {
+    "--term-panel-bg": "#fbf4e8",
+    "--term-panel-card": "#fffaf0",
+    "--term-panel-card-inner": "#f4ead7",
+    "--term-panel-border": "#dec7a6",
+    "--term-panel-fg": "#2e2418",
+    "--term-panel-dim": "#77634a",
+    "--term-panel-green": "#4f8a55",
+    "--term-panel-yellow": "#b9811f",
+    "--term-panel-red": "#c15442",
+    "--term-panel-magenta": "#a65d7a",
+    "--term-panel-cyan": "#2f8797",
+    "--term-panel-blue": "#3f6ea8",
+    "--term-panel-track": "#eadbc3",
+  },
+  sunrise: {
+    "--term-panel-bg": "#fff2e4",
+    "--term-panel-card": "#fff8ec",
+    "--term-panel-card-inner": "#ffe8d1",
+    "--term-panel-border": "#f2bf8a",
+    "--term-panel-fg": "#331d12",
+    "--term-panel-dim": "#855d42",
+    "--term-panel-green": "#5d8f48",
+    "--term-panel-yellow": "#c77a1d",
+    "--term-panel-red": "#d15b45",
+    "--term-panel-magenta": "#b46a86",
+    "--term-panel-cyan": "#2e8c95",
+    "--term-panel-blue": "#4d73b8",
+    "--term-panel-track": "#f7d9bd",
+  },
+  linen: {
+    "--term-panel-bg": "#f8efe1",
+    "--term-panel-card": "#fffaf1",
+    "--term-panel-card-inner": "#efe2cd",
+    "--term-panel-border": "#d4bea0",
+    "--term-panel-fg": "#2b251d",
+    "--term-panel-dim": "#726555",
+    "--term-panel-green": "#5f8358",
+    "--term-panel-yellow": "#a97929",
+    "--term-panel-red": "#b65a4a",
+    "--term-panel-magenta": "#98677d",
+    "--term-panel-cyan": "#4f8790",
+    "--term-panel-blue": "#576f9e",
+    "--term-panel-track": "#e7d7bd",
+  },
+  latte: {
+    "--term-panel-bg": "#f6eadc",
+    "--term-panel-card": "#fff7ee",
+    "--term-panel-card-inner": "#ead8c5",
+    "--term-panel-border": "#c9ab8e",
+    "--term-panel-fg": "#30251c",
+    "--term-panel-dim": "#7b6654",
+    "--term-panel-green": "#678955",
+    "--term-panel-yellow": "#a66f2a",
+    "--term-panel-red": "#b45b4c",
+    "--term-panel-magenta": "#956075",
+    "--term-panel-cyan": "#4d8388",
+    "--term-panel-blue": "#596f9c",
+    "--term-panel-track": "#dfc9b5",
+  },
+};
+
+export function getTerminalSidePanelSkinStyle(skin: TerminalSidePanelSkin): CSSProperties {
+  if (skin === "terminal") return {};
+  return SIDE_PANEL_SKIN_STYLES[skin] as CSSProperties;
+}
 
 // 来源徽章配色：claude 黄 / codex 青
 export const SOURCE_COLORS: Record<string, string> = {
-  claude: TERM.yellow,
-  codex: TERM.cyan,
+  claude: TERM_PANEL.yellow,
+  codex: TERM_PANEL.cyan,
 };
 
 export function formatCount(value: number): string {
@@ -161,7 +252,7 @@ export function useCountUp(target: number, duration = 700): number {
 
 export function StatCard({
   icon,
-  iconColor = TERM.green,
+  iconColor = TERM_PANEL.green,
   title,
   headerRight,
   children,
@@ -181,7 +272,7 @@ export function StatCard({
         <div className="flex min-w-0 items-center gap-2">
           <span
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-            style={{ backgroundColor: `${iconColor}1A`, color: iconColor }}
+            style={{ backgroundColor: panelColorTint(iconColor, 10), color: iconColor }}
           >
             {icon}
           </span>
@@ -200,7 +291,7 @@ export function HeaderPill({ children, color = TERM.green }: { children: React.R
   return (
     <span
       className="shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-semibold"
-      style={{ borderColor: `${color}55`, color, backgroundColor: `${color}14` }}
+      style={{ borderColor: panelColorTint(color, 34), color, backgroundColor: panelColorTint(color, 8) }}
     >
       {children}
     </span>
@@ -312,7 +403,7 @@ export function Donut({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke={TERM.track}
+          stroke={TERM_PANEL.track}
           strokeWidth={thickness}
         />
         {segments.map((seg, index) => {
@@ -365,36 +456,36 @@ function SparkTooltip({
 }) {
   const rows = detail
     ? [
-        { label: translateCurrent("termStats.input"), value: detail.input ?? 0, color: TERM.green },
-        { label: translateCurrent("termStats.output"), value: detail.output ?? 0, color: TERM.yellow },
-        { label: translateCurrent("termStats.cacheHit"), value: detail.cacheRead ?? 0, color: TERM.blue },
-        { label: translateCurrent("termStats.cacheWrite"), value: detail.cacheCreation ?? 0, color: TERM.magenta },
+        { label: translateCurrent("termStats.input"), value: detail.input ?? 0, color: TERM_PANEL.green },
+        { label: translateCurrent("termStats.output"), value: detail.output ?? 0, color: TERM_PANEL.yellow },
+        { label: translateCurrent("termStats.cacheHit"), value: detail.cacheRead ?? 0, color: TERM_PANEL.blue },
+        { label: translateCurrent("termStats.cacheWrite"), value: detail.cacheCreation ?? 0, color: TERM_PANEL.magenta },
       ]
     : [];
 
   return (
     <div
       className="rounded-lg border px-2.5 py-1.5 text-[10px] tabular-nums shadow-lg"
-      style={{ backgroundColor: TERM.cardInner, borderColor: TERM.border, minWidth: 124 }}
+      style={{ backgroundColor: TERM_PANEL.cardInner, borderColor: TERM_PANEL.border, minWidth: 124 }}
     >
-      <div className="mb-1 font-semibold" style={{ color: TERM.cyan }}>
+      <div className="mb-1 font-semibold" style={{ color: TERM_PANEL.cyan }}>
         {translateCurrent("termStats.tooltipPoint", { index: index + 1, count })}
       </div>
       {rows.map((r) => (
         <div key={r.label} className="flex items-center justify-between gap-3 leading-4">
-          <span className="flex items-center gap-1.5" style={{ color: TERM.dim }}>
+          <span className="flex items-center gap-1.5" style={{ color: TERM_PANEL.dim }}>
             <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: r.color }} />
             {r.label}
           </span>
-          <span style={{ color: TERM.fg }}>{formatCount(r.value)}</span>
+          <span style={{ color: TERM_PANEL.fg }}>{formatCount(r.value)}</span>
         </div>
       ))}
       <div
         className="mt-1 flex items-center justify-between gap-3 border-t pt-1 leading-4"
-        style={{ borderColor: TERM.border }}
+        style={{ borderColor: TERM_PANEL.border }}
       >
-        <span style={{ color: TERM.dim }}>{translateCurrent("termStats.total")}</span>
-        <span className="font-bold" style={{ color: TERM.fg }}>
+        <span style={{ color: TERM_PANEL.dim }}>{translateCurrent("termStats.total")}</span>
+        <span className="font-bold" style={{ color: TERM_PANEL.fg }}>
           {formatCount(total)}
         </span>
       </div>
@@ -405,7 +496,7 @@ function SparkTooltip({
 export function Sparkline({
   points,
   details,
-  color = TERM.green,
+  color = TERM_PANEL.green,
   height = 36,
 }: {
   points: number[];
@@ -421,7 +512,7 @@ export function Sparkline({
     return (
       <div
         className="flex items-center justify-center rounded-md text-[10px]"
-        style={{ height, color: TERM.dim, backgroundColor: TERM.cardInner }}
+        style={{ height, color: TERM_PANEL.dim, backgroundColor: TERM_PANEL.cardInner }}
       >
         {translateCurrent("termStats.noTrendData")}
       </div>
@@ -509,7 +600,7 @@ export function Sparkline({
             height: 7,
             transform: "translate(-50%, -50%)",
             backgroundColor: color,
-            boxShadow: `0 0 0 2px ${TERM.card}`,
+            boxShadow: `0 0 0 2px ${TERM_PANEL.card}`,
           }}
         />
       )}
@@ -545,7 +636,7 @@ export function SegmentedBar({ parts, height = 6 }: { parts: SegmentedBarPart[];
   return (
     <div
       className="flex w-full overflow-hidden rounded-full"
-      style={{ height, backgroundColor: TERM.track }}
+      style={{ height, backgroundColor: TERM_PANEL.track }}
     >
       {parts.map((part, index) => (
         <div
@@ -562,7 +653,7 @@ export function SegmentedBar({ parts, height = 6 }: { parts: SegmentedBarPart[];
 export function ProgressBar({ ratio, color, height = 6 }: { ratio: number; color: string; height?: number }) {
   const clamped = Math.max(0, Math.min(1, ratio));
   return (
-    <div className="w-full overflow-hidden rounded-full" style={{ height, backgroundColor: TERM.track }}>
+    <div className="w-full overflow-hidden rounded-full" style={{ height, backgroundColor: TERM_PANEL.track }}>
       <div
         className="h-full rounded-full transition-all duration-700 ease-out"
         style={{ width: `${clamped * 100}%`, backgroundColor: color }}
@@ -571,7 +662,7 @@ export function ProgressBar({ ratio, color, height = 6 }: { ratio: number; color
   );
 }
 
-export function LiveDot({ color = TERM.green }: { color?: string }) {
+export function LiveDot({ color = TERM_PANEL.green }: { color?: string }) {
   return (
     <span className="relative inline-flex h-2 w-2">
       <span
@@ -585,10 +676,10 @@ export function LiveDot({ color = TERM.green }: { color?: string }) {
 
 export function EmptyHint({ text }: { text: string }) {
   return (
-    <div className="flex h-full items-center justify-center p-4 text-[12px]" style={{ color: TERM.dim }}>
-      <span style={{ color: TERM.green }}>❯&nbsp;</span>
+    <div className="flex h-full items-center justify-center p-4 text-[12px]" style={{ color: TERM_PANEL.dim }}>
+      <span style={{ color: TERM_PANEL.green }}>❯&nbsp;</span>
       {text}
-      <span className="animate-pulse" style={{ color: TERM.fg }}>
+      <span className="animate-pulse" style={{ color: TERM_PANEL.fg }}>
         ▊
       </span>
     </div>

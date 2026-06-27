@@ -4,6 +4,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { AppMantineThemeProvider } from "./ui/MantineThemeProvider";
 import { SettingsLayout } from "./settings/SettingsLayout";
 import { GeneralSettingsPage } from "./settings/pages/GeneralSettingsPage";
+import { SidebarSettingsPage } from "./settings/pages/SidebarSettingsPage";
 import { ThemeSettingsPage } from "./settings/pages/ThemeSettingsPage";
 import { ShortcutSettingsPage } from "./settings/pages/ShortcutSettingsPage";
 import { TemplateSettingsPage } from "./settings/pages/TemplateSettingsPage";
@@ -17,6 +18,7 @@ import { useI18n, type TranslationKey } from "../lib/i18n";
 
 export type SettingsTab =
   | "general"
+  | "sidebar"
   | "terminal-theme"
   | "shortcuts"
   | "templates"
@@ -42,6 +44,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "model-pricing",
   "sync",
   "hooks",
+  "sidebar",
   "about",
 ];
 
@@ -50,6 +53,11 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     label: "settings.tabs.general.label",
     title: "settings.tabs.general.title",
     description: "settings.tabs.general.description",
+  },
+  sidebar: {
+    label: "settings.tabs.sidebar.label",
+    title: "settings.tabs.sidebar.title",
+    description: "settings.tabs.sidebar.description",
   },
   "terminal-theme": {
     label: "settings.tabs.terminal.label",
@@ -150,6 +158,7 @@ export function SettingsModal({ open, onClose, initialTab }: Props) {
   const activeConfig = SETTINGS_TAB_CONFIG[activeTab];
   const activeContent = (() => {
     if (activeTab === "general") return <GeneralSettingsPage />;
+    if (activeTab === "sidebar") return <SidebarSettingsPage />;
     if (activeTab === "terminal-theme") return <ThemeSettingsPage />;
     if (activeTab === "shortcuts") return <ShortcutSettingsPage searchValue={searchValue} />;
     if (activeTab === "templates") return <TemplateSettingsPage searchValue={searchValue} />;

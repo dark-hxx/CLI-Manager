@@ -2,7 +2,7 @@ import { ChevronRight, Undo2, Check, Minus } from "../icons";
 import type { GitTreeNode, GitFileChange } from "../../lib/types";
 import { GitStatusIcon } from "./GitStatusIcon";
 import { useGitStore } from "../../stores/gitStore";
-import { TERM } from "../stats/termStatsUi";
+import { TERM, panelColorTint } from "../stats/termStatsUi";
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from "../ui/context-menu";
 import { getMaterialFileIcon, getMaterialFolderIcon } from "@baybreezy/file-extension-icon";
 import { StageCheckbox, type StageState } from "./StageCheckbox";
@@ -97,7 +97,7 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
           <div
             className="group flex items-center gap-1.5 rounded py-0.5 px-1 cursor-pointer text-[13px]"
             style={{ paddingLeft: indentPx, backgroundColor: "transparent" }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = `${TERM.cyan}20`)}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = panelColorTint(TERM.cyan, 13))}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
             onClick={() => onFileClick(node.path)}
           >
@@ -274,7 +274,7 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               fontWeight: isModuleRoot ? 600 : 500,
             }}
             onClick={() => toggleDir(displayCollapseKey)}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = `${TERM.cyan}20`)}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = panelColorTint(TERM.cyan, 13))}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
           >
             <span
@@ -310,7 +310,7 @@ export function GitTreeNodeComponent({ node, depth, treeId, onFileClick, onReque
               )}
             </span>
             {hasChildren && (
-              <span className="text-[11px] rounded px-1 py-0" style={{ color: TERM.dim, backgroundColor: `${TERM.dim}20` }}>
+              <span className="text-[11px] rounded px-1 py-0" style={{ color: TERM.dim, backgroundColor: panelColorTint(TERM.dim, 13) }}>
                 {displayNode.children!.length}
               </span>
             )}

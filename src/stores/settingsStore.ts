@@ -30,6 +30,15 @@ export type TerminalThemeMode = "follow-app" | "independent";
 export type SidebarDensity = "compact" | "comfortable";
 export type ViewMode = "standard" | "compact";
 export type CloseBehavior = "ask" | "minimize" | "exit";
+export type TerminalSidePanelSkin = "terminal" | "classic-terminal" | "warm-paper" | "sunrise" | "linen" | "latte";
+export type TerminalStatsCardKey =
+  | "session"
+  | "tokenUsage"
+  | "tokenTrend"
+  | "modelContext"
+  | "tools"
+  | "latestChanges"
+  | "todayUsage";
 export const UI_FONT_SIZE_MIN = 11;
 export const UI_FONT_SIZE_MAX = 18;
 export const UI_FONT_SIZE_DEFAULT = 13;
@@ -87,6 +96,18 @@ export interface SidebarToolbarVisibilitySettings {
   stats: boolean;
   gitChanges: boolean;
 }
+
+export type TerminalStatsCardVisibilitySettings = Record<TerminalStatsCardKey, boolean>;
+
+export const TERMINAL_STATS_CARD_KEYS: readonly TerminalStatsCardKey[] = [
+  "session",
+  "tokenUsage",
+  "tokenTrend",
+  "modelContext",
+  "tools",
+  "latestChanges",
+  "todayUsage",
+];
 
 export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   newTerminal: "Ctrl+Shift+T",
@@ -171,6 +192,8 @@ interface Settings {
   terminalToolbarOrder: string[];
   /** 是否把实时统计与 Git 变更合并为带 Tab 的单一侧边面板；关闭后两者可并排独立显示。 */
   terminalSidePanelMerged: boolean;
+  terminalSidePanelSkin: TerminalSidePanelSkin;
+  terminalStatsCardVisibility: TerminalStatsCardVisibilitySettings;
   shellRuntimeMonitoringEnabled: boolean;
   ccusageAnalyticsEnabled: boolean;
   terminalBackground: TerminalBackgroundSettings;
@@ -252,6 +275,16 @@ const DEFAULTS: Settings = {
   },
   terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "files", "gitChanges", "stats"],
   terminalSidePanelMerged: true,
+  terminalSidePanelSkin: "terminal",
+  terminalStatsCardVisibility: {
+    session: true,
+    tokenUsage: true,
+    tokenTrend: true,
+    modelContext: true,
+    tools: true,
+    latestChanges: true,
+    todayUsage: true,
+  },
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
   terminalBackground: {
@@ -413,6 +446,29 @@ export function migrateTerminalToolbarOrder(value: unknown): string[] {
   const filtered = value.filter((k): k is string => typeof k === "string" && validKeys.has(k));
   const missing = defaults.filter((k) => !filtered.includes(k));
   return [...filtered, ...missing];
+}
+
+function migrateTerminalSidePanelSkin(value: unknown): TerminalSidePanelSkin {
+  return value === "terminal" ||
+    value === "classic-terminal" ||
+    value === "warm-paper" ||
+    value === "sunrise" ||
+    value === "linen" ||
+    value === "latte"
+    ? value
+    : DEFAULTS.terminalSidePanelSkin;
+}
+
+export function migrateTerminalStatsCardVisibility(value: unknown): TerminalStatsCardVisibilitySettings {
+  const defaults = DEFAULTS.terminalStatsCardVisibility;
+  if (typeof value !== "object" || value === null) {
+    return { ...defaults };
+  }
+  const raw = value as Partial<Record<TerminalStatsCardKey, unknown>>;
+  return TERMINAL_STATS_CARD_KEYS.reduce<TerminalStatsCardVisibilitySettings>((next, key) => {
+    next[key] = typeof raw[key] === "boolean" ? raw[key] : defaults[key];
+    return next;
+  }, { ...defaults });
 }
 
 function migrateUnsplitBehavior(value: unknown): UnsplitBehavior {
@@ -585,6 +641,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.terminalSidePanelMerged === "boolean"
         ? entries.terminalSidePanelMerged
         : DEFAULTS.terminalSidePanelMerged;
+    entries.terminalSidePanelSkin = migrateTerminalSidePanelSkin(entries.terminalSidePanelSkin);
+    entries.terminalStatsCardVisibility = migrateTerminalStatsCardVisibility(entries.terminalStatsCardVisibility);
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
 
     // 默认 Shell：非 Windows 上迁移旧 Windows-only 默认值，避免 macOS/Linux 继续显示或启动 powershell.exe。

@@ -1,11 +1,11 @@
-import { Activity, CalendarClock, Coins, Cpu, Wrench } from "lucide-react";
-import type { HistorySessionDetail, HistoryToolCount } from "../../lib/types";
+import { Activity, CalendarClock, Coins, Cpu, FileCode2, Wrench } from "lucide-react";
+import type { HistoryFileChangeSummary, HistorySessionDetail, HistoryToolCount } from "../../lib/types";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { getContextLimit } from "../../lib/modelPricing";
 import type { TodayProjectStats } from "../../stores/historyStore";
 import { useI18n } from "../../lib/i18n";
 import {
-  TERM,
+  TERM_PANEL,
   StatCard,
   HeaderPill,
   Row,
@@ -39,36 +39,36 @@ export function TokenUsageCard({ stats }: { stats: TokenStats }) {
   return (
     <StatCard
       icon={<Coins size={13} />}
-      iconColor={TERM.yellow}
+      iconColor={TERM_PANEL.yellow}
       title={t("termStats.tokenUsage")}
       headerRight={<HeaderPill>{formatCompactCount(animatedTotal)}</HeaderPill>}
     >
       <div className="flex items-center gap-3">
         <Donut
           segments={[
-            { value: stats.inputTokens, color: TERM.green },
-            { value: stats.outputTokens, color: TERM.yellow },
-            { value: stats.cacheReadTokens, color: TERM.blue },
-            { value: stats.cacheCreationTokens, color: TERM.magenta },
+            { value: stats.inputTokens, color: TERM_PANEL.green },
+            { value: stats.outputTokens, color: TERM_PANEL.yellow },
+            { value: stats.cacheReadTokens, color: TERM_PANEL.blue },
+            { value: stats.cacheCreationTokens, color: TERM_PANEL.magenta },
           ]}
         >
-          <span className="text-[10px] font-bold" style={{ color: TERM.fg }}>
+          <span className="text-[10px] font-bold" style={{ color: TERM_PANEL.fg }}>
             {formatCompactCount(animatedTotal)}
           </span>
         </Donut>
         <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
-          <StatChip dotColor={TERM.green} label={t("termStats.input")} value={formatCompactCount(stats.inputTokens)} />
-          <StatChip dotColor={TERM.yellow} label={t("termStats.output")} value={formatCompactCount(stats.outputTokens)} />
-          <StatChip dotColor={TERM.blue} label={t("termStats.cacheHit")} value={formatCompactCount(stats.cacheReadTokens)} />
-          <StatChip dotColor={TERM.magenta} label={t("termStats.cacheWrite")} value={formatCompactCount(stats.cacheCreationTokens)} />
+          <StatChip dotColor={TERM_PANEL.green} label={t("termStats.input")} value={formatCompactCount(stats.inputTokens)} />
+          <StatChip dotColor={TERM_PANEL.yellow} label={t("termStats.output")} value={formatCompactCount(stats.outputTokens)} />
+          <StatChip dotColor={TERM_PANEL.blue} label={t("termStats.cacheHit")} value={formatCompactCount(stats.cacheReadTokens)} />
+          <StatChip dotColor={TERM_PANEL.magenta} label={t("termStats.cacheWrite")} value={formatCompactCount(stats.cacheCreationTokens)} />
         </div>
       </div>
       <div
         className="mt-2 flex items-baseline justify-between border-t pt-2 text-[11px]"
-        style={{ borderColor: TERM.border }}
+        style={{ borderColor: TERM_PANEL.border }}
       >
-        <span style={{ color: TERM.dim }}>{t("termStats.estimatedCost")}</span>
-        <span className="text-[14px] font-bold" style={{ color: TERM.green }}>
+        <span style={{ color: TERM_PANEL.dim }}>{t("termStats.estimatedCost")}</span>
+        <span className="text-[14px] font-bold" style={{ color: TERM_PANEL.green }}>
           {formatCost(animatedCost)}
         </span>
       </div>
@@ -110,12 +110,12 @@ export function ModelContextCard({
 
   const percentColor =
     usagePercent === null
-      ? TERM.dim
+      ? TERM_PANEL.dim
       : usagePercent >= 80
-        ? TERM.red
+        ? TERM_PANEL.red
         : usagePercent >= 50
-          ? TERM.yellow
-          : TERM.green;
+          ? TERM_PANEL.yellow
+          : TERM_PANEL.green;
   const animatedPercent = useCountUp(usagePercent ?? 0);
   // 未绑定空态（session 为 null）补骨架占位（徽章/剩余行/进度条），高度与有数据时一致；
   // 非空会话维持原生行为，历史会话面板不受影响
@@ -125,21 +125,21 @@ export function ModelContextCard({
   return (
     <StatCard
       icon={<Cpu size={13} />}
-      iconColor={TERM.magenta}
+      iconColor={TERM_PANEL.magenta}
       title={t("termStats.modelContext")}
       headerRight={
         usagePercent !== null ? (
           <HeaderPill color={percentColor}>{animatedPercent.toFixed(1)}%</HeaderPill>
         ) : isEmpty ? (
-          <HeaderPill color={TERM.dim}>—</HeaderPill>
+          <HeaderPill color={TERM_PANEL.dim}>—</HeaderPill>
         ) : undefined
       }
     >
       <div className="flex items-center justify-between gap-2 text-[11px] leading-5">
-        <span className="shrink-0" style={{ color: TERM.dim }}>{t("termStats.model")}</span>
+        <span className="shrink-0" style={{ color: TERM_PANEL.dim }}>{t("termStats.model")}</span>
         <span
           className="flex min-w-0 items-center gap-1 truncate text-right"
-          style={{ color: TERM.magenta }}
+          style={{ color: TERM_PANEL.magenta }}
           title={stats.dominantModel || "—"}
         >
           {modelVendor && <VendorIcon vendor={modelVendor} size={12} />}
@@ -149,22 +149,22 @@ export function ModelContextCard({
       <Row
         label={t("termStats.reasoningEffort")}
         value={reasoningEffort}
-        color={reasoningEffort === "—" ? TERM.dim : TERM.magenta}
+        color={reasoningEffort === "—" ? TERM_PANEL.dim : TERM_PANEL.magenta}
       />
       <Row
         label={t("termStats.currentContext")}
         value={contextTokens !== null ? formatCompactCount(contextTokens) : "—"}
-        color={TERM.fg}
+        color={TERM_PANEL.fg}
       />
       <Row
         label={t("termStats.contextLimit")}
         value={contextLimit ? formatCompactCount(contextLimit) : "—"}
-        color={TERM.fg}
+        color={TERM_PANEL.fg}
       />
       {remaining !== null ? (
         <Row label={t("termStats.remaining")} value={formatCompactCount(remaining)} color={percentColor} />
       ) : isEmpty ? (
-        <Row label={t("termStats.remaining")} value="—" color={TERM.dim} />
+        <Row label={t("termStats.remaining")} value="—" color={TERM_PANEL.dim} />
       ) : null}
       {usagePercent !== null ? (
         <div className="mt-1.5">
@@ -172,7 +172,7 @@ export function ModelContextCard({
         </div>
       ) : isEmpty ? (
         <div className="mt-1.5">
-          <ProgressBar ratio={0} color={TERM.dim} />
+          <ProgressBar ratio={0} color={TERM_PANEL.dim} />
         </div>
       ) : null}
     </StatCard>
@@ -223,22 +223,22 @@ export function TrendCard({ session }: { session: HistorySessionDetail | null })
   return (
     <StatCard
       icon={<Activity size={13} />}
-      iconColor={TERM.cyan}
+      iconColor={TERM_PANEL.cyan}
       title={t("termStats.tokenTrend")}
       headerRight={
         hasTrend ? (
-          <HeaderPill color={TERM.cyan}>{t("termStats.trendPointCount", { count: recent.length })}</HeaderPill>
+          <HeaderPill color={TERM_PANEL.cyan}>{t("termStats.trendPointCount", { count: recent.length })}</HeaderPill>
         ) : isEmpty ? (
-          <HeaderPill color={TERM.cyan}>—</HeaderPill>
+          <HeaderPill color={TERM_PANEL.cyan}>—</HeaderPill>
         ) : undefined
       }
     >
       {hasTrend ? (
-        <Sparkline points={values} details={recent} color={TERM.cyan} height={40} />
+        <Sparkline points={values} details={recent} color={TERM_PANEL.cyan} height={40} />
       ) : (
         <div
           className="flex items-center justify-center rounded-md text-[10px]"
-          style={{ height: 40, color: TERM.dim, backgroundColor: TERM.cardInner }}
+          style={{ height: 40, color: TERM_PANEL.dim, backgroundColor: TERM_PANEL.cardInner }}
         >
           {recent.length === 1
             ? t("termStats.singleTrendPoint", { tokens: formatCompactCount(peakTokens) })
@@ -246,14 +246,14 @@ export function TrendCard({ session }: { session: HistorySessionDetail | null })
         </div>
       )}
       {hasTrend ? (
-        <div className="mt-1 flex justify-between text-[10px]" style={{ color: TERM.dim }}>
+        <div className="mt-1 flex justify-between text-[10px]" style={{ color: TERM_PANEL.dim }}>
           <span>{sourceLabel}</span>
           <span>
             {t("termStats.peak", { value: formatCompactCount(peakTokens) })}
           </span>
         </div>
       ) : isEmpty ? (
-        <div className="mt-1 flex justify-between text-[10px]" style={{ color: TERM.dim }}>
+        <div className="mt-1 flex justify-between text-[10px]" style={{ color: TERM_PANEL.dim }}>
           <span>{sourceLabel}</span>
           <span>{t("termStats.peak", { value: formatCompactCount(peakTokens) })}</span>
         </div>
@@ -287,7 +287,7 @@ function ToolCountList({
           key={item.name}
           className="flex items-baseline justify-between gap-2 text-[11px] leading-5"
         >
-          <span className="truncate" style={{ color: TERM.fg }} title={item.name}>
+          <span className="truncate" style={{ color: TERM_PANEL.fg }} title={item.name}>
             {item.name}
           </span>
           <span className="shrink-0 font-bold" style={{ color }}>
@@ -296,7 +296,7 @@ function ToolCountList({
         </div>
       ))}
       {restCount > 0 && (
-        <div className="text-[10px]" style={{ color: TERM.dim }}>
+        <div className="text-[10px]" style={{ color: TERM_PANEL.dim }}>
           +{restCount} {t("common.more")}
         </div>
       )}
@@ -317,29 +317,113 @@ export function ToolsCard({ session }: { session: HistorySessionDetail | null })
   return (
     <StatCard
       icon={<Wrench size={13} />}
-      iconColor={TERM.blue}
+      iconColor={TERM_PANEL.blue}
       title={t("termStats.tools")}
       headerRight={
         toolCalls > 0 ? (
-          <HeaderPill color={TERM.blue}>{t("termStats.callCount", { count: formatCompactCount(toolCalls) })}</HeaderPill>
+          <HeaderPill color={TERM_PANEL.blue}>{t("termStats.callCount", { count: formatCompactCount(toolCalls) })}</HeaderPill>
         ) : isEmpty ? (
-          <HeaderPill color={TERM.blue}>{t("termStats.zeroCalls")}</HeaderPill>
+          <HeaderPill color={TERM_PANEL.blue}>{t("termStats.zeroCalls")}</HeaderPill>
         ) : undefined
       }
     >
       {mcpCalls.length === 0 && skillCalls.length === 0 && builtinCalls.length === 0 ? (
-        <div className="text-[11px]" style={{ color: TERM.dim }}>
+        <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
           {t("termStats.noToolCalls")}
         </div>
       ) : (
         <>
           {builtinCalls.length > 0 && (
-            <ToolCountList label={t("termStats.builtinTools")} color={TERM.green} items={builtinCalls} />
+            <ToolCountList label={t("termStats.builtinTools")} color={TERM_PANEL.green} items={builtinCalls} />
           )}
-          {mcpCalls.length > 0 && <ToolCountList label="MCP" color={TERM.cyan} items={mcpCalls} />}
+          {mcpCalls.length > 0 && <ToolCountList label="MCP" color={TERM_PANEL.cyan} items={mcpCalls} />}
           {skillCalls.length > 0 && (
-            <ToolCountList label={t("termStats.skillCommand")} color={TERM.magenta} items={skillCalls} />
+            <ToolCountList label={t("termStats.skillCommand")} color={TERM_PANEL.magenta} items={skillCalls} />
           )}
+        </>
+      )}
+    </StatCard>
+  );
+}
+
+export interface LatestChangesCardData {
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  files: HistoryFileChangeSummary[];
+}
+
+export function LatestChangesCard({
+  summary,
+  onOpenDiff,
+}: {
+  summary: LatestChangesCardData | null;
+  onOpenDiff: (fileChange: HistoryFileChangeSummary) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <StatCard
+      icon={<FileCode2 size={13} />}
+      iconColor={TERM_PANEL.cyan}
+      title={t("termStats.latestChanges")}
+      headerRight={
+        summary ? (
+          <HeaderPill color={TERM_PANEL.cyan}>
+            {t("termStats.latestChangesFiles", { count: summary.fileCount })}
+          </HeaderPill>
+        ) : undefined
+      }
+    >
+      {!summary ? (
+        <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
+          {t("termStats.latestChangesEmpty")}
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-1.5">
+            <StatChip
+              dotColor={TERM_PANEL.green}
+              label={t("termStats.latestChangesAdded")}
+              value={`+${formatCompactCount(summary.additions)}`}
+              valueColor={TERM_PANEL.green}
+            />
+            <StatChip
+              dotColor={TERM_PANEL.red}
+              label={t("termStats.latestChangesDeleted")}
+              value={`-${formatCompactCount(summary.deletions)}`}
+              valueColor={TERM_PANEL.red}
+            />
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {summary.files.slice(0, 4).map((fileChange) => (
+              <div
+                key={fileChange.file_path}
+                className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5"
+                style={{ backgroundColor: TERM_PANEL.cardInner, border: `1px solid ${TERM_PANEL.border}` }}
+              >
+                <div className="min-w-0">
+                  <div
+                    className="truncate text-[11px] font-semibold"
+                    style={{ color: TERM_PANEL.fg }}
+                    title={fileChange.file_path}
+                  >
+                    {fileChange.file_path}
+                  </div>
+                  <div className="text-[10px]" style={{ color: TERM_PANEL.dim }}>
+                    +{formatCompactCount(fileChange.additions)} / -{formatCompactCount(fileChange.deletions)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onOpenDiff(fileChange)}
+                  className="shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold"
+                  style={{ color: TERM_PANEL.cyan, backgroundColor: "color-mix(in srgb, var(--term-panel-cyan, #5AC8E0) 12%, transparent)" }}
+                >
+                  {t("termStats.latestChangesViewDiff")}
+                </button>
+              </div>
+            ))}
+          </div>
         </>
       )}
     </StatCard>
@@ -357,33 +441,33 @@ export function TodayUsageCard({
   return (
     <StatCard
       icon={<CalendarClock size={13} />}
-      iconColor={TERM.green}
+      iconColor={TERM_PANEL.green}
       title={t("termStats.todayUsage")}
       headerRight={
         stats && stats.sessions > 0 ? <HeaderPill>{t("termStats.sessionCount", { count: stats.sessions })}</HeaderPill> : undefined
       }
     >
       {loading && !stats ? (
-        <div className="text-[11px]" style={{ color: TERM.dim }}>
+        <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
           {t("common.loading")}
         </div>
       ) : stats && stats.sessions > 0 ? (
         <div className="grid grid-cols-2 gap-1.5">
           <StatChip
-            dotColor={TERM.yellow}
+            dotColor={TERM_PANEL.yellow}
             label="Token"
             value={formatCompactCount(stats.totalTokens)}
-            valueColor={TERM.yellow}
+            valueColor={TERM_PANEL.yellow}
           />
           <StatChip
-            dotColor={TERM.green}
+            dotColor={TERM_PANEL.green}
             label={t("termStats.cost")}
             value={formatCost(stats.totalCostUsd)}
-            valueColor={TERM.green}
+            valueColor={TERM_PANEL.green}
           />
         </div>
       ) : (
-        <div className="text-[11px]" style={{ color: TERM.dim }}>
+        <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
           {t("termStats.todayNoSessions")}
         </div>
       )}

@@ -34,6 +34,7 @@ import {
   TERMINAL_SCROLLBACK_ROWS_MIN,
   useSettingsStore,
   type BatchLaunchPaneDirection,
+  type CloseBehavior,
   type UnsplitBehavior,
 } from "../../../stores/settingsStore";
 import { TerminalBackgroundSection } from "./TerminalBackgroundSection";
@@ -118,6 +119,10 @@ export function ThemeSettingsPage() {
   const defaultShell = useSettingsStore((s) => s.defaultShell);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
   const unsplitBehavior = useSettingsStore((s) => s.unsplitBehavior);
+  const closeBehavior = useSettingsStore((s) => s.closeBehavior);
+  const confirmBeforeClosingTerminalTab = useSettingsStore((s) => s.confirmBeforeClosingTerminalTab);
+  const terminalTabHoverInfoEnabled = useSettingsStore((s) => s.terminalTabHoverInfoEnabled);
+  const debugMode = useSettingsStore((s) => s.debugMode);
   const shellRuntimeMonitoringEnabled = useSettingsStore((s) => s.shellRuntimeMonitoringEnabled);
   const batchLaunchGroupInPane = useSettingsStore((s) => s.batchLaunchGroupInPane);
   const batchLaunchPaneDirection = useSettingsStore((s) => s.batchLaunchPaneDirection);
@@ -220,6 +225,11 @@ export function ThemeSettingsPage() {
     })),
     [language]
   );
+  const closeBehaviorOptions: { value: CloseBehavior; label: string }[] = [
+    { value: "ask", label: t("settings.options.close.ask") },
+    { value: "minimize", label: t("settings.options.close.minimize") },
+    { value: "exit", label: t("settings.options.close.exit") },
+  ];
   const normalizedDefaultShell = normalizeShellKey(defaultShell);
   const shellSelectValue = normalizedDefaultShell ?? defaultShell;
   const isCustomShellValue = !normalizedDefaultShell;
@@ -454,6 +464,79 @@ export function ThemeSettingsPage() {
               aria-label={text("取消分屏行为", "Unsplit Behavior")}
               description={text("影响 Unsplit 时当前 Pane 内终端的处理方式。", "Controls how terminals in the current Pane are handled when unsplitting.")}
             />
+
+            <Select<CloseBehavior>
+              label={t("settings.general.closeBehavior")}
+              value={closeBehavior}
+              onChange={(value) => {
+                if (value) void update("closeBehavior", value);
+              }}
+              data={closeBehaviorOptions}
+              allowDeselect={false}
+              size="xs"
+              aria-label={t("settings.general.closeBehavior")}
+              description={t("settings.general.closeBehaviorDescription")}
+            />
+
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    {t("settings.general.confirmCloseTab")}
+                  </Text>
+                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                    {t("settings.general.confirmCloseTabDescription")}
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={confirmBeforeClosingTerminalTab}
+                  onChange={(event) => void update("confirmBeforeClosingTerminalTab", event.currentTarget.checked)}
+                  aria-label={
+                    confirmBeforeClosingTerminalTab
+                      ? t("settings.general.disableCloseTabConfirm")
+                      : t("settings.general.enableCloseTabConfirm")
+                  }
+                />
+              </Group>
+            </Card>
+
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    {t("settings.general.tabHoverInfo")}
+                  </Text>
+                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                    {t("settings.general.tabHoverInfoDescription")}
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={terminalTabHoverInfoEnabled}
+                  onChange={(event) => void update("terminalTabHoverInfoEnabled", event.currentTarget.checked)}
+                  aria-label={
+                    terminalTabHoverInfoEnabled
+                      ? t("settings.general.disableTabHoverInfo")
+                      : t("settings.general.enableTabHoverInfo")
+                  }
+                />
+              </Group>
+            </Card>
+
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Text size="xs" c="var(--on-surface-variant)">
+                  {t("settings.general.debugMode")}
+                </Text>
+                <Switch
+                  color="cliPrimary"
+                  checked={debugMode}
+                  onChange={(event) => void update("debugMode", event.currentTarget.checked)}
+                  aria-label={debugMode ? t("settings.general.disableDebugMode") : t("settings.general.enableDebugMode")}
+                />
+              </Group>
+            </Card>
 
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">

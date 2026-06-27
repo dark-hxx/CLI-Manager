@@ -20,12 +20,9 @@ import {
   useSettingsStore,
   UI_FONT_SIZE_MAX,
   UI_FONT_SIZE_MIN,
-  type CloseBehavior,
   type DarkThemePalette,
   type LanguagePreference,
   type LightThemePalette,
-  type SidebarDensity,
-  type SidebarToolbarVisibilitySettings,
   type TerminalToolbarVisibilitySettings,
   type ThemeMode,
 } from "../../../stores/settingsStore";
@@ -416,16 +413,8 @@ export function GeneralSettingsPage() {
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
   const uiFontSize = useSettingsStore((s) => s.uiFontSize);
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
-  const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
-  const viewMode = useSettingsStore((s) => s.viewMode);
-  const closeBehavior = useSettingsStore((s) => s.closeBehavior);
-  const confirmBeforeClosingTerminalTab = useSettingsStore((s) => s.confirmBeforeClosingTerminalTab);
-  const terminalTabHoverInfoEnabled = useSettingsStore((s) => s.terminalTabHoverInfoEnabled);
-  const debugMode = useSettingsStore((s) => s.debugMode);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
-  const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
-  const terminalSidePanelMerged = useSettingsStore((s) => s.terminalSidePanelMerged);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const update = useSettingsStore((s) => s.update);
   const [uiFontSizeDraft, setUiFontSizeDraft] = useState(uiFontSize);
@@ -441,30 +430,6 @@ export function GeneralSettingsPage() {
     ],
     [t]
   );
-  const sidebarDensityOptions = useMemo<{ value: SidebarDensity; label: string; description: string }[]>(
-    () => [
-      {
-        value: "comfortable",
-        label: t("settings.options.sidebarDensity.comfortable"),
-        description: t("settings.options.sidebarDensity.comfortableDescription"),
-      },
-      {
-        value: "compact",
-        label: t("settings.options.sidebarDensity.compact"),
-        description: t("settings.options.sidebarDensity.compactDescription"),
-      },
-    ],
-    [t]
-  );
-  const closeBehaviorOptions = useMemo<{ value: CloseBehavior; label: string }[]>(
-    () => [
-      { value: "ask", label: t("settings.options.close.ask") },
-      { value: "minimize", label: t("settings.options.close.minimize") },
-      { value: "exit", label: t("settings.options.close.exit") },
-    ],
-    [t]
-  );
-
   useEffect(() => {
     let cancelled = false;
     setSystemFontsLoading(true);
@@ -544,10 +509,6 @@ export function GeneralSettingsPage() {
   );
   const updateToolbarVisibility = (key: keyof TerminalToolbarVisibilitySettings, checked: boolean) => {
     void update("terminalToolbarVisibility", { ...terminalToolbarVisibility, [key]: checked });
-  };
-
-  const updateSidebarToolbarVisibility = (key: keyof SidebarToolbarVisibilitySettings, checked: boolean) => {
-    void update("sidebarToolbarVisibility", { ...sidebarToolbarVisibility, [key]: checked });
   };
 
   return (
@@ -758,177 +719,6 @@ export function GeneralSettingsPage() {
       </section>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <Stack gap="md">
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.general.sidebarBehavior")}
-            </Text>
-            <Card className="border border-primary bg-surface-container-low" p="md" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="sm" fw={600} c="var(--on-surface)">
-                    {t("settings.general.compactMode")}
-                  </Text>
-                  <Text mt={4} size="xs" c="var(--text-muted)">
-                    {t("settings.general.compactModeDescription")}
-                  </Text>
-                </Box>
-                <Switch
-                  color="cliPrimary"
-                  checked={viewMode === "compact"}
-                  onChange={(event) =>
-                    void update("viewMode", event.currentTarget.checked ? "compact" : "standard")
-                  }
-                  aria-label={viewMode === "compact" ? t("settings.general.closeCompactMode") : t("settings.general.openCompactMode")}
-                />
-              </Group>
-            </Card>
-
-            <Stack gap="xs">
-              <Text size="xs" c="var(--on-surface-variant)">
-                {t("settings.general.sidebarDensity")}
-              </Text>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                {sidebarDensityOptions.map((opt) => {
-                  const active = sidebarDensity === opt.value;
-                  return (
-                    <UnstyledButton
-                      key={opt.value}
-                      type="button"
-                      onClick={() => void update("sidebarDensity", opt.value)}
-                      className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border px-4 py-3 text-left"
-                      data-selected={active ? "true" : "false"}
-                      aria-pressed={active}
-                      w="100%"
-                      style={{
-                        display: "block",
-                        minHeight: 76,
-                        minWidth: 0,
-                        backgroundColor: active
-                          ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
-                          : "var(--surface-container-lowest)",
-                        borderColor: active
-                          ? "color-mix(in srgb, var(--primary) 54%, var(--border))"
-                          : "color-mix(in srgb, var(--border) 92%, transparent)",
-                        boxShadow: active
-                          ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent)"
-                          : "0 1px 4px color-mix(in srgb, var(--on-surface) 5%, transparent)",
-                      }}
-                    >
-                      <Stack gap={4} style={{ minWidth: 0, padding: "6px 10px 4px" }}>
-                        <Text size="sm" fw={600} c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}>
-                          {opt.label}
-                        </Text>
-                        <Text
-                          size="xs"
-                          lh={1.45}
-                          c="var(--text-muted)"
-                          style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
-                        >
-                          {opt.description}
-                        </Text>
-                      </Stack>
-                    </UnstyledButton>
-                  );
-                })}
-              </SimpleGrid>
-            </Stack>
-
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.mergePanels")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.mergePanelsDescription")}
-                  </Text>
-                </Box>
-                <Switch
-                  color="cliPrimary"
-                  checked={terminalSidePanelMerged}
-                  onChange={(event) => void update("terminalSidePanelMerged", event.currentTarget.checked)}
-                  aria-label={terminalSidePanelMerged ? t("settings.general.disableMergePanels") : t("settings.general.enableMergePanels")}
-                />
-              </Group>
-            </Card>
-
-            <Select<CloseBehavior>
-              label={t("settings.general.closeBehavior")}
-              value={closeBehavior}
-              onChange={(value) => {
-                if (value) void update("closeBehavior", value);
-              }}
-              data={closeBehaviorOptions}
-              allowDeselect={false}
-              size="xs"
-              aria-label={t("settings.general.closeBehavior")}
-              description={t("settings.general.closeBehaviorDescription")}
-            />
-
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.confirmCloseTab")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.confirmCloseTabDescription")}
-                  </Text>
-                </Box>
-                <Switch
-                  color="cliPrimary"
-                  checked={confirmBeforeClosingTerminalTab}
-                  onChange={(event) => void update("confirmBeforeClosingTerminalTab", event.currentTarget.checked)}
-                  aria-label={
-                    confirmBeforeClosingTerminalTab
-                      ? t("settings.general.disableCloseTabConfirm")
-                      : t("settings.general.enableCloseTabConfirm")
-                  }
-                />
-              </Group>
-            </Card>
-
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.tabHoverInfo")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.tabHoverInfoDescription")}
-                  </Text>
-                </Box>
-                <Switch
-                  color="cliPrimary"
-                  checked={terminalTabHoverInfoEnabled}
-                  onChange={(event) => void update("terminalTabHoverInfoEnabled", event.currentTarget.checked)}
-                  aria-label={
-                    terminalTabHoverInfoEnabled
-                      ? t("settings.general.disableTabHoverInfo")
-                      : t("settings.general.enableTabHoverInfo")
-                  }
-                />
-              </Group>
-            </Card>
-
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {t("settings.general.debugMode")}
-                </Text>
-                <Switch
-                  color="cliPrimary"
-                  checked={debugMode}
-                  onChange={(event) => void update("debugMode", event.currentTarget.checked)}
-                  aria-label={debugMode ? t("settings.general.disableDebugMode") : t("settings.general.enableDebugMode")}
-                />
-              </Group>
-            </Card>
-        </Stack>
-      </section>
-
-
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">
             <Text size="sm" fw={600} c="var(--on-surface)">
               {t("settings.general.toolbar")}
@@ -958,31 +748,6 @@ export function GeneralSettingsPage() {
                 </Card>
               ))}
             </SimpleGrid>
-            <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="md">
-              {t("settings.general.sidebarToolbar")}
-            </Text>
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.showStatsButton")}
-                  </Text>
-                  <Text mt={4} size="xs" c="var(--text-muted)">
-                    {t("settings.general.showStatsButtonDescription")}
-                  </Text>
-                </Box>
-                <Switch
-                  color="cliPrimary"
-                  checked={sidebarToolbarVisibility.stats}
-                  onChange={(event) => updateSidebarToolbarVisibility("stats", event.currentTarget.checked)}
-                  aria-label={
-                    sidebarToolbarVisibility.stats
-                      ? t("settings.general.hideStatsButton")
-                      : t("settings.general.showStatsButtonAria")
-                  }
-                />
-              </Group>
-            </Card>
         </Stack>
       </section>
 

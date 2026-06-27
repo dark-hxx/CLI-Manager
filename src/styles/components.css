@@ -2381,9 +2381,10 @@
   isolation: isolate;
   width: 38px;
   padding: 6px 4px;
-  border-left: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
-  background-color: transparent;
+  border-left: 0;
+  background-color: var(--surface-container-low);
   color: var(--on-surface);
+  box-shadow: none;
 }
 
 .ui-terminal-action-sidebar::before {
@@ -2391,10 +2392,12 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--primary) 8%, transparent), transparent 42%),
-    color-mix(in srgb, var(--surface-container-low) 86%, var(--surface) 14%);
+  background: none;
   z-index: -1;
+}
+
+.ui-terminal-action-sidebar::after {
+  content: none;
 }
 
 .ui-terminal-action-sidebar[data-show-text="true"] {
@@ -2406,6 +2409,8 @@
   touch-action: none;
 }
 
+.ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-toolbar-button,
+.ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-icon-action,
 .ui-terminal-action-sidebar .ui-toolbar-button,
 .ui-terminal-action-sidebar .ui-icon-action,
 .ui-terminal-action-drag-overlay .ui-toolbar-button,
@@ -2437,24 +2442,30 @@
   border-radius: 9px;
 }
 
+.ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-toolbar-button:hover:not(:disabled),
+.ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-icon-action:hover:not(:disabled),
 .ui-terminal-action-sidebar .ui-toolbar-button:hover:not(:disabled),
 .ui-terminal-action-sidebar .ui-icon-action:hover:not(:disabled),
 .ui-terminal-action-drag-overlay .ui-toolbar-button:hover:not(:disabled),
 .ui-terminal-action-drag-overlay .ui-icon-action:hover:not(:disabled) {
   transform: none;
-  border-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 18%, transparent);
+  border-color: transparent;
   background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 9%, transparent);
   color: color-mix(in srgb, var(--terminal-action-color, currentColor) 88%, var(--on-surface) 12%);
+  box-shadow: none;
 }
 
+.ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-primary-action,
+.ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-icon-action[data-active="true"],
 .ui-terminal-action-sidebar .ui-primary-action,
 .ui-terminal-action-sidebar .ui-icon-action[data-active="true"],
 .ui-terminal-action-drag-overlay .ui-primary-action,
 .ui-terminal-action-drag-overlay .ui-icon-action[data-active="true"] {
-  border-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 22%, transparent);
+  border-color: transparent;
   background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 10%, transparent);
   background-image: none;
   color: var(--terminal-action-color, currentColor);
+  box-shadow: none;
 }
 
 .ui-terminal-action-sidebar .ui-action-new.ui-primary-action,
@@ -2470,35 +2481,35 @@
 }
 
 .ui-action-new {
-  --terminal-action-color: var(--primary);
+  --terminal-action-color: #3dd68c;
 }
 
 .ui-action-template {
-  --terminal-action-color: color-mix(in srgb, var(--primary) 72%, var(--danger) 28%);
+  --terminal-action-color: #c77dbb;
 }
 
 .ui-action-command-history {
-  --terminal-action-color: color-mix(in srgb, var(--primary) 68%, var(--success) 32%);
+  --terminal-action-color: #5ac8e0;
 }
 
 .ui-action-fullscreen {
-  --terminal-action-color: color-mix(in srgb, var(--primary) 82%, var(--text-primary) 18%);
+  --terminal-action-color: #5b8def;
 }
 
 .ui-action-session-history {
-  --terminal-action-color: var(--warning);
+  --terminal-action-color: #e5c453;
 }
 
 .ui-action-git {
-  --terminal-action-color: color-mix(in srgb, var(--warning) 72%, var(--primary) 28%);
+  --terminal-action-color: #f59e0b;
 }
 
 .ui-action-files {
-  --terminal-action-color: color-mix(in srgb, var(--accent) 78%, var(--primary) 22%);
+  --terminal-action-color: #14b8a6;
 }
 
 .ui-action-stats {
-  --terminal-action-color: var(--success);
+  --terminal-action-color: #3dd68c;
 }
 
 .ui-terminal-global-chrome {
