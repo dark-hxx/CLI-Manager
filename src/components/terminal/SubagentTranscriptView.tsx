@@ -178,8 +178,8 @@ export function SubagentTranscriptView({ sessionId, title }: Props) {
           <div className="mx-auto flex max-w-md flex-col items-center gap-2 py-10 text-center text-[11px]" style={{ color: TERM.dim }}>
             {source?.kind === "pending" ? (
               <>
-                <div style={{ color: TERM.blue }}>已捕获 Agent 工具调用，正在等待子 Agent transcript。</div>
-                <div>CLI-Manager 只会短时订阅相关子任务 JSONL，不会扫描所有终端输出。</div>
+                <div style={{ color: TERM.blue }}>已捕获子 Agent 事件，正在等待独立 transcript。</div>
+                <div>CLI-Manager 只会按当前父会话关联发现对应 transcript，不会扫描无关终端输出。</div>
               </>
             ) : source?.kind === "parent-jsonl" ? (
               <>

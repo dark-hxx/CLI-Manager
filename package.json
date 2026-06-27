@@ -2,6 +2,7 @@
   "name": "cli-manager",
   "private": true,
   "version": "1.2.0",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/dev-server.mjs",

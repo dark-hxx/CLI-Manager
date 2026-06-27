@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend verification entry point."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify pane/session behavior still matches state contracts."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check for forbidden UI/store patterns."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend verification entry point."}
+{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Verify Codex hook and transcript routing changes stay contract-compatible."}
+{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"Verify transcript discovery changes do not break WSL handling."}
+{"file":".trellis/tasks/06-26-fix-codex-subagent-transcript-binding/prd.md","reason":"Review implementation against approved task scope and acceptance criteria."}

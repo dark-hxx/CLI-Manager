@@ -398,6 +398,7 @@ pub fn run() {
             commands::subagent_transcript::subagent_transcript_subscribe,
             commands::subagent_transcript::subagent_transcript_unsubscribe,
             commands::subagent_transcript::subagent_transcript_discover,
+            commands::subagent_transcript::codex_subagent_transcript_discover,
             commands::model_pricing::model_prices_set_cache,
             commands::model_pricing::model_prices_sync,
             commands::system_notification::is_wsl,

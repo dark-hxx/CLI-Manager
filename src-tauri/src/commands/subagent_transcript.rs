@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use log::{info, warn};
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
 const EVENT_NAME: &str = "subagent-transcript-append";
@@ -207,6 +208,10 @@ fn trimmed(value: Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+fn trimmed_str(value: Option<&str>) -> Option<String> {
+    value.map(str::trim).filter(|v| !v.is_empty()).map(str::to_string)
+}
+
 fn is_linux_absolute_path(path: &str) -> bool {
     path.trim().starts_with('/')
 }
@@ -355,6 +360,115 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
+fn resolve_codex_sessions_root(codex_config_dir: Option<String>) -> PathBuf {
+    let base = trimmed(codex_config_dir)
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("CODEX_HOME")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| home_dir().map(|home| home.join(".codex")))
+        .unwrap_or_else(|| PathBuf::from(".codex"));
+    base.join("sessions")
+}
+
+fn list_native_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
+    let expected_suffix = format!("-{agent_id}.jsonl");
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if name.starts_with("rollout-") && name.ends_with(&expected_suffix) {
+                out.push(path);
+            }
+        }
+    }
+
+    out
+}
+
+fn list_wsl_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
+    let root_str = root.to_string_lossy().to_string();
+    let Some((distro, linux_root)) = crate::wsl::parse_wsl_unc_path(&root_str) else {
+        return Vec::new();
+    };
+    let pattern = format!("rollout-*-{agent_id}.jsonl");
+    let args = [
+        "find",
+        linux_root.as_str(),
+        "-type",
+        "f",
+        "-name",
+        pattern.as_str(),
+        "-printf",
+        "%p\n",
+    ];
+    match wsl_command_text(&distro, &args) {
+        Ok((stdout, stderr)) => {
+            if !stderr.trim().is_empty() {
+                warn!(
+                    "[subagent_transcript:codex] wsl discover stderr: {}",
+                    stderr.trim()
+                );
+            }
+            stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| PathBuf::from(crate::wsl::linux_to_unc_wsl_path(line, &distro)))
+                .collect()
+        }
+        Err(err) => {
+            warn!(
+                "[subagent_transcript:codex] wsl discover failed: root={} agentId={} error={err}",
+                root_str,
+                agent_id
+            );
+            Vec::new()
+        }
+    }
+}
+
+fn list_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
+    let root_str = root.to_string_lossy().to_string();
+    if crate::wsl::is_wsl_config_dir(&root_str) {
+        return list_wsl_codex_rollout_candidates(root, agent_id);
+    }
+    list_native_codex_rollout_candidates(root, agent_id)
+}
+
+fn codex_rollout_parent_thread_id(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut first_line = String::new();
+    use std::io::BufRead;
+    reader.read_line(&mut first_line).ok()?;
+    let json: Value = serde_json::from_str(first_line.trim()).ok()?;
+    if json.get("type")?.as_str()? != "session_meta" {
+        return None;
+    }
+    let payload = json.get("payload")?;
+    trimmed_str(payload.get("parent_thread_id").and_then(Value::as_str))
+}
+
 /// 解析转录路径：优先显式 `agentTranscriptPath`，否则由 cwd+sessionId+agentId 推导。
 fn resolve_transcript_path(
     transcript_path: Option<String>,
@@ -486,6 +600,46 @@ pub async fn subagent_transcript_discover(
         agent_files.len()
     );
     Ok(agent_files)
+}
+
+#[tauri::command]
+pub async fn codex_subagent_transcript_discover(
+    parent_session_id: String,
+    agent_id: String,
+    codex_config_dir: Option<String>,
+) -> Result<Option<String>, String> {
+    let parent_session_id = parent_session_id.trim().to_string();
+    let agent_id = agent_id.trim().to_string();
+    if parent_session_id.is_empty() {
+        return Err("missing_parent_session_id".to_string());
+    }
+    if agent_id.is_empty() {
+        return Err("missing_agent_id".to_string());
+    }
+
+    let sessions_root = resolve_codex_sessions_root(codex_config_dir);
+    if !sessions_root.exists() {
+        info!(
+            "[subagent_transcript:codex] sessions root missing: {}",
+            sessions_root.to_string_lossy()
+        );
+        return Ok(None);
+    }
+
+    for candidate in list_codex_rollout_candidates(&sessions_root, &agent_id) {
+        let parent_thread_id = codex_rollout_parent_thread_id(&candidate);
+        info!(
+            "[subagent_transcript:codex] inspect rollout candidate: agentId={} path={} parentThreadId={:?}",
+            agent_id,
+            candidate.to_string_lossy(),
+            parent_thread_id
+        );
+        if parent_thread_id.as_deref() == Some(parent_session_id.as_str()) {
+            return Ok(Some(candidate.to_string_lossy().to_string()));
+        }
+    }
+
+    Ok(None)
 }
 
 fn discover_wsl_subagent_files(

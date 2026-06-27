@@ -281,6 +281,14 @@ function resolveSubagentTranscriptSource(payload: CliHookPayload): SubagentTrans
     };
   }
 
+  if (payload.source === "codex" && trimOptional(payload.agentId) && trimOptional(payload.sessionId)) {
+    return {
+      kind: "pending",
+      parentTranscriptPath: parentPath ?? undefined,
+      reason: "waiting for Codex rollout transcript discovery",
+    };
+  }
+
   if (payload.event === "AgentToolStart" || payload.event === "AgentToolStop") {
     return {
       kind: "pending",
@@ -1522,6 +1530,74 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       }
     };
 
+    const subscribeCodexRolloutChild = async () => {
+      if (payload.source !== "codex" || source.kind === "child-jsonl" || !agentId || !payload.sessionId?.trim()) {
+        return false;
+      }
+
+      try {
+        const codexConfigDir = useSettingsStore.getState().codexHookConfigDir ?? undefined;
+        const discoveredPath = await invoke<string | null>("codex_subagent_transcript_discover", {
+          parentSessionId: payload.sessionId,
+          agentId,
+          codexConfigDir,
+        });
+        if (!discoveredPath) {
+          logInfo("[subagent_transcript] codex rollout transcript not found yet", {
+            pseudoId,
+            agentId,
+            parentSessionId: payload.sessionId,
+          });
+          return false;
+        }
+
+        const result = await invoke<SubagentTranscriptSubscribeResult>("subagent_transcript_subscribe", {
+          key: pseudoId,
+          transcriptPath: discoveredPath,
+          cwd: payload.cwd ?? null,
+          sessionId: payload.sessionId ?? null,
+          agentId,
+          wslDistroName: payload.wslDistroName ?? null,
+        });
+        const childSource: SubagentTranscriptSource = {
+          kind: "child-jsonl",
+          transcriptPath: result.path,
+          parentTranscriptPath: source.parentTranscriptPath,
+        };
+        useTerminalStore.setState((state) => ({
+          sessions: state.sessions.map((session) =>
+            session.id === pseudoId && session.kind === "subagent-transcript" && session.subagent
+              ? { ...session, subagent: { ...session.subagent, source: childSource } }
+              : session
+          ),
+          subagentTranscripts: {
+            ...state.subagentTranscripts,
+            [pseudoId]: {
+              ...(state.subagentTranscripts[pseudoId] ?? { content: "", ended: false }),
+              source: childSource,
+            },
+          },
+        }));
+        if (result.initialContent) {
+          useTerminalStore.getState().appendSubagentTranscript(pseudoId, result.initialContent, true);
+        }
+        logInfo("[subagent_transcript] subscribed codex rollout transcript", {
+          pseudoId,
+          agentId,
+          path: result.path,
+          initialBytes: result.initialContent.length,
+        });
+        return true;
+      } catch (err) {
+        logWarn("[subagent_transcript] codex rollout transcript subscribe failed", {
+          pseudoId,
+          agentId,
+          err,
+        });
+        return false;
+      }
+    };
+
     // 去重：同一子 Agent 已有面板则更新 source；仅发现/切换 child JSONL 时订阅。
     if (sessions.some((session) => session.id === pseudoId)) {
       const agentType = payload.agentType?.trim() || null;
@@ -1560,7 +1636,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         },
       }));
       if (shouldSubscribe) await subscribeChild();
-      else if (!(await subscribeDerivedChild()) && source.kind !== "child-jsonl") await subscribeChild();
+      else if (!(await subscribeCodexRolloutChild()) && !(await subscribeDerivedChild()) && source.kind !== "child-jsonl") await subscribeChild();
       return;
     }
 
@@ -1636,7 +1712,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     void useSessionStore.getState().saveSessions(newSessions).catch(() => {});
 
     if (shouldSubscribe) await subscribeChild();
-    else if (!(await subscribeDerivedChild())) await subscribeChild();
+    else if (!(await subscribeCodexRolloutChild()) && !(await subscribeDerivedChild())) await subscribeChild();
   },
 
   finishSubagentTranscript: (payload) => {

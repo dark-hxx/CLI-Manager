@@ -577,3 +577,37 @@ Add project-level Codex provider switching with generated profiles, cleanup, sid
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Fix Codex Subagent Transcript Binding
+
+**Date**: 2026-06-26
+**Task**: Fix Codex Subagent Transcript Binding
+**Branch**: `master`
+
+### Summary
+
+修复 Codex 子 Agent rollout transcript 与父会话绑定，保持同 pane 多 tab 展示，并补录任务文档后完成归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4698022` | (see git log) |
+| `7d77604` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

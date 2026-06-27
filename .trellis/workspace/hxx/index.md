@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-06-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~579 | Active |
+| `journal-1.md` | ~613 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-06-26 | Fix Codex Subagent Transcript Binding | `4698022`, `7d77604` | `master` |
 | 17 | 2026-06-26 | codex project provider switching | `71b3f3b`, `19598e7` | `master` |
 | 16 | 2026-06-25 | 完善界面国际化 | `e53f2da` | `master` |
 | 15 | 2026-06-25 | History resume conversation | `2e2d2d2` | `feature/v1.1.9` |

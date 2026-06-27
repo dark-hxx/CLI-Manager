@@ -3,7 +3,9 @@
     "windows": [
       {
         "title": "CLI-Manager",
-        "decorations": false,
+        "decorations": true,
+        "titleBarStyle": "Visible",
+        "hiddenTitle": true,
         "center": true,
         "width": 1200,
         "height": 800,

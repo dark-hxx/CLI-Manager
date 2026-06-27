@@ -1,0 +1,8 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Load frontend spec index before editing terminal store and transcript view behavior."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Pane tree, session binding, and Zustand state contracts for subagent transcript tabs."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend change guardrails and forbidden patterns."}
+{"file":".trellis/spec/backend/index.md","reason":"Load backend spec index before touching Tauri transcript discovery commands."}
+{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Existing Claude/Codex hook payload and sub-agent transcript routing contracts."}
+{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"Transcript path discovery must stay compatible with WSL path handling."}
+{"file":".trellis/tasks/06-26-fix-codex-subagent-transcript-binding/prd.md","reason":"Current task requirements and approved MVP scope."}
+{"file":".trellis/tasks/06-22-cli-manager-agent/research/current-findings-summary.md","reason":"Previous investigation context for Claude/Codex subagent differences and existing design constraints."}
