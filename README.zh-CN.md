@@ -1,6 +1,6 @@
 # CLI-Manager
 
-> **Language**: [English](README.md) | 简体中文
+> **语言**：简体中文 | [English](README.en-US.md)
 
 <div align="center">
 
