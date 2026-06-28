@@ -711,3 +711,37 @@ Add project-level Codex provider switching with generated profiles, cleanup, sid
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 修复实时统计最新变更 Diff 崩溃
+
+**Date**: 2026-06-28
+**Task**: 修复实时统计最新变更 Diff 崩溃
+**Branch**: `master`
+
+### Summary
+
+修复实时统计侧边栏最新变更 Diff 打开时黑屏和 Maximum update depth exceeded 问题，补充 V1.2.2 changelog 与前端组件规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ccaaf58` | (see git log) |
+| `f8e8f2d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

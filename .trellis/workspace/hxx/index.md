@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-06-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~713 | Active |
+| `journal-1.md` | ~747 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-06-28 | 修复实时统计最新变更 Diff 崩溃 | `ccaaf58`, `f8e8f2d` | `master` |
 | 21 | 2026-06-28 | 修复浅色终端背景与 TUI 输入区显示 | `c02b4da` | `master` |
 | 20 | 2026-06-28 | 系统通知点击跳转终端 | `79e15d8` | `master` |
 | 19 | 2026-06-28 | 修复终端侧边面板切换异常 | `0f9e885`, `d00f99f` | `master` |
