@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../lib/db";
-import { createPerfMarker } from "../lib/logger";
+import { createPerfMarker, logInfo, logWarn } from "../lib/logger";
 import { useSettingsStore } from "./settingsStore";
 import type {
   HistoryFileChangeOperation,
@@ -636,6 +636,13 @@ export async function fetchLatestProjectSessionDetail(
   cliSessionId?: string | null
 ): Promise<HistorySessionDetail | "unchanged" | null> {
   try {
+    logInfo("history.realtime.lookup.start", {
+      source: source ?? null,
+      projectPath,
+      cliSessionId: cliSessionId ?? null,
+      previousFilePath: prev?.filePath ?? null,
+      previousUpdatedAt: prev?.updatedAt ?? null,
+    });
     const loadSummary = async (query: string | null): Promise<HistorySessionSummary | null> => {
       const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
         source: source ?? null,
@@ -645,7 +652,18 @@ export async function fetchLatestProjectSessionDetail(
         limit: 1,
         offset: 0,
       });
-      return (summariesRaw ?? []).map((item) => normalizeSummary(item))[0] ?? null;
+      const summary = (summariesRaw ?? []).map((item) => normalizeSummary(item))[0] ?? null;
+      logInfo("history.realtime.lookup.summary", {
+        source: source ?? null,
+        projectPath,
+        query,
+        cliSessionId: cliSessionId ?? null,
+        found: Boolean(summary),
+        sessionId: summary?.session_id ?? null,
+        sessionProjectKey: summary?.project_key ?? null,
+        sessionFilePath: summary?.file_path ?? null,
+      });
+      return summary;
     };
     const sessionQuery = cliSessionId?.trim() || null;
     // 有 CLI 会话 ID 时优先按该会话查找；命中不到时回退项目最近会话，
@@ -653,8 +671,21 @@ export async function fetchLatestProjectSessionDetail(
     // token 类卡片的串显由调用方按 session_id 与 cliSessionId 比对门控，
     // 此处回退不会造成 token 数据泄漏。
     const summary = (sessionQuery ? await loadSummary(sessionQuery) : null) ?? await loadSummary(null);
-    if (!summary) return null;
+    if (!summary) {
+      logWarn("history.realtime.lookup.miss", {
+        source: source ?? null,
+        projectPath,
+        cliSessionId: cliSessionId ?? null,
+      });
+      return null;
+    }
     if (prev && summary.file_path === prev.filePath && summary.updated_at === prev.updatedAt) {
+      logInfo("history.realtime.lookup.unchanged", {
+        source: summary.source,
+        projectPath,
+        sessionId: summary.session_id,
+        sessionFilePath: summary.file_path,
+      });
       return "unchanged";
     }
     const detailRaw = await invoke<unknown>("history_get_session", {
@@ -664,8 +695,24 @@ export async function fetchLatestProjectSessionDetail(
       projectKey: summary.project_key,
       aggregateSubtasks: true,
     });
-    return normalizeDetail(detailRaw);
-  } catch {
+    const detail = normalizeDetail(detailRaw);
+    logInfo("history.realtime.lookup.detail", {
+      source: detail.source,
+      projectPath,
+      cliSessionId: cliSessionId ?? null,
+      sessionId: detail.session_id,
+      sessionProjectKey: detail.project_key,
+      sessionFilePath: detail.file_path,
+      cwd: detail.cwd ?? null,
+    });
+    return detail;
+  } catch (error) {
+    logWarn("history.realtime.lookup.error", {
+      source: source ?? null,
+      projectPath,
+      cliSessionId: cliSessionId ?? null,
+      error: String(error),
+    });
     return prev ? "unchanged" : null;
   }
 }

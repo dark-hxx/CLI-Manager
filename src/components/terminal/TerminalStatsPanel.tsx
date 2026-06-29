@@ -39,6 +39,7 @@ import { useI18n } from "../../lib/i18n";
 import { DiffModal } from "../history/DiffModal";
 import { parseDiffBlocksFromMessages } from "../../lib/diffParser";
 import { TerminalSquare } from "../icons";
+import { logInfo } from "../../lib/logger";
 
 interface TerminalStatsPanelProps {
   activeSessionId: string | null;
@@ -374,7 +375,9 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     [projects, terminalSession?.projectId]
   );
 
-  const projectPath = terminalSession?.cwd || project?.path || null;
+  // 项目级历史匹配优先用已绑定项目根目录；展示仍保留终端当前 cwd。
+  const lookupProjectPath = project?.path || terminalSession?.cwd || null;
+  const displayProjectPath = terminalSession?.cwd || project?.path || null;
 
   // 终端运行的 CLI 工具（claude/codex），来自项目设置；推断不出则不过滤
   const sourceFilter = useMemo(
@@ -405,7 +408,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   // 会话数据轮询：updated_at 未变化时跳过 jsonl 重解析
   // 多窗口隔离：scopeKey 含 activeSessionId(tabId)，不同终端窗口的数据各自独立缓存与查询
   useEffect(() => {
-    if (!panelActive || !projectPath) {
+    if (!panelActive || !lookupProjectPath) {
       lastPathRef.current = null;
       latestRef.current = null;
       setLatestSession(null);
@@ -413,9 +416,19 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     }
     // 切换 Tab（项目路径、CLI 来源、Tab ID 或 cliSessionId 变化）时按作用域换数据：
     // 命中内存缓存则先秒显缓存，无缓存才清空；随后后台刷新校正。
-    const scopeKey = `${activeSessionId}|${projectPath}|${sourceFilter ?? ""}|${terminalSession?.cliSessionId ?? ""}`;
+    const scopeKey = `${activeSessionId}|${lookupProjectPath}|${sourceFilter ?? ""}|${terminalSession?.cliSessionId ?? ""}`;
     if (lastPathRef.current !== scopeKey) {
       lastPathRef.current = scopeKey;
+      logInfo("term_stats.lookup_scope", {
+        activeSessionId,
+        projectId: terminalSession?.projectId ?? null,
+        sourceFilter: sourceFilter ?? null,
+        cliSessionId: terminalSession?.cliSessionId ?? null,
+        projectRoot: project?.path ?? null,
+        terminalCwd: terminalSession?.cwd ?? null,
+        lookupProjectPath,
+        displayProjectPath,
+      });
       const cached = sessionDetailCache.get(scopeKey) ?? null;
       latestRef.current = cached;
       setLatestSession(cached);
@@ -430,7 +443,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         ? { filePath: current.file_path, updatedAt: current.updated_at }
         : undefined;
       const result = await fetchLatestProjectSessionDetail(
-        projectPath,
+        lookupProjectPath,
         prev,
         sourceFilter,
         terminalSession?.cliSessionId
@@ -455,7 +468,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     };
     // activeSessionId 入依赖：切换 Tab 时立即重新核对最近会话（unchanged 时开销仅一次列表查询）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelActive, projectPath, sourceFilter, terminalSession?.cliSessionId, refreshSeq, activeSessionId, pollTrigger]);
+  }, [activeSessionId, displayProjectPath, lookupProjectPath, panelActive, pollTrigger, project?.path, refreshSeq, sourceFilter, terminalSession?.cliSessionId, terminalSession?.cwd, terminalSession?.projectId]);
 
   // 今日项目用量：会话数据变化时同步刷新（与终端 CLI 来源保持一致）
   useEffect(() => {
@@ -494,7 +507,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   // A7: 实时查询当前项目的 git 分支，初始值为会话静态分支，避免首屏闪烁
   // A6: 通过 pollTrigger 与会话数据轮询共用 10s 节拍
   const currentBranch = useCurrentGitBranch(
-    projectPath,
+    lookupProjectPath,
     panelActive,
     latestSession?.branch ?? null,
     pollTrigger
@@ -514,7 +527,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const renderStatsCard = (cardKey: TerminalStatsCardKey) => {
     if (!terminalStatsCardVisibility[cardKey]) return null;
     const session = latestSession;
-    const resolvedProjectPath = projectPath;
+    const resolvedProjectPath = displayProjectPath;
     if (!session || !resolvedProjectPath) return null;
 
     switch (cardKey) {
@@ -597,7 +610,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         </span>
       </div>
 
-      {!projectPath ? (
+      {!displayProjectPath ? (
         <EmptyHint text={t("termStats.noProject")} />
       ) : loadingSession && !latestSession ? (
         <EmptyHint text={t("common.loading")} />

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查 UI 文案和组件交互是否符合前端约定。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查阶段需要遵守本项目静态验证和人工验证要求。"}
+{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"检查 Rust 侧 WSL 分流是否符合既有合约。"}
+{"file":".trellis/tasks/06-29-ccusage-windows-wsl-install-buttons/prd.md","reason":"按本任务验收标准进行实现核对。"}

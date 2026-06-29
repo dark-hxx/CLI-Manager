@@ -93,7 +93,7 @@ function resolveResumeCommand(session: HistorySessionView | HistorySessionDetail
   const sessionId = session.session_id.trim();
   if (!sessionId || /\s/.test(sessionId) || /[\r\n]/.test(sessionId)) return null;
   if (session.source === "claude") return `claude --resume ${sessionId}`;
-  if (session.source === "codex") return `codex resume --no-alt-screen ${sessionId}`;
+  if (session.source === "codex") return `codex resume ${sessionId}`;
   return null;
 }
 

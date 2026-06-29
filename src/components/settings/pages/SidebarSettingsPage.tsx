@@ -23,6 +23,7 @@ import {
   type SidebarDensity,
   type TerminalSidePanelSkin,
   type TerminalStatsCardKey,
+  type TerminalToolbarVisibilitySettings,
 } from "../../../stores/settingsStore";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
 
@@ -97,6 +98,19 @@ const STATS_CARD_OPTION_MAP = new Map<TerminalStatsCardKey, (typeof STATS_CARD_O
   STATS_CARD_OPTIONS.map((option) => [option.key, option])
 );
 
+const TERMINAL_TOOLBAR_OPTIONS: { key: TerminalToolbarOptionKey; labelKey: TranslationKey }[] = [
+  { key: "templates", labelKey: "settings.general.toolbar.templates" },
+  { key: "commandHistory", labelKey: "settings.general.toolbar.commandHistory" },
+  { key: "fullscreen", labelKey: "settings.general.toolbar.fullscreen" },
+  { key: "sessionHistory", labelKey: "settings.general.toolbar.sessionHistory" },
+  { key: "replay", labelKey: "settings.general.toolbar.replay" },
+  { key: "files", labelKey: "settings.general.toolbar.files" },
+  { key: "stats", labelKey: "settings.general.toolbar.stats" },
+  { key: "gitChanges", labelKey: "settings.general.toolbar.gitChanges" },
+];
+
+type TerminalToolbarOptionKey = keyof TerminalToolbarVisibilitySettings;
+
 function SortableStatsCardRow({
   id,
   dragLabel,
@@ -152,7 +166,7 @@ export function SidebarSettingsPage() {
   const terminalSidePanelSkin = useSettingsStore((s) => s.terminalSidePanelSkin);
   const terminalStatsCardVisibility = useSettingsStore((s) => s.terminalStatsCardVisibility);
   const terminalStatsCardOrder = useSettingsStore((s) => s.terminalStatsCardOrder);
-  const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
+  const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const update = useSettingsStore((s) => s.update);
 
   const visibleCardCount = TERMINAL_STATS_CARD_KEYS.filter((key) => terminalStatsCardVisibility[key]).length;
@@ -188,6 +202,10 @@ export function SidebarSettingsPage() {
 
   const resetStatsCardOrder = () => {
     void update("terminalStatsCardOrder", [...TERMINAL_STATS_CARD_KEYS]);
+  };
+
+  const updateToolbarVisibility = (key: TerminalToolbarOptionKey, checked: boolean) => {
+    void update("terminalToolbarVisibility", { ...terminalToolbarVisibility, [key]: checked });
   };
 
   return (
@@ -466,33 +484,32 @@ export function SidebarSettingsPage() {
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">
           <Text size="sm" fw={600} c="var(--on-surface)">
-            {t("settings.general.sidebarToolbar")}
+            {t("settings.general.toolbar")}
           </Text>
-          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-              <Box>
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {t("settings.general.showStatsButton")}
-                </Text>
-                <Text mt={4} size="xs" c="var(--text-muted)">
-                  {t("settings.general.showStatsButtonDescription")}
-                </Text>
-              </Box>
-              <Switch
-                color="cliPrimary"
-                checked={sidebarToolbarVisibility.stats}
-                onChange={(event) => void update("sidebarToolbarVisibility", {
-                  ...sidebarToolbarVisibility,
-                  stats: event.currentTarget.checked,
-                })}
-                aria-label={
-                  sidebarToolbarVisibility.stats
-                    ? t("settings.general.hideStatsButton")
-                    : t("settings.general.showStatsButtonAria")
-                }
-              />
-            </Group>
-          </Card>
+          <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="xs">
+            {t("settings.general.terminalToolbar")}
+          </Text>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+            {TERMINAL_TOOLBAR_OPTIONS.map((option) => (
+              <Card key={option.key} className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+                <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    {t(option.labelKey)}
+                  </Text>
+                  <Switch
+                    color="cliPrimary"
+                    checked={terminalToolbarVisibility[option.key]}
+                    onChange={(event) => updateToolbarVisibility(option.key, event.currentTarget.checked)}
+                    aria-label={
+                      terminalToolbarVisibility[option.key]
+                        ? t("settings.general.toolbar.hide", { item: t(option.labelKey) })
+                        : t("settings.general.toolbar.show", { item: t(option.labelKey) })
+                    }
+                  />
+                </Group>
+              </Card>
+            ))}
+          </SimpleGrid>
         </Stack>
       </section>
     </Stack>
