@@ -9,7 +9,8 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { Portal } from "../ui/Portal";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import type { CcusageSource } from "../../lib/types";
-import { useCcusageStore } from "../../stores/ccusageStore";
+import { resolveCcusageRuntimeScope, resolveCcusageWslTarget, useCcusageStore } from "../../stores/ccusageStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { EChart } from "./EChart";
 import { StatsDatePicker } from "./StatsDatePicker";
 import {
@@ -1580,14 +1581,16 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
   const installTools = useCcusageStore((s) => s.installTools);
   const loadCachedReport = useCcusageStore((s) => s.loadCachedReport);
   const refreshReport = useCcusageStore((s) => s.refreshReport);
-  const [installConfirmOpen, setInstallConfirmOpen] = useState(false);
+  const claudeConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
+  const codexConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
+  const [hostInstallConfirmOpen, setHostInstallConfirmOpen] = useState(false);
   const [timeWindow, setTimeWindow] = useState<CcusageTimeWindowState>(DEFAULT_TIME_WINDOW);
 
   useEffect(() => {
     if (!open) return;
     void checkStatus().catch(() => {});
     void loadCachedReport().catch(() => {});
-  }, [open, source, checkStatus, loadCachedReport]);
+  }, [open, source, claudeConfigDir, codexConfigDir, checkStatus, loadCachedReport]);
 
   useEffect(() => {
     if (!open) return;
@@ -1622,7 +1625,34 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
   const sourceOption = SOURCE_OPTIONS.find((option) => option.value === source) ?? SOURCE_OPTIONS[0];
   const sourceLabel = sourceOption.labelKey ? t(sourceOption.labelKey) : sourceOption.label;
   const sourceDescription = t(sourceOption.descriptionKey);
-  const toolReady = toolStatus?.bunxAvailable === true;
+  const runtimeScope = useMemo(
+    () => resolveCcusageRuntimeScope(source, claudeConfigDir, codexConfigDir),
+    [claudeConfigDir, codexConfigDir, source]
+  );
+  const wslTarget = useMemo(
+    () => resolveCcusageWslTarget(claudeConfigDir, codexConfigDir),
+    [claudeConfigDir, codexConfigDir]
+  );
+  const hostReady = toolStatus?.host.bunxAvailable === true;
+  const wslReady =
+    Boolean(wslTarget.distro) &&
+    toolStatus?.wsl?.distro === wslTarget.distro &&
+    toolStatus.wsl.bunxAvailable === true;
+  const sourceToolReady =
+    runtimeScope.kind === "host"
+      ? hostReady
+      : runtimeScope.kind === "wsl"
+        ? toolStatus?.wsl?.distro === runtimeScope.distro && toolStatus.wsl.bunxAvailable === true
+        : false;
+  const mixedRuntimeMessageKey: TranslationKey | null =
+    runtimeScope.kind !== "mixed"
+      ? null
+      : runtimeScope.reason === "host-wsl"
+        ? "ccusage.mixedRuntimeHostWsl"
+        : "ccusage.mixedRuntimeMultiWsl";
+  const showWslManualHint = !wslReady && (Boolean(wslTarget.distro) || wslTarget.conflicts.length > 0);
+  const showPrepareCard = !hostReady || showWslManualHint || Boolean(mixedRuntimeMessageKey);
+  const wslStatus = toolStatus?.wsl?.distro === wslTarget.distro ? toolStatus.wsl : null;
 
   if (!open) return null;
 
@@ -1667,13 +1697,13 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
 
             <Button
               onClick={() => {
-                if (!toolReady) {
+                if (!sourceToolReady) {
                   void checkStatus().catch(() => {});
                   return;
                 }
                 void refreshReport().catch(() => {});
               }}
-              disabled={checkingStatus || installingTools || refreshing || !toolReady}
+              disabled={checkingStatus || installingTools || refreshing || !sourceToolReady}
               aria-label={t("ccusage.refreshReport")}
               size="sm"
             >
@@ -1681,9 +1711,9 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
               {t("ccusage.refresh")}
             </Button>
 
-            {!toolReady && (
+            {!hostReady && (
               <Button
-                onClick={() => setInstallConfirmOpen(true)}
+                onClick={() => setHostInstallConfirmOpen(true)}
                 disabled={checkingStatus || installingTools}
                 aria-label={t("ccusage.installAria")}
                 size="sm"
@@ -1709,7 +1739,7 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
               <Card className="bg-bg-secondary p-3 text-[12px] text-text-secondary">{t("ccusage.loadingStatus")}</Card>
             )}
 
-            {!toolReady && (
+            {showPrepareCard && (
               <Card className="bg-bg-secondary p-4">
                 <div className="flex items-center gap-2 text-[13px] font-semibold text-text-primary">
                   <PackageCheck size={14} />
@@ -1717,15 +1747,29 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
                 </div>
                 <div className="mt-2 space-y-1.5 text-[12px] leading-6 text-text-secondary">
                   <div>{t("ccusage.reportExplanation")}</div>
-                  <div>{t("ccusage.toolVersions", { bun: toolStatus?.bunVersion ?? t("ccusage.notDetected"), bunx: toolStatus?.bunxVersion ?? t("ccusage.notDetected") })}</div>
+                  <div>{t("ccusage.toolVersions", { bun: toolStatus?.host.bunVersion ?? t("ccusage.notDetected"), bunx: toolStatus?.host.bunxVersion ?? t("ccusage.notDetected") })}</div>
+                  {wslTarget.distro && (
+                    <div>
+                      {t("ccusage.wslToolVersions", {
+                        distro: wslTarget.distro,
+                        bun: wslStatus?.bunVersion ?? t("ccusage.notDetected"),
+                        bunx: wslStatus?.bunxVersion ?? t("ccusage.notDetected"),
+                      })}
+                    </div>
+                  )}
+                  {wslTarget.conflicts.length > 0 && (
+                    <div>{t("ccusage.installWslConflict", { distros: wslTarget.conflicts.join(", ") })}</div>
+                  )}
+                  {mixedRuntimeMessageKey && <div>{t(mixedRuntimeMessageKey)}</div>}
                   <div>{t("ccusage.installNote")}</div>
+                  {wslTarget.distro && <div>{t("ccusage.installWslNote", { distro: wslTarget.distro })}</div>}
                 </div>
               </Card>
             )}
 
             {error && <Card className="bg-bg-secondary p-3 text-[12px] text-danger">{error}</Card>}
 
-            {!report && toolReady && !loadingCache && (
+            {!report && sourceToolReady && !loadingCache && (
               <Card className="bg-bg-secondary p-4 text-[12px] leading-6 text-text-secondary">
                 {t("ccusage.noCache")}
               </Card>
@@ -1766,21 +1810,26 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
       </div>
 
       <ConfirmDialog
-        open={installConfirmOpen}
+        open={hostInstallConfirmOpen}
         title={t("ccusage.installConfirmTitle")}
         message={t("ccusage.installConfirmMessage", { registry: REGISTRY_MIRROR_TEXT })}
         confirmText={t("ccusage.installTools")}
         cancelText={t("common.cancel")}
         zIndex={60}
-        onClose={() => setInstallConfirmOpen(false)}
+        onClose={() => setHostInstallConfirmOpen(false)}
         onConfirm={() => {
-          setInstallConfirmOpen(false);
+          setHostInstallConfirmOpen(false);
           void (async () => {
             try {
               await installTools();
-              const status = useCcusageStore.getState().toolStatus;
-              if (status?.bunxAvailable) {
-                toast.success(t("ccusage.installSuccess", { bun: status.bunVersion ?? "?", bunx: status.bunxVersion ?? "?" }));
+              const targetStatus = useCcusageStore.getState().toolStatus?.host ?? null;
+              if (targetStatus?.bunxAvailable) {
+                toast.success(
+                  t("ccusage.installSuccess", {
+                    bun: targetStatus.bunVersion ?? "?",
+                    bunx: targetStatus.bunxVersion ?? "?",
+                  })
+                );
               } else {
                 toast.warning(t("ccusage.installWarning"));
               }

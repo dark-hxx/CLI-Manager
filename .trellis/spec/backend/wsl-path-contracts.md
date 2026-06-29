@@ -41,6 +41,24 @@ pub fn find_wsl_exe() -> Option<PathBuf>
 pub fn silent_command(program: &str) -> Command
 ```
 
+### `commands/ccusage.rs` — WSL 运行时 / 安装边界
+
+```rust
+#[tauri::command]
+pub async fn ccusage_get_status(
+    claude_config_dir: Option<String>,
+    codex_config_dir: Option<String>,
+) -> Result<CcusageToolStatus, String>
+
+#[tauri::command]
+pub async fn ccusage_install_tools(
+    target: String,
+    _distro: Option<String>,
+    claude_config_dir: Option<String>,
+    codex_config_dir: Option<String>,
+) -> Result<CcusageToolStatus, String>
+```
+
 ---
 
 ## 3. Contracts
@@ -81,6 +99,20 @@ envs.push(("CLAUDE_CONFIG_DIR", path));  // WSL UNC 路径 → 不可靠
 // 修复后：检测 WSL → 转为 Linux 路径 → 由 wsl.exe 命令内部解析
 ```
 
+### WSL Bun / bunx 探测契约
+
+```rust
+// Good: WSL 中的 bun / bunx 通过 sh -lc 注入 ~/.bun/bin
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:$PATH"
+exec bun --version
+```
+
+- 后端不得假设 WSL 的非交互命令会自动加载 `~/.profile` / `~/.bashrc`。
+- 对 `bun` / `bunx` 的 WSL 探测与执行，必须显式补上 `BUN_INSTALL` 与 `PATH`。
+- `ccusage_install_tools(target="wsl")` 现在是**手动安装边界**：命令必须直接返回“去设置页按提示手动安装”的错误，不能再代替用户执行 `curl` / `sudo` / `apt` / `bun install`。
+- 前端展示给用户的 WSL 手动安装命令，应优先使用 `~/.bun/bin/bun ...` 形式，避免刚装完 Bun 时因为 PATH 尚未刷新而出现 `bun: command not found`。
+
 ---
 
 ## 4. Validation & Error Matrix
@@ -93,6 +125,8 @@ envs.push(("CLAUDE_CONFIG_DIR", path));  // WSL UNC 路径 → 不可靠
 | `wsl.exe find` 返回非 0 | `wsl_find_session_files: wsl find failed for {path}` (debug log) |
 | `wsl.exe stat` 返回非 0 或解析失败 | fingerprint 回退为 `{0, 0, 0}`（强制重新扫描） |
 | `set_verify_owner_validation` 后仍失败 | `打开 WSL Git 仓库失败: {e}` |
+| `ccusage_install_tools(target="wsl")` | 直接返回“WSL 环境不再支持应用内自动安装，请在设置页手动安装” |
+| WSL 已安装 Bun 但 shell 启动文件未生效 | `bun --version` / `bunx` 仍应通过显式注入 `~/.bun/bin` 成功 |
 
 ---
 
@@ -123,6 +157,17 @@ fn wsl_session_fingerprint(linux_path: &str, distro: &str) -> SessionFileFingerp
 }
 ```
 
+### Good: WSL Bun 状态检测不依赖 shell 初始化
+
+```rust
+fn wsl_command_with_bun_path_output(...) -> Result<Output, String> {
+    let script = r#"export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}";
+export PATH="$BUN_INSTALL/bin:$PATH";
+exec bunx ccusage daily --json --offline"#;
+    wsl_command_output(distro, "sh", &["-lc", script], &[])
+}
+```
+
 ### Bad: 静默吞掉错误
 
 ```rust
@@ -137,6 +182,15 @@ fn read_dir_entries(dir: &Path) -> Vec<fs::DirEntry> {
 
 **Fix**: 在函数开头加 WSL 检测，分流到 wsl.exe 命令路径；或在错误分支至少输出 `log::warn!`。
 
+### Bad: 把 WSL 安装当成宿主机静默代执行
+
+```rust
+// DON'T — 会触发 unzip/sudo/password/PATH 一系列不可控副作用
+wsl.exe -d Ubuntu --exec sh -lc "curl -fsSL https://bun.sh/install | bash"
+```
+
+**Fix**: WSL 安装改成手动说明 + 状态检测；应用内只允许宿主机 Windows 的 Bun 安装继续走确认流程。
+
 ---
 
 ## 6. Tests Required
@@ -146,6 +200,9 @@ fn read_dir_entries(dir: &Path) -> Vec<fs::DirEntry> {
 - `wsl_find_session_files` 的 find 输出解析（纯解析单测覆盖 path/size/mtime；真实 WSL find 作为集成测试）
 - `open_git_repo` 在 WSL UNC 路径下成功打开仓库（需要 WSL 环境）
 - `session_matches_project_path` 同时匹配 Windows 盘符 + WSL /mnt + WSL UNC→Linux 三种 project_key
+- `ccusage_get_status` 在 WSL 已装 Bun、但未加载 shell PATH 时仍能检测到 `bun` / `bunx`
+- `ccusage_install_tools(target="wsl")` 返回手动安装错误，不得启动任何安装命令
+- 前端设置页的 WSL 状态按钮在 `ready / manual / unavailable / multi-distro` 四种状态下文案一致
 
 ---
 
@@ -191,6 +248,20 @@ fn open_git_repo(path: &Path) -> Result<Repository, String> {
     unsafe { git2::opts::set_verify_owner_validation(true); }  // 立即恢复
     result
 }
+```
+
+### Wrong: 直接信任 `wsl.exe --exec bun`
+
+```rust
+// DON'T — 非交互命令拿不到 ~/.bun/bin
+wsl.exe -d Ubuntu --exec env bun --version
+```
+
+### Correct: 显式补 `~/.bun/bin`
+
+```rust
+wsl.exe -d Ubuntu --exec sh -lc \
+  'export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"; export PATH="$BUN_INSTALL/bin:$PATH"; exec bun --version'
 ```
 
 ---
