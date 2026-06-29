@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import type { SubagentTranscriptSource, TerminalSession, Project } from "../lib/types";
 import { logError, logInfo, logWarn } from "../lib/logger";
-import { normalizeDirectCodexStartupCommand, withCodexLightTuiTheme } from "../lib/projectStartupCommand";
+import { isDirectCodexStartupCommand, normalizeDirectCodexStartupCommand, withCodexLightTuiTheme } from "../lib/projectStartupCommand";
 import { getTerminalTheme } from "../lib/terminalThemes";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
@@ -637,6 +637,11 @@ function prepareStartupCommandForPty(command: string | undefined, shell: ShellKe
   return withCodexLightTuiTheme(command);
 }
 
+function formatStartupInputForPty(command: string): string {
+  const clearBeforeLaunch = isDirectCodexStartupCommand(command) ? "\x0c" : "";
+  return `${clearBeforeLaunch}${command}\r`;
+}
+
 // hook running 超时回退：Stop/StopFailure 丢失（hook 脚本失败、bridge 不可达）
 // 时 Tab 会永久停留 running，超时后回退为 none（未知）。阈值取宽（Claude 长任务
 // 可合法运行很久），只兜底明显异常的滞留。
@@ -782,7 +787,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     if (launchStartupCmd) {
       setTimeout(() => {
-        invoke("pty_write", { sessionId, data: launchStartupCmd + "\r" }).catch((err) => {
+        invoke("pty_write", { sessionId, data: formatStartupInputForPty(launchStartupCmd) }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
           logError("Failed to write startup command", {
             sessionId,
@@ -1095,7 +1100,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     if (launchStartupCmd) {
       setTimeout(() => {
-        invoke("pty_write", { sessionId: splitSessionId, data: launchStartupCmd + "\r" }).catch((err) => {
+        invoke("pty_write", { sessionId: splitSessionId, data: formatStartupInputForPty(launchStartupCmd) }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
           logError("Failed to write split startup command", {
             sessionId: splitSessionId,
@@ -1333,7 +1338,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       // 执行启动命令
       if (launchStartupCmd) {
         setTimeout(() => {
-          invoke("pty_write", { sessionId: newSessionId, data: launchStartupCmd + "\r" }).catch((err) => {
+          invoke("pty_write", { sessionId: newSessionId, data: formatStartupInputForPty(launchStartupCmd) }).catch((err) => {
             logError("Failed to write startup command on restore", {
               sessionId: newSessionId,
               hasStartupCmd: true,

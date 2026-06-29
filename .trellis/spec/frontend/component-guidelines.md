@@ -664,6 +664,29 @@ terminal.options.theme = isTransparent ? applyTransparency(theme) : theme;
 
 **Fix**: Keep the construction effect's deps as `[sessionId]`. Add a separate hot-update effect that mutates `terminal.options.*` for the changed setting. xterm supports hot-mutating `fontSize`, `fontFamily`, `theme`, `cursorBlink`, `cursorStyle`, `scrollback` without rebuild. Only `allowTransparency`, `cols`/`rows` (use Fit instead), and `rendererType` (legacy) require rebuild.
 
+### Common Mistake: Treating Codex half-screen scrolling as a scrollbar bug
+
+**Symptom**: After shell output such as `dir`, starting Codex leaves the old output visible above Codex, while Codex scrolls only in the lower part of the terminal. Increasing terminal font size may make the outer scrollbar reappear, but that is only exposing the same state more clearly.
+
+**Cause**: Codex is launched from the current shell cursor position instead of a clean viewport. The problem is the pre-launch screen state, not xterm scrollbar CSS, Codex `--no-alt-screen`, `TERM=dumb`, or terminal recreation.
+
+**Fix**: Before direct Codex launches, send form feed (`\x0c`, Ctrl+L) to the PTY, then execute the command. Apply this to both automatic startup commands and manually typed direct `codex` commands on Enter. Keep the match narrow: direct commands such as `codex`, `codex.cmd`, `codex.exe`, and `codex.ps1` only.
+
+**Wrong**:
+
+```typescript
+invoke("pty_write", { sessionId, data: `${command}\r` });
+```
+
+**Correct**:
+
+```typescript
+const clearBeforeLaunch = isDirectCodexStartupCommand(command) ? "\x0c" : "";
+invoke("pty_write", { sessionId, data: `${clearBeforeLaunch}${command}\r` });
+```
+
+**Prevention**: When a TUI appears to scroll inside a partial screen, reproduce with prior shell output still visible. If old output remains above the TUI, fix the launch input sequence before changing scrollbar styles, TERM, alternate-screen flags, or xterm construction.
+
 ### Common Mistake: Treating `cursorBlink` as full cursor visibility control
 
 **Symptom**: A TUI such as Codex still shows rapid cursor flashing after `cursorBlink` is set to `false`.

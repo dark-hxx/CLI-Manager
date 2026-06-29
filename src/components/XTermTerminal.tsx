@@ -23,6 +23,7 @@ import {
 } from "../lib/terminalThemes";
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
+import { isDirectCodexStartupCommand } from "../lib/projectStartupCommand";
 import { endTerminalFileDrag, getTerminalFileDragText } from "../lib/terminalFileDrag";
 import {
   defaultShellForOs,
@@ -1072,7 +1073,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     terminal.onData((data) => {
       markAttentionInputHandled();
-      invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("onData", err));
+      const ptyData = data === "\r" && isDirectCodexStartupCommand(inputBuffer.current) ? "\x0c\r" : data;
+      invoke("pty_write", { sessionId, data: ptyData }).catch((err) => reportPtyWriteError("onData", err));
 
       if (data === "\r") {
         const cmd = inputBuffer.current;

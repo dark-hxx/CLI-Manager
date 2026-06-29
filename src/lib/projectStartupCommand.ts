@@ -9,6 +9,11 @@ export function isCodexStartupCommand(command: string): boolean {
   return /\bcodex(?:\.(?:cmd|exe|ps1))?\b/i.test(command);
 }
 
+export function isDirectCodexStartupCommand(command?: string): boolean {
+  const trimmed = command?.trim();
+  return Boolean(trimmed && DIRECT_CODEX_COMMAND_PATTERN.test(trimmed));
+}
+
 function hasProfileArg(command: string): boolean {
   return new RegExp(`(^|\\s)${CODEX_PROFILE_ARG}(\\s|$)`).test(command);
 }
