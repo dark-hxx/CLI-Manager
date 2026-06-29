@@ -1,14 +1,13 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useProjectStore } from "../stores/projectStore";
 import type { CommandTemplate, Project } from "../lib/types";
-import { TerminalSquare, Plus, Trash2 } from "./icons";
+import { Check, ChevronDown, TerminalSquare, Plus, Trash2 } from "./icons";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { EmptyState } from "./ui/EmptyState";
 import { Input } from "./ui/input";
-import { Select } from "./ui/select";
 import { Skeleton } from "./ui/Skeleton";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
@@ -25,6 +24,104 @@ function resolveCommand(command: string, project?: Project): string {
 interface CommandTemplatePanelProps {
   popoverSide?: "top" | "right" | "bottom" | "left";
   toneClassName?: string;
+}
+
+interface InlineSelectOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+interface InlinePanelSelectProps {
+  value: string;
+  options: InlineSelectOption[];
+  onChange: (value: string) => void;
+  ariaLabel: string;
+}
+
+function InlinePanelSelect({ value, options, onChange, ariaLabel }: InlinePanelSelectProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = options.find((option) => option.value === value) ?? null;
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        className="ui-input ui-focus-ring flex h-7 w-full items-center justify-between gap-2 px-2 text-xs text-on-surface outline-none"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className="truncate">{selected?.label ?? ""}</span>
+        <ChevronDown
+          size={12}
+          strokeWidth={1.8}
+          className={`shrink-0 text-on-surface-variant transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label={ariaLabel}
+          className="ui-select-popover absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-xl border border-border bg-surface-container-high py-1"
+        >
+          {options.map((option) => {
+            const active = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={active}
+                disabled={option.disabled}
+                onClick={() => {
+                  if (option.disabled) return;
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={`mx-1 flex w-[calc(100%-8px)] items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  option.disabled
+                    ? "cursor-not-allowed opacity-45"
+                    : active
+                      ? "bg-surface-container-highest text-primary"
+                      : "text-on-surface hover:bg-surface-container-highest/80"
+                }`}
+              >
+                <span className="flex-1 truncate">{option.label}</span>
+                {active && <Check size={12} strokeWidth={2} className="shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "" }: CommandTemplatePanelProps) {
@@ -48,6 +145,15 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
   const [scope, setScope] = useState<"global" | "project" | "session">("global");
   const [projectId, setProjectId] = useState<string | null>(null);
   const [panelLoading, setPanelLoading] = useState(false);
+  const scopeOptions: InlineSelectOption[] = [
+    { value: "global", label: t("commandTemplate.scope.global") },
+    { value: "project", label: t("commandTemplate.scope.project") },
+    { value: "session", label: t("commandTemplate.scope.session") },
+  ];
+  const projectOptions: InlineSelectOption[] = [
+    { value: "", label: t("settings.templates.selectProject") },
+    ...projects.map((project) => ({ value: project.id, label: project.name })),
+  ];
 
   useEffect(() => {
     fetchTemplates();
@@ -99,7 +205,8 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
   };
 
   const handleCreate = async () => {
-    if (!name.trim() || !command.trim()) return;
+    const commandRequired = scope !== "global";
+    if (!name.trim() || (commandRequired && !command.trim())) return;
 
     try {
       if (scope === "session") {
@@ -146,6 +253,8 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
       ? t("settings.templates.scope.projectWithName", { name: project.name })
       : t("settings.templates.scope.project");
   };
+
+  const commandRequired = scope !== "global";
 
   return (
     <Popover
@@ -201,26 +310,19 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
               onChange={(e) => setDescription(e.target.value)}
               className="h-7 text-xs"
             />
-            <Select
+            <InlinePanelSelect
               value={scope}
-              onChange={(e) => setScope(e.target.value as "global" | "project" | "session")}
-              className="h-7 text-xs"
-            >
-              <option value="global">{t("commandTemplate.scope.global")}</option>
-              <option value="project">{t("commandTemplate.scope.project")}</option>
-              <option value="session">{t("commandTemplate.scope.session")}</option>
-            </Select>
+              options={scopeOptions}
+              onChange={(value) => setScope(value as "global" | "project" | "session")}
+              ariaLabel={t("settings.templates.scopeLabel")}
+            />
             {scope === "project" && (
-              <Select
+              <InlinePanelSelect
                 value={projectId ?? ""}
-                onChange={(e) => setProjectId(e.target.value || null)}
-                className="h-7 text-xs"
-              >
-                <option value="">{t("settings.templates.selectProject")}</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </Select>
+                options={projectOptions}
+                onChange={(value) => setProjectId(value || null)}
+                ariaLabel={t("settings.templates.targetProject")}
+              />
             )}
             {scope === "session" && (
               <div className="text-[10px] text-on-surface-variant">
@@ -239,7 +341,10 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
               </button>
               <button
                 onClick={handleCreate}
-                disabled={(scope === "project" && !projectId) || (scope === "session" && !activeSessionId)}
+                disabled={name.trim().length === 0
+                  || (commandRequired && command.trim().length === 0)
+                  || (scope === "project" && !projectId)
+                  || (scope === "session" && !activeSessionId)}
                 className="ui-flat-action ui-primary-action h-6 px-2 text-[10px] disabled:opacity-50"
                 aria-label={t("commandTemplate.save")}
               >

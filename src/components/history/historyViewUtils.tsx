@@ -79,6 +79,47 @@ export function makeSessionLabel(session: HistorySessionView): string {
   return session.project_key;
 }
 
+function sessionRelationKey(source: string, projectKey: string, sessionId: string): string {
+  return `${source}:${projectKey}:${sessionId}`;
+}
+
+export function inferSubagentParentSessionId(session: HistorySessionView): string | null {
+  const parts = session.file_path.replace(/\\/g, "/").split("/").filter(Boolean);
+  const subagentsIndex = parts.findIndex((part) => part.toLowerCase() === "subagents");
+  if (subagentsIndex <= 0) return null;
+
+  const fileName = parts[subagentsIndex + 1] ?? "";
+  if (!/^agent-[^/]+\.jsonl$/i.test(fileName)) return null;
+
+  const parentSessionId = parts[subagentsIndex - 1] ?? "";
+  if (!parentSessionId || parentSessionId === session.session_id) return null;
+  return parentSessionId;
+}
+
+export function buildHistorySessionChildMap(items: HistorySessionView[]): Map<string, HistorySessionView[]> {
+  const bySessionId = new Map<string, HistorySessionView>();
+  const childrenByParentKey = new Map<string, HistorySessionView[]>();
+
+  for (const item of items) {
+    bySessionId.set(sessionRelationKey(item.source, item.project_key, item.session_id), item);
+  }
+
+  for (const item of items) {
+    const parentSessionId = inferSubagentParentSessionId(item);
+    if (!parentSessionId) continue;
+
+    const parentKey = sessionRelationKey(item.source, item.project_key, parentSessionId);
+    const parent = bySessionId.get(parentKey);
+    if (!parent) continue;
+
+    const children = childrenByParentKey.get(parent.sessionKey) ?? [];
+    children.push(item);
+    childrenByParentKey.set(parent.sessionKey, children);
+  }
+
+  return childrenByParentKey;
+}
+
 export function toGroupLabel(ts: number, nowTs: number): TimeGroupLabel {
   if (!Number.isFinite(ts) || ts <= 0) return "Earlier";
   const todayStart = new Date(nowTs);

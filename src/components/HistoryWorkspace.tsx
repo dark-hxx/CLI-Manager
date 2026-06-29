@@ -11,7 +11,7 @@ import { DiffModal } from "./history/DiffModal";
 import { HistoryListPane } from "./history/HistoryListPane";
 import { SessionDetailPane, type HistoryDetailView } from "./history/SessionDetailPane";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { toGroupLabel, type TimeGroupLabel } from "./history/historyViewUtils";
+import { buildHistorySessionChildMap, toGroupLabel, type TimeGroupLabel } from "./history/historyViewUtils";
 import { buildSessionProcessModel } from "./history/sessionEvents";
 
 const SESSION_PAGE_SIZE = 100;
@@ -93,7 +93,7 @@ function resolveResumeCommand(session: HistorySessionView | HistorySessionDetail
   const sessionId = session.session_id.trim();
   if (!sessionId || /\s/.test(sessionId) || /[\r\n]/.test(sessionId)) return null;
   if (session.source === "claude") return `claude --resume ${sessionId}`;
-  if (session.source === "codex") return `codex resume --no-alt-screen ${sessionId}`;
+  if (session.source === "codex") return `codex resume ${sessionId}`;
   return null;
 }
 
@@ -107,6 +107,10 @@ function resolveHistoryResumeCwd(session: HistorySessionView | HistorySessionDet
 interface HistoryWorkspaceProps {
   active?: boolean;
 }
+
+type DeleteIntent =
+  | { type: "single"; session: HistorySessionView }
+  | { type: "bulk"; sessionKeys: string[] };
 
 export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const { t } = useI18n();
@@ -169,7 +173,9 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const [visibleSessionCount, setVisibleSessionCount] = useState(SESSION_PAGE_SIZE);
   const [visibleMessageCount, setVisibleMessageCount] = useState(MESSAGE_PAGE_SIZE);
   const [debouncedSessionQuery, setDebouncedSessionQuery] = useState(sessionQuery);
-  const [deleteTarget, setDeleteTarget] = useState<HistorySessionView | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedSessionKeys, setSelectedSessionKeys] = useState<Set<string>>(new Set());
+  const [deleteIntent, setDeleteIntent] = useState<DeleteIntent | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSessionQuery(sessionQuery), 150);
@@ -292,10 +298,46 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     () => filteredSessions.slice(0, visibleSessionCount),
     [filteredSessions, visibleSessionCount]
   );
+  const childSessionKeyMap = useMemo(() => {
+    const childrenByParentKey = buildHistorySessionChildMap(filteredSessions);
+    const map = new Map<string, string[]>();
+    for (const [parentSessionKey, children] of childrenByParentKey.entries()) {
+      map.set(parentSessionKey, children.map((item) => item.sessionKey));
+    }
+    return map;
+  }, [filteredSessions]);
+  const visibleSessionKeys = useMemo(() => visibleFilteredSessions.map((item) => item.sessionKey), [visibleFilteredSessions]);
+  const visibleSelectableSessionKeys = useMemo(() => {
+    const next = new Set<string>();
+    for (const sessionKey of visibleSessionKeys) {
+      next.add(sessionKey);
+      const childKeys = childSessionKeyMap.get(sessionKey) ?? [];
+      for (const childKey of childKeys) next.add(childKey);
+    }
+    return [...next];
+  }, [childSessionKeyMap, visibleSessionKeys]);
+  const allVisibleSelected = useMemo(
+    () => visibleSelectableSessionKeys.length > 0 && visibleSelectableSessionKeys.every((key) => selectedSessionKeys.has(key)),
+    [selectedSessionKeys, visibleSelectableSessionKeys]
+  );
 
   const hasMoreVisibleSessions = visibleSessionCount < filteredSessions.length;
   const hasMoreSessions = hasMoreVisibleSessions || backendHasMoreSessions;
   const loadMoreSessionMode = hasMoreVisibleSessions ? "local" : "backend";
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    const allowedKeys = new Set(filteredSessions.map((item) => item.sessionKey));
+    setSelectedSessionKeys((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const key of prev) {
+        if (allowedKeys.has(key)) next.add(key);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredSessions, selectionMode]);
 
   const groupedSessions = useMemo(() => {
     const order: TimeGroupLabel[] = ["Today", "Yesterday", "This Week", "This Month", "Earlier"];
@@ -501,18 +543,86 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   );
 
   const confirmDeleteSession = useCallback(() => {
-    if (!deleteTarget) return;
-    void deleteSession(deleteTarget.sessionKey)
-      .then(() => {
-        toast.success("历史会话已删除");
-      })
-      .catch((err) => {
-        toast.error("删除历史会话失败", { description: String(err) });
-      })
-      .finally(() => {
-        setDeleteTarget(null);
-      });
-  }, [deleteSession, deleteTarget]);
+    if (!deleteIntent) return;
+    const intent = deleteIntent;
+    void (async () => {
+      let deletedCount = 0;
+      try {
+        if (intent.type === "single") {
+          await deleteSession(intent.session.sessionKey);
+          toast.success(t("history.toast.deleteSuccess"));
+          return;
+        }
+
+        for (const sessionKey of intent.sessionKeys) {
+          await deleteSession(sessionKey);
+          deletedCount += 1;
+        }
+
+        setSelectionMode(false);
+        setSelectedSessionKeys(new Set());
+        toast.success(t("history.toast.bulkDeleteSuccess", { count: deletedCount }));
+      } catch (err) {
+        if (intent.type === "bulk" && deletedCount > 0) {
+          toast.error(t("history.toast.bulkDeletePartialFailed", { deleted: deletedCount, total: intent.sessionKeys.length }), {
+            description: String(err),
+          });
+          return;
+        }
+        toast.error(intent.type === "single" ? t("history.toast.deleteFailed") : t("history.toast.bulkDeleteFailed"), {
+          description: String(err),
+        });
+      } finally {
+        setDeleteIntent(null);
+      }
+    })();
+  }, [deleteIntent, deleteSession, t]);
+
+  const handleToggleSessionSelection = useCallback((sessionKey: string) => {
+    setSelectedSessionKeys((prev) => {
+      const next = new Set(prev);
+      const childKeys = childSessionKeyMap.get(sessionKey) ?? [];
+      if (next.has(sessionKey)) {
+        next.delete(sessionKey);
+        for (const childKey of childKeys) next.delete(childKey);
+      } else {
+        next.add(sessionKey);
+        for (const childKey of childKeys) next.add(childKey);
+      }
+      return next;
+    });
+  }, [childSessionKeyMap]);
+
+  const handleToggleSelectAllVisible = useCallback(() => {
+    setSelectedSessionKeys((prev) => {
+      const next = new Set(prev);
+      const shouldClear = visibleSelectableSessionKeys.length > 0 && visibleSelectableSessionKeys.every((key) => next.has(key));
+      for (const key of visibleSelectableSessionKeys) {
+        if (shouldClear) next.delete(key);
+        else next.add(key);
+      }
+      return next;
+    });
+  }, [visibleSelectableSessionKeys]);
+
+  const handleCancelSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedSessionKeys(new Set());
+  }, []);
+
+  const handleRequestBulkDelete = useCallback(() => {
+    if (selectedSessionKeys.size === 0) return;
+    const sessionKeys = filteredSessions.filter((item) => selectedSessionKeys.has(item.sessionKey)).map((item) => item.sessionKey);
+    if (sessionKeys.length === 0) return;
+    setDeleteIntent({ type: "bulk", sessionKeys });
+  }, [filteredSessions, selectedSessionKeys]);
+
+  const deleteDialogTitle = deleteIntent?.type === "bulk" ? t("history.bulk.confirmDeleteTitle", { count: deleteIntent.sessionKeys.length }) : t("history.deleteSession");
+  const deleteDialogMessage = deleteIntent
+    ? deleteIntent.type === "bulk"
+      ? t("history.bulk.confirmDeleteMessage", { count: deleteIntent.sessionKeys.length })
+      : t("history.confirmDeleteMessage", { title: deleteIntent.session.displayTitle })
+    : "";
 
   const resumeSessionInTerminal = useCallback(
     (session: HistorySessionView) => {
@@ -587,6 +697,10 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           visibleSessionCount={Math.min(visibleSessionCount, filteredSessions.length)}
           searchHits={searchHits}
           globalSearchRef={globalSearchRef}
+          selectionMode={selectionMode}
+          selectedCount={selectedSessionKeys.size}
+          allVisibleSelected={allVisibleSelected}
+          selectedSessionKeys={selectedSessionKeys}
           onRefresh={handleRefreshSessions}
           onClose={closeHistory}
           onSourceFilterChange={(value) => {
@@ -596,9 +710,14 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
             void setProjectPathFilter(value);
           }}
           onGlobalQueryChange={setGlobalQuery}
+          onEnterSelectionMode={() => setSelectionMode(true)}
+          onCancelSelectionMode={handleCancelSelectionMode}
+          onToggleSelectAllVisible={handleToggleSelectAllVisible}
+          onToggleSessionSelection={handleToggleSessionSelection}
           onOpenSession={openSessionSafe}
           onResumeSession={resumeSessionInTerminal}
-          onDeleteSession={setDeleteTarget}
+          onDeleteSession={(session) => setDeleteIntent({ type: "single", session })}
+          onDeleteSelected={handleRequestBulkDelete}
           onOpenHit={(hit) => {
             void openByHit(hit);
           }}
@@ -684,14 +803,14 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     </div>
 
       <ConfirmDialog
-        open={deleteTarget !== null}
-        title="删除历史会话"
-        message={`将删除本地历史文件：${deleteTarget?.displayTitle ?? ""}。此操作不可恢复。`}
-        confirmText="删除"
-        cancelText="取消"
+        open={deleteIntent !== null}
+        title={deleteDialogTitle}
+        message={deleteDialogMessage}
+        confirmText={t("common.delete")}
+        cancelText={t("common.cancel")}
         danger
         onConfirm={confirmDeleteSession}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => setDeleteIntent(null)}
       />
     </>
   );

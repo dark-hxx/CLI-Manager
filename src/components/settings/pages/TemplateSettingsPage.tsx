@@ -149,7 +149,8 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
     const name = form.name.trim();
     const command = form.command.trim();
     const description = form.description.trim();
-    if (!name || !command) return;
+    const commandRequired = form.scope !== "global";
+    if (!name || (commandRequired && !command)) return;
     if (mode === "create" && form.scope === "project" && !form.projectId) return;
     if (mode === "create" && form.scope === "session" && !activeSessionId) return;
 
@@ -207,9 +208,10 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
     resetToCreate();
   };
 
+  const commandRequired = form.scope !== "global";
   const saveDisabled = saving
     || !form.name.trim()
-    || !form.command.trim()
+    || (commandRequired && !form.command.trim())
     || (mode === "create" && form.scope === "project" && !form.projectId)
     || (mode === "create" && form.scope === "session" && !activeSessionId);
 

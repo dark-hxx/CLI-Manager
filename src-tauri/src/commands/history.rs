@@ -581,6 +581,7 @@ pub async fn history_list_sessions(
             .filter(|q| !q.is_empty());
         let max_sessions = limit.unwrap_or(usize::MAX);
         let start_offset = offset.unwrap_or(0);
+        let targeted_lookup = target_project_path.is_some() && max_sessions == 1 && start_offset == 0;
         debug!(
             "history_list_sessions request: source={:?}, claude_root={}, codex_root={}, project_path={:?}, query={:?}, limit={}, offset={}",
             source_filter,
@@ -591,6 +592,16 @@ pub async fn history_list_sessions(
             max_sessions,
             start_offset
         );
+        if targeted_lookup {
+            info!(
+                "history_list_sessions targeted lookup: source={:?}, project_path={:?}, query={:?}, limit={}, offset={}",
+                source_filter,
+                target_project_path,
+                query_lower,
+                max_sessions,
+                start_offset
+            );
+        }
         let mut sessions = Vec::new();
         if max_sessions == 0 {
             return Ok(sessions);
@@ -602,17 +613,29 @@ pub async fn history_list_sessions(
             let index_hints = cached_history_index_entries(&roots);
             let all_files = collect_session_files(source_filter.as_deref(), &roots);
             let total_files = all_files.len();
+            let mut mismatch_samples = Vec::new();
             let mut files: Vec<(SessionFileRef, SessionFileFingerprint)> = all_files
                 .into_iter()
-                .filter(|file_ref| {
-                    target_project_path
+                .filter_map(|file_ref| {
+                    let matched = target_project_path
                         .as_ref()
-                        .map(|project_path| session_matches_project_path(file_ref, project_path))
-                        .unwrap_or(true)
-                })
-                .map(|file_ref| {
+                        .map(|project_path| session_matches_project_path(&file_ref, project_path))
+                        .unwrap_or(true);
+                    if !matched {
+                        if targeted_lookup && mismatch_samples.len() < 5 {
+                            let scan = get_or_scan_session_project(&file_ref.path);
+                            mismatch_samples.push(format!(
+                                "source={} project_key={} cwd={:?} file={}",
+                                file_ref.source,
+                                file_ref.project_key,
+                                scan.cwd,
+                                file_ref.path.to_string_lossy()
+                            ));
+                        }
+                        return None;
+                    }
                     let fingerprint = session_file_fingerprint(&file_ref.path);
-                    (file_ref, fingerprint)
+                    Some((file_ref, fingerprint))
                 })
                 .collect();
             debug!(
@@ -623,6 +646,16 @@ pub async fn history_list_sessions(
                 files.len(),
                 index_hints.as_ref().map(|entries| entries.len()).unwrap_or(0)
             );
+            if targeted_lookup {
+                info!(
+                    "history_list_sessions targeted candidates: source={:?}, project_path={:?}, total_files={}, matched_files={}, mismatch_samples={:?}",
+                    source_filter,
+                    target_project_path,
+                    total_files,
+                    files.len(),
+                    mismatch_samples
+                );
+            }
             files.sort_by(|a, b| {
                 b.1.updated_at
                     .cmp(&a.1.updated_at)
@@ -655,6 +688,15 @@ pub async fn history_list_sessions(
                     computed.session_id,
                     file_ref.path.to_string_lossy()
                 );
+                if targeted_lookup && sessions.is_empty() {
+                    info!(
+                        "history_list_sessions targeted hit: source={}, project_key={}, session_id={}, path={}",
+                        file_ref.source,
+                        file_ref.project_key,
+                        computed.session_id,
+                        file_ref.path.to_string_lossy()
+                    );
+                }
                 sessions.push(summary_from_computation(&file_ref, &computed));
             }
             if sessions.is_empty() {
@@ -665,6 +707,15 @@ pub async fn history_list_sessions(
                     total_files,
                     matched
                 );
+                if targeted_lookup {
+                    info!(
+                        "history_list_sessions targeted miss: source={:?}, project_path={:?}, total_files={}, matched_files={}",
+                        source_filter,
+                        target_project_path,
+                        total_files,
+                        matched
+                    );
+                }
             }
             return Ok(sessions);
         }
@@ -712,6 +763,15 @@ pub async fn history_list_sessions(
                 summary.session_id,
                 entry.file_ref.path.to_string_lossy()
             );
+            if targeted_lookup && sessions.is_empty() {
+                info!(
+                    "history_list_sessions targeted indexed hit: source={}, project_key={}, session_id={}, path={}",
+                    entry.file_ref.source,
+                    entry.file_ref.project_key,
+                    summary.session_id,
+                    entry.file_ref.path.to_string_lossy()
+                );
+            }
             sessions.push(summary);
         }
 
@@ -723,6 +783,15 @@ pub async fn history_list_sessions(
                 query_lower,
                 scanned_entries
             );
+            if targeted_lookup {
+                info!(
+                    "history_list_sessions targeted indexed miss: source={:?}, project_path={:?}, query={:?}, scanned_entries={}",
+                    source_filter,
+                    target_project_path,
+                    query_lower,
+                    scanned_entries
+                );
+            }
         }
         Ok(sessions.into_iter().skip(start_offset).take(max_sessions).collect())
     })
@@ -3319,24 +3388,47 @@ fn session_matches_project_path(file_ref: &SessionFileRef, target_project_path: 
     if file_ref.source == "claude" {
         let key = file_ref.project_key.to_lowercase();
         if key == claude_project_key_from_path(target_project_path) {
+            debug!(
+                "session_matches_project_path matched claude key: target={} source={} project_key={} file={}",
+                target_project_path,
+                file_ref.source,
+                file_ref.project_key,
+                file_ref.path.to_string_lossy()
+            );
             return true;
         }
         if let Some(wsl_target) = wsl_target.as_deref() {
             if key == claude_project_key_from_path(wsl_target) {
+                debug!(
+                    "session_matches_project_path matched claude wsl target: target={} wsl_target={} source={} project_key={} file={}",
+                    target_project_path,
+                    wsl_target,
+                    file_ref.source,
+                    file_ref.project_key,
+                    file_ref.path.to_string_lossy()
+                );
                 return true;
             }
         }
         if let Some(ref linux_target) = wsl_unc_linux_target {
             if key == claude_project_key_from_path(linux_target) {
+                debug!(
+                    "session_matches_project_path matched claude unc target: target={} linux_target={} source={} project_key={} file={}",
+                    target_project_path,
+                    linux_target,
+                    file_ref.source,
+                    file_ref.project_key,
+                    file_ref.path.to_string_lossy()
+                );
                 return true;
             }
         }
     }
 
     let scan = get_or_scan_session_project(&file_ref.path);
-    scan.cwd
+    let normalized_cwd = scan.cwd.as_deref().map(normalize_history_path);
+    let matched = normalized_cwd
         .as_deref()
-        .map(normalize_history_path)
         .map(|cwd| {
             cwd_matches_target(&cwd, target_project_path)
                 || wsl_target
@@ -3346,7 +3438,19 @@ fn session_matches_project_path(file_ref: &SessionFileRef, target_project_path: 
                     .as_deref()
                     .is_some_and(|target| cwd_matches_target(&cwd, target))
         })
-        .unwrap_or(false)
+        .unwrap_or(false);
+    debug!(
+        "session_matches_project_path result: target={} wsl_target={:?} unc_linux_target={:?} source={} project_key={} cwd={:?} file={} matched={}",
+        target_project_path,
+        wsl_target,
+        wsl_unc_linux_target,
+        file_ref.source,
+        file_ref.project_key,
+        normalized_cwd,
+        file_ref.path.to_string_lossy(),
+        matched
+    );
+    matched
 }
 
 fn cwd_matches_target(cwd: &str, target: &str) -> bool {
@@ -3396,10 +3500,19 @@ fn scan_session_project(path: &Path) -> SessionProjectScan {
             continue;
         };
         if let Some(cwd) = extract_cwd(&value) {
+            debug!(
+                "scan_session_project extracted cwd: path={} cwd={}",
+                path.to_string_lossy(),
+                cwd
+            );
             return SessionProjectScan { cwd: Some(cwd) };
         }
     }
 
+    debug!(
+        "scan_session_project no cwd found: path={}",
+        path.to_string_lossy()
+    );
     SessionProjectScan::default()
 }
 

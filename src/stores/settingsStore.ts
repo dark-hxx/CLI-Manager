@@ -211,6 +211,7 @@ interface Settings {
   terminalStatsCardOrder: TerminalStatsCardOrderSettings;
   shellRuntimeMonitoringEnabled: boolean;
   ccusageAnalyticsEnabled: boolean;
+  ccusageUseWsl: boolean;
   terminalBackground: TerminalBackgroundSettings;
   hookPopupNotificationsEnabled: boolean;
   hookPopupAutoCloseEnabled: boolean;
@@ -305,6 +306,7 @@ const DEFAULTS: Settings = {
   terminalStatsCardOrder: [...TERMINAL_STATS_CARD_KEYS],
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
+  ccusageUseWsl: false,
   terminalBackground: {
     enabled: false,
     imagePath: null,
@@ -733,6 +735,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.ccusageAnalyticsEnabled === "boolean"
         ? entries.ccusageAnalyticsEnabled
         : DEFAULTS.ccusageAnalyticsEnabled;
+    entries.ccusageUseWsl =
+      typeof entries.ccusageUseWsl === "boolean"
+        ? entries.ccusageUseWsl
+        : DEFAULTS.ccusageUseWsl;
 
     entries.hookPopupNotificationsEnabled =
       typeof entries.hookPopupNotificationsEnabled === "boolean"
