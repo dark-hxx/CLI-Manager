@@ -25,7 +25,7 @@ import { isProjectFileDirty, useFileExplorerStore } from "../stores/fileExplorer
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { logError } from "../lib/logger";
 import type { TerminalPaneDropEdge, TerminalPaneLeaf, TerminalPaneSplitDirection } from "../stores/terminalPaneTree";
-import { collectPaneLeaves } from "../stores/terminalPaneTree";
+import { collectPaneLeaves, filterPaneTreeBySessionIds, findFirstSessionId } from "../stores/terminalPaneTree";
 import { SplitTerminalView } from "./SplitTerminalView";
 import { XTermTerminal } from "./XTermTerminal";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
@@ -1504,9 +1504,16 @@ function SortableToolbarButton({
 interface TerminalTabsProps {
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  projectScopedTerminalViewEnabled?: boolean;
+  projectScopeProjectId?: string | null;
 }
 
-export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: TerminalTabsProps = {}) {
+export function TerminalTabs({
+  fullscreen = false,
+  onToggleFullscreen,
+  projectScopedTerminalViewEnabled = false,
+  projectScopeProjectId = null,
+}: TerminalTabsProps = {}) {
   const { t } = useI18n();
   const { sessions, activeSessionId, paneTree, tabNotifications } = useTerminalStore(
     useShallow((s) => ({
@@ -1579,18 +1586,62 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  const allPanes = useMemo(() => collectPaneLeaves(paneTree), [paneTree]);
+  const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const scopedProject = useMemo(
+    () => (projectScopeProjectId ? projectById.get(projectScopeProjectId) ?? null : null),
+    [projectById, projectScopeProjectId]
+  );
+  const sessionProjectIds = useMemo(() => {
+    const next = new Map<string, string | null>();
+    for (const session of sessions) {
+      next.set(session.id, resolveProjectForSession(session, sessions, projects, projectById)?.id ?? null);
+    }
+    return next;
+  }, [projectById, projects, sessions]);
+  const scopedSessionIds = useMemo(() => {
+    if (!projectScopedTerminalViewEnabled || !projectScopeProjectId) return null;
+    const next = new Set<string>();
+    for (const session of sessions) {
+      if (sessionProjectIds.get(session.id) === projectScopeProjectId) {
+        next.add(session.id);
+      }
+    }
+    return next;
+  }, [projectScopeProjectId, projectScopedTerminalViewEnabled, sessionProjectIds, sessions]);
+  const visiblePaneTree = useMemo(
+    () => (scopedSessionIds ? filterPaneTreeBySessionIds(paneTree, scopedSessionIds) : paneTree),
+    [paneTree, scopedSessionIds]
+  );
+  const visibleSessions = useMemo(
+    () => (scopedSessionIds ? sessions.filter((session) => scopedSessionIds.has(session.id)) : sessions),
+    [scopedSessionIds, sessions]
+  );
+  const allPanes = useMemo(() => collectPaneLeaves(visiblePaneTree), [visiblePaneTree]);
   const activeFullscreenPaneId = useMemo(() => {
     if (!fullscreenPaneId) return null;
     return allPanes.some((pane) => pane.id === fullscreenPaneId) ? fullscreenPaneId : null;
   }, [allPanes, fullscreenPaneId]);
-  const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const preferredScopedSessionId = useMemo(() => {
+    if (!scopedSessionIds) return null;
+    if (activeSessionId && scopedSessionIds.has(activeSessionId)) return activeSessionId;
+    return findFirstSessionId(visiblePaneTree);
+  }, [activeSessionId, scopedSessionIds, visiblePaneTree]);
+  const effectiveActiveSessionId = preferredScopedSessionId ?? activeSessionId;
   const activeSession = useMemo(
-    () => activeSessionId ? sessions.find((session) => session.id === activeSessionId) ?? null : null,
-    [activeSessionId, sessions]
+    () => {
+      if (scopedSessionIds && !preferredScopedSessionId) return null;
+      return effectiveActiveSessionId ? sessions.find((session) => session.id === effectiveActiveSessionId) ?? null : null;
+    },
+    [effectiveActiveSessionId, preferredScopedSessionId, scopedSessionIds, sessions]
   );
   // 子 Agent 转录伪会话没有自己的 CLI 会话/项目：实时统计与 Git 面板落到其父终端，
   // 避免聚焦转录 Tab 时面板被清空/错位。
+  useEffect(() => {
+    if (!projectScopedTerminalViewEnabled || !projectScopeProjectId) return;
+    if (!preferredScopedSessionId || preferredScopedSessionId === activeSessionId) return;
+    setActive(preferredScopedSessionId);
+  }, [activeSessionId, preferredScopedSessionId, projectScopeProjectId, projectScopedTerminalViewEnabled, setActive]);
+
   const panelSession = useMemo(() => {
     if (activeSession?.kind === "subagent-transcript" && activeSession.subagent) {
       return sessions.find((session) => session.id === activeSession.subagent!.parentSessionId) ?? activeSession;
@@ -1721,6 +1772,14 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     closeHistory();
     setActiveWorkspaceTab("terminal");
   }, [activeSession, closeHistory, createSession, useExternalTerminal]);
+
+  const handleOpenScopedProjectSession = useCallback(async () => {
+    if (!scopedProject || useExternalTerminal) return;
+    const options = buildProjectSplitOptions(scopedProject);
+    await createSession(options.projectId, options.cwd, options.title, options.startupCmd, options.envVars, options.shell);
+    closeHistory();
+    setActiveWorkspaceTab("terminal");
+  }, [closeHistory, createSession, scopedProject, useExternalTerminal]);
 
   const handleDuplicateSession = useCallback((session: TerminalSession) => {
     void createSession(
@@ -2348,10 +2407,10 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     <MemoPaneLeafView
       key={pane.id}
       pane={pane}
-      sessions={sessions}
+      sessions={visibleSessions}
       projects={projects}
       allPanes={allPanes}
-      activeSessionId={activeSessionId}
+      activeSessionId={effectiveActiveSessionId}
       historyActive={historyActive}
       editingSessionId={editingSessionId}
       tabNotifications={tabNotifications}
@@ -2388,7 +2447,6 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     />
   ), [
     activeFullscreenPaneId,
-    activeSessionId,
     activeDropPreview,
     allPanes,
     darkThemePalette,
@@ -2410,7 +2468,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     projects,
     renameSession,
     resolvedTheme,
-    sessions,
+    effectiveActiveSessionId,
+    visibleSessions,
     showBackgroundForSession,
     tabNotifications,
     terminalThemeBackground,
@@ -2458,7 +2517,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           style={{ display: historyActive ? "none" : "flex" }}
         >
           <div className="flex-1 min-h-0 min-w-0">
-            {paneTree && sessions.length > 0 ? (
+            {visiblePaneTree && visibleSessions.length > 0 ? (
               <DndContext
                 sensors={sensors}
                 collisionDetection={terminalTabCollisionDetection}
@@ -2467,7 +2526,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
                 onDragCancel={clearDragState}
                 onDragEnd={handleDragEnd}
               >
-                <SplitTerminalView node={paneTree} renderLeaf={renderLeaf} fullscreenLeafId={activeFullscreenPaneId} />
+                <SplitTerminalView node={visiblePaneTree} renderLeaf={renderLeaf} fullscreenLeafId={activeFullscreenPaneId} />
                 <DragOverlay dropAnimation={null}>
                   {activeDragSession ? (
                     <DragOverlayTab
@@ -2479,7 +2538,22 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
                 </DragOverlay>
               </DndContext>
             ) : null}
-            {sessions.length === 0 && !useExternalTerminal && (
+            {projectScopedTerminalViewEnabled && projectScopeProjectId && visibleSessions.length === 0 && !useExternalTerminal && (
+              <div className="flex h-full items-center justify-center">
+                <EmptyState
+                  icon={<Terminal size={40} strokeWidth={1} />}
+                  title={t("terminal.empty.projectTitle", { name: scopedProject?.name ?? "" })}
+                  description={t("terminal.empty.projectDescription", { name: scopedProject?.name ?? "" })}
+                  tone="inverse"
+                  action={
+                    scopedProject
+                      ? { label: t("terminal.empty.projectAction", { name: scopedProject.name }), onClick: handleOpenScopedProjectSession }
+                      : undefined
+                  }
+                />
+              </div>
+            )}
+            {sessions.length === 0 && !useExternalTerminal && !(projectScopedTerminalViewEnabled && projectScopeProjectId) && (
               <div className="flex h-full items-center justify-center">
                 <EmptyState
                   icon={<Terminal size={40} strokeWidth={1} />}

@@ -2,6 +2,8 @@
 
 This file provides guidance to coding agents when working with code in this repository.
 
+DO NOT send optional commentary
+
 ## 项目概述
 
 CLI-Manager 是一款 Windows 桌面应用，用于集中管理基于 PowerShell 的多个开发项目的 CLI 工具（如 claude、codex）。

@@ -642,7 +642,14 @@ export function SegmentedBar({ parts, height = 6 }: { parts: SegmentedBarPart[];
         <div
           key={index}
           className="h-full transition-all duration-700 ease-out"
-          style={{ width: `${(Math.max(0, part.value) / total) * 100}%`, backgroundColor: part.color }}
+          style={{
+            width: `${(Math.max(0, part.value) / total) * 100}%`,
+            minWidth: part.value > 0 ? 2 : 0,
+            backgroundColor: part.color,
+            boxShadow: index > 0 && part.value > 0
+              ? "inset 1px 0 0 color-mix(in srgb, var(--bg-primary) 72%, transparent)"
+              : undefined,
+          }}
           title={part.label ? `${part.label} ${formatCount(part.value)}` : undefined}
         />
       ))}

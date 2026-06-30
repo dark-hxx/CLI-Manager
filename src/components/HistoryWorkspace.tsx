@@ -12,7 +12,7 @@ import { HistoryListPane } from "./history/HistoryListPane";
 import { SessionDetailPane, type HistoryDetailView } from "./history/SessionDetailPane";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { buildHistorySessionChildMap, toGroupLabel, type TimeGroupLabel } from "./history/historyViewUtils";
-import { buildSessionProcessModel } from "./history/sessionEvents";
+import { buildSessionProcessModel, type SessionProcessModel } from "./history/sessionEvents";
 
 const SESSION_PAGE_SIZE = 100;
 const MESSAGE_PAGE_SIZE = 160;
@@ -21,6 +21,14 @@ const HISTORY_SIDEBAR_DEFAULT_WIDTH = 276;
 const HISTORY_SIDEBAR_OLD_DEFAULT_WIDTH = 300;
 // 稳定的空数组引用：避免每次 render 都用 `?? []` 生成新数组、击穿下游 memo。
 const EMPTY_MESSAGES: HistoryMessage[] = [];
+const EMPTY_PROCESS_MODEL: SessionProcessModel = {
+  events: [],
+  diffBlocks: [],
+  fileGroups: [],
+  toolEvents: [],
+  errorEvents: [],
+  subtaskEvents: [],
+};
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -419,7 +427,11 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     [activeSession?.messages, visibleMessageCount]
   );
 
-  const processModel = useMemo(() => buildSessionProcessModel(activeSession, t), [activeSession, t]);
+  const processModel = useMemo(() => {
+    if (!activeSession) return EMPTY_PROCESS_MODEL;
+    if (detailView === "transcript" || detailView === "context") return EMPTY_PROCESS_MODEL;
+    return buildSessionProcessModel(activeSession, t);
+  }, [activeSession, detailView, t]);
 
   const hasMoreMessages = visibleMessageCount < (activeSession?.messages.length ?? 0);
 

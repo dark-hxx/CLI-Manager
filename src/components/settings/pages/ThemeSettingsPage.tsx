@@ -25,6 +25,7 @@ import {
   resolveAutoTerminalThemeId,
   type TerminalThemeGroupId,
 } from "../../../lib/terminalThemes";
+import { normalizeTerminalFontFamily } from "../../../lib/terminalFontFamily";
 import { normalizeShellKey, getOsPlatform } from "../../../lib/shell";
 import type { OsPlatform } from "../../../lib/shell";
 import { getShellOptions } from "../../../lib/types";
@@ -116,6 +117,7 @@ export function ThemeSettingsPage() {
   const fontSize = useSettingsStore((s) => s.fontSize);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
+  const normalizedFontFamily = normalizeTerminalFontFamily(fontFamily);
   const defaultShell = useSettingsStore((s) => s.defaultShell);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
   const unsplitBehavior = useSettingsStore((s) => s.unsplitBehavior);
@@ -126,6 +128,7 @@ export function ThemeSettingsPage() {
   const shellRuntimeMonitoringEnabled = useSettingsStore((s) => s.shellRuntimeMonitoringEnabled);
   const batchLaunchGroupInPane = useSettingsStore((s) => s.batchLaunchGroupInPane);
   const batchLaunchPaneDirection = useSettingsStore((s) => s.batchLaunchPaneDirection);
+  const projectScopedTerminalViewEnabled = useSettingsStore((s) => s.projectScopedTerminalViewEnabled);
   const setTerminalThemeMode = useSettingsStore((s) => s.setTerminalThemeMode);
   const update = useSettingsStore((s) => s.update);
   const [query, setQuery] = useState("");
@@ -208,15 +211,15 @@ export function ThemeSettingsPage() {
   const fontFamilyOptions = useMemo(
     () =>
       mergeFontFamilyOptions(
-        fontFamily,
+        normalizedFontFamily,
         FONT_FAMILY_OPTIONS.map((option) => ({
-          value: option.value,
+          value: normalizeTerminalFontFamily(option.value),
           label: language === "zh-CN" ? option.label : option.labelEn ?? option.label,
         })),
         systemFonts,
         TERMINAL_FONT_FALLBACK
       ),
-    [fontFamily, language, systemFonts]
+    [language, normalizedFontFamily, systemFonts]
   );
   const unsplitOptions = useMemo(
     () => UNSPLIT_OPTIONS.map((option) => ({
@@ -306,7 +309,7 @@ export function ThemeSettingsPage() {
             className="rounded-xl border border-border p-4 font-mono"
             style={{ backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}
           >
-            <Box style={{ fontFamily, fontSize: `${fontSize}px` }}>
+            <Box style={{ fontFamily: normalizedFontFamily, fontSize: `${fontSize}px` }}>
               <div>$ cli-manager --doctor</div>
               <div className="opacity-80">Environment ready. Launching workspace...</div>
               <div className="mt-1 text-success">Terminal initialized</div>
@@ -422,9 +425,9 @@ export function ThemeSettingsPage() {
 
             <FontFamilySelect
               label={text("终端字体族", "Terminal Font Family")}
-              value={fontFamily}
+              value={normalizedFontFamily}
               onChange={(value) => {
-                if (value) void update("fontFamily", value);
+                if (value) void update("fontFamily", normalizeTerminalFontFamily(value));
               }}
               data={fontFamilyOptions}
               maxDropdownHeight={320}
@@ -611,6 +614,28 @@ export function ThemeSettingsPage() {
                   />
                 </Group>
               )}
+            </Card>
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    {t("settings.general.projectScopedTerminalView")}
+                  </Text>
+                  <Text mt={4} size="xs" c="var(--text-muted)">
+                    {t("settings.general.projectScopedTerminalViewDescription")}
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={projectScopedTerminalViewEnabled}
+                  onChange={(event) => void update("projectScopedTerminalViewEnabled", event.currentTarget.checked)}
+                  aria-label={
+                    projectScopedTerminalViewEnabled
+                      ? t("settings.general.disableProjectScopedTerminalView")
+                      : t("settings.general.enableProjectScopedTerminalView")
+                  }
+                />
+              </Group>
             </Card>
           </Stack>
         </section>

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -13,9 +13,10 @@ import markdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown
 import rust from "react-syntax-highlighter/dist/esm/languages/prism/rust";
 import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
 import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn } from "@/lib/utils";
 import { logError } from "@/lib/logger";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 SyntaxHighlighter.registerLanguage("bash", bash);
 SyntaxHighlighter.registerLanguage("sh", bash);
@@ -51,6 +52,8 @@ export interface MarkdownContentProps {
   linkBehavior?: MarkdownLinkBehavior;
   className?: string;
 }
+
+type MarkdownCodeTheme = typeof oneDark;
 
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -163,7 +166,11 @@ function makeLink(
   );
 }
 
-const makeComponents = (query: string, linkBehavior: MarkdownLinkBehavior): Components => {
+const makeComponents = (
+  query: string,
+  linkBehavior: MarkdownLinkBehavior,
+  codeTheme: MarkdownCodeTheme
+): Components => {
   const headingCounts = new Map<string, number>();
 
   const makeHeadingId = (children: ReactNode) => {
@@ -350,7 +357,7 @@ const makeComponents = (query: string, linkBehavior: MarkdownLinkBehavior): Comp
         </div>
         <SyntaxHighlighter
           language={language}
-          style={oneDark}
+          style={codeTheme}
           customStyle={{
             margin: 0,
             padding: "0.75rem",
@@ -380,6 +387,12 @@ export function MarkdownContent({
   linkBehavior = variant === "terminal" ? "open" : "preview",
   className,
 }: MarkdownContentProps) {
+  const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
+  const codeTheme = useMemo<MarkdownCodeTheme>(() => {
+    if (variant === "terminal" || resolvedTheme === "dark") return oneDark;
+    return oneLight;
+  }, [resolvedTheme, variant]);
+
   return (
     <div
       className={cn(
@@ -389,7 +402,7 @@ export function MarkdownContent({
         className
       )}
     >
-      <Markdown remarkPlugins={remarkPlugins} components={makeComponents(query, linkBehavior)} skipHtml>
+      <Markdown remarkPlugins={remarkPlugins} components={makeComponents(query, linkBehavior, codeTheme)} skipHtml>
         {content}
       </Markdown>
     </div>

@@ -71,6 +71,22 @@ export function normalizePaneTree(node: TerminalPaneNode | null): TerminalPaneNo
   return { ...node, first, second };
 }
 
+export function filterPaneTreeBySessionIds(node: TerminalPaneNode | null, visibleSessionIds: Set<string>): TerminalPaneNode | null {
+  if (!node) return null;
+  if (node.type === "leaf") {
+    const sessionIds = node.sessionIds.filter((id) => visibleSessionIds.has(id));
+    return sessionIds.length > 0
+      ? createPaneLeaf(node.id, sessionIds, node.activeSessionId)
+      : null;
+  }
+
+  return normalizePaneTree({
+    ...node,
+    first: filterPaneTreeBySessionIds(node.first, visibleSessionIds) ?? createPaneLeaf("empty-first"),
+    second: filterPaneTreeBySessionIds(node.second, visibleSessionIds) ?? createPaneLeaf("empty-second"),
+  });
+}
+
 export function addSessionToPaneTree(
   tree: TerminalPaneNode | null,
   paneId: string | null,

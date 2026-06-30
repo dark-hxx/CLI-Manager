@@ -19,6 +19,9 @@ interface ProjectTreeProps {
   collapsed: boolean;
   density: "compact" | "comfortable";
   newGroupParentId: string | null;
+  projectScopedTerminalViewEnabled: boolean;
+  terminalScopeProjectId: string | null;
+  onSelectAllTerminalScope: () => void;
   onCreateRootGroup: (name: string) => void;
   onCancelRootGroup: () => void;
   onQuickAddProject: () => void;
@@ -39,7 +42,7 @@ function countProjects(node: TNode): number {
 
 interface VisibleTreeNode {
   key: string;
-  kind: "group" | "project";
+  kind: "all-terminals" | "group" | "project";
   parentGroupKey: string | null;
   groupId?: string;
   groupName?: string;
@@ -51,6 +54,48 @@ interface VisibleTreeNode {
 
 function nodeKey(node: TNode): string {
   return node.type === "group" ? `g:${node.group.id}` : `p:${node.project.id}`;
+}
+
+function isProjectSearchKey(key: string): boolean {
+  return /^[a-z0-9._\\/-]$/i.test(key);
+}
+
+function matchesProjectQuery(project: Extract<TNode, { type: "project" }>["project"], normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  const keywords = [project.name, project.path, project.cli_tool]
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return keywords.some((value) => value.includes(normalizedQuery));
+}
+
+function matchesGroupQuery(groupName: string, normalizedQuery: string): boolean {
+  return normalizedQuery.length > 0 && groupName.trim().toLowerCase().includes(normalizedQuery);
+}
+
+function filterTreeNodes(nodes: TNode[], query: string): TNode[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return nodes;
+
+  const result: TNode[] = [];
+  for (const node of nodes) {
+    if (node.type === "project") {
+      if (matchesProjectQuery(node.project, normalizedQuery)) {
+        result.push(node);
+      }
+      continue;
+    }
+
+    if (matchesGroupQuery(node.group.name, normalizedQuery)) {
+      result.push(node);
+      continue;
+    }
+
+    const children = filterTreeNodes(node.children, normalizedQuery);
+    if (children.length > 0) {
+      result.push({ ...node, children });
+    }
+  }
+  return result;
 }
 
 // 指针在节点行的中部 40% → 命中 into:groupId（进入该分组）
@@ -146,6 +191,9 @@ export function ProjectTree({
   collapsed,
   density,
   newGroupParentId,
+  projectScopedTerminalViewEnabled,
+  terminalScopeProjectId,
+  onSelectAllTerminalScope,
   onCreateRootGroup,
   onCancelRootGroup,
   onQuickAddProject,
@@ -157,9 +205,23 @@ export function ProjectTree({
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [focusedNodeKey, setFocusedNodeKey] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const treeContainerRef = useRef<HTMLDivElement | null>(null);
+  const searchActive = searchOpen && searchQuery.trim().length > 0;
+  const filteredTree = useMemo(
+    () => (searchActive ? filterTreeNodes(tree, searchQuery) : tree),
+    [searchActive, searchQuery, tree]
+  );
   const visibleNodes = useMemo(
-    () => flattenVisibleTree(tree, actions.collapsedIds),
-    [actions.collapsedIds, tree]
+    () => {
+      const nodes = flattenVisibleTree(filteredTree, searchActive ? new Set<string>() : actions.collapsedIds);
+      return projectScopedTerminalViewEnabled
+        ? [{ key: "scope:all", kind: "all-terminals", parentGroupKey: null } satisfies VisibleTreeNode, ...nodes]
+        : nodes;
+    },
+    [actions.collapsedIds, filteredTree, projectScopedTerminalViewEnabled, searchActive]
   );
   const visibleNodeIndex = useMemo(() => {
     const map = new Map<string, number>();
@@ -189,6 +251,34 @@ export function ProjectTree({
     });
   }, []);
 
+  const focusTreeContainer = useCallback(() => {
+    requestAnimationFrame(() => {
+      treeContainerRef.current?.focus();
+    });
+  }, []);
+
+  const closeSearch = useCallback((focusKey?: string | null) => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    const nextKey = focusKey ?? focusedNodeKey ?? visibleNodes[0]?.key ?? null;
+    if (nextKey) {
+      focusTreeItem(nextKey);
+      return;
+    }
+    focusTreeContainer();
+  }, [focusTreeContainer, focusTreeItem, focusedNodeKey, visibleNodes]);
+
+  const openSearch = useCallback((initialQuery = "") => {
+    setSearchOpen(true);
+    setSearchQuery(initialQuery);
+    window.requestAnimationFrame(() => {
+      const input = searchInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(initialQuery.length, initialQuery.length);
+    });
+  }, []);
+
   useEffect(() => {
     if (visibleNodes.length === 0) {
       if (focusedNodeKey !== null) {
@@ -215,11 +305,31 @@ export function ProjectTree({
       return;
     }
 
+    const isSearchShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
+    if (isSearchShortcut) {
+      event.preventDefault();
+      openSearch(searchQuery);
+      return;
+    }
+
+    if (event.key === "Escape" && searchOpen) {
+      event.preventDefault();
+      closeSearch();
+      return;
+    }
+
+    if (!searchOpen && !event.ctrlKey && !event.metaKey && !event.altKey && isProjectSearchKey(event.key)) {
+      event.preventDefault();
+      openSearch(event.key);
+      return;
+    }
+
     if (visibleNodes.length === 0) return;
     const currentKey = focusedNodeKey ?? visibleNodes[0].key;
     const index = visibleNodeIndex.get(currentKey) ?? 0;
     const current = visibleNodes[index];
     if (!current) return;
+    const forceExpanded = searchActive;
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -237,7 +347,7 @@ export function ProjectTree({
 
     if (event.key === "ArrowRight" && current.kind === "group" && current.groupId) {
       event.preventDefault();
-      if (current.hasChildren && !current.isOpen) {
+      if (current.hasChildren && !current.isOpen && !forceExpanded) {
         actions.toggleCollapsed(current.groupId);
         return;
       }
@@ -248,7 +358,7 @@ export function ProjectTree({
     }
 
     if (event.key === "ArrowLeft") {
-      if (current.kind === "group" && current.groupId && current.hasChildren && current.isOpen) {
+      if (current.kind === "group" && current.groupId && current.hasChildren && current.isOpen && !forceExpanded) {
         event.preventDefault();
         actions.toggleCollapsed(current.groupId);
         return;
@@ -262,8 +372,12 @@ export function ProjectTree({
 
     if (event.key === "Enter") {
       event.preventDefault();
+      if (current.kind === "all-terminals") {
+        onSelectAllTerminalScope();
+        return;
+      }
       if (current.kind === "group" && current.groupId) {
-        actions.toggleCollapsed(current.groupId);
+        if (!forceExpanded) actions.toggleCollapsed(current.groupId);
         return;
       }
       if (current.kind === "project" && current.projectId) {
@@ -293,13 +407,17 @@ export function ProjectTree({
 
     if (event.key === " " || event.key === "Spacebar") {
       event.preventDefault();
+      if (current.kind === "all-terminals") {
+        onSelectAllTerminalScope();
+        return;
+      }
       if (current.kind === "project" && current.projectId) {
         const projectNode = projectById.get(current.projectId);
         if (projectNode?.type === "project") {
           actions.onSelectProjectByKeyboard(projectNode.project);
         }
       }
-      if (current.kind === "group" && current.groupId) {
+      if (current.kind === "group" && current.groupId && !forceExpanded) {
         actions.toggleCollapsed(current.groupId);
       }
       return;
@@ -315,7 +433,23 @@ export function ProjectTree({
       event.preventDefault();
       focusTreeItem(visibleNodes[visibleNodes.length - 1].key);
     }
-  }, [actions, focusTreeItem, focusedNodeKey, projectById, visibleNodeIndex, visibleNodes]);
+  }, [
+    actions,
+    focusTreeItem,
+    focusedNodeKey,
+    onSelectAllTerminalScope,
+    openSearch,
+    projectById,
+    searchActive,
+    searchOpen,
+    searchQuery,
+    visibleNodeIndex,
+    visibleNodes,
+  ]);
+  const filteredRootIds = useMemo(
+    () => filteredTree.map((node) => (node.type === "group" ? node.group.id : node.project.id)),
+    [filteredTree]
+  );
 
   if (initialLoading) {
     return (
@@ -391,6 +525,40 @@ export function ProjectTree({
         </div>
       )}
 
+      {searchOpen && (
+        <div className={`px-2 ${density === "compact" ? "pb-1 pt-0.5" : "pb-1.5 pt-0.5"}`}>
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            placeholder={t("sidebar.tree.searchPlaceholder")}
+            aria-label={t("sidebar.tree.searchAria")}
+            className="ui-tree-inline-input ui-focus-ring h-8 w-full px-2 text-xs text-on-surface outline-none"
+            onChange={(event) => {
+              const nextValue = event.currentTarget.value;
+              if (!nextValue.trim()) {
+                closeSearch();
+                return;
+              }
+              setSearchQuery(nextValue);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeSearch();
+                return;
+              }
+              if (event.key === "ArrowDown" && visibleNodes.length > 0) {
+                event.preventDefault();
+                const nextNode = searchActive
+                  ? visibleNodes.find((node) => node.kind !== "all-terminals") ?? visibleNodes[0]
+                  : visibleNodes[0];
+                focusTreeItem(nextNode.key);
+              }
+            }}
+          />
+        </div>
+      )}
+
       <DndContext
         sensors={sensors}
         collisionDetection={treeCollisionDetection}
@@ -402,16 +570,50 @@ export function ProjectTree({
         }}
       >
         <SortableContext
-          items={tree.map((n) => (n.type === "group" ? n.group.id : n.project.id))}
+          items={filteredRootIds}
           strategy={verticalListSortingStrategy}
         >
           <div
+            ref={treeContainerRef}
             role="tree"
             aria-label={t("sidebar.tree.aria")}
             aria-multiselectable="true"
+            tabIndex={-1}
+            className="min-h-full outline-none"
             onKeyDown={handleTreeKeyDown}
+            onMouseDown={(event) => {
+              const target = event.target as HTMLElement | null;
+              if (!target) return;
+              if (target.closest("button, input, textarea, select, a, [contenteditable='true']")) return;
+              focusTreeContainer();
+            }}
           >
-            {tree.map((node) => (
+            {projectScopedTerminalViewEnabled && (
+              <div
+                role="treeitem"
+                data-tree-key="scope:all"
+                aria-level={1}
+                aria-selected={terminalScopeProjectId === null}
+                tabIndex={focusedNodeKey === "scope:all" ? 0 : -1}
+                onFocus={() => setFocusedNodeKey("scope:all")}
+              >
+                <button
+                  type="button"
+                  className={`ui-tree-node ui-tree-project ui-focus-ring flex w-full items-center rounded-xl ${
+                    density === "compact" ? "gap-1.5 py-1 text-[12px]" : "gap-2 py-1.5 text-[13px]"
+                  }`}
+                  data-selected={terminalScopeProjectId === null ? "true" : "false"}
+                  style={{ paddingLeft: density === "compact" ? 6 : 8, paddingRight: density === "compact" ? 8 : 10 }}
+                  onClick={onSelectAllTerminalScope}
+                >
+                  <span className="ui-tree-leading-icon">
+                    <Terminal size={14} strokeWidth={1.5} />
+                  </span>
+                  <span className="truncate font-medium">{t("sidebar.tree.allTerminals")}</span>
+                </button>
+              </div>
+            )}
+            {filteredTree.map((node) => (
               <TreeNodeItem
                 key={node.type === "group" ? `g:${node.group.id}` : `p:${node.project.id}`}
                 node={node}
@@ -419,16 +621,26 @@ export function ProjectTree({
                 density={density}
                 focusedNodeKey={focusedNodeKey}
                 onFocusNode={setFocusedNodeKey}
+                forceExpanded={searchActive}
+                sortableEnabled={!searchActive}
               />
             ))}
           </div>
         </SortableContext>
         <DragOverlay dropAnimation={null}>
-          {activeId ? <DragGhost activeId={activeId} tree={tree} /> : null}
+          {activeId ? <DragGhost activeId={activeId} tree={filteredTree} /> : null}
         </DragOverlay>
       </DndContext>
 
-      {tree.length === 0 && loadError && (
+      {searchActive && filteredTree.length === 0 && (
+        <EmptyState
+          icon={<Terminal size={40} strokeWidth={1} />}
+          title={t("sidebar.tree.searchEmptyTitle")}
+          description={t("sidebar.tree.searchEmptyDescription")}
+        />
+      )}
+
+      {tree.length === 0 && loadError && !searchActive && (
         <EmptyState
           icon={<Terminal size={40} strokeWidth={1} />}
           title={t("sidebar.tree.loadFailed")}
@@ -437,7 +649,7 @@ export function ProjectTree({
         />
       )}
 
-      {tree.length === 0 && !loadError && (
+      {tree.length === 0 && !loadError && !searchActive && (
         <EmptyState
           icon={<Terminal size={40} strokeWidth={1} />}
           title={t("sidebar.tree.welcome")}

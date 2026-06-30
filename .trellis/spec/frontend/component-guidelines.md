@@ -928,3 +928,35 @@ text = text.replace(/\x1b\[[23]J/g, "");
 - [ ] Scope clear-screen filtering to the "user is reading history" case; do not degrade normal at-bottom TUI redraw fidelity.
 - [ ] If resize is noisy during TUI streaming, prefer deferring `fit()` rather than rebuilding the terminal or forcing outer-container scroll resets.
 
+### Convention: Light-theme hierarchy relies on contrast plus borders, not tint alone
+
+**What**: When polishing existing light-theme UI surfaces, selected and active states must combine three signals: darker text or icon contrast, a stronger edge (`border` or inset outline), and a surface step that is visibly different from hover. Do not rely on a near-white tint change alone.
+
+**Why**: Dense desktop-tool layouts compress tabs, tree rows, toolbar buttons, and side-panel shells into narrow bands. In light themes, subtle fills collapse visually into the base surface and make selection state hard to scan. Border and surface hierarchy improve readability without increasing spacing or introducing decorative gradients.
+
+**Example**:
+
+```css
+[data-theme="light"] .ui-tab-trigger[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--interactive-selected-border) 68%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 12%, white 88%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-selected-border) 34%, transparent);
+}
+
+[data-theme="light"] .ui-tree-project[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--interactive-selected-border) 58%, transparent);
+  background: color-mix(in srgb, var(--primary) 13%, white 87%);
+}
+```
+
+**Wrong**:
+
+```css
+[data-theme="light"] .ui-tree-project[data-selected="true"] {
+  background: color-mix(in srgb, var(--primary) 5%, white 95%);
+  border-color: transparent;
+}
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually verify at least one light palette and one dark theme. In the light theme, check project-tree selection, terminal tabs, toolbar buttons, and terminal side-panel buttons are distinguishable at a glance without changing layout density.
+

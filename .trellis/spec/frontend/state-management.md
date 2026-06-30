@@ -208,6 +208,41 @@ splitSessionToPaneEdge(sessionId: string, targetPaneId: string, edge: TerminalPa
 - Assert same-pane single-tab edge split returns `changed: false`.
 - Assert `activePaneId` and `activeSessionId` point to the moved tab when a split succeeds.
 
+### Pattern: Project-scoped terminal filtering derives a visible pane tree
+
+**Problem**: A project-only terminal view is a presentation concern. If the UI mutates the real `sessions` array or `paneTree` to hide other projects, background sessions disappear from state, pane operations close the wrong tabs, and leaving scoped mode cannot reconstruct the original layout.
+
+**Solution**: Keep the store state authoritative and derive a filtered pane tree in the view layer. Filter by resolved project ownership per session, then pass the filtered leaves into tab rendering and pane-level close actions.
+
+```typescript
+const scopedSessionIds = new Set(
+  sessions
+    .filter((session) => resolveProjectForSession(session, sessions, projects, projectById)?.id === projectScopeProjectId)
+    .map((session) => session.id)
+);
+
+const visiblePaneTree = filterPaneTreeBySessionIds(paneTree, scopedSessionIds);
+const visiblePanes = collectPaneLeaves(visiblePaneTree);
+```
+
+**Contracts**:
+
+- `sessions` and the persisted `paneTree` remain unchanged when toggling project scope.
+- Filtering must use resolved ownership for derived sessions such as subagent transcript tabs, not only `session.projectId`.
+- Pane/tab bulk actions in scoped mode must operate on the filtered leaves, so hidden tabs from other projects are untouched.
+- Disabling scoped mode must immediately restore the original all-project layout without rebuilding pane state.
+
+**Good/Base/Bad Cases**:
+
+- Good: project A scope shows only A tabs, and `close others` leaves hidden project B tabs intact in the store.
+- Base: selecting "All Terminals" bypasses filtering and renders the original pane tree.
+- Bad: removing non-matching sessions from `terminalStore.sessions` or rewriting `paneTree` during filtering.
+
+**Tests Required**:
+
+- Type-check that scoped rendering paths consume `visiblePaneTree` / `visibleSessions` instead of raw `paneTree` / `sessions`.
+- Manual desktop verification: scoped mode on/off restores the same tab layout; project empty state appears when the chosen project has no open terminals; hidden-project tabs survive scoped close operations.
+
 ---
 
 ## Common Mistakes

@@ -45,13 +45,23 @@ interface TreeNodeItemProps {
   density: "compact" | "comfortable";
   focusedNodeKey: string | null;
   onFocusNode: (key: string) => void;
+  forceExpanded?: boolean;
+  sortableEnabled?: boolean;
 }
 
-function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }: TreeNodeItemProps) {
+function TreeNodeItemImpl({
+  node,
+  depth,
+  density,
+  focusedNodeKey,
+  onFocusNode,
+  forceExpanded = false,
+  sortableEnabled = true,
+}: TreeNodeItemProps) {
   const { t } = useI18n();
   const actions = useTreeActions();
   const itemId = node.type === "project" ? node.project.id : node.group.id;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: itemId });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: itemId, disabled: !sortableEnabled });
   const sortableStyle = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const compact = density === "compact";
   const indentBase = compact ? 6 : 8;
@@ -141,7 +151,7 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
 
   const g = node.group;
   const treeKey = `g:${g.id}`;
-  const isOpen = !actions.collapsedIds.has(g.id);
+  const isOpen = forceExpanded || !actions.collapsedIds.has(g.id);
   const { setNodeRef: setIntoRef, isOver: isOverInto } = useDroppable({ id: `into:${g.id}` });
 
   if (actions.renamingGroupId === g.id) {
@@ -189,7 +199,9 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
           data-open={isOpen ? "true" : "false"}
           data-drop-target={isOverInto ? "true" : "false"}
           style={{ paddingLeft, paddingRight: compact ? 8 : 10, color: "var(--text-secondary)" }}
-          onClick={() => actions.toggleCollapsed(g.id)}
+          onClick={() => {
+            if (!forceExpanded) actions.toggleCollapsed(g.id);
+          }}
           onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
           {...listeners}
         >
@@ -226,6 +238,8 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
                       density={density}
                       focusedNodeKey={focusedNodeKey}
                       onFocusNode={onFocusNode}
+                      forceExpanded={forceExpanded}
+                      sortableEnabled={sortableEnabled}
                     />
                   ))}
                 </div>

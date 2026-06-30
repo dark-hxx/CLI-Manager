@@ -441,3 +441,15 @@
   --interactive-selected-border: color-mix(in srgb, var(--primary) 55%, var(--border) 45%);
   --interactive-shadow: none;
 }
+
+[data-theme="light"] {
+  --surface-container-low: color-mix(in srgb, var(--bg-secondary) 95%, white 5%);
+  --surface-container-high: color-mix(in srgb, var(--bg-tertiary) 92%, var(--border) 8%);
+  --surface-container-highest: color-mix(in srgb, var(--bg-tertiary) 76%, var(--border) 24%);
+  --on-surface-variant: color-mix(in srgb, var(--text-secondary) 82%, var(--text-primary) 18%);
+  --interactive-hover-bg: color-mix(in srgb, var(--surface-container-highest) 84%, var(--primary) 16%);
+  --interactive-active-bg: color-mix(in srgb, var(--surface-container-highest) 74%, var(--primary) 26%);
+  --interactive-selected-bg: color-mix(in srgb, var(--surface-container-highest) 60%, var(--primary) 40%);
+  --interactive-selected-border: color-mix(in srgb, var(--primary) 64%, var(--border) 36%);
+  --interactive-shadow: 0 8px 20px color-mix(in srgb, var(--on-surface) 8%, transparent);
+}

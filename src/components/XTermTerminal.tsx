@@ -25,6 +25,7 @@ import { backgroundAssetUrl } from "../lib/assetUrl";
 import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
 import { useI18n } from "../lib/i18n";
 import { isDirectCodexStartupCommand } from "../lib/projectStartupCommand";
+import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
 import { endTerminalFileDrag, getTerminalFileDragText } from "../lib/terminalFileDrag";
 import {
   defaultShellForOs,
@@ -354,6 +355,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const isTransparent = background.enabled && background.imagePath !== null && !hiddenForThisSession;
   const isTransparentRef = useRef(isTransparent);
   isTransparentRef.current = isTransparent;
+  const effectiveFontFamily = normalizeTerminalFontFamily(fontFamily);
 
   const syncWebglRenderer = (terminal: Terminal, theme: ReturnType<typeof getTerminalTheme>) => {
     const shouldUseWebgl = !isTransparentRef.current && !isLightTerminalTheme(theme);
@@ -816,10 +818,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       terminal.options.fontWeightBold = "bold";
     }
     const rendererChanged = syncWebglRenderer(terminal, baseTheme);
-    const sizeChanged = terminal.options.fontSize !== fontSize || terminal.options.fontFamily !== fontFamily;
+    const sizeChanged = terminal.options.fontSize !== fontSize || terminal.options.fontFamily !== effectiveFontFamily;
     if (sizeChanged || weightChanged) {
       terminal.options.fontSize = fontSize;
-      terminal.options.fontFamily = fontFamily;
+      terminal.options.fontFamily = effectiveFontFamily;
     }
     if (sizeChanged || weightChanged || rendererChanged) {
       scheduleFit(true);
@@ -829,7 +831,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     }
     normalizeTuiComposerBackground(terminal);
     scheduleTuiComposerBackgroundNormalization(terminal);
-  }, [fontSize, fontFamily, terminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken]);
+  }, [fontSize, effectiveFontFamily, terminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken]);
 
   // Visibility drives live rendering. A pane tab is "visible" when it is the
   // shown tab in its own pane — which, in a split, includes panes that are not
@@ -880,7 +882,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       cursorStyle: "bar",
       cursorWidth: 1,
       fontSize,
-      fontFamily,
+      fontFamily: effectiveFontFamily,
       fontWeight: "normal",
       fontWeightBold: "bold",
       scrollback: terminalScrollbackRows,
@@ -1853,14 +1855,14 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   // cover the pseudo-element image layer and break the transparency model.
   const wrapperStyle: CSSProperties = showBackgroundImage
     ? ({
-        "--terminal-font-family": fontFamily,
+        "--terminal-font-family": effectiveFontFamily,
         "--terminal-bg-image": `url("${assetUrl}")`,
         "--terminal-bg-opacity": (background.opacity / 100).toString(),
         "--terminal-bg-blur": `${background.blur}px`,
         "--terminal-bg-darken": (background.overlayDarken / 100).toString(),
         "--terminal-bg-overlay-color": backgroundOverlayColor,
       } as CSSProperties)
-    : ({ "--terminal-font-family": fontFamily, backgroundColor } as CSSProperties);
+    : ({ "--terminal-font-family": effectiveFontFamily, backgroundColor } as CSSProperties);
 
   return (
     <div

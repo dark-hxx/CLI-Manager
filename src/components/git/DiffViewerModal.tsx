@@ -5,8 +5,8 @@ import { X, Undo2 } from "../icons";
 import { parseDiff, Diff, Hunk, tokenize, Decoration, getChangeKey } from "react-diff-view";
 import type { ChangeData } from "react-diff-view";
 import { useGitStore } from "../../stores/gitStore";
-import { TERM } from "../stats/termStatsUi";
 import { useI18n } from "../../lib/i18n";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { refractor, detectLanguage } from "./diffHighlight";
 import "react-diff-view/style/index.css";
 import "./diffViewer.css";
@@ -23,6 +23,7 @@ interface DiffViewerModalProps {
 
 export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName, status, onRequestDiscard }: DiffViewerModalProps) {
   const { t } = useI18n();
+  const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const [diffText, setDiffText] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,24 +148,28 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
 
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
-      style={{ zIndex: 100, backgroundColor: "rgba(0, 0, 0, 0.6)" }}
+      className="fixed inset-0 flex items-center justify-center bg-black/60 p-4"
+      style={{ zIndex: 100 }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="w-full max-w-6xl h-[85vh] flex flex-col rounded-xl shadow-2xl overflow-hidden border font-mono"
-        style={{ backgroundColor: TERM.bg, borderColor: TERM.border }}
+        className="w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden rounded-xl border font-mono shadow-2xl"
+        data-theme-mode={resolvedTheme}
+        style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
           className="flex items-center justify-between px-4 py-3 border-b"
-          style={{ backgroundColor: TERM.card, borderColor: TERM.border }}
+          style={{
+            backgroundColor: "var(--surface-container-low)",
+            borderColor: "color-mix(in srgb, var(--border) 24%, transparent)",
+          }}
         >
           <div className="flex items-center gap-3">
-            <h2 className="text-base font-semibold" style={{ color: TERM.fg }}>
+            <h2 className="text-base font-semibold text-text-primary">
               Diff: {fileName}
             </h2>
           </div>
@@ -176,7 +181,10 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                   onRequestDiscard?.(filePath, fileName, status);
                 }}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-1 text-[12px] transition-opacity hover:opacity-80"
-                style={{ color: TERM.red, border: `1px solid ${TERM.border}` }}
+                style={{
+                  color: "var(--danger)",
+                  border: "1px solid color-mix(in srgb, var(--danger) 26%, var(--border))",
+                }}
                 title={t("git.diff.revertFileTitle")}
               >
                 <Undo2 size={13} />
@@ -186,7 +194,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
             <button
               onClick={onClose}
               className="ui-focus-ring rounded p-1 transition-opacity hover:opacity-70"
-              style={{ color: TERM.dim }}
+              style={{ color: "var(--text-muted)" }}
               title={t("common.close")}
             >
               <X size={18} strokeWidth={1.5} />
@@ -195,15 +203,15 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-4" style={{ backgroundColor: TERM.bg }}>
+        <div className="flex-1 overflow-auto p-4" style={{ backgroundColor: "var(--surface)" }}>
           {loading && (
             <div className="flex items-center justify-center h-full">
               <div className="flex flex-col items-center gap-3">
                 <div
                   className="h-8 w-8 animate-spin rounded-full border-2"
-                  style={{ borderColor: TERM.green, borderTopColor: "transparent" }}
+                  style={{ borderColor: "var(--success)", borderTopColor: "transparent" }}
                 ></div>
-                <p className="text-sm" style={{ color: TERM.dim }}>{t("git.diff.loading")}</p>
+                <p className="text-sm text-text-muted">{t("git.diff.loading")}</p>
               </div>
             </div>
           )}
@@ -211,7 +219,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
           {error && (
             <div className="flex items-center justify-center h-full">
               <div className="flex flex-col items-center gap-3 max-w-md text-center">
-                <p className="text-sm" style={{ color: TERM.red }}>{error}</p>
+                <p className="text-sm" style={{ color: "var(--danger)" }}>{error}</p>
               </div>
             </div>
           )}
@@ -219,7 +227,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
           {!loading && !error && diffText && parsedDiff && tokens && (
             <div
               className="diff-viewer-container rounded-lg shadow-sm border overflow-hidden"
-              style={{ backgroundColor: TERM.bg, borderColor: TERM.border }}
+              style={{ backgroundColor: "var(--surface-container-lowest)", borderColor: "var(--border)" }}
             >
               <Diff
                 viewType="split"
@@ -234,9 +242,12 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                     <Decoration key={`deco-${hunk.content}`}>
                       <div
                         className="flex items-center justify-between gap-2 px-3 py-1"
-                        style={{ backgroundColor: TERM.cardInner, borderTop: `1px solid ${TERM.border}` }}
+                        style={{
+                          backgroundColor: "var(--surface-container-low)",
+                          borderTop: "1px solid color-mix(in srgb, var(--border) 20%, transparent)",
+                        }}
                       >
-                        <span className="truncate text-[11px]" style={{ color: TERM.dim }}>
+                        <span className="truncate text-[11px] text-text-muted">
                           {hunk.content}
                         </span>
                         {canDiscard && (
@@ -244,7 +255,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                             onClick={() => handleRevertHunk(index)}
                             disabled={discarding}
                             className="ui-focus-ring flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
-                            style={{ color: TERM.red }}
+                            style={{ color: "var(--danger)" }}
                             title={t("git.diff.revertHunkTitle")}
                           >
                             <Undo2 size={11} />
@@ -262,7 +273,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
 
           {!loading && !error && (!diffText || !parsedDiff) && (
             <div className="flex items-center justify-center h-full">
-              <p className="text-sm" style={{ color: TERM.dim }}>{t("git.diff.noContent")}</p>
+              <p className="text-sm text-text-muted">{t("git.diff.noContent")}</p>
             </div>
           )}
         </div>
@@ -271,16 +282,20 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
         {canDiscard && parsedDiff && (
           <div
             className="flex items-center justify-between gap-3 border-t px-4 py-2 text-[11px]"
-            style={{ borderColor: TERM.border, backgroundColor: TERM.card, color: TERM.dim }}
+            style={{
+              borderColor: "color-mix(in srgb, var(--border) 24%, transparent)",
+              backgroundColor: "var(--surface-container-low)",
+              color: "var(--text-muted)",
+            }}
           >
             <span>{t("git.diff.selectLineHint")}</span>
             {selectedKeys.length > 0 && (
               <div className="flex items-center gap-2">
-                <span style={{ color: TERM.fg }}>{t("git.diff.selectedLines", { count: selectedKeys.length })}</span>
+                <span className="text-text-primary">{t("git.diff.selectedLines", { count: selectedKeys.length })}</span>
                 <button
                   onClick={() => setSelectedKeys([])}
                   className="ui-focus-ring rounded px-2 py-0.5 transition-opacity hover:opacity-80"
-                  style={{ color: TERM.dim }}
+                  style={{ color: "var(--text-muted)" }}
                 >
                   {t("git.diff.clearSelection")}
                 </button>
@@ -288,7 +303,10 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
                   onClick={handleRevertLines}
                   disabled={discarding}
                   className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 transition-opacity hover:opacity-80 disabled:opacity-40"
-                  style={{ color: TERM.red, border: `1px solid ${TERM.border}` }}
+                  style={{
+                    color: "var(--danger)",
+                    border: "1px solid color-mix(in srgb, var(--danger) 26%, var(--border))",
+                  }}
                 >
                   <Undo2 size={11} />
                   {t("git.diff.revertSelectedLines", { count: selectedKeys.length })}

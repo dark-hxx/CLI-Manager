@@ -745,3 +745,37 @@ Add project-level Codex provider switching with generated profiles, cleanup, sid
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 完成 Issue 70 项目列表搜索与终端聚焦
+
+**Date**: 2026-06-30
+**Task**: 完成 Issue 70 项目列表搜索与终端聚焦
+**Branch**: `master`
+
+### Summary
+
+实现项目列表瞬时搜索、按项目聚焦终端、项目级空状态与相关文档更新。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56b696b` | (see git log) |
+| `5fc43a3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

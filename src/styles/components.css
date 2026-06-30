@@ -284,6 +284,26 @@
   transform: translateY(-1px);
 }
 
+[data-theme="light"] .ui-tab-trigger {
+  color: color-mix(in srgb, var(--on-surface-variant) 88%, var(--on-surface) 12%);
+  border-color: color-mix(in srgb, var(--border) 36%, transparent);
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 82%, var(--surface-container-low) 18%);
+}
+
+[data-theme="light"] .ui-tab-trigger:hover:not([data-selected="true"]) {
+  color: var(--on-surface);
+  border-color: color-mix(in srgb, var(--border) 46%, transparent);
+  background-color: color-mix(in srgb, var(--surface-container-high) 72%, var(--surface-container-lowest) 28%);
+}
+
+[data-theme="light"] .ui-tab-trigger[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--interactive-selected-border) 68%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 12%, white 88%);
+  box-shadow:
+    0 6px 18px color-mix(in srgb, var(--on-surface) 8%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--interactive-selected-border) 34%, transparent);
+}
+
 .ui-tab-runtime-dot {
   color: var(--tab-runtime-dot-color, currentColor);
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
@@ -564,18 +584,24 @@
 }
 
 [data-theme="light"] .ui-tree-project[data-selected="true"] {
-  background: color-mix(in srgb, var(--primary) 7%, white 93%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--on-surface);
+  border-color: color-mix(in srgb, var(--interactive-selected-border) 58%, transparent);
+  background: color-mix(in srgb, var(--primary) 13%, white 87%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent);
 }
 
-[data-theme="light"] .ui-tree-project,
+[data-theme="light"] .ui-tree-project {
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 90%, var(--surface-container-low) 10%);
+}
+
 [data-theme="light"] .ui-tree-project:hover {
-  background-color: var(--surface-container-lowest);
+  background-color: color-mix(in srgb, var(--surface-container-high) 62%, white 38%);
+  border-color: color-mix(in srgb, var(--border) 40%, transparent);
 }
 
 [data-theme="light"] .ui-tree-group-shell {
   background: var(--surface-container-lowest);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 14%, transparent);
 }
 
 [data-theme="light"] .ui-tree-group:hover,
@@ -1306,7 +1332,7 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 8px;
   background-color: var(--surface-container-highest);
   color: var(--on-surface-variant);
@@ -1330,9 +1356,32 @@
   color: #fff;
 }
 
+[data-theme="light"] .ui-icon-action {
+  background-color: color-mix(in srgb, var(--surface-container-highest) 72%, white 28%);
+  color: color-mix(in srgb, var(--on-surface-variant) 86%, var(--on-surface) 14%);
+}
+
 .ui-icon-action.ui-sidebar-action-stats {
   background-color: transparent;
   color: var(--success);
+}
+
+[data-theme="light"] .ui-icon-action.ui-sidebar-action-stats {
+  color: color-mix(in srgb, var(--success) 82%, var(--on-surface) 18%);
+}
+
+[data-theme="light"] .ui-icon-action.ui-sidebar-action-settings {
+  color: color-mix(in srgb, var(--primary) 82%, var(--on-surface) 18%);
+}
+
+[data-theme="light"] .ui-icon-action.ui-sidebar-action-hook {
+  color: color-mix(in srgb, var(--on-surface-variant) 92%, var(--on-surface) 8%);
+}
+
+[data-theme="light"] .ui-icon-action.ui-sidebar-action-stats,
+[data-theme="light"] .ui-icon-action.ui-sidebar-action-settings,
+[data-theme="light"] .ui-icon-action.ui-sidebar-action-hook {
+  border-color: color-mix(in srgb, currentColor 18%, transparent);
 }
 
 .ui-icon-action.ui-sidebar-action-settings {
@@ -2524,6 +2573,11 @@
   align-items: stretch;
 }
 
+[data-theme="light"] .ui-terminal-action-sidebar {
+  background-color: color-mix(in srgb, var(--surface-container-low) 88%, white 12%);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 14%, transparent);
+}
+
 .ui-terminal-action-sort-item {
   touch-action: none;
 }
@@ -2587,6 +2641,34 @@
   box-shadow: none;
 }
 
+[data-theme="light"] .ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-toolbar-button:hover:not(:disabled),
+[data-theme="light"] .ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-icon-action:hover:not(:disabled),
+[data-theme="light"] .ui-terminal-action-sidebar .ui-toolbar-button:hover:not(:disabled),
+[data-theme="light"] .ui-terminal-action-sidebar .ui-icon-action:hover:not(:disabled),
+[data-theme="light"] .ui-terminal-action-drag-overlay .ui-toolbar-button:hover:not(:disabled),
+[data-theme="light"] .ui-terminal-action-drag-overlay .ui-icon-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 18%, transparent);
+  background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 12%, white 88%);
+}
+
+[data-theme="light"] .ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-primary-action,
+[data-theme="light"] .ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-icon-action[data-active="true"],
+[data-theme="light"] .ui-terminal-action-sidebar .ui-primary-action,
+[data-theme="light"] .ui-terminal-action-sidebar .ui-icon-action[data-active="true"],
+[data-theme="light"] .ui-terminal-action-drag-overlay .ui-primary-action,
+[data-theme="light"] .ui-terminal-action-drag-overlay .ui-icon-action[data-active="true"] {
+  color: color-mix(in srgb, var(--terminal-action-color, currentColor) 92%, var(--on-surface) 8%);
+}
+
+[data-theme="light"] .ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-toolbar-button,
+[data-theme="light"] .ui-terminal-pane-chrome .ui-terminal-action-sidebar .ui-icon-action,
+[data-theme="light"] .ui-terminal-action-sidebar .ui-toolbar-button,
+[data-theme="light"] .ui-terminal-action-sidebar .ui-icon-action,
+[data-theme="light"] .ui-terminal-action-drag-overlay .ui-toolbar-button,
+[data-theme="light"] .ui-terminal-action-drag-overlay .ui-icon-action {
+  color: color-mix(in srgb, var(--terminal-action-color, currentColor) 92%, var(--on-surface) 8%);
+}
+
 .ui-terminal-action-sidebar .ui-action-new.ui-primary-action,
 .ui-terminal-action-drag-overlay .ui-action-new.ui-primary-action {
   border-color: transparent;
@@ -2633,6 +2715,36 @@
 
 .ui-action-stats {
   --terminal-action-color: #3dd68c;
+}
+
+[data-theme="light"] .ui-action-new {
+  --terminal-action-color: #0f9f6e;
+}
+
+[data-theme="light"] .ui-action-template,
+[data-theme="light"] .ui-action-replay {
+  --terminal-action-color: #b83280;
+}
+
+[data-theme="light"] .ui-action-command-history,
+[data-theme="light"] .ui-action-session-history {
+  --terminal-action-color: #2563eb;
+}
+
+[data-theme="light"] .ui-action-fullscreen {
+  --terminal-action-color: #1d4ed8;
+}
+
+[data-theme="light"] .ui-action-git {
+  --terminal-action-color: #b45309;
+}
+
+[data-theme="light"] .ui-action-files {
+  --terminal-action-color: #0f766e;
+}
+
+[data-theme="light"] .ui-action-stats {
+  --terminal-action-color: #15803d;
 }
 
 .ui-terminal-global-chrome {
@@ -2852,7 +2964,9 @@
 }
 
 [data-theme="light"] .ui-terminal-well {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 8%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border) 14%, transparent),
+    0 1px 0 color-mix(in srgb, white 48%, transparent);
 }
 
 [data-theme="light"] .ui-terminal-well::before,
@@ -2861,8 +2975,22 @@
 }
 
 [data-theme="light"] .ui-terminal-well[data-terminal-mode="independent"] {
-  outline-color: color-mix(in srgb, var(--border) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 10%, transparent);
+  outline-color: color-mix(in srgb, var(--border) 24%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border) 16%, transparent),
+    0 8px 18px color-mix(in srgb, var(--border) 10%, transparent);
+}
+
+[data-theme="light"] .ui-terminal-well > aside,
+[data-theme="light"] .ui-terminal-well > .flex-1 + aside {
+  border-left-color: color-mix(in srgb, var(--border) 20%, transparent);
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 10%, transparent);
+}
+
+[data-theme="light"] .ui-terminal-well > aside > .border-b:first-child,
+[data-theme="light"] .ui-terminal-well > aside > .min-h-0 > [class*="overflow-hidden"][class*="font-mono"] > .border-b:first-child {
+  border-bottom-color: color-mix(in srgb, var(--border) 18%, transparent) !important;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-container-high) 24%, transparent), transparent);
 }
 
 .ui-terminal-tabs-shell[data-fullscreen="true"] .ui-terminal-global-chrome {
@@ -3211,6 +3339,16 @@
 
 .ui-toolbar-button.ui-primary-action {
   border-color: color-mix(in srgb, var(--primary) 42%, var(--border) 58%);
+}
+
+[data-theme="light"] .ui-toolbar-button {
+  border-color: color-mix(in srgb, var(--border) 28%, transparent);
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 86%, var(--surface-container-low) 14%);
+}
+
+[data-theme="light"] .ui-toolbar-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--border) 40%, transparent);
+  background-color: color-mix(in srgb, var(--surface-container-high) 76%, white 24%);
 }
 
 .ui-toolbar-button-compact {

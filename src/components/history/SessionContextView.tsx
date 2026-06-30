@@ -24,7 +24,7 @@ import {
   truncatePath,
 } from "../stats/termStatsUi";
 import { resolveContextLimit } from "../../lib/modelPricing";
-import { HISTORY_TREND_COLORS, PEAK, RECHARTS_AXIS_CURSOR } from "../stats/statsPalette";
+import { HISTORY_SERIES_COLORS, HISTORY_TREND_COLORS, PEAK, RECHARTS_AXIS_CURSOR } from "../stats/statsPalette";
 
 const RECHARTS_TOOLTIP_STYLE = {
   backgroundColor: "var(--bg-secondary)",
@@ -102,6 +102,12 @@ export function SessionContextView({ session }: SessionContextViewProps) {
   const remaining = contextLimit && lastContextTokens !== null ? Math.max(0, contextLimit - lastContextTokens) : null;
   const contextColor = usageRatio === null ? TERM.dim : usageRatio >= 0.8 ? TERM.red : usageRatio >= 0.5 ? TERM.yellow : TERM.green;
   const trendChartLabel = `${t("history.context.requestTokenTrend")} · ${t("history.context.ioCacheTrend")}`;
+  const tokenSegments = [
+    { label: t("termStats.input"), value: stats.inputTokens, color: HISTORY_SERIES_COLORS.input },
+    { label: t("termStats.output"), value: stats.outputTokens, color: HISTORY_SERIES_COLORS.output },
+    { label: t("termStats.cacheHit"), value: stats.cacheReadTokens, color: HISTORY_SERIES_COLORS.cacheRead },
+    { label: t("termStats.cacheWrite"), value: stats.cacheCreationTokens, color: HISTORY_SERIES_COLORS.cacheCreation },
+  ];
 
   if (!session) return <div className="ui-session-process-empty">{t("history.context.selectSession")}</div>;
 
@@ -137,12 +143,7 @@ export function SessionContextView({ session }: SessionContextViewProps) {
         <div className="ui-session-context-token-card">
           <Donut
             size={74}
-            segments={[
-              { value: stats.inputTokens, color: TERM.green },
-              { value: stats.outputTokens, color: TERM.yellow },
-              { value: stats.cacheReadTokens, color: TERM.blue },
-              { value: stats.cacheCreationTokens, color: TERM.magenta },
-            ]}
+            segments={tokenSegments.map(({ value, color }) => ({ value, color }))}
           >
             <span className="ui-session-context-donut-label">{formatCompactCount(stats.totalTokens)}</span>
           </Donut>
@@ -255,18 +256,24 @@ export function SessionContextView({ session }: SessionContextViewProps) {
         </div>
         <SegmentedBar
           height={10}
-          parts={[
-            { value: stats.inputTokens, color: TERM.green, label: t("termStats.input") },
-            { value: stats.outputTokens, color: TERM.yellow, label: t("termStats.output") },
-            { value: stats.cacheReadTokens, color: TERM.blue, label: t("termStats.cacheHit") },
-            { value: stats.cacheCreationTokens, color: TERM.magenta, label: t("termStats.cacheWrite") },
-          ]}
+          parts={tokenSegments}
         />
-        <div className="ui-session-context-legend">
-          <span style={{ color: TERM.green }}>{t("termStats.input")}</span>
-          <span style={{ color: TERM.yellow }}>{t("termStats.output")}</span>
-          <span style={{ color: TERM.blue }}>{t("termStats.cacheHit")}</span>
-          <span style={{ color: TERM.magenta }}>{t("termStats.cacheWrite")}</span>
+        <div className="ui-session-context-legend gap-3">
+          {tokenSegments.map((item) => (
+            <span
+              key={item.label}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium"
+              style={{ color: item.color }}
+              title={`${item.label} ${formatCompactCount(item.value)}`}
+            >
+              <span
+                className="inline-block h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: item.color, boxShadow: "0 0 0 1px color-mix(in srgb, var(--bg-primary) 70%, transparent)" }}
+              />
+              <span>{item.label}</span>
+              <b>{formatCompactCount(item.value)}</b>
+            </span>
+          ))}
         </div>
       </section>
     </div>

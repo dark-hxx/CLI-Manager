@@ -47,6 +47,9 @@ interface SidebarProps {
   onOpenSettings: (tab?: SettingsTab) => void;
   onOpenStats: () => void;
   compactMode?: boolean;
+  projectScopedTerminalViewEnabled?: boolean;
+  terminalScopeProjectId?: string | null;
+  onTerminalScopeChange?: (projectId: string | null) => void;
 }
 
 const SIDEBAR_COLLAPSED_WIDTH = 64;
@@ -91,7 +94,14 @@ function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
   };
 }
 
-export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: SidebarProps) {
+export function Sidebar({
+  onOpenSettings,
+  onOpenStats,
+  compactMode = false,
+  projectScopedTerminalViewEnabled = false,
+  terminalScopeProjectId = null,
+  onTerminalScopeChange,
+}: SidebarProps) {
   const { t } = useI18n();
   const {
     tree,
@@ -176,13 +186,21 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
   );
 
   useEffect(() => {
+    if (projectScopedTerminalViewEnabled) return;
     if (!activeSessionProjectId) return;
     setSelectedId(activeSessionProjectId);
     setSelectedProjectIds((prev) => {
       if (prev.size === 1 && prev.has(activeSessionProjectId)) return prev;
       return new Set([activeSessionProjectId]);
     });
-  }, [activeSessionProjectId]);
+  }, [activeSessionProjectId, projectScopedTerminalViewEnabled]);
+
+  useEffect(() => {
+    if (!projectScopedTerminalViewEnabled) return;
+    if (!terminalScopeProjectId) return;
+    if (projects.some((project) => project.id === terminalScopeProjectId)) return;
+    onTerminalScopeChange?.(null);
+  }, [onTerminalScopeChange, projectScopedTerminalViewEnabled, projects, terminalScopeProjectId]);
 
   useEffect(() => {
     if (!fileProject) setShowFileExplorer(false);
@@ -686,6 +704,9 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
 
   const handleSelectProject = useCallback((e: ReactMouseEvent, project: Project) => {
     setSelectedId(project.id);
+    if (projectScopedTerminalViewEnabled) {
+      onTerminalScopeChange?.(project.id);
+    }
 
     const additive = e.ctrlKey || e.metaKey; // Ctrl(Win/Linux) / Cmd(Mac) 切换单项
     const rangeSelect = e.shiftKey;          // Shift 连续范围选择（Windows 风格）
@@ -725,16 +746,26 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     if (activateFirstProjectSession(project.id)) {
       closeHistory();
     }
-  }, [activateFirstProjectSession, closeHistory, visibleProjectIds]);
+  }, [activateFirstProjectSession, closeHistory, onTerminalScopeChange, projectScopedTerminalViewEnabled, visibleProjectIds]);
 
   const handleSelectProjectByKeyboard = useCallback((project: Project) => {
     setSelectedId(project.id);
     setSelectedProjectIds(new Set([project.id]));
     selectionAnchorRef.current = project.id;
+    if (projectScopedTerminalViewEnabled) {
+      onTerminalScopeChange?.(project.id);
+    }
     if (activateFirstProjectSession(project.id)) {
       closeHistory();
     }
-  }, [activateFirstProjectSession, closeHistory]);
+  }, [activateFirstProjectSession, closeHistory, onTerminalScopeChange, projectScopedTerminalViewEnabled]);
+
+  const handleSelectAllTerminalScope = useCallback(() => {
+    setSelectedId(null);
+    setSelectedProjectIds(new Set());
+    selectionAnchorRef.current = null;
+    onTerminalScopeChange?.(null);
+  }, [onTerminalScopeChange]);
 
   const handleToggleSelection = useCallback((project: Project) => {
     setSelectedProjectIds((prev) => {
@@ -967,6 +998,9 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
               collapsed={compactMode ? false : sidebarCollapsed}
               density={sidebarDensity}
               newGroupParentId={newGroupParentId}
+              projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
+              terminalScopeProjectId={terminalScopeProjectId}
+              onSelectAllTerminalScope={handleSelectAllTerminalScope}
               onCreateRootGroup={(name) => handleCreateGroup(null, name)}
               onCancelRootGroup={handleCancelNewGroup}
               onQuickAddProject={() => {
