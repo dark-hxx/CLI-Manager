@@ -332,7 +332,6 @@ pub fn run() {
             commands::terminal::pty_create,
             commands::terminal::pty_write,
             commands::terminal::pty_resize,
-            commands::terminal::pty_resize_and_wait,
             commands::terminal::pty_close,
             commands::terminal::pty_close_all,
             commands::terminal::pty_status,

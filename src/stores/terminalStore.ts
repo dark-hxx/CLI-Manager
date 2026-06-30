@@ -651,9 +651,51 @@ function prepareStartupCommandForPty(command: string | undefined, shell: ShellKe
   return withCodexLightTuiTheme(command);
 }
 
-function formatStartupInputForPty(command: string): string {
-  const clearBeforeLaunch = isDirectCodexStartupCommand(command) ? "\x0c" : "";
-  return `${clearBeforeLaunch}${command}\r`;
+function buildDirectCodexLaunchCommand(command: string, shell: ShellKey | null | undefined): string {
+  const normalized = normalizeDirectCodexStartupCommand(command) ?? command.trim();
+  switch (shell) {
+    case "powershell":
+    case "pwsh":
+      return `Clear-Host; ${normalized}`;
+    case "cmd":
+      return `cls & ${normalized}`;
+    case "gitbash":
+    case "bash":
+    case "zsh":
+    case "sh":
+    case "fish":
+    case "wsl":
+      return `clear; ${normalized}`;
+    default:
+      return `\x0c${normalized}`;
+  }
+}
+
+export function formatStartupInputForPty(command: string, shell?: ShellKey | null): string {
+  if (!isDirectCodexStartupCommand(command)) return `${command}\r`;
+  return `${buildDirectCodexLaunchCommand(command, shell ?? null)}\r`;
+}
+
+function buildCancelCurrentInputControl(shell: ShellKey | null | undefined): string {
+  switch (shell) {
+    case "powershell":
+    case "pwsh":
+    case "cmd":
+    case "gitbash":
+    case "bash":
+    case "zsh":
+    case "sh":
+    case "fish":
+    case "wsl":
+      return "\x03";
+    default:
+      return "";
+  }
+}
+
+export function formatManualDirectCodexInputForPty(command: string, shell?: ShellKey | null): string {
+  const normalizedShell = shell ?? null;
+  return `${buildCancelCurrentInputControl(normalizedShell)}${formatStartupInputForPty(command, normalizedShell)}`;
 }
 
 // hook running 超时回退：Stop/StopFailure 丢失（hook 脚本失败、bridge 不可达）
@@ -801,7 +843,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     if (launchStartupCmd) {
       setTimeout(() => {
-        invoke("pty_write", { sessionId, data: formatStartupInputForPty(launchStartupCmd) }).catch((err) => {
+        invoke("pty_write", { sessionId, data: formatStartupInputForPty(launchStartupCmd, resolvedShell) }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
           logError("Failed to write startup command", {
             sessionId,
@@ -1114,7 +1156,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     if (launchStartupCmd) {
       setTimeout(() => {
-        invoke("pty_write", { sessionId: splitSessionId, data: formatStartupInputForPty(launchStartupCmd) }).catch((err) => {
+        invoke("pty_write", { sessionId: splitSessionId, data: formatStartupInputForPty(launchStartupCmd, resolvedShell) }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
           logError("Failed to write split startup command", {
             sessionId: splitSessionId,
@@ -1352,7 +1394,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       // 执行启动命令
       if (launchStartupCmd) {
         setTimeout(() => {
-          invoke("pty_write", { sessionId: newSessionId, data: formatStartupInputForPty(launchStartupCmd) }).catch((err) => {
+          invoke("pty_write", { sessionId: newSessionId, data: formatStartupInputForPty(launchStartupCmd, resolvedShell) }).catch((err) => {
             logError("Failed to write startup command on restore", {
               sessionId: newSessionId,
               hasStartupCmd: true,

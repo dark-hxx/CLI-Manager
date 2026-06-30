@@ -38,7 +38,7 @@ import {
 import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
-import { useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
+import { formatManualDirectCodexInputForPty, useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
 import { useSettingsStore, type LightThemePalette, type DarkThemePalette } from "../stores/settingsStore";
 
 const FONT_SIZE_MIN = 8;
@@ -194,6 +194,10 @@ const copyTextToClipboard = async (text: string) => {
     }
   }
 };
+
+const wrapTerminalPasteTextForCtrlShiftV = (text: string) => (
+  /[\r\n]/u.test(text) ? `'${text}'` : text
+);
 
 const normalizeShellForKnownOs = (shell: string | null | undefined, os: OsPlatform): ShellKey | undefined => (
   os === "unknown" ? normalizeShellKey(shell) : normalizeShellForOs(shell, os)
@@ -1076,6 +1080,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           return false;
         }
       }
+      if (e.type === "keydown" && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        navigator.clipboard.readText().then((text) => {
+          pasteIntoTerminal(wrapTerminalPasteTextForCtrlShiftV(text));
+        }).catch((err) => {
+          logError("Failed to read clipboard text", { sessionId, err });
+        });
+        return false;
+      }
       if (e.type !== "keydown" || !e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return true;
       const key = e.key.toLowerCase();
       if (key === "f") {
@@ -1111,7 +1124,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     terminal.onData((data) => {
       markAttentionInputHandled();
-      const ptyData = data === "\r" && isDirectCodexStartupCommand(inputBuffer.current) ? "\x0c\r" : data;
+      const inputBufferBefore = inputBuffer.current;
+      const sessionShell = useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.shell;
+      const ptyData = data === "\r" && isDirectCodexStartupCommand(inputBufferBefore)
+        ? formatManualDirectCodexInputForPty(inputBufferBefore.trim(), normalizeShellKey(sessionShell) ?? null)
+        : data;
       invoke("pty_write", { sessionId, data: ptyData }).catch((err) => reportPtyWriteError("onData", err));
 
       if (data === "\r") {
