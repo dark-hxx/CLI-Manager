@@ -350,7 +350,7 @@ export function SessionDetailPane({
               onClick={onResumeSession}
               disabled={loadingSessionDetail || !activeSession}
               aria-label={t("history.detail.resume")}
-              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact ui-primary-action"
+              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact ui-history-detail-resume-action"
               title={t("history.detail.resumeTitle")}
             >
               <Terminal size={12} />

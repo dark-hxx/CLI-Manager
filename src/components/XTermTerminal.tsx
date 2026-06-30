@@ -57,7 +57,7 @@ const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
 const TUI_BORDER_CHAR_PATTERN = /^[│┃║▏▎▍▌▋▊▉█┆┊╎╏]$/u;
 const TUI_BORDER_PREFIX_PATTERN = /^[\s│┃║▏▎▍▌▋▊▉█┆┊╎╏]+/u;
 import { toast } from "sonner";
-import { logError } from "../lib/logger";
+import { logError, logInfo } from "../lib/logger";
 
 // Shell integration OSC 序列在原始 PTY 流上解析（而非 xterm parser hook）：
 // 后台 Tab 的输出会进入 inactive ring buffer 且可能被截断丢弃，状态事件必须
@@ -77,6 +77,8 @@ const TUI_COMPOSER_PROMPT_PATTERN = /^[\u203a\u276f\u00bb\u2023>]\s?/u;
 const AI_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|claude\s+code|yolo\s+mode|mcp\s+(?:client|startup)|\/model\s+to\s+change)/i;
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const CODEX_IME_DEBUG_WINDOW_MS = 250;
+const CODEX_IME_DUPLICATE_WINDOW_MS = 120;
 
 type SpecialColorQueryId = 10 | 11;
 
@@ -135,11 +137,39 @@ interface SearchResultState {
   resultCount: number;
 }
 
+interface TextDiagnosticSummary {
+  length: number;
+  hasNonAscii: boolean;
+  fingerprint: string;
+}
+
+interface CodexImeDebugState {
+  compositionEndAt: number;
+  compositionEndSummary: TextDiagnosticSummary | null;
+  lastNearCompositionFingerprint: string | null;
+  lastNearCompositionAt: number;
+}
+
 const EMPTY_SEARCH_RESULT: SearchResultState = { resultIndex: 0, resultCount: 0 };
 
 const normalizeHexColor = (value: string | undefined, fallback: string) => (
   value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback
 );
+
+const summarizeTextForDiagnostics = (value: string): TextDiagnosticSummary => {
+  let hash = 0;
+  let hasNonAscii = false;
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    hash = Math.imul(31, hash) + code;
+    if (code > 0x7f) hasNonAscii = true;
+  }
+  return {
+    length: value.length,
+    hasNonAscii,
+    fingerprint: (hash >>> 0).toString(36),
+  };
+};
 
 const getInactiveBufferLimit = (scrollbackRows: number) => Math.min(
   INACTIVE_BUFFER_MAX_CHARS,
@@ -309,6 +339,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const [menuState, setMenuState] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const osPlatformRef = useRef<OsPlatform>("unknown");
+  const codexImeDebugRef = useRef<CodexImeDebugState>({
+    compositionEndAt: -1,
+    compositionEndSummary: null,
+    lastNearCompositionFingerprint: null,
+    lastNearCompositionAt: -1,
+  });
 
   const getOsPlatformForPathQuoting = async () => {
     if (osPlatformRef.current !== "unknown") return osPlatformRef.current;
@@ -355,6 +391,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const isTransparent = background.enabled && background.imagePath !== null && !hiddenForThisSession;
   const isTransparentRef = useRef(isTransparent);
   isTransparentRef.current = isTransparent;
+  const terminalTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
+  const isLightTerminalRef = useRef(isLightTerminalTheme(terminalTheme));
+  isLightTerminalRef.current = isLightTerminalTheme(terminalTheme);
   const effectiveFontFamily = normalizeTerminalFontFamily(fontFamily);
 
   const syncWebglRenderer = (terminal: Terminal, theme: ReturnType<typeof getTerminalTheme>) => {
@@ -464,7 +503,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     );
   };
 
-  const shouldNormalizeTuiComposerBackground = () => isTransparentRef.current;
+  const shouldNormalizeTuiComposerBackground = () => (
+    isTransparentRef.current || (isCodexSession() && isLightTerminalRef.current)
+  );
 
   // 私有 OSC 777：session=<id>;event=<name>[;exit=<code>]
   const handleLegacyRuntimeOsc = (body: string) => {
@@ -1108,11 +1149,45 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     // Forward keyboard input to PTY and record command history
     const addCommand = useCommandHistoryStore.getState().addCommand;
     const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
+    const maybeLogCodexImeDuplicate = (data: string) => {
+      if (!isCodexSession()) return;
+      const debugState = codexImeDebugRef.current;
+      const now = Date.now();
+      if (debugState.compositionEndAt < 0 || now - debugState.compositionEndAt > CODEX_IME_DEBUG_WINDOW_MS) return;
+      if (!data || data === "\r" || data === "\x7f" || data === "\b" || data.startsWith("\x1b")) return;
+
+      const normalized = data.replace(/\r\n?/g, "\n");
+      if (!normalized.trim()) return;
+
+      const summary = summarizeTextForDiagnostics(normalized);
+      if (!summary.hasNonAscii) return;
+
+      const duplicateDeltaMs = now - debugState.lastNearCompositionAt;
+      const isSuspiciousDuplicate = (
+        debugState.lastNearCompositionFingerprint === summary.fingerprint
+        && duplicateDeltaMs >= 0
+        && duplicateDeltaMs <= CODEX_IME_DUPLICATE_WINDOW_MS
+      );
+
+      if (isSuspiciousDuplicate) {
+        logInfo("[codex-ime] duplicate-near-composition", {
+          sessionId,
+          data: summary,
+          composition: debugState.compositionEndSummary,
+          duplicateDeltaMs,
+          compositionDeltaMs: now - debugState.compositionEndAt,
+        });
+      }
+
+      debugState.lastNearCompositionFingerprint = summary.fingerprint;
+      debugState.lastNearCompositionAt = now;
+    };
 
     terminal.onData((data) => {
       markAttentionInputHandled();
       const ptyData = data === "\r" && isDirectCodexStartupCommand(inputBuffer.current) ? "\x0c\r" : data;
       invoke("pty_write", { sessionId, data: ptyData }).catch((err) => reportPtyWriteError("onData", err));
+      maybeLogCodexImeDuplicate(data);
 
       if (data === "\r") {
         const cmd = inputBuffer.current;
@@ -1570,6 +1645,13 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const onCompositionEnd = () => {
       isComposingRef.current = false;
       compositionAnchorCell = null;
+      if (isCodexSession()) {
+        const textareaValue = textarea?.value ?? "";
+        codexImeDebugRef.current.compositionEndAt = Date.now();
+        codexImeDebugRef.current.compositionEndSummary = summarizeTextForDiagnostics(textareaValue);
+        codexImeDebugRef.current.lastNearCompositionFingerprint = null;
+        codexImeDebugRef.current.lastNearCompositionAt = -1;
+      }
       scheduleCompositionScrollRestore();
       scheduleHelperTextareaAnchorPin();
       scheduleFit(true);
@@ -1679,7 +1761,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
   }, [sessionId]);
 
-  const terminalTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
   const backgroundColor = getTerminalBackground(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
   const backgroundOverlayColor = getTerminalBackgroundOverlayColor(terminalTheme);
   const showBackgroundImage = isTransparent && assetUrl !== null;

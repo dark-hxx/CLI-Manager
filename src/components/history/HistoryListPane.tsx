@@ -581,7 +581,7 @@ export function HistoryListPane({
             className="ui-flat-action ui-toolbar-button-compact ui-history-close-action h-8 w-8 shrink-0 px-0"
             title={t("history.close")}
           >
-            <X size={13} />
+            <X size={14} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </div>
 
