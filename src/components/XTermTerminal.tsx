@@ -27,6 +27,7 @@ import { useI18n } from "../lib/i18n";
 import { isDirectCodexStartupCommand } from "../lib/projectStartupCommand";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
 import { endTerminalFileDrag, getTerminalFileDragText } from "../lib/terminalFileDrag";
+import { planTerminalVisibilityRestore, refreshTerminalViewport } from "../lib/terminalVisibility";
 import {
   defaultShellForOs,
   getOsPlatform,
@@ -322,6 +323,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const activeWriteQueueSizeRef = useRef(0);
   const activeWriteQueueLastDropLogAtRef = useRef(0);
   const activeWriteRafRef = useRef<number | null>(null);
+  const needsViewportRefreshRef = useRef(false);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
   const runtimeOscBufferRef = useRef("");
@@ -448,6 +450,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const dims = fitAddon.proposeDimensions();
     if (!dims || dims.cols < MIN_TERMINAL_COLS || dims.rows < MIN_TERMINAL_ROWS) return;
     fitAddon.fit();
+    if (needsViewportRefreshRef.current) {
+      refreshTerminalViewport(terminalRef.current);
+      needsViewportRefreshRef.current = false;
+    }
   };
 
   const scheduleFit = (force = false) => {
@@ -926,7 +932,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
   const flushActiveWriteQueue = () => {
     activeWriteRafRef.current = null;
-    if (!isVisibleRef.current || activeWriteQueueRef.current.length === 0) return;
+    if (!isVisibleRef.current || activeWriteQueueRef.current.length === 0) {
+      if (!isVisibleRef.current && activeWriteQueueRef.current.length > 0 && useSettingsStore.getState().debugMode) {
+        logInfo("[terminal-visibility] active write flush deferred while hidden", {
+          sessionId,
+          queuedChars: activeWriteQueueSizeRef.current,
+          queuedChunks: activeWriteQueueRef.current.length,
+        });
+      }
+      return;
+    }
     const terminal = terminalRef.current;
     if (!terminal) return;
 
@@ -1051,12 +1066,32 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const wasVisible = isVisibleRef.current;
     isVisibleRef.current = isVisible;
     if (!isVisible || !fitAddonRef.current || !containerRef.current) return;
+    const restorePlan = planTerminalVisibilityRestore({
+      wasVisible,
+      isVisible,
+      inactiveBufferLength: inactiveBufferRef.current.length,
+      activeWriteQueueLength: activeWriteQueueRef.current.length,
+      activeWriteRafScheduled: activeWriteRafRef.current !== null,
+    });
     // Flush data stashed while this tab was hidden
-    if (!wasVisible && inactiveBufferRef.current.length > 0 && terminalRef.current) {
+    if (restorePlan.shouldFlushInactiveBuffer && terminalRef.current) {
       const combined = inactiveBufferRef.current.join("");
       inactiveBufferRef.current = [];
       inactiveBufferSizeRef.current = 0;
       enqueueActiveWrite(combined);
+    }
+    if (restorePlan.shouldResumeActiveWriteQueue && activeWriteRafRef.current === null) {
+      if (useSettingsStore.getState().debugMode) {
+        logInfo("[terminal-visibility] resuming queued active writes after visibility restore", {
+          sessionId,
+          queuedChars: activeWriteQueueSizeRef.current,
+          queuedChunks: activeWriteQueueRef.current.length,
+        });
+      }
+      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
+    }
+    if (restorePlan.shouldRefreshViewport) {
+      needsViewportRefreshRef.current = true;
     }
     // Wait one frame to ensure display:block has taken effect and layout is stable.
     scheduleFit(true);
@@ -1931,6 +1966,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       activeWriteQueueSizeRef.current = 0;
       inactiveBufferRef.current = [];
       inactiveBufferSizeRef.current = 0;
+      needsViewportRefreshRef.current = false;
       unlisten?.();
       searchResultDisposable.dispose();
       cursorStyleDisposable.dispose();
