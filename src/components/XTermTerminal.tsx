@@ -72,10 +72,13 @@ const INTEGRATION_OSC_PREFIXES = ["\x1b]133;", "\x1b]633;", LEGACY_RUNTIME_OSC_P
 const OSC_CARRY_BUFFER_MAX = 8192;
 const OSC_PREFIX = "\x1b]";
 const XTERM_BG_COLOR_MASK = 0x03ffffff;
+const XTERM_COLOR_MODE_RGB = 0x03000000;
 const XTERM_INVERSE_FLAG = 0x04000000;
+const CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG = 0xe7eefc;
 const TUI_COMPOSER_PRELUDE_ROWS = 1;
 const TUI_COMPOSER_CONTINUATION_ROWS = 4;
 const TUI_COMPOSER_PROMPT_PATTERN = /^[\u203a\u276f\u00bb\u2023>]\s?/u;
+const SLASH_COMMAND_MENU_LINE_PATTERN = /^\/[a-z0-9][a-z0-9:_-]*(?:\s|$)/i;
 const AI_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|claude\s+code|yolo\s+mode|mcp\s+(?:client|startup)|\/model\s+to\s+change)/i;
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
@@ -495,8 +498,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
   };
 
-  const isCodexSession = () => {
-    const context = getSessionToolContext();
+  const isCodexSession = (context = getSessionToolContext()) => {
     return (
       context.projectTool === "codex"
       || context.titleTool === "codex"
@@ -504,8 +506,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     );
   };
 
-  const isClaudeOrCodexSession = () => {
-    const context = getSessionToolContext();
+  const isClaudeSession = (context = getSessionToolContext()) => {
+    return (
+      context.projectTool.includes("claude")
+      || context.titleTool.includes("claude")
+      || CLAUDE_COMMAND_PATTERN.test(context.startupCmd)
+    );
+  };
+
+  const isClaudeOrCodexSession = (context = getSessionToolContext()) => {
     return (
       context.projectTool === "codex"
       || context.projectTool.includes("claude")
@@ -516,8 +525,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     );
   };
 
-  const shouldNormalizeTuiComposerBackground = () => (
-    isTransparentRef.current || (isCodexSession() && isLightTerminalRef.current)
+  const shouldNormalizeTuiComposerBackground = (context = getSessionToolContext()) => (
+    isTransparentRef.current || (isClaudeOrCodexSession(context) && isLightTerminalRef.current)
   );
 
   // 私有 OSC 777：session=<id>;event=<name>[;exit=<code>]
@@ -667,10 +676,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   };
 
   const normalizeTuiComposerBackground = (terminal: Terminal) => {
-    if (!shouldNormalizeTuiComposerBackground()) return;
+    const toolContext = getSessionToolContext();
+    if (!shouldNormalizeTuiComposerBackground(toolContext)) return;
     const buffer = terminal.buffer.active;
     const probeCell = buffer.getNullCell() as MutableXtermCell;
     const minRow = 0;
+    const codexSession = isCodexSession(toolContext);
+    const claudeSession = isClaudeSession(toolContext);
+    const knownAiSession = codexSession || claudeSession;
+    const useBroadViewportNormalization = isTransparentRef.current || (codexSession && isLightTerminalRef.current);
+    const useClaudeLightPatchNormalization = !useBroadViewportNormalization && claudeSession && isLightTerminalRef.current;
 
     const getViewportLine = (row: number) => buffer.getLine(buffer.viewportY + row);
     const normalizePromptText = (line: IBufferLine) => (
@@ -704,16 +719,21 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         hasWideInverse: inverseCells >= Math.max(4, Math.floor(terminal.cols * 0.25)),
       };
     };
-    const clearLineBackground = (line: IBufferLine, clearInverse: boolean) => {
+    const isPatchLikeLine = (line: IBufferLine) => {
+      const text = line.translateToString(true).trim();
+      return /^(?:\d+\s+)?(?:[+-](?![+-]{2,})|@@|diff --git |index |--- |\+\+\+ |\*\*\* (?:Begin|End) Patch|\*\*\* (?:Update|Add|Delete) File:|```(?:diff|patch)?\s*$)/.test(text);
+    };
+    const clearLineBackground = (line: IBufferLine, clearInverse: boolean, clearForeground: boolean = false) => {
       const mutableLine = (line as XtermBufferLineApiView)._line;
       if (!mutableLine) return false;
       const limit = Math.min(terminal.cols, mutableLine.length);
       let changed = false;
       for (let x = 0; x < limit; x += 1) {
         mutableLine.loadCell(x, probeCell);
-        // Drop only visual field styling; keep text colors and other flags.
+        // Drop only visual field styling; optionally reset low-contrast ANSI text on patch rows.
         const nextBg = probeCell.bg & ~XTERM_BG_COLOR_MASK;
-        const nextFg = clearInverse ? probeCell.fg & ~XTERM_INVERSE_FLAG : probeCell.fg;
+        const fgWithoutColor = clearForeground ? probeCell.fg & ~XTERM_BG_COLOR_MASK : probeCell.fg;
+        const nextFg = clearInverse ? fgWithoutColor & ~XTERM_INVERSE_FLAG : fgWithoutColor;
         if (nextBg === probeCell.bg && nextFg === probeCell.fg) continue;
         probeCell.bg = nextBg;
         probeCell.fg = nextFg;
@@ -725,17 +745,114 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     let firstChangedRow = terminal.rows;
     let lastChangedRow = -1;
+    const markChangedRow = (row: number) => {
+      firstChangedRow = Math.min(firstChangedRow, row);
+      lastChangedRow = Math.max(lastChangedRow, row);
+    };
+    const isSlashCommandPromptLine = (line: IBufferLine) => {
+      const text = normalizePromptText(line);
+      return TUI_COMPOSER_PROMPT_PATTERN.test(text) && /^[\u203a\u276f\u00bb\u2023>]\s*\/\S*$/u.test(text);
+    };
+    const getSlashCommandMenuLineState = (line: IBufferLine) => {
+      const text = line.translateToString(true);
+      const trimmed = text.trimStart();
+      const commandMatch = SLASH_COMMAND_MENU_LINE_PATTERN.exec(trimmed);
+      if (!commandMatch) return null;
 
-    if (isClaudeOrCodexSession() || hasKnownAiTuiSignature()) {
+      const leadingSpaces = text.length - trimmed.length;
+      const commandEnd = leadingSpaces + commandMatch[0].trimEnd().length;
+      const limit = Math.min(terminal.cols, line.length, text.length);
+      let visibleDescriptionCells = 0;
+      let highlightedDescriptionCells = 0;
+      for (let x = commandEnd; x < limit; x += 1) {
+        const cell = line.getCell(x, probeCell);
+        if (!cell || cell.getWidth() === 0 || cell.getChars().trim() === "") continue;
+        visibleDescriptionCells += 1;
+        if ((cell.getFgColorMode() !== 0 || cell.isBold() !== 0) && cell.isDim() === 0) {
+          highlightedDescriptionCells += 1;
+        }
+      }
+
+      return {
+        selectedByForeground: highlightedDescriptionCells >= Math.max(
+          6,
+          Math.floor(visibleDescriptionCells * 0.35),
+        ),
+      };
+    };
+    const syncOwnedSlashMenuBackground = (line: IBufferLine, selected: boolean) => {
+      const mutableLine = (line as XtermBufferLineApiView)._line;
+      if (!mutableLine) return false;
+      const limit = Math.min(terminal.cols, mutableLine.length);
+      let changed = false;
+      for (let x = 0; x < limit; x += 1) {
+        mutableLine.loadCell(x, probeCell);
+        const hasOwnedBackground = probeCell.isBgRGB()
+          && probeCell.getBgColor() === CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG;
+        const nextBg = selected
+          ? (probeCell.bg & ~XTERM_BG_COLOR_MASK) | XTERM_COLOR_MODE_RGB | CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG
+          : hasOwnedBackground
+            ? probeCell.bg & ~XTERM_BG_COLOR_MASK
+            : probeCell.bg;
+        if (nextBg === probeCell.bg) continue;
+        probeCell.bg = nextBg;
+        mutableLine.setCell(x, probeCell);
+        changed = true;
+      }
+      return changed;
+    };
+    const syncClaudeLightSlashMenuHighlights = () => {
+      let promptRow = -1;
+      const commandRows: Array<{ row: number; line: IBufferLine; selectedByForeground: boolean }> = [];
+      for (let row = minRow; row < terminal.rows; row += 1) {
+        const line = getViewportLine(row);
+        if (line && isSlashCommandPromptLine(line)) promptRow = row;
+      }
+      if (promptRow >= 0) {
+        for (let row = promptRow + 1; row < terminal.rows; row += 1) {
+          const line = getViewportLine(row);
+          if (!line) continue;
+          const state = getSlashCommandMenuLineState(line);
+          if (!state) continue;
+          commandRows.push({ row, line, selectedByForeground: state.selectedByForeground });
+        }
+      }
+
+      const foregroundSelectedRow = commandRows.find((item) => item.selectedByForeground)?.row;
+      const selectedRow = foregroundSelectedRow ?? commandRows[0]?.row ?? -1;
+      for (let row = minRow; row < terminal.rows; row += 1) {
+        const line = getViewportLine(row);
+        if (!line) continue;
+        if (!syncOwnedSlashMenuBackground(line, row === selectedRow)) continue;
+        markChangedRow(row);
+      }
+    };
+
+    if (useBroadViewportNormalization && (knownAiSession || hasKnownAiTuiSignature())) {
       for (let row = minRow; row < terminal.rows; row += 1) {
         const line = getViewportLine(row);
         if (!line) continue;
         const backgroundState = getLineBackgroundState(line);
         if (!backgroundState.hasExplicitBackground && !backgroundState.hasInverse) continue;
         if (!clearLineBackground(line, backgroundState.hasInverse)) continue;
-        firstChangedRow = Math.min(firstChangedRow, row);
-        lastChangedRow = Math.max(lastChangedRow, row);
+        markChangedRow(row);
       }
+      if (lastChangedRow >= firstChangedRow) {
+        terminal.refresh(firstChangedRow, lastChangedRow);
+      }
+      return;
+    }
+
+    if (useClaudeLightPatchNormalization) {
+      for (let row = minRow; row < terminal.rows; row += 1) {
+        const line = getViewportLine(row);
+        if (!line || !isPatchLikeLine(line)) continue;
+        const backgroundState = getLineBackgroundState(line);
+        if (!backgroundState.hasExplicitBackground && !backgroundState.hasInverse) continue;
+        if (!clearLineBackground(line, backgroundState.hasInverse, true)) continue;
+        markChangedRow(row);
+      }
+      syncClaudeLightSlashMenuHighlights();
       if (lastChangedRow >= firstChangedRow) {
         terminal.refresh(firstChangedRow, lastChangedRow);
       }
@@ -755,8 +872,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         if (row < promptRow) {
           if (!backgroundState.hasExplicitBackground && !backgroundState.hasWideInverse) continue;
           if (!clearLineBackground(line, backgroundState.hasWideInverse)) continue;
-          firstChangedRow = Math.min(firstChangedRow, row);
-          lastChangedRow = Math.max(lastChangedRow, row);
+          markChangedRow(row);
           continue;
         }
         if (
@@ -769,8 +885,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         }
         if (!backgroundState.hasExplicitBackground && !backgroundState.hasWideInverse) continue;
         if (!clearLineBackground(line, backgroundState.hasWideInverse)) continue;
-        firstChangedRow = Math.min(firstChangedRow, row);
-        lastChangedRow = Math.max(lastChangedRow, row);
+        markChangedRow(row);
       }
     }
 
