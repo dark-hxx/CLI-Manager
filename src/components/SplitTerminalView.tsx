@@ -183,11 +183,14 @@ export function SplitTerminalView({ node, renderLeaf, fullscreenLeafId }: Props)
       })}
       {!fullscreenLeaf && layout.dividers.map(({ split, rect, splitRect }) => {
         const isHorizontal = split.direction === "horizontal";
+        const isDragging = dragPreview?.splitId === split.id;
         return (
           <div
             key={split.id}
             onMouseDown={(event) => handleDragStart(split, splitRect, event)}
             className="ui-terminal-split-divider absolute shrink-0 transition-colors"
+            data-dragging={isDragging ? "true" : undefined}
+            data-orientation={isHorizontal ? "vertical" : "horizontal"}
             style={{
               ...rectStyle(rect),
               cursor: isHorizontal ? "col-resize" : "row-resize",

@@ -2426,6 +2426,50 @@
   background-color: color-mix(in srgb, var(--primary) 18%, transparent);
 }
 
+.ui-terminal-split-divider {
+  touch-action: none;
+  background-color: color-mix(in srgb, var(--terminal-theme-background, var(--surface)) 82%, var(--terminal-theme-foreground, var(--on-surface)) 18%);
+}
+
+.ui-terminal-split-divider::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, var(--on-surface)) 34%, transparent);
+  transition:
+    background-color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    opacity var(--animate-duration-fast);
+}
+
+.ui-terminal-split-divider[data-orientation="vertical"]::before {
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.ui-terminal-split-divider[data-orientation="horizontal"]::before {
+  top: 50%;
+  right: 8px;
+  left: 8px;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.ui-terminal-split-divider:hover,
+.ui-terminal-split-divider[data-dragging="true"] {
+  background-color: color-mix(in srgb, var(--terminal-theme-accent, var(--primary)) 24%, transparent);
+}
+
+.ui-terminal-split-divider:hover::before,
+.ui-terminal-split-divider[data-dragging="true"]::before {
+  background-color: color-mix(in srgb, var(--terminal-theme-accent, var(--primary)) 72%, var(--terminal-theme-foreground, var(--on-surface)) 28%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--terminal-theme-accent, var(--primary)) 18%, transparent);
+}
+
 .ui-main-shell {
   background-color: var(--surface);
 }

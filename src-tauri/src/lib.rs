@@ -5,6 +5,7 @@ mod claude_hook;
 mod commands;
 mod git_watcher;
 pub mod hook_client;
+mod log_rotation;
 mod pty;
 mod shell_resolver;
 mod sync;
@@ -17,7 +18,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime,
 };
-use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind, TimezoneStrategy};
+use tauri_plugin_log::{fern, Builder as LogBuilder, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
@@ -253,10 +254,11 @@ pub fn run() {
             show_main_window(app);
         }))
         .plugin({
-            let mut targets = vec![Target::new(TargetKind::Folder {
-                path: log_dir,
-                file_name: Some(log_file_name.into()),
-            })];
+            let file_log_writer = log_rotation::create_log_writer(log_dir, log_file_name)
+                .expect("failed to create CLI-Manager log writer");
+            let file_log_target = fern::Dispatch::new()
+                .chain(Box::new(file_log_writer) as Box<dyn std::io::Write + Send>);
+            let mut targets = vec![Target::new(TargetKind::Dispatch(file_log_target))];
             if debug_logs {
                 targets.push(Target::new(TargetKind::Webview));
                 targets.push(Target::new(TargetKind::Stdout));

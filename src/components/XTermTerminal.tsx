@@ -303,6 +303,11 @@ interface Props extends TerminalContextMenuActions {
   darkThemePalette?: DarkThemePalette;
 }
 
+interface ActiveWriteQueueItem {
+  text: string;
+  inactiveReplay: boolean;
+}
+
 export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo", onNewTab, onCloseSession, onCloseOthers, onCloseToLeft, onCloseToRight, onSplitRight, onSplitDown }: Props) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -319,11 +324,14 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const inactiveBufferRef = useRef<string[]>([]);
   const inactiveBufferSizeRef = useRef(0);
-  const activeWriteQueueRef = useRef<string[]>([]);
+  const activeWriteQueueRef = useRef<ActiveWriteQueueItem[]>([]);
   const activeWriteQueueSizeRef = useRef(0);
   const activeWriteQueueLastDropLogAtRef = useRef(0);
   const activeWriteRafRef = useRef<number | null>(null);
   const needsViewportRefreshRef = useRef(false);
+  const inactiveReplayStickToBottomRef = useRef(false);
+  const inactiveReplayPendingWritesRef = useRef(0);
+  const inactiveReplayPendingRef = useRef(false);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
   const runtimeOscBufferRef = useRef("");
@@ -355,6 +363,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const [searchMatched, setSearchMatched] = useState<boolean | null>(null);
   const [searchResult, setSearchResult] = useState<SearchResultState>(EMPTY_SEARCH_RESULT);
   const [menuState, setMenuState] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
+  const [inactiveReplayPending, setInactiveReplayPending] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const osPlatformRef = useRef<OsPlatform>("unknown");
   const codexImeDebugRef = useRef<CodexImeDebugState>({
@@ -930,6 +939,27 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     return processed + text.slice(lastIndex);
   };
 
+  const setInactiveReplayPendingVisible = (pending: boolean) => {
+    if (inactiveReplayPendingRef.current === pending) return;
+    inactiveReplayPendingRef.current = pending;
+    setInactiveReplayPending(pending);
+  };
+
+  const hasQueuedInactiveReplay = () => activeWriteQueueRef.current.some((item) => item.inactiveReplay);
+
+  const finishInactiveReplayIfReady = (terminal: Terminal) => {
+    if (!inactiveReplayStickToBottomRef.current) return;
+    if (
+      hasQueuedInactiveReplay()
+      || inactiveReplayPendingWritesRef.current > 0
+    ) {
+      return;
+    }
+    inactiveReplayStickToBottomRef.current = false;
+    terminal.scrollToBottom();
+    setInactiveReplayPendingVisible(false);
+  };
+
   const flushActiveWriteQueue = () => {
     activeWriteRafRef.current = null;
     if (!isVisibleRef.current || activeWriteQueueRef.current.length === 0) {
@@ -945,36 +975,45 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const terminal = terminalRef.current;
     if (!terminal) return;
 
-    const writeTerminalChunk = (chunk: string) => {
+    const writeTerminalChunk = (chunk: string, inactiveReplay: boolean) => {
+      if (inactiveReplay) inactiveReplayPendingWritesRef.current += 1;
       terminal.write(chunk, () => {
+        if (inactiveReplay) {
+          inactiveReplayPendingWritesRef.current = Math.max(0, inactiveReplayPendingWritesRef.current - 1);
+        }
         if (terminalRef.current !== terminal) return;
+        if (inactiveReplay) terminal.scrollToBottom();
         normalizeTuiComposerBackground(terminal);
         scheduleTuiComposerBackgroundNormalization(terminal);
+        if (inactiveReplay) finishInactiveReplayIfReady(terminal);
       });
     };
 
     let budget = ACTIVE_WRITE_FRAME_BUDGET;
     while (budget > 0 && activeWriteQueueRef.current.length > 0) {
-      const chunk = activeWriteQueueRef.current[0];
+      const item = activeWriteQueueRef.current[0];
+      const chunk = item.text;
       if (chunk.length <= budget) {
-        writeTerminalChunk(chunk);
+        writeTerminalChunk(chunk, item.inactiveReplay);
         activeWriteQueueRef.current.shift();
         activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - chunk.length);
         budget -= chunk.length;
         continue;
       }
-      writeTerminalChunk(chunk.slice(0, budget));
-      activeWriteQueueRef.current[0] = chunk.slice(budget);
+      writeTerminalChunk(chunk.slice(0, budget), item.inactiveReplay);
+      activeWriteQueueRef.current[0] = { ...item, text: chunk.slice(budget) };
       activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - budget);
       budget = 0;
     }
 
     if (activeWriteQueueRef.current.length > 0) {
       activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
+    } else {
+      finishInactiveReplayIfReady(terminal);
     }
   };
 
-  const enqueueActiveWrite = (text: string) => {
+  const enqueueActiveWrite = (text: string, inactiveReplay = false) => {
     if (!text) return;
     let nextText = processCursorVisibility(text);
     let droppedChars = 0;
@@ -984,19 +1023,19 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       activeWriteQueueRef.current = [];
       activeWriteQueueSizeRef.current = 0;
     }
-    activeWriteQueueRef.current.push(nextText);
+    activeWriteQueueRef.current.push({ text: nextText, inactiveReplay });
     activeWriteQueueSizeRef.current += nextText.length;
     while (activeWriteQueueSizeRef.current > ACTIVE_WRITE_QUEUE_MAX_CHARS && activeWriteQueueRef.current.length > 0) {
       const overflow = activeWriteQueueSizeRef.current - ACTIVE_WRITE_QUEUE_MAX_CHARS;
       const head = activeWriteQueueRef.current[0];
-      if (!head || head.length <= overflow) {
+      if (!head || head.text.length <= overflow) {
         const removed = activeWriteQueueRef.current.shift();
-        const removedLength = removed?.length ?? 0;
+        const removedLength = removed?.text.length ?? 0;
         activeWriteQueueSizeRef.current -= removedLength;
         droppedChars += removedLength;
         continue;
       }
-      activeWriteQueueRef.current[0] = head.slice(overflow);
+      activeWriteQueueRef.current[0] = { ...head, text: head.text.slice(overflow) };
       activeWriteQueueSizeRef.current -= overflow;
       droppedChars += overflow;
     }
@@ -1078,7 +1117,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       const combined = inactiveBufferRef.current.join("");
       inactiveBufferRef.current = [];
       inactiveBufferSizeRef.current = 0;
-      enqueueActiveWrite(combined);
+      inactiveReplayStickToBottomRef.current = true;
+      inactiveReplayPendingWritesRef.current = 0;
+      setInactiveReplayPendingVisible(true);
+      terminalRef.current.scrollToBottom();
+      enqueueActiveWrite(combined, true);
     }
     if (restorePlan.shouldResumeActiveWriteQueue && activeWriteRafRef.current === null) {
       if (useSettingsStore.getState().debugMode) {
@@ -1964,6 +2007,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       pendingChunks = [];
       activeWriteQueueRef.current = [];
       activeWriteQueueSizeRef.current = 0;
+      inactiveReplayStickToBottomRef.current = false;
+      inactiveReplayPendingWritesRef.current = 0;
+      inactiveReplayPendingRef.current = false;
       inactiveBufferRef.current = [];
       inactiveBufferSizeRef.current = 0;
       needsViewportRefreshRef.current = false;
@@ -2164,6 +2210,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         "--terminal-bg-overlay-color": backgroundOverlayColor,
       } as CSSProperties)
     : ({ "--terminal-font-family": effectiveFontFamily, backgroundColor } as CSSProperties);
+  const terminalContainerStyle: CSSProperties | undefined = inactiveReplayPending
+    ? { visibility: "hidden" }
+    : undefined;
 
   return (
     <div
@@ -2249,7 +2298,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           </button>
         </div>
       )}
-      <div ref={containerRef} className="h-full w-full overflow-hidden pl-2" />
+      <div ref={containerRef} className="h-full w-full overflow-hidden pl-2" style={terminalContainerStyle} />
       {menuState && (
         <Portal>
           <div
