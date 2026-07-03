@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
+import { getTerminalTheme, isLightTerminalTheme } from "../../lib/terminalThemes";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { MarkdownContent } from "../ui/MarkdownContent";
 import { TERM } from "../stats/termStatsUi";
@@ -147,10 +149,25 @@ function parseTranscript(content: string): RenderedMessage[] {
  * 仅当用户停在底部时自动跟随滚动，避免打断向上翻阅。
  */
 export function SubagentTranscriptView({ sessionId, title }: Props) {
+  const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
+  const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
+  const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
+  const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
+  const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const transcript = useTerminalStore((s) => s.subagentTranscripts[sessionId]);
   const content = transcript?.content ?? "";
   const source = transcript?.source;
   const messages = useMemo(() => parseTranscript(content), [content]);
+  const terminalCodeTheme = useMemo<"light" | "dark">(() => {
+    const effectiveTerminalThemeName = terminalThemeMode === "follow-app" ? "auto" : terminalThemeName;
+    const terminalTheme = getTerminalTheme(
+      effectiveTerminalThemeName,
+      resolvedTheme,
+      lightThemePalette,
+      darkThemePalette
+    );
+    return isLightTerminalTheme(terminalTheme) ? "light" : "dark";
+  }, [darkThemePalette, lightThemePalette, resolvedTheme, terminalThemeMode, terminalThemeName]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
 
@@ -166,7 +183,10 @@ export function SubagentTranscriptView({ sessionId, title }: Props) {
   };
 
   return (
-    <div className="subagent-transcript-shell flex h-full min-h-0 flex-col text-xs" style={{ background: TERM.bg, color: TERM.fg }}>
+    <div
+      className="subagent-transcript-shell flex h-full min-h-0 flex-col text-xs"
+      style={{ backgroundColor: TERM.bg, color: TERM.fg }}
+    >
       <div
         className="flex items-center gap-2 px-3 py-1.5"
         style={{ borderBottom: `1px solid ${TERM.border}`, color: TERM.dim }}
@@ -219,7 +239,12 @@ export function SubagentTranscriptView({ sessionId, title }: Props) {
                 >
                   {m.role}
                 </div>
-                <MarkdownContent content={m.text} variant="terminal" />
+                <MarkdownContent
+                  content={m.text}
+                  variant="terminal"
+                  terminalCodeTheme={terminalCodeTheme}
+                  className="subagent-transcript-markdown"
+                />
               </li>
             ))}
           </ul>

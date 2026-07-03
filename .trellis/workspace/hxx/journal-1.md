@@ -812,3 +812,38 @@ Add project-level Codex provider switching with generated profiles, cleanup, sid
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Fix subagent split theme adaptation
+
+**Date**: 2026-07-03
+**Task**: Fix subagent split theme adaptation
+**Branch**: `master`
+
+### Summary
+
+修复浅色终端下 sub-agent transcript 背景与 Markdown 主题失配，补充共享 Markdown 主题约束。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b942c35` | (see git log) |
+| `ebedb2c` | (see git log) |
+| `a5c9357` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

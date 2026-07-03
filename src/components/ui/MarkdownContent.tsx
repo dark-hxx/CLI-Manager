@@ -50,6 +50,7 @@ export interface MarkdownContentProps {
   compact?: boolean;
   variant?: MarkdownVariant;
   linkBehavior?: MarkdownLinkBehavior;
+  terminalCodeTheme?: "light" | "dark";
   className?: string;
 }
 
@@ -385,13 +386,16 @@ export function MarkdownContent({
   compact = false,
   variant = "default",
   linkBehavior = variant === "terminal" ? "open" : "preview",
+  terminalCodeTheme,
   className,
 }: MarkdownContentProps) {
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const codeTheme = useMemo<MarkdownCodeTheme>(() => {
-    if (variant === "terminal" || resolvedTheme === "dark") return oneDark;
-    return oneLight;
-  }, [resolvedTheme, variant]);
+    if (variant === "terminal") {
+      return terminalCodeTheme === "light" ? oneLight : oneDark;
+    }
+    return resolvedTheme === "dark" ? oneDark : oneLight;
+  }, [resolvedTheme, terminalCodeTheme, variant]);
 
   return (
     <div

@@ -4,7 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../stores/projectStore";
 import type { Project, Group } from "../lib/types";
 import { getShellOptions } from "../lib/types";
-import { getOsPlatform, defaultShellForOs, normalizeShellKey } from "../lib/shell";
+import { getOsPlatform, normalizeShellKey } from "../lib/shell";
+import { getConfigModalShellPrefill } from "../lib/configModalShellPrefill";
 import type { OsPlatform } from "../lib/shell";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Check, ChevronDown } from "./icons";
@@ -20,7 +21,7 @@ import {
 } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
-import { logError } from "../lib/logger";
+import { logError, logInfo, logWarn } from "../lib/logger";
 
 interface Props {
   project?: Project;
@@ -35,6 +36,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
   const { createProject, updateProject, groups } = useProjectStore();
   const isEdit = !!project;
   const isClone = !!cloneFrom;
+  const logInstanceIdRef = useRef(crypto.randomUUID().slice(0, 8));
 
   const [osPlatform, setOsPlatform] = useState<OsPlatform>("windows");
 
@@ -53,19 +55,70 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmEdit, setShowConfirmEdit] = useState(false);
 
+  useEffect(() => {
+    logInfo("[config-modal] mounted", {
+      instanceId: logInstanceIdRef.current,
+      isEdit,
+      isClone,
+    });
+    return () => {
+      logInfo("[config-modal] unmounted", {
+        instanceId: logInstanceIdRef.current,
+        isEdit,
+        isClone,
+      });
+    };
+  }, [isClone, isEdit]);
+
   // Detect OS and set default shell on mount
   useEffect(() => {
     void (async () => {
       const platform = await getOsPlatform();
       setOsPlatform(platform);
+      setShell((currentShell) => {
+        const resolvedShell = getConfigModalShellPrefill(platform, currentShell, isEdit, isClone);
+        logInfo("[config-modal] resolved shell prefill", {
+          instanceId: logInstanceIdRef.current,
+          platform,
+          currentShell,
+          resolvedShell,
+          isEdit,
+          isClone,
+        });
+        if (platform === "macos" && !isEdit && !isClone && !resolvedShell.trim()) {
+          logWarn("[config-modal] macOS new terminal modal resolved empty shell prefill", {
+            currentShell,
+            resolvedShell,
+          });
+        }
+        return resolvedShell;
+      });
+    })().catch((err) => {
+      logError("[config-modal] failed to resolve shell prefill", { err, isEdit, isClone });
+    });
+  }, [isClone, isEdit]);
 
-      // 如果是新建且没有预设 shell，使用平台默认值
-      if (!isEdit && !isClone && !shell) {
-        setShell(defaultShellForOs(platform));
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // 只在 mount 时执行一次
+  useEffect(() => {
+    if (isEdit || isClone || osPlatform === "unknown") return;
+    const effectiveShell = getConfigModalShellPrefill(osPlatform, shell, isEdit, isClone);
+    const optionValues = getShellOptions(osPlatform).map((opt) => opt.value);
+    const hasShellOption = optionValues.includes(effectiveShell);
+    logInfo("[config-modal] shell select state", {
+      instanceId: logInstanceIdRef.current,
+      osPlatform,
+      shell,
+      effectiveShell,
+      hasShellOption,
+      optionValues,
+    });
+    if (osPlatform === "macos" && !effectiveShell.trim()) {
+      logWarn("[config-modal] macOS new terminal modal still has empty shell state", {
+        shell,
+        effectiveShell,
+        optionValues,
+      });
+    }
+  }, [isClone, isEdit, osPlatform, shell]);
 
   const handleBrowse = async () => {
     const selected = await open({ directory: true, title: "选择项目目录" });
@@ -160,12 +213,14 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
   const selectedGroupName = groupId
     ? groups.find((g) => g.id === groupId)?.name ?? "未知分组"
     : "不分组";
+  const shellSelectValue = getConfigModalShellPrefill(osPlatform, shell, isEdit, isClone);
+  const shellSelectKey = `${osPlatform}:${isEdit ? "edit" : isClone ? "clone" : "create"}`;
 
   // Shell 选项：如果当前 shell 在平台选项中不存在，保留为"当前自定义（保留）"
-  const normalizedShell = normalizeShellKey(shell);
-  const isCustomShell = shell && !normalizedShell;
+  const normalizedShell = normalizeShellKey(shellSelectValue);
+  const isCustomShell = shellSelectValue && !normalizedShell;
   const shellOptions = [
-    ...(isCustomShell ? [{ value: shell, label: `${shell}（当前自定义）` }] : []),
+    ...(isCustomShell ? [{ value: shellSelectValue, label: `${shellSelectValue}（当前自定义）` }] : []),
     ...getShellOptions(osPlatform),
   ];
 
@@ -232,9 +287,25 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
               <div>
                 <label className="mb-1 block text-xs text-text-muted">Shell</label>
                 <Select
-                  value={shell}
-                  onChange={(e) => setShell(e.target.value)}
+                  key={shellSelectKey}
+                  value={shellSelectValue}
+                  onChange={(e) => {
+                    const nextShell = e.target.value;
+                    logInfo("[config-modal] shell select onChange", {
+                      instanceId: logInstanceIdRef.current,
+                      nextShell,
+                    });
+                    if (!nextShell.trim()) {
+                      logWarn("[config-modal] ignored empty shell select onChange", {
+                        instanceId: logInstanceIdRef.current,
+                        shell,
+                      });
+                      return;
+                    }
+                    setShell(nextShell);
+                  }}
                   className="text-sm"
+                  placeholder="请选择"
                 >
                   {shellOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>

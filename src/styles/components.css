@@ -2112,8 +2112,16 @@
 
 .subagent-transcript-shell {
   background:
-    radial-gradient(circle at 0 0, rgba(61, 214, 140, 0.13), transparent 34%),
-    linear-gradient(180deg, #0a0a0a, #121212);
+    radial-gradient(
+      circle at 0 0,
+      color-mix(in srgb, var(--term-panel-green, #3dd68c) 15%, transparent),
+      transparent 34%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--term-panel-bg, #0a0a0a) 92%, var(--term-panel-fg, #ececec) 8%),
+      color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--terminal-theme-background, #0c0e10) 10%)
+    );
 }
 
 .subagent-transcript-list {
@@ -2123,23 +2131,26 @@
 }
 
 .subagent-transcript-message {
-  border: 1px solid #2e2e2e;
+  border: 1px solid var(--term-panel-border, #2e2e2e);
   border-radius: 10px;
   padding: 0.75rem;
-  background-color: #121212;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  background-color: var(--term-panel-card, #121212);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 22%, transparent);
 }
 
 .subagent-transcript-message[data-role="assistant"] {
-  border-color: rgba(91, 141, 239, 0.42);
+  border-color: color-mix(in srgb, var(--term-panel-blue, #5b8def) 42%, var(--term-panel-border, #2e2e2e) 58%);
+  background-color: color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--term-panel-blue, #5b8def) 10%);
 }
 
 .subagent-transcript-message[data-role="user"] {
-  border-color: rgba(61, 214, 140, 0.42);
+  border-color: color-mix(in srgb, var(--term-panel-green, #3dd68c) 42%, var(--term-panel-border, #2e2e2e) 58%);
+  background-color: color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--term-panel-green, #3dd68c) 10%);
 }
 
 .subagent-transcript-message[data-role="tool"] {
-  border-color: rgba(229, 196, 83, 0.42);
+  border-color: color-mix(in srgb, var(--term-panel-yellow, #e5c453) 42%, var(--term-panel-border, #2e2e2e) 58%);
+  background-color: color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--term-panel-yellow, #e5c453) 10%);
 }
 
 .subagent-transcript-role {
@@ -2254,6 +2265,125 @@
 .ui-markdown-terminal .ui-markdown-link:hover {
   color: #3dd68c;
   border-bottom-color: rgba(61, 214, 140, 0.65);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal {
+  --md-text: var(--term-panel-fg, #ececec);
+  --md-muted: color-mix(in srgb, var(--term-panel-fg, #ececec) 82%, var(--term-panel-dim, #9ca0a6) 18%);
+  --md-subtle: var(--term-panel-dim, #9ca0a6);
+  --md-border: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 88%, transparent);
+  --md-border-muted: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 72%, transparent);
+  --md-canvas-subtle: color-mix(in srgb, var(--term-panel-card-inner, #181818) 86%, transparent);
+  --md-canvas-muted: color-mix(in srgb, var(--term-panel-green, #3dd68c) 10%, transparent);
+  color: var(--term-panel-fg, #ececec);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-h,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-strong,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table td {
+  color: var(--term-panel-fg, #ececec);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table th,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table td {
+  border-bottom-color: var(--md-border);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-h2,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-h3 {
+  border-bottom-color: var(--md-border-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-p,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-em,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-del {
+  color: var(--md-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal li::marker,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-inline-code,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table th {
+  color: var(--term-panel-green, #3dd68c);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal input[type="checkbox"] {
+  accent-color: var(--term-panel-green, #3dd68c);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-quote {
+  border-left-color: var(--term-panel-green, #3dd68c);
+  background: color-mix(in srgb, var(--term-panel-green, #3dd68c) 8%, transparent);
+  color: var(--md-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-inline-code {
+  background: color-mix(in srgb, var(--term-panel-green, #3dd68c) 10%, transparent);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table-wrap,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-code-block {
+  border-color: var(--md-border);
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-bg, #0a0a0a) 82%,
+    var(--term-panel-fg, #ececec) 6%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table {
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-bg, #0a0a0a) 90%,
+    var(--term-panel-fg, #ececec) 5%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table th {
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-card-inner, #181818) 82%,
+    var(--term-panel-green, #3dd68c) 18%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table tbody tr:nth-child(even) {
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-card-inner, #181818) 88%,
+    var(--term-panel-fg, #ececec) 6%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table tbody tr:hover {
+  background-color: color-mix(
+    in srgb,
+    var(--terminal-theme-selection, var(--term-panel-blue, #5b8def)) 18%,
+    var(--term-panel-card-inner, #181818) 82%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-code-header {
+  border-bottom-color: var(--md-border);
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-card-inner, #181818) 86%,
+    var(--term-panel-fg, #ececec) 6%
+  );
+  color: var(--term-panel-dim, #9ca0a6);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-hr {
+  background-color: var(--md-border-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-link {
+  color: var(--term-panel-cyan, #5ac8e0);
+  border-bottom: 1px solid color-mix(in srgb, var(--term-panel-cyan, #5ac8e0) 45%, transparent);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-link:hover {
+  color: var(--term-panel-green, #3dd68c);
+  border-bottom-color: color-mix(in srgb, var(--term-panel-green, #3dd68c) 60%, transparent);
 }
 
 .history-diff-viewer {
