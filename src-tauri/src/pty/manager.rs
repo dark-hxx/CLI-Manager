@@ -519,9 +519,29 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         if let Some(dir) = cwd {
             cmd.cwd(dir);
         }
-        if let Some(vars) = env_vars {
+        if let Some(ref vars) = env_vars {
             for (k, v) in vars {
                 cmd.env(k, v);
+            }
+        }
+        // 非 Windows：GUI 启动（Dock/Finder）时父进程没有 TERM，子进程继承空 TERM
+        // 会导致 claude/codex/ls/git 等判定为非彩色终端而禁用 ANSI 颜色。
+        // 显式注入 xterm-256color（xterm.js 完整支持）+ truecolor，让支持的工具走 24-bit。
+        // 仅在调用方未自定义时补默认值，尊重用户偏好。
+        if !cfg!(target_os = "windows") {
+            let has_term = env_vars
+                .as_ref()
+                .map(|v| v.contains_key("TERM"))
+                .unwrap_or(false);
+            if !has_term {
+                cmd.env("TERM", "xterm-256color");
+            }
+            let has_colorterm = env_vars
+                .as_ref()
+                .map(|v| v.contains_key("COLORTERM"))
+                .unwrap_or(false);
+            if !has_colorterm {
+                cmd.env("COLORTERM", "truecolor");
             }
         }
 

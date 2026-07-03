@@ -37,6 +37,7 @@ import { getContrastRatioFromHex, MIN_APPLY_CONTRAST_RATIO } from "./lib/contras
 import { translateCurrent, useI18n } from "./lib/i18n";
 import { getOsPlatform } from "./lib/shell";
 import { normalizeFontFamilyStack } from "./lib/systemFonts";
+import { getTerminalTheme } from "./lib/terminalThemes";
 import { resolveProjectForSession } from "./lib/terminalProject";
 import "./App.css";
 
@@ -359,6 +360,8 @@ function App() {
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
+  const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
+  const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
   const uiFontSize = useSettingsStore((s) => s.uiFontSize);
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
@@ -634,6 +637,70 @@ function App() {
     document.documentElement.setAttribute("data-dark-palette", darkThemePalette);
     document.documentElement.setAttribute("lang", language);
   }, [resolvedTheme, lightThemePalette, darkThemePalette, language]);
+
+  useEffect(() => {
+    const root = document.documentElement.style;
+    const effectiveTerminalThemeName = terminalThemeMode === "follow-app" ? "auto" : terminalThemeName;
+    const terminalTheme = getTerminalTheme(
+      effectiveTerminalThemeName,
+      resolvedTheme,
+      lightThemePalette,
+      darkThemePalette
+    );
+    const terminalThemeBackground =
+      terminalTheme.background ?? (resolvedTheme === "dark" ? "#0c0e10" : "#ffffff");
+    const terminalThemeForeground =
+      terminalTheme.foreground ?? (resolvedTheme === "dark" ? "#f8fafc" : "#1e293b");
+    const terminalThemeAccent =
+      terminalTheme.blue ?? terminalTheme.cursor ?? terminalThemeForeground;
+    const terminalThemeMuted =
+      terminalTheme.brightBlack ?? terminalTheme.white ?? terminalThemeForeground;
+    const terminalThemeSelection =
+      terminalTheme.selectionBackground ?? terminalThemeAccent;
+
+    root.setProperty("--terminal-theme-background", terminalThemeBackground);
+    root.setProperty("--terminal-theme-foreground", terminalThemeForeground);
+    root.setProperty("--terminal-theme-muted", terminalThemeMuted);
+    root.setProperty("--terminal-theme-accent", terminalThemeAccent);
+    root.setProperty("--terminal-theme-selection", terminalThemeSelection);
+    root.setProperty(
+      "--term-panel-bg",
+      "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 96%, var(--terminal-theme-foreground, #f8fafc) 4%)"
+    );
+    root.setProperty(
+      "--term-panel-card",
+      "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 91%, var(--terminal-theme-foreground, #f8fafc) 9%)"
+    );
+    root.setProperty(
+      "--term-panel-card-inner",
+      "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 87%, var(--terminal-theme-foreground, #f8fafc) 13%)"
+    );
+    root.setProperty(
+      "--term-panel-border",
+      "color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 11%, transparent)"
+    );
+    root.setProperty("--term-panel-fg", terminalThemeForeground);
+    root.setProperty(
+      "--term-panel-dim",
+      "color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 50%, var(--terminal-theme-muted, #64748b) 50%)"
+    );
+    root.setProperty("--term-panel-green", terminalTheme.green ?? "#3DD68C");
+    root.setProperty("--term-panel-yellow", terminalTheme.yellow ?? "#E5C453");
+    root.setProperty("--term-panel-red", terminalTheme.red ?? "#F25E5E");
+    root.setProperty("--term-panel-magenta", terminalTheme.magenta ?? "#C77DBB");
+    root.setProperty("--term-panel-cyan", terminalTheme.cyan ?? "#5AC8E0");
+    root.setProperty("--term-panel-blue", terminalTheme.blue ?? "#5B8DEF");
+    root.setProperty(
+      "--term-panel-track",
+      "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 94%, var(--terminal-theme-foreground, #f8fafc) 6%)"
+    );
+  }, [
+    darkThemePalette,
+    lightThemePalette,
+    resolvedTheme,
+    terminalThemeMode,
+    terminalThemeName,
+  ]);
 
   useEffect(() => {
     const root = document.documentElement.style;

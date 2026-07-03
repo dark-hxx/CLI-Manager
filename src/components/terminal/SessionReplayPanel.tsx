@@ -29,6 +29,7 @@ import {
   type ReplayWorktreeSnapshot,
 } from "../../stores/replayStore";
 import type { HistoryMessage } from "../../lib/types";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { DiffModal } from "../history/DiffModal";
 import { EmptyHint, HeaderPill, TERM_PANEL, panelColorTint } from "../stats/termStatsUi";
 
@@ -80,6 +81,24 @@ const TIMELINE_LINE_LEFT = "calc(78px + 12px + 14px)";
 const OOM_PATCH_WARN_BYTES = 1024 * 1024;
 const OOM_REPLAY_EVENTS_WARN_COUNT = 200;
 type TranslateFn = (key: TranslationKey, params?: Record<string, string | number>) => string;
+type PendingReplayAction =
+  | {
+      kind: "rollback";
+      sessionKey: string;
+      projectPath: string;
+      targetPatch: string;
+      expectedCurrentPatch: string;
+      targetHead: string;
+    }
+  | {
+      kind: "fork";
+      sessionKey: string;
+      projectPath: string;
+      targetPatch: string;
+      expectedCurrentPatch: string;
+      targetHead: string;
+      branchName: string;
+    };
 
 function stringByteLength(value: string): number {
   if (typeof Blob !== "undefined") return new Blob([value]).size;
@@ -507,6 +526,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
   const [selectedEventIndex, setSelectedEventIndex] = useState<number | null>(null);
   const [rollbackPending, setRollbackPending] = useState(false);
   const [forkPending, setForkPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingReplayAction | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [snapshotDiffMessages, setSnapshotDiffMessages] = useState<HistoryMessage[] | null>(null);
   const panelActive = open && visible;
@@ -583,6 +603,10 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     setSelectedEventIndex(null);
   }, [selectedSessionKey]);
 
+  useEffect(() => {
+    setPendingAction(null);
+  }, [panelActive, selectedSessionKey]);
+
   const handleSelectReplaySession = async (sessionKey: string) => {
     setHistoryOpen(false);
     setSelectedEventIndex(null);
@@ -596,35 +620,23 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     await selectSession(activeSessionId);
   };
 
-  const handleRollback = async (event: ReplayEvent, latest: ReplayEvent) => {
+  const handleRollback = (event: ReplayEvent, latest: ReplayEvent) => {
     const projectPath = getStringPayload(event.payload, "projectPath");
     const targetPatch = getStringPayload(event.payload, "patch");
     const expectedCurrentPatch = getStringPayload(latest.payload, "patch");
     const targetHead = getStringPayload(event.payload, "head");
     if (!selectedSessionKey || !projectPath || targetPatch === null || expectedCurrentPatch === null || !targetHead) return;
-
-    const confirmed = window.confirm(t("aiReplay.rollback.confirm"));
-    if (!confirmed) return;
-
-    setRollbackPending(true);
-    try {
-      await invoke<ReplayWorktreeSnapshot>("git_restore_worktree_snapshot", {
-        projectPath,
-        targetPatch,
-        expectedCurrentPatch,
-        targetHead,
-      });
-      toast.success(t("aiReplay.rollback.success"));
-      await captureCodeSnapshot(selectedSessionKey, projectPath, "rollback");
-      await loadSession(selectedSessionKey);
-    } catch (err) {
-      toast.error(t("aiReplay.rollback.failed"), { description: String(err) });
-    } finally {
-      setRollbackPending(false);
-    }
+    setPendingAction({
+      kind: "rollback",
+      sessionKey: selectedSessionKey,
+      projectPath,
+      targetPatch,
+      expectedCurrentPatch,
+      targetHead,
+    });
   };
 
-  const handleFork = async (event: ReplayEvent, latest: ReplayEvent) => {
+  const handleFork = (event: ReplayEvent, latest: ReplayEvent) => {
     const projectPath = getStringPayload(event.payload, "projectPath");
     const targetPatch = getStringPayload(event.payload, "patch");
     const expectedCurrentPatch = getStringPayload(latest.payload, "patch");
@@ -632,21 +644,57 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     if (!selectedSessionKey || !projectPath || targetPatch === null || expectedCurrentPatch === null || !targetHead) return;
 
     const branchName = buildSnapshotForkBranchName(event);
-    const confirmed = window.confirm(t("aiReplay.fork.confirm", { branch: branchName }));
-    if (!confirmed) return;
+    setPendingAction({
+      kind: "fork",
+      sessionKey: selectedSessionKey,
+      projectPath,
+      targetPatch,
+      expectedCurrentPatch,
+      targetHead,
+      branchName,
+    });
+  };
 
+  const handleConfirmPendingAction = async () => {
+    if (!pendingAction) return;
+
+    const action = pendingAction;
+    setPendingAction(null);
+
+    if (action.kind === "rollback") {
+      if (rollbackPending) return;
+      setRollbackPending(true);
+      try {
+        await invoke<ReplayWorktreeSnapshot>("git_restore_worktree_snapshot", {
+          projectPath: action.projectPath,
+          targetPatch: action.targetPatch,
+          expectedCurrentPatch: action.expectedCurrentPatch,
+          targetHead: action.targetHead,
+        });
+        toast.success(t("aiReplay.rollback.success"));
+        await captureCodeSnapshot(action.sessionKey, action.projectPath, "rollback");
+        await loadSession(action.sessionKey);
+      } catch (err) {
+        toast.error(t("aiReplay.rollback.failed"), { description: String(err) });
+      } finally {
+        setRollbackPending(false);
+      }
+      return;
+    }
+
+    if (forkPending) return;
     setForkPending(true);
     try {
       await invoke<ReplayWorktreeSnapshot>("git_fork_worktree_snapshot", {
-        projectPath,
-        targetPatch,
-        expectedCurrentPatch,
-        targetHead,
-        branchName,
+        projectPath: action.projectPath,
+        targetPatch: action.targetPatch,
+        expectedCurrentPatch: action.expectedCurrentPatch,
+        targetHead: action.targetHead,
+        branchName: action.branchName,
       });
-      toast.success(t("aiReplay.fork.success"), { description: branchName });
-      await captureCodeSnapshot(selectedSessionKey, projectPath, "fork");
-      await loadSession(selectedSessionKey);
+      toast.success(t("aiReplay.fork.success"), { description: action.branchName });
+      await captureCodeSnapshot(action.sessionKey, action.projectPath, "fork");
+      await loadSession(action.sessionKey);
     } catch (err) {
       toast.error(t("aiReplay.fork.failed"), { description: String(err) });
     } finally {
@@ -968,6 +1016,22 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
         open={Boolean(snapshotDiffMessages)}
         messages={snapshotDiffMessages ?? undefined}
         onClose={() => setSnapshotDiffMessages(null)}
+      />
+      <ConfirmDialog
+        open={pendingAction !== null}
+        title={pendingAction ? t(pendingAction.kind === "rollback" ? "aiReplay.action.rollback" : "aiReplay.action.fork") : ""}
+        message={
+          pendingAction?.kind === "rollback"
+            ? t("aiReplay.rollback.confirm")
+            : pendingAction?.kind === "fork"
+              ? t("aiReplay.fork.confirm", { branch: pendingAction.branchName })
+              : undefined
+        }
+        confirmText={t("common.confirm")}
+        cancelText={t("common.cancel")}
+        danger={pendingAction?.kind === "rollback"}
+        onClose={() => setPendingAction(null)}
+        onConfirm={() => void handleConfirmPendingAction()}
       />
     </div>
   );

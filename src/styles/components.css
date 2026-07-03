@@ -39,6 +39,64 @@
   -webkit-backdrop-filter: blur(20px);
 }
 
+#command-template-panel,
+#command-history-panel {
+  --terminal-popover-fg: var(--term-panel-fg, #ececec);
+  --terminal-popover-muted: color-mix(in srgb, var(--terminal-popover-fg) 74%, var(--term-panel-dim, #9ca0a6) 26%);
+  --terminal-popover-soft: color-mix(in srgb, var(--terminal-popover-fg) 60%, var(--term-panel-dim, #9ca0a6) 40%);
+  --surface: var(--term-panel-bg, #0a0a0a);
+  --surface-container-low: var(--term-panel-bg, #0a0a0a);
+  --surface-container-lowest: var(--terminal-theme-background, #0c0e10);
+  --surface-container-high: var(--term-panel-card, #121212);
+  --surface-container-highest: var(--term-panel-card-inner, #181818);
+  --on-surface: var(--terminal-popover-fg);
+  --on-surface-variant: var(--terminal-popover-muted);
+  --text-primary: var(--terminal-popover-fg);
+  --text-secondary: var(--terminal-popover-muted);
+  --text-muted: var(--terminal-popover-soft);
+  --border: var(--term-panel-border, #2e2e2e);
+  --primary: var(--terminal-theme-accent, #5b8def);
+  --interactive-hover-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 84%, var(--terminal-theme-accent, #5b8def) 16%);
+  --interactive-active-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 76%, var(--terminal-theme-accent, #5b8def) 24%);
+  --interactive-selected-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 64%, var(--terminal-theme-accent, #5b8def) 36%);
+  --interactive-selected-border: color-mix(in srgb, var(--terminal-theme-accent, #5b8def) 40%, var(--term-panel-border, #2e2e2e) 60%);
+  --interactive-focus-ring: color-mix(in srgb, var(--terminal-theme-accent, #5b8def) 26%, transparent);
+  --interactive-shadow: none;
+  background-color: var(--term-panel-bg, #0a0a0a);
+  border-color: var(--term-panel-border, #2e2e2e);
+  color: var(--term-panel-fg, #ececec);
+  box-shadow:
+    0 14px 34px color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 58%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--term-panel-border, #2e2e2e) 68%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+#command-template-panel .text-on-surface,
+#command-template-panel .text-text-primary,
+#command-history-panel .text-on-surface,
+#command-history-panel .text-text-primary,
+#command-history-panel code {
+  color: var(--terminal-popover-fg);
+}
+
+#command-template-panel .text-on-surface-variant,
+#command-template-panel .text-text-muted,
+#command-history-panel .text-on-surface-variant,
+#command-history-panel .text-text-muted {
+  color: var(--terminal-popover-muted);
+}
+
+#command-template-panel .ui-select-popover {
+  background-color: var(--term-panel-card, #121212);
+  border-color: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 72%, transparent);
+  box-shadow:
+    0 12px 30px color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 62%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--term-panel-border, #2e2e2e) 52%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .ui-bloom-shadow {
   box-shadow:
     0 12px 32px color-mix(in srgb, var(--on-surface) 6%, transparent),
