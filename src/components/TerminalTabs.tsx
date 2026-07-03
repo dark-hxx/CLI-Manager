@@ -1629,6 +1629,7 @@ export function TerminalTabs({
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
   const sidePanelMerged = useSettingsStore((s) => s.terminalSidePanelMerged);
+  const terminalSidePanelSingleOpen = useSettingsStore((s) => s.terminalSidePanelSingleOpen);
   const terminalSidePanelSkin = useSettingsStore((s) => s.terminalSidePanelSkin);
   const updateSettings = useSettingsStore((s) => s.update);
   const openFileProject = useFileExplorerStore((s) => s.openProject);
@@ -1791,6 +1792,15 @@ export function TerminalTabs({
   useEffect(() => {
     if (!historyOpen && activeWorkspaceTab === "history") setActiveWorkspaceTab("terminal");
   }, [activeWorkspaceTab, historyOpen]);
+
+  useEffect(() => {
+    if (!terminalSidePanelSingleOpen || !historyOpen) return;
+    setSidePanelOpen(false);
+    setStatsOpen(false);
+    setGitOpen(false);
+    setReplayOpen(false);
+    setFilesOpen(false);
+  }, [historyOpen, terminalSidePanelSingleOpen]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -2020,19 +2030,22 @@ export function TerminalTabs({
     }
     const allowed = await ensureStatsPanelAllowed();
     if (!allowed) return;
+    if (terminalSidePanelSingleOpen) {
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+    }
     if (sidePanelMerged) {
       setSidePanelTab("stats");
       setSidePanelOpen(true);
     } else {
-      // 窄屏下退化为单面板：打开实时统计时收起其他面板，避免挤压终端
-      if (window.innerWidth < 1100) {
+      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
         setGitOpen(false);
         setReplayOpen(false);
         setFilesOpen(false);
       }
       setStatsOpen(true);
     }
-  }, [ensureStatsPanelAllowed, sidePanelMerged, statsPanelActive]);
+  }, [closeHistory, ensureStatsPanelAllowed, sidePanelMerged, statsPanelActive, terminalSidePanelSingleOpen]);
 
   const handleToggleGitChangesPanel = useCallback(() => {
     if (gitPanelActive) {
@@ -2041,18 +2054,25 @@ export function TerminalTabs({
       return;
     }
     if (sidePanelMerged) {
+      if (terminalSidePanelSingleOpen) {
+        closeHistory();
+        setActiveWorkspaceTab("terminal");
+      }
       setSidePanelTab("git");
       setSidePanelOpen(true);
     } else {
-      // 窄屏下退化为单面板：打开 Git 时收起其他面板，避免挤压终端
-      if (window.innerWidth < 1100) {
+      if (terminalSidePanelSingleOpen) {
+        closeHistory();
+        setActiveWorkspaceTab("terminal");
+      }
+      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
         setStatsOpen(false);
         setReplayOpen(false);
         setFilesOpen(false);
       }
       setGitOpen(true);
     }
-  }, [gitPanelActive, sidePanelMerged]);
+  }, [closeHistory, gitPanelActive, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const handleToggleReplayPanel = useCallback(() => {
     if (replayPanelActive) {
@@ -2061,17 +2081,25 @@ export function TerminalTabs({
       return;
     }
     if (sidePanelMerged) {
+      if (terminalSidePanelSingleOpen) {
+        closeHistory();
+        setActiveWorkspaceTab("terminal");
+      }
       setSidePanelTab("replay");
       setSidePanelOpen(true);
     } else {
-      if (window.innerWidth < 1100) {
+      if (terminalSidePanelSingleOpen) {
+        closeHistory();
+        setActiveWorkspaceTab("terminal");
+      }
+      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
         setStatsOpen(false);
         setGitOpen(false);
         setFilesOpen(false);
       }
       setReplayOpen(true);
     }
-  }, [replayPanelActive, sidePanelMerged]);
+  }, [closeHistory, replayPanelActive, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const syncFilePanelProject = useCallback(async (project: Project) => {
     try {
@@ -2105,18 +2133,22 @@ export function TerminalTabs({
     if (!filePanelProject) return;
     const allowed = await syncFilePanelProject(filePanelProject);
     if (!allowed) return;
+    if (terminalSidePanelSingleOpen) {
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+    }
     if (sidePanelMerged) {
       setSidePanelTab("files");
       setSidePanelOpen(true);
     } else {
-      if (window.innerWidth < 1100) {
+      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
         setStatsOpen(false);
         setGitOpen(false);
         setReplayOpen(false);
       }
       setFilesOpen(true);
     }
-  }, [closeFilesPanel, filePanelProject, filesPanelActive, sidePanelMerged, syncFilePanelProject]);
+  }, [closeFilesPanel, closeHistory, filePanelProject, filesPanelActive, sidePanelMerged, syncFilePanelProject, terminalSidePanelSingleOpen]);
 
   const handleSidePanelTabChange = useCallback((tab: TerminalSidePanelTab) => {
     if (tab === "stats") {
@@ -2140,7 +2172,7 @@ export function TerminalTabs({
   useEffect(() => {
     if (sidePanelMerged) return;
     const enforce = () => {
-      if (window.innerWidth >= 1100) return;
+      if (!terminalSidePanelSingleOpen && window.innerWidth >= 1100) return;
       const openPanels = [statsOpen, gitOpen, replayOpen, filesOpen].filter(Boolean).length;
       if (openPanels <= 1) return;
       if (statsOpen) {
@@ -2161,7 +2193,7 @@ export function TerminalTabs({
     enforce();
     window.addEventListener("resize", enforce);
     return () => window.removeEventListener("resize", enforce);
-  }, [filesOpen, gitOpen, replayOpen, sidePanelMerged, statsOpen]);
+  }, [filesOpen, gitOpen, replayOpen, sidePanelMerged, statsOpen, terminalSidePanelSingleOpen]);
 
   useEffect(() => {
     if (!filesPanelActive) return;
@@ -2178,13 +2210,20 @@ export function TerminalTabs({
       return;
     }
 
+    if (terminalSidePanelSingleOpen) {
+      setSidePanelOpen(false);
+      setStatsOpen(false);
+      setGitOpen(false);
+      setReplayOpen(false);
+      setFilesOpen(false);
+    }
     const project = activeSession?.projectId ? projects.find((item) => item.id === activeSession.projectId) : undefined;
     setActiveWorkspaceTab("history");
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project?.cli_tool),
       projectPath: project?.path ?? null,
     });
-  }, [activeSession, activeWorkspaceTab, closeHistory, historyOpen, openHistory, projects]);
+  }, [activeSession, closeHistory, historyOpen, openHistory, projects, terminalSidePanelSingleOpen]);
 
   const handleOpenSplitPicker = useCallback((sessionId: string, direction: TerminalPaneSplitDirection, anchor?: SplitPickerAnchor) => {
     clearSplitPickerOpenSchedule();

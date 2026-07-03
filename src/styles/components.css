@@ -2542,15 +2542,50 @@
 }
 
 .ui-file-search-input-shell,
-.ui-file-search-mode-tabs {
+.ui-file-search-mode-inline {
   transition:
     border-color var(--animate-duration-fast),
     box-shadow var(--animate-duration-fast),
     background-color var(--animate-duration-fast);
 }
 
-.ui-file-search-input-shell:focus-within,
-.ui-file-search-mode-tabs:focus-within {
+.ui-file-search-input-shell {
+  min-height: 30px;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 88%, var(--on-surface) 12%);
+  border-color: color-mix(in srgb, var(--border) 42%, transparent);
+}
+
+.ui-file-search-mode-inline {
+  background-color: color-mix(in srgb, var(--surface-container-low) 84%, var(--on-surface) 16%);
+  border-color: color-mix(in srgb, var(--border) 48%, transparent);
+}
+
+.ui-file-explorer-title {
+  color: color-mix(in srgb, var(--on-surface) 92%, var(--primary) 8%);
+}
+
+.ui-file-explorer-root-icon {
+  color: color-mix(in srgb, var(--text-muted) 54%, var(--on-surface) 46%);
+}
+
+.ui-file-explorer-subtitle {
+  color: color-mix(in srgb, var(--text-muted) 78%, var(--on-surface) 22%);
+}
+
+.ui-file-search-input-shell input {
+  color: color-mix(in srgb, var(--on-surface) 90%, var(--primary) 10%);
+}
+
+.ui-file-search-input-shell input::placeholder {
+  color: color-mix(in srgb, var(--text-muted) 78%, var(--on-surface) 22%);
+  opacity: 1;
+}
+
+.ui-file-search-mode-option {
+  color: color-mix(in srgb, var(--text-muted) 72%, var(--on-surface) 28%);
+}
+
+.ui-file-search-input-shell:focus-within {
   border-color: color-mix(in srgb, var(--border) 72%, var(--on-surface) 28%);
   background-color: var(--surface-container-high);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 10%, transparent);
@@ -2561,8 +2596,9 @@
 }
 
 .ui-file-search-mode-option[data-selected="true"] {
-  background-color: color-mix(in srgb, var(--surface-container-highest) 82%, var(--on-surface) 18%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 8%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 22%, var(--surface-container-highest) 78%);
+  color: color-mix(in srgb, var(--on-surface) 92%, var(--primary) 8%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 .ui-file-search-mode-option:focus-visible {
@@ -2570,6 +2606,33 @@
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 14%, transparent),
     0 0 0 1px color-mix(in srgb, var(--border) 86%, var(--on-surface) 14%);
+}
+
+.context-menu.file-explorer-menu {
+  background-color: color-mix(in srgb, var(--surface-container-low) 94%, transparent);
+  color: var(--on-surface);
+  outline-color: color-mix(in srgb, var(--border) 62%, transparent);
+  box-shadow:
+    0 12px 30px color-mix(in srgb, var(--surface-container-lowest) 58%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.context-menu.file-explorer-menu .context-menu-item {
+  color: var(--text-secondary);
+}
+
+.context-menu.file-explorer-menu .context-menu-item:hover,
+.context-menu.file-explorer-menu .context-menu-item[data-highlighted] {
+  background-color: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--on-surface);
+}
+
+.context-menu.file-explorer-menu .context-menu-item.danger {
+  color: var(--danger);
+}
+
+.context-menu.file-explorer-menu [role="separator"] {
+  background-color: color-mix(in srgb, var(--border) 48%, transparent);
 }
 
 .ui-search-focus-shell {
@@ -2697,6 +2760,9 @@
 .ui-terminal-pane-chrome {
   --terminal-tab-accent: color-mix(in srgb, var(--terminal-theme-accent, #60a5fa) 64%, var(--terminal-theme-foreground, #f8fafc) 36%);
   --terminal-tab-accent-muted: color-mix(in srgb, var(--terminal-tab-accent) 42%, var(--terminal-theme-muted, #64748b) 58%);
+  --terminal-tab-border: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 48%, var(--terminal-theme-foreground, #f8fafc) 52%);
+  --terminal-tab-hover-bg: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 72%, black 28%);
+  --terminal-tab-selected-bg: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 62%, black 38%);
   height: 42px;
   min-height: 42px;
   margin: 0;
@@ -2720,32 +2786,28 @@
 
 .ui-terminal-pane-chrome .ui-tab-trigger {
   color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 72%, var(--terminal-theme-muted, #64748b) 28%);
-  border-color: color-mix(in srgb, var(--terminal-tab-accent-muted) 34%, transparent);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 34%, transparent);
   background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 68%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 5%, transparent);
 }
 
 .ui-terminal-pane-chrome .ui-tab-trigger:hover:not([data-selected="true"]) {
-  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 58%, var(--terminal-tab-accent) 42%);
-  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 88%, var(--terminal-tab-accent) 12%);
-  border-color: color-mix(in srgb, var(--terminal-tab-accent) 40%, transparent);
+  background-color: var(--terminal-tab-hover-bg);
+  color: var(--terminal-theme-foreground, #f8fafc);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 76%, transparent);
   box-shadow:
-    0 8px 18px color-mix(in srgb, #000 16%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--terminal-tab-accent) 18%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--terminal-tab-border) 34%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 10%, transparent);
+  transform: translateY(-1px);
 }
 
 .ui-terminal-pane-chrome .ui-tab-trigger[data-selected="true"] {
   color: var(--terminal-theme-foreground, #f8fafc);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--terminal-theme-selection, var(--terminal-tab-accent)) 24%, transparent) 0%,
-      color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 46%, var(--terminal-tab-accent) 54%) 100%
-    );
-  border-color: transparent;
+  background-color: var(--terminal-tab-selected-bg);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 92%, transparent);
   box-shadow:
-    0 12px 24px color-mix(in srgb, #000 22%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 18%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--terminal-tab-border) 42%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 16%, transparent);
 }
 
 .ui-terminal-pane-chrome .ui-tab-trigger[data-session-kind="file-editor"] {

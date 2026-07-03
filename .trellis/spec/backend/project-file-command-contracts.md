@@ -17,6 +17,8 @@
 Backend commands in `src-tauri/src/commands/fs.rs`:
 
 ```rust
+file_watch_start(project_path: String) -> Result<(), String>
+file_watch_stop(project_path: String) -> Result<(), String>
 file_list_dir(root_path: String, relative_path: String) -> Result<Vec<FileEntry>, String>
 file_search(root_path: String, query: String) -> Result<Vec<FileEntry>, String>
 file_search_content(root_path: String, query: String) -> Result<Vec<ContentSearchMatch>, String>
@@ -43,6 +45,7 @@ ImageFilePayload { data_base64: String, mime_type: String, size_bytes: u64 }
 ### 3. Contracts
 
 - `rootPath` must be absolute, canonicalizable, and a directory.
+- `file_watch_start` / `file_watch_stop` only accept a project root path; Rust owns watcher lifecycle and WSL/network-path fallback signaling.
 - Relative path fields use forward slashes only; empty string means project root where accepted.
 - `name` / `newName` are single child names only; they must not contain `/` or `\`.
 - `file_read_text` only returns UTF-8 text and rejects files larger than `TEXT_FILE_MAX_BYTES`.
@@ -80,6 +83,7 @@ ImageFilePayload { data_base64: String, mime_type: String, size_bytes: u64 }
 
 - Good: `file_list_dir(rootPath, "")` returns sorted directories before files, with project-relative `path`.
 - Good: `file_search_content(rootPath, "invoke")` returns bounded `{ path, line_number, line_text, before, after }` snippets for UTF-8 project files, with duplicate hits in the same file collapsed to the first match.
+- Good: `file_watch_start(projectPath)` uses a debounced recursive watcher for local Windows paths and returns a stable error such as `wsl_watch_unsupported` when notify cannot be used.
 - Base: `file_write_text(rootPath, "src/App.tsx", content)` writes only if `src` remains inside `rootPath`.
 - Base: `file_search(rootPath, "app")` can match file names or project-relative paths, but skips generated directories such as `node_modules`.
 - Bad: `file_delete(rootPath, "")` must fail with `cannot_delete_root`.

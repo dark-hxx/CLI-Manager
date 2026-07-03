@@ -85,6 +85,10 @@ const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CODEX_IME_DEBUG_WINDOW_MS = 250;
 const CODEX_IME_DUPLICATE_WINDOW_MS = 120;
+const IME_PROCESS_KEY_CODE = 229;
+const IME_PROCESS_KEY_RECOVERY_WINDOW_MS = 400;
+const IME_COMPOSITION_END_SUPPRESS_WINDOW_MS = 80;
+const NATIVE_TEXT_INPUT_DEDUP_WINDOW_MS = 16;
 
 type SpecialColorQueryId = 10 | 11;
 
@@ -1439,16 +1443,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       debugState.lastNearCompositionAt = now;
     };
 
-    terminal.onData((data) => {
-      markAttentionInputHandled();
-      const inputBufferBefore = inputBuffer.current;
-      const sessionShell = useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.shell;
-      const ptyData = data === "\r" && isDirectCodexStartupCommand(inputBufferBefore)
-        ? formatManualDirectCodexInputForPty(inputBufferBefore.trim(), normalizeShellKey(sessionShell) ?? null)
-        : data;
-      invoke("pty_write", { sessionId, data: ptyData }).catch((err) => reportPtyWriteError("onData", err));
-      maybeLogCodexImeDuplicate(data);
-
+    // 前置：data 是已经决定写入 PTY 的终端输入；后置：命令历史缓冲与运行状态跟随更新。
+    // 副作用：回车时会按现有策略推断 cmd command_started，这个推断不能扩散到普通 shell。
+    const updateInputBufferFromTerminalData = (data: string) => {
       if (data === "\r") {
         const cmd = inputBuffer.current;
         if (cmd.trim()) {
@@ -1468,6 +1465,25 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           inputBuffer.current += pastedText.replace(/\r\n?/g, "\n");
         }
       }
+    };
+
+    // 前置：data 必须是 xterm 已解析出的用户输入，或浏览器 IME text input 兜底拿到的最终文本。
+    // 后置：文本写入当前 PTY，并同步命令历史缓冲；副作用是触发 attention 标记、可能记录命令开始事件。
+    // 这里统一入口是为了让 xterm onData 与 IME 兜底保持完全一致，避免中文标点只写 PTY 不进历史缓冲。
+    const forwardTerminalInput = (data: string, source: "onData" | "nativeTextInput") => {
+      markAttentionInputHandled();
+      const inputBufferBefore = inputBuffer.current;
+      const sessionShell = useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.shell;
+      const ptyData = data === "\r" && isDirectCodexStartupCommand(inputBufferBefore)
+        ? formatManualDirectCodexInputForPty(inputBufferBefore.trim(), normalizeShellKey(sessionShell) ?? null)
+        : data;
+      invoke("pty_write", { sessionId, data: ptyData }).catch((err) => reportPtyWriteError(source, err));
+      maybeLogCodexImeDuplicate(data);
+      updateInputBufferFromTerminalData(data);
+    };
+
+    terminal.onData((data) => {
+      forwardTerminalInput(data, "onData");
     });
 
     // Sync resize to PTY
@@ -1556,6 +1572,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const terminalContainer = containerRef.current;
     const textarea = terminalContainer.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
     const viewport = terminalContainer.querySelector(".xterm-viewport") as HTMLElement | null;
+    const nativeTextInputListenerOptions = { capture: true } as const;
+    let lastImeProcessKeyAt = -1;
+    let lastCompositionEndAt = -1;
+    let lastNativeTextInputAt = -1;
+    let lastNativeTextInputData = "";
     let compositionScrollRafId: number | null = null;
     let containerScrollResetRafId: number | null = null;
     let helperTextareaAnchorRafId: number | null = null;
@@ -1886,8 +1907,51 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       scheduleCompositionAnchorFix();
     });
 
+    // Windows 中文 IME 的直出标点会经过 keyCode 229，但部分 Chromium/WebView2 版本不会让
+    // xterm 的 textarea diff 兜底稳定触发。这里在捕获阶段接管那一小段原生 text input，
+    // 既保留真实组合输入交给 xterm，也避免中文双引号这类标点被静默吞掉。
+    const nowForImeInput = () => performance.now();
+    const isHelperTextareaEvent = (event: Event) => Boolean(textarea) && event.target === textarea;
+    const shouldRecoverNativeTextInput = (event: InputEvent) => {
+      if (!isHelperTextareaEvent(event) || event.inputType !== "insertText" || !event.data) return false;
+      if (isComposingRef.current || event.isComposing) return false;
+      const now = nowForImeInput();
+      if (lastCompositionEndAt >= 0 && now - lastCompositionEndAt <= IME_COMPOSITION_END_SUPPRESS_WINDOW_MS) return false;
+      const hasRecentImeProcessKey = lastImeProcessKeyAt >= 0 && now - lastImeProcessKeyAt <= IME_PROCESS_KEY_RECOVERY_WINDOW_MS;
+      return hasRecentImeProcessKey;
+    };
+    const recoverNativeTextInput = (event: InputEvent) => {
+      if (!shouldRecoverNativeTextInput(event)) return false;
+      const data = event.data ?? "";
+      const now = nowForImeInput();
+      event.stopPropagation();
+      if (event.type === "beforeinput" && event.cancelable) event.preventDefault();
+      if (lastNativeTextInputData === data && now - lastNativeTextInputAt <= NATIVE_TEXT_INPUT_DEDUP_WINDOW_MS) return true;
+      lastNativeTextInputAt = now;
+      lastNativeTextInputData = data;
+      forwardTerminalInput(data, "nativeTextInput");
+      return true;
+    };
+    const onNativeTextBeforeInput = (event: Event) => {
+      recoverNativeTextInput(event as InputEvent);
+    };
+    const onNativeTextInput = (event: Event) => {
+      if (!recoverNativeTextInput(event as InputEvent) || !textarea) return;
+      textarea.value = "";
+    };
+    const onImeProcessKeyDown = (event: KeyboardEvent) => {
+      if (!isHelperTextareaEvent(event) || event.keyCode !== IME_PROCESS_KEY_CODE || event.ctrlKey || event.altKey || event.metaKey) return;
+      lastImeProcessKeyAt = nowForImeInput();
+      event.stopPropagation();
+    };
+
+    terminalContainer.addEventListener("keydown", onImeProcessKeyDown, nativeTextInputListenerOptions);
+    terminalContainer.addEventListener("beforeinput", onNativeTextBeforeInput, nativeTextInputListenerOptions);
+    terminalContainer.addEventListener("input", onNativeTextInput, nativeTextInputListenerOptions);
+
     const onCompositionStart = () => {
       isComposingRef.current = true;
+      lastImeProcessKeyAt = -1;
       // Freeze the anchor at the cell where typing began. The buffer cursor is
       // trustworthy at this instant (the user just placed the caret here), and
       // it must not be re-read afterwards — TUI redraws can move the hardware
@@ -1904,6 +1968,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
     const onCompositionEnd = () => {
       isComposingRef.current = false;
+      lastCompositionEndAt = nowForImeInput();
       compositionAnchorCell = null;
       if (isCodexSession()) {
         const textareaValue = textarea?.value ?? "";
@@ -1960,6 +2025,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       fileDropCancelled = true;
       unlistenFileDrop?.();
       contextMenuTarget.removeEventListener("contextmenu", onContextMenu);
+      terminalContainer.removeEventListener("keydown", onImeProcessKeyDown, nativeTextInputListenerOptions);
+      terminalContainer.removeEventListener("beforeinput", onNativeTextBeforeInput, nativeTextInputListenerOptions);
+      terminalContainer.removeEventListener("input", onNativeTextInput, nativeTextInputListenerOptions);
       textarea?.removeEventListener("compositionstart", onCompositionStart);
       textarea?.removeEventListener("compositionupdate", onCompositionUpdate);
       textarea?.removeEventListener("compositionend", onCompositionEnd);

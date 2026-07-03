@@ -163,6 +163,7 @@ export function SidebarSettingsPage() {
   const viewMode = useSettingsStore((s) => s.viewMode);
   const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
   const terminalSidePanelMerged = useSettingsStore((s) => s.terminalSidePanelMerged);
+  const terminalSidePanelSingleOpen = useSettingsStore((s) => s.terminalSidePanelSingleOpen);
   const terminalSidePanelSkin = useSettingsStore((s) => s.terminalSidePanelSkin);
   const terminalStatsCardVisibility = useSettingsStore((s) => s.terminalStatsCardVisibility);
   const terminalStatsCardOrder = useSettingsStore((s) => s.terminalStatsCardOrder);
@@ -291,6 +292,29 @@ export function SidebarSettingsPage() {
                 checked={terminalSidePanelMerged}
                 onChange={(event) => void update("terminalSidePanelMerged", event.currentTarget.checked)}
                 aria-label={terminalSidePanelMerged ? t("settings.general.disableMergePanels") : t("settings.general.enableMergePanels")}
+              />
+            </Group>
+          </Card>
+
+          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+              <Box>
+                <Text size="xs" c="var(--on-surface-variant)">
+                  {t("settings.general.singleSidePanel")}
+                </Text>
+                <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                  {t("settings.general.singleSidePanelDescription")}
+                </Text>
+              </Box>
+              <Switch
+                color="cliPrimary"
+                checked={terminalSidePanelSingleOpen}
+                onChange={(event) => void update("terminalSidePanelSingleOpen", event.currentTarget.checked)}
+                aria-label={
+                  terminalSidePanelSingleOpen
+                    ? t("settings.general.disableSingleSidePanel")
+                    : t("settings.general.enableSingleSidePanel")
+                }
               />
             </Group>
           </Card>

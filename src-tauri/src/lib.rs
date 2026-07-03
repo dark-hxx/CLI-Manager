@@ -3,6 +3,7 @@
 mod app_paths;
 mod claude_hook;
 mod commands;
+mod file_watcher;
 mod git_watcher;
 pub mod hook_client;
 mod log_rotation;
@@ -338,6 +339,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .manage(pty::manager::PtyManager::new())
+        .manage(file_watcher::FileWatcherBridge::new())
         .manage(git_watcher::GitWatcherBridge::new())
         .manage(commands::subagent_transcript::SubagentTranscriptBridge::new())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -356,6 +358,8 @@ pub fn run() {
             commands::terminal::pty_status,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,
+            commands::fs::file_watch_start,
+            commands::fs::file_watch_stop,
             commands::fs::file_list_dir,
             commands::fs::file_search,
             commands::fs::file_search_content,
@@ -407,6 +411,7 @@ pub fn run() {
             commands::ccswitch::ccswitch_reset_project_provider,
             commands::ccswitch::ccswitch_prepare_claude_provider,
             commands::ccswitch::ccswitch_prepare_codex_provider,
+            commands::ccswitch::ccswitch_test_provider_model,
             commands::ccswitch::ccswitch_cleanup_codex_profiles,
             commands::ccswitch::ccswitch_probe_projects,
             commands::ccswitch::ccswitch_list_common_configs,

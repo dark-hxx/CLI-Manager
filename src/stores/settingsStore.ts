@@ -207,6 +207,8 @@ interface Settings {
   terminalToolbarOrder: string[];
   /** 是否把实时统计与 Git 变更合并为带 Tab 的单一侧边面板；关闭后两者可并排独立显示。 */
   terminalSidePanelMerged: boolean;
+  /** 是否限制终端辅助侧边面板同一时间只打开一个。 */
+  terminalSidePanelSingleOpen: boolean;
   terminalSidePanelSkin: TerminalSidePanelSkin;
   terminalStatsCardVisibility: TerminalStatsCardVisibilitySettings;
   terminalStatsCardOrder: TerminalStatsCardOrderSettings;
@@ -295,6 +297,7 @@ const DEFAULTS: Settings = {
   },
   terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "replay", "files", "gitChanges", "stats"],
   terminalSidePanelMerged: true,
+  terminalSidePanelSingleOpen: true,
   terminalSidePanelSkin: "terminal",
   terminalStatsCardVisibility: {
     session: true,
@@ -711,6 +714,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.terminalSidePanelMerged === "boolean"
         ? entries.terminalSidePanelMerged
         : DEFAULTS.terminalSidePanelMerged;
+    entries.terminalSidePanelSingleOpen =
+      typeof entries.terminalSidePanelSingleOpen === "boolean"
+        ? entries.terminalSidePanelSingleOpen
+        : DEFAULTS.terminalSidePanelSingleOpen;
     entries.terminalSidePanelSkin = migrateTerminalSidePanelSkin(entries.terminalSidePanelSkin);
     entries.terminalStatsCardVisibility = migrateTerminalStatsCardVisibility(entries.terminalStatsCardVisibility);
     entries.terminalStatsCardOrder = migrateTerminalStatsCardOrder(entries.terminalStatsCardOrder);

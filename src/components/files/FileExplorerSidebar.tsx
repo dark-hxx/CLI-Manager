@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getMaterialFileIcon, getMaterialFolderIcon } from "@baybreezy/file-extension-icon";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiPathBlock, formatAiRootTree, formatAiTree, formatTerminalDragPath, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
@@ -13,7 +16,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
-import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderPlus, Pencil, RefreshCw, Search, Trash2, X } from "../icons";
+import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Search, Trash2, X } from "../icons";
 import { TERM } from "../stats/termStatsUi";
 
 interface FileExplorerSidebarProps {
@@ -65,6 +68,28 @@ const SEARCH_MODES: Array<{ value: ProjectFileSearchMode; labelKey: TranslationK
   { value: "files", labelKey: "files.search.modeFiles" },
   { value: "content", labelKey: "files.search.modeCode" },
 ];
+const FALLBACK_POLL_INTERVAL_MS = 15000;
+
+function getDisplayPathName(path: string): string {
+  const normalized = path.trim().replace(/[\\/]+$/g, "");
+  return normalized.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function joinProjectPath(rootPath: string, relativePath: string): string {
+  const root = rootPath.replace(/[\\/]+$/g, "");
+  const relative = relativePath.trim().replace(/^[\\/]+/g, "");
+  if (!relative) return root;
+  const separator = root.includes("\\") ? "\\" : "/";
+  return `${root}${separator}${relative.replace(/[\\/]/g, separator)}`;
+}
+
+async function openFileBrowserFolder(rootPath: string, relativePath: string, t: Translate) {
+  try {
+    await invoke("open_folder_in_explorer", { path: joinProjectPath(rootPath, relativePath) });
+  } catch (err) {
+    toast.error(t("files.toast.openFolderFailed"), { description: String(err) });
+  }
+}
 
 function makeGitDisplayStatus(change: GitFileChange, t: Translate): FileDisplayStatus {
   const config = STATUS_CONFIG[change.status] ?? STATUS_CONFIG.M;
@@ -279,6 +304,7 @@ function FileNode({
   onFileDragOver,
   onFileDrop,
   autoCollapseGroups,
+  menuPortalContainer,
 }: {
   entry: ProjectFileEntry;
   depth: number;
@@ -295,6 +321,7 @@ function FileNode({
   onFileDragOver: (event: ReactDragEvent<HTMLElement>, targetEntry: ProjectFileEntry) => void;
   onFileDrop: (event: ReactDragEvent<HTMLElement>, targetEntry: ProjectFileEntry) => void;
   autoCollapseGroups: AutoCollapseGroupState;
+  menuPortalContainer: HTMLDivElement | null;
 }) {
   const { t } = useI18n();
   const project = useFileExplorerStore((s) => s.project);
@@ -361,6 +388,7 @@ function FileNode({
       onFileDragOver={onFileDragOver}
       onFileDrop={onFileDrop}
       autoCollapseGroups={autoCollapseGroups}
+      menuPortalContainer={menuPortalContainer}
       renderAutoCollapsedGroup={false}
     />
   ) : null;
@@ -440,7 +468,7 @@ function FileNode({
             </span>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent>
+        <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
           {isDir && (
             <>
               <ContextMenuItem onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
@@ -475,6 +503,9 @@ function FileNode({
           </ContextMenuItem>
           {project && (
             <>
+              <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, displayEntry.path, t)}>
+                <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
+              </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(project, displayEntry.path, displayEntry.kind), t("files.toast.aiPathCopied"))}>
                 <Copy size={13} /> {t("files.menu.copyAiPath")}
@@ -514,6 +545,7 @@ function FileTreeRows({
   onFileDragOver,
   onFileDrop,
   autoCollapseGroups,
+  menuPortalContainer,
   renderAutoCollapsedGroup,
 }: {
   entries: ProjectFileEntry[];
@@ -532,6 +564,7 @@ function FileTreeRows({
   onFileDragOver: (event: ReactDragEvent<HTMLElement>, targetEntry: ProjectFileEntry) => void;
   onFileDrop: (event: ReactDragEvent<HTMLElement>, targetEntry: ProjectFileEntry) => void;
   autoCollapseGroups: AutoCollapseGroupState;
+  menuPortalContainer: HTMLDivElement | null;
   renderAutoCollapsedGroup: boolean;
 }) {
   const { normalEntries } = splitAutoCollapsedEntries(entries, autoCollapseGroups.ignoredPaths);
@@ -560,6 +593,7 @@ function FileTreeRows({
           onFileDragOver={onFileDragOver}
           onFileDrop={onFileDrop}
           autoCollapseGroups={autoCollapseGroups}
+          menuPortalContainer={menuPortalContainer}
         />
       ))}
       {collapsedEntries.length > 0 && (
@@ -588,6 +622,7 @@ function FileTreeRows({
               onFileDragOver={onFileDragOver}
               onFileDrop={onFileDrop}
               autoCollapseGroups={autoCollapseGroups}
+              menuPortalContainer={menuPortalContainer}
             />
           ))}
         </>
@@ -598,6 +633,7 @@ function FileTreeRows({
 
 export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToProjects }: FileExplorerSidebarProps) {
   const { t } = useI18n();
+  const [menuPortalContainer, setMenuPortalContainer] = useState<HTMLDivElement | null>(null);
   const project = useFileExplorerStore((s) => s.project);
   const tree = useFileExplorerStore((s) => s.tree);
   const searchMode = useFileExplorerStore((s) => s.searchMode);
@@ -611,6 +647,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const clipboard = useFileExplorerStore((s) => s.clipboard);
   const closeProject = useFileExplorerStore((s) => s.closeProject);
   const refresh = useFileExplorerStore((s) => s.refresh);
+  const refreshVisibleState = useFileExplorerStore((s) => s.refreshVisibleState);
   const setSearchMode = useFileExplorerStore((s) => s.setSearchMode);
   const setSearchQuery = useFileExplorerStore((s) => s.setSearchQuery);
   const openFile = useFileExplorerStore((s) => s.openFile);
@@ -639,6 +676,59 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   useEffect(() => {
     if (searchQuery.trim()) setSearchControlsVisible(true);
   }, [searchQuery]);
+
+  useEffect(() => {
+    if (!project?.path) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let fallbackTimer: number | undefined;
+
+    const isActive = () => document.visibilityState === "visible" && document.hasFocus();
+    const refreshIfActive = () => {
+      if (isActive()) void refreshVisibleState();
+    };
+    const startFallback = () => {
+      if (fallbackTimer === undefined) {
+        fallbackTimer = window.setInterval(refreshIfActive, FALLBACK_POLL_INTERVAL_MS);
+      }
+    };
+    const stopFallback = () => {
+      if (fallbackTimer !== undefined) {
+        window.clearInterval(fallbackTimer);
+        fallbackTimer = undefined;
+      }
+    };
+
+    void listen<{ projectPath: string }>("project-files-changed", (event) => {
+      if (disposed) return;
+      if (event.payload.projectPath === project.path) refreshIfActive();
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+
+    void invoke("file_watch_start", { projectPath: project.path }).catch((err) => {
+      console.warn("[FileExplorerSidebar] file_watch_start failed, falling back to polling:", err);
+      if (!disposed) startFallback();
+    });
+
+    const onFocus = () => refreshIfActive();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshIfActive();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      disposed = true;
+      stopFallback();
+      if (unlisten) unlisten();
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      void invoke("file_watch_stop", { projectPath: project.path }).catch(() => {});
+    };
+  }, [project?.path, refreshVisibleState]);
 
   const hasSearchQuery = Boolean(searchQuery.trim());
   const visibleRows = hasSearchQuery && searchMode === "files" ? searchResults : tree;
@@ -904,36 +994,49 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   };
 
   const renderContentSearchRow = useCallback((match: ProjectFileContentMatch) => {
+    if (!project) return null;
     return (
-      <button
-        key={`${match.path}:${match.lineNumber}`}
-        type="button"
-        className="ui-file-tree-row flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[12px]"
-        data-selected={activeFile?.path === match.path ? "true" : "false"}
-        onClick={() => {
-          void openFileAtSearchMatch(match);
-          if (project) openFileEditorPane(project);
-        }}
-        title={`${match.path}:${match.lineNumber}`}
-      >
-        <FileCode size={15} className="mt-0.5 shrink-0 text-text-muted" />
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1">
-            <span className="truncate text-on-surface">{match.path}</span>
-            <span className="shrink-0 text-[10px] text-text-muted">{t("files.search.line", { line: match.lineNumber })}</span>
-          </span>
-          {match.before.map((line, index) => (
-            <span key={`before-${index}`} className="block truncate font-mono text-[11px] text-text-muted">{line}</span>
-          ))}
-          <span className="block truncate font-mono text-[11px] text-on-surface">{match.lineText}</span>
-          {match.after.map((line, index) => (
-            <span key={`after-${index}`} className="block truncate font-mono text-[11px] text-text-muted">{line}</span>
-          ))}
-        </span>
-      </button>
+      <ContextMenu key={`${match.path}:${match.lineNumber}`}>
+        <ContextMenuTrigger asChild>
+          <button
+            type="button"
+            className="ui-file-tree-row flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[12px]"
+            data-selected={activeFile?.path === match.path ? "true" : "false"}
+            onContextMenu={(event) => event.stopPropagation()}
+            onClick={() => {
+              void openFileAtSearchMatch(match);
+              openFileEditorPane(project);
+            }}
+            title={`${match.path}:${match.lineNumber}`}
+          >
+            <FileCode size={15} className="mt-0.5 shrink-0 text-text-muted" />
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-1">
+                <span className="truncate text-on-surface">{match.path}</span>
+                <span className="shrink-0 text-[10px] text-text-muted">{t("files.search.line", { line: match.lineNumber })}</span>
+              </span>
+              {match.before.map((line, index) => (
+                <span key={`before-${index}`} className="block truncate font-mono text-[11px] text-text-muted">{line}</span>
+              ))}
+              <span className="block truncate font-mono text-[11px] text-on-surface">{match.lineText}</span>
+              {match.after.map((line, index) => (
+                <span key={`after-${index}`} className="block truncate font-mono text-[11px] text-text-muted">{line}</span>
+              ))}
+            </span>
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, match.path, t)}>
+            <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(project, match.path, "file"), t("files.toast.aiPathCopied"))}>
+            <Copy size={13} /> {t("files.menu.copyAiPath")}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, openFileAtSearchMatch, openFileEditorPane, project, t]);
+  }, [activeFile?.path, menuPortalContainer, openFileAtSearchMatch, openFileEditorPane, project, t]);
 
   const renderSearchRow = useCallback((entry: ProjectFileEntry) => {
     if (!project) return null;
@@ -988,7 +1091,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             </span>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent>
+        <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, entry.path, t)}>
+            <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
+          </ContextMenuItem>
           <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(project, entry.path, entry.kind), t("files.toast.aiPathCopied"))}>
             <Copy size={13} /> {t("files.menu.copyAiPath")}
           </ContextMenuItem>
@@ -1001,7 +1107,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, cancelRename, getDisplayStatus, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, openFile, project, renamingAction?.path, submitRename, t]);
+  }, [activeFile?.path, cancelRename, getDisplayStatus, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, menuPortalContainer, openFile, project, renamingAction?.path, submitRename, t]);
 
   const copyRootAiPath = useCallback(() => {
     if (!project) return;
@@ -1012,6 +1118,11 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     if (!project) return;
     void copyAiText(formatAiRootTree(project, tree), t("files.toast.aiTreeCopied"));
   }, [project, t, tree]);
+
+  const openProjectRootFolder = useCallback(() => {
+    if (!project) return;
+    void openFileBrowserFolder(project.path, "", t);
+  }, [project, t]);
 
   const renderRows = useMemo(() => {
     if (hasSearchQuery && searchLoading) {
@@ -1048,13 +1159,14 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         onFileDragOver={handleFileDragOver}
         onFileDrop={handleFileDrop}
         autoCollapseGroups={autoCollapseGroups}
+        menuPortalContainer={menuPortalContainer}
         renderAutoCollapsedGroup
       />
     ) : (
       <div className="px-3 py-8 text-center text-xs text-text-muted">{t("files.empty")}</div>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, autoCollapseGroups, handleFileKeyDown, handleFileDragStart, handleFileDragEnd, renamingAction?.path, submitRename, cancelRename, t]);
+  }, [hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, autoCollapseGroups, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDragEnd, renamingAction?.path, submitRename, cancelRename, t]);
 
   if (!project) return null;
 
@@ -1073,16 +1185,23 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const closeLabel = mode === "panel" ? t("files.closePanel") : t("files.backToProjects");
   const searchLabel = searchMode === "content" ? t("files.searchCodePlaceholder") : t("files.searchPlaceholder");
   const searchToggleLabel = searchControlsVisible ? t("files.hideSearch") : searchLabel;
+  const displayPathName = getDisplayPathName(project.path);
   const panelStyle = mode === "panel"
     ? ({
         "--surface-container": TERM.card,
         "--surface-container-low": TERM.card,
         "--surface-container-lowest": TERM.cardInner,
+        "--surface-container-high": TERM.cardInner,
+        "--surface-container-highest": TERM.cardInner,
+        "--surface": TERM.card,
         "--on-surface": TERM.fg,
         "--on-surface-variant": TERM.dim,
+        "--text-primary": TERM.fg,
+        "--text-secondary": TERM.dim,
         "--text-muted": TERM.dim,
         "--border": TERM.border,
         "--primary": TERM.cyan,
+        "--interactive-hover-bg": "color-mix(in srgb, var(--term-panel-cyan, #5AC8E0) 12%, transparent)",
         "--ui-scrollbar-thumb": TERM.border,
         "--ui-scrollbar-track": TERM.bg,
         backgroundColor: TERM.bg,
@@ -1091,13 +1210,15 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     : undefined;
 
   return (
-    <div className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
+    <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
       <div className="shrink-0 border-b border-border px-2 py-2">
         <div className="mb-2 flex items-center gap-2">
-          <Folder size={15} className="text-on-surface-variant" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-semibold text-on-surface">{project.name}</div>
-            <div className="truncate text-[10px] text-text-muted">{project.path}</div>
+          <span className="flex shrink-0 cursor-pointer" title={project.path} onDoubleClick={openProjectRootFolder}>
+            <Folder size={15} className="ui-file-explorer-root-icon" />
+          </span>
+          <div className="min-w-0 flex-1 cursor-pointer" title={project.path} onDoubleClick={openProjectRootFolder}>
+            <div className="ui-file-explorer-title truncate text-xs font-semibold">{project.name}</div>
+            <div className="ui-file-explorer-subtitle truncate text-[10px]" title={project.path}>{displayPathName}</div>
           </div>
           <button
             className="ui-icon-action"
@@ -1117,36 +1238,36 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         </div>
         {searchControlsVisible && (
           <>
-            <div className="ui-file-search-input-shell flex items-center gap-1 rounded-md border border-border bg-surface-container-lowest px-2">
+            <div className="ui-file-search-input-shell flex items-center gap-1 rounded-md border border-border bg-surface-container-lowest px-1.5">
               <Search size={13} className="text-text-muted" />
               <input
                 ref={searchInputRef}
-                className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-on-surface outline-none"
+                className="min-w-0 flex-1 bg-transparent py-1 text-xs text-on-surface outline-none"
                 value={searchQuery}
                 aria-label={searchLabel}
                 placeholder={searchLabel}
                 onChange={(event) => void setSearchQuery(event.currentTarget.value)}
               />
-            </div>
-            <div className="ui-file-search-mode-tabs mt-1 grid grid-cols-2 rounded-md border border-border bg-surface-container-lowest p-0.5">
-              {SEARCH_MODES.map((mode) => {
-                const active = searchMode === mode.value;
-                return (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    className={[
-                      "ui-file-search-mode-option rounded px-2 py-1 text-[11px] transition-colors",
-                      active ? "text-on-surface" : "text-text-muted hover:text-on-surface",
-                    ].join(" ")}
-                    data-selected={active ? "true" : "false"}
-                    aria-pressed={active}
-                    onClick={() => setSearchMode(mode.value)}
-                  >
-                    {t(mode.labelKey)}
-                  </button>
-                );
-              })}
+              <div className="ui-file-search-mode-inline flex shrink-0 items-center gap-0.5 rounded border border-border bg-surface-container-low p-0.5">
+                {SEARCH_MODES.map((mode) => {
+                  const active = searchMode === mode.value;
+                  return (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      className={[
+                        "ui-file-search-mode-option rounded px-1.5 py-0.5 text-[10px] leading-4 transition-colors",
+                        active ? "text-on-surface" : "text-text-muted hover:text-on-surface",
+                      ].join(" ")}
+                      data-selected={active ? "true" : "false"}
+                      aria-pressed={active}
+                      onClick={() => setSearchMode(mode.value)}
+                    >
+                      {t(mode.labelKey)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </>
         )}
@@ -1164,7 +1285,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             {renderRows}
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent>
+        <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
           <ContextMenuItem onSelect={() => openInput({ kind: "create-file", parentPath: "" })}>
             <File size={13} /> {t("files.menu.newFile")}
           </ContextMenuItem>
@@ -1175,6 +1296,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             <Copy size={13} /> {t("files.menu.paste")}
           </ContextMenuItem>
           <ContextMenuSeparator />
+          <ContextMenuItem onSelect={openProjectRootFolder}>
+            <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
+          </ContextMenuItem>
           <ContextMenuItem onSelect={copyRootAiPath}>
             <Copy size={13} /> {t("files.menu.copyAiPath")}
           </ContextMenuItem>

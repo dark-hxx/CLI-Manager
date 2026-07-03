@@ -31,6 +31,7 @@ interface ActiveProjectFile {
   savedContent: string;
   image: ProjectImageFilePayload | null;
   sizeBytes: number;
+  modifiedMs?: number | null;
 }
 
 interface FileSearchNavigationTarget {
@@ -58,6 +59,7 @@ interface FileExplorerStore {
   openProject: (project: Project) => Promise<void>;
   closeProject: () => void;
   refresh: () => Promise<void>;
+  refreshVisibleState: () => Promise<void>;
   refreshGitChanges: () => Promise<void>;
   loadDir: (path: string) => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
@@ -349,6 +351,70 @@ async function listDir(rootPath: string, path: string): Promise<ProjectFileEntry
   return entries.map(normalizeEntry);
 }
 
+async function loadProjectFile(
+  project: Project,
+  entry: Pick<ProjectFileEntry, "path" | "name" | "sizeBytes" | "modifiedMs">
+): Promise<{ file: ActiveProjectFile; errorMessage?: string }> {
+  try {
+    if (isImage(entry.path)) {
+      const image = await invoke<ProjectImageFilePayload>("file_read_image", {
+        rootPath: project.path,
+        relativePath: entry.path,
+      });
+      return {
+        file: {
+          path: entry.path,
+          name: entry.name,
+          previewKind: "image",
+          content: "",
+          savedContent: "",
+          image,
+          sizeBytes: image.sizeBytes,
+          modifiedMs: entry.modifiedMs ?? null,
+        },
+      };
+    }
+
+    const text = await invoke<ProjectTextFilePayload>("file_read_text", {
+      rootPath: project.path,
+      relativePath: entry.path,
+    });
+    return {
+      file: {
+        path: entry.path,
+        name: entry.name,
+        previewKind: isMarkdown(entry.path) ? "markdown" : "text",
+        content: text.content,
+        savedContent: text.content,
+        image: null,
+        sizeBytes: text.sizeBytes,
+        modifiedMs: entry.modifiedMs ?? null,
+      },
+    };
+  } catch (err) {
+    return {
+      file: {
+        path: entry.path,
+        name: entry.name,
+        previewKind: "unsupported",
+        content: "",
+        savedContent: "",
+        image: null,
+        sizeBytes: entry.sizeBytes,
+        modifiedMs: entry.modifiedMs ?? null,
+      },
+      errorMessage: String(err),
+    };
+  }
+}
+
+function collectEntriesByPath(entries: ProjectFileEntry[], map: Map<string, ProjectFileEntry>): void {
+  for (const entry of entries) {
+    map.set(entry.path, entry);
+    if (entry.children) collectEntriesByPath(entry.children, map);
+  }
+}
+
 async function fetchGitChanges(projectPath: string): Promise<GitFileChange[]> {
   const existing = inFlightGitChangeRequests.get(projectPath);
   if (existing) return existing;
@@ -448,6 +514,88 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     if (!project) return;
     await get().openProject(project);
     if (get().searchQuery.trim()) await get().setSearchQuery(get().searchQuery);
+  },
+
+  refreshVisibleState: async () => {
+    const project = get().project;
+    if (!project) return;
+
+    const expandedPaths = Array.from(get().expandedPaths);
+    const openFiles = get().openFiles;
+    const refreshPaths = Array.from(new Set([
+      "",
+      ...expandedPaths,
+      ...openFiles.map((file) => parentPath(file.path)),
+    ])).sort((a, b) => pathDepth(a) - pathDepth(b));
+
+    try {
+      const refreshedDirs = (await Promise.all(refreshPaths.map(async (path) => {
+        try {
+          return {
+            path,
+            children: await listDir(project.path, path),
+          };
+        } catch (err) {
+          if (path === "") throw err;
+          logError(`Failed to refresh project file dir: ${path}`, err);
+          return null;
+        }
+      }))).filter((item): item is { path: string; children: ProjectFileEntry[] } => item !== null);
+
+      const nextTree = refreshedDirs.reduce(
+        (tree, dir) => replaceChildrenKeepingLoadedSubtrees(tree, dir.path, dir.children),
+        get().tree
+      );
+      const entryByPath = new Map<string, ProjectFileEntry>();
+      collectEntriesByPath(nextTree, entryByPath);
+
+      const nextOpenFiles: ActiveProjectFile[] = [];
+      for (const file of openFiles) {
+        const latestEntry = entryByPath.get(file.path);
+        const dirty = file.content !== file.savedContent;
+
+        if (!latestEntry) {
+          if (dirty) nextOpenFiles.push(file);
+          continue;
+        }
+
+        const baseFile = {
+          ...file,
+          name: latestEntry.name,
+          sizeBytes: latestEntry.sizeBytes,
+          modifiedMs: latestEntry.modifiedMs ?? null,
+        };
+
+        if (dirty) {
+          nextOpenFiles.push(baseFile);
+          continue;
+        }
+
+        const changed = file.modifiedMs !== (latestEntry.modifiedMs ?? null)
+          || file.sizeBytes !== latestEntry.sizeBytes;
+        if (!changed) {
+          nextOpenFiles.push(baseFile);
+          continue;
+        }
+
+        const { file: refreshedFile } = await loadProjectFile(project, latestEntry);
+        nextOpenFiles.push(refreshedFile);
+      }
+
+      const activeFile = nextOpenFiles.find((file) => file.path === get().activeFilePath) ?? nextOpenFiles[0] ?? null;
+      set({
+        tree: nextTree,
+        openFiles: nextOpenFiles,
+        activeFilePath: activeFile?.path ?? null,
+        activeFile,
+      });
+    } catch (err) {
+      logError("Failed to refresh visible project files", err);
+    }
+
+    await get().refreshGitChanges();
+    const query = get().searchQuery.trim();
+    if (query) await get().setSearchQuery(get().searchQuery);
   },
 
   refreshGitChanges: async () => {
@@ -605,66 +753,19 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
     set({ loading: true });
     try {
-      if (isImage(entry.path)) {
-        const image = await invoke<ProjectImageFilePayload>("file_read_image", {
-          rootPath: project.path,
-          relativePath: entry.path,
-        });
-        const file = {
-          path: entry.path,
-          name: entry.name,
-          previewKind: "image" as const,
-          content: "",
-          savedContent: "",
-          image,
-          sizeBytes: image.sizeBytes,
-        };
-        set({
-          loading: false,
-          openFiles: [...get().openFiles, file],
-          activeFilePath: file.path,
-          activeFile: file,
-        });
-        return;
+      const { file, errorMessage } = await loadProjectFile(project, entry);
+      set({
+        loading: false,
+        openFiles: [...get().openFiles, file],
+        activeFilePath: file.path,
+        activeFile: file,
+      });
+      if (errorMessage) {
+        toast.warning("无法预览此文件", { description: errorMessage });
       }
-
-      const text = await invoke<ProjectTextFilePayload>("file_read_text", {
-        rootPath: project.path,
-        relativePath: entry.path,
-      });
-      const file = {
-        path: entry.path,
-        name: entry.name,
-        previewKind: isMarkdown(entry.path) ? "markdown" as const : "text" as const,
-        content: text.content,
-        savedContent: text.content,
-        image: null,
-        sizeBytes: text.sizeBytes,
-      };
-      set({
-        loading: false,
-        openFiles: [...get().openFiles, file],
-        activeFilePath: file.path,
-        activeFile: file,
-      });
     } catch (err) {
-      const message = String(err);
-      const file = {
-        path: entry.path,
-        name: entry.name,
-        previewKind: "unsupported" as const,
-        content: "",
-        savedContent: "",
-        image: null,
-        sizeBytes: entry.sizeBytes,
-      };
-      set({
-        loading: false,
-        openFiles: [...get().openFiles, file],
-        activeFilePath: file.path,
-        activeFile: file,
-      });
-      toast.warning("无法预览此文件", { description: message });
+      set({ loading: false });
+      throw err;
     }
   },
 

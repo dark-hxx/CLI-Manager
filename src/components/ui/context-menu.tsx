@@ -40,11 +40,16 @@ const ContextMenuSubContent = forwardRef<
 ));
 ContextMenuSubContent.displayName = ContextMenuPrimitive.SubContent.displayName;
 
+interface ContextMenuContentProps
+  extends ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Content> {
+  portalContainer?: HTMLElement | null;
+}
+
 const ContextMenuContent = forwardRef<
   ElementRef<typeof ContextMenuPrimitive.Content>,
-  ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <ContextMenuPrimitive.Portal>
+  ContextMenuContentProps
+>(({ className, portalContainer, ...props }, ref) => (
+  <ContextMenuPrimitive.Portal container={portalContainer ?? undefined}>
     <ContextMenuPrimitive.Content
       ref={ref}
       className={cn("context-menu outline-none", className)}

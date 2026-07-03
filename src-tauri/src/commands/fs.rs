@@ -7,6 +7,9 @@ use std::{
 use base64::{engine::general_purpose, Engine as _};
 use memchr::memmem;
 use serde::Serialize;
+use tauri::{AppHandle, State};
+
+use crate::file_watcher::FileWatcherBridge;
 
 const TEXT_FILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -85,6 +88,23 @@ pub async fn check_paths_exist(paths: Vec<String>) -> Result<Vec<bool>, String> 
     tokio::task::spawn_blocking(move || paths.iter().map(|p| Path::new(p).exists()).collect())
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn file_watch_start(
+    app_handle: AppHandle,
+    bridge: State<'_, FileWatcherBridge>,
+    project_path: String,
+) -> Result<(), String> {
+    bridge.start(app_handle, project_path)
+}
+
+#[tauri::command]
+pub async fn file_watch_stop(
+    bridge: State<'_, FileWatcherBridge>,
+    project_path: String,
+) -> Result<(), String> {
+    bridge.stop(project_path)
 }
 
 #[tauri::command]

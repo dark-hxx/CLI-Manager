@@ -9,10 +9,11 @@ import {
   withClaudeProviderOverride,
   withCodexProviderOverride,
 } from "../lib/providerSwitching";
+import { useI18n } from "../lib/i18n";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
-import { AlertTriangle, Boxes, Check, ChevronRight, Database } from "./icons";
+import { Activity, AlertTriangle, Boxes, Check, ChevronRight, Database, RefreshCw } from "./icons";
 import { ProviderBadge, type ProviderBadgeTone } from "./provider/ProviderRow";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { logError } from "../lib/logger";
@@ -53,8 +54,21 @@ interface ClaudeProviderSettingsResponse {
   settingsPath: string;
 }
 
+type ProviderModelTestStatus = "operational" | "degraded" | "failed";
+
+interface ProviderModelTestResult {
+  status: ProviderModelTestStatus;
+  success: boolean;
+  message: string;
+  responseTimeMs?: number;
+  httpStatus?: number;
+  testedAt: number;
+  retryCount: number;
+}
+
 /** applyingId 的哨兵值：标记"恢复跟随全局"操作进行中 */
 const RESET_APPLYING_ID = "__follow_global__";
+const MODEL_TEST_BATCH_CONCURRENCY = 3;
 
 const ERROR_HINTS: Record<string, string> = {
   db_not_found: "未找到 cc-switch 数据库文件，请先在 设置 → 供应商 中配置 cc-switch.db。",
@@ -100,6 +114,67 @@ function providerVendorHint(provider: CcSwitchProvider): string | null {
     provider.category ??
     provider.name ??
     null
+  );
+}
+
+function modelTestColor(result: ProviderModelTestResult | undefined): string {
+  if (!result) return "var(--text-muted)";
+  if (result.status === "operational") return "var(--success)";
+  if (result.status === "degraded") return "var(--warning)";
+  return "var(--danger)";
+}
+
+function failedModelTestResult(message: string): ProviderModelTestResult {
+  return {
+    status: "failed",
+    success: false,
+    message,
+    testedAt: Math.floor(Date.now() / 1000),
+    retryCount: 0,
+  };
+}
+
+/**
+ * 供应商行内的模型测试按钮。
+ *
+ * 前置条件：父级负责判断供应商配置是否可解析、是否正在切换或测试。
+ * 后置结果：点击只触发真实模型测试，不触发行级供应商切换。
+ * 副作用：阻止事件冒泡，避免模型测试按钮复用行内空间时误触发切换。
+ */
+function ProviderModelTestButton({
+  title,
+  disabled,
+  testing,
+  result,
+  onClick,
+}: {
+  title: string;
+  disabled: boolean;
+  testing: boolean;
+  result?: ProviderModelTestResult;
+  onClick: () => void;
+}) {
+  const Icon = testing ? RefreshCw : Activity;
+  return (
+    <button
+      type="button"
+      className="ui-focus-ring absolute right-8 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md transition disabled:cursor-not-allowed disabled:opacity-45"
+      style={{
+        backgroundColor: "color-mix(in srgb, var(--surface-container-high) 86%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--border) 28%, transparent)",
+        color: modelTestColor(result),
+      }}
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <Icon size={14} strokeWidth={2} className={testing ? "animate-spin" : undefined} />
+    </button>
   );
 }
 
@@ -220,6 +295,7 @@ interface Props {
 }
 
 export function ProviderSwitchModal({ project, onClose }: Props) {
+  const { t } = useI18n();
   const appType = getProviderSwitchAppType(project);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const codexConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
@@ -231,6 +307,10 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [testingModelIds, setTestingModelIds] = useState<Set<string>>(() => new Set());
+  const [modelTestResults, setModelTestResults] = useState<Record<string, ProviderModelTestResult>>({});
+  const [batchTesting, setBatchTesting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -274,8 +354,133 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     void load();
   }, [load]);
 
+  const showModelTestToast = (provider: CcSwitchProvider, result: ProviderModelTestResult) => {
+    const responseTimeMs = result.responseTimeMs ?? 0;
+    if (result.status === "operational") {
+      toast.success(t("providerSwitch.modelTest.reachable", { name: provider.name, ms: responseTimeMs }));
+    } else if (result.status === "degraded") {
+      toast.warning(t("providerSwitch.modelTest.slow", { name: provider.name, ms: responseTimeMs }));
+    } else {
+      toast.error(t("providerSwitch.modelTest.unreachable", { name: provider.name }), {
+        description: result.message,
+      });
+    }
+  };
+
+  /**
+   * 对单个供应商做真实模型测试。
+   *
+   * 前置条件：供应商列表已从 cc-switch 读取，且后端可按 providerId 读取完整配置。
+   * 后置结果：保存本次测试结果用于行内图标着色；调用方决定是否展示单项 toast。
+   * 副作用：会触发一次最小模型请求，可能产生极少量 token 消耗；不修改项目或 cc-switch 数据库。
+   */
+  const testProviderModel = async (
+    provider: CcSwitchProvider,
+    options: { showToast?: boolean } = { showToast: true },
+  ): Promise<ProviderModelTestResult> => {
+    if (!appType) {
+      const result = failedModelTestResult("unsupported_app_type");
+      setModelTestResults((current) => ({ ...current, [provider.id]: result }));
+      return result;
+    }
+    if (provider.configParseError) {
+      const result = failedModelTestResult(t("providerSwitch.modelTest.configInvalid"));
+      setModelTestResults((current) => ({ ...current, [provider.id]: result }));
+      if (options.showToast !== false) showModelTestToast(provider, result);
+      return result;
+    }
+    if (!provider.baseUrl) {
+      const result = failedModelTestResult(t("providerSwitch.modelTest.missingBaseUrl"));
+      setModelTestResults((current) => ({ ...current, [provider.id]: result }));
+      if (options.showToast !== false) showModelTestToast(provider, result);
+      return result;
+    }
+
+    setTestingModelIds((current) => new Set(current).add(provider.id));
+    try {
+      const result = await invoke<ProviderModelTestResult>("ccswitch_test_provider_model", {
+        appType,
+        providerId: provider.id,
+        dbPath: ccSwitchDbPath ?? undefined,
+      });
+      setModelTestResults((current) => ({ ...current, [provider.id]: result }));
+      if (options.showToast !== false) showModelTestToast(provider, result);
+      return result;
+    } catch (err) {
+      const result = failedModelTestResult(String(err));
+      setModelTestResults((current) => ({ ...current, [provider.id]: result }));
+      if (options.showToast !== false) {
+        toast.error(t("providerSwitch.modelTest.error", { name: provider.name }), {
+          description: result.message,
+        });
+      }
+      return result;
+    } finally {
+      setTestingModelIds((current) => {
+        const next = new Set(current);
+        next.delete(provider.id);
+        return next;
+      });
+    }
+  };
+
+  /**
+   * 批量测试当前 CLI 类型下的所有供应商。
+   *
+   * 前置条件：供应商列表已加载完成，且当前弹窗已解析出 appType。
+   * 后置结果：每个供应商都会写入一次行内测试结果，并在结束时只弹一次汇总 toast。
+   * 副作用：会并发发起真实模型请求；并发数固定为 3，避免一次性触发供应商限流。
+   */
+  const testAllProviderModels = async () => {
+    if (batchTesting || testingModelIds.size > 0 || applyingId !== null || !appType || providers.length === 0) return;
+
+    setBatchTesting(true);
+    setBatchProgress({ done: 0, total: providers.length });
+
+    const results: ProviderModelTestResult[] = new Array(providers.length);
+    let nextIndex = 0;
+    const runWorker = async () => {
+      while (nextIndex < providers.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await testProviderModel(providers[index], { showToast: false });
+        setBatchProgress((current) =>
+          current
+            ? { ...current, done: Math.min(current.done + 1, current.total) }
+            : current,
+        );
+      }
+    };
+
+    try {
+      const workers = Array.from(
+        { length: Math.min(MODEL_TEST_BATCH_CONCURRENCY, providers.length) },
+        () => runWorker(),
+      );
+      await Promise.all(workers);
+
+      const normal = results.filter((item) => item?.status === "operational").length;
+      const slow = results.filter((item) => item?.status === "degraded").length;
+      const failed = results.length - normal - slow;
+      const summary = t("providerSwitch.modelTest.batchSummary", {
+        total: results.length,
+        normal,
+        slow,
+        failed,
+      });
+      if (failed > 0) {
+        toast.warning(t("providerSwitch.modelTest.batchDone"), { description: summary });
+      } else {
+        toast.success(t("providerSwitch.modelTest.batchDone"), { description: summary });
+      }
+    } finally {
+      setBatchTesting(false);
+      setBatchProgress(null);
+    }
+  };
+
   const applyProvider = async (provider: CcSwitchProvider) => {
-    if (applyingId || !appType) return;
+    if (applyingId || batchTesting || !appType) return;
     setApplyingId(provider.id);
     let shouldReload = true;
     try {
@@ -339,7 +544,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
   };
 
   const resetToGlobal = async () => {
-    if (applyingId || !appType) return;
+    if (applyingId || batchTesting || !appType) return;
     setApplyingId(RESET_APPLYING_ID);
     let shouldReload = true;
     try {
@@ -389,9 +594,40 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
       }}
     >
       <DialogContent className="max-w-[480px] p-4">
-        <DialogTitle className="mb-1 text-base font-semibold text-text-primary">
-          切换供应商
-        </DialogTitle>
+        <div className="mb-1 flex items-center justify-between gap-3 pr-8">
+          <DialogTitle className="text-base font-semibold text-text-primary">
+            切换供应商
+          </DialogTitle>
+          {!loading && !error && providers.length > 0 && (
+            <button
+              type="button"
+              className="ui-focus-ring inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+              style={{
+                backgroundColor: "color-mix(in srgb, var(--primary) 10%, var(--surface-container-lowest))",
+                border: "1px solid color-mix(in srgb, var(--primary) 28%, transparent)",
+                color: "var(--primary)",
+              }}
+              title={t("providerSwitch.modelTest.batchAction")}
+              aria-label={t("providerSwitch.modelTest.batchAction")}
+              disabled={batchTesting || testingModelIds.size > 0 || applyingId !== null}
+              onClick={() => void testAllProviderModels()}
+            >
+              {batchTesting ? (
+                <RefreshCw size={13} strokeWidth={2} className="animate-spin" />
+              ) : (
+                <Activity size={13} strokeWidth={2} />
+              )}
+              <span>
+                {batchTesting && batchProgress
+                  ? t("providerSwitch.modelTest.batchProgress", {
+                      done: batchProgress.done,
+                      total: batchProgress.total,
+                    })
+                  : t("providerSwitch.modelTest.batchAction")}
+              </span>
+            </button>
+          )}
+        </div>
         <p className="mb-3 break-all text-xs text-text-muted" title={project.path}>
           {project.name} · {project.path}
         </p>
@@ -427,7 +663,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           <div className="mb-1">
             <ProviderSwitchListButton
               selected={followGlobal}
-              disabled={applyingId !== null}
+              disabled={applyingId !== null || batchTesting}
               onClick={() => {
                 if (!followGlobal) void resetToGlobal();
               }}
@@ -463,6 +699,8 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
               const matched = probe?.matchedProviderId === provider.id;
               const vendor = inferProviderVendor(provider);
               const subtitle = provider.baseUrl ?? provider.category ?? undefined;
+              const modelTestResult = modelTestResults[provider.id];
+              const testingModel = testingModelIds.has(provider.id);
               const badges: SwitchBadge[] = [];
               if (applyingId === provider.id) {
                 badges.push({ label: "切换中…", tone: "neutral" });
@@ -474,19 +712,51 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
                 badges.push({ label: provider.category, tone: "neutral" });
               }
               if (provider.configParseError) badges.push({ label: "配置解析失败", tone: "danger" });
+              const modelTestTitle = provider.configParseError
+                ? t("providerSwitch.modelTest.configInvalid")
+                : !provider.baseUrl
+                  ? t("providerSwitch.modelTest.missingBaseUrl")
+                  : testingModel
+                    ? t("providerSwitch.modelTest.checking")
+                    : modelTestResult
+                      ? modelTestResult.success
+                        ? t("providerSwitch.modelTest.lastReachable", {
+                            ms: modelTestResult.responseTimeMs ?? 0,
+                            status: modelTestResult.httpStatus ?? "-",
+                          })
+                        : t("providerSwitch.modelTest.lastFailed", {
+                            message: modelTestResult.message,
+                          })
+                      : t("providerSwitch.modelTest.action");
 
               return (
-                <ProviderSwitchListButton
-                  key={provider.id}
-                  selected={matched}
-                  disabled={applyingId !== null || provider.configParseError}
-                  onClick={() => void applyProvider(provider)}
-                  icon={<VendorIcon vendor={vendor} size={21} fallback={Boxes} />}
-                  name={provider.name}
-                  subtitle={subtitle}
-                  subtitleTitle={provider.baseUrl ?? provider.category ?? undefined}
-                  badges={badges}
-                />
+                <div key={provider.id} className="relative">
+                  <ProviderSwitchListButton
+                    selected={matched}
+                    disabled={applyingId !== null || batchTesting || provider.configParseError}
+                    onClick={() => void applyProvider(provider)}
+                    icon={<VendorIcon vendor={vendor} size={21} fallback={Boxes} />}
+                    name={provider.name}
+                    subtitle={subtitle}
+                    subtitleTitle={provider.baseUrl ?? provider.category ?? undefined}
+                    trailing={
+                      <span className="mr-7 flex items-center gap-1.5">
+                        {badges.map((badge) => (
+                          <ProviderBadge key={`${badge.tone}-${badge.label}`} tone={badge.tone}>
+                            {badge.label}
+                          </ProviderBadge>
+                        ))}
+                      </span>
+                    }
+                  />
+                  <ProviderModelTestButton
+                    title={modelTestTitle}
+                    disabled={applyingId !== null || batchTesting || provider.configParseError || !provider.baseUrl || testingModel}
+                    testing={testingModel}
+                    result={modelTestResult}
+                    onClick={() => void testProviderModel(provider)}
+                  />
+                </div>
               );
             })}
           </div>
