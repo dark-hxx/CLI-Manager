@@ -3,6 +3,7 @@
 //! 与 Git watcher 类似，监听当前项目目录变更并在去抖后向前端发送
 //! `project-files-changed` 事件。支持同项目多订阅者复用一个 watcher。
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -31,6 +32,7 @@ const IGNORED_DIRS: &[&str] = &[
 #[serde(rename_all = "camelCase")]
 struct ProjectFilesChangedPayload {
     project_path: String,
+    changed_paths: Vec<String>,
 }
 
 struct WatchState {
@@ -86,12 +88,18 @@ impl FileWatcherBridge {
             Duration::from_millis(DEBOUNCE_MS),
             move |res: DebounceEventResult| match res {
                 Ok(events) => {
-                    if events
+                    let changed_paths = events
                         .iter()
-                        .any(|e| is_relevant(&root_for_filter, &e.path))
-                    {
+                        .filter(|e| is_relevant(&root_for_filter, &e.path))
+                        .filter_map(|e| project_relative_path(&root_for_filter, &e.path))
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>();
+
+                    if !changed_paths.is_empty() {
                         let payload = ProjectFilesChangedPayload {
                             project_path: emit_path.clone(),
+                            changed_paths,
                         };
                         if let Err(e) = emit_handle.emit(EVENT_NAME, payload) {
                             warn!("[file_watcher] emit 失败: {e}");
@@ -141,12 +149,9 @@ impl FileWatcherBridge {
 }
 
 fn is_relevant(root: &str, path: &Path) -> bool {
-    let path_str = path.to_string_lossy().replace('\\', "/");
-    let root_norm = root.replace('\\', "/");
-    let rel = path_str
-        .strip_prefix(&root_norm)
-        .unwrap_or(&path_str)
-        .trim_start_matches('/');
+    let Some(rel) = project_relative_path(root, path) else {
+        return false;
+    };
 
     if rel == ".git" {
         return false;
@@ -162,7 +167,18 @@ fn is_relevant(root: &str, path: &Path) -> bool {
         return false;
     }
 
-    !path_str.ends_with(".lock")
+    !rel.ends_with(".lock")
+}
+
+fn project_relative_path(root: &str, path: &Path) -> Option<String> {
+    let path_str = path.to_string_lossy().replace('\\', "/");
+    let root_norm = root.replace('\\', "/").trim_end_matches('/').to_string();
+    if path_str == root_norm {
+        return Some(String::new());
+    }
+    path_str
+        .strip_prefix(&format!("{root_norm}/"))
+        .map(|rel| rel.trim_start_matches('/').to_string())
 }
 
 #[cfg(test)]
@@ -199,8 +215,14 @@ mod tests {
 
     #[test]
     fn generated_directories_ignored() {
-        assert!(!is_relevant(ROOT, Path::new("F:/proj/node_modules/pkg/index.js")));
-        assert!(!is_relevant(ROOT, Path::new("F:/proj/target/debug/app.exe")));
+        assert!(!is_relevant(
+            ROOT,
+            Path::new("F:/proj/node_modules/pkg/index.js")
+        ));
+        assert!(!is_relevant(
+            ROOT,
+            Path::new("F:/proj/target/debug/app.exe")
+        ));
         assert!(!is_relevant(ROOT, Path::new("F:/proj/.gitnexus/index.db")));
     }
 }

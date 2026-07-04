@@ -739,17 +739,30 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     let unlisten: (() => void) | undefined;
     let fallbackTimer: number | undefined;
     let refreshTimer: number | undefined;
+    let pendingChangedPaths: Set<string> | null | undefined;
 
     const isActive = () => document.visibilityState === "visible" && document.hasFocus();
-    const refreshIfActive = () => {
-      if (isActive()) void refreshVisibleState();
+    const refreshIfActive = (changedPaths?: string[]) => {
+      if (isActive()) void refreshVisibleState(changedPaths);
     };
-    const scheduleRefreshIfActive = () => {
+    const scheduleRefreshIfActive = (changedPaths?: string[]) => {
       if (!isActive()) return;
+      if (!changedPaths?.length) {
+        pendingChangedPaths = null;
+      } else if (pendingChangedPaths !== null) {
+        pendingChangedPaths ??= new Set<string>();
+        for (const path of changedPaths) pendingChangedPaths.add(path);
+      }
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
         refreshTimer = undefined;
-        refreshIfActive();
+        const paths = pendingChangedPaths === null
+          ? undefined
+          : pendingChangedPaths
+            ? Array.from(pendingChangedPaths)
+            : undefined;
+        pendingChangedPaths = undefined;
+        refreshIfActive(paths);
       }, FILE_WATCH_REFRESH_DEBOUNCE_MS);
     };
     const startFallback = () => {
@@ -764,9 +777,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       }
     };
 
-    void listen<{ projectPath: string }>("project-files-changed", (event) => {
+    void listen<{ projectPath: string; changedPaths?: string[] }>("project-files-changed", (event) => {
       if (disposed) return;
-      if (event.payload.projectPath === project.path) scheduleRefreshIfActive();
+      if (event.payload.projectPath === project.path) scheduleRefreshIfActive(event.payload.changedPaths);
     }).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;

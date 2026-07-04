@@ -68,7 +68,8 @@ interface FileExplorerStore {
   openProject: (project: Project) => Promise<void>;
   closeProject: () => void;
   refresh: () => Promise<void>;
-  refreshVisibleState: () => Promise<void>;
+  refreshVisibleState: (changedPaths?: string[]) => Promise<void>;
+  refreshVisibleStateOnce: (changedPaths?: string[]) => Promise<void>;
   refreshGitChanges: () => Promise<void>;
   loadDir: (path: string) => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
@@ -256,6 +257,8 @@ const SEARCH_DEBOUNCE_MS = 220;
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let searchRequestSeq = 0;
 const inFlightGitChangeRequests = new Map<string, Promise<GitFileChange[]>>();
+let refreshVisibleStateInFlight: Promise<void> | null = null;
+let pendingRefreshChangedPaths: Set<string> | null | undefined;
 
 export function isDefaultCollapsedDirectoryName(name: string): boolean {
   return DEFAULT_COLLAPSED_DIRECTORY_NAME_SET.has(name.toLowerCase());
@@ -334,6 +337,10 @@ function pathDepth(path: string): number {
 function parentPath(path: string): string {
   const index = path.lastIndexOf("/");
   return index === -1 ? "" : path.slice(0, index);
+}
+
+function normalizeRelativeFilePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
 function basename(path: string): string {
@@ -468,6 +475,52 @@ function diffFromChange(change: GitFileChange): ActiveProjectDiff {
   };
 }
 
+function changedPathAffectsFile(changedPath: string, filePath: string): boolean {
+  return changedPath === "" || changedPath === filePath || filePath.startsWith(`${changedPath}/`);
+}
+
+function shouldRefreshOpenFile(filePath: string, changedPaths?: string[]): boolean {
+  return !changedPaths?.length || changedPaths.some((path) => changedPathAffectsFile(path, filePath));
+}
+
+function collectRefreshPaths(
+  expandedPaths: Set<string>,
+  openFiles: ActiveProjectFile[],
+  changedPaths?: string[]
+): string[] {
+  if (!changedPaths?.length) {
+    return Array.from(new Set([
+      "",
+      ...expandedPaths,
+      ...openFiles.map((file) => parentPath(file.path)),
+    ])).sort((a, b) => pathDepth(a) - pathDepth(b));
+  }
+
+  const paths = new Set<string>();
+  for (const path of changedPaths) {
+    if (path === "") {
+      paths.add("");
+      continue;
+    }
+    if (path === ".git" || path.startsWith(".git/")) continue;
+    paths.add(parentPath(path));
+  }
+  for (const file of openFiles) {
+    if (shouldRefreshOpenFile(file.path, changedPaths)) paths.add(parentPath(file.path));
+  }
+  return Array.from(paths).sort((a, b) => pathDepth(a) - pathDepth(b));
+}
+
+function mergePendingRefreshPaths(changedPaths?: string[]): void {
+  if (!changedPaths?.length) {
+    pendingRefreshChangedPaths = null;
+    return;
+  }
+  if (pendingRefreshChangedPaths === null) return;
+  pendingRefreshChangedPaths ??= new Set<string>();
+  for (const path of changedPaths) pendingRefreshChangedPaths.add(path);
+}
+
 export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   project: null,
   tree: [],
@@ -551,17 +604,40 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     await get().refreshVisibleState();
   },
 
-  refreshVisibleState: async () => {
+  refreshVisibleState: async (changedPaths) => {
+    const normalizedChangedPaths = changedPaths
+      ?.map(normalizeRelativeFilePath)
+      .filter((path, index, paths) => paths.indexOf(path) === index);
+
+    if (refreshVisibleStateInFlight) {
+      mergePendingRefreshPaths(normalizedChangedPaths);
+      await refreshVisibleStateInFlight;
+      return;
+    }
+
+    refreshVisibleStateInFlight = (async () => {
+      let nextChangedPaths = normalizedChangedPaths;
+      while (true) {
+        await get().refreshVisibleStateOnce(nextChangedPaths);
+        if (pendingRefreshChangedPaths === undefined) break;
+        const pending = pendingRefreshChangedPaths;
+        pendingRefreshChangedPaths = undefined;
+        nextChangedPaths = pending === null ? undefined : Array.from(pending);
+      }
+    })().finally(() => {
+      refreshVisibleStateInFlight = null;
+    });
+
+    await refreshVisibleStateInFlight;
+  },
+
+  refreshVisibleStateOnce: async (changedPaths) => {
     const project = get().project;
     if (!project) return;
 
-    const expandedPaths = Array.from(get().expandedPaths);
+    const expandedPaths = get().expandedPaths;
     const openFiles = get().openFiles;
-    const refreshPaths = Array.from(new Set([
-      "",
-      ...expandedPaths,
-      ...openFiles.map((file) => parentPath(file.path)),
-    ])).sort((a, b) => pathDepth(a) - pathDepth(b));
+    const refreshPaths = collectRefreshPaths(expandedPaths, openFiles, changedPaths);
 
     try {
       const refreshedDirs = (await Promise.all(refreshPaths.map(async (path) => {
@@ -577,15 +653,22 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         }
       }))).filter((item): item is { path: string; children: ProjectFileEntry[] } => item !== null);
 
-      const nextTree = refreshedDirs.reduce(
-        (tree, dir) => replaceChildrenKeepingLoadedSubtrees(tree, dir.path, dir.children),
-        get().tree
-      );
+      const nextTree = refreshedDirs.length > 0
+        ? refreshedDirs.reduce(
+          (tree, dir) => replaceChildrenKeepingLoadedSubtrees(tree, dir.path, dir.children),
+          get().tree
+        )
+        : get().tree;
       const entryByPath = new Map<string, ProjectFileEntry>();
       collectEntriesByPath(nextTree, entryByPath);
 
       const nextOpenFiles: ActiveProjectFile[] = [];
       for (const file of openFiles) {
+        if (!shouldRefreshOpenFile(file.path, changedPaths)) {
+          nextOpenFiles.push(file);
+          continue;
+        }
+
         const latestEntry = entryByPath.get(file.path);
         const dirty = file.content !== file.savedContent;
 
