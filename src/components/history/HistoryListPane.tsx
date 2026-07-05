@@ -1,12 +1,11 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bot, Check, ChevronDown, ChevronRight, CircleChevronDown, CircleChevronRight, Folder, RefreshCw, Search, Star, Terminal, Trash2, X } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, MessageSquare, RefreshCw, Search, Star, Terminal, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
-import { useSettingsStore } from "../../stores/settingsStore";
-import { VendorIcon, inferVendor } from "../VendorIcon";
+import { VendorIcon, inferVendor, type VendorKey } from "../VendorIcon";
 import { Portal } from "../ui/Portal";
-import { buildHistorySessionChildMap, formatTime, makeSessionLabel } from "./historyViewUtils";
+import { buildHistorySessionChildMap, formatTime } from "./historyViewUtils";
 
 interface SessionGroup {
   label: string;
@@ -49,6 +48,7 @@ interface HistoryListPaneProps {
   projects: Project[];
   groups: Group[];
   globalQuery: string;
+  favoriteOnly: boolean;
   activeSessionKey: string | null;
   loadingSessions: boolean;
   loadingMoreSessions: boolean;
@@ -70,6 +70,7 @@ interface HistoryListPaneProps {
   onSourceFilterChange: (value: HistorySourceFilter) => void;
   onProjectPathFilterChange: (value: string | null) => void;
   onGlobalQueryChange: (value: string) => void;
+  onFavoriteOnlyChange: (value: boolean) => void;
   onEnterSelectionMode: () => void;
   onCancelSelectionMode: () => void;
   onToggleSelectAllVisible: () => void;
@@ -95,7 +96,7 @@ function rowHeight(row: HistoryListRow): number {
   if (row.type === "empty") return 88;
   if (row.type === "loading" || row.type === "loadMore") return 56;
   if (row.type === "searchHit") return 72;
-  return row.depth > 0 ? 82 : 96;
+  return row.depth > 0 ? 68 : 78;
 }
 
 function SelectionCheckbox({
@@ -216,6 +217,13 @@ function ProjectFilterIcon({ project, size = 13 }: { project: Project; size?: nu
   return vendor ? <VendorIcon vendor={vendor} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
 }
 
+function SessionSourceIcon({ source, size = 14 }: { source: string; size?: number }) {
+  const normalized = source.trim().toLowerCase();
+  const vendor: VendorKey | null =
+    normalized === "claude" ? "claude" : normalized === "codex" ? "openai" : inferVendor(source);
+  return vendor ? <VendorIcon vendor={vendor} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+}
+
 function collectGroupIds(nodes: HistoryProjectTreeNode[], out: string[] = []): string[] {
   for (const node of nodes) {
     if (node.type !== "group") continue;
@@ -227,6 +235,27 @@ function collectGroupIds(nodes: HistoryProjectTreeNode[], out: string[] = []): s
 
 function normalizeProjectSearch(value: string): string {
   return value.trim().toLowerCase();
+}
+
+const IMAGE_TITLE_TOKEN_PATTERN = /<image\b[^>\r\n]*(?:>|$)|\[Image #\d+\]/gi;
+const IMAGE_CLOSE_TOKEN_PATTERN = /<\/image>/gi;
+
+function formatSessionListTitle(title: string, imageLabel: string): string {
+  const normalizedTitle = title.replace(IMAGE_CLOSE_TOKEN_PATTERN, " ");
+  const imageTokens = normalizedTitle.match(IMAGE_TITLE_TOKEN_PATTERN);
+  if (!imageTokens || imageTokens.length === 0) return title;
+
+  const onlyImages = normalizedTitle.replace(IMAGE_TITLE_TOKEN_PATTERN, "").trim().length === 0;
+  let index = 0;
+  const replacement = () => {
+    index += 1;
+    return `[${imageTokens.length === 1 ? imageLabel : `${imageLabel}${index}`}]`;
+  };
+
+  if (onlyImages) {
+    return imageTokens.map(replacement).join("");
+  }
+  return normalizedTitle.replace(IMAGE_TITLE_TOKEN_PATTERN, replacement).replace(/\s+/g, " ").trim();
 }
 
 function projectMatchesSearch(project: Project, query: string): boolean {
@@ -268,6 +297,7 @@ export function HistoryListPane({
   projects,
   groups,
   globalQuery,
+  favoriteOnly,
   activeSessionKey,
   loadingSessions,
   loadingMoreSessions,
@@ -289,6 +319,7 @@ export function HistoryListPane({
   onSourceFilterChange,
   onProjectPathFilterChange,
   onGlobalQueryChange,
+  onFavoriteOnlyChange,
   onEnterSelectionMode,
   onCancelSelectionMode,
   onToggleSelectAllVisible,
@@ -303,8 +334,6 @@ export function HistoryListPane({
   onStartResize,
 }: HistoryListPaneProps) {
   const { t, language } = useI18n();
-  const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
-  const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || t("history.shortcut.notSet");
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
   const [collapsedFilterGroups, setCollapsedFilterGroups] = useState<Set<string>>(new Set());
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set());
@@ -343,6 +372,12 @@ export function HistoryListPane({
         description: t("history.empty.noMatchesDescription"),
       };
     }
+    if (favoriteOnly) {
+      return {
+        title: t("history.empty.noFavoritesTitle"),
+        description: t("history.empty.noFavoritesDescription"),
+      };
+    }
     if (projectPathFilter) {
       return {
         title: t("history.empty.noHistoryTitle"),
@@ -353,7 +388,7 @@ export function HistoryListPane({
       title: t("history.empty.noHistoryTitle"),
       description: t("history.empty.sourceNoSessions", { source: sourceLabel }),
     };
-  }, [normalizedGlobal, projectPathFilter, selectedProjectLabel, sourceFilter, t]);
+  }, [favoriteOnly, normalizedGlobal, projectPathFilter, selectedProjectLabel, sourceFilter, t]);
 
   const toggleFilterGroup = useCallback((groupId: string) => {
     setCollapsedFilterGroups((prev) => {
@@ -484,6 +519,7 @@ export function HistoryListPane({
     count: rows.length,
     getScrollElement: () => sessionListRef.current,
     estimateSize: (index) => rowHeight(rows[index] ?? { type: "loading", id: "fallback" }),
+    measureElement: (element) => element.getBoundingClientRect().height,
     overscan: 10,
     getItemKey: (index) => rows[index]?.id ?? index,
   });
@@ -566,6 +602,20 @@ export function HistoryListPane({
             })}
           </div>
 
+          <button
+            type="button"
+            onClick={() => onFavoriteOnlyChange(!favoriteOnly)}
+            aria-label={favoriteOnly ? t("history.favoriteFilter.showAll") : t("history.favoriteFilter.showOnly")}
+            aria-pressed={favoriteOnly}
+            className="ui-flat-action ui-toolbar-button-compact ui-history-list-action h-8 w-8 shrink-0 px-0"
+            title={favoriteOnly ? t("history.favoriteFilter.showAll") : t("history.favoriteFilter.showOnly")}
+            style={{
+              color: favoriteOnly ? "var(--warning)" : undefined,
+              backgroundColor: favoriteOnly ? "color-mix(in srgb, var(--warning) 12%, transparent)" : undefined,
+            }}
+          >
+            <Star size={12} fill={favoriteOnly ? "currentColor" : "none"} />
+          </button>
           <button
             onClick={onRefresh}
             aria-label={t("history.refreshList")}
@@ -673,7 +723,6 @@ export function HistoryListPane({
           )}
         </div>
 
-        <div className="mt-1 text-[12px] text-text-muted">{t("history.search.openGlobal", { shortcut: sessionHistoryShortcutHint })}</div>
         {selectionMode ? (
           <div className="mt-2 rounded-xl border border-border/60 bg-surface-container-lowest p-2">
             <div className="flex items-center justify-between gap-2">
@@ -722,12 +771,17 @@ export function HistoryListPane({
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (!row) return null;
+            const sessionDisplayTitle =
+              row.type === "session"
+                ? formatSessionListTitle(row.item.displayTitle, t("history.imagePlaceholder"))
+                : "";
             return (
               <div
                 key={virtualRow.key}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
                 className="absolute left-0 top-0 w-full"
                 style={{
-                  height: virtualRow.size,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
@@ -775,10 +829,10 @@ export function HistoryListPane({
                       onContextMenu={(e) => handleSessionContextMenu(e, row.item)}
                       onClick={selectionMode ? () => onToggleSessionSelection(row.item.sessionKey) : undefined}
                       className={[
-                        "ui-list-row flex w-full items-start gap-2 border text-left",
+                        "ui-list-row group/session-row flex w-full items-center gap-2 border text-left",
                         row.depth > 0
-                          ? "min-h-[72px] rounded-lg border-border/45 bg-surface-container-low px-2 py-1.5"
-                          : "min-h-[88px] rounded-xl border-border/70 bg-surface-container-lowest px-2.5 py-2",
+                          ? "min-h-[58px] rounded-lg border-border/45 bg-surface-container-low px-2 py-1.5"
+                          : "min-h-[68px] rounded-xl border-border/70 bg-surface-container-lowest px-2.5 py-2",
                         selectionMode ? "cursor-pointer" : "",
                       ].join(" ")}
                       style={{ backgroundColor: row.item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : undefined }}
@@ -790,7 +844,7 @@ export function HistoryListPane({
                             e.stopPropagation();
                             toggleSessionParent(row.item.sessionKey);
                           }}
-                          className="ui-flat-action mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-surface-container-high text-text-secondary"
+                          className="ui-history-tree-toggle mt-0.5"
                           aria-expanded={!collapsedSessionParents.has(row.item.sessionKey)}
                           aria-label={t(
                             collapsedSessionParents.has(row.item.sessionKey)
@@ -806,49 +860,53 @@ export function HistoryListPane({
                           )}
                         >
                           {collapsedSessionParents.has(row.item.sessionKey) ? (
-                            <CircleChevronRight size={19} strokeWidth={2.1} className="text-primary/90" />
+                            <ChevronRight size={15} strokeWidth={2} />
                           ) : (
-                            <CircleChevronDown size={19} strokeWidth={2.1} className="text-primary/90" />
+                            <ChevronDown size={15} strokeWidth={2} />
                           )}
                         </button>
                       )}
                       {selectionMode && (
                         <SelectionCheckbox
                           checked={selectedSessionKeys.has(row.item.sessionKey)}
-                          title={t("history.bulk.selectSessionNamed", { title: row.item.displayTitle })}
-                          ariaLabel={t("history.bulk.selectSessionNamed", { title: row.item.displayTitle })}
+                          title={t("history.bulk.selectSessionNamed", { title: sessionDisplayTitle })}
+                          ariaLabel={t("history.bulk.selectSessionNamed", { title: sessionDisplayTitle })}
                           onToggle={() => onToggleSessionSelection(row.item.sessionKey)}
                         />
                       )}
                       {selectionMode ? (
                         <div className="min-w-0 flex-1 overflow-hidden text-left">
                           <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-primary">
+                              <SessionSourceIcon source={row.item.source} size={14} />
+                            </span>
                             {row.item.starred && <Star size={12} className="shrink-0" style={{ color: "var(--warning)" }} fill="currentColor" />}
                             {row.depth > 0 && (
                               <span
-                                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em]"
-                                style={{
-                                  backgroundColor: "color-mix(in srgb, var(--primary) 16%, var(--surface-container-high) 84%)",
-                                  border: "1px solid color-mix(in srgb, var(--primary) 34%, transparent)",
-                                  color: "color-mix(in srgb, var(--primary) 72%, var(--text-primary) 28%)",
-                                }}
+                                className="ui-history-subagent-badge"
+                                role="img"
+                                aria-label={t("history.tree.subagent")}
+                                title={t("history.tree.subagent")}
                               >
-                                <Bot size={10} strokeWidth={2.2} />
-                                {t("history.tree.subagent")}
+                                <Bot size={12} strokeWidth={1.8} />
                               </span>
                             )}
-                            <span className="truncate text-[13px] font-semibold text-text-primary">{row.item.displayTitle}</span>
+                            <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
                             {row.childCount > 0 && (
-                              <span className="shrink-0 rounded-full border border-border/70 px-1.5 text-[10px] font-medium text-text-muted">
+                              <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[10px] font-medium text-text-muted">
                                 {t("history.tree.childCount", { count: row.childCount })}
                               </span>
                             )}
                           </div>
-                          <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
-                            {row.item.source} · {makeSessionLabel(row.item)} · {t("history.messageCount", { count: row.item.message_count })}
-                          </div>
-                          <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
-                            {t("history.updatedAt", { time: formatTime(row.item.updated_at, language) })}
+                          <div className="ui-dev-label mt-1.5 flex min-w-0 items-center gap-2 text-[11px] text-text-muted">
+                            <span className="inline-flex min-w-0 items-center gap-1">
+                              <Clock3 size={11} className="shrink-0" />
+                              <span className="truncate">{formatTime(row.item.updated_at, language)}</span>
+                            </span>
+                            <span className="inline-flex shrink-0 items-center gap-1">
+                              <MessageSquare size={11} className="shrink-0" />
+                              {t("history.messageCount", { count: row.item.message_count })}
+                            </span>
                           </div>
                         </div>
                       ) : (
@@ -858,32 +916,36 @@ export function HistoryListPane({
                           className="min-w-0 flex-1 overflow-hidden text-left"
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-primary">
+                              <SessionSourceIcon source={row.item.source} size={14} />
+                            </span>
                             {row.item.starred && <Star size={12} className="shrink-0" style={{ color: "var(--warning)" }} fill="currentColor" />}
                             {row.depth > 0 && (
                               <span
-                                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em]"
-                                style={{
-                                  backgroundColor: "color-mix(in srgb, var(--primary) 16%, var(--surface-container-high) 84%)",
-                                  border: "1px solid color-mix(in srgb, var(--primary) 34%, transparent)",
-                                  color: "color-mix(in srgb, var(--primary) 72%, var(--text-primary) 28%)",
-                                }}
+                                className="ui-history-subagent-badge"
+                                role="img"
+                                aria-label={t("history.tree.subagent")}
+                                title={t("history.tree.subagent")}
                               >
-                                <Bot size={10} strokeWidth={2.2} />
-                                {t("history.tree.subagent")}
+                                <Bot size={12} strokeWidth={1.8} />
                               </span>
                             )}
-                            <span className="truncate text-[13px] font-semibold text-text-primary">{row.item.displayTitle}</span>
+                            <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
                             {row.childCount > 0 && (
-                              <span className="shrink-0 rounded-full border border-border/70 px-1.5 text-[10px] font-medium text-text-muted">
+                              <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[10px] font-medium text-text-muted">
                                 {t("history.tree.childCount", { count: row.childCount })}
                               </span>
                             )}
                           </div>
-                          <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
-                            {row.item.source} · {makeSessionLabel(row.item)} · {t("history.messageCount", { count: row.item.message_count })}
-                          </div>
-                          <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
-                            {t("history.updatedAt", { time: formatTime(row.item.updated_at, language) })}
+                          <div className="ui-dev-label mt-1.5 flex min-w-0 items-center gap-2 text-[11px] text-text-muted">
+                            <span className="inline-flex min-w-0 items-center gap-1">
+                              <Clock3 size={11} className="shrink-0" />
+                              <span className="truncate">{formatTime(row.item.updated_at, language)}</span>
+                            </span>
+                            <span className="inline-flex shrink-0 items-center gap-1">
+                              <MessageSquare size={11} className="shrink-0" />
+                              {t("history.messageCount", { count: row.item.message_count })}
+                            </span>
                           </div>
                         </button>
                       )}
@@ -891,11 +953,11 @@ export function HistoryListPane({
                         <button
                           type="button"
                           onClick={() => onDeleteSession(row.item)}
-                          className="ui-flat-action mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-danger/25 bg-danger/10 text-danger/85 hover:border-danger/40 hover:bg-danger/18 hover:text-danger"
-                          aria-label={t("history.deleteSessionNamed", { title: row.item.displayTitle })}
+                          className="ui-history-row-delete"
+                          aria-label={t("history.deleteSessionNamed", { title: sessionDisplayTitle })}
                           title={t("history.deleteSession")}
                         >
-                          <X size={14} />
+                          <X size={13} strokeWidth={1.9} />
                         </button>
                       )}
                     </div>

@@ -440,6 +440,8 @@ export interface SparkPoint {
   output?: number;
   cacheRead?: number;
   cacheCreation?: number;
+  model?: string | null;
+  color?: string;
 }
 
 // 折线悬浮提示：展示该数据点的 token 明细与序号，配色对齐"Token 用量"卡片
@@ -471,6 +473,18 @@ function SparkTooltip({
       <div className="mb-1 font-semibold" style={{ color: TERM_PANEL.cyan }}>
         {translateCurrent("termStats.tooltipPoint", { index: index + 1, count })}
       </div>
+      {detail?.model ? (
+        <div className="mb-1 flex items-center justify-between gap-3 leading-4">
+          <span style={{ color: TERM_PANEL.dim }}>{translateCurrent("termStats.model")}</span>
+          <span
+            className="max-w-[128px] truncate font-semibold"
+            style={{ color: detail.color ?? TERM_PANEL.cyan }}
+            title={detail.model}
+          >
+            {detail.model}
+          </span>
+        </div>
+      ) : null}
       {rows.map((r) => (
         <div key={r.label} className="flex items-center justify-between gap-3 leading-4">
           <span className="flex items-center gap-1.5" style={{ color: TERM_PANEL.dim }}>
@@ -530,12 +544,14 @@ export function Sparkline({
   const linePath = coords.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x},${y}`).join(" ");
   const areaPath = `${linePath} L100,100 L0,100 Z`;
   const [lastX, lastY] = coords[coords.length - 1];
+  const pointColors = points.map((_, index) => details?.[index]?.color ?? color);
 
   // hover 命中：用容器像素宽换算最近点索引
   const safeIndex =
     hoverIndex !== null && hoverIndex >= 0 && hoverIndex < coords.length ? hoverIndex : -1;
   const active = safeIndex >= 0;
   const [hoverX, hoverY] = active ? coords[safeIndex] : [0, 0];
+  const activeColor = active ? pointColors[safeIndex] : pointColors[pointColors.length - 1] ?? color;
   // tooltip 水平防溢出：左/中/右三段对齐
   const align = hoverX < 33 ? "0" : hoverX > 67 ? "-100%" : "-50%";
 
@@ -564,29 +580,36 @@ export function Sparkline({
           </linearGradient>
         </defs>
         <path d={areaPath} fill={`url(#${gradientId})`} />
-        <path
-          d={linePath}
-          fill="none"
-          stroke={color}
-          strokeWidth={1.6}
-          vectorEffect="non-scaling-stroke"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
+        {coords.slice(1).map(([x, y], index) => {
+          const [prevX, prevY] = coords[index];
+          const segmentColor = pointColors[index + 1] ?? color;
+          return (
+            <path
+              key={index}
+              d={`M${prevX},${prevY} L${x},${y}`}
+              fill="none"
+              stroke={segmentColor}
+              strokeWidth={1.6}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          );
+        })}
         {active ? (
           <line
             x1={hoverX}
             y1={0}
             x2={hoverX}
             y2={100}
-            stroke={color}
+            stroke={activeColor}
             strokeWidth={1}
             strokeDasharray="2 2"
             vectorEffect="non-scaling-stroke"
             opacity={0.45}
           />
         ) : (
-          <circle cx={lastX} cy={lastY} r={2.4} fill={color} className="animate-pulse" />
+          <circle cx={lastX} cy={lastY} r={2.4} fill={activeColor} className="animate-pulse" />
         )}
       </svg>
 
@@ -599,7 +622,7 @@ export function Sparkline({
             width: 7,
             height: 7,
             transform: "translate(-50%, -50%)",
-            backgroundColor: color,
+            backgroundColor: activeColor,
             boxShadow: `0 0 0 2px ${TERM_PANEL.card}`,
           }}
         />

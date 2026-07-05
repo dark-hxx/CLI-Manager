@@ -11,6 +11,9 @@ import { VendorIcon, inferVendor } from "../VendorIcon";
 import { TreeNodeItem } from "./TreeNodeItem";
 import { useTreeActions, type TreeActions } from "./TreeContext";
 import { useI18n } from "../../lib/i18n";
+import { useExternalSessionSyncStore } from "../../stores/externalSessionSyncStore";
+import { groupSyncedExternalSessions } from "../../lib/externalSessionGrouping";
+import type { Project } from "../../lib/types";
 
 interface ProjectTreeProps {
   tree: TNode[];
@@ -27,6 +30,8 @@ interface ProjectTreeProps {
   onQuickAddProject: () => void;
   onRetry: () => void;
   onExpandSidebar: () => void;
+  suppressEmptyState?: boolean;
+  embedded?: boolean;
 }
 
 const STATUS_COLORS: Record<SessionStatus, string> = {
@@ -38,6 +43,17 @@ const STATUS_COLORS: Record<SessionStatus, string> = {
 function countProjects(node: TNode): number {
   if (node.type === "project") return 1;
   return node.children.reduce((sum, child) => sum + countProjects(child), 0);
+}
+
+function collectProjects(nodes: TNode[], out: Project[] = []): Project[] {
+  for (const node of nodes) {
+    if (node.type === "project") {
+      out.push(node.project);
+    } else {
+      collectProjects(node.children, out);
+    }
+  }
+  return out;
 }
 
 interface VisibleTreeNode {
@@ -199,9 +215,12 @@ export function ProjectTree({
   onQuickAddProject,
   onRetry,
   onExpandSidebar,
+  suppressEmptyState = false,
+  embedded = false,
 }: ProjectTreeProps) {
   const { t } = useI18n();
   const actions = useTreeActions();
+  const syncedSessions = useExternalSessionSyncStore((state) => state.syncedSessions);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [focusedNodeKey, setFocusedNodeKey] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -213,6 +232,11 @@ export function ProjectTree({
   const filteredTree = useMemo(
     () => (searchActive ? filterTreeNodes(tree, searchQuery) : tree),
     [searchActive, searchQuery, tree]
+  );
+  const projects = useMemo(() => collectProjects(tree), [tree]);
+  const syncedGroupsByProjectId = useMemo(
+    () => groupSyncedExternalSessions(syncedSessions, projects).byProjectId,
+    [projects, syncedSessions]
   );
   const visibleNodes = useMemo(
     () => {
@@ -496,7 +520,7 @@ export function ProjectTree({
   }
 
   return (
-    <div className={`h-full overflow-y-auto overflow-x-hidden ${density === "compact" ? "px-1 pb-1.5 pt-0.5" : "px-1.5 pb-2 pt-1"}`}>
+    <div className={`${embedded ? "" : "h-full overflow-y-auto"} overflow-x-hidden ${density === "compact" ? "px-1 pb-1.5 pt-0.5" : "px-1.5 pb-2 pt-1"}`}>
       {newGroupParentId === "__root__" && (
         <div className={`flex items-center px-2 ${density === "compact" ? "gap-1 py-1" : "gap-1.5 py-1.5"}`}>
           <span className="shrink-0 text-accent">
@@ -623,6 +647,7 @@ export function ProjectTree({
                 onFocusNode={setFocusedNodeKey}
                 forceExpanded={searchActive}
                 sortableEnabled={!searchActive}
+                syncedGroupsByProjectId={syncedGroupsByProjectId}
               />
             ))}
           </div>
@@ -649,7 +674,7 @@ export function ProjectTree({
         />
       )}
 
-      {tree.length === 0 && !loadError && !searchActive && (
+      {tree.length === 0 && !loadError && !searchActive && !suppressEmptyState && (
         <EmptyState
           icon={<Terminal size={40} strokeWidth={1} />}
           title={t("sidebar.tree.welcome")}

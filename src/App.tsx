@@ -11,9 +11,8 @@ import { TerminalTabs } from "./components/TerminalTabs";
 import { CommandPalette } from "./components/CommandPalette";
 import type { LucideIcon } from "lucide-react";
 import type { SettingsTab } from "./components/SettingsModal";
-const SettingsModal = lazy(() =>
-  import("./components/SettingsModal").then((module) => ({ default: module.SettingsModal }))
-);
+const loadSettingsModal = () => import("./components/SettingsModal").then((module) => ({ default: module.SettingsModal }));
+const SettingsModal = lazy(loadSettingsModal);
 const StatsPanel = lazy(() =>
   import("./components/stats/StatsPanel").then((module) => ({ default: module.StatsPanel }))
 );
@@ -23,17 +22,21 @@ const CcusageStatsPanel = lazy(() =>
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
 import { ExitProgressOverlay, type ExitPhase } from "./components/ExitProgressOverlay";
+import { AppFailureState } from "./components/AppFailureState";
+import { ExternalSessionSyncDialog } from "./components/ExternalSessionSyncDialog";
 import { CircleAlert, CircleCheck, Info, ShieldAlert, X } from "./components/icons";
 import { useSettingsStore, type HookEventType } from "./stores/settingsStore";
 import { useProjectStore } from "./stores/projectStore";
 import { useSessionStore } from "./stores/sessionStore";
 import { useSyncStore } from "./stores/syncStore";
 import { useHistoryStore } from "./stores/historyStore";
+import { useExternalSessionSyncStore } from "./stores/externalSessionSyncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdateStore } from "./stores/updateStore";
 import { useReplayStore } from "./stores/replayStore";
 import { useTerminalStore, type CliHookPayload } from "./stores/terminalStore";
 import { useModelPricingStore } from "./stores/modelPricingStore";
+import { debugConsoleWarn } from "./lib/debugConsole";
 import { createPerfMarker, logWarn } from "./lib/logger";
 import { getContrastRatioFromHex, MIN_APPLY_CONTRAST_RATIO } from "./lib/contrast";
 import { translateCurrent, useI18n } from "./lib/i18n";
@@ -52,6 +55,7 @@ let firstScreenShown = false;
 let startupBaseReady = false;
 let deferredStartupTasksStarted = false;
 let startupUpdateChecked = false;
+let settingsModalPreloadStarted = false;
 const COMPACT_WINDOW_WIDTH = 350;
 const WINDOW_MIN_HEIGHT = 600;
 // 关闭期自动同步上限：封顶最坏退出时间（WebDAV 客户端本身有 30s HTTP 超时）。
@@ -66,6 +70,15 @@ type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled
 
 function isLikelyMacOs() {
   return typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+}
+
+function preloadSettingsModal(): void {
+  if (settingsModalPreloadStarted) return;
+  settingsModalPreloadStarted = true;
+  void loadSettingsModal().catch((err) => {
+    settingsModalPreloadStarted = false;
+    logWarn("Failed to preload settings modal", err);
+  });
 }
 
 interface HookSettingsStatusPayload {
@@ -236,7 +249,7 @@ async function sendSystemNotification(payload: CliHookPayload, tabId: string | n
       permissionGranted = permission === "granted";
     }
     if (!permissionGranted) {
-      console.warn("[System Notification] Permission not granted");
+      debugConsoleWarn("[System Notification] Permission not granted");
       return;
     }
 
@@ -249,7 +262,7 @@ async function sendSystemNotification(payload: CliHookPayload, tabId: string | n
       await invoke("send_notification_via_windows", { title, body });
     }
   } catch (err) {
-    console.warn("[System Notification] Failed to send:", err);
+    debugConsoleWarn("[System Notification] Failed to send:", err);
   }
 }
 
@@ -314,6 +327,8 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
   deferredStartupTasksStarted = true;
 
   window.setTimeout(() => {
+    window.setTimeout(preloadSettingsModal, 250);
+
     void (async () => {
       await useProjectStore.getState().refreshProjectDiagnostics().catch((err) => {
         logWarn("Failed to refresh deferred project diagnostics", err);
@@ -350,6 +365,17 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
         });
       })();
     }
+
+    window.setTimeout(() => {
+      const startExternalSessionSync = () => {
+        useExternalSessionSyncStore.getState().startMonitor();
+      };
+      if ("requestIdleCallback" in window) {
+        window.requestIdleCallback(startExternalSessionSync, { timeout: 3000 });
+      } else {
+        startExternalSessionSync();
+      }
+    }, 5000);
   }, 0);
 }
 
@@ -385,12 +411,14 @@ function App() {
   const [terminalFullscreen, setTerminalFullscreen] = useState(false);
   const [terminalScopeProjectId, setTerminalScopeProjectId] = useState<string | null>(null);
   const [isMacOs, setIsMacOs] = useState(isLikelyMacOs);
+  const [initError, setInitError] = useState<string | null>(null);
   const terminalFullscreenMaximizedRef = useRef(false);
   const restoreWindowWidthRef = useRef<number | null>(null);
   const closeBehaviorRef = useRef(closeBehavior);
 
   const handleOpenSettings = useCallback((tab?: SettingsTab) => {
     const nextTab = tab ?? lastSettingsTab;
+    preloadSettingsModal();
     setSettingsInitialTab(nextTab);
     if (tab && tab !== useSettingsStore.getState().lastSettingsTab) {
       void updateSetting("lastSettingsTab", tab);
@@ -632,29 +660,51 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const init = async () => {
+      setInitError(null);
+      startupBaseReady = false;
+
       // 1. 先加载设置，再并行加载依赖设置路径的子系统
       await loadSettings();
+
       await Promise.all([
-        useSyncStore.getState().load(),
-        useSessionStore.getState().load(),
+        useSyncStore.getState().load().catch((err) => {
+          logWarn("Failed to load sync store during startup", err);
+        }),
+        useSessionStore.getState().load().catch((err) => {
+          logWarn("Failed to load persisted sessions during startup", err);
+        }),
       ]);
+
       void useModelPricingStore.getState().load().catch((err) => {
         logWarn("Failed to preload model pricing", err);
       });
-
       // 2. 加载项目列表
       await useProjectStore.getState().fetchAll("startup");
 
       // 3. 启动时不恢复历史终端，避免重建 PTY 并重跑 startupCmd。
-      await useSessionStore.getState().clear();
+      await useSessionStore.getState().clear().catch((err) => {
+        logWarn("Failed to clear restored sessions during startup", err);
+      });
 
       startupBaseReady = true;
-      runDeferredStartupTasks(handleOpenSettings);
+      if (!cancelled) {
+        runDeferredStartupTasks(handleOpenSettings);
+      }
     };
     init().catch((err) => {
+      const message = err instanceof Error ? err.stack || err.message : String(err);
+      logWarn("Application init failed", err);
+      if (!cancelled) {
+        setInitError(message);
+      }
       toast.error(t("notifications.app.initFailed"), { description: String(err) });
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [handleOpenSettings, loadSettings, t]);
 
   useEffect(() => {
@@ -1001,6 +1051,20 @@ function App() {
     };
   }, [handleOpenSettings, resolvedTheme, viewMode]);
 
+  if (initError) {
+    return (
+      <AppFailureState
+        title={t("app.init.failedTitle")}
+        description={t("app.init.failedDescription")}
+        detail={initError}
+        primaryAction={{
+          label: t("common.retry"),
+          onClick: () => window.location.reload(),
+        }}
+      />
+    );
+  }
+
   if (!settingsLoaded) {
     return <div className="ui-workspace-shell flex h-screen flex-col" />;
   }
@@ -1044,6 +1108,7 @@ function App() {
         </div>
       )}
       <CommandPalette />
+      <ExternalSessionSyncDialog />
       <Suspense fallback={null}>
         {settingsEverOpened && (
             <SettingsModal

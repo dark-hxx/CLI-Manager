@@ -75,9 +75,18 @@ pub fn data_paths() -> Result<CliManagerDataPaths, String> {
         data_dir: data_dir.to_string_lossy().into_owned(),
         db_path: db_path.to_string_lossy().into_owned(),
         db_url: format!("sqlite:{}", db_path.to_string_lossy()),
-        settings_store_path: data_dir.join("settings.json").to_string_lossy().into_owned(),
-        sessions_store_path: data_dir.join("sessions.json").to_string_lossy().into_owned(),
-        sync_store_path: data_dir.join("sync-config.json").to_string_lossy().into_owned(),
+        settings_store_path: data_dir
+            .join("settings.json")
+            .to_string_lossy()
+            .into_owned(),
+        sessions_store_path: data_dir
+            .join("sessions.json")
+            .to_string_lossy()
+            .into_owned(),
+        sync_store_path: data_dir
+            .join("sync-config.json")
+            .to_string_lossy()
+            .into_owned(),
         logs_dir: logs_dir.to_string_lossy().into_owned(),
         codex_providers_dir: codex_providers_dir.to_string_lossy().into_owned(),
         claude_providers_dir: claude_providers_dir.to_string_lossy().into_owned(),

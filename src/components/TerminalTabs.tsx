@@ -21,6 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useTerminalStore, type SplitTerminalOptions, type TabNotificationState } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
+import { useExternalSessionSyncStore } from "../stores/externalSessionSyncStore";
 import { isProjectFileDirty, useFileExplorerStore } from "../stores/fileExplorerStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { logError } from "../lib/logger";
@@ -51,7 +52,7 @@ import { FileExplorerSidebar } from "./files/FileExplorerSidebar";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
-import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check } from "./icons";
+import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check, RefreshCw } from "./icons";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
@@ -227,7 +228,16 @@ function buildTerminalTabHoverInfo(session: TerminalSession, project?: Project):
       sessionId: session.cliSessionId?.trim() || session.id,
     };
   }
-
+  if (session.kind === "synced-history") {
+    return {
+      name: session.title.trim() || "同步记录",
+      cli: "Synced History",
+      shell: formatShellLabel(session.shell ?? project?.shell),
+      project: project?.name.trim() || session.syncedHistory?.title || "\u672a\u7ed1\u5b9a\u9879\u76ee",
+      path: session.syncedHistory?.cwd || session.cwd?.trim() || project?.path.trim() || "-",
+      sessionId: session.syncedHistory?.key || session.id,
+    };
+  }
   return {
     name: session.title.trim() || "Terminal",
     cli: formatCliToolLabel(project?.cli_tool),
@@ -1644,6 +1654,9 @@ export function TerminalTabs({
   const openHistory = useHistoryStore((s) => s.openHistory);
   const closeHistory = useHistoryStore((s) => s.closeHistory);
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
+  const openExternalSessionSyncDialog = useExternalSessionSyncStore((s) => s.openManualDialog);
+  const externalSessionSyncScanning = useExternalSessionSyncStore((s) => s.scanningProjects);
+  const externalSessionSyncing = useExternalSessionSyncStore((s) => s.syncingProjects);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"terminal" | "history">("terminal");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [splitPicker, setSplitPicker] = useState<SplitPickerState>(null);
@@ -1740,6 +1753,7 @@ export function TerminalTabs({
     () => resolveProjectForSession(activeSession, sessions, projects, projectById),
     [activeSession, projectById, projects, sessions]
   );
+  const sidePanelProjectPath = panelSession?.cwd ?? filePanelProject?.path ?? null;
   const activeDragSession = useMemo(
     () => activeDragSessionId ? sessions.find((session) => session.id === activeDragSessionId) ?? null : null,
     [activeDragSessionId, sessions]
@@ -2501,6 +2515,21 @@ export function TerminalTabs({
               </SortableToolbarButton>
             ))}
           </SortableContext>
+          <button
+            onClick={() => {
+              void openExternalSessionSyncDialog();
+            }}
+            disabled={externalSessionSyncScanning || externalSessionSyncing}
+            className="ui-focus-ring ui-icon-action ui-action-external-session-sync"
+            title="同步 Codex/Claude 历史"
+            aria-label="同步 Codex/Claude 历史"
+          >
+            <RefreshCw
+              size={13}
+              strokeWidth={1.8}
+              className={externalSessionSyncScanning || externalSessionSyncing ? "animate-spin" : undefined}
+            />
+          </button>
         </nav>
         <DragOverlay dropAnimation={null}>
           {activeToolbarDragId && buttonMap[activeToolbarDragId] ? (
@@ -2513,6 +2542,8 @@ export function TerminalTabs({
     );
   }, [
     activeToolbarDragId,
+    externalSessionSyncScanning,
+    externalSessionSyncing,
     fullscreen,
     filePanelProject,
     filesPanelActive,
@@ -2529,6 +2560,7 @@ export function TerminalTabs({
     handleToolbarDragStart,
     historyOpen,
     onToggleFullscreen,
+    openExternalSessionSyncDialog,
     replayPanelActive,
     sessionHistoryShortcutHint,
     sidePanelMerged,
@@ -2708,7 +2740,7 @@ export function TerminalTabs({
               open={sidePanelOpen}
               activeTab={sidePanelTab}
               activeSessionId={panelSessionId}
-              projectPath={panelSession?.cwd ?? null}
+              projectPath={sidePanelProjectPath}
               filesTabDisabled={!filePanelProject}
               filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
               onTabChange={handleSidePanelTabChange}
@@ -2733,7 +2765,7 @@ export function TerminalTabs({
                   resizeTitle={t("terminal.panel.resizeGitTitle")}
                 >
                   <Suspense fallback={null}>
-                    <GitChangesPanel open={gitOpen} projectPath={panelSession?.cwd ?? null} embedded />
+                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} embedded />
                   </Suspense>
                 </ResizableTerminalPanelFrame>
               )}

@@ -24,6 +24,25 @@ function formatReasoningEffort(value: string | null | undefined): string {
   return value?.trim() || "—";
 }
 
+const TREND_MODEL_COLORS = [
+  TERM_PANEL.cyan,
+  TERM_PANEL.magenta,
+  TERM_PANEL.yellow,
+  TERM_PANEL.blue,
+  TERM_PANEL.green,
+  TERM_PANEL.red,
+] as const;
+
+function colorForTrendModel(model: string | null | undefined): string {
+  const value = model?.trim();
+  if (!value) return TERM_PANEL.cyan;
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return TREND_MODEL_COLORS[hash % TREND_MODEL_COLORS.length];
+}
+
 export function TokenUsageCard({ stats }: { stats: TokenStats }) {
   const { t } = useI18n();
   const animatedTotal = useCountUp(stats.totalTokens);
@@ -105,7 +124,7 @@ export function ModelContextCard({
     contextLimit && contextTokens !== null ? (contextTokens / contextLimit) * 100 : null;
   const remaining =
     contextLimit && contextTokens !== null ? Math.max(0, contextLimit - contextTokens) : null;
-  const displayedReasoningEffort = formatReasoningEffort(session?.usage?.reasoning_effort ?? reasoningEffort);
+  const displayedReasoningEffort = formatReasoningEffort(reasoningEffort ?? session?.usage?.reasoning_effort);
 
   const percentColor =
     usagePercent === null
@@ -191,12 +210,15 @@ export function TrendCard({ session }: { session: HistorySessionDetail | null })
           point.total_tokens
           || point.input_tokens + point.output_tokens + point.cache_read_tokens + point.cache_creation_tokens;
         if (total > 0) {
+          const model = point.model?.trim() || null;
           trend.push({
             total,
             input: point.input_tokens,
             output: point.output_tokens,
             cacheRead: point.cache_read_tokens,
             cacheCreation: point.cache_creation_tokens,
+            model,
+            color: colorForTrendModel(model),
           });
         }
       }
@@ -205,7 +227,10 @@ export function TrendCard({ session }: { session: HistorySessionDetail | null })
         const input = msg.input_tokens ?? 0;
         const output = msg.output_tokens ?? 0;
         const total = input + output;
-        if (total > 0) trend.push({ total, input, output });
+        if (total > 0) {
+          const model = msg.model?.trim() || null;
+          trend.push({ total, input, output, model, color: colorForTrendModel(model) });
+        }
       }
     }
   }

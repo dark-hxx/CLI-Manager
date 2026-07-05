@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, useCallback, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, useCallback, type CSSProperties, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { X, Undo2 } from "../icons";
 import { parseDiff, Diff, Hunk, tokenize, Decoration, getChangeKey } from "react-diff-view";
 import type { ChangeData } from "react-diff-view";
+import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n } from "../../lib/i18n";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { refractor, detectLanguage } from "./diffHighlight";
@@ -17,6 +18,7 @@ interface DiffViewerModalProps {
   filePath: string;
   fileName: string;
   status: string;
+  diffText?: string;
   onRequestDiscard?: (path: string, name: string, status: string) => void;
 }
 
@@ -25,6 +27,7 @@ interface GitDiffViewerProps {
   filePath: string;
   fileName: string;
   status: string;
+  diffText?: string;
   onRequestDiscard?: (path: string, name: string, status: string) => void;
   onClose?: () => void;
   onReverted?: () => void;
@@ -66,11 +69,40 @@ const TERMINAL_DIFF_TABLE_STYLE = {
   borderColor: "var(--border)",
 } as CSSProperties;
 
+function classifyFallbackLine(line: string): CSSProperties {
+  if (line.startsWith("+") && !line.startsWith("+++")) {
+    return { color: "var(--term-panel-green, #3dd68c)", backgroundColor: "var(--git-diff-insert-bg)" };
+  }
+  if (line.startsWith("-") && !line.startsWith("---")) {
+    return { color: "var(--term-panel-red, #ff6b6b)", backgroundColor: "var(--git-diff-delete-bg)" };
+  }
+  if (
+    line.startsWith("@@") ||
+    line.startsWith("*** ") ||
+    line.startsWith("diff --git ") ||
+    line.startsWith("index ") ||
+    line.startsWith("--- ") ||
+    line.startsWith("+++ ")
+  ) {
+    return { color: "var(--git-diff-hunk-text)" };
+  }
+  return { color: "var(--git-diff-text)" };
+}
+
+function renderFallbackDiffText(diffText: string): ReactNode {
+  return diffText.split("\n").map((line, index) => (
+    <span key={index} className="block min-h-5 px-2" style={classifyFallbackLine(line)}>
+      {line || " "}
+    </span>
+  ));
+}
+
 export function GitDiffViewer({
   projectPath,
   filePath,
   fileName,
   status,
+  diffText: providedDiffText,
   onRequestDiscard,
   onClose,
   onReverted,
@@ -86,6 +118,13 @@ export function GitDiffViewer({
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
 
   useEffect(() => {
+    if (providedDiffText !== undefined) {
+      setDiffText(providedDiffText);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
 
@@ -108,7 +147,7 @@ export function GitDiffViewer({
     return () => {
       cancelled = true;
     };
-  }, [projectPath, filePath, status]);
+  }, [projectPath, filePath, status, providedDiffText]);
 
   // diff 解析放在 hooks 区（行选择 hook 依赖 hunks，不能在条件 return 之后）。
   const parsed = useMemo(() => {
@@ -123,7 +162,7 @@ export function GitDiffViewer({
           try {
             return { file, tokens: tokenize(file.hunks, { highlight: true, refractor, language }) };
           } catch (highlightErr) {
-            console.warn("[DiffViewerModal] 语法高亮失败，回退无高亮:", highlightErr);
+            debugConsoleWarn("[DiffViewerModal] 语法高亮失败，回退无高亮:", highlightErr);
           }
         }
         return { file, tokens: tokenize(file.hunks) };
@@ -314,7 +353,18 @@ export function GitDiffViewer({
             </div>
           )}
 
-          {!loading && !error && (!diffText || !parsedDiff) && (
+          {!loading && !error && diffText && !parsedDiff && (
+            <div
+              className="diff-viewer-container rounded-lg border overflow-hidden"
+              style={useTerminalTheme ? TERMINAL_DIFF_TABLE_STYLE : { backgroundColor: "var(--surface-container-lowest)", borderColor: "var(--border)" }}
+            >
+              <pre className="m-0 overflow-auto py-2 text-xs leading-5" style={{ color: "var(--git-diff-text)" }}>
+                {renderFallbackDiffText(diffText)}
+              </pre>
+            </div>
+          )}
+
+          {!loading && !error && !diffText && (
             <div className="flex items-center justify-center h-full">
               <p className="text-sm text-text-muted">{t("git.diff.noContent")}</p>
             </div>
@@ -362,7 +412,7 @@ export function GitDiffViewer({
   );
 }
 
-export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName, status, onRequestDiscard }: DiffViewerModalProps) {
+export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName, status, diffText, onRequestDiscard }: DiffViewerModalProps) {
   // Esc 关闭弹窗（仅 open 时挂载监听；对齐 SettingsModal / HistoryWorkspace 的 keydown 处理模式）。
   useEffect(() => {
     if (!open) return;
@@ -375,7 +425,6 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, onClose]);
-
   if (!open) return null;
 
   return (
@@ -396,6 +445,7 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
           filePath={filePath}
           fileName={fileName}
           status={status}
+          diffText={diffText}
           onClose={onClose}
           onRequestDiscard={onRequestDiscard}
           closeOnRevert

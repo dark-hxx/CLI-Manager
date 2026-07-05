@@ -225,6 +225,29 @@ fn migrations() -> Vec<Migration> {
         },
         Migration {
             version: 13,
+            description: "create_session_favorite_snapshots_table",
+            sql: "
+                CREATE TABLE IF NOT EXISTS session_favorite_snapshots (
+                    session_key   TEXT PRIMARY KEY,
+                    session_id    TEXT NOT NULL,
+                    source        TEXT NOT NULL,
+                    project_key   TEXT NOT NULL,
+                    file_path     TEXT NOT NULL,
+                    title         TEXT NOT NULL,
+                    created_at    INTEGER NOT NULL,
+                    updated_at    INTEGER NOT NULL,
+                    message_count INTEGER NOT NULL,
+                    branch        TEXT,
+                    detail_json   TEXT NOT NULL,
+                    snapshot_at   TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_source ON session_favorite_snapshots(source);
+                CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_updated ON session_favorite_snapshots(updated_at DESC);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
             description: "add_cli_args_to_projects",
             sql: "ALTER TABLE projects ADD COLUMN cli_args TEXT NOT NULL DEFAULT '';",
             kind: MigrationKind::Up,
@@ -423,7 +446,6 @@ pub fn run() {
             commands::ccswitch::ccswitch_list_common_configs,
             commands::git::get_current_git_branch,
             commands::git::git_get_changes,
-            commands::git::git_list_repositories,
             commands::git::git_get_file_diff,
             commands::git::git_fork_worktree_snapshot,
             commands::git::git_get_worktree_snapshot,

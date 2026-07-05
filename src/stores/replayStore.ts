@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { getDb } from "../lib/db";
+import { debugConsoleInfo, debugConsoleWarn } from "../lib/debugConsole";
 import { translateCurrent } from "../lib/i18n";
 import { logError, logWarn } from "../lib/logger";
 import type { CliHookPayload, CliHookEventName } from "./terminalStore";
@@ -147,9 +148,9 @@ function logReplayOomDiagnostic(phase: string, fields: Record<string, unknown>, 
     ...fields,
   };
   if (warn) {
-    console.warn("[oom-diagnostics:webview]", payload);
+    debugConsoleWarn("[oom-diagnostics:webview]", payload);
   } else {
-    console.info("[oom-diagnostics:webview]", payload);
+    debugConsoleInfo("[oom-diagnostics:webview]", payload);
   }
 }
 

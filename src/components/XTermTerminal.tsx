@@ -24,6 +24,7 @@ import {
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
 import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
+import { debugConsoleWarn } from "../lib/debugConsole";
 import { useI18n } from "../lib/i18n";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
 import { endTerminalFileDrag, getTerminalFileDragText } from "../lib/terminalFileDrag";
@@ -39,7 +40,7 @@ import {
 import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
-import { useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
+import { formatStartupInputForPty, useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
 import { useSettingsStore, type LightThemePalette, type DarkThemePalette } from "../stores/settingsStore";
 
 const FONT_SIZE_MIN = 8;
@@ -1069,7 +1070,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       const now = Date.now();
       if (now - activeWriteQueueLastDropLogAtRef.current >= ACTIVE_WRITE_QUEUE_LOG_INTERVAL_MS) {
         activeWriteQueueLastDropLogAtRef.current = now;
-        console.warn("[oom-diagnostics:webview]", {
+        debugConsoleWarn("[oom-diagnostics:webview]", {
           area: "xterm",
           phase: "activeWriteQueueTrim",
           sessionId,
@@ -1278,6 +1279,23 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     fitAddonRef.current = fitAddon;
     searchAddonRef.current = searchAddon;
     scheduleFit(true);
+    const sessionSnapshot = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
+    const initialTerminalOutput = sessionSnapshot?.initialTerminalOutput;
+    const writeDeferredStartup = () => {
+      if (!sessionSnapshot?.deferStartupUntilInitialOutput || !sessionSnapshot.startupCmd) return;
+      invoke("pty_write", {
+        sessionId,
+        data: formatStartupInputForPty(sessionSnapshot.startupCmd, normalizeShellKey(sessionSnapshot.shell) ?? null),
+      }).catch((err) => reportPtyWriteError("deferredStartup", err));
+    };
+    if (initialTerminalOutput) {
+      terminal.write(initialTerminalOutput, () => {
+        terminal.scrollToBottom();
+        writeDeferredStartup();
+      });
+    } else {
+      writeDeferredStartup();
+    }
     if (isActive) {
       terminal.focus();
     }

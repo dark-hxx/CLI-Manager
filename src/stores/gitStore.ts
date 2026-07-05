@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { debugConsoleLog, debugConsoleWarn } from "../lib/debugConsole";
 import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy } from "../lib/types";
 import { useSettingsStore } from "./settingsStore";
 
@@ -263,7 +264,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (silent) {
       set({ currentProjectPath: projectPath, ...switchPatch });
     } else {
-      console.log(`[GitStore] 开始获取 Git 变更, projectPath: "${projectPath}"`);
+      debugConsoleLog(`[GitStore] 开始获取 Git 变更, projectPath: "${projectPath}"`);
       set({ loading: true, error: null, currentProjectPath: projectPath, ...switchPatch });
     }
 
@@ -315,7 +316,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
         set({ branchStatus });
       }
     } catch (err) {
-      console.warn(`[GitStore] 获取分支状态失败:`, err);
+      debugConsoleWarn(`[GitStore] 获取分支状态失败:`, err);
       // 与成功路径同守卫：stale 请求（项目/子仓库已切换）失败时不得清掉新仓库的有效状态。
       if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? projectPath) === repoPath) {
         set({ branchStatus: null });

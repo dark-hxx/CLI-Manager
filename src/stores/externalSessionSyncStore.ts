@@ -1,0 +1,795 @@
+import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
+import { Store } from "@tauri-apps/plugin-store";
+import { toast } from "sonner";
+import { useSettingsStore } from "./settingsStore";
+import { useProjectStore } from "./projectStore";
+import { logInfo, logWarn } from "../lib/logger";
+import { translateCurrent } from "../lib/i18n";
+import type { HistorySource, Project } from "../lib/types";
+
+interface HistorySessionSummaryLike {
+  session_id?: unknown;
+  sessionId?: unknown;
+  source?: unknown;
+  project_key?: unknown;
+  projectKey?: unknown;
+  title?: unknown;
+  file_path?: unknown;
+  filePath?: unknown;
+  cwd?: unknown;
+  created_at?: unknown;
+  createdAt?: unknown;
+  updated_at?: unknown;
+  updatedAt?: unknown;
+  message_count?: unknown;
+  messageCount?: unknown;
+}
+
+export interface ExternalSessionCandidate {
+  key: string;
+  source: HistorySource;
+  sessionId: string;
+  projectKey: string;
+  filePath: string;
+  projectName: string;
+  cwd: string;
+  title: string;
+  startupCmd: string;
+  updatedAt: number;
+}
+
+export interface SyncedExternalSession extends ExternalSessionCandidate {
+  syncedAt: number;
+}
+
+export interface ExternalSessionProjectCandidate {
+  key: string;
+  source: HistorySource;
+  name: string;
+  cwd: string;
+  updatedAt: number;
+  sessionCount: number;
+  sessions: ExternalSessionCandidate[];
+}
+
+type ExternalSessionSyncDialogMode = "initial" | "manual";
+
+interface ExternalSessionSyncStore {
+  loaded: boolean;
+  initialSyncPromptHandled: boolean;
+  acceptedKeys: string[];
+  ignoredKeys: string[];
+  pendingKeys: string[];
+  syncedSessions: SyncedExternalSession[];
+  projectCandidates: ExternalSessionProjectCandidate[];
+  dialogOpen: boolean;
+  dialogMode: ExternalSessionSyncDialogMode;
+  scanningProjects: boolean;
+  syncingProjects: boolean;
+  load: () => Promise<void>;
+  scanAndPrompt: () => Promise<void>;
+  startMonitor: () => void;
+  stopMonitor: () => void;
+  openInitialDialog: () => Promise<void>;
+  openManualDialog: () => Promise<void>;
+  closeProjectDialog: () => Promise<void>;
+  syncProjectCandidates: (keys: string[]) => Promise<void>;
+  accept: (candidate: ExternalSessionCandidate) => Promise<void>;
+  ignore: (candidate: ExternalSessionCandidate) => Promise<void>;
+  removeSyncedSessions: (keys: string[]) => Promise<void>;
+}
+
+const INITIAL_PROJECT_SCAN_LIMIT = 60;
+const MANUAL_PROJECT_SCAN_LIMIT = 240;
+const STORE_FILE = "external-session-sync.json";
+const STORE_SCHEMA_VERSION = 3;
+
+let store: Store | null = null;
+let initialCheckStarted = false;
+let projectScanInFlight: Promise<ExternalSessionProjectCandidate[]> | null = null;
+const deletedKeysThisSession = new Set<string>();
+
+async function getStore() {
+  if (!store) {
+    store = await Store.load(STORE_FILE, { autoSave: 100, defaults: {} });
+  }
+  return store;
+}
+
+function asString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function asNumber(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const result: string[] = [];
+  for (const item of value) {
+    const text = asString(item).trim();
+    if (text && !result.includes(text)) result.push(text);
+  }
+  return result;
+}
+
+function isCliManagerSyncArtifactText(value: string): boolean {
+  const text = value.toLowerCase();
+  return (
+    text.includes("cli-manager 同步聚合会话")
+    || text.includes(".cli-manager/synced-history/")
+    || text.includes("同步记录已加载")
+  );
+}
+
+function normalizeSyncedSessions(value: unknown): SyncedExternalSession[] {
+  if (!Array.isArray(value)) return [];
+  const result: SyncedExternalSession[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    const rec = (raw ?? {}) as Partial<Record<keyof SyncedExternalSession, unknown>>;
+    const source = normalizeSource(rec.source);
+    const key = asString(rec.key).trim();
+    const sessionId = asString(rec.sessionId).trim();
+    const filePath = asString(rec.filePath).trim();
+    const cwd = asString(rec.cwd).trim();
+    const rawTitle = asString(rec.title);
+    if (isCliManagerSyncArtifactText(rawTitle)) continue;
+    const projectKey = asString(rec.projectKey).trim() || inferProjectKey(source, cwd, filePath);
+    const startupCmd = normalizeStoredResumeCommand(source, sessionId, asString(rec.startupCmd).trim());
+    if (!source || !key || !sessionId || !projectKey || !filePath || !cwd || !startupCmd || seen.has(key)) continue;
+    seen.add(key);
+    const fallbackTitle = basenameFromPath(cwd) || sourceLabel(source);
+    const title = cleanTitle(rawTitle);
+    result.push({
+      key,
+      source,
+      sessionId,
+      projectKey,
+      filePath,
+      projectName: asString(rec.projectName).trim() || basenameFromPath(cwd) || sourceLabel(source),
+      cwd,
+      title: isInternalTitle(title) ? fallbackTitle : title,
+      startupCmd,
+      updatedAt: asNumber(rec.updatedAt),
+      syncedAt: asNumber(rec.syncedAt) || Date.now(),
+    });
+  }
+  return result.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function normalizeSource(value: unknown): HistorySource | null {
+  const source = asString(value).trim().toLowerCase();
+  return source === "codex" || source === "claude" ? source : null;
+}
+
+function getHistoryPathArgs(): { claudeConfigDir: string | null; codexConfigDir: string | null } {
+  const settings = useSettingsStore.getState();
+  return {
+    claudeConfigDir: settings.claudeHookConfigDir?.trim() || null,
+    codexConfigDir: settings.codexHookConfigDir?.trim() || null,
+  };
+}
+
+function normalizePathForKey(path: string): string {
+  return path.trim().replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
+}
+
+function pathDepth(path: string): number {
+  return normalizePathForKey(path).split("/").filter(Boolean).length;
+}
+
+function isSameOrChildPath(path: string, root: string): boolean {
+  const normalizedPath = normalizePathForKey(path);
+  const normalizedRoot = normalizePathForKey(root);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function matchesProjectSource(project: Project, source: HistorySource): boolean {
+  const cliTool = project.cli_tool.trim().toLowerCase();
+  if (!cliTool) return true;
+  return source === "codex" ? cliTool.includes("codex") : cliTool.includes("claude");
+}
+
+function findContainingProject(projects: Project[], candidate: ExternalSessionCandidate): Project | undefined {
+  const matches = projects
+    .filter((project) => project.path && isSameOrChildPath(candidate.cwd, project.path))
+    .sort((a, b) => normalizePathForKey(b.path).length - normalizePathForKey(a.path).length);
+  return matches.find((project) => matchesProjectSource(project, candidate.source));
+}
+
+function findAncestorCandidate(candidates: ExternalSessionCandidate[], candidate: ExternalSessionCandidate): ExternalSessionCandidate | undefined {
+  return candidates
+    .filter((item) => {
+      if (!item.cwd || item.key === candidate.key) return false;
+      if (pathDepth(item.cwd) < 3) return false;
+      return isSameOrChildPath(candidate.cwd, item.cwd);
+    })
+    .sort((a, b) => normalizePathForKey(b.cwd).length - normalizePathForKey(a.cwd).length)[0];
+}
+
+function makeSessionCandidateKey(source: HistorySource, sessionId: string, filePath: string): string {
+  return `${source}:${sessionId}:${normalizePathForKey(filePath)}`;
+}
+
+function basenameFromPath(path: string): string {
+  const normalized = path.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+function inferProjectKey(source: HistorySource | null, cwd: string, filePath: string): string {
+  if (cwd.trim()) return basenameFromPath(cwd);
+  const normalized = filePath.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (source === "claude") {
+    const projectsIndex = parts.findIndex((part) => part === "projects");
+    if (projectsIndex >= 0 && parts[projectsIndex + 1]) return parts[projectsIndex + 1];
+    return parts.length >= 2 ? parts[parts.length - 2] : "default";
+  }
+  const sessionsIndex = parts.findIndex((part) => part === "sessions");
+  if (sessionsIndex >= 0 && parts[parts.length - 2]) return parts[parts.length - 2];
+  return parts.length >= 2 ? parts[parts.length - 2] : "sessions";
+}
+
+function cleanTitle(value: string): string {
+  return value
+    .replace(/^\s{0,3}#{1,6}\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isInternalTitle(value: string): boolean {
+  const title = cleanTitle(value);
+  if (!title) return true;
+  if (isCliManagerSyncArtifactText(title)) return true;
+  if (/^AGENTS\.md instructions\b/i.test(title)) return true;
+  if (/^<[^>]+>$/.test(title)) return true;
+  if (/^(system|developer|user)_instructions$/i.test(title)) return true;
+  if (/^(system|developer) instructions$/i.test(title)) return true;
+  return false;
+}
+
+function normalizeSummary(raw: unknown) {
+  const rec = (raw ?? {}) as HistorySessionSummaryLike;
+  const source = normalizeSource(rec.source);
+  if (!source) return null;
+  return {
+    sessionId: asString(rec.session_id ?? rec.sessionId),
+    source,
+    projectKey: asString(rec.project_key ?? rec.projectKey),
+    title: asString(rec.title),
+    filePath: asString(rec.file_path ?? rec.filePath),
+    cwd: asString(rec.cwd).trim(),
+    updatedAt: asNumber(rec.updated_at ?? rec.updatedAt),
+    messageCount: asNumber(rec.message_count ?? rec.messageCount),
+  };
+}
+
+function resolveResumeCommand(source: HistorySource, sessionId: string): string | null {
+  const trimmed = sessionId.trim();
+  if (!trimmed || /\s/.test(trimmed) || /[\r\n]/.test(trimmed)) return null;
+  return source === "claude" ? `claude --resume ${trimmed}` : `codex resume --no-alt-screen ${trimmed}`;
+}
+
+function normalizeStoredResumeCommand(source: HistorySource | null, sessionId: string, startupCmd: string): string {
+  if (!source) return startupCmd;
+  const fallback = resolveResumeCommand(source, sessionId);
+  if (!startupCmd) return fallback ?? "";
+  if (source !== "codex" || !fallback) return startupCmd;
+  return startupCmd === `codex resume ${sessionId.trim()}` ? fallback : startupCmd;
+}
+
+function isAbsolutePathLike(path: string): boolean {
+  const value = path.trim();
+  return value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("\\\\");
+}
+
+function normalizeCandidate(summary: NonNullable<ReturnType<typeof normalizeSummary>>): ExternalSessionCandidate | null {
+  if (isCliManagerSyncArtifactText(summary.title)) return null;
+  const cwd = summary.cwd || (isAbsolutePathLike(summary.projectKey) ? summary.projectKey.trim() : "");
+  if (!cwd) return null;
+  const startupCmd = resolveResumeCommand(summary.source, summary.sessionId);
+  if (!startupCmd) return null;
+  const projectName = basenameFromPath(cwd) || summary.projectKey || summary.title || summary.source;
+  const summaryTitle = isInternalTitle(summary.title) ? "" : cleanTitle(summary.title);
+  const title = summaryTitle || projectName;
+  return {
+    key: makeSessionCandidateKey(summary.source, summary.sessionId, summary.filePath),
+    source: summary.source,
+    sessionId: summary.sessionId,
+    projectKey: summary.projectKey,
+    filePath: summary.filePath,
+    projectName,
+    cwd,
+    title,
+    startupCmd,
+    updatedAt: summary.updatedAt,
+  };
+}
+
+function sourceLabel(source: HistorySource): string {
+  return source === "codex" ? "Codex" : "Claude";
+}
+
+function stripSourceSuffix(name: string): string {
+  return name.replace(/\s+·\s+(?:Codex|Claude)$/i, "").trim() || name;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const result: string[] = [];
+  for (const value of values) {
+    if (value && !result.includes(value)) result.push(value);
+  }
+  return result;
+}
+
+function upsertManySyncedSessions(
+  sessions: SyncedExternalSession[],
+  candidates: ExternalSessionCandidate[]
+): SyncedExternalSession[] {
+  let next = sessions;
+  for (const candidate of candidates) {
+    next = upsertSyncedSession(next, candidate);
+  }
+  return next;
+}
+
+function candidateProjectRoot(candidate: ExternalSessionCandidate, rootCandidates: ExternalSessionCandidate[], projects: Project[]) {
+  const project = findContainingProject(projects, candidate);
+  if (project) {
+    return {
+      key: `project:${project.id}`,
+      name: stripSourceSuffix(project.name),
+      cwd: project.path,
+    };
+  }
+  const ancestor = findAncestorCandidate(rootCandidates, candidate);
+  if (ancestor) {
+    return {
+      key: `cwd:${normalizePathForKey(ancestor.cwd)}`,
+      name: ancestor.projectName || basenameFromPath(ancestor.cwd) || sourceLabel(ancestor.source),
+      cwd: ancestor.cwd,
+    };
+  }
+  return {
+    key: `cwd:${normalizePathForKey(candidate.cwd)}`,
+    name: candidate.projectName || basenameFromPath(candidate.cwd) || sourceLabel(candidate.source),
+    cwd: candidate.cwd,
+  };
+}
+
+function groupProjectCandidates(
+  candidates: ExternalSessionCandidate[],
+  projects: Project[],
+  rootCandidates = candidates
+): ExternalSessionProjectCandidate[] {
+  const sourcesByProject = new Map<string, Set<HistorySource>>();
+  for (const candidate of candidates) {
+    const root = candidateProjectRoot(candidate, rootCandidates, projects);
+    const sources = sourcesByProject.get(root.key) ?? new Set<HistorySource>();
+    sources.add(candidate.source);
+    sourcesByProject.set(root.key, sources);
+  }
+
+  const map = new Map<string, ExternalSessionProjectCandidate>();
+  for (const candidate of candidates) {
+    const root = candidateProjectRoot(candidate, rootCandidates, projects);
+    const splitBySource = (sourcesByProject.get(root.key)?.size ?? 0) > 1;
+    const key = `${root.key}:${candidate.source}`;
+    const rootName = stripSourceSuffix(root.name);
+    const name = splitBySource ? `${rootName} · ${sourceLabel(candidate.source)}` : rootName;
+    const group = map.get(key);
+    if (group) {
+      group.sessions.push(candidate);
+      group.sessionCount += 1;
+      group.updatedAt = Math.max(group.updatedAt, candidate.updatedAt);
+      continue;
+    }
+    map.set(key, {
+      key,
+      source: candidate.source,
+      name,
+      cwd: root.cwd,
+      updatedAt: candidate.updatedAt,
+      sessionCount: 1,
+      sessions: [candidate],
+    });
+  }
+
+  return Array.from(map.values())
+    .map((group) => ({
+      ...group,
+      sessions: [...group.sessions].sort((a, b) => b.updatedAt - a.updatedAt),
+    }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function upsertSyncedSession(sessions: SyncedExternalSession[], candidate: ExternalSessionCandidate): SyncedExternalSession[] {
+  const next: SyncedExternalSession = {
+    ...candidate,
+    syncedAt: sessions.find((item) => item.key === candidate.key)?.syncedAt ?? Date.now(),
+  };
+  return [next, ...sessions.filter((item) => item.key !== candidate.key)]
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function sourceCliTool(source: HistorySource): string {
+  return source === "codex" ? "codex" : "claude";
+}
+
+function samePath(a: string, b: string): boolean {
+  return normalizePathForKey(a) === normalizePathForKey(b);
+}
+
+async function ensureExternalSessionGroup(name: string) {
+  const trimmed = name.trim();
+  const existing = useProjectStore
+    .getState()
+    .groups
+    .find((group) => group.parent_id === null && group.name === trimmed);
+  if (existing) return existing;
+  return useProjectStore.getState().createGroup({ name: trimmed });
+}
+
+function parseProjectGroupKey(key: string): string | null {
+  return key.match(/^project:([^:]+)/)?.[1] ?? null;
+}
+
+async function ensureProjectsForExternalSessionGroups(groups: ExternalSessionProjectCandidate[]): Promise<number> {
+  if (groups.length === 0) return 0;
+
+  const projectStore = useProjectStore.getState();
+  let projects = projectStore.projects;
+  let createdCount = 0;
+
+  for (const group of groups) {
+    if (!group.cwd.trim()) continue;
+    const cliTool = sourceCliTool(group.source);
+    const sourceName = sourceLabel(group.source);
+    const existingProjectId = parseProjectGroupKey(group.key);
+    const existingProject = existingProjectId
+      ? projects.find((project) => project.id === existingProjectId)
+      : null;
+
+    if (
+      existingProject
+      && existingProject.group_id === null
+      && samePath(existingProject.path, group.cwd)
+      && existingProject.cli_tool.trim().toLowerCase() === cliTool
+      && existingProject.name === group.name
+    ) {
+      const externalGroup = await ensureExternalSessionGroup(group.name);
+      await useProjectStore.getState().updateProject(existingProject.id, {
+        name: sourceName,
+        group_id: externalGroup.id,
+      });
+      projects = useProjectStore.getState().projects;
+      continue;
+    }
+
+    if (existingProject && matchesProjectSource(existingProject, group.source)) continue;
+
+    const representative = group.sessions[0] ?? {
+      key: group.key,
+      source: group.source,
+      sessionId: "",
+      projectKey: "",
+      filePath: "",
+      projectName: group.name,
+      cwd: group.cwd,
+      title: group.name,
+      startupCmd: "",
+      updatedAt: group.updatedAt,
+    };
+    const existing = findContainingProject(projects, {
+      ...representative,
+      cwd: group.cwd,
+      source: group.source,
+    });
+    if (existing) continue;
+    const externalGroup = await ensureExternalSessionGroup(group.name);
+
+    const created = await useProjectStore.getState().createProject({
+      name: sourceName,
+      path: group.cwd,
+      group_id: externalGroup.id,
+      cli_tool: cliTool,
+      startup_cmd: "",
+      env_vars: "{}",
+      provider_overrides: "{}",
+    });
+    projects = [...useProjectStore.getState().projects, created];
+    createdCount += 1;
+  }
+
+  return createdCount;
+}
+
+async function ensureProjectsForSyncedSessions(sessions: SyncedExternalSession[]): Promise<number> {
+  if (sessions.length === 0) return 0;
+  const groups = groupProjectCandidates(
+    sessions,
+    useProjectStore.getState().projects,
+    sessions
+  );
+  return ensureProjectsForExternalSessionGroups(groups);
+}
+
+async function persistState(
+  acceptedKeys: string[],
+  ignoredKeys: string[],
+  syncedSessions: SyncedExternalSession[],
+  initialSyncPromptHandled: boolean
+): Promise<void> {
+  const s = await getStore();
+  await Promise.all([
+    s.set("schemaVersion", STORE_SCHEMA_VERSION),
+    s.set("initialSyncPromptHandled", initialSyncPromptHandled),
+    s.set("acceptedKeys", acceptedKeys),
+    s.set("ignoredKeys", ignoredKeys),
+    s.set("syncedSessions", syncedSessions),
+  ]);
+}
+
+async function persistCurrentState(state: ExternalSessionSyncStore): Promise<void> {
+  await persistState(
+    state.acceptedKeys,
+    state.ignoredKeys,
+    state.syncedSessions,
+    state.initialSyncPromptHandled
+  );
+}
+
+function handledSessionKeys(state: ExternalSessionSyncStore): Set<string> {
+  return new Set([
+    ...state.acceptedKeys,
+    ...state.ignoredKeys,
+    ...state.pendingKeys,
+    ...state.syncedSessions.map((session) => session.key),
+    ...deletedKeysThisSession,
+  ]);
+}
+
+async function scanProjectCandidates(handledKeys: Set<string>, limit: number): Promise<ExternalSessionProjectCandidate[]> {
+  if (projectScanInFlight) return projectScanInFlight;
+  projectScanInFlight = (async () => {
+    const startedAt = Date.now();
+    logInfo("External session project scan started", { limit });
+    const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
+      source: null,
+      ...getHistoryPathArgs(),
+      projectPath: null,
+      query: null,
+      limit,
+      offset: 0,
+    });
+    const summaries = (summariesRaw ?? [])
+      .map((item) => normalizeSummary(item))
+      .filter((item): item is NonNullable<ReturnType<typeof normalizeSummary>> => Boolean(item))
+      .filter((item) => item.sessionId && item.filePath)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+
+    const allCandidates = summaries
+      .map((summary) => normalizeCandidate(summary))
+      .filter((candidate): candidate is ExternalSessionCandidate => Boolean(candidate));
+
+    const unsyncedCandidates = allCandidates.filter((candidate) => !handledKeys.has(candidate.key));
+    const projectCandidates = groupProjectCandidates(unsyncedCandidates, useProjectStore.getState().projects, allCandidates);
+    logInfo("External session project scan finished", {
+      durationMs: Date.now() - startedAt,
+      summaries: summaries.length,
+      candidates: allCandidates.length,
+      unsynced: unsyncedCandidates.length,
+      projects: projectCandidates.length,
+    });
+    return projectCandidates;
+  })().finally(() => {
+    projectScanInFlight = null;
+  });
+  return projectScanInFlight;
+}
+
+export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set, get) => ({
+  loaded: false,
+  initialSyncPromptHandled: false,
+  acceptedKeys: [],
+  ignoredKeys: [],
+  pendingKeys: [],
+  syncedSessions: [],
+  projectCandidates: [],
+  dialogOpen: false,
+  dialogMode: "manual",
+  scanningProjects: false,
+  syncingProjects: false,
+
+  load: async () => {
+    const s = await getStore();
+    const schemaVersion = asNumber(await s.get("schemaVersion"));
+    const acceptedKeys = normalizeStringList(await s.get("acceptedKeys"));
+    const syncedSessions = normalizeSyncedSessions(await s.get("syncedSessions"));
+    let ignoredKeys = normalizeStringList(await s.get("ignoredKeys"));
+    const initialSyncPromptHandled = Boolean(await s.get("initialSyncPromptHandled"));
+    if (schemaVersion < STORE_SCHEMA_VERSION) {
+      ignoredKeys = [];
+      await persistState(acceptedKeys, ignoredKeys, syncedSessions, initialSyncPromptHandled);
+    }
+    set({
+      loaded: true,
+      initialSyncPromptHandled,
+      acceptedKeys,
+      ignoredKeys,
+      syncedSessions,
+    });
+    void ensureProjectsForSyncedSessions(syncedSessions).catch((err) => {
+      logWarn("Failed to materialize synced external sessions as projects", err);
+    });
+  },
+
+  scanAndPrompt: async () => {
+    await get().openInitialDialog();
+  },
+
+  startMonitor: () => {
+    if (typeof window === "undefined" || initialCheckStarted) return;
+    initialCheckStarted = true;
+    void get().openInitialDialog();
+  },
+
+  stopMonitor: () => {
+    initialCheckStarted = false;
+  },
+
+  openInitialDialog: async () => {
+    if (!get().loaded) await get().load();
+    if (get().initialSyncPromptHandled) return;
+    set({ scanningProjects: true, dialogMode: "initial" });
+    try {
+      const projectCandidates = await scanProjectCandidates(handledSessionKeys(get()), INITIAL_PROJECT_SCAN_LIMIT);
+      if (projectCandidates.length === 0) {
+        set({ initialSyncPromptHandled: true, scanningProjects: false, projectCandidates: [] });
+        await persistCurrentState(get());
+        return;
+      }
+      set({
+        projectCandidates,
+        dialogMode: "initial",
+        dialogOpen: true,
+        scanningProjects: false,
+      });
+    } catch (err) {
+      set({ scanningProjects: false });
+      logWarn("External session project scan failed", err);
+    }
+  },
+
+  openManualDialog: async () => {
+    if (!get().loaded) await get().load();
+    set({ scanningProjects: true, dialogMode: "manual", dialogOpen: true, projectCandidates: [] });
+    try {
+      const projectCandidates = await scanProjectCandidates(handledSessionKeys(get()), MANUAL_PROJECT_SCAN_LIMIT);
+      set({
+        projectCandidates,
+        dialogMode: "manual",
+        dialogOpen: true,
+        scanningProjects: false,
+      });
+      if (projectCandidates.length === 0) {
+        toast.info("没有找到可同步的 Codex/Claude 项目");
+      }
+    } catch (err) {
+      set({ scanningProjects: false });
+      toast.error("扫描 Codex/Claude 项目失败", { description: String(err) });
+    }
+  },
+
+  closeProjectDialog: async () => {
+    const nextInitialHandled = get().dialogMode === "initial" ? true : get().initialSyncPromptHandled;
+    set({
+      dialogOpen: false,
+      scanningProjects: false,
+      syncingProjects: false,
+      initialSyncPromptHandled: nextInitialHandled,
+    });
+    await persistCurrentState(get());
+  },
+
+  syncProjectCandidates: async (keys) => {
+    const selectedKeys = new Set(keys.map((key) => key.trim()).filter(Boolean));
+    const selectedProjects = get().projectCandidates.filter((project) => selectedKeys.has(project.key));
+    const candidates = selectedProjects.flatMap((project) => project.sessions);
+    const nextInitialHandled = get().dialogMode === "initial" ? true : get().initialSyncPromptHandled;
+
+    if (candidates.length === 0) {
+      set({ dialogOpen: false, initialSyncPromptHandled: nextInitialHandled });
+      await persistCurrentState(get());
+      toast.info("没有选择要同步的项目");
+      return;
+    }
+
+    set({ syncingProjects: true });
+    try {
+      const createdProjects = await ensureProjectsForExternalSessionGroups(selectedProjects);
+      const candidateKeys = candidates.map((candidate) => candidate.key);
+      candidateKeys.forEach((key) => deletedKeysThisSession.delete(key));
+      const nextAccepted = uniqueStrings([
+        ...get().acceptedKeys.filter((key) => !candidateKeys.includes(key)),
+        ...candidateKeys,
+      ]);
+      const nextIgnored = get().ignoredKeys.filter((key) => !candidateKeys.includes(key));
+      const nextSessions = upsertManySyncedSessions(get().syncedSessions, candidates);
+      set({
+        acceptedKeys: nextAccepted,
+        ignoredKeys: nextIgnored,
+        pendingKeys: get().pendingKeys.filter((key) => !candidateKeys.includes(key)),
+        syncedSessions: nextSessions,
+        initialSyncPromptHandled: nextInitialHandled,
+        dialogOpen: false,
+        syncingProjects: false,
+      });
+      await persistCurrentState(get());
+      toast.success(
+        createdProjects > 0
+          ? `同步完成，新建 ${createdProjects} 个项目，${candidates.length} 条记录`
+          : `同步完成，共同步 ${selectedProjects.length} 个项目，${candidates.length} 条记录`
+      );
+    } catch (err) {
+      set({ syncingProjects: false });
+      toast.error("同步 Codex/Claude 项目失败", { description: String(err) });
+    }
+  },
+
+  accept: async (candidate) => {
+    try {
+      deletedKeysThisSession.delete(candidate.key);
+      const nextAccepted = [...get().acceptedKeys.filter((key) => key !== candidate.key), candidate.key];
+      const nextPending = get().pendingKeys.filter((key) => key !== candidate.key);
+      const nextSessions = upsertSyncedSession(get().syncedSessions, candidate);
+      set({ acceptedKeys: nextAccepted, pendingKeys: nextPending, syncedSessions: nextSessions });
+      await persistState(nextAccepted, get().ignoredKeys, nextSessions, get().initialSyncPromptHandled);
+      toast.success(translateCurrent("notifications.externalSessionSync.success", {
+        source: sourceLabel(candidate.source),
+        name: candidate.title,
+      }));
+    } catch (err) {
+      set((state) => ({ pendingKeys: state.pendingKeys.filter((key) => key !== candidate.key) }));
+      toast.error(translateCurrent("notifications.externalSessionSync.failed"), { description: String(err) });
+    }
+  },
+
+  ignore: async (candidate) => {
+    deletedKeysThisSession.delete(candidate.key);
+    const nextIgnored = [...get().ignoredKeys.filter((key) => key !== candidate.key), candidate.key];
+    const nextPending = get().pendingKeys.filter((key) => key !== candidate.key);
+    set({ ignoredKeys: nextIgnored, pendingKeys: nextPending });
+    await persistState(get().acceptedKeys, nextIgnored, get().syncedSessions, get().initialSyncPromptHandled);
+  },
+
+  removeSyncedSessions: async (keys) => {
+    const keySet = new Set(keys.map((key) => key.trim()).filter(Boolean));
+    if (keySet.size === 0) return;
+
+    const nextSessions = get().syncedSessions.filter((session) => !keySet.has(session.key));
+    const nextAccepted = get().acceptedKeys.filter((key) => !keySet.has(key));
+    const nextPending = get().pendingKeys.filter((key) => !keySet.has(key));
+    const nextIgnored = get().ignoredKeys.filter((key) => !keySet.has(key));
+    keySet.forEach((key) => deletedKeysThisSession.add(key));
+
+    set({
+      acceptedKeys: nextAccepted,
+      ignoredKeys: nextIgnored,
+      pendingKeys: nextPending,
+      syncedSessions: nextSessions,
+    });
+    await persistState(nextAccepted, nextIgnored, nextSessions, get().initialSyncPromptHandled);
+  },
+}));

@@ -6,12 +6,13 @@ interface GitChangesTreeProps {
   nodes: GitTreeNode[];
   treeId: string;
   onFileClick: (filePath: string) => void;
+  onOpenSourceFile: (filePath: string, status: string) => void;
   onRequestDiscard: (path: string, name: string, status: string) => void;
   onToggleStage: (filePath: string, staged: boolean) => void;
   onToggleStagePaths: (paths: string[], allStaged: boolean) => void;
 }
 
-export function GitChangesTree({ project, nodes, treeId, onFileClick, onRequestDiscard, onToggleStage, onToggleStagePaths }: GitChangesTreeProps) {
+export function GitChangesTree({ project, nodes, treeId, onFileClick, onOpenSourceFile, onRequestDiscard, onToggleStage, onToggleStagePaths }: GitChangesTreeProps) {
   return (
     <div className="space-y-0.5">
       {nodes.map((node) => (
@@ -22,6 +23,7 @@ export function GitChangesTree({ project, nodes, treeId, onFileClick, onRequestD
           depth={0}
           treeId={treeId}
           onFileClick={onFileClick}
+          onOpenSourceFile={onOpenSourceFile}
           onRequestDiscard={onRequestDiscard}
           onToggleStage={onToggleStage}
           onToggleStagePaths={onToggleStagePaths}

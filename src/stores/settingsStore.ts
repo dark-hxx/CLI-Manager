@@ -620,7 +620,9 @@ async function applyDebugMode(enabled: boolean) {
   try {
     await invoke("set_debug_logging", { enabled });
   } catch (err) {
-    console.warn("Failed to set debug logging:", err);
+    if (enabled) {
+      console.warn("Failed to set debug logging:", err);
+    }
   }
 }
 

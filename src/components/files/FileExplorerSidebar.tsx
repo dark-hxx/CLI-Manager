@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiPathBlock, formatAiRootTree, formatAiTree, formatTerminalDragPath, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
+import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { beginTerminalFileDrag, endTerminalFileDrag } from "../../lib/terminalFileDrag";
 import type { GitFileChange, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode } from "../../lib/types";
@@ -45,6 +46,7 @@ type DraggedFileEntry = Pick<ProjectFileEntry, "kind" | "name" | "path">;
 type Translate = ReturnType<typeof useI18n>["t"];
 
 const FILE_EXPLORER_ENTRY_MIME = "application/x-cli-manager-file-entry";
+const FILE_WATCH_REFRESH_DEBOUNCE_MS = 600;
 
 interface AutoCollapseGroupState {
   expandedGroupPaths: Set<string>;
@@ -736,10 +738,32 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     let disposed = false;
     let unlisten: (() => void) | undefined;
     let fallbackTimer: number | undefined;
+    let refreshTimer: number | undefined;
+    let pendingChangedPaths: Set<string> | null | undefined;
 
     const isActive = () => document.visibilityState === "visible" && document.hasFocus();
-    const refreshIfActive = () => {
-      if (isActive()) void refreshVisibleState();
+    const refreshIfActive = (changedPaths?: string[]) => {
+      if (isActive()) void refreshVisibleState(changedPaths);
+    };
+    const scheduleRefreshIfActive = (changedPaths?: string[]) => {
+      if (!isActive()) return;
+      if (!changedPaths?.length) {
+        pendingChangedPaths = null;
+      } else if (pendingChangedPaths !== null) {
+        pendingChangedPaths ??= new Set<string>();
+        for (const path of changedPaths) pendingChangedPaths.add(path);
+      }
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
+        const paths = pendingChangedPaths === null
+          ? undefined
+          : pendingChangedPaths
+            ? Array.from(pendingChangedPaths)
+            : undefined;
+        pendingChangedPaths = undefined;
+        refreshIfActive(paths);
+      }, FILE_WATCH_REFRESH_DEBOUNCE_MS);
     };
     const startFallback = () => {
       if (fallbackTimer === undefined) {
@@ -753,16 +777,16 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       }
     };
 
-    void listen<{ projectPath: string }>("project-files-changed", (event) => {
+    void listen<{ projectPath: string; changedPaths?: string[] }>("project-files-changed", (event) => {
       if (disposed) return;
-      if (event.payload.projectPath === project.path) refreshIfActive();
+      if (event.payload.projectPath === project.path) scheduleRefreshIfActive(event.payload.changedPaths);
     }).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;
     });
 
     void invoke("file_watch_start", { projectPath: project.path }).catch((err) => {
-      console.warn("[FileExplorerSidebar] file_watch_start failed, falling back to polling:", err);
+      debugConsoleWarn("[FileExplorerSidebar] file_watch_start failed, falling back to polling:", err);
       if (!disposed) startFallback();
     });
 
@@ -776,6 +800,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     return () => {
       disposed = true;
       stopFallback();
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
       if (unlisten) unlisten();
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);

@@ -49,6 +49,22 @@ for (const message of messages) {
 
 ## Required Patterns
 
+### Gate diagnostic console output behind Debug Mode
+
+**What**: WebView-side diagnostic `console.log`, `console.info`, and `console.warn` output must go through `src/lib/debugConsole.ts`, not direct `console.*` calls.
+
+**Why**: normal users should not get noisy console diagnostics; Debug Mode is the explicit switch for frontend console diagnostics. Keep real error reporting paths such as `console.error` separate unless the task explicitly changes error reporting.
+
+**Correct**:
+```typescript
+debugConsoleWarn("[oom-diagnostics:webview]", payload);
+```
+
+**Wrong**:
+```typescript
+console.warn("[oom-diagnostics:webview]", payload);
+```
+
 ### Bound buffers for hidden terminal output
 
 **What**: when terminal output is buffered while a tab is hidden, keep a fixed-size latest suffix instead of an unbounded list.

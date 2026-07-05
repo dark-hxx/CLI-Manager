@@ -25,6 +25,7 @@ import type {
   PromptScope,
   HistorySource,
   HistorySourceFilter,
+  SessionFavoriteSnapshot,
   SessionMeta,
 } from "../lib/types";
 
@@ -108,7 +109,7 @@ interface HistoryStore {
   triggerSessionSearchFocus: () => void;
 }
 
-const SESSION_PAGE_SIZE = 100;
+const SESSION_PAGE_SIZE = 20;
 const SESSION_PAGE_FETCH_LIMIT = SESSION_PAGE_SIZE + 1;
 const DEFAULT_SEARCH_LIMIT = 120;
 const STATS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -202,6 +203,7 @@ function normalizeSummary(raw: unknown): HistorySessionSummary {
     project_key: asString(rec.project_key ?? rec.projectKey),
     title: asString(rec.title),
     file_path: asString(rec.file_path ?? rec.filePath),
+    cwd: asString(rec.cwd ?? "") || null,
     created_at: asNumber(rec.created_at ?? rec.createdAt),
     updated_at: asNumber(rec.updated_at ?? rec.updatedAt),
     message_count: asNumber(rec.message_count ?? rec.messageCount),
@@ -246,6 +248,7 @@ function normalizeSessionUsage(raw: unknown): HistorySessionDetail["usage"] {
     cache_creation_tokens: asNumber(rec.cache_creation_tokens ?? rec.cacheCreationTokens),
     total_cost_usd: asNumber(rec.total_cost_usd ?? rec.totalCostUsd),
     dominant_model: asString(rec.dominant_model ?? rec.dominantModel ?? "") || null,
+    current_model: asString(rec.current_model ?? rec.currentModel ?? "") || null,
     context_window: asNumber(rec.context_window ?? rec.contextWindow) || null,
     last_context_tokens: asNumber(rec.last_context_tokens ?? rec.lastContextTokens) || null,
     reasoning_effort: asString(rec.reasoning_effort ?? rec.reasoningEffort ?? "") || null,
@@ -274,6 +277,7 @@ function normalizeTokenTrend(raw: unknown): HistoryTokenTrendPoint[] {
         cache_read_tokens: cacheRead,
         cache_creation_tokens: cacheCreation,
         total_tokens: total,
+        model: asString(rec.model ?? "") || null,
       };
     })
     .filter((item) => item.total_tokens > 0);
@@ -765,8 +769,30 @@ function makeSessionKey(source: HistorySource, sessionId: string, filePath: stri
   return `${source}:${sessionId}:${filePath}`;
 }
 
+function claudeProjectKeyFromPath(path: string): string {
+  return path.trim().replace(/:/g, "-").replace(/[\\/]/g, "-").replace(/-+$/g, "").toLowerCase();
+}
+
+function projectLastSegment(path: string): string {
+  return normalizeMetaPath(path).replace(/\/+$/g, "").split("/").filter(Boolean).pop()?.toLowerCase() ?? "";
+}
+
 function normalizeMetaPath(path: string): string {
   return path.replace(/\\/g, "/");
+}
+
+function snapshotMatchesFilters(
+  snapshot: SessionFavoriteSnapshot,
+  sourceFilter: HistorySourceFilter,
+  projectPathFilter: string | null
+): boolean {
+  if (sourceFilter !== "all" && snapshot.source !== sourceFilter) return false;
+  if (!projectPathFilter) return true;
+  const projectKey = snapshot.project_key.toLowerCase();
+  if (snapshot.source === "claude") {
+    return projectKey === claudeProjectKeyFromPath(projectPathFilter);
+  }
+  return projectKey === projectLastSegment(projectPathFilter) || projectKey === normalizeMetaPath(projectPathFilter).toLowerCase();
 }
 
 function makeStatsProjectOptionsCacheKey(
@@ -859,6 +885,7 @@ function viewToSummary(view: HistorySessionView): HistorySessionSummary {
     project_key: view.project_key,
     title: view.title,
     file_path: view.file_path,
+    cwd: view.cwd,
     created_at: view.created_at,
     updated_at: view.updated_at,
     message_count: view.message_count,
@@ -876,6 +903,134 @@ async function readMetaMap(): Promise<SessionMetaMap> {
     result[row.session_key] = row;
   }
   return result;
+}
+
+function snapshotToSummary(snapshot: SessionFavoriteSnapshot): HistorySessionSummary {
+  return {
+    session_id: snapshot.session_id,
+    source: snapshot.source,
+    project_key: snapshot.project_key,
+    title: snapshot.title,
+    file_path: snapshot.file_path,
+    created_at: snapshot.created_at,
+    updated_at: snapshot.updated_at,
+    message_count: snapshot.message_count,
+    branch: snapshot.branch ?? null,
+  };
+}
+
+async function readFavoriteSnapshots(
+  sourceFilter: HistorySourceFilter,
+  projectPathFilter: string | null
+): Promise<SessionFavoriteSnapshot[]> {
+  const db = await getDb();
+  const rows = await db.select<SessionFavoriteSnapshot[]>(`
+    SELECT s.*
+    FROM session_favorite_snapshots s
+    INNER JOIN session_meta m ON m.session_key = s.session_key
+    WHERE m.starred = 1
+    ORDER BY s.updated_at DESC
+  `);
+  return rows.filter((snapshot) => snapshotMatchesFilters(snapshot, sourceFilter, projectPathFilter));
+}
+
+async function readFavoriteSnapshotDetail(sessionKey: string): Promise<HistorySessionDetail | null> {
+  const db = await getDb();
+  const rows = await db.select<Array<{ detail_json: string }>>(
+    "SELECT detail_json FROM session_favorite_snapshots WHERE session_key = $1 LIMIT 1",
+    [sessionKey]
+  );
+  const json = rows[0]?.detail_json;
+  if (!json) return null;
+  try {
+    return normalizeDetail(JSON.parse(json));
+  } catch (err) {
+    logWarn("history.favoriteSnapshot.parseFailed", { sessionKey, error: String(err) });
+    return null;
+  }
+}
+
+async function writeFavoriteSnapshot(sessionKey: string, detail: HistorySessionDetail): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO session_favorite_snapshots
+      (session_key, session_id, source, project_key, file_path, title, created_at, updated_at, message_count, branch, detail_json, snapshot_at)
+     VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     ON CONFLICT(session_key) DO UPDATE SET
+      session_id = excluded.session_id,
+      source = excluded.source,
+      project_key = excluded.project_key,
+      file_path = excluded.file_path,
+      title = excluded.title,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      message_count = excluded.message_count,
+      branch = excluded.branch,
+      detail_json = excluded.detail_json,
+      snapshot_at = excluded.snapshot_at`,
+    [
+      sessionKey,
+      detail.session_id,
+      detail.source,
+      detail.project_key,
+      detail.file_path,
+      detail.title,
+      detail.created_at,
+      detail.updated_at,
+      detail.message_count,
+      detail.branch ?? null,
+      JSON.stringify(detail),
+      Date.now().toString(),
+    ]
+  );
+}
+
+async function deleteFavoriteSnapshot(sessionKey: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM session_favorite_snapshots WHERE session_key = $1", [sessionKey]);
+}
+
+async function loadDetailForSnapshot(sessionKey: string, session: HistorySessionView): Promise<HistorySessionDetail> {
+  const active = useHistoryStore.getState().activeSession;
+  if (useHistoryStore.getState().activeSessionKey === sessionKey && active) {
+    return active;
+  }
+  const detailRaw = await invoke<unknown>("history_get_session", {
+    filePath: session.file_path,
+    ...getHistoryPathArgs(),
+    source: session.source,
+    projectKey: session.project_key,
+  });
+  return normalizeDetail(detailRaw);
+}
+
+async function applyFavoriteSnapshots(
+  summaries: HistorySessionSummary[],
+  metaMap: SessionMetaMap,
+  sourceFilter: HistorySourceFilter,
+  projectPathFilter: string | null,
+  sourceSessionKeys?: Set<string>
+): Promise<HistorySessionView[]> {
+  const summaryMap = new Map<string, HistorySessionSummary>();
+  for (const summary of summaries) {
+    summaryMap.set(makeSessionKey(summary.source, summary.session_id, summary.file_path), summary);
+  }
+  const sourceKeys = sourceSessionKeys ?? new Set(summaryMap.keys());
+
+  const snapshotKeys = new Set<string>();
+  for (const snapshot of await readFavoriteSnapshots(sourceFilter, projectPathFilter)) {
+    snapshotKeys.add(snapshot.session_key);
+    if (!summaryMap.has(snapshot.session_key)) {
+      summaryMap.set(snapshot.session_key, snapshotToSummary(snapshot));
+    }
+  }
+
+  return applyMeta(Array.from(summaryMap.values()), metaMap).map((session) =>
+    snapshotKeys.has(session.sessionKey) && !sourceKeys.has(session.sessionKey)
+      ? { ...session, favoriteSnapshot: true }
+      : session
+  );
 }
 
 export const useHistoryStore = create<HistoryStore>((set, get) => ({
@@ -930,6 +1085,28 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     );
     await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_session_meta_updated ON session_meta(updated_at DESC)"
+    );
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS session_favorite_snapshots (
+        session_key   TEXT PRIMARY KEY,
+        session_id    TEXT NOT NULL,
+        source        TEXT NOT NULL,
+        project_key   TEXT NOT NULL,
+        file_path     TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        message_count INTEGER NOT NULL,
+        branch        TEXT,
+        detail_json   TEXT NOT NULL,
+        snapshot_at   TEXT NOT NULL
+      )
+    `);
+    await db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_source ON session_favorite_snapshots(source)"
+    );
+    await db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_updated ON session_favorite_snapshots(updated_at DESC)"
     );
   },
 
@@ -1002,7 +1179,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       const allSummaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
       const summaries = allSummaries.slice(0, SESSION_PAGE_SIZE);
       const metaMap = await readMetaMap();
-      const sessions = applyMeta(summaries, metaMap);
+      const sessions = await applyFavoriteSnapshots(summaries, metaMap, get().sourceFilter, get().projectPathFilter);
       const activeSessionKey = get().activeSessionKey;
       const activeExists = activeSessionKey
         ? sessions.some((item) => item.sessionKey === activeSessionKey)
@@ -1052,14 +1229,20 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       const allSummaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
       const nextSummaries = allSummaries.slice(0, SESSION_PAGE_SIZE);
       const summaryMap = new Map<string, HistorySessionSummary>();
+      const sourceSessionKeys = new Set<string>();
       for (const session of get().sessions) {
         summaryMap.set(session.sessionKey, viewToSummary(session));
+        if (!session.favoriteSnapshot) {
+          sourceSessionKeys.add(session.sessionKey);
+        }
       }
       for (const summary of nextSummaries) {
-        summaryMap.set(makeSessionKey(summary.source, summary.session_id, summary.file_path), summary);
+        const key = makeSessionKey(summary.source, summary.session_id, summary.file_path);
+        summaryMap.set(key, summary);
+        sourceSessionKeys.add(key);
       }
       const metaMap = get().metaMap;
-      const sessions = applyMeta(Array.from(summaryMap.values()), metaMap);
+      const sessions = await applyFavoriteSnapshots(Array.from(summaryMap.values()), metaMap, get().sourceFilter, get().projectPathFilter, sourceSessionKeys);
       set({
         sessions,
         hasMoreSessions: allSummaries.length > SESSION_PAGE_SIZE,
@@ -1083,14 +1266,21 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
     set({ activeSessionKey: sessionKey, loadingSessionDetail: true, focusedMessageIndex: null });
     try {
-      const detailRaw = await invoke<unknown>("history_get_session", {
-        filePath: target.file_path,
-        ...getHistoryPathArgs(),
-        source: target.source,
-        projectKey: target.project_key,
-      });
-      const detail = normalizeDetail(detailRaw);
-      set({ activeSession: detail });
+      try {
+        const detailRaw = await invoke<unknown>("history_get_session", {
+          filePath: target.file_path,
+          ...getHistoryPathArgs(),
+          source: target.source,
+          projectKey: target.project_key,
+        });
+        const detail = normalizeDetail(detailRaw);
+        set({ activeSession: detail });
+      } catch (err) {
+        const snapshot = await readFavoriteSnapshotDetail(sessionKey);
+        if (!snapshot) throw err;
+        logWarn("history.favoriteSnapshot.fallback", { sessionKey, error: String(err) });
+        set({ activeSession: snapshot });
+      }
     } finally {
       set({ loadingSessionDetail: false });
       stopPerf({
@@ -1146,15 +1336,18 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     const target = get().sessions.find((item) => item.sessionKey === sessionKey);
     if (!target) return;
 
-    await invoke("history_delete_session", {
-      filePath: target.file_path,
-      ...getHistoryPathArgs(),
-      source: target.source,
-      projectKey: target.project_key,
-    });
+    if (!target.favoriteSnapshot) {
+      await invoke("history_delete_session", {
+        filePath: target.file_path,
+        ...getHistoryPathArgs(),
+        source: target.source,
+        projectKey: target.project_key,
+      });
+    }
 
     const db = await getDb();
     await db.execute("DELETE FROM session_meta WHERE session_key = $1", [sessionKey]);
+    await deleteFavoriteSnapshot(sessionKey);
 
     const sessions = get().sessions.filter((item) => item.sessionKey !== sessionKey);
     const metaMap = { ...get().metaMap };
@@ -1407,8 +1600,14 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       tags.map((item) => item.trim()).filter((item) => item.length > 0)
     );
     const updatedAt = Date.now().toString();
+    const snapshotDetail = patch.starred === true
+      ? await loadDetailForSnapshot(sessionKey, session)
+      : null;
 
     const db = await getDb();
+    if (snapshotDetail) {
+      await writeFavoriteSnapshot(sessionKey, snapshotDetail);
+    }
     await db.execute(
       `INSERT INTO session_meta
         (session_key, session_id, source, project_key, file_path, alias, starred, tags_json, updated_at)
@@ -1431,6 +1630,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         updatedAt,
       ]
     );
+    if (patch.starred === false) {
+      await deleteFavoriteSnapshot(sessionKey);
+    }
 
     const nextMeta: SessionMeta = {
       session_key: sessionKey,
@@ -1445,18 +1647,25 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     };
 
     const nextMetaMap = { ...get().metaMap, [sessionKey]: nextMeta };
-    const summaries: HistorySessionSummary[] = get().sessions.map((item) => ({
-      session_id: item.session_id,
-      source: item.source,
-      project_key: item.project_key,
-      title: item.title,
-      file_path: item.file_path,
-      created_at: item.created_at,
-      updated_at: item.updated_at,
-      message_count: item.message_count,
-      branch: item.branch,
-    }));
-    const sessions = applyMeta(summaries, nextMetaMap);
+    const sourceSessionKeys = new Set<string>();
+    const visibleSessions = get().sessions.filter((item) => !(patch.starred === false && item.sessionKey === sessionKey && item.favoriteSnapshot));
+    const summaries: HistorySessionSummary[] = visibleSessions.map((item) => {
+      if (!item.favoriteSnapshot) {
+        sourceSessionKeys.add(item.sessionKey);
+      }
+      return {
+        session_id: item.session_id,
+        source: item.source,
+        project_key: item.project_key,
+        title: item.title,
+        file_path: item.file_path,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+        message_count: item.message_count,
+        branch: item.branch,
+      };
+    });
+    const sessions = await applyFavoriteSnapshots(summaries, nextMetaMap, get().sourceFilter, get().projectPathFilter, sourceSessionKeys);
     set({ metaMap: nextMetaMap, sessions });
   },
 

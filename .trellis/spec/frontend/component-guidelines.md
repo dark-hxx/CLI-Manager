@@ -293,6 +293,29 @@ attachChildUnderLoadedParent(guessedParent, session);
 
 **Tests**: Run `npx tsc --noEmit`; manually verify a loaded parent with `subagents/agent-*.jsonl` children renders as a tree, while an orphan child remains a normal row.
 
+### Convention: History session source icons use explicit source mapping
+
+**What**: History session list source icons must map known history `source` values explicitly. Use `claude` -> `VendorKey "claude"` and `codex` -> `VendorKey "openai"` or the current Codex/OpenAI brand icon. Use `inferVendor(source)` only as a fallback for unknown future source strings.
+
+**Why**: `source` is an app-level history source identifier, not a provider/model name. Passing it directly through generic vendor inference can make Claude and Codex sessions share the wrong icon when inference rules change or overlap with model/provider names.
+
+**Correct**:
+
+```tsx
+const vendor =
+  source === "claude" ? "claude" :
+  source === "codex" ? "openai" :
+  inferVendor(source);
+```
+
+**Wrong**:
+
+```tsx
+const vendor = inferVendor(source);
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually verify the history list renders different source icons for Claude and Codex sessions in both light and dark themes.
+
 ### Convention: Keep settings tab ids stable when only renaming UI labels
 
 **What**: In `SettingsModal`, `SettingsTab` ids are part of the internal navigation contract. When a change only renames or reorganizes a settings page, keep the existing tab id and update only the visible label/title/description.

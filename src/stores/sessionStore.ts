@@ -47,9 +47,9 @@ export const useSessionStore = create<SessionStore>(() => ({
 
   saveSessions: async (sessions) => {
     const s = await getStore();
-    // 伪会话（子 Agent 转录 / 文件编辑器）是临时视图，绝不持久化/恢复。
+    // 伪会话（子 Agent 转录 / 文件编辑器 / 同步历史）是临时视图，绝不持久化/恢复。
     const persistable = sessions.filter(
-      (session) => session.kind !== "subagent-transcript" && session.kind !== "file-editor"
+      (session) => session.kind !== "subagent-transcript" && session.kind !== "file-editor" && session.kind !== "synced-history"
     );
     await s.set("sessions", persistable);
     useSessionStore.setState({ sessions: persistable });

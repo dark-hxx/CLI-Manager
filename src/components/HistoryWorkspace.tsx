@@ -14,7 +14,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { buildHistorySessionChildMap, toGroupLabel, type TimeGroupLabel } from "./history/historyViewUtils";
 import { buildSessionProcessModel, type SessionProcessModel } from "./history/sessionEvents";
 
-const SESSION_PAGE_SIZE = 100;
+const SESSION_PAGE_SIZE = 20;
 const MESSAGE_PAGE_SIZE = 160;
 const LOAD_MORE_THRESHOLD_PX = 220;
 const HISTORY_SIDEBAR_DEFAULT_WIDTH = 276;
@@ -40,6 +40,14 @@ function normalizeHistorySidebarWidth(width: number): number {
 
 function normalizePathKey(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+}
+
+function makeSearchHitKey(hit: HistorySearchHit): string {
+  return `${hit.source.toLowerCase()}:${hit.session_id}:${hit.file_path}`;
+}
+
+function matchesSourceFilter(source: string, sourceFilter: HistorySourceFilter): boolean {
+  return sourceFilter === "all" || source.toLowerCase() === sourceFilter;
 }
 
 function projectPathName(path: string): string {
@@ -129,6 +137,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const sourceFilter = useHistoryStore((s) => s.sourceFilter);
   const projectPathFilter = useHistoryStore((s) => s.projectPathFilter);
   const sessions = useHistoryStore((s) => s.sessions);
+  const metaMap = useHistoryStore((s) => s.metaMap);
   const activeSessionKey = useHistoryStore((s) => s.activeSessionKey);
   const activeSession = useHistoryStore((s) => s.activeSession);
   const globalQuery = useHistoryStore((s) => s.globalQuery);
@@ -176,6 +185,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const [matchCursor, setMatchCursor] = useState(0);
   const [promptOpen, setPromptOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [diffContainer, setDiffContainer] = useState<HTMLElement | null>(null);
   const [detailView, setDetailView] = useState<HistoryDetailView>("transcript");
   const [visibleSessionCount, setVisibleSessionCount] = useState(SESSION_PAGE_SIZE);
@@ -194,6 +204,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.isComposing) return;
+      if (document.querySelector(".ui-history-transcript-image-preview")) return;
       event.preventDefault();
       event.stopPropagation();
       if (diffOpen) {
@@ -286,21 +297,57 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
 
   const normalizedGlobal = globalQuery.trim().toLowerCase();
 
-  const filteredSessions = useMemo(() => {
-    if (!normalizedGlobal) return sessions;
-    const result: HistorySessionView[] = [];
+  const favoriteSearchScope = useMemo(() => {
+    const keys = new Set<string>();
+    const sourceSessions = new Set<string>();
+    const sourcePaths = new Set<string>();
+    const addFavorite = (source: string, sessionId: string, filePath: string) => {
+      const normalizedSource = source.toLowerCase();
+      if (sessionId) sourceSessions.add(`${normalizedSource}:${sessionId}`);
+      if (filePath) sourcePaths.add(`${normalizedSource}:${normalizePathKey(filePath)}`);
+      if (sessionId && filePath) keys.add(`${normalizedSource}:${sessionId}:${filePath}`);
+    };
+
     for (const item of sessions) {
+      if (item.starred) addFavorite(item.source, item.session_id, item.file_path);
+    }
+    for (const meta of Object.values(metaMap)) {
+      if (meta.starred === 1) addFavorite(meta.source, meta.session_id, meta.file_path);
+    }
+
+    return { keys, sourceSessions, sourcePaths };
+  }, [metaMap, sessions]);
+
+  const visibleSearchHits = useMemo(() => {
+    const sourceFilteredHits = searchHits.filter((hit) => matchesSourceFilter(hit.source, sourceFilter));
+    if (!favoriteOnly) return sourceFilteredHits;
+    return sourceFilteredHits.filter((hit) => {
+      const source = hit.source.toLowerCase();
+      return (
+        favoriteSearchScope.keys.has(makeSearchHitKey(hit)) ||
+        favoriteSearchScope.sourceSessions.has(`${source}:${hit.session_id}`) ||
+        favoriteSearchScope.sourcePaths.has(`${source}:${normalizePathKey(hit.file_path)}`)
+      );
+    });
+  }, [favoriteOnly, favoriteSearchScope, searchHits, sourceFilter]);
+
+  const filteredSessions = useMemo(() => {
+    const sourceFilteredSessions = sessions.filter((item) => matchesSourceFilter(item.source, sourceFilter));
+    const baseSessions = favoriteOnly ? sourceFilteredSessions.filter((item) => item.starred) : sourceFilteredSessions;
+    if (!normalizedGlobal) return baseSessions;
+    const result: HistorySessionView[] = [];
+    for (const item of baseSessions) {
       const haystack = `${item.displayTitle.toLowerCase()}${item.project_key.toLowerCase()}${item.tags.join(" ").toLowerCase()}`;
       if (haystack.includes(normalizedGlobal)) {
         result.push(item);
       }
     }
     return result;
-  }, [sessions, normalizedGlobal]);
+  }, [favoriteOnly, sessions, normalizedGlobal, sourceFilter]);
 
   useEffect(() => {
     setVisibleSessionCount(SESSION_PAGE_SIZE);
-  }, [normalizedGlobal, projectPathFilter, sourceFilter, loadingSessions]);
+  }, [favoriteOnly, normalizedGlobal, projectPathFilter, sourceFilter, loadingSessions]);
 
   const visibleFilteredSessions = useMemo(
     () => filteredSessions.slice(0, visibleSessionCount),
@@ -697,6 +744,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           projects={projects}
           groups={groups}
           globalQuery={globalQuery}
+          favoriteOnly={favoriteOnly}
           activeSessionKey={activeSessionKey}
           loadingSessions={loadingSessions}
           loadingMoreSessions={loadingMoreSessions}
@@ -707,7 +755,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           hasMoreSessions={hasMoreSessions}
           loadMoreSessionMode={loadMoreSessionMode}
           visibleSessionCount={Math.min(visibleSessionCount, filteredSessions.length)}
-          searchHits={searchHits}
+          searchHits={visibleSearchHits}
           globalSearchRef={globalSearchRef}
           selectionMode={selectionMode}
           selectedCount={selectedSessionKeys.size}
@@ -722,6 +770,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
             void setProjectPathFilter(value);
           }}
           onGlobalQueryChange={setGlobalQuery}
+          onFavoriteOnlyChange={setFavoriteOnly}
           onEnterSelectionMode={() => setSelectionMode(true)}
           onCancelSelectionMode={handleCancelSelectionMode}
           onToggleSelectAllVisible={handleToggleSelectAllVisible}

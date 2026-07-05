@@ -1,5 +1,9 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { X } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import type { ProjectImageFilePayload } from "../../lib/types";
 import { HistoryMarkdownContent } from "./HistoryMarkdownContent";
 import {
   isGitStatusLine,
@@ -12,7 +16,7 @@ interface SessionTranscriptContentProps {
   query?: string;
 }
 
-type TranscriptSectionKind = "markdown" | "xml" | "workflow-state" | "git" | "list";
+type TranscriptSectionKind = "markdown" | "xml" | "workflow-state" | "git" | "list" | "image";
 
 interface TranscriptSection {
   id: string;
@@ -20,6 +24,8 @@ interface TranscriptSection {
   text: string;
   tag?: string;
   status?: string;
+  imagePath?: string;
+  imageLabel?: string;
 }
 
 const XML_BLOCK_TAGS = new Set(["session-context", "current-state", "workflow", "system-reminder", "codex_internal_context"]);
@@ -85,6 +91,61 @@ function getFencePrefix(line: string): string | null {
   return null;
 }
 
+function parseAttribute(attrs: string, name: string): string | null {
+  const pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|(\\[[^\\]]+\\]|[^\\s>]+))`, "i");
+  const match = pattern.exec(attrs);
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+function parseImageMarker(line: string): { raw: string; path: string; label: string; rest: string } | null {
+  const trimmed = line.trim();
+  const match = /^<image\b([^>]*)(?:>|$)/i.exec(trimmed);
+  if (!match) return null;
+  const path = parseAttribute(match[1], "path");
+  if (!path) return null;
+
+  let consumed = match[0].length;
+  let tail = trimmed.slice(consumed);
+  const closeMatch = /^\s*<\/image>/i.exec(tail);
+  if (closeMatch) {
+    consumed += closeMatch[0].length;
+    tail = trimmed.slice(consumed);
+  }
+
+  const inlineLabelMatch = /^\s*(\[[^\]]+])/.exec(tail);
+  if (inlineLabelMatch) {
+    consumed += inlineLabelMatch[0].length;
+    tail = trimmed.slice(consumed);
+  }
+
+  const label = parseAttribute(match[1], "name") ?? inlineLabelMatch?.[1] ?? path;
+  return {
+    raw: trimmed.slice(0, consumed).trim(),
+    path,
+    label,
+    rest: tail.trimStart(),
+  };
+}
+
+function stripImageTextPrefix(line: string): string | null {
+  let rest = line.trimStart();
+  let changed = false;
+
+  const closeMatch = /^<\/image>/i.exec(rest);
+  if (closeMatch) {
+    rest = rest.slice(closeMatch[0].length).trimStart();
+    changed = true;
+  }
+
+  const labelMatch = /^\[Image #\d+]\s*/i.exec(rest);
+  if (labelMatch) {
+    rest = rest.slice(labelMatch[0].length).trimStart();
+    changed = true;
+  }
+
+  return changed ? rest : null;
+}
+
 function parseTranscriptSections(content: string): TranscriptSection[] {
   const lines = normalizeLines(content);
   const sections: TranscriptSection[] = [];
@@ -111,6 +172,32 @@ function parseTranscriptSections(content: string): TranscriptSection[] {
         }
         lineIndex += 1;
       }
+      continue;
+    }
+
+    let imageMarker = parseImageMarker(line);
+    if (imageMarker) {
+      let rest = line;
+      while (imageMarker) {
+        flushMarkdown();
+        sections.push(
+          makeSection("image", imageMarker.raw, sections.length, {
+            imagePath: imageMarker.path,
+            imageLabel: imageMarker.label,
+          })
+        );
+        rest = imageMarker.rest;
+        imageMarker = rest ? parseImageMarker(rest) : null;
+      }
+      if (rest.trim()) pending.push(rest);
+      lineIndex += 1;
+      continue;
+    }
+
+    const imageText = stripImageTextPrefix(line);
+    if (imageText !== null) {
+      if (imageText.trim()) pending.push(imageText);
+      lineIndex += 1;
       continue;
     }
 
@@ -194,6 +281,7 @@ function getBlockTitle(section: TranscriptSection): string {
 }
 
 function getBlockKind(section: TranscriptSection): string {
+  if (section.kind === "image") return "image";
   if (section.kind === "xml") return section.tag ?? "xml";
   return section.kind;
 }
@@ -233,9 +321,102 @@ function TranscriptLines({ lines, query, sectionId }: { lines: string[]; query: 
   );
 }
 
+function splitLocalPath(path: string): { rootPath: string; relativePath: string } | null {
+  const lastSlash = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  if (lastSlash < 0) return null;
+  const isWindowsDriveRoot = lastSlash === 2 && path[1] === ":";
+  const rootPath = lastSlash === 0 || isWindowsDriveRoot ? path.slice(0, lastSlash + 1) : path.slice(0, lastSlash);
+  const relativePath = path.slice(lastSlash + 1);
+  if (!rootPath || !relativePath) return null;
+  return { rootPath, relativePath };
+}
+
+function TranscriptImage({ section, query }: { section: TranscriptSection; query: string }) {
+  const { t } = useI18n();
+  const [image, setImage] = useState<ProjectImageFilePayload | null>(null);
+  const [failed, setFailed] = useState(false);
+  const imagePath = section.imagePath ?? "";
+  const imageLabel = section.imageLabel ?? t("history.imagePlaceholder");
+
+  useEffect(() => {
+    const target = splitLocalPath(imagePath);
+    if (!target) {
+      setImage(null);
+      setFailed(true);
+      return;
+    }
+
+    let cancelled = false;
+    setImage(null);
+    setFailed(false);
+    void invoke<ProjectImageFilePayload>("file_read_image", target)
+      .then((payload) => {
+        if (!cancelled) setImage(payload);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imagePath]);
+
+  if (!image || failed) {
+    return (
+      <div className="ui-history-transcript-lines ui-history-transcript-image-fallback">
+        <div className="ui-history-transcript-line">
+          {renderTranscriptLineHighlights(section.text, query, `${section.id}-image-fallback`)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <DialogPrimitive.Root>
+      <figure className="ui-history-transcript-image" title={section.text}>
+        <DialogPrimitive.Trigger asChild>
+          <button
+            type="button"
+            className="ui-history-transcript-image-trigger"
+            aria-label={t("history.transcript.openImage", { label: imageLabel })}
+          >
+            <img
+              src={`data:${image.mimeType};base64,${image.dataBase64}`}
+              alt={t("history.transcript.imageAlt", { label: imageLabel })}
+              loading="lazy"
+            />
+          </button>
+        </DialogPrimitive.Trigger>
+        <figcaption>{renderTranscriptLineHighlights(imageLabel, query, `${section.id}-image-label`)}</figcaption>
+      </figure>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="ui-history-transcript-image-preview-overlay" />
+        <DialogPrimitive.Content className="ui-history-transcript-image-preview" aria-describedby={undefined}>
+          <DialogPrimitive.Title className="sr-only">{imageLabel}</DialogPrimitive.Title>
+          <img
+            src={`data:${image.mimeType};base64,${image.dataBase64}`}
+            alt={t("history.transcript.imageAlt", { label: imageLabel })}
+          />
+          <DialogPrimitive.Close
+            className="ui-history-transcript-image-preview-close"
+            aria-label={t("history.transcript.closeImage")}
+          >
+            <X size={16} strokeWidth={2} aria-hidden="true" />
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
 function TranscriptBlock({ section, query }: { section: TranscriptSection; query: string }) {
   const { t } = useI18n();
   const lines = normalizeLines(section.text);
+  if (section.kind === "image") {
+    return <TranscriptImage section={section} query={query} />;
+  }
+
   const collapsible = shouldCollapse(section, lines);
   const previewLines = collapsible ? lines.slice(0, PREVIEW_LINE_COUNT) : lines;
   const hiddenLines = collapsible ? lines.slice(PREVIEW_LINE_COUNT) : [];

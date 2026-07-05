@@ -198,6 +198,7 @@ struct SessionStatsScan {
     total_cost_usd: f64,
     unpriced_tokens: u64,
     dominant_model: Option<String>,
+    current_model: Option<String>,
     model_usage: HashMap<String, UsageStatsScan>,
     /// 模型上下文窗口大小（日志显式字段，如 Codex model_context_window / Claude context_window）。
     context_window: Option<u64>,
@@ -376,6 +377,7 @@ pub struct HistorySessionSummary {
     pub project_key: String,
     pub title: String,
     pub file_path: String,
+    pub cwd: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub message_count: usize,
@@ -440,6 +442,7 @@ pub struct HistoryTokenTrendPoint {
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
     pub total_tokens: u64,
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -451,6 +454,7 @@ pub struct HistorySessionUsage {
     pub cache_creation_tokens: u64,
     pub total_cost_usd: f64,
     pub dominant_model: Option<String>,
+    pub current_model: Option<String>,
     pub context_window: Option<u64>,
     pub last_context_tokens: Option<u64>,
     pub reasoning_effort: Option<String>,
@@ -2120,7 +2124,7 @@ pub(crate) fn invalidate_history_stats_caches() {
 // 内存索引（HISTORY_SESSION_INDEX）每次 App 启动后为空，首个 history_get_stats 必须
 // 全量解析所有 JSONL（可能上千个），冷启动耗时不可接受。这里把 per-file 解析结果落盘，
 // 重启后载入作为 build_history_index 的 previous，按 fingerprint 仅重解析变更文件。
-const HISTORY_INDEX_CACHE_VERSION: u32 = 3;
+const HISTORY_INDEX_CACHE_VERSION: u32 = 5;
 const HISTORY_INDEX_CACHE_FILE: &str = "history-index-cache.json";
 
 static HISTORY_INDEX_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -2467,6 +2471,7 @@ fn summary_from_computation(
         project_key: file_ref.project_key.clone(),
         title: computed.title.clone(),
         file_path: file_ref.path.to_string_lossy().to_string(),
+        cwd: get_or_scan_session_project(&file_ref.path).cwd,
         created_at: computed.created_at,
         updated_at: computed.updated_at,
         message_count: computed.message_count,
@@ -2563,6 +2568,7 @@ fn finalize_session_detail(
         cache_creation_tokens: parts.computed.stats.cache_creation_tokens,
         total_cost_usd: parts.computed.stats.total_cost_usd,
         dominant_model: parts.computed.stats.dominant_model.clone(),
+        current_model: parts.computed.stats.current_model.clone(),
         context_window: parts.computed.stats.context_window,
         last_context_tokens: parts.computed.stats.last_context_tokens,
         reasoning_effort: parts.computed.stats.reasoning_effort.clone(),
@@ -2641,6 +2647,7 @@ fn merge_session_detail_parts(
     let mut latest_context_updated_at = i64::MIN;
     let mut context_window = None;
     let mut last_context_tokens = None;
+    let mut current_model = None;
     let mut reasoning_effort = None;
     let mut tool_call_count = 0u64;
     let mut mcp_calls: HashMap<String, u64> = HashMap::new();
@@ -2661,6 +2668,9 @@ fn merge_session_detail_parts(
             cwd = part.cwd.clone();
         }
         if part.computed.updated_at >= latest_context_updated_at {
+            if part.computed.stats.current_model.is_some() {
+                current_model = part.computed.stats.current_model.clone();
+            }
             if part.computed.stats.context_window.is_some() {
                 context_window = part.computed.stats.context_window;
             }
@@ -2752,6 +2762,7 @@ fn merge_session_detail_parts(
     let mut merged_stats = SessionStatsScan {
         context_window,
         last_context_tokens,
+        current_model,
         reasoning_effort,
         tool_call_count,
         mcp_calls,
@@ -2805,6 +2816,7 @@ fn merge_session_detail_parts(
             cache_read_tokens: event.usage.cache_read_tokens,
             cache_creation_tokens: event.usage.cache_creation_tokens,
             total_tokens: usage_stats_total_tokens(event.usage),
+            model: event.model.clone(),
         })
         .filter(|point| point.total_tokens > 0)
         .collect();
@@ -2818,6 +2830,11 @@ fn merge_session_detail_parts(
                 .then_with(|| right_model.cmp(left_model))
         })
         .map(|(model, _)| model.clone());
+    merged_stats.current_model = usage_events
+        .iter()
+        .rev()
+        .find_map(|(_, _, event)| event.model.clone())
+        .or(merged_stats.current_model);
 
     let messages = message_rows
         .into_iter()
@@ -3839,6 +3856,7 @@ fn scan_session_inner(
             }
         }
 
+        let mut codex_message_usage = None;
         let usage = if let Some(current) = extract_codex_token_count(&value) {
             let (window, last_context) = extract_codex_context_info(&value);
             if window.is_some() {
@@ -3849,6 +3867,7 @@ fn scan_session_inner(
             }
             let usage = codex_usage_delta(codex_prev_totals, current);
             codex_prev_totals = Some(current);
+            codex_message_usage = Some(usage);
             usage
         } else {
             let usage = extract_usage_tokens(&value);
@@ -3870,14 +3889,23 @@ fn scan_session_inner(
                 continue;
             }
         }
-        token_trend.push(usage_trend_point(usage));
+        if collect_messages {
+            if let Some(message_usage) = codex_message_usage {
+                backfill_latest_assistant_message_usage(
+                    &mut messages,
+                    message_usage,
+                    extract_timestamp(&value),
+                );
+            }
+        }
+        let attributed_model = line_model.or_else(|| current_model.clone());
+        token_trend.push(usage_trend_point(usage, attributed_model.clone()));
 
         input_tokens = input_tokens.saturating_add(usage.input_tokens);
         output_tokens = output_tokens.saturating_add(usage.output_tokens);
         cache_read_tokens = cache_read_tokens.saturating_add(usage.cache_read_tokens);
         cache_creation_tokens = cache_creation_tokens.saturating_add(usage.cache_creation_tokens);
 
-        let attributed_model = line_model.or_else(|| current_model.clone());
         let cost = calculate_usage_cost(attributed_model.as_deref(), usage);
         total_cost_usd += cost.total_cost_usd;
         unpriced_tokens = unpriced_tokens.saturating_add(cost.unpriced_tokens);
@@ -3927,6 +3955,7 @@ fn scan_session_inner(
             total_cost_usd,
             unpriced_tokens,
             dominant_model,
+            current_model,
             model_usage,
             context_window,
             last_context_tokens,
@@ -5360,6 +5389,42 @@ fn usage_total_tokens(usage: UsageTokenScan) -> u64 {
         .saturating_add(usage.cache_creation_tokens)
 }
 
+fn message_has_token_usage(message: &HistoryMessage) -> bool {
+    message.input_tokens.unwrap_or(0) > 0
+        || message.output_tokens.unwrap_or(0) > 0
+        || message.cache_read_tokens.unwrap_or(0) > 0
+        || message.cache_creation_tokens.unwrap_or(0) > 0
+}
+
+fn positive_usage_token(value: u64) -> Option<u64> {
+    (value > 0).then_some(value)
+}
+
+fn backfill_latest_assistant_message_usage(
+    messages: &mut [HistoryMessage],
+    usage: UsageTokenScan,
+    timestamp: Option<String>,
+) {
+    if usage_total_tokens(usage) == 0 {
+        return;
+    }
+    let Some(message) = messages
+        .iter_mut()
+        .rev()
+        .find(|message| message.role == "assistant" && !message_has_token_usage(message))
+    else {
+        return;
+    };
+
+    if message.timestamp.is_none() {
+        message.timestamp = timestamp;
+    }
+    message.input_tokens = positive_usage_token(usage.input_tokens);
+    message.output_tokens = positive_usage_token(usage.output_tokens);
+    message.cache_read_tokens = positive_usage_token(usage.cache_read_tokens);
+    message.cache_creation_tokens = positive_usage_token(usage.cache_creation_tokens);
+}
+
 fn usage_stats_total_tokens(usage: UsageStatsScan) -> u64 {
     usage
         .input_tokens
@@ -5368,13 +5433,14 @@ fn usage_stats_total_tokens(usage: UsageStatsScan) -> u64 {
         .saturating_add(usage.cache_creation_tokens)
 }
 
-fn usage_trend_point(usage: UsageTokenScan) -> HistoryTokenTrendPoint {
+fn usage_trend_point(usage: UsageTokenScan, model: Option<String>) -> HistoryTokenTrendPoint {
     HistoryTokenTrendPoint {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cache_read_tokens: usage.cache_read_tokens,
         cache_creation_tokens: usage.cache_creation_tokens,
         total_tokens: usage_total_tokens(usage),
+        model,
     }
 }
 
@@ -5581,7 +5647,11 @@ fn parse_message(value: &Value) -> Option<HistoryMessage> {
                 .unwrap_or_default();
             if payload_type == "message" {
                 if let Some(payload_value) = payload {
-                    return parse_message(payload_value);
+                    let mut message = parse_message(payload_value)?;
+                    if message.timestamp.is_none() {
+                        message.timestamp = extract_timestamp(value);
+                    }
+                    return Some(message);
                 }
                 return None;
             }
@@ -5624,6 +5694,10 @@ fn parse_message(value: &Value) -> Option<HistoryMessage> {
 
     if let Some(payload) = value.get("payload") {
         if let Some(message) = parse_message(payload) {
+            let mut message = message;
+            if message.timestamp.is_none() {
+                message.timestamp = extract_timestamp(value);
+            }
             return Some(message);
         }
     }
@@ -5727,7 +5801,10 @@ fn title_candidate_from_lines(text: &str) -> Option<String> {
 
     while index < lines.len() {
         let trimmed = lines[index].trim();
-        if trimmed.is_empty() || is_title_noise_line(trimmed) {
+        if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("</image>")
+            || is_title_noise_line(trimmed)
+        {
             index += 1;
             continue;
         }
@@ -5762,10 +5839,127 @@ fn title_candidate_from_lines(text: &str) -> Option<String> {
             }
         }
 
+        if let Some(candidate) = image_title_candidate_from_lines(&lines, index) {
+            return Some(candidate);
+        }
+
         return Some(trimmed.to_string());
     }
 
     None
+}
+
+fn image_title_candidate_from_lines(lines: &[&str], start_index: usize) -> Option<String> {
+    let mut image_tokens: Vec<String> = Vec::new();
+    let mut text_suffix: Option<String> = None;
+    let mut index = start_index;
+
+    while index < lines.len() {
+        let trimmed = lines[index].trim();
+        if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("</image>")
+            || is_title_noise_line(trimmed)
+        {
+            index += 1;
+            continue;
+        }
+
+        let (line_images, remaining_text) = extract_image_title_parts(trimmed);
+        if line_images.is_empty() {
+            if image_tokens.is_empty() {
+                return None;
+            }
+            text_suffix = Some(trimmed.to_string());
+            break;
+        }
+
+        for image in line_images {
+            if !image_tokens
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&image))
+            {
+                image_tokens.push(image);
+            }
+        }
+        if !remaining_text.is_empty() {
+            text_suffix = Some(remaining_text);
+            break;
+        }
+        index += 1;
+    }
+
+    if image_tokens.is_empty() {
+        return None;
+    }
+
+    let mut title = image_tokens.join("");
+    if let Some(text) = text_suffix {
+        if !text.is_empty() {
+            title.push(' ');
+            title.push_str(&text);
+        }
+    }
+    Some(title)
+}
+
+fn extract_image_title_parts(line: &str) -> (Vec<String>, String) {
+    let mut rest = line;
+    let mut image_tokens = Vec::new();
+    let mut remaining_text = String::new();
+
+    while !rest.is_empty() {
+        let tag_pos = find_ascii_ci(rest, "<image");
+        let label_pos = find_ascii_ci(rest, "[image #");
+        let close_pos = find_ascii_ci(rest, "</image>");
+        let next_pos = [tag_pos, label_pos, close_pos].into_iter().flatten().min();
+
+        let Some(pos) = next_pos else {
+            remaining_text.push_str(rest);
+            break;
+        };
+
+        remaining_text.push_str(&rest[..pos]);
+        rest = &rest[pos..];
+
+        if starts_with_ascii_ci(rest, "</image>") {
+            rest = &rest["</image>".len()..];
+            continue;
+        }
+
+        if starts_with_ascii_ci(rest, "<image") {
+            let end = rest.find('>').map(|idx| idx + 1).unwrap_or(rest.len());
+            let token = &rest[..end];
+            image_tokens.push(extract_image_label(token).unwrap_or_else(|| "[Image]".to_string()));
+            rest = &rest[end..];
+            continue;
+        }
+
+        if starts_with_ascii_ci(rest, "[image #") {
+            let end = rest.find(']').map(|idx| idx + 1).unwrap_or(rest.len());
+            image_tokens.push(rest[..end].to_string());
+            rest = &rest[end..];
+            continue;
+        }
+    }
+
+    (image_tokens, remaining_text.trim().to_string())
+}
+
+fn extract_image_label(token: &str) -> Option<String> {
+    let start = find_ascii_ci(token, "[image #")?;
+    let end = token[start..].find(']')? + start + 1;
+    Some(token[start..end].to_string())
+}
+
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    haystack.to_ascii_lowercase().find(needle)
+}
+
+fn starts_with_ascii_ci(value: &str, prefix: &str) -> bool {
+    value
+        .get(..prefix.len())
+        .map(|start| start.eq_ignore_ascii_case(prefix))
+        .unwrap_or(false)
 }
 
 fn title_xml_tag_name(line: &str) -> Option<String> {
@@ -6361,17 +6555,21 @@ mod tests {
                     total_cost_usd: usage.total_cost_usd,
                     unpriced_tokens: usage.unpriced_tokens,
                     dominant_model: Some("priced-model".to_string()),
+                    current_model: Some("priced-model".to_string()),
                     model_usage: HashMap::new(),
                     context_window: None,
                     last_context_tokens: None,
                     reasoning_effort: None,
-                    token_trend: vec![usage_trend_point(UsageTokenScan {
-                        input_tokens: usage.input_tokens,
-                        output_tokens: usage.output_tokens,
-                        cache_read_tokens: usage.cache_read_tokens,
-                        cache_creation_tokens: usage.cache_creation_tokens,
-                        explicit_cost_usd: None,
-                    })],
+                    token_trend: vec![usage_trend_point(
+                        UsageTokenScan {
+                            input_tokens: usage.input_tokens,
+                            output_tokens: usage.output_tokens,
+                            cache_read_tokens: usage.cache_read_tokens,
+                            cache_creation_tokens: usage.cache_creation_tokens,
+                            explicit_cost_usd: None,
+                        },
+                        Some("priced-model".to_string()),
+                    )],
                     usage_events: vec![SessionUsageEventScan {
                         timestamp_ms: Some(DAY_MS),
                         model: Some("priced-model".to_string()),
@@ -6613,6 +6811,93 @@ mod tests {
     }
 
     #[test]
+    fn build_session_computation_title_uses_image_placeholders_with_remaining_text() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("image-session.jsonl");
+        let content = concat!(
+            "<image name=[Image #1] path=\"C:\\\\Users\\\\Administrator\\\\image-a.png\">\n",
+            "<image name=[Image #2] path=\"C:\\\\Users\\\\Administrator\\\\image-b.png\">\n",
+            "请分析这两张截图的问题"
+        );
+        let line = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": content }
+        })
+        .to_string();
+        write_text(&file, &line);
+
+        let computed = scan_session_computation(&file, 1, 2);
+
+        assert_eq!(
+            computed.title,
+            "[Image #1][Image #2] 请分析这两张截图的问题"
+        );
+    }
+
+    #[test]
+    fn build_session_computation_title_skips_image_close_and_repeated_placeholder() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("image-with-text-session.jsonl");
+        let content = concat!(
+            "<image name=[Image #1] path=\"C:\\\\Users\\\\Administrator\\\\image.png\">\n",
+            "</image>\n",
+            "[Image #1] 重新设计历史会话中会话列表的这三个图标，关闭展开和 subagent 。需要实现简约干净的风格"
+        );
+        let line = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": content }
+        })
+        .to_string();
+        write_text(&file, &line);
+
+        let computed = scan_session_computation(&file, 1, 2);
+
+        assert_eq!(
+            computed.title,
+            "[Image #1] 重新设计历史会话中会话列表的这三个图标，关闭展开和 subagent 。需要实现简约干净的风格"
+        );
+    }
+
+    #[test]
+    fn build_session_computation_title_skips_inline_image_close_before_text() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("image-inline-close-session.jsonl");
+        let content = concat!(
+            "<image name=[Image #1] path=\"C:\\\\Users\\\\Administrator\\\\image.png\">\n",
+            "</image>[Image #1]还是没有实现"
+        );
+        let line = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": content }
+        })
+        .to_string();
+        write_text(&file, &line);
+
+        let computed = scan_session_computation(&file, 1, 2);
+
+        assert_eq!(computed.title, "[Image #1] 还是没有实现");
+    }
+
+    #[test]
+    fn build_session_computation_title_uses_single_image_placeholder() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("image-only-session.jsonl");
+        let line = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<image name=[Image #1] path=\"C:\\\\Users\\\\Administrator\\\\image.png\">"
+            }
+        })
+        .to_string();
+        write_text(&file, &line);
+
+        let computed = scan_session_computation(&file, 1, 2);
+
+        assert_eq!(computed.title, "[Image #1]");
+    }
+
+    #[test]
     fn get_or_scan_session_project_reuses_matching_fingerprint_cache() {
         let temp_dir = TempDir::new().unwrap();
         let file = temp_dir.path().join("rollout-session.jsonl");
@@ -6756,6 +7041,34 @@ mod tests {
 
         assert_eq!(stats.context_window, Some(1_000_000));
         assert_eq!(stats.last_context_tokens, Some(96_020));
+    }
+
+    #[test]
+    fn scan_session_combined_tracks_current_model_separately_from_dominant_model() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("claude-session.jsonl");
+        write_text(
+            &file,
+            concat!(
+                r#"{"type":"assistant","requestId":"r1","message":{"id":"m1","model":"claude-old","usage":{"input_tokens":10,"output_tokens":20}}}"#,
+                "\n",
+                r#"{"type":"assistant","requestId":"r2","message":{"id":"m2","model":"claude-old","usage":{"input_tokens":11,"output_tokens":21}}}"#,
+                "\n",
+                r#"{"type":"assistant","requestId":"r3","message":{"id":"m3","model":"claude-new","usage":{"input_tokens":12,"output_tokens":22,"context_window":300000}}}"#,
+                "\n",
+            ),
+        );
+
+        let (_, stats) = scan_session_combined(&file);
+
+        assert_eq!(stats.dominant_model.as_deref(), Some("claude-old"));
+        assert_eq!(stats.current_model.as_deref(), Some("claude-new"));
+        assert_eq!(stats.context_window, Some(300_000));
+        assert_eq!(stats.last_context_tokens, Some(12));
+        assert_eq!(stats.token_trend.len(), 3);
+        assert_eq!(stats.token_trend[0].model.as_deref(), Some("claude-old"));
+        assert_eq!(stats.token_trend[1].model.as_deref(), Some("claude-old"));
+        assert_eq!(stats.token_trend[2].model.as_deref(), Some("claude-new"));
     }
 
     #[test]
@@ -6999,7 +7312,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file = temp_dir.path().join("rollout-session.jsonl");
         let turn_context = r#"{"type":"turn_context","payload":{"model":"gpt-5-codex"}}"#;
-        let message = r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#;
+        let message = r#"{"type":"response_item","timestamp":"2026-03-08T06:32:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#;
         write_text(&file, &format!("{turn_context}\n{message}\n"));
 
         let (_, _, messages) = scan_session_detail(&file);
@@ -7007,5 +7320,29 @@ mod tests {
         // 消息行不带 model，回填最近 turn_context 的模型（detail 单遍路径与 iter_session_messages 一致）
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].model.as_deref(), Some("gpt-5-codex"));
+        assert_eq!(
+            messages[0].timestamp.as_deref(),
+            Some("2026-03-08T06:32:00Z")
+        );
+    }
+
+    #[test]
+    fn scan_session_detail_backfills_codex_token_count_to_latest_assistant_message() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("rollout-session.jsonl");
+        let message = r#"{"type":"response_item","timestamp":"2026-03-08T06:32:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#;
+        let token_count = r#"{"type":"event_msg","timestamp":"2026-03-08T06:32:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":50,"total_tokens":150}}}}"#;
+        write_text(&file, &format!("{message}\n{token_count}\n"));
+
+        let (_, stats, messages) = scan_session_detail(&file);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].input_tokens, Some(90));
+        assert_eq!(messages[0].output_tokens, Some(50));
+        assert_eq!(messages[0].cache_read_tokens, Some(10));
+        assert_eq!(messages[0].cache_creation_tokens, None);
+        assert_eq!(stats.input_tokens, 90);
+        assert_eq!(stats.output_tokens, 50);
+        assert_eq!(stats.cache_read_tokens, 10);
     }
 }

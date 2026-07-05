@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { eventToCombo } from "../../hooks/useKeyboardShortcuts";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiAnchor, formatAiContextBlock, type AiTextSelection } from "../../lib/aiPathFormatter";
+import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n } from "../../lib/i18n";
 import type { GitFileChange, TerminalSession } from "../../lib/types";
 import { configureMonaco, languageFromPath } from "../../lib/monacoSetup";
@@ -260,7 +261,7 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
         );
       })
       .catch((err) => {
-        if (!cancelled) console.warn("[FileEditorPane] Failed to load git diff markers:", err);
+        if (!cancelled) debugConsoleWarn("[FileEditorPane] Failed to load git diff markers:", err);
       });
 
     return () => {

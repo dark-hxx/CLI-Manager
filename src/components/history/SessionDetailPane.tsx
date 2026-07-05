@@ -2,12 +2,14 @@
 import { BookCopy, ChevronDown, ChevronRight, Copy, GitCompare, Star, Terminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
+import aiAvatarUrl from "../../assets/history-ai-avatar.svg";
+import userAvatarUrl from "../../assets/history-user-avatar.svg";
 import type { HistoryMessage, HistorySessionDetail, HistorySessionView } from "../../lib/types";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { EmptyState } from "../ui/EmptyState";
 import { SessionTranscriptContent } from "./SessionTranscriptContent";
 import { MetaEditor } from "./MetaEditor";
-import { formatTime, makeSessionLabel, roleBadge } from "./historyViewUtils";
+import { formatTime, makeSessionLabel } from "./historyViewUtils";
 import { SessionTimelineView } from "./SessionTimelineView";
 import { SessionContextView } from "./SessionContextView";
 import { SessionFileChangesView } from "./SessionFileChangesView";
@@ -62,6 +64,11 @@ const DETAIL_VIEWS: Array<{ id: HistoryDetailView; labelKey: TranslationKey }> =
   { id: "subtasks", labelKey: "history.detail.view.subtasks" },
 ];
 
+const MESSAGE_PREVIEW_LINE_COUNT = 5;
+const LONG_MESSAGE_LINE_THRESHOLD = 8;
+const LONG_MESSAGE_CHAR_THRESHOLD = 900;
+const TOKEN_FORMATTER = new Intl.NumberFormat("en-US");
+
 function isInjectedPromptContent(content: string): boolean {
   const trimmed = content.trimStart();
   const lowerTrimmed = trimmed.toLowerCase();
@@ -76,18 +83,69 @@ function isInjectedPromptContent(content: string): boolean {
   );
 }
 
-function shouldAutoCollapseMessage(message: HistoryMessage): boolean {
-  if (isInjectedPromptContent(message.content)) return true;
-  const role = message.role;
+function normalizeMessageRole(role: string): "user" | "assistant" | "other" {
   const normalized = role.toLowerCase();
-  return normalized !== "user";
+  if (normalized === "user" || normalized.includes("human")) return "user";
+  if (normalized === "assistant" || normalized.includes("model") || normalized.includes("llm")) return "assistant";
+  return "other";
+}
+
+function shouldCollapseMessage(message: HistoryMessage): boolean {
+  if (isInjectedPromptContent(message.content)) return true;
+  const lines = message.content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  return lines.length >= LONG_MESSAGE_LINE_THRESHOLD || message.content.length >= LONG_MESSAGE_CHAR_THRESHOLD;
+}
+
+function padTimePart(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function formatMessageTimestamp(timestamp?: string | null): string | null {
+  const raw = timestamp?.trim();
+  if (!raw) return null;
+
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) {
+    const date = new Date(parsed);
+    return `${padTimePart(date.getMonth() + 1)}/${padTimePart(date.getDate())} ${padTimePart(date.getHours())}:${padTimePart(date.getMinutes())}`;
+  }
+
+  const fallback = /(\d{1,2})[/-](\d{1,2}).*?(\d{1,2}):(\d{2})/.exec(raw);
+  if (fallback) {
+    return `${padTimePart(Number(fallback[1]))}/${padTimePart(Number(fallback[2]))} ${padTimePart(Number(fallback[3]))}:${fallback[4]}`;
+  }
+
+  return raw;
+}
+
+function positiveToken(value?: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function formatMessageTokenMeta(message: HistoryMessage): string | null {
+  const input = positiveToken(message.input_tokens);
+  const output = positiveToken(message.output_tokens);
+  const cache = positiveToken(message.cache_read_tokens) + positiveToken(message.cache_creation_tokens);
+  const parts: string[] = [];
+
+  if (input > 0) parts.push(`in ${TOKEN_FORMATTER.format(input)}`);
+  if (output > 0) parts.push(`out ${TOKEN_FORMATTER.format(output)}`);
+  if (cache > 0) parts.push(`cache ${TOKEN_FORMATTER.format(cache)}`);
+
+  return parts.length > 0 ? parts.join(" / ") : null;
+}
+
+function formatMessageMeta(message: HistoryMessage): string | null {
+  const timestamp = formatMessageTimestamp(message.timestamp);
+  const tokens = formatMessageTokenMeta(message);
+  return [timestamp, tokens].filter(Boolean).join("  ") || null;
 }
 
 function getCollapsedMessagePreview(content: string, fallback: string): string[] {
   const lines: string[] = [];
   let start = 0;
 
-  for (let i = 0; i <= content.length && lines.length < 2; i++) {
+  for (let i = 0; i <= content.length && lines.length < MESSAGE_PREVIEW_LINE_COUNT; i++) {
     if (i < content.length && content[i] !== "\n") continue;
     const line = content.slice(start, i).replace(/\r$/, "").trim();
     if (line) lines.push(line);
@@ -97,29 +155,23 @@ function getCollapsedMessagePreview(content: string, fallback: string): string[]
   return lines.length > 0 ? lines : [fallback];
 }
 
-function AutoCollapsedMessageContent({
+function ConversationMessageContent({
   message,
   query,
   open,
+  collapsible,
 }: {
   message: HistoryMessage;
   query: string;
   open: boolean;
+  collapsible: boolean;
 }) {
   const { t } = useI18n();
-  if (!shouldAutoCollapseMessage(message)) {
+  if (!collapsible || open) {
     return <SessionTranscriptContent content={message.content} query={query} />;
   }
 
   const previewLines = getCollapsedMessagePreview(message.content, t("history.detail.noText"));
-
-  if (open) {
-    return (
-      <div className="ui-history-message-collapse">
-        <SessionTranscriptContent content={message.content} query={query} />
-      </div>
-    );
-  }
 
   return (
     <div className="ui-history-message-collapse">
@@ -137,7 +189,6 @@ function HistoryMessageCard({
   index,
   isMatched,
   isFocused,
-  badge,
   query,
   messageRefs,
   measureElement,
@@ -146,14 +197,16 @@ function HistoryMessageCard({
   index: number;
   isMatched: boolean;
   isFocused: boolean;
-  badge: ReturnType<typeof roleBadge>;
   query: string;
   messageRefs: RefObject<Record<number, HTMLDivElement | null>>;
   measureElement: (element: Element) => void;
 }) {
   const { t } = useI18n();
+  const roleKind = normalizeMessageRole(message.role);
+  const avatarUrl = roleKind === "user" ? userAvatarUrl : aiAvatarUrl;
   const forceOpen = isMatched || isFocused;
-  const collapsible = shouldAutoCollapseMessage(message);
+  const collapsible = shouldCollapseMessage(message);
+  const messageMeta = formatMessageMeta(message);
   const [open, setOpen] = useState(forceOpen);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
@@ -170,58 +223,52 @@ function HistoryMessageCard({
     messageRefs.current[index] = element;
     if (element) measureElement(element);
   };
-  const toggleTitle = open ? t("history.detail.collapse") : t("history.detail.expand");
+  const toggleTitle = open ? t("history.detail.collapseFull") : t("history.detail.expandFull");
 
   return (
     <div
       data-index={index}
+      data-role={roleKind}
       ref={setCardRef}
-      className="ui-history-message-card absolute left-0 top-0 w-full p-2.5"
+      className="ui-history-message-card absolute left-0 top-0 w-full px-2.5 py-2"
       style={{
-        borderColor: isFocused ? "var(--warning)" : isMatched ? "var(--accent)" : "var(--border)",
+        borderColor: isFocused ? "var(--warning)" : isMatched ? "var(--accent)" : "transparent",
       }}
     >
-      {collapsible ? (
-        <button
-          type="button"
-          className="ui-history-message-header ui-dev-label mb-1 flex w-full items-center justify-between text-[11px] text-text-muted"
-          onClick={() => setOpen((current) => !current)}
-          aria-expanded={open}
-          title={toggleTitle}
-        >
-          <span
-            className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
-            style={{
-              color: badge.color,
-              backgroundColor: badge.bg,
-              border: `1px solid ${badge.border}`,
-            }}
-          >
-            {badge.label}
-          </span>
-          <span className="flex min-w-0 items-center gap-2">
-            <span>{message.timestamp ?? "-"}</span>
-            <span className="ui-history-message-collapse-icon" aria-hidden="true">
-              {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-            </span>
-          </span>
-        </button>
-      ) : (
-        <div className="ui-dev-label mb-1 flex items-center justify-between text-[11px] text-text-muted">
-          <span
-            className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide"
-            style={{
-              color: badge.color,
-              backgroundColor: badge.bg,
-              border: `1px solid ${badge.border}`,
-            }}
-          >
-            {badge.label}
-          </span>
-          <span>{message.timestamp ?? "-"}</span>
-        </div>
+      {roleKind !== "user" && (
+        <span className="ui-history-message-avatar" aria-hidden="true">
+          <img src={avatarUrl} alt="" />
+        </span>
       )}
-      <AutoCollapsedMessageContent message={message} query={query} open={open} />
+      <div className="ui-history-message-stack">
+        {messageMeta && (
+          <div className="ui-history-message-meta" title={messageMeta}>
+            {messageMeta}
+          </div>
+        )}
+        <div className="ui-history-message-bubble">
+          <ConversationMessageContent message={message} query={query} open={open} collapsible={collapsible} />
+          {collapsible && (
+            <button
+              type="button"
+              className="ui-history-message-expand"
+              onClick={() => setOpen((current) => !current)}
+              aria-expanded={open}
+              title={toggleTitle}
+            >
+              <span className="ui-history-message-collapse-icon" aria-hidden="true">
+                {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              </span>
+              {toggleTitle}
+            </button>
+          )}
+        </div>
+      </div>
+      {roleKind === "user" && (
+        <span className="ui-history-message-avatar" aria-hidden="true">
+          <img src={avatarUrl} alt="" />
+        </span>
+      )}
     </div>
   );
 }
@@ -424,7 +471,13 @@ export function SessionDetailPane({
         </div>
       </div>
 
-      <div ref={messageListRef} onScroll={onMessageListScroll} className="[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3">
+      <div
+        ref={messageListRef}
+        onScroll={onMessageListScroll}
+        className={`[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3 ${
+          detailView === "transcript" ? "ui-history-transcript-chat-surface" : ""
+        }`}
+      >
         {loadingSessionDetail && <div className="text-xs text-text-muted">{t("history.detail.loading")}</div>}
 
         {!loadingSessionDetail && activeSession?.messages.length === 0 && (
@@ -438,7 +491,6 @@ export function SessionDetailPane({
               if (!msg) return null;
               const isMatched = matchSet.has(virtualRow.index);
               const isFocused = focusedMessageIndex === virtualRow.index;
-              const badge = roleBadge(msg.role);
               return (
                 <div key={virtualRow.key} className="absolute left-0 top-0 w-full" style={{ transform: `translateY(${virtualRow.start}px)` }}>
                   <HistoryMessageCard
@@ -446,7 +498,6 @@ export function SessionDetailPane({
                     index={virtualRow.index}
                     isMatched={isMatched}
                     isFocused={isFocused}
-                    badge={badge}
                     query={sessionQuery}
                     messageRefs={messageRefs}
                     measureElement={messageVirtualizer.measureElement}

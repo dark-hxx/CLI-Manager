@@ -3,13 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import type { SubagentTranscriptSource, TerminalSession, Project } from "../lib/types";
+import { debugConsoleWarn } from "../lib/debugConsole";
+import { sourceLabel as getSyncedSourceLabel, type SyncedHistoryGroup } from "../lib/externalSessionGrouping";
 import { logError, logInfo, logWarn } from "../lib/logger";
 import { isDirectCodexStartupCommand, normalizeDirectCodexStartupCommand, withCodexLightTuiTheme } from "../lib/projectStartupCommand";
 import { getTerminalTheme } from "../lib/terminalThemes";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey, type OsPlatform, type ShellKey } from "../lib/shell";
-import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject } from "../lib/providerSwitching";
+import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject, parseProjectEnvVars } from "../lib/providerSwitching";
 import { useProjectStore } from "./projectStore";
 import {
   addSessionToPaneTree,
@@ -176,6 +178,7 @@ interface TerminalStore {
   renameSession: (id: string, title: string) => void;
   splitTerminal: (sessionId: string, direction: TerminalPaneSplitDirection, options?: SplitTerminalOptions) => Promise<string | null>;
   openFileEditorPane: (project: Project) => string;
+  openSyncedHistoryPane: (group: SyncedHistoryGroup, project?: Project) => Promise<string>;
   /** Split the current pane into two, creating a new empty leaf (no sessions). Used by batch launch to create panes for different root groups. */
   splitPaneEmpty: (paneId: string, direction: TerminalPaneSplitDirection) => void;
   unsplitTerminal: (sessionId: string) => Promise<void>;
@@ -216,7 +219,7 @@ function createFileEditorSessionId(projectId: string): string {
 }
 
 function isPersistableSession(session: TerminalSession | undefined): boolean {
-  return !!session && session.kind !== "subagent-transcript" && session.kind !== "file-editor";
+  return !!session && session.kind !== "subagent-transcript" && session.kind !== "file-editor" && session.kind !== "synced-history";
 }
 
 function createSplitSessionTitle(options?: SplitTerminalOptions) {
@@ -669,6 +672,20 @@ export function formatManualDirectCodexInputForPty(command: string, shell?: Shel
   return formatStartupInputForPty(command, shell ?? null);
 }
 
+export interface DetachedPtyLaunchOptions {
+  projectId?: string;
+  cwd?: string | null;
+  startupCmd?: string | null;
+  envVars?: Record<string, string> | null;
+  shell?: string | null;
+}
+
+export interface DetachedPtyLaunchResult {
+  sessionId: string;
+  shell: ShellKey | null;
+  startupCmd?: string;
+}
+
 // hook running 超时回退：Stop/StopFailure 丢失（hook 脚本失败、bridge 不可达）
 // 时 Tab 会永久停留 running，超时后回退为 none（未知）。阈值取宽（Claude 长任务
 // 可合法运行很久），只兜底明显异常的滞留。
@@ -752,6 +769,136 @@ function getClaudeProviderLaunchConfig(projectId?: string) {
     providerId: override.providerId,
     dbPath: settings.ccSwitchDbPath ?? undefined,
   };
+}
+
+export async function createDetachedPtyProcess(options: DetachedPtyLaunchOptions): Promise<DetachedPtyLaunchResult> {
+  const os = await getOsPlatform();
+  const resolvedShell = resolveShellForPty(options.shell, !!options.projectId, os);
+  const launchStartupCmd = prepareStartupCommandForPty(options.startupCmd ?? undefined, resolvedShell);
+  const sessionId = await invoke<string>("pty_create", {
+    cwd: options.cwd ?? null,
+    envVars: buildPtyEnvVars(options.envVars ?? null, resolvedShell),
+    shell: resolvedShell,
+    hookEnvEnabled: await shouldEnableHookEnv(),
+    claudeProvider: getClaudeProviderLaunchConfig(options.projectId),
+    codexProvider: getCodexProviderLaunchConfig(options.projectId, options.startupCmd),
+  });
+
+  return {
+    sessionId,
+    shell: resolvedShell,
+    startupCmd: launchStartupCmd,
+  };
+}
+
+function externalHistoryPathArgs() {
+  const settings = useSettingsStore.getState();
+  return {
+    claudeConfigDir: settings.claudeHookConfigDir?.trim() || null,
+    codexConfigDir: settings.codexHookConfigDir?.trim() || null,
+  };
+}
+
+function rawString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function rawNumber(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function terminalLine(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, "\r\n");
+}
+
+function isCliManagerSyncArtifactText(value: string): boolean {
+  const text = value.toLowerCase();
+  return (
+    text.includes("cli-manager 同步聚合会话")
+    || text.includes(".cli-manager/synced-history/")
+    || text.includes("同步记录已加载")
+  );
+}
+
+function rolePrompt(role: string): string {
+  const normalized = role.trim().toLowerCase();
+  if (normalized.includes("user") || normalized.includes("human")) return "›";
+  if (normalized.includes("system")) return "!";
+  if (normalized.includes("tool")) return "↳";
+  return "•";
+}
+
+function formatHistoryTimestamp(value: number): string {
+  if (!value) return "";
+  const millis = value > 1_000_000_000_000 ? value : value * 1000;
+  return new Date(millis).toLocaleString();
+}
+
+async function buildSyncedHistoryInitialOutput(group: SyncedHistoryGroup): Promise<string> {
+  const sortedSessions = [...group.sessions].sort((a, b) => a.updatedAt - b.updatedAt);
+  const chunks: string[] = [
+    `${group.name} · ${getSyncedSourceLabel(sortedSessions[0]?.source ?? "claude")} 同步记录`,
+    `${sortedSessions.length} 个会话`,
+    "",
+  ];
+  let skippedArtifactCount = 0;
+
+  for (const meta of sortedSessions) {
+    try {
+      const detailRaw = await invoke<unknown>("history_get_session", {
+        filePath: meta.filePath,
+        ...externalHistoryPathArgs(),
+        source: meta.source,
+        projectKey: meta.projectKey,
+        aggregateSubtasks: true,
+      });
+      const detail = (detailRaw ?? {}) as Record<string, unknown>;
+      const title = rawString(detail.title).trim() || meta.title || meta.sessionId;
+      const updatedAt = rawNumber(detail.updated_at ?? detail.updatedAt) || meta.updatedAt;
+      const messages = Array.isArray(detail.messages) ? detail.messages : [];
+      const isSyncArtifact = (
+        isCliManagerSyncArtifactText(title)
+        || isCliManagerSyncArtifactText(meta.title)
+        || messages.some((rawMessage) => {
+          const message = (rawMessage ?? {}) as Record<string, unknown>;
+          return isCliManagerSyncArtifactText(rawString(message.content));
+        })
+      );
+      if (isSyncArtifact) {
+        skippedArtifactCount += 1;
+        continue;
+      }
+
+      chunks.push(`--- ${title}${updatedAt ? ` · ${formatHistoryTimestamp(updatedAt)}` : ""}`, "");
+      for (const rawMessage of messages) {
+        const message = (rawMessage ?? {}) as Record<string, unknown>;
+        const role = rawString(message.role) || "assistant";
+        const content = rawString(message.content).trimEnd();
+        if (!content) continue;
+        const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+        chunks.push(`${rolePrompt(role)} ${lines[0] ?? ""}`);
+        for (const line of lines.slice(1)) {
+          chunks.push(`  ${line}`);
+        }
+        chunks.push("");
+      }
+    } catch (err) {
+      chunks.push(`! ${meta.title || meta.sessionId} 读取失败: ${String(err)}`, "");
+    }
+  }
+
+  if (skippedArtifactCount > 0) {
+    chunks.push(`! 已过滤 ${skippedArtifactCount} 个 CLI-Manager 旧同步中间会话。`, "");
+  }
+  chunks.push("");
+  return terminalLine(chunks.join("\n"));
 }
 
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
@@ -1199,6 +1346,92 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     return editorSessionId;
   },
 
+  openSyncedHistoryPane: async (group, project) => {
+    const firstSession = group.sessions[0];
+    const label = firstSession?.source === "codex" ? "Codex" : "Claude";
+    const existing = get().sessions.find(
+      (session) => session.kind === "synced-history" && session.syncedHistory?.key === group.key && get().sessionStatuses[session.id]
+    );
+    if (existing) {
+      const paneResult = setPaneActiveSession(get().paneTree, existing.id);
+      set({
+        activeSessionId: existing.id,
+        activePaneId: paneResult.activePaneId ?? get().activePaneId,
+        paneTree: paneResult.tree,
+      });
+      scheduleSaveActiveId(existing.id);
+      return existing.id;
+    }
+
+    const sortedSessions = [...group.sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+    const latestSession = sortedSessions[0];
+    if (!latestSession?.startupCmd.trim()) {
+      throw new Error("这条同步记录缺少 resume 命令。");
+    }
+    const cwd = latestSession.cwd || group.cwd || project?.path;
+    const shell = project?.shell && project.shell !== "powershell" ? project.shell : undefined;
+    const envVars = project ? parseProjectEnvVars(project) : undefined;
+    const initialTerminalOutput = await buildSyncedHistoryInitialOutput(group);
+    const launch = await createDetachedPtyProcess({
+      projectId: project?.id,
+      cwd,
+      startupCmd: latestSession.startupCmd,
+      envVars,
+      shell,
+    });
+    const historySession: TerminalSession = {
+      id: launch.sessionId,
+      projectId: project?.id,
+      title: `${group.name} · ${label} 同步终端`,
+      cwd,
+      shell: launch.shell,
+      envVars,
+      startupCmd: launch.startupCmd ?? latestSession.startupCmd,
+      initialTerminalOutput,
+      deferStartupUntilInitialOutput: true,
+      kind: "synced-history",
+      syncedHistory: {
+        key: group.key,
+        title: group.name,
+        cwd: group.cwd || project?.path || "",
+        sessions: group.sessions.map((session) => ({
+          key: session.key,
+          source: session.source,
+          sessionId: session.sessionId,
+          projectKey: session.projectKey,
+          filePath: session.filePath,
+          projectName: session.projectName,
+          cwd: session.cwd,
+          title: session.title,
+          startupCmd: session.startupCmd,
+          updatedAt: session.updatedAt,
+        })),
+      },
+    };
+    const unlisten = await listen<PtyStatusPayload>(`pty-status-${launch.sessionId}`, (event) => {
+      const status = event.payload.status as SessionStatus;
+      logTerminalExitStatus(historySession, event.payload);
+      set((state) => ({
+        sessionStatuses: { ...state.sessionStatuses, [launch.sessionId]: status },
+      }));
+    });
+    const sessions = [...get().sessions, historySession];
+    const paneResult = addSessionToPaneTree(get().paneTree, get().activePaneId, launch.sessionId, createPaneId);
+
+    set({
+      sessions,
+      activeSessionId: launch.sessionId,
+      activePaneId: paneResult.activePaneId,
+      paneTree: paneResult.tree,
+      sessionStatuses: { ...get().sessionStatuses, [launch.sessionId]: "running" },
+      statusListeners: { ...get().statusListeners, [launch.sessionId]: unlisten },
+      splits: {},
+    });
+    void useSessionStore.getState().saveSessions(sessions).catch(() => {});
+    void useSessionStore.getState().saveActiveSessionId(null).catch(() => {});
+    return launch.sessionId;
+  },
+
   unsplitTerminal: async (sessionId) => {
     const pane = findPaneLeafBySession(get().paneTree, sessionId);
     if (!pane) return;
@@ -1215,7 +1448,6 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         .filter((s) => closedSessionIds.includes(s.id) && s.kind === "file-editor")
         .map((s) => s.id)
     );
-
     for (const closedSessionId of closedSessionIds) {
       get().statusListeners[closedSessionId]?.();
     }
@@ -1309,6 +1541,10 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const os = await getOsPlatform();
     for (let i = 0; i < persistedSessions.length; i++) {
       const ps = persistedSessions[i];
+      if (isCliManagerSyncArtifactText(ps.title ?? "") || isCliManagerSyncArtifactText(ps.startupCmd ?? "")) {
+        skippedSessions.push(ps.title ?? `会话 ${i + 1}`);
+        continue;
+      }
 
       // 检查项目是否存在
       if (ps.projectId) {
@@ -1883,7 +2119,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         nextContent = prevTail + content;
       }
       if (droppedChars > 0) {
-        console.warn("[oom-diagnostics:webview]", {
+        debugConsoleWarn("[oom-diagnostics:webview]", {
           area: "subagentTranscript",
           phase: "appendTrim",
           key,

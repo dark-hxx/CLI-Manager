@@ -527,26 +527,26 @@ const catppuccinMacchiato: ITheme = {
 };
 
 const catppuccinLatte: ITheme = {
-  background: "#eff1f5",
-  foreground: "#4c4f69",
-  cursor: "#dc8a78",
-  selectionBackground: "#acb0be",
-  black: "#5c5f77",
+  background: "#f7f8fc",
+  foreground: "#24273a",
+  cursor: "#b14b3f",
+  selectionBackground: "#c7d2fe",
+  black: "#1e1e2e",
   red: "#d20f39",
-  green: "#40a02b",
-  yellow: "#df8e1d",
-  blue: "#1e66f5",
-  magenta: "#ea76cb",
-  cyan: "#179299",
-  white: "#acb0be",
-  brightBlack: "#6c6f85",
+  green: "#2b7d1f",
+  yellow: "#9a5b00",
+  blue: "#1d4ed8",
+  magenta: "#a21caf",
+  cyan: "#0f7c86",
+  white: "#4c4f69",
+  brightBlack: "#62677f",
   brightRed: "#d20f39",
-  brightGreen: "#40a02b",
-  brightYellow: "#df8e1d",
-  brightBlue: "#1e66f5",
-  brightMagenta: "#ea76cb",
-  brightCyan: "#179299",
-  brightWhite: "#bcc0cc",
+  brightGreen: "#2b7d1f",
+  brightYellow: "#9a5b00",
+  brightBlue: "#1d4ed8",
+  brightMagenta: "#a21caf",
+  brightCyan: "#0f7c86",
+  brightWhite: "#24273a",
 };
 
 const gruvboxDark: ITheme = {
@@ -1027,6 +1027,29 @@ const dawnfox: ITheme = {
   brightWhite: "#e6ebf3",
 };
 
+const codexDark: ITheme = {
+  background: "#171717",
+  foreground: "#f3f4f6",
+  cursor: "#f3f4f6",
+  selectionBackground: "#3a3a3a",
+  black: "#111111",
+  red: "#ff6b6b",
+  green: "#3dd68c",
+  yellow: "#e5c453",
+  blue: "#8ab4f8",
+  magenta: "#c084fc",
+  cyan: "#5ac8e0",
+  white: "#e5e7eb",
+  brightBlack: "#8a8a8a",
+  brightRed: "#ff8a8a",
+  brightGreen: "#55e6a1",
+  brightYellow: "#f0d46b",
+  brightBlue: "#a6c8ff",
+  brightMagenta: "#d0a2ff",
+  brightCyan: "#7bdff2",
+  brightWhite: "#ffffff",
+};
+
 const gruberDarker: ITheme = {
   background: "#181818",
   foreground: "#e4e4e4",
@@ -1404,6 +1427,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
   { id: "tomorrowNight", name: "Tomorrow Night", theme: tomorrowNight, group: "cool", family: "tomorrow", tone: "dark" },
   { id: "materialPalenight", name: "Material Palenight", theme: materialPalenight, group: "pink-purple", family: "material", tone: "dark" },
   { id: "oneLight", name: "One Light", theme: oneLight, group: "light-office", family: "one-dark", tone: "light" },
+  { id: "codexDark", name: "Codex Dark", theme: codexDark, group: "high-contrast", family: "codex", tone: "dark" },
   { id: "gruberDarker", name: "Gruber Darker", theme: gruberDarker, group: "high-contrast", family: "classic", tone: "dark" },
   { id: "carbonfox", name: "Carbonfox", theme: carbonfox, group: "high-contrast", family: "nightfox", tone: "dark" },
   { id: "cobalt2", name: "Cobalt2", theme: cobalt2, group: "high-contrast", family: "cobalt", tone: "dark" },
@@ -1411,6 +1435,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
 ];
 
 const themeMap = new Map(TERMINAL_THEME_PRESETS.map((p) => [p.id, p.theme]));
+const themePresetMap = new Map(TERMINAL_THEME_PRESETS.map((p) => [p.id, p]));
 
 function resolveAutoLightThemeId(lightPalette: LightTerminalPalette = "warm-paper"): string {
   if (lightPalette === "cream-green") return "creamGreenLight";
@@ -1425,6 +1450,7 @@ function resolveAutoLightThemeId(lightPalette: LightTerminalPalette = "warm-pape
 }
 
 function resolveAutoDarkThemeId(darkPalette: DarkTerminalPalette = "night-indigo"): string {
+  if (darkPalette === "night-indigo") return "codexDark";
   if (darkPalette === "forest-night") return "forestNightDark";
   if (darkPalette === "graphite-red") return "graphiteRedDark";
   if (darkPalette === "investment-platform") return "investmentPlatformDark";
@@ -1433,7 +1459,7 @@ function resolveAutoDarkThemeId(darkPalette: DarkTerminalPalette = "night-indigo
   if (darkPalette === "terminal-green") return "forestNightDark";
   if (darkPalette === "dracula-purple") return "dracula";
   if (darkPalette === "carbon-black") return "carbonfox";
-  return "forestNightDark";
+  return "codexDark";
 }
 
 function resolveAutoLightTheme(lightPalette: LightTerminalPalette = "warm-paper"): ITheme {
@@ -1441,7 +1467,7 @@ function resolveAutoLightTheme(lightPalette: LightTerminalPalette = "warm-paper"
 }
 
 function resolveAutoDarkTheme(darkPalette: DarkTerminalPalette = "night-indigo"): ITheme {
-  return themeMap.get(resolveAutoDarkThemeId(darkPalette)) ?? tokyoNightDark;
+  return themeMap.get(resolveAutoDarkThemeId(darkPalette)) ?? codexDark;
 }
 
 export function resolveAutoTerminalThemeId(
@@ -1452,16 +1478,31 @@ export function resolveAutoTerminalThemeId(
   return resolvedTheme === "dark" ? resolveAutoDarkThemeId(darkPalette) : resolveAutoLightThemeId(lightPalette);
 }
 
+export function resolveTerminalThemeId(
+  themeName: string,
+  resolvedTheme: "dark" | "light",
+  lightPalette: LightTerminalPalette = "warm-paper",
+  darkPalette: DarkTerminalPalette = "night-indigo"
+): string {
+  if (themeName === "auto") {
+    return resolveAutoTerminalThemeId(resolvedTheme, lightPalette, darkPalette);
+  }
+
+  const preset = themePresetMap.get(themeName);
+  if (!preset || (preset.tone && preset.tone !== resolvedTheme)) {
+    return resolveAutoTerminalThemeId(resolvedTheme, lightPalette, darkPalette);
+  }
+  return preset.id;
+}
+
 export function getTerminalTheme(
   themeName: string,
   resolvedTheme: "dark" | "light",
   lightPalette: LightTerminalPalette = "warm-paper",
   darkPalette: DarkTerminalPalette = "night-indigo"
 ): ITheme {
-  if (themeName === "auto") {
-    return resolvedTheme === "dark" ? resolveAutoDarkTheme(darkPalette) : resolveAutoLightTheme(lightPalette);
-  }
-  return themeMap.get(themeName) ?? (resolvedTheme === "dark" ? resolveAutoDarkTheme(darkPalette) : resolveAutoLightTheme(lightPalette));
+  return themeMap.get(resolveTerminalThemeId(themeName, resolvedTheme, lightPalette, darkPalette)) ??
+    (resolvedTheme === "dark" ? resolveAutoDarkTheme(darkPalette) : resolveAutoLightTheme(lightPalette));
 }
 
 export function getTerminalBackground(

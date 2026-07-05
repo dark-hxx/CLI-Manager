@@ -5,6 +5,7 @@ let initialized = false;
 export type PerfMetric =
   | "app.first_screen"
   | "history.open"
+  | "history.index.warmup"
   | "history.sessions.load"
   | "history.session.detail"
   | "stats.open"
@@ -27,6 +28,11 @@ export const PERF_BUDGETS: Record<PerfMetric, PerfBudget> = {
     targetMs: 450,
     warnMs: 900,
     desc: "打开历史工作区（含首次会话预取）",
+  },
+  "history.index.warmup": {
+    targetMs: 900,
+    warnMs: 1800,
+    desc: "后台同步 Claude/Codex 历史索引",
   },
   "history.sessions.load": {
     targetMs: 650,
@@ -68,7 +74,10 @@ export async function initLogging() {
   try {
     await attachConsole();
   } catch (err) {
-    console.warn("Failed to attach Tauri console logger:", err);
+    const { useSettingsStore } = await import("../stores/settingsStore");
+    if (useSettingsStore.getState().debugMode) {
+      console.warn("Failed to attach Tauri console logger:", err);
+    }
   }
   void info("Logger initialized");
 }

@@ -17,6 +17,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { toast } from "sonner";
+import { debugConsoleWarn } from "../../../lib/debugConsole";
 import {
   useSettingsStore,
   UI_FONT_SIZE_MAX,
@@ -446,7 +447,7 @@ export function GeneralSettingsPage() {
         if (!cancelled) setSystemFonts(fonts);
       })
       .catch((err) => {
-        console.warn("Failed to list system fonts:", err);
+        debugConsoleWarn("Failed to list system fonts:", err);
         if (!cancelled) setSystemFontsError(t("settings.general.uiFontError"));
       })
       .finally(() => {

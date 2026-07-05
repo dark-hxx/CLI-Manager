@@ -19,6 +19,7 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
+import { debugConsoleInfo, debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import {
   useReplayStore,
@@ -112,9 +113,9 @@ function logReplayPanelOomDiagnostic(phase: string, fields: Record<string, unkno
     ...fields,
   };
   if (warn) {
-    console.warn("[oom-diagnostics:webview]", payload);
+    debugConsoleWarn("[oom-diagnostics:webview]", payload);
   } else {
-    console.info("[oom-diagnostics:webview]", payload);
+    debugConsoleInfo("[oom-diagnostics:webview]", payload);
   }
 }
 

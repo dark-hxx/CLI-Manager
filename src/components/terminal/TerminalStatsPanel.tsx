@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { Copy, FolderGit2, GitBranch, RefreshCw, FolderOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { createPatch } from "diff";
 import type { HistoryFileChangeSummary, HistorySessionDetail, HistorySource } from "../../lib/types";
 import {
   fetchLatestProjectSessionDetail,
@@ -36,7 +37,7 @@ import {
   type LatestChangesCardData,
 } from "../stats/termStatsCards";
 import { useI18n } from "../../lib/i18n";
-import { DiffModal } from "../history/DiffModal";
+import { DiffViewerModal } from "../git/DiffViewerModal";
 import { parseDiffBlocksFromMessages } from "../../lib/diffParser";
 import { TerminalSquare } from "../icons";
 
@@ -181,6 +182,16 @@ function buildLatestChangesSummary(session: HistorySessionDetail | null): Latest
     deletions: latestFiles.reduce((sum, item) => sum + item.deletions, 0),
     files: latestFiles,
   };
+}
+
+function buildLatestChangeDiffText(fileChange: HistoryFileChangeSummary): string {
+  return fileChange.operations
+    .map((operation) =>
+      operation.patch ||
+      createPatch(fileChange.file_path, operation.old_text ?? "", operation.new_text ?? "", "", "")
+    )
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
@@ -360,7 +371,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const [, setNowTick] = useState(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
   const [pollTrigger, setPollTrigger] = useState(0); // A6: 统一轮询触发器
-  const [diffFileChanges, setDiffFileChanges] = useState<HistoryFileChangeSummary[] | null>(null);
+  const [diffFileChange, setDiffFileChange] = useState<HistoryFileChangeSummary | null>(null);
   const latestRef = useRef<HistorySessionDetail | null>(null);
   const lastPathRef = useRef<string | null>(null);
 
@@ -506,6 +517,10 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const boundSession = tokensBound ? latestSession : null;
   const boundStats = tokensBound ? stats : EMPTY_TOKEN_STATS;
   const latestChangesSummary = useMemo(() => buildLatestChangesSummary(boundSession), [boundSession]);
+  const diffText = useMemo(
+    () => (diffFileChange ? buildLatestChangeDiffText(diffFileChange) : ""),
+    [diffFileChange]
+  );
   const hasVisibleCard = terminalStatsCardOrder.some((key) => terminalStatsCardVisibility[key]);
 
   if (!panelActive) return null;
@@ -543,7 +558,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             key={cardKey}
             stats={boundStats}
             session={boundSession}
-            displayModel={boundStats.dominantModel}
+            displayModel={boundSession?.usage?.current_model ?? boundStats.dominantModel}
             exactContextLimit={boundSession?.usage?.context_window ?? null}
             reasoningEffort={terminalSession?.cliReasoningEffort ?? null}
           />
@@ -555,7 +570,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
           <LatestChangesCard
             key={cardKey}
             summary={latestChangesSummary}
-            onOpenDiff={(fileChange) => setDiffFileChanges([fileChange])}
+            onOpenDiff={(fileChange) => setDiffFileChange(fileChange)}
           />
         );
       case "todayUsage":
@@ -612,11 +627,17 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
           {terminalStatsCardOrder.map(renderStatsCard)}
         </>
       )}
-      <DiffModal
-        open={Boolean(diffFileChanges)}
-        fileChanges={diffFileChanges}
-        onClose={() => setDiffFileChanges(null)}
-      />
+      {diffFileChange && displayProjectPath && (
+        <DiffViewerModal
+          open={Boolean(diffFileChange)}
+          projectPath={displayProjectPath}
+          filePath={diffFileChange.file_path}
+          fileName={diffFileChange.file_path.split(/[\\/]/).pop() || diffFileChange.file_path}
+          status={diffFileChange.status}
+          diffText={diffText}
+          onClose={() => setDiffFileChange(null)}
+        />
+      )}
     </Container>
   );
 }

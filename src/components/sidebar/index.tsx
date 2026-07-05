@@ -6,6 +6,7 @@ import { useTerminalStore, type SessionStatus, type SplitTerminalOptions } from 
 import { isProjectFileDirty, useFileExplorerStore } from "../../stores/fileExplorerStore";
 import { useHistoryStore } from "../../stores/historyStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useExternalSessionSyncStore } from "../../stores/externalSessionSyncStore";
 import type { TerminalPaneSplitDirection } from "../../stores/terminalPaneTree";
 import type { HistorySourceFilter, Project, TreeNode as TNode, Group } from "../../lib/types";
 import { ConfigModal } from "../ConfigModal";
@@ -22,6 +23,8 @@ import { logError } from "../../lib/logger";
 import { SidebarHeader } from "./SidebarHeader";
 import { ProjectTree } from "./ProjectTree";
 import { SidebarFooter } from "./SidebarFooter";
+import { SyncedHistoryList } from "./SyncedHistoryList";
+import { groupSyncedExternalSessions } from "../../lib/externalSessionGrouping";
 import { FileExplorerSidebar } from "../files/FileExplorerSidebar";
 import {
   ArrowLeftRight,
@@ -95,6 +98,34 @@ function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
   };
 }
 
+function getSyncedSessionKeysForProject(
+  project: Project,
+  syncedSessions: ReturnType<typeof useExternalSessionSyncStore.getState>["syncedSessions"]
+): string[] {
+  return groupSyncedExternalSessions(syncedSessions, [project])
+    .byProjectId.get(project.id)
+    ?.flatMap((group) => group.sessions.map((session) => session.key)) ?? [];
+}
+
+function collectGroupProjectIds(groupId: string, groups: Group[], projects: Project[]): Set<string> {
+  const groupIds = new Set<string>([groupId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const group of groups) {
+      if (group.parent_id && groupIds.has(group.parent_id) && !groupIds.has(group.id)) {
+        groupIds.add(group.id);
+        changed = true;
+      }
+    }
+  }
+  return new Set(
+    projects
+      .filter((project) => project.group_id && groupIds.has(project.group_id))
+      .map((project) => project.id)
+  );
+}
+
 export function Sidebar({
   onOpenSettings,
   onOpenStats,
@@ -131,6 +162,7 @@ export function Sidebar({
   const moveProjectToGroup = useProjectStore((s) => s.moveProjectToGroup);
   const createSession = useTerminalStore((s) => s.createSession);
   const splitTerminal = useTerminalStore((s) => s.splitTerminal);
+  const closeSession = useTerminalStore((s) => s.closeSession);
   const sessions = useTerminalStore((s) => s.sessions);
   const activeSessionId = useTerminalStore((s) => s.activeSessionId);
   const setActiveSession = useTerminalStore((s) => s.setActive);
@@ -145,6 +177,8 @@ export function Sidebar({
   const closeHistory = useHistoryStore((s) => s.closeHistory);
   const openHistory = useHistoryStore((s) => s.openHistory);
   const triggerGlobalSearchFocus = useHistoryStore((s) => s.triggerGlobalSearchFocus);
+  const syncedSessionCount = useExternalSessionSyncStore((s) => s.syncedSessions.length);
+  const removeSyncedSessions = useExternalSessionSyncStore((s) => s.removeSyncedSessions);
 
   const initialSidebarWidth = normalizePersistedSidebarWidth(persistedSidebarWidth);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
@@ -960,7 +994,25 @@ export function Sidebar({
         danger: true,
         onConfirm: async () => {
           try {
+            const syncedKeys = getSyncedSessionKeysForProject(
+              confirmAction.project,
+              useExternalSessionSyncStore.getState().syncedSessions
+            );
+            const projectSessionIds = useTerminalStore
+              .getState()
+              .sessions
+              .filter((session) =>
+                session.projectId === confirmAction.project.id
+                || session.fileEditor?.projectId === confirmAction.project.id
+              )
+              .map((session) => session.id);
+            for (const sessionId of projectSessionIds) {
+              await closeSession(sessionId);
+            }
             await deleteProject(confirmAction.project.id);
+            if (syncedKeys.length > 0) {
+              await removeSyncedSessions(syncedKeys);
+            }
             toast.success(t("sidebar.toast.terminalDeleteSuccess"));
             setConfirmAction(null);
             if (selectedId === confirmAction.project.id) setSelectedId(null);
@@ -983,15 +1035,49 @@ export function Sidebar({
       danger: true,
       onConfirm: async () => {
         try {
+          const projectIds = collectGroupProjectIds(confirmAction.groupId, groups, projects);
+          const groupProjects = projects.filter((project) => projectIds.has(project.id));
+          const syncedKeys = groupProjects.flatMap((project) =>
+            getSyncedSessionKeysForProject(project, useExternalSessionSyncStore.getState().syncedSessions)
+          );
+          const sessionIds = useTerminalStore
+            .getState()
+            .sessions
+            .filter((session) =>
+              (session.projectId && projectIds.has(session.projectId))
+              || (session.fileEditor?.projectId && projectIds.has(session.fileEditor.projectId))
+            )
+            .map((session) => session.id);
+          for (const sessionId of sessionIds) {
+            await closeSession(sessionId);
+          }
+          for (const project of groupProjects) {
+            await deleteProject(project.id);
+          }
+          if (syncedKeys.length > 0) {
+            await removeSyncedSessions(syncedKeys);
+          }
           await deleteGroup(confirmAction.groupId);
           toast.success(t("sidebar.toast.groupDeleteSuccess"));
           setConfirmAction(null);
+          if (selectedId && projectIds.has(selectedId)) setSelectedId(null);
+          setSelectedProjectIds((prev) => {
+            const next = new Set(prev);
+            projectIds.forEach((id) => next.delete(id));
+            return next;
+          });
         } catch (err) {
           toast.error(t("sidebar.toast.groupDeleteFailed"), { description: String(err) });
         }
       },
     };
   })();
+  const hasOnlySyncedHistory =
+    syncedSessionCount > 0 &&
+    !initialLoading &&
+    !loadError &&
+    tree.length === 0 &&
+    newGroupParentId !== "__root__";
 
   return (
     <aside
@@ -1023,29 +1109,36 @@ export function Sidebar({
           <FileExplorerSidebar onBackToProjects={handleBackToProjectTree} />
         ) : (
           <TreeContext.Provider value={treeActions}>
-            <ProjectTree
-              tree={tree}
-              initialLoading={initialLoading}
-              loadError={loadError}
-              collapsed={compactMode ? false : sidebarCollapsed}
-              density={sidebarDensity}
-              newGroupParentId={newGroupParentId}
-              projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
-              terminalScopeProjectId={terminalScopeProjectId}
-              onSelectAllTerminalScope={handleSelectAllTerminalScope}
-              onCreateRootGroup={(name) => handleCreateGroup(null, name)}
-              onCancelRootGroup={handleCancelNewGroup}
-              onQuickAddProject={() => {
-                ensureSidebarExpanded();
-                setAddToGroupId(null);
-                setShowAdd(true);
-              }}
-              onRetry={() => {
-                setInitialLoading(true);
-                void loadProjects();
-              }}
-              onExpandSidebar={expandSidebar}
-            />
+            <div className="ui-sidebar-combined-list h-full min-h-0 overflow-y-auto overflow-x-hidden">
+              {!hasOnlySyncedHistory && (
+                <ProjectTree
+                  tree={tree}
+                  initialLoading={initialLoading}
+                  loadError={loadError}
+                  collapsed={compactMode ? false : sidebarCollapsed}
+                  density={sidebarDensity}
+                  newGroupParentId={newGroupParentId}
+                  projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
+                  terminalScopeProjectId={terminalScopeProjectId}
+                  onSelectAllTerminalScope={handleSelectAllTerminalScope}
+                  onCreateRootGroup={(name) => handleCreateGroup(null, name)}
+                  onCancelRootGroup={handleCancelNewGroup}
+                  onQuickAddProject={() => {
+                    ensureSidebarExpanded();
+                    setAddToGroupId(null);
+                    setShowAdd(true);
+                  }}
+                  onRetry={() => {
+                    setInitialLoading(true);
+                    void loadProjects();
+                  }}
+                  onExpandSidebar={expandSidebar}
+                  suppressEmptyState={syncedSessionCount > 0}
+                  embedded={!sidebarCollapsed && syncedSessionCount > 0}
+                />
+              )}
+              {!sidebarCollapsed && <SyncedHistoryList fillAvailable={hasOnlySyncedHistory} />}
+            </div>
           </TreeContext.Provider>
         )}
       </div>

@@ -7,11 +7,7 @@ const CLAUDE_SETTINGS_ARG = "--settings";
 const CODEX_LIGHT_TUI_THEME_ARG = "-c theme=catppuccin-latte";
 const DIRECT_CODEX_COMMAND_PATTERN = /^(\s*codex(?:\.(?:cmd|exe|ps1))?)(?=\s|$)/i;
 
-export function isCodexStartupCommand(command: string): boolean {
-  return /\bcodex(?:\.(?:cmd|exe|ps1))?\b/i.test(command);
-}
-
-export function isDirectCodexStartupCommand(command?: string): boolean {
+export function isDirectCodexStartupCommand(command?: string | null): boolean {
   const trimmed = command?.trim();
   return Boolean(trimmed && DIRECT_CODEX_COMMAND_PATTERN.test(trimmed));
 }
@@ -45,6 +41,10 @@ function settingsPathForShell(settingsPath: string, shell?: string | null): stri
 
 function hasCodexThemeConfigArg(command: string): boolean {
   return /(^|\s)(?:-c|--config)(?:\s+|=)["']?(?:tui\.)?theme\s*=/i.test(command);
+}
+
+export function isCodexStartupCommand(command?: string | null): boolean {
+  return isDirectCodexStartupCommand(command);
 }
 
 export function normalizeDirectCodexStartupCommand(command?: string): string | undefined {

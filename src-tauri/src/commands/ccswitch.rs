@@ -800,12 +800,13 @@ async fn load_claude_provider_env(
 ) -> Result<(String, Map<String, Value>), String> {
     let path = resolve_db_path(app, db_path)?;
     let mut conn = open_db_readonly(&path).await?;
-    let row =
-        sqlx::query("SELECT name, settings_config FROM providers WHERE id = ?1 AND app_type = 'claude'")
-            .bind(provider_id.trim())
-            .fetch_optional(&mut conn)
-            .await
-            .map_err(|err| format!("db_query_failed: {err}"))?;
+    let row = sqlx::query(
+        "SELECT name, settings_config FROM providers WHERE id = ?1 AND app_type = 'claude'",
+    )
+    .bind(provider_id.trim())
+    .fetch_optional(&mut conn)
+    .await
+    .map_err(|err| format!("db_query_failed: {err}"))?;
     let _ = conn.close().await;
 
     let row = row.ok_or_else(|| "provider_not_found".to_string())?;
@@ -976,7 +977,8 @@ pub async fn ccswitch_prepare_claude_provider(
         return Err("project_not_found".to_string());
     }
     let provider_id = provider_id.trim();
-    let (provider_name, provider_env) = load_claude_provider_env(&app, provider_id, db_path).await?;
+    let (provider_name, provider_env) =
+        load_claude_provider_env(&app, provider_id, db_path).await?;
     let settings_path = write_claude_provider_settings(project_id, provider_id, &provider_env)?;
     Ok(CcSwitchClaudeProviderSettings {
         provider_id: provider_id.to_string(),
@@ -1489,7 +1491,11 @@ fn write_codex_profile(
     replace_file_with_tmp(&tmp_path, &profile_path, "profile_write_failed")
 }
 
-fn replace_file_with_tmp(tmp_path: &Path, target_path: &Path, error_prefix: &str) -> Result<(), String> {
+fn replace_file_with_tmp(
+    tmp_path: &Path,
+    target_path: &Path,
+    error_prefix: &str,
+) -> Result<(), String> {
     if target_path.exists() {
         fs::remove_file(target_path).map_err(|err| format!("{error_prefix}: {err}"))?;
     }
@@ -1627,7 +1633,10 @@ pub(crate) async fn apply_codex_provider_launch_env(
     let runtime =
         load_codex_runtime_config(app, &launch_config.provider_id, launch_config.db_path).await?;
     let resolved_dir = resolve_codex_config_dir(app, codex_config_dir.clone())?;
-    env_vars.insert("CODEX_HOME".to_string(), codex_home_for_shell(&resolved_dir, shell));
+    env_vars.insert(
+        "CODEX_HOME".to_string(),
+        codex_home_for_shell(&resolved_dir, shell),
+    );
     write_codex_profile(app, codex_config_dir, &runtime)?;
     env_vars.insert(runtime.env_key, runtime.secret_value);
     Ok(())

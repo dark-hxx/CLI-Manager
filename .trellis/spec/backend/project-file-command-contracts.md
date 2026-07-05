@@ -40,12 +40,14 @@ FileEntry { name: String, path: String, kind: String, size_bytes: u64, modified_
 ContentSearchMatch { path: String, name: String, line_number: usize, line_text: String, before: Vec<String>, after: Vec<String> }
 TextFilePayload { content: String, size_bytes: u64 }
 ImageFilePayload { data_base64: String, mime_type: String, size_bytes: u64 }
+ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 ```
 
 ### 3. Contracts
 
 - `rootPath` must be absolute, canonicalizable, and a directory.
 - `file_watch_start` / `file_watch_stop` only accept a project root path; Rust owns watcher lifecycle and WSL/network-path fallback signaling.
+- `project-files-changed` emits `projectPath` plus project-relative `changedPaths` using forward slashes; frontend refresh logic must treat an omitted/empty `changedPaths` as a full visible refresh fallback.
 - Relative path fields use forward slashes only; empty string means project root where accepted.
 - `name` / `newName` are single child names only; they must not contain `/` or `\`.
 - `file_read_text` only returns UTF-8 text and rejects files larger than `TEXT_FILE_MAX_BYTES`.
@@ -84,6 +86,7 @@ ImageFilePayload { data_base64: String, mime_type: String, size_bytes: u64 }
 - Good: `file_list_dir(rootPath, "")` returns sorted directories before files, with project-relative `path`.
 - Good: `file_search_content(rootPath, "invoke")` returns bounded `{ path, line_number, line_text, before, after }` snippets for UTF-8 project files, with duplicate hits in the same file collapsed to the first match.
 - Good: `file_watch_start(projectPath)` uses a debounced recursive watcher for local Windows paths and returns a stable error such as `wsl_watch_unsupported` when notify cannot be used.
+- Good: watcher events for `src/main.ts` emit `changedPaths: ["src/main.ts"]`, allowing the frontend to refresh `src` instead of every expanded directory.
 - Base: `file_write_text(rootPath, "src/App.tsx", content)` writes only if `src` remains inside `rootPath`.
 - Base: `file_search(rootPath, "app")` can match file names or project-relative paths, but skips generated directories such as `node_modules`.
 - Bad: `file_delete(rootPath, "")` must fail with `cannot_delete_root`.
@@ -100,6 +103,7 @@ ImageFilePayload { data_base64: String, mime_type: String, size_bytes: u64 }
 - Unit-test file search skips heavy/generated directories.
 - Unit-test content search returns line/context data and skips heavy/generated directories.
 - Unit-test content search returns only one match per file even when a file contains multiple matching lines.
+- Unit-test watcher path filtering keeps project-relative paths stable and ignores generated/noisy directories.
 
 ### 7. Wrong vs Correct
 
@@ -120,6 +124,26 @@ const image = await invoke<ProjectImageFilePayload>("file_read_image", {
 ```
 
 Rust validates `rootPath` and `relativePath`, reads the file, and returns bounded data without expanding global file access.
+
+#### Wrong
+
+```typescript
+listen("project-files-changed", () => refreshVisibleState());
+```
+
+This discards watcher path information and refreshes every expanded directory for a one-file save.
+
+#### Correct
+
+```typescript
+listen<{ projectPath: string; changedPaths?: string[] }>("project-files-changed", (event) => {
+  if (event.payload.projectPath === project.path) {
+    void refreshVisibleState(event.payload.changedPaths);
+  }
+});
+```
+
+The frontend can still fall back to a full visible refresh when `changedPaths` is missing, but same-version watcher events should pass the affected relative paths through.
 
 #### Wrong
 

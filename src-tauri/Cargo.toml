@@ -1,6 +1,6 @@
 [package]
 name = "cli-manager"
-version = "1.2.4"
+version = "1.2.5"
 description = "A lightweight desktop app for managing CLI tools across multiple projects"
 authors = ["tianhao.zhao", "zhang.yuan"]
 license = "AGPL-3.0-or-later"
