@@ -110,7 +110,6 @@ function clampTerminalScrollbackRows(value: number) {
 export function ThemeSettingsPage() {
   const { language, t } = useI18n();
   const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
-  const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
@@ -129,7 +128,6 @@ export function ThemeSettingsPage() {
   const batchLaunchGroupInPane = useSettingsStore((s) => s.batchLaunchGroupInPane);
   const batchLaunchPaneDirection = useSettingsStore((s) => s.batchLaunchPaneDirection);
   const projectScopedTerminalViewEnabled = useSettingsStore((s) => s.projectScopedTerminalViewEnabled);
-  const setTerminalThemeMode = useSettingsStore((s) => s.setTerminalThemeMode);
   const update = useSettingsStore((s) => s.update);
   const [query, setQuery] = useState("");
   const [fontSizeDraft, setFontSizeDraft] = useState(fontSize);
@@ -173,7 +171,7 @@ export function ThemeSettingsPage() {
     setTerminalScrollbackRowsDraft(terminalScrollbackRows);
   }, [terminalScrollbackRows]);
 
-  const effectiveThemeName = terminalThemeMode === "follow-app" ? "auto" : terminalThemeName;
+  const effectiveThemeName = terminalThemeName;
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -198,12 +196,10 @@ export function ThemeSettingsPage() {
       null;
     return {
       label:
-        terminalThemeMode === "follow-app"
-          ? text(`跟随应用主题（当前：${selectedPreset?.name ?? "Auto"}）`, `Following app theme (current: ${selectedPreset?.name ?? "Auto"})`)
-          : selectedPreset?.name ?? text("独立终端主题", "Independent terminal theme"),
+        selectedPreset?.name ?? text("独立终端主题", "Independent terminal theme"),
       theme: effective,
     };
-  }, [darkThemePalette, effectiveThemeName, language, lightThemePalette, resolvedTheme, terminalThemeMode]);
+  }, [darkThemePalette, effectiveThemeName, language, lightThemePalette, resolvedTheme]);
 
   const fontFamilyOptions = useMemo(
     () =>
@@ -627,31 +623,9 @@ export function ThemeSettingsPage() {
 
         <section className="ui-surface-card rounded-2xl border border-border p-4 xl:col-start-1 xl:row-start-2">
           <Stack gap="md">
-            <Stack gap={6}>
-              <Text size="sm" fw={600} c="var(--on-surface)">
-                {text("终端主题模式", "Terminal Theme Mode")}
-              </Text>
-              <SegmentedControl<"follow-app" | "independent">
-                className="ui-terminal-theme-mode-segmented"
-                value={terminalThemeMode}
-                onChange={(value) => void setTerminalThemeMode(value)}
-                data={[
-                  { value: "follow-app", label: text("跟随应用", "Follow App") },
-                  { value: "independent", label: text("独立设置", "Independent") },
-                ]}
-                color="cliPrimary"
-                aria-label={text("终端主题模式切换", "Terminal theme mode switch")}
-              />
-              <Text size="xs" c="var(--on-surface-variant)">
-                {terminalThemeMode === "follow-app"
-                  ? text("终端会自动跟随应用浅/深主题与配色方案。", "Terminal automatically follows the app light/dark theme and palette.")
-                  : text("终端主题独立于应用主题，切换应用主题时保持不变。", "Terminal theme is independent and stays fixed when the app theme changes.")}
-              </Text>
-            </Stack>
-
             <Group align="flex-end" justify="space-between" gap="md">
               <Text size="sm" fw={600} c="var(--on-surface)">
-                {text("独立主题库", "Independent Theme Library")}
+                {text("终端主题库", "Terminal Theme Library")}
               </Text>
               <TextInput
                 value={query}
@@ -660,7 +634,6 @@ export function ThemeSettingsPage() {
                 size="xs"
                 w={220}
                 aria-label={text("终端主题搜索", "Terminal theme search")}
-                disabled={terminalThemeMode !== "independent"}
               />
             </Group>
 
@@ -677,7 +650,7 @@ export function ThemeSettingsPage() {
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="xs">
                   {group.presets.map((preset) => {
-                    const active = terminalThemeMode === "independent" && terminalThemeName === preset.id;
+                    const active = terminalThemeName === preset.id;
                     return (
                       <UnstyledButton
                         key={preset.id}
@@ -686,7 +659,6 @@ export function ThemeSettingsPage() {
                         }}
                         className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border p-4 text-left transition-[transform,box-shadow,border-color,background-color]"
                         data-selected={active ? "true" : "false"}
-                        disabled={terminalThemeMode !== "independent"}
                         aria-pressed={active}
                         w="100%"
                         style={{
@@ -772,13 +744,6 @@ export function ThemeSettingsPage() {
               </Card>
             )}
             </Stack>
-          {terminalThemeMode !== "independent" && (
-            <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
-              <Text size="xs" c="var(--on-surface-variant)">
-                {text("当前为“跟随应用”模式，切换到“独立设置”后可选择固定终端主题。", "Current mode follows the app. Switch to Independent to choose a fixed terminal theme.")}
-              </Text>
-            </Card>
-          )}
           </Stack>
         </section>
 

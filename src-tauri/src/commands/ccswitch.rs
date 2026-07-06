@@ -180,7 +180,13 @@ pub(crate) fn resolve_db_path(
 }
 
 async fn open_db_readonly(path: &Path) -> Result<SqliteConnection, String> {
-    let options = SqliteConnectOptions::new().filename(path).read_only(true);
+    let mut options = SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .busy_timeout(Duration::from_secs(15));
+    if crate::wsl::is_wsl_config_dir(&path.to_string_lossy()) {
+        options = options.immutable(true);
+    }
     SqliteConnection::connect_with(&options)
         .await
         .map_err(|err| format!("db_open_failed: {err}"))

@@ -210,6 +210,12 @@ const SUBAGENT_CLOSE_DELAY_MS = 1500;
 const SUBAGENT_CHILD_JSONL_CLOSE_DELAY_MS = 10_000;
 const SUBAGENT_DISCOVERY_INTERVAL_MS = 1000;
 const SUBAGENT_DISCOVERY_TTL_MS = 15000;
+const PTY_ORPHAN_RECONCILE_INTERVAL_MS = 30_000;
+const TERMINAL_STORE_IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+type WindowWithPtyOrphanTimer = Window & {
+  __CLI_MANAGER_PTY_ORPHAN_RECONCILE_TIMER__?: ReturnType<typeof setInterval>;
+};
 
 function createPaneId() {
   paneIdSeq += 1;
@@ -222,6 +228,27 @@ function createFileEditorSessionId(projectId: string): string {
 
 function isPersistableSession(session: TerminalSession | undefined): boolean {
   return !!session && session.kind !== "subagent-transcript" && session.kind !== "file-editor" && session.kind !== "synced-history";
+}
+
+function hasBackendPty(session: TerminalSession): boolean {
+  return session.kind !== "subagent-transcript" && session.kind !== "file-editor";
+}
+
+function startPtyOrphanReconcileHeartbeat() {
+  if (!TERMINAL_STORE_IN_TAURI || typeof window === "undefined") return;
+  const host = window as WindowWithPtyOrphanTimer;
+  if (host.__CLI_MANAGER_PTY_ORPHAN_RECONCILE_TIMER__) return;
+  host.__CLI_MANAGER_PTY_ORPHAN_RECONCILE_TIMER__ = setInterval(() => {
+    const activeSessionIds = useTerminalStore
+      .getState()
+      .sessions
+      .filter(hasBackendPty)
+      .map((session) => session.id);
+    if (activeSessionIds.length === 0) return;
+    void invoke("pty_reconcile_active_sessions", { activeSessionIds }).catch((err) => {
+      logError("pty_reconcile_active_sessions invoke failed", { activeSessionIds: activeSessionIds.length, err });
+    });
+  }, PTY_ORPHAN_RECONCILE_INTERVAL_MS);
 }
 
 function createSplitSessionTitle(options?: SplitTerminalOptions) {
@@ -650,8 +677,7 @@ function isLightHexColor(value: string | undefined): boolean {
 
 function isCurrentTerminalBackgroundLight(): boolean {
   const settings = useSettingsStore.getState();
-  const themeName = settings.terminalThemeMode === "follow-app" ? "auto" : settings.terminalThemeName;
-  const theme = getTerminalTheme(themeName, settings.resolvedTheme, settings.lightThemePalette, settings.darkThemePalette);
+  const theme = getTerminalTheme(settings.terminalThemeName, settings.resolvedTheme, settings.lightThemePalette, settings.darkThemePalette);
   return isLightHexColor(theme.background);
 }
 
@@ -2058,3 +2084,5 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     });
   },
 }));
+
+startPtyOrphanReconcileHeartbeat();

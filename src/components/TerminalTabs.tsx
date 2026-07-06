@@ -79,7 +79,7 @@ import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "./ui/pop
 import { Button } from "./ui/button";
 import { Portal } from "./ui/Portal";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { getTerminalTheme } from "../lib/terminalThemes";
+import { getTerminalTheme, isLightTerminalTheme } from "../lib/terminalThemes";
 import { getTerminalSidePanelSkinStyle } from "./stats/termStatsUi";
 import { resolveProjectForSession } from "../lib/terminalProject";
 
@@ -309,7 +309,6 @@ interface SortableTabProps {
   hoverInfo: TerminalTabHoverInfo;
   onActivate: () => void;
   onClose: (anchor?: SplitPickerAnchor) => void;
-  onStartEdit: () => void;
   onSubmitEdit: (title: string) => void;
   onCancelEdit: () => void;
   menuContent: (getAnchor: () => SplitPickerAnchor | undefined) => ReactNode;
@@ -331,7 +330,6 @@ function SortableTab({
   hoverInfo,
   onActivate,
   onClose,
-  onStartEdit,
   onSubmitEdit,
   onCancelEdit,
   menuContent,
@@ -472,9 +470,9 @@ function SortableTab({
           onClick={onActivate}
           onPointerEnter={scheduleHoverCard}
           onPointerLeave={scheduleHideHoverCard}
-          onDoubleClick={() => {
+          onDoubleClick={(event) => {
             hideHoverCard();
-            onStartEdit();
+            onClose(event.currentTarget.getBoundingClientRect());
           }}
           onContextMenu={(event) => {
             hideHoverCard();
@@ -1018,7 +1016,6 @@ function PaneTabBar({
               hoverInfo={buildTerminalTabHoverInfo(session, session.projectId ? projectById.get(session.projectId) : undefined)}
               onActivate={() => onActivateSession(session.id)}
               onClose={(anchor) => closePaneSessions([session.id], anchor)}
-              onStartEdit={() => onStartEdit(session.id)}
               onSubmitEdit={(title) => onSubmitEdit(session.id, title)}
               onCancelEdit={onCancelEdit}
               menuClassName="terminal-skin"
@@ -1026,6 +1023,7 @@ function PaneTabBar({
               menuContent={(getAnchor) => (
                 <>
                   <ContextMenuItem onSelect={() => closePaneSessions([session.id], getAnchor())}>{t("terminal.tab.closeCurrent")}</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onStartEdit(session.id)}>{t("terminal.tab.rename", { title: session.title })}</ContextMenuItem>
                   <ContextMenuItem onSelect={() => closeOtherPaneSessions(session.id, getAnchor())}>{t("terminal.tab.closeOthers")}</ContextMenuItem>
                   <ContextMenuItem onSelect={() => closePaneSessionsToLeft(session.id, getAnchor())}>{t("terminal.tab.closeLeft")}</ContextMenuItem>
                   <ContextMenuItem onSelect={() => closePaneSessionsToRight(session.id, getAnchor())}>{t("terminal.tab.closeRight")}</ContextMenuItem>
@@ -1747,7 +1745,6 @@ export function TerminalTabs({
   const fontSize = useSettingsStore((s) => s.fontSize);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
-  const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
@@ -1870,11 +1867,11 @@ export function TerminalTabs({
     () => activeDragSessionId ? sessions.find((session) => session.id === activeDragSessionId) ?? null : null,
     [activeDragSessionId, sessions]
   );
-  const effectiveTerminalThemeName = terminalThemeMode === "follow-app" ? "auto" : terminalThemeName;
   const terminalTheme = useMemo(
-    () => getTerminalTheme(effectiveTerminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette),
-    [darkThemePalette, effectiveTerminalThemeName, lightThemePalette, resolvedTheme]
+    () => getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette),
+    [darkThemePalette, lightThemePalette, resolvedTheme, terminalThemeName]
   );
+  const terminalThemeTone = isLightTerminalTheme(terminalTheme) ? "light" : "dark";
   const terminalThemeBackground = terminalTheme.background ?? (resolvedTheme === "dark" ? "#0c0e10" : "#ffffff");
   const terminalThemeForeground = terminalTheme.foreground ?? (resolvedTheme === "dark" ? "#f8fafc" : "#1e293b");
   const terminalThemeAccent = terminalTheme.blue ?? terminalTheme.cursor ?? terminalThemeForeground;
@@ -2720,7 +2717,7 @@ export function TerminalTabs({
       fontSize={fontSize}
       fontFamily={fontFamily}
       resolvedTheme={resolvedTheme}
-      terminalThemeName={effectiveTerminalThemeName}
+      terminalThemeName={terminalThemeName}
       terminalThemeBackground={terminalThemeBackground}
       lightThemePalette={lightThemePalette}
       darkThemePalette={darkThemePalette}
@@ -2759,7 +2756,6 @@ export function TerminalTabs({
     allPanes,
     darkThemePalette,
     editingSessionId,
-    effectiveTerminalThemeName,
     fontFamily,
     fontSize,
     handleActivateSession,
@@ -2787,6 +2783,7 @@ export function TerminalTabs({
     terminalThemeBackground,
     terminalBackgroundEnabled,
     terminalBackgroundImagePath,
+    terminalThemeName,
     unsplitTerminal,
   ]);
 
@@ -2849,7 +2846,8 @@ export function TerminalTabs({
         )}
         <div
           className="ui-terminal-well absolute inset-0 min-h-0 flex"
-          data-terminal-mode={terminalThemeMode}
+          data-terminal-mode="independent"
+          data-terminal-theme-tone={terminalThemeTone}
           style={{ display: historyActive ? "none" : "flex" }}
         >
           <div className="flex-1 min-h-0 min-w-0">

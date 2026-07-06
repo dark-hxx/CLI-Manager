@@ -3,10 +3,11 @@ use base64::Engine;
 use log::{debug, error, info, warn};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::pty::boundary::safe_emit_boundary;
@@ -19,6 +20,8 @@ const READER_BUF_SIZE: usize = 16 * 1024;
 const MIN_PTY_COLS: u16 = 40;
 const MIN_PTY_ROWS: u16 = 8;
 const GIT_BASH_INITIAL_OUTPUT_DELAY_MS: u64 = 250;
+const ORPHAN_CREATE_GRACE_SECS: u64 = 30;
+const ORPHAN_MISSING_GRACE_SECS: u64 = 90;
 
 /// Debug 诊断（CLI_MANAGER_DEBUG=1）：统计影响滚动条/回滚的关键 VT 序列，
 /// 用于排查 Codex 等 TUI 在不同机器上滚动条表现不一致的问题。
@@ -93,6 +96,8 @@ pub struct PtySession {
     child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
     diagnostics: Arc<Mutex<PtySessionDiagnostics>>,
     reader_handle: Option<JoinHandle<()>>,
+    created_at: Instant,
+    missing_since: Option<Instant>,
 }
 
 #[derive(Clone)]
@@ -109,6 +114,16 @@ struct PtySessionDiagnostics {
 pub struct PtyProcessStatus {
     pub status: String,
     pub exit_code: Option<i32>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct PtyOrphanCleanupSummary {
+    pub active_count: usize,
+    pub tracked_count: usize,
+    pub marked_missing: usize,
+    pub protected_count: usize,
+    pub cleaned_count: usize,
+    pub skipped_empty_active_list: bool,
 }
 
 pub struct PtyManager {
@@ -771,6 +786,8 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             child,
             diagnostics,
             reader_handle: Some(reader_handle),
+            created_at: Instant::now(),
+            missing_since: None,
         }));
         self.sessions
             .write()
@@ -837,43 +854,173 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             })
     }
 
+    fn close_session_arc(session_id: &str, session_arc: Arc<Mutex<PtySession>>, reason: &str) {
+        // Kill child first, take reader handle out, then drop the Arc.
+        // Dropping the last Arc releases the master PTY, which causes the
+        // reader thread to observe EOF and exit promptly.
+        let (reader_handle, diagnostics) = {
+            let mut session = session_arc.lock().unwrap();
+            let diagnostics = session.diagnostics.lock().unwrap().clone();
+            let mut child = session.child.lock().unwrap();
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(pid) = child.process_id() {
+                    if let Err(err) = Self::kill_process_tree(pid) {
+                        warn!(
+                            "pty process tree kill failed, fallback to child kill: id={}, pid={}, reason={}, error={}",
+                            session_id, pid, reason, err
+                        );
+                    }
+                }
+            }
+            let _ = child.kill();
+            drop(child);
+            (session.reader_handle.take(), diagnostics)
+        };
+        drop(session_arc);
+        if let Some(handle) = reader_handle {
+            let _ = handle.join();
+        }
+        info!(
+            "pty session killed: id={}, reason={}, shell={}, exe={}, cwd={:?}",
+            session_id, reason, diagnostics.shell, diagnostics.exe, diagnostics.cwd
+        );
+    }
+
     pub fn close(&self, session_id: &str) -> Result<(), String> {
         let session_arc = {
             let mut sessions = self.sessions.write().unwrap();
             sessions.remove(session_id)
         };
         if let Some(session_arc) = session_arc {
-            // Kill child first, take reader handle out, then drop the Arc.
-            // Dropping the last Arc releases the master PTY, which causes the
-            // reader thread to observe EOF and exit promptly.
-            let reader_handle = {
-                let mut session = session_arc.lock().unwrap();
-                let mut child = session.child.lock().unwrap();
-                #[cfg(target_os = "windows")]
-                {
-                    if let Some(pid) = child.process_id() {
-                        if let Err(err) = Self::kill_process_tree(pid) {
-                            warn!(
-                                "pty process tree kill failed, fallback to child kill: id={}, pid={}, error={}",
-                                session_id, pid, err
-                            );
-                        }
-                    }
-                }
-                let _ = child.kill();
-                drop(child);
-                session.reader_handle.take()
-            };
-            drop(session_arc);
-            if let Some(handle) = reader_handle {
-                let _ = handle.join();
-            }
-            info!("pty session killed: id={}", session_id);
+            Self::close_session_arc(session_id, session_arc, "close");
         } else {
             debug!("pty close requested for missing session: id={}", session_id);
         }
         self.statuses.lock().unwrap().remove(session_id);
         Ok(())
+    }
+
+    pub fn reconcile_active_sessions(
+        &self,
+        active_session_ids: Vec<String>,
+    ) -> PtyOrphanCleanupSummary {
+        let active_ids: HashSet<String> = active_session_ids
+            .into_iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        let active_count = active_ids.len();
+        let create_grace = Duration::from_secs(ORPHAN_CREATE_GRACE_SECS);
+        let missing_grace = Duration::from_secs(ORPHAN_MISSING_GRACE_SECS);
+
+        if active_ids.is_empty() {
+            let tracked_count = self.sessions.read().unwrap().len();
+            debug!(
+                "pty orphan reconcile skipped: active list empty, tracked={}",
+                tracked_count
+            );
+            return PtyOrphanCleanupSummary {
+                active_count,
+                tracked_count,
+                marked_missing: 0,
+                protected_count: 0,
+                cleaned_count: 0,
+                skipped_empty_active_list: true,
+            };
+        }
+
+        let now = Instant::now();
+        let mut marked_missing = 0usize;
+        let mut protected_count = 0usize;
+        let mut sessions_to_close: Vec<(String, Arc<Mutex<PtySession>>)> = Vec::new();
+        let tracked_count;
+
+        {
+            let mut sessions = self.sessions.write().unwrap();
+            tracked_count = sessions.len();
+            let session_ids: Vec<String> = sessions.keys().cloned().collect();
+
+            for session_id in session_ids {
+                if active_ids.contains(&session_id) {
+                    if let Some(session_arc) = sessions.get(&session_id) {
+                        let mut session = session_arc.lock().unwrap();
+                        if session.missing_since.take().is_some() {
+                            debug!("pty orphan candidate recovered: id={}", session_id);
+                        }
+                    }
+                    continue;
+                }
+
+                let mut should_close = false;
+                if let Some(session_arc) = sessions.get(&session_id) {
+                    let mut session = session_arc.lock().unwrap();
+                    let age = now.saturating_duration_since(session.created_at);
+                    if age < create_grace {
+                        protected_count += 1;
+                        debug!(
+                            "pty orphan reconcile protected new session: id={}, age_secs={}",
+                            session_id,
+                            age.as_secs()
+                        );
+                        continue;
+                    }
+
+                    if let Some(missing_since) = session.missing_since {
+                        let missing_for = now.saturating_duration_since(missing_since);
+                        if missing_for >= missing_grace {
+                            should_close = true;
+                        } else {
+                            protected_count += 1;
+                            debug!(
+                                "pty orphan reconcile waiting grace: id={}, missing_secs={}",
+                                session_id,
+                                missing_for.as_secs()
+                            );
+                        }
+                    } else {
+                        let diagnostics = session.diagnostics.lock().unwrap().clone();
+                        session.missing_since = Some(now);
+                        marked_missing += 1;
+                        info!(
+                            "pty orphan candidate marked missing: id={}, age_secs={}, active_count={}, tracked_count={}, shell={}, exe={}, cwd={:?}",
+                            session_id,
+                            age.as_secs(),
+                            active_count,
+                            tracked_count,
+                            diagnostics.shell,
+                            diagnostics.exe,
+                            diagnostics.cwd
+                        );
+                    }
+                }
+
+                if should_close {
+                    if let Some(session_arc) = sessions.remove(&session_id) {
+                        sessions_to_close.push((session_id, session_arc));
+                    }
+                }
+            }
+        }
+
+        let cleaned_count = sessions_to_close.len();
+        for (session_id, session_arc) in sessions_to_close {
+            warn!(
+                "pty orphan cleanup closing missing session: id={}",
+                session_id
+            );
+            Self::close_session_arc(&session_id, session_arc, "orphan_reconcile");
+            self.statuses.lock().unwrap().remove(&session_id);
+        }
+
+        PtyOrphanCleanupSummary {
+            active_count,
+            tracked_count,
+            marked_missing,
+            protected_count,
+            cleaned_count,
+            skipped_empty_active_list: false,
+        }
     }
 
     /// 应用退出路径的批量关闭（Windows）：单次写锁取出全部会话 → 收集 PID 一次性
@@ -930,7 +1077,10 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             let _ = handle.join();
             info!("pty session killed (close_all): id={}", session_id);
         }
-        info!("pty close_all: batch closed sessions, joined_readers={}", closed);
+        info!(
+            "pty close_all: batch closed sessions, joined_readers={}",
+            closed
+        );
 
         self.statuses.lock().unwrap().clear();
         Ok(())
@@ -954,6 +1104,30 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconcile_active_sessions_skips_empty_active_list() {
+        let manager = PtyManager::new();
+
+        let summary = manager.reconcile_active_sessions(Vec::new());
+
+        assert!(summary.skipped_empty_active_list);
+        assert_eq!(summary.active_count, 0);
+        assert_eq!(summary.tracked_count, 0);
+        assert_eq!(summary.cleaned_count, 0);
+    }
+
+    #[test]
+    fn reconcile_active_sessions_handles_no_tracked_sessions() {
+        let manager = PtyManager::new();
+
+        let summary = manager.reconcile_active_sessions(vec!["session-1".to_string()]);
+
+        assert!(!summary.skipped_empty_active_list);
+        assert_eq!(summary.active_count, 1);
+        assert_eq!(summary.tracked_count, 0);
+        assert_eq!(summary.cleaned_count, 0);
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

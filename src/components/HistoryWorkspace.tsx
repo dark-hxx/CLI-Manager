@@ -228,6 +228,30 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     [sessions, activeSessionKey]
   );
 
+  const tagSuggestions = useMemo(() => {
+    const tags = new Set<string>();
+    for (const session of sessions) {
+      for (const tag of session.tags) {
+        const trimmed = tag.trim();
+        if (trimmed) tags.add(trimmed);
+      }
+    }
+    for (const meta of Object.values(metaMap)) {
+      try {
+        const parsed = JSON.parse(meta.tags_json);
+        if (!Array.isArray(parsed)) continue;
+        for (const tag of parsed) {
+          if (typeof tag !== "string") continue;
+          const trimmed = tag.trim();
+          if (trimmed) tags.add(trimmed);
+        }
+      } catch {
+        // Ignore malformed legacy metadata; visible session tags still participate.
+      }
+    }
+    return Array.from(tags).sort((a, b) => a.localeCompare(b));
+  }, [metaMap, sessions]);
+
   const activeTagText = useMemo(() => (activeView ? activeView.tags.join(", ") : ""), [activeView]);
 
   const startResize = useCallback(
@@ -537,9 +561,9 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
       .filter((item) => item.length > 0);
     try {
       await updateMeta(activeView.sessionKey, { alias: aliasDraft, tags });
-      toast.success("会话元数据已保存");
+      toast.success(t("history.meta.saveSuccess"));
     } catch (err) {
-      toast.error("保存失败", { description: String(err) });
+      toast.error(t("history.meta.saveFailed"), { description: String(err) });
     }
   };
 
@@ -802,6 +826,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
             loadingSessionDetail={loadingSessionDetail}
             aliasDraft={aliasDraft}
             tagsDraft={tagsDraft}
+            tagSuggestions={tagSuggestions}
             sessionQuery={sessionQuery}
             matchIndices={matchIndices}
             matchCursor={matchCursor}

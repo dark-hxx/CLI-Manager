@@ -326,14 +326,26 @@ pub async fn pty_close_all(
     pty_manager: tauri::State<'_, PtyManager>,
 ) -> Result<(), String>
 
+pub async fn pty_reconcile_active_sessions(
+    pty_manager: tauri::State<'_, PtyManager>,
+    active_session_ids: Vec<String>,
+) -> Result<PtyOrphanCleanupSummary, String>
+
 pub fn close(&self, session_id: &str) -> Result<(), String>
 pub fn close_all(&self) -> Result<(), String>
+pub fn reconcile_active_sessions(
+    &self,
+    active_session_ids: Vec<String>,
+) -> PtyOrphanCleanupSummary
 ```
 
 ### 3. Contracts
 
 - `pty_close` remains the per-session close command used by tab close and split cleanup.
 - `pty_close_all` closes every session currently tracked by `PtyManager`; app exit must call it before clearing persisted session state and destroying the window.
+- `pty_reconcile_active_sessions` is a conservative fallback only: the frontend reports currently active PTY-backed terminal session ids, and the backend compares that set with `PtyManager.sessions`.
+- Orphan reconciliation must never scan or kill by process name; only missing session ids already owned by `PtyManager` are eligible.
+- Orphan reconciliation must ignore an empty active list, protect newly-created sessions, mark missing sessions first, and only close a missing session after the grace period.
 - Windows cleanup must target the PTY root PID returned by `portable_pty::Child::process_id()` and terminate that process tree.
 - Windows cleanup must not scan by process name (`codex.exe`, `bash.exe`, etc.); only the owned PTY process tree is eligible.
 - Non-Windows cleanup keeps the existing direct child kill behavior unless a platform-specific process-tree mechanism is explicitly added later.
@@ -352,13 +364,20 @@ pub fn close_all(&self) -> Result<(), String>
 | `pty_close_all` runs while sessions are active on Windows | Remove/snapshot all sessions, batch owned root PIDs into one `taskkill /F /T` call, then direct-kill each child and join readers. |
 | `pty_close_all` runs while sessions are active on non-Windows | Keep the existing per-session close behavior unless a platform-specific tree cleanup is added. |
 | App exit cleanup fails to close PTYs | Log the error and continue the exit path so the app does not hang. |
+| `pty_reconcile_active_sessions` receives an empty active list | Skip cleanup and return a summary with `skipped_empty_active_list=true`. |
+| A backend session is absent from the active list but newly created | Keep it alive during the startup protection window. |
+| A backend session is absent from the active list for the first time | Mark it missing and keep it alive until the grace period expires. |
+| A backend session remains absent past the grace period | Remove it from `PtyManager.sessions` and close only that owned PTY process tree. |
+| A previously missing backend session appears in a later active list | Clear its missing marker and keep it alive. |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: closing a Codex terminal launched through Git Bash removes the shell and its `codex.exe` descendants.
 - Good: app exit with many active terminals issues one scoped Windows `taskkill` for all owned PTY root PIDs instead of spawning one `taskkill` per session.
+- Good: if a frontend tab is lost while its backend PTY session remains, reconciliation closes that owned PTY tree only after the missing grace period.
 - Base: closing an already-exited session is harmless; stale status entries are removed.
 - Bad: killing all system processes named `codex.exe` or `bash.exe` may terminate work started outside CLI-Manager and is forbidden.
+- Bad: treating one empty frontend heartbeat as proof that every PTY is orphaned may kill valid sessions during restore or reload.
 - Bad: `close_all` loops through `close()` on Windows and spawns N `taskkill` processes serially, causing visible app-exit lag.
 
 ### 6. Tests Required
@@ -367,6 +386,7 @@ pub fn close_all(&self) -> Result<(), String>
 - Frontend checks: `npx tsc --noEmit` or `npm run build` when the exit path changes.
 - Manual Windows verification: open a Git Bash/Codex terminal, close its tab, and confirm the associated process tree no longer remains in Task Manager.
 - Manual Windows verification: exit the app with active PTY sessions and confirm owned PTY child processes are gone.
+- Manual Windows verification: temporarily remove a tab from frontend state without calling `pty_close`, then confirm the backend marks it missing before killing it after the grace period.
 - Regression check: app exit with multiple active PTYs should not spawn one `taskkill` per session on Windows; the full-exit cleanup path should remain bounded by one batch command plus reader joins.
 
 ### 7. Wrong vs Correct

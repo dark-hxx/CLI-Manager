@@ -25,6 +25,7 @@ interface SessionDetailPaneProps {
   loadingSessionDetail: boolean;
   aliasDraft: string;
   tagsDraft: string;
+  tagSuggestions: string[];
   sessionQuery: string;
   matchIndices: number[];
   matchCursor: number;
@@ -279,6 +280,7 @@ export function SessionDetailPane({
   loadingSessionDetail,
   aliasDraft,
   tagsDraft,
+  tagSuggestions,
   sessionQuery,
   matchIndices,
   matchCursor,
@@ -443,6 +445,7 @@ export function SessionDetailPane({
         <MetaEditor
           aliasDraft={aliasDraft}
           tagsDraft={tagsDraft}
+          tagSuggestions={tagSuggestions}
           sessionQuery={sessionQuery}
           sessionSearchRef={sessionSearchRef}
           matchCursor={matchCursor}

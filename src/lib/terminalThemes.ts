@@ -1489,7 +1489,7 @@ export function resolveTerminalThemeId(
   }
 
   const preset = themePresetMap.get(themeName);
-  if (!preset || (preset.tone && preset.tone !== resolvedTheme)) {
+  if (!preset) {
     return resolveAutoTerminalThemeId(resolvedTheme, lightPalette, darkPalette);
   }
   return preset.id;

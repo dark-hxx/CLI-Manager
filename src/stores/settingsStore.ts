@@ -273,8 +273,8 @@ const DEFAULTS: Settings = {
   collapsedGroupIds: [],
   useExternalTerminal: false,
   debugMode: false,
-  terminalThemeMode: "follow-app",
-  terminalThemeName: "auto",
+  terminalThemeMode: "independent",
+  terminalThemeName: "forestNightDark",
   sidebarDensity: "comfortable",
   viewMode: "standard",
   closeBehavior: "ask",
@@ -671,13 +671,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       persistSetting("terminalThemeName", terminalThemeName);
     }
 
-    const terminalThemeMode =
-      storedTerminalThemeMode ??
-      (terminalThemeName !== "auto" ? "independent" : "follow-app");
-
-    if (terminalThemeMode === "independent" && terminalThemeName === "auto") {
+    if (storedTerminalThemeMode === "follow-app" || terminalThemeName === "auto") {
       terminalThemeName = resolveAutoTerminalThemeId(resolvedTheme, lightThemePalette, darkThemePalette);
       persistSetting("terminalThemeName", terminalThemeName);
+    }
+    const terminalThemeMode: TerminalThemeMode = "independent";
+    if (storedTerminalThemeMode === "follow-app") {
+      persistSetting("terminalThemeMode", terminalThemeMode);
     }
 
     entries.terminalThemeName = terminalThemeName;
@@ -879,7 +879,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const current = get();
     let nextThemeName = current.terminalThemeName;
 
-    if (mode === "independent" && nextThemeName === "auto") {
+    if (nextThemeName === "auto" || mode === "follow-app") {
       nextThemeName = resolveAutoTerminalThemeId(
         current.resolvedTheme,
         current.lightThemePalette,
@@ -888,8 +888,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await s.set("terminalThemeName", nextThemeName);
     }
 
-    await s.set("terminalThemeMode", mode);
-    set({ terminalThemeMode: mode, terminalThemeName: nextThemeName });
+    await s.set("terminalThemeMode", "independent");
+    set({ terminalThemeMode: "independent", terminalThemeName: nextThemeName });
   },
 
   clearTerminalBackgroundMissing: () => {

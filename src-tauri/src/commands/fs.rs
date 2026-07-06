@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::file_watcher::FileWatcherBridge;
+use crate::shell_resolver::silent_command;
 
 const TEXT_FILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -112,50 +113,164 @@ pub async fn file_list_dir(
     root_path: String,
     relative_path: String,
 ) -> Result<Vec<FileEntry>, String> {
-    tokio::task::spawn_blocking(move || {
-        let root = canonical_root(&root_path)?;
-        let dir = resolve_existing_path(&root, &relative_path)?;
-        if !dir.is_dir() {
-            return Err("not_directory".into());
-        }
+    tokio::task::spawn_blocking(move || list_dir_entries(&root_path, &relative_path))
+        .await
+        .map_err(|err| err.to_string())?
+}
 
-        let mut entries = Vec::new();
-        for item in fs::read_dir(&dir).map_err(|err| format!("read_dir_failed: {err}"))? {
-            let entry = item.map_err(|err| format!("read_dir_entry_failed: {err}"))?;
-            let path = entry.path();
-            let metadata = entry
-                .metadata()
-                .map_err(|err| format!("metadata_failed: {err}"))?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            let rel = relative_from_root(&root, &path)?;
-            entries.push(FileEntry {
-                name,
-                path: rel,
-                kind: if metadata.is_dir() {
-                    "directory"
-                } else {
-                    "file"
-                }
-                .into(),
-                size_bytes: metadata.len(),
-                modified_ms: metadata
-                    .modified()
-                    .ok()
-                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_millis() as u64),
-            });
-        }
+fn list_dir_entries(root_path: &str, relative_path: &str) -> Result<Vec<FileEntry>, String> {
+    if let Some((distro, linux_root)) = crate::wsl::parse_wsl_unc_path(root_path) {
+        return list_wsl_dir_entries(&distro, &linux_root, relative_path);
+    }
 
-        entries.sort_by_cached_key(|entry| {
-            (
-                if entry.kind == "directory" { 0u8 } else { 1u8 },
-                entry.name.to_lowercase(),
-            )
+    let root = canonical_root(root_path)?;
+    let dir = resolve_existing_path(&root, relative_path)?;
+    if !dir.is_dir() {
+        return Err("not_directory".into());
+    }
+
+    let mut entries = Vec::new();
+    for item in fs::read_dir(&dir).map_err(|err| format!("read_dir_failed: {err}"))? {
+        let entry = item.map_err(|err| format!("read_dir_entry_failed: {err}"))?;
+        let path = entry.path();
+        let metadata = entry
+            .metadata()
+            .map_err(|err| format!("metadata_failed: {err}"))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let rel = relative_from_root(&root, &path)?;
+        entries.push(FileEntry {
+            name,
+            path: rel,
+            kind: if metadata.is_dir() {
+                "directory"
+            } else {
+                "file"
+            }
+            .into(),
+            size_bytes: metadata.len(),
+            modified_ms: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis() as u64),
         });
-        Ok(entries)
-    })
-    .await
-    .map_err(|err| err.to_string())?
+    }
+
+    sort_file_entries(&mut entries);
+    Ok(entries)
+}
+
+fn list_wsl_dir_entries(
+    distro: &str,
+    linux_root: &str,
+    relative_path: &str,
+) -> Result<Vec<FileEntry>, String> {
+    validate_relative_path(relative_path).map_err(|err| err.to_string())?;
+    let linux_dir = join_linux_path(linux_root, relative_path);
+    let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
+    let output = silent_command(&wsl_exe.to_string_lossy())
+        .args([
+            "-d",
+            distro,
+            "--exec",
+            "find",
+            &linux_dir,
+            "-mindepth",
+            "1",
+            "-maxdepth",
+            "1",
+            "-printf",
+            "%f\\0%y\\0%s\\0%T@\\0",
+        ])
+        .output()
+        .map_err(|err| format!("read_dir_failed: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("read_dir_failed: {}", stderr.trim()));
+    }
+
+    parse_wsl_find_dir_entries(&output.stdout, relative_path)
+}
+
+fn join_linux_path(root: &str, relative_path: &str) -> String {
+    let root = root.trim_end_matches('/');
+    if relative_path.is_empty() {
+        root.to_string()
+    } else {
+        format!("{root}/{}", relative_path.trim_start_matches('/'))
+    }
+}
+
+fn parse_wsl_find_dir_entries(
+    stdout: &[u8],
+    relative_path: &str,
+) -> Result<Vec<FileEntry>, String> {
+    let mut fields = stdout
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    let mut entries = Vec::new();
+
+    loop {
+        let Some(name_raw) = fields.next() else {
+            break;
+        };
+        let kind_raw = fields
+            .next()
+            .ok_or_else(|| "read_dir_parse_failed".to_string())?;
+        let size_raw = fields
+            .next()
+            .ok_or_else(|| "read_dir_parse_failed".to_string())?;
+        let modified_raw = fields
+            .next()
+            .ok_or_else(|| "read_dir_parse_failed".to_string())?;
+
+        let name = String::from_utf8_lossy(name_raw).to_string();
+        let kind = if kind_raw == b"d" {
+            "directory"
+        } else {
+            "file"
+        }
+        .to_string();
+        let size_bytes = String::from_utf8_lossy(size_raw)
+            .parse::<u64>()
+            .map_err(|err| format!("read_dir_parse_failed: {err}"))?;
+        let modified_ms = parse_find_modified_ms(modified_raw);
+        let path = if relative_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative_path}/{name}")
+        };
+
+        entries.push(FileEntry {
+            name,
+            path,
+            kind,
+            size_bytes,
+            modified_ms,
+        });
+    }
+
+    sort_file_entries(&mut entries);
+    Ok(entries)
+}
+
+fn parse_find_modified_ms(raw: &[u8]) -> Option<u64> {
+    let value = String::from_utf8_lossy(raw).parse::<f64>().ok()?;
+    if value.is_finite() && value >= 0.0 {
+        Some((value * 1000.0) as u64)
+    } else {
+        None
+    }
+}
+
+fn sort_file_entries(entries: &mut [FileEntry]) {
+    entries.sort_by_cached_key(|entry| {
+        (
+            if entry.kind == "directory" { 0u8 } else { 1u8 },
+            entry.name.to_lowercase(),
+        )
+    });
 }
 
 #[tauri::command]
@@ -778,6 +893,42 @@ mod tests {
             "name_contains_separator"
         );
         assert_eq!(validate_child_name("..").unwrap_err(), "invalid_name");
+    }
+
+    #[test]
+    fn parse_wsl_find_dir_entries_returns_sorted_relative_entries() {
+        let output = [
+            b"z.txt\0".as_slice(),
+            b"f\0",
+            b"12\0",
+            b"1720000000.125\0",
+            b"src\0",
+            b"d\0",
+            b"4096\0",
+            b"1720000001.5\0",
+        ]
+        .concat();
+
+        let entries = parse_wsl_find_dir_entries(&output, "parent").unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "src");
+        assert_eq!(entries[0].path, "parent/src");
+        assert_eq!(entries[0].kind, "directory");
+        assert_eq!(entries[0].size_bytes, 4096);
+        assert_eq!(entries[0].modified_ms, Some(1_720_000_001_500));
+        assert_eq!(entries[1].name, "z.txt");
+        assert_eq!(entries[1].path, "parent/z.txt");
+        assert_eq!(entries[1].kind, "file");
+    }
+
+    #[test]
+    fn join_linux_path_preserves_root_and_nested_paths() {
+        assert_eq!(join_linux_path("/home/me/project", ""), "/home/me/project");
+        assert_eq!(
+            join_linux_path("/home/me/project/", "src/main.ts"),
+            "/home/me/project/src/main.ts"
+        );
     }
 
     #[test]

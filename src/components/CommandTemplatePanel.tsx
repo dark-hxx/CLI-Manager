@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useProjectStore } from "../stores/projectStore";
 import type { CommandTemplate, Project } from "../lib/types";
-import { Check, ChevronDown, TerminalSquare, Plus, Trash2 } from "./icons";
+import { Check, ChevronDown, Pencil, Play, Plus, Search, TerminalSquare, Trash2, X } from "./icons";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { EmptyState } from "./ui/EmptyState";
 import { Input } from "./ui/input";
@@ -14,12 +14,20 @@ import { toast } from "sonner";
 import { logError } from "../lib/logger";
 import { useI18n } from "../lib/i18n";
 
-/** Resolve template variables: ${projectPath}, ${projectName} */
+type TemplateScope = "global" | "project" | "session";
+type ScopeFilter = "all" | TemplateScope;
+
 function resolveCommand(command: string, project?: Project): string {
   if (!project) return command;
   return command
     .replace(/\$\{projectPath\}/g, project.path)
     .replace(/\$\{projectName\}/g, project.name);
+}
+
+function getTemplateScope(template: CommandTemplate): TemplateScope {
+  if (template.session_id) return "session";
+  if (template.project_id) return "project";
+  return "global";
 }
 
 interface CommandTemplatePanelProps {
@@ -132,24 +140,29 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
     getForContext,
     createTemplate,
     createSessionTemplate,
+    updateTemplate,
+    updateSessionTemplate,
     deleteTemplate,
     deleteSessionTemplate,
     pruneSessionTemplates,
   } = useTemplateStore();
-  // 常驻终端工具栏组件：收窄订阅到实际用到的字段，避免 terminalStore 高频变化
-  // （如子 Agent 转录每 250ms 追加）触发整店订阅重渲染。
   const { sessions, activeSessionId } = useTerminalStore(
     useShallow((s) => ({ sessions: s.sessions, activeSessionId: s.activeSessionId }))
   );
   const { projects } = useProjectStore();
   const [open, setOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<CommandTemplate | null>(null);
+  const [pendingDeleteTemplate, setPendingDeleteTemplate] = useState<CommandTemplate | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("all");
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [description, setDescription] = useState("");
-  const [scope, setScope] = useState<"global" | "project" | "session">("global");
+  const [scope, setScope] = useState<TemplateScope>("global");
   const [projectId, setProjectId] = useState<string | null>(null);
   const [panelLoading, setPanelLoading] = useState(false);
+
   const scopeOptions: InlineSelectOption[] = [
     { value: "global", label: t("commandTemplate.scope.global") },
     { value: "project", label: t("commandTemplate.scope.project") },
@@ -158,6 +171,12 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
   const projectOptions: InlineSelectOption[] = [
     { value: "", label: t("settings.templates.selectProject") },
     ...projects.map((project) => ({ value: project.id, label: project.name })),
+  ];
+  const scopeFilterOptions: Array<{ value: ScopeFilter; label: string }> = [
+    { value: "all", label: t("commandTemplate.filter.all") },
+    { value: "global", label: t("settings.templates.scope.global") },
+    { value: "project", label: t("settings.templates.scope.project") },
+    { value: "session", label: t("settings.templates.scope.session") },
   ];
 
   useEffect(() => {
@@ -189,9 +208,63 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
   const activeProject = activeSession?.projectId
     ? projects.find((p) => p.id === activeSession.projectId)
     : undefined;
-
-  // Show templates relevant to the active project and session.
   const visibleTemplates = getForContext(activeSession?.projectId ?? null, activeSessionId);
+
+  const filteredTemplates = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return visibleTemplates.filter((template) => {
+      const templateScope = getTemplateScope(template);
+      if (scopeFilter !== "all" && templateScope !== scopeFilter) return false;
+      if (!query) return true;
+      return [template.name, template.command, template.description]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(query));
+    });
+  }, [visibleTemplates, scopeFilter, searchQuery]);
+
+  const resetForm = () => {
+    setEditingTemplate(null);
+    setName("");
+    setCommand("");
+    setDescription("");
+    setScope("global");
+    setProjectId(null);
+  };
+
+  const openCreateForm = () => {
+    if (showForm && !editingTemplate) {
+      setShowForm(false);
+      return;
+    }
+    setPendingDeleteTemplate(null);
+    resetForm();
+    setShowForm(true);
+  };
+
+  const openEditForm = (template: CommandTemplate) => {
+    setPendingDeleteTemplate(null);
+    setEditingTemplate(template);
+    setName(template.name);
+    setCommand(template.command);
+    setDescription(template.description);
+    setScope(getTemplateScope(template));
+    setProjectId(template.project_id);
+    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    resetForm();
+    setShowForm(false);
+  };
+
+  const scopeLabel = (template: CommandTemplate) => {
+    if (template.session_id) return t("settings.templates.scope.session");
+    if (!template.project_id) return t("settings.templates.scope.global");
+    const project = projects.find((item) => item.id === template.project_id);
+    return project
+      ? t("settings.templates.scope.projectWithName", { name: project.name })
+      : t("settings.templates.scope.project");
+  };
 
   const handleRun = async (template: CommandTemplate) => {
     if (!activeSessionId) return;
@@ -209,39 +282,53 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
     }
   };
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
+    const nextName = name.trim();
+    const nextCommand = command.trim();
+    const nextDescription = description.trim();
     const commandRequired = scope !== "global";
-    if (!name.trim() || (commandRequired && !command.trim())) return;
+    if (!nextName || (commandRequired && !nextCommand)) return;
+    if (!editingTemplate && scope === "project" && !projectId) return;
+    if (!editingTemplate && scope === "session" && !activeSessionId) return;
 
     try {
-      if (scope === "session") {
-        if (!activeSessionId) return;
-        await createSessionTemplate(activeSessionId, {
+      if (editingTemplate) {
+        if (editingTemplate.session_id) {
+          await updateSessionTemplate(editingTemplate.session_id, editingTemplate.id, {
+            name: nextName,
+            command: nextCommand,
+            description: nextDescription,
+          });
+        } else {
+          await updateTemplate(editingTemplate.id, {
+            name: nextName,
+            command: nextCommand,
+            description: nextDescription,
+          });
+        }
+      } else if (scope === "session") {
+        await createSessionTemplate(activeSessionId!, {
           project_id: activeSession?.projectId ?? null,
-          session_id: activeSessionId,
-          name: name.trim(),
-          command: command.trim(),
-          description: description.trim(),
+          session_id: activeSessionId!,
+          name: nextName,
+          command: nextCommand,
+          description: nextDescription,
         });
       } else {
         await createTemplate({
           project_id: scope === "project" ? projectId : null,
-          name: name.trim(),
-          command: command.trim(),
-          description: description.trim(),
+          name: nextName,
+          command: nextCommand,
+          description: nextDescription,
         });
       }
 
-      setName("");
-      setCommand("");
-      setDescription("");
-      setScope("global");
-      setProjectId(null);
-      setShowForm(false);
+      closeForm();
       toast.success(t("commandTemplate.toast.saveSuccess"));
     } catch (err) {
       toast.error(t("commandTemplate.toast.saveFailed"), { description: String(err) });
       logError("Failed to save command template", {
+        editingTemplateId: editingTemplate?.id,
         scope,
         projectId,
         activeSessionId,
@@ -250,23 +337,37 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
     }
   };
 
-  const scopeLabel = (template: CommandTemplate) => {
-    if (template.session_id) return t("settings.templates.scope.session");
-    if (!template.project_id) return t("settings.templates.scope.global");
-    const project = projects.find((item) => item.id === template.project_id);
-    return project
-      ? t("settings.templates.scope.projectWithName", { name: project.name })
-      : t("settings.templates.scope.project");
+  const handleDelete = async (template: CommandTemplate) => {
+    if (template.session_id) {
+      deleteSessionTemplate(template.session_id, template.id);
+    } else {
+      await deleteTemplate(template.id);
+    }
+    if (editingTemplate?.id === template.id) closeForm();
+    setPendingDeleteTemplate(null);
   };
 
   const commandRequired = scope !== "global";
+  const saveDisabled = name.trim().length === 0
+    || (commandRequired && command.trim().length === 0)
+    || (!editingTemplate && scope === "project" && !projectId)
+    || (!editingTemplate && scope === "session" && !activeSessionId);
+  const emptyTitle = searchQuery || scopeFilter !== "all"
+    ? t("commandTemplate.emptySearchTitle")
+    : t("commandTemplate.emptyTitle");
+  const emptyDescription = searchQuery || scopeFilter !== "all"
+    ? t("commandTemplate.emptySearchDescription")
+    : t("commandTemplate.emptyDescription");
 
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) setShowForm(false);
+        if (!next) {
+          closeForm();
+          setPendingDeleteTemplate(null);
+        }
       }}
     >
       <PopoverTrigger asChild>
@@ -278,22 +379,76 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
           <TerminalSquare size={14} strokeWidth={1.5} />
         </button>
       </PopoverTrigger>
-      <PopoverContent id="command-template-panel" align="start" side={popoverSide} className="w-72">
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-xs font-semibold text-on-surface">{t("commandTemplate.title")}</span>
+      <PopoverContent id="command-template-panel" align="start" side={popoverSide} className="w-[360px]">
+        <div className="command-template-panel__header">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="command-template-panel__title-icon">
+              <TerminalSquare size={15} strokeWidth={1.8} />
+            </span>
+            <span className="truncate text-sm font-semibold text-on-surface">{t("commandTemplate.title")}</span>
+            <span className="command-template-panel__count" aria-label={t("commandTemplate.countLabel", { count: filteredTemplates.length })}>
+              {filteredTemplates.length}
+            </span>
+          </div>
           <button
-            onClick={() => setShowForm((prev) => !prev)}
-            className="ui-flat-action h-6 gap-1 px-2 text-[10px] text-primary"
-            aria-label={showForm ? t("commandTemplate.collapseForm") : t("commandTemplate.expandForm")}
+            type="button"
+            onClick={openCreateForm}
+            className="command-template-panel__new-button ui-focus-ring"
+            aria-label={showForm && !editingTemplate ? t("commandTemplate.collapseForm") : t("commandTemplate.expandForm")}
+            title={t("settings.templates.new")}
           >
-            <Plus size={10} strokeWidth={2} /> {t("settings.templates.new")}
+            <Plus size={16} strokeWidth={2} />
+            <span>{t("commandTemplate.newShort")}</span>
           </button>
         </div>
 
-        {/* New template form */}
+        <div className="command-template-panel__filters">
+          <div className="command-template-panel__search ui-focus-ring">
+            <Search size={13} strokeWidth={1.8} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.currentTarget.value)}
+              placeholder={t("commandTemplate.searchPlaceholder")}
+              aria-label={t("commandTemplate.searchAria")}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label={t("commandTemplate.clearSearch")}
+                title={t("commandTemplate.clearSearch")}
+              >
+                <X size={12} strokeWidth={1.8} />
+              </button>
+            )}
+          </div>
+          <div className="command-template-panel__scope-tabs" role="tablist" aria-label={t("commandTemplate.scopeFilterAria")}>
+            {scopeFilterOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="tab"
+                aria-selected={scopeFilter === option.value}
+                data-active={scopeFilter === option.value ? "true" : "false"}
+                onClick={() => setScopeFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {showForm && (
-          <div className="space-y-1.5 px-3 py-2">
+          <div className="command-template-panel__form">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-on-surface">
+                {editingTemplate ? t("settings.templates.editTitle") : t("settings.templates.createTitle")}
+              </span>
+              {editingTemplate && (
+                <span className="command-template-panel__scope-pill">{scopeLabel(editingTemplate)}</span>
+              )}
+            </div>
             <Input
               type="text"
               placeholder={t("settings.templates.name")}
@@ -315,41 +470,44 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
               onChange={(e) => setDescription(e.target.value)}
               className="h-7 text-xs"
             />
-            <InlinePanelSelect
-              value={scope}
-              options={scopeOptions}
-              onChange={(value) => setScope(value as "global" | "project" | "session")}
-              ariaLabel={t("settings.templates.scopeLabel")}
-            />
-            {scope === "project" && (
-              <InlinePanelSelect
-                value={projectId ?? ""}
-                options={projectOptions}
-                onChange={(value) => setProjectId(value || null)}
-                ariaLabel={t("settings.templates.targetProject")}
-              />
+            {!editingTemplate && (
+              <>
+                <InlinePanelSelect
+                  value={scope}
+                  options={scopeOptions}
+                  onChange={(value) => setScope(value as TemplateScope)}
+                  ariaLabel={t("settings.templates.scopeLabel")}
+                />
+                {scope === "project" && (
+                  <InlinePanelSelect
+                    value={projectId ?? ""}
+                    options={projectOptions}
+                    onChange={(value) => setProjectId(value || null)}
+                    ariaLabel={t("settings.templates.targetProject")}
+                  />
+                )}
+                {scope === "session" && (
+                  <div className="text-[10px] text-on-surface-variant">
+                    {activeSessionId
+                      ? t("commandTemplate.bindSession", { sessionId: activeSessionId })
+                      : t("commandTemplate.openSessionFirst")}
+                  </div>
+                )}
+              </>
             )}
-            {scope === "session" && (
-              <div className="text-[10px] text-on-surface-variant">
-                {activeSessionId
-                  ? t("commandTemplate.bindSession", { sessionId: activeSessionId })
-                  : t("commandTemplate.openSessionFirst")}
-              </div>
-            )}
-            <div className="flex justify-end gap-1">
+            <div className="flex justify-end gap-1.5">
               <button
-                onClick={() => setShowForm(false)}
+                type="button"
+                onClick={closeForm}
                 className="ui-flat-action h-6 px-2 text-[10px]"
-                aria-label={t("commandTemplate.cancelCreate")}
+                aria-label={editingTemplate ? t("settings.templates.cancelEdit") : t("commandTemplate.cancelCreate")}
               >
                 {t("common.cancel")}
               </button>
               <button
-                onClick={handleCreate}
-                disabled={name.trim().length === 0
-                  || (commandRequired && command.trim().length === 0)
-                  || (scope === "project" && !projectId)
-                  || (scope === "session" && !activeSessionId)}
+                type="button"
+                onClick={handleSave}
+                disabled={saveDisabled}
                 className="ui-flat-action ui-primary-action h-6 px-2 text-[10px] disabled:opacity-50"
                 aria-label={t("commandTemplate.save")}
               >
@@ -359,63 +517,137 @@ export function CommandTemplatePanel({ popoverSide = "bottom", toneClassName = "
           </div>
         )}
 
-        {/* Template list */}
-        <div className="max-h-48 overflow-y-auto">
+        <div className="command-template-panel__list ui-thin-scroll">
           {panelLoading ? (
-            <div className="space-y-2 px-3 py-3">
-              {[1, 2, 3, 4].map((item) => (
-                <div key={item} className="space-y-1">
-                  <Skeleton className="h-3 w-2/3" />
-                  <Skeleton className="h-2.5 w-full" />
+            <div className="space-y-3 px-3 py-3">
+              {[1, 2, 3].map((item) => (
+                <div key={item} className="flex items-center gap-3">
+                  <Skeleton className="h-9 w-9 rounded-lg" />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <Skeleton className="h-3 w-2/3" />
+                    <Skeleton className="h-2.5 w-full" />
+                  </div>
                 </div>
               ))}
             </div>
-          ) : visibleTemplates.length === 0 ? (
+          ) : filteredTemplates.length === 0 ? (
             <EmptyState
               icon={<TerminalSquare size={20} strokeWidth={1.5} />}
-              title={t("commandTemplate.emptyTitle")}
-              description={t("commandTemplate.emptyDescription")}
-              action={{ label: t("commandTemplate.create"), onClick: () => setShowForm(true) }}
+              title={emptyTitle}
+              description={emptyDescription}
+              action={visibleTemplates.length === 0 ? { label: t("commandTemplate.create"), onClick: openCreateForm } : undefined}
               className="px-3 py-6"
             />
           ) : (
-            visibleTemplates.map((template) => (
-              <div
-                key={template.id}
-                className="group ui-interactive flex cursor-pointer items-center gap-2 px-3 py-1.5 text-on-surface-variant"
-                onClick={() => handleRun(template)}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-xs font-medium text-on-surface">{template.name}</span>
-                    <span className="shrink-0 rounded-full bg-surface-container-high px-1 text-[9px] text-on-surface-variant">
-                      {scopeLabel(template)}
-                    </span>
-                  </div>
-                  <div className="truncate text-[10px] text-on-surface-variant">{template.command}</div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (template.session_id) {
-                      deleteSessionTemplate(template.session_id, template.id);
-                    } else {
-                      void deleteTemplate(template.id);
+            filteredTemplates.map((template) => {
+              const preview = template.command || template.description || t("commandTemplate.noCommand");
+              return (
+                <div
+                  key={template.id}
+                  role="button"
+                  tabIndex={0}
+                  className="command-template-panel__row ui-focus-ring"
+                  title={activeSessionId ? t("commandTemplate.runNamed", { name: template.name }) : t("commandTemplate.inactiveHint")}
+                  onClick={() => {
+                    void handleRun(template);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      void handleRun(template);
                     }
                   }}
-                  className="hidden shrink-0 text-danger opacity-70 group-hover:block"
-                  aria-label={t("commandTemplate.deleteNamed", { name: template.name })}
                 >
-                  <Trash2 size={12} strokeWidth={1.5} />
-                </button>
-              </div>
-            ))
+                  <span className="command-template-panel__row-icon">
+                    <TerminalSquare size={18} strokeWidth={1.8} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-xs font-semibold text-on-surface">{template.name}</span>
+                      <span className="command-template-panel__scope-pill">{scopeLabel(template)}</span>
+                    </span>
+                    <code className="block truncate pt-1 font-mono text-[10px] text-primary">{preview}</code>
+                  </span>
+                  <span className="command-template-panel__actions" aria-hidden="false">
+                    {pendingDeleteTemplate?.id === template.id ? (
+                      <span className="command-template-panel__delete-confirm">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPendingDeleteTemplate(null);
+                          }}
+                          className="command-template-panel__icon-button"
+                          aria-label={t("settings.templates.cancelDelete")}
+                          title={t("settings.templates.cancelDelete")}
+                        >
+                          <X size={13} strokeWidth={2.2} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDelete(template);
+                          }}
+                          className="command-template-panel__confirm-delete-button"
+                          aria-label={t("commandTemplate.deleteNamed", { name: template.name })}
+                          title={t("settings.templates.confirmDelete")}
+                        >
+                          <Check size={12} strokeWidth={2.2} />
+                          <span>{t("common.delete")}</span>
+                        </button>
+                      </span>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          disabled={!activeSessionId}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleRun(template);
+                          }}
+                          className="command-template-panel__icon-button command-template-panel__icon-button--run"
+                          aria-label={t("commandTemplate.runNamed", { name: template.name })}
+                          title={t("commandTemplate.runNamed", { name: template.name })}
+                        >
+                          <Play size={14} strokeWidth={1.9} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEditForm(template);
+                          }}
+                          className="command-template-panel__icon-button"
+                          aria-label={t("commandTemplate.editNamed", { name: template.name })}
+                          title={t("commandTemplate.editNamed", { name: template.name })}
+                        >
+                          <Pencil size={14} strokeWidth={1.8} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeForm();
+                            setPendingDeleteTemplate(template);
+                          }}
+                          className="command-template-panel__icon-button command-template-panel__icon-button--danger"
+                          aria-label={t("commandTemplate.deleteNamed", { name: template.name })}
+                          title={t("commandTemplate.deleteNamed", { name: template.name })}
+                        >
+                          <Trash2 size={14} strokeWidth={1.8} />
+                        </button>
+                      </>
+                    )}
+                  </span>
+                </div>
+              );
+            })
           )}
         </div>
 
-        {/* Footer hint */}
         {!activeSessionId && (
-          <div className="px-3 py-1 text-[10px] text-on-surface-variant">
+          <div className="border-t border-border/60 px-3 py-2 text-[10px] text-on-surface-variant">
             {t("commandTemplate.inactiveHint")}
           </div>
         )}

@@ -225,12 +225,35 @@ fn migrations() -> Vec<Migration> {
         },
         Migration {
             version: 13,
+            description: "create_session_favorite_snapshots_table",
+            sql: "
+                CREATE TABLE IF NOT EXISTS session_favorite_snapshots (
+                    session_key   TEXT PRIMARY KEY,
+                    session_id    TEXT NOT NULL,
+                    source        TEXT NOT NULL,
+                    project_key   TEXT NOT NULL,
+                    file_path     TEXT NOT NULL,
+                    title         TEXT NOT NULL,
+                    created_at    INTEGER NOT NULL,
+                    updated_at    INTEGER NOT NULL,
+                    message_count INTEGER NOT NULL,
+                    branch        TEXT,
+                    detail_json   TEXT NOT NULL,
+                    snapshot_at   TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_source ON session_favorite_snapshots(source);
+                CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_updated ON session_favorite_snapshots(updated_at DESC);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
             description: "add_cli_args_to_projects",
             sql: "ALTER TABLE projects ADD COLUMN cli_args TEXT NOT NULL DEFAULT '';",
             kind: MigrationKind::Up,
         },
         Migration {
-            version: 14,
+            version: 15,
             description: "add_worktree_isolation_tables",
             sql: "
                 ALTER TABLE projects ADD COLUMN worktree_strategy TEXT NOT NULL DEFAULT 'prompt';
@@ -251,29 +274,6 @@ fn migrations() -> Vec<Migration> {
                 CREATE INDEX IF NOT EXISTS idx_worktrees_project ON worktrees(project_id);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_worktrees_project_name ON worktrees(project_id, name);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_worktrees_path ON worktrees(path);
-            ",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 15,
-            description: "create_session_favorite_snapshots_table",
-            sql: "
-                CREATE TABLE IF NOT EXISTS session_favorite_snapshots (
-                    session_key   TEXT PRIMARY KEY,
-                    session_id    TEXT NOT NULL,
-                    source        TEXT NOT NULL,
-                    project_key   TEXT NOT NULL,
-                    file_path     TEXT NOT NULL,
-                    title         TEXT NOT NULL,
-                    created_at    INTEGER NOT NULL,
-                    updated_at    INTEGER NOT NULL,
-                    message_count INTEGER NOT NULL,
-                    branch        TEXT,
-                    detail_json   TEXT NOT NULL,
-                    snapshot_at   TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_source ON session_favorite_snapshots(source);
-                CREATE INDEX IF NOT EXISTS idx_session_favorite_snapshots_updated ON session_favorite_snapshots(updated_at DESC);
             ",
             kind: MigrationKind::Up,
         },
@@ -409,6 +409,7 @@ pub fn run() {
             commands::terminal::pty_resize,
             commands::terminal::pty_close,
             commands::terminal::pty_close_all,
+            commands::terminal::pty_reconcile_active_sessions,
             commands::terminal::pty_status,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,

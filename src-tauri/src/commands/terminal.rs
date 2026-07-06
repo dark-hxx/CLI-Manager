@@ -3,7 +3,7 @@ use crate::commands::ccswitch::{
     apply_codex_provider_launch_env, refresh_claude_provider_launch_settings,
     ClaudeProviderLaunchConfig, CodexProviderLaunchConfig,
 };
-use crate::pty::manager::{PtyManager, PtyProcessStatus};
+use crate::pty::manager::{PtyManager, PtyOrphanCleanupSummary, PtyProcessStatus};
 use log::{debug, error, info};
 use std::collections::HashMap;
 use tauri::AppHandle;
@@ -105,6 +105,18 @@ pub async fn pty_close_all(pty_manager: tauri::State<'_, PtyManager>) -> Result<
         error!("pty_close_all failed: error={}", err);
         err
     })
+}
+
+#[tauri::command]
+pub async fn pty_reconcile_active_sessions(
+    pty_manager: tauri::State<'_, PtyManager>,
+    active_session_ids: Vec<String>,
+) -> Result<PtyOrphanCleanupSummary, String> {
+    debug!(
+        "pty_reconcile_active_sessions requested: active_count={}",
+        active_session_ids.len()
+    );
+    Ok(pty_manager.reconcile_active_sessions(active_session_ids))
 }
 
 #[tauri::command]

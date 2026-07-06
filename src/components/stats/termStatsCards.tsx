@@ -403,18 +403,30 @@ export function LatestChangesCard({
       ) : (
         <>
           <div className="grid grid-cols-2 gap-1.5">
-            <StatChip
-              dotColor={TERM_PANEL.green}
-              label={t("termStats.latestChangesAdded")}
-              value={`+${formatCompactCount(summary.additions)}`}
-              valueColor={TERM_PANEL.green}
-            />
-            <StatChip
-              dotColor={TERM_PANEL.red}
-              label={t("termStats.latestChangesDeleted")}
-              value={`-${formatCompactCount(summary.deletions)}`}
-              valueColor={TERM_PANEL.red}
-            />
+            <div
+              className="flex min-w-0 flex-col gap-0.5 rounded-lg px-2 py-1.5"
+              style={{ backgroundColor: TERM_PANEL.cardInner, border: `1px solid ${TERM_PANEL.border}` }}
+            >
+              <span className="flex items-center gap-1.5 text-[10px]" style={{ color: TERM_PANEL.green }}>
+                <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: TERM_PANEL.green }} />
+                <span className="truncate">{t("termStats.latestChangesAdded")}</span>
+              </span>
+              <span className="truncate text-[12px] font-bold" style={{ color: TERM_PANEL.green }} title={`+${summary.additions}`}>
+                +{formatCompactCount(summary.additions)}
+              </span>
+            </div>
+            <div
+              className="flex min-w-0 flex-col gap-0.5 rounded-lg px-2 py-1.5"
+              style={{ backgroundColor: TERM_PANEL.cardInner, border: `1px solid ${TERM_PANEL.border}` }}
+            >
+              <span className="flex items-center gap-1.5 text-[10px]" style={{ color: TERM_PANEL.red }}>
+                <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: TERM_PANEL.red }} />
+                <span className="truncate">{t("termStats.latestChangesDeleted")}</span>
+              </span>
+              <span className="truncate text-[12px] font-bold" style={{ color: TERM_PANEL.red }} title={`-${summary.deletions}`}>
+                -{formatCompactCount(summary.deletions)}
+              </span>
+            </div>
           </div>
           <div className="mt-2 space-y-1.5">
             {summary.files.slice(0, 4).map((fileChange) => (
@@ -431,8 +443,10 @@ export function LatestChangesCard({
                   >
                     {fileChange.file_path}
                   </div>
-                  <div className="text-[10px]" style={{ color: TERM_PANEL.dim }}>
-                    +{formatCompactCount(fileChange.additions)} / -{formatCompactCount(fileChange.deletions)}
+                  <div className="flex items-center gap-1.5 text-[10px] font-medium">
+                    <span style={{ color: TERM_PANEL.green }}>+{formatCompactCount(fileChange.additions)}</span>
+                    <span style={{ color: TERM_PANEL.dim }}>/</span>
+                    <span style={{ color: TERM_PANEL.red }}>-{formatCompactCount(fileChange.deletions)}</span>
                   </div>
                 </div>
                 <button

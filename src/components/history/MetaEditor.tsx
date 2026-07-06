@@ -1,11 +1,12 @@
 ﻿import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
-import type { RefObject } from "react";
+import { useMemo, useState, type RefObject } from "react";
 import { useI18n } from "../../lib/i18n";
 
 interface MetaEditorProps {
   aliasDraft: string;
   tagsDraft: string;
+  tagSuggestions: string[];
   sessionQuery: string;
   sessionSearchRef: RefObject<HTMLInputElement | null>;
   matchCursor: number;
@@ -21,6 +22,7 @@ interface MetaEditorProps {
 export function MetaEditor({
   aliasDraft,
   tagsDraft,
+  tagSuggestions,
   sessionQuery,
   sessionSearchRef,
   matchCursor,
@@ -33,9 +35,36 @@ export function MetaEditor({
   onJumpNext,
 }: MetaEditorProps) {
   const { t } = useI18n();
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const selectedTags = useMemo(
+    () => new Set(tagsDraft.split(",").map((tag) => tag.trim()).filter(Boolean)),
+    [tagsDraft]
+  );
+  const tagDraftParts = tagsDraft.split(",");
+  const activeTagQuery = (tagDraftParts[tagDraftParts.length - 1] ?? "").trim().toLowerCase();
+  const visibleTagSuggestions = useMemo(
+    () =>
+      tagSuggestions
+        .filter((tag) => !selectedTags.has(tag))
+        .filter((tag) => !activeTagQuery || tag.toLowerCase().includes(activeTagQuery))
+        .slice(0, 8),
+    [activeTagQuery, selectedTags, tagSuggestions]
+  );
+  const showTagPicker = tagPickerOpen && visibleTagSuggestions.length > 0;
+
+  const applyTagSuggestion = (tag: string) => {
+    const previousTags = tagsDraft
+      .split(",")
+      .slice(0, -1)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    onTagsDraftChange([...previousTags, tag].join(", "));
+    setTagPickerOpen(false);
+  };
+
   return (
     <>
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center">
         <Input
           value={aliasDraft}
           onChange={(e) => onAliasDraftChange(e.target.value)}
@@ -43,17 +72,41 @@ export function MetaEditor({
           placeholder={t("history.meta.aliasPlaceholder")}
           className="h-7 px-2 text-xs"
         />
-        <Input
-          value={tagsDraft}
-          onChange={(e) => onTagsDraftChange(e.target.value)}
-          aria-label={t("history.meta.tags")}
-          placeholder={t("history.meta.tagsPlaceholder")}
-          className="h-7 px-2 text-xs"
-        />
-      </div>
-
-      <div className="mt-2">
-        <button onClick={onSaveMeta} className="ui-btn ui-btn-primary text-xs">
+        <div className="relative min-w-0">
+          <Input
+            value={tagsDraft}
+            onChange={(e) => {
+              onTagsDraftChange(e.target.value);
+              setTagPickerOpen(true);
+            }}
+            onFocus={() => setTagPickerOpen(true)}
+            onBlur={() => window.setTimeout(() => setTagPickerOpen(false), 120)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setTagPickerOpen(false);
+            }}
+            aria-label={t("history.meta.tags")}
+            placeholder={t("history.meta.tagsPlaceholder")}
+            className="h-7 px-2 text-xs"
+          />
+          {showTagPicker && (
+            <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 max-h-44 overflow-y-auto rounded-md border border-border bg-bg-secondary p-1 shadow-lg">
+              {visibleTagSuggestions.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyTagSuggestion(tag);
+                  }}
+                  className="block w-full rounded px-2 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary focus:bg-bg-tertiary focus:outline-none"
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={onSaveMeta} className="ui-btn ui-btn-primary h-7 text-xs">
           {t("history.meta.save")}
         </button>
       </div>

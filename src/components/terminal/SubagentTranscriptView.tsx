@@ -208,7 +208,6 @@ const TranscriptMessageRow = memo(function TranscriptMessageRow({ message, termi
 export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
   const { t } = useI18n();
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
-  const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
@@ -264,15 +263,14 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
   const omittedCount = parseSnapshot?.omittedCount ?? 0;
 
   const terminalCodeTheme = useMemo<"light" | "dark">(() => {
-    const effectiveTerminalThemeName = terminalThemeMode === "follow-app" ? "auto" : terminalThemeName;
     const terminalTheme = getTerminalTheme(
-      effectiveTerminalThemeName,
+      terminalThemeName,
       resolvedTheme,
       lightThemePalette,
       darkThemePalette
     );
     return isLightTerminalTheme(terminalTheme) ? "light" : "dark";
-  }, [darkThemePalette, lightThemePalette, resolvedTheme, terminalThemeMode, terminalThemeName]);
+  }, [darkThemePalette, lightThemePalette, resolvedTheme, terminalThemeName]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
 

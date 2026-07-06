@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Box, Button, Card, Group, Select, Stack, Text, TextInput, UnstyledButton } from "@mantine/core";
+import { Badge, Box, Button, Card, Group, List, Select, Stack, Text, TextInput } from "@mantine/core";
+import { ChevronRight, Plus, TerminalSquare } from "../../icons";
 import { useTemplateStore } from "../../../stores/templateStore";
 import { useProjectStore } from "../../../stores/projectStore";
 import { useTerminalStore } from "../../../stores/terminalStore";
@@ -223,44 +224,81 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
             <Text size="sm" fw={600} c="var(--on-surface)">
               {t("settings.templates.list")}
             </Text>
-            <Button type="button" size="xs" variant="subtle" color="cliPrimary" onClick={resetToCreate}>
+            <Button
+              type="button"
+              size="xs"
+              variant="filled"
+              color="cliPrimary"
+              leftSection={<Plus size={12} strokeWidth={2} aria-hidden="true" />}
+              onClick={resetToCreate}
+            >
               {t("settings.templates.new")}
             </Button>
           </Group>
 
-          <Stack gap={6}>
-          {visibleTemplates.map((template) => {
-            const active = selectedId === template.id && mode === "edit";
-            return (
-              <UnstyledButton
-                key={template.id}
-                onClick={() => openEditor(template)}
-                className={`ui-interactive w-full rounded-xl border px-3 py-2 text-left ${
-                  active ? "border-primary bg-surface-container-highest" : "border-border bg-surface-container-high"
-                }`}
-              >
-                <Group gap="xs" wrap="nowrap">
-                  <Text size="xs" fw={600} c="var(--on-surface)" truncate>
-                    {template.name}
-                  </Text>
-                  <Badge size="xs" variant="light" color={active ? "cliPrimary" : "gray"} className="shrink-0">
-                    {scopeLabel(template)}
-                  </Badge>
-                </Group>
-                <Text mt={4} size="xs" c="var(--on-surface-variant)" truncate>
-                  {template.command}
-                </Text>
-              </UnstyledButton>
-            );
-          })}
-          {visibleTemplates.length === 0 && (
-            <Card className="border border-dashed border-border bg-surface-container-lowest text-center" p="lg" radius="lg">
+          {visibleTemplates.length > 0 ? (
+            <List
+              listStyleType="none"
+              spacing="sm"
+              className="min-h-0 overflow-auto pr-1 ui-thin-scroll"
+              styles={{ root: { paddingInlineStart: 0 } }}
+            >
+              {visibleTemplates.map((template) => {
+                const active = selectedId === template.id && mode === "edit";
+                return (
+                  <List.Item
+                    key={template.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-selected={active}
+                    data-selected={active ? "true" : "false"}
+                    className="ui-interactive ui-focus-ring cursor-pointer rounded-2xl border border-border bg-surface-container-lowest px-3 py-3 transition-colors"
+                    styles={{ itemWrapper: { display: "block" } }}
+                    onClick={() => openEditor(template)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openEditor(template);
+                      }
+                    }}
+                  >
+                    <Group justify="space-between" align="center" gap="sm" wrap="nowrap">
+                      <Group gap="sm" wrap="nowrap" className="min-w-0">
+                        <Box className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-container-high text-primary">
+                          <TerminalSquare size={20} strokeWidth={1.8} aria-hidden="true" />
+                        </Box>
+                        <Box className="min-w-0">
+                          <Text size="xs" fw={600} c="var(--on-surface)" truncate>
+                            {template.name}
+                          </Text>
+                          <Text mt={3} size="xs" c="var(--on-surface-variant)" truncate>
+                            {template.command || template.description}
+                          </Text>
+                        </Box>
+                      </Group>
+                      <Group gap="xs" wrap="nowrap" className="shrink-0">
+                        <Badge size="xs" variant="light" color={active ? "cliPrimary" : "gray"}>
+                          {scopeLabel(template)}
+                        </Badge>
+                        <ChevronRight
+                          size={16}
+                          strokeWidth={1.8}
+                          style={{ color: "var(--on-surface-variant)" }}
+                          aria-hidden="true"
+                        />
+                      </Group>
+                    </Group>
+                  </List.Item>
+                );
+              })}
+            </List>
+          ) : (
+            <Box className="rounded-lg border border-dashed border-border bg-surface-container-lowest px-3 py-6 text-center">
               <Text size="xs" c="var(--on-surface-variant)">
                 {t("settings.templates.empty")}
               </Text>
-            </Card>
+            </Box>
           )}
-          </Stack>
         </Stack>
       </section>
 
