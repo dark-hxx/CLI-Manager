@@ -570,6 +570,20 @@ Ordinary use of the unmodified application does not require a commercial license
 
 ---
 
+## ⭐ Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/?repos=dark-hxx%2FCLI-Manager&type=date&legend=top-left">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dark-hxx/CLI-Manager&type=date&theme=dark&legend=top-left" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dark-hxx/CLI-Manager&type=date&legend=top-left" />
+      <img alt="CLI-Manager Star History Chart" src="https://api.star-history.com/chart?repos=dark-hxx/CLI-Manager&type=date&legend=top-left" />
+    </picture>
+  </a>
+</p>
+
+---
+
 <div align="center">
 
 **⭐ If this project helps you, a Star is appreciated.**
