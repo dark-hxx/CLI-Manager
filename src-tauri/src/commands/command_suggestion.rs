@@ -73,9 +73,9 @@ pub async fn command_suggestion_test_model(
         &base_url,
         &api_key,
         &model,
-        "Reply with one short word.",
+        "",
         "ping",
-        1,
+        16,
         Duration::from_secs(MODEL_TEST_TIMEOUT_SECS),
     )
     .await;
@@ -242,16 +242,7 @@ async fn post_chat_completion(
         .timeout(timeout)
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {api_key}"))
-        .json(&serde_json::json!({
-            "model": model.trim(),
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": user_prompt }
-            ],
-            "max_tokens": max_tokens,
-            "temperature": 0,
-            "stream": false
-        }))
+        .json(&chat_completion_body(model, system_prompt, user_prompt, max_tokens))
         .send()
         .await
         .map_err(map_request_error)?;
@@ -275,21 +266,48 @@ async fn post_responses(
         .timeout(timeout)
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {api_key}"))
-        .json(&serde_json::json!({
-            "model": model.trim(),
-            "instructions": instructions,
-            "input": input,
-            "max_output_tokens": max_tokens,
-            "temperature": 0,
-            "stream": false,
-            "store": false
-        }))
+        .json(&responses_body(model, instructions, input, max_tokens))
         .send()
         .await
         .map_err(map_request_error)?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     Ok((status, body))
+}
+
+fn chat_completion_body(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens: u16,
+) -> Value {
+    let mut messages = Vec::new();
+    let system_prompt = system_prompt.trim();
+    if !system_prompt.is_empty() {
+        messages.push(serde_json::json!({ "role": "system", "content": system_prompt }));
+    }
+    messages.push(serde_json::json!({ "role": "user", "content": user_prompt }));
+
+    serde_json::json!({
+        "model": model.trim(),
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": false
+    })
+}
+
+fn responses_body(model: &str, instructions: &str, input: &str, max_tokens: u16) -> Value {
+    let mut body = serde_json::Map::new();
+    body.insert("model".to_string(), serde_json::json!(model.trim()));
+    body.insert("input".to_string(), serde_json::json!(input));
+    body.insert("max_output_tokens".to_string(), serde_json::json!(max_tokens));
+    body.insert("stream".to_string(), Value::Bool(false));
+    body.insert("store".to_string(), Value::Bool(false));
+    let instructions = instructions.trim();
+    if !instructions.is_empty() {
+        body.insert("instructions".to_string(), serde_json::json!(instructions));
+    }
+    Value::Object(body)
 }
 
 fn build_user_prompt(request: &CommandSuggestionGenerateRequest) -> String {
@@ -529,6 +547,19 @@ mod tests {
             detect_api_type("https://example.com/v1"),
             CommandSuggestionApiType::ChatCompletions
         ));
+    }
+
+    #[test]
+    fn minimal_model_test_bodies_avoid_optional_sampling_params() {
+        let chat = chat_completion_body("model-a", "", "ping", 16);
+        assert!(chat.get("temperature").is_none());
+        let messages = chat.get("messages").and_then(Value::as_array).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].get("role").and_then(Value::as_str), Some("user"));
+
+        let responses = responses_body("model-a", "", "ping", 16);
+        assert!(responses.get("temperature").is_none());
+        assert!(responses.get("instructions").is_none());
     }
 
     #[test]
