@@ -10,6 +10,7 @@ import { useI18n } from "../../lib/i18n";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { configureMonaco } from "../../lib/monacoSetup";
 import { refractor, detectLanguage } from "./diffHighlight";
+import { Portal } from "../ui/Portal";
 import "react-diff-view/style/index.css";
 import "./diffViewer.css";
 
@@ -424,29 +425,31 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 flex items-center justify-center bg-black/60 p-4"
-      style={{ zIndex: 100 }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <Portal>
       <div
-        className="h-[85vh] w-full max-w-6xl overflow-hidden rounded-xl border shadow-2xl"
-        style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
-        onClick={(e) => e.stopPropagation()}
+        className="fixed inset-0 flex items-center justify-center bg-black/60 p-4"
+        style={{ zIndex: 100 }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
       >
-        <GitDiffViewer
-          projectPath={projectPath}
-          filePath={filePath}
-          fileName={fileName}
-          status={status}
-          diffText={diffText}
-          onClose={onClose}
-          onRequestDiscard={onRequestDiscard}
-          closeOnRevert
-        />
+        <div
+          className="h-[85vh] w-full max-w-6xl overflow-hidden rounded-xl border shadow-2xl"
+          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GitDiffViewer
+            projectPath={projectPath}
+            filePath={filePath}
+            fileName={fileName}
+            status={status}
+            diffText={diffText}
+            onClose={onClose}
+            onRequestDiscard={onRequestDiscard}
+            closeOnRevert
+          />
+        </div>
       </div>
-    </div>
+    </Portal>
   );
 }
