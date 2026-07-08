@@ -102,11 +102,25 @@ fn path_exists(path: &str) -> bool {
 
 fn wsl_path_exists(distro: &str, linux_path: &str) -> bool {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
+    let args = wsl_path_exists_args(distro, linux_path);
     silent_command(&wsl_exe.to_string_lossy())
-        .args(["-d", distro, "--exec", "test", "-e", linux_path])
+        .args(&args)
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn wsl_path_exists_args(distro: &str, linux_path: &str) -> Vec<String> {
+    vec![
+        "-d".into(),
+        distro.into(),
+        "--exec".into(),
+        "sh".into(),
+        "-c".into(),
+        "test -e \"$1\" || test -L \"$1\"".into(),
+        "cli-manager-path-check".into(),
+        linux_path.into(),
+    ]
 }
 
 #[tauri::command]
@@ -1218,6 +1232,24 @@ mod tests {
     #[test]
     fn path_exists_rejects_invalid_wsl_unc_without_launching_wsl() {
         assert!(!path_exists(r"\\wsl.localhost\Ubuntu"));
+    }
+
+    #[test]
+    fn wsl_path_exists_args_accepts_symlink_nodes() {
+        let args = wsl_path_exists_args("Ubuntu-22.04", "/data/acGo");
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "Ubuntu-22.04",
+                "--exec",
+                "sh",
+                "-c",
+                "test -e \"$1\" || test -L \"$1\"",
+                "cli-manager-path-check",
+                "/data/acGo",
+            ]
+        );
     }
 
     #[test]
