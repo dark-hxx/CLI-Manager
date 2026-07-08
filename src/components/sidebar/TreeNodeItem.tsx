@@ -3,6 +3,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { TreeNode as TNode } from "../../lib/types";
+import type { ProviderBadge } from "../../stores/projectStore";
 import { useTreeActions, worktreeListCollapseId } from "./TreeContext";
 import { Folder, Terminal, Play, ChevronRight, AlertTriangle } from "../icons";
 import { VendorIcon, inferVendor } from "../VendorIcon";
@@ -27,6 +28,24 @@ function compactProviderBadgeLabel(name: string) {
   return token.length > MAX_PROVIDER_BADGE_LABEL_LENGTH
     ? token.slice(0, MAX_PROVIDER_BADGE_LABEL_LENGTH)
     : token;
+}
+
+function ProviderBadgeChip({ badge }: { badge: ProviderBadge }) {
+  const { t } = useI18n();
+  const providerName = badge.providerName?.trim() || t("sidebar.tree.customProvider");
+  const providerBadgeLabel = compactProviderBadgeLabel(providerName);
+  const providerVendor = inferVendor(badge.vendorHint) ?? inferVendor(badge.providerName);
+
+  return (
+    <span
+      className="ui-tree-meta-chip ui-tree-provider-chip inline-flex max-w-[64px] shrink-0 items-center gap-0.5 truncate rounded-full px-1 py-0.5 text-[10px] leading-none"
+      title={t("sidebar.tree.providerBadge", { name: providerName })}
+      aria-label={t("sidebar.tree.providerBadge", { name: providerName })}
+    >
+      {providerVendor && <VendorIcon vendor={providerVendor} size={9} />}
+      <span className="truncate">{providerBadgeLabel}</span>
+    </span>
+  );
 }
 
 function InlineRename({ initial, onConfirm, onCancel }: { initial: string; onConfirm: (name: string) => void; onCancel: () => void }) {
@@ -93,6 +112,7 @@ function TreeNodeItemImpl({
     const { project, worktree } = node;
     const treeKey = `wt:${worktree.id}`;
     const isSelected = actions.selectedId === worktree.id;
+    const providerBadge = actions.providerBadges[`wt:${worktree.id}`];
 
     return (
       <div
@@ -130,6 +150,7 @@ function TreeNodeItemImpl({
             >
               WT
             </span>
+            {providerBadge && <ProviderBadgeChip badge={providerBadge} />}
           </span>
           {worktree.status === "missing" && (
             <span
@@ -153,15 +174,10 @@ function TreeNodeItemImpl({
     const status = actions.getProjectStatus(p.id);
     const terminalCount = actions.getProjectTerminalCount(p.id);
     const pathInvalid = actions.isPathInvalid(p.id);
-    const providerBadge = actions.providerBadges[p.id];
-    const providerName = providerBadge?.providerName?.trim() || t("sidebar.tree.customProvider");
-    const providerBadgeLabel = compactProviderBadgeLabel(providerName);
-    const providerVendor = providerBadge
-      ? inferVendor(providerBadge.vendorHint) ?? inferVendor(providerBadge.providerName)
-      : null;
     const cliVendor = p.cli_tool ? inferVendor(p.cli_tool) : null;
     const projectWorktrees = node.worktrees ?? [];
     const hasWorktrees = projectWorktrees.length > 0;
+    const providerBadge = actions.providerBadges[p.id];
     const worktreeCollapseKey = worktreeListCollapseId(p.id);
     const worktreesOpen = forceExpanded || !actions.collapsedIds.has(worktreeCollapseKey);
 
@@ -223,16 +239,7 @@ function TreeNodeItemImpl({
           </span>
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="block truncate font-medium">{p.name}</span>
-            {providerBadge && (
-              <span
-                className="ui-tree-meta-chip ui-tree-provider-chip inline-flex max-w-[64px] shrink-0 items-center gap-0.5 truncate rounded-full px-1 py-0.5 text-[10px] leading-none"
-                title={t("sidebar.tree.providerBadge", { name: providerName })}
-                aria-label={t("sidebar.tree.providerBadge", { name: providerName })}
-              >
-                {providerVendor && <VendorIcon vendor={providerVendor} size={9} />}
-                <span className="truncate">{providerBadgeLabel}</span>
-              </span>
-            )}
+            {providerBadge && <ProviderBadgeChip badge={providerBadge} />}
             {terminalCount > 0 && (
               <span
                 className="ui-tree-meta-chip inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] leading-none"

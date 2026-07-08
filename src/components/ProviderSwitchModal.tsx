@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import type { Project } from "../lib/types";
+import type { Project, WorktreeRecord } from "../lib/types";
 import {
   getClaudeProviderOverride,
   getCodexProviderOverride,
@@ -12,6 +12,7 @@ import {
 import { useI18n } from "../lib/i18n";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
+import { useWorktreeStore } from "../stores/worktreeStore";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { Activity, AlertTriangle, Boxes, Check, ChevronRight, Database, RefreshCw } from "./icons";
 import { ProviderBadge, type ProviderBadgeTone } from "./provider/ProviderRow";
@@ -291,18 +292,26 @@ function buildClaudeProbe(project: Project, legacyProbe?: ProjectProviderProbe |
 
 interface Props {
   project: Project;
+  worktree?: WorktreeRecord;
   onClose: () => void;
 }
 
-export function ProviderSwitchModal({ project, onClose }: Props) {
+export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
   const { t } = useI18n();
+  const targetProviderOverrides = worktree?.provider_overrides ?? project.provider_overrides;
+  const targetProject = useMemo<Project>(() => ({
+    ...project,
+    name: worktree ? `${project.name} · ${worktree.name}` : project.name,
+    path: worktree?.path ?? project.path,
+    provider_overrides: targetProviderOverrides,
+  }), [project, targetProviderOverrides, worktree]);
   const appType = getProviderSwitchAppType(project);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const codexConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const [providers, setProviders] = useState<CcSwitchProvider[]>([]);
   const [probe, setProbe] = useState<ProjectProviderProbe | null>(null);
   const [activeCodexProfileName, setActiveCodexProfileName] = useState<string | null>(
-    () => getCodexProviderOverride(project)?.profileName ?? null
+    () => getCodexProviderOverride(targetProject)?.profileName ?? null
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -311,6 +320,13 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
   const [modelTestResults, setModelTestResults] = useState<Record<string, ProviderModelTestResult>>({});
   const [batchTesting, setBatchTesting] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
+  const updateTargetProviderOverrides = useCallback(async (providerOverrides: string) => {
+    if (worktree) {
+      await useWorktreeStore.getState().updateWorktreeProviderOverrides(worktree.id, providerOverrides);
+      return;
+    }
+    await useProjectStore.getState().updateProject(project.id, { provider_overrides: providerOverrides });
+  }, [project.id, worktree]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -327,19 +343,19 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
         invoke<ProvidersResponse>("ccswitch_list_providers", { dbPath }),
         appType === "claude"
           ? invoke<ProjectProviderProbe>("ccswitch_get_project_provider", {
-              projectPath: project.path,
+              projectPath: targetProject.path,
               dbPath,
             }).catch((err): ProjectProviderProbe | null => {
               // 探测失败不阻塞供应商列表展示；真正的错误在切换时再呈现
-              logError("ccswitch project provider probe failed", { path: project.path, err });
+              logError("ccswitch project provider probe failed", { path: targetProject.path, err });
               return null;
             })
-          : Promise.resolve(buildCodexProbe(project)),
+          : Promise.resolve(buildCodexProbe(targetProject)),
       ]);
       setProviders(listRes.providers.filter((p) => p.appType === appType));
-      setProbe(appType === "claude" ? buildClaudeProbe(project, probeRes) : probeRes);
+      setProbe(appType === "claude" ? buildClaudeProbe(targetProject, probeRes) : probeRes);
       if (appType === "codex") {
-        setActiveCodexProfileName(getCodexProviderOverride(project)?.profileName ?? null);
+        setActiveCodexProfileName(getCodexProviderOverride(targetProject)?.profileName ?? null);
       }
     } catch (err) {
       setProviders([]);
@@ -348,7 +364,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [appType, ccSwitchDbPath, project]);
+  }, [appType, ccSwitchDbPath, targetProject]);
 
   useEffect(() => {
     void load();
@@ -490,14 +506,12 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           providerId: provider.id,
           dbPath: ccSwitchDbPath ?? undefined,
         });
-        await useProjectStore.getState().updateProject(project.id, {
-          provider_overrides: withClaudeProviderOverride(project.provider_overrides, {
-            providerId: result.providerId,
-            providerName: result.providerName,
-            settingsPath: result.settingsPath,
-            vendorHint: providerVendorHint(provider),
-          }),
-        });
+        await updateTargetProviderOverrides(withClaudeProviderOverride(targetProviderOverrides, {
+          providerId: result.providerId,
+          providerName: result.providerName,
+          settingsPath: result.settingsPath,
+          vendorHint: providerVendorHint(provider),
+        }));
         setProbe({
           matchedProviderId: result.providerId,
           hasSettingsFile: true,
@@ -514,14 +528,12 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           dbPath: ccSwitchDbPath ?? undefined,
           codexConfigDir: codexConfigDir ?? undefined,
         });
-        await useProjectStore.getState().updateProject(project.id, {
-          provider_overrides: withCodexProviderOverride(project.provider_overrides, {
-            providerId: result.providerId,
-            providerName: result.providerName,
-            profileName: result.profileName,
-            vendorHint: providerVendorHint(provider),
-          }),
-        });
+        await updateTargetProviderOverrides(withCodexProviderOverride(targetProviderOverrides, {
+          providerId: result.providerId,
+          providerName: result.providerName,
+          profileName: result.profileName,
+          vendorHint: providerVendorHint(provider),
+        }));
         setProbe({
           matchedProviderId: result.providerId,
           hasSettingsFile: true,
@@ -549,9 +561,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     let shouldReload = true;
     try {
       if (appType === "claude") {
-        await useProjectStore.getState().updateProject(project.id, {
-          provider_overrides: withClaudeProviderOverride(project.provider_overrides, null),
-        });
+        await updateTargetProviderOverrides(withClaudeProviderOverride(targetProviderOverrides, null));
         setProbe({
           matchedProviderId: null,
           hasSettingsFile: Boolean(probe?.hasSettingsFile),
@@ -560,15 +570,16 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
         });
         shouldReload = false;
       } else {
-        await useProjectStore.getState().updateProject(project.id, {
-          provider_overrides: withCodexProviderOverride(project.provider_overrides, null),
-        });
-        setProbe(buildCodexProbe({ ...project, provider_overrides: withCodexProviderOverride(project.provider_overrides, null) }));
+        const nextProviderOverrides = withCodexProviderOverride(targetProviderOverrides, null);
+        await updateTargetProviderOverrides(nextProviderOverrides);
+        setProbe(buildCodexProbe({ ...targetProject, provider_overrides: nextProviderOverrides }));
         setActiveCodexProfileName(null);
         shouldReload = false;
       }
-      toast.success("已恢复跟随全局", {
-        description: "已移除项目级供应商配置，新开终端后生效。",
+      toast.success(worktree ? "已移除 Worktree 供应商覆盖" : "已恢复跟随全局", {
+        description: worktree
+          ? "当前 Worktree 会在新开终端后继续按项目或全局配置生效。"
+          : "已移除项目级供应商配置，新开终端后生效。",
       });
       if (shouldReload) await load();
       void useProjectStore.getState().refreshProviderBadges();
@@ -585,6 +596,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
   const globalCurrentName = providers.find((p) => p.isCurrent)?.name ?? null;
   const localOverrideKeys = appType === "claude" ? probe?.localOverrideKeys ?? [] : [];
   const hasCustomProviderStartup = (appType === "codex" || appType === "claude") && project.startup_cmd.trim().length > 0;
+  const followProviderName = worktree ? "跟随项目/全局供应商" : "跟随全局供应商";
 
   return (
     <Dialog
@@ -628,8 +640,8 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
             </button>
           )}
         </div>
-        <p className="mb-3 break-all text-xs text-text-muted" title={project.path}>
-          {project.name} · {project.path}
+        <p className="mb-3 break-all text-xs text-text-muted" title={targetProject.path}>
+          {targetProject.name} · {targetProject.path}
         </p>
 
         {error && (
@@ -650,7 +662,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           <div className="mb-3 flex items-start gap-1.5 rounded border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-text-secondary">
             <AlertTriangle size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-warning" />
             <span className="min-w-0 break-all">
-              该项目配置了自定义启动命令，CLI-Manager 不会自动改写；请手动加入 {appType === "codex" ? `--profile ${activeCodexProfileName ?? "cli-manager-..."}` : `--settings ${getClaudeProviderOverride(project)?.settingsPath ?? "<settings-file>"}`}。
+              该项目配置了自定义启动命令，CLI-Manager 不会自动改写；请手动加入 {appType === "codex" ? `--profile ${activeCodexProfileName ?? "cli-manager-..."}` : `--settings ${getClaudeProviderOverride(targetProject)?.settingsPath ?? "<settings-file>"}`}。
             </span>
           </div>
         )}
@@ -668,7 +680,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
                 if (!followGlobal) void resetToGlobal();
               }}
               icon={<Database size={18} strokeWidth={2.1} />}
-              name="跟随全局供应商"
+              name={followProviderName}
               subtitle={globalCurrentName ? `当前全局：${globalCurrentName}` : `cc-switch 未设置 ${appType ?? "当前 CLI"} 全局当前供应商`}
               trailing={
                 applyingId === RESET_APPLYING_ID ? (

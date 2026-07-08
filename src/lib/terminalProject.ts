@@ -84,6 +84,15 @@ export function projectWithWorktreePath(project: Project, worktree: WorktreeReco
   };
 }
 
+export function projectWithWorktreeProviderOverrides(project: Project, worktree: WorktreeRecord): Project {
+  const providerOverrides = worktree.provider_overrides.trim();
+  if (!providerOverrides || providerOverrides === "{}") return project;
+  return {
+    ...project,
+    provider_overrides: providerOverrides,
+  };
+}
+
 export function resolveProjectForSession(
   session: TerminalSession | null,
   sessions: TerminalSession[],

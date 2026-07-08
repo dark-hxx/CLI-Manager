@@ -57,6 +57,7 @@ interface WorktreeStore {
     sessions: TerminalSession[]
   ) => WorktreeIsolationDecision;
   validateProjectGit: (project: Project) => Promise<boolean>;
+  updateWorktreeProviderOverrides: (worktreeId: string, providerOverrides: string) => Promise<void>;
   checkDeps: (worktree: WorktreeRecord) => Promise<GitWorktreeDepsCheckResult>;
   dismissDepsPrompt: (worktreeId: string) => Promise<void>;
   mergeWorktree: (worktree: WorktreeRecord) => Promise<GitWorktreeMergeResult>;
@@ -134,6 +135,7 @@ function mapCreateResultToRecord(projectId: string, result: GitWorktreeCreateRes
     path: result.path,
     base_branch: result.baseBranch,
     deps_prompt_dismissed: 0,
+    provider_overrides: "{}",
     status: "active",
     created_at: ts,
     updated_at: ts,
@@ -143,8 +145,8 @@ function mapCreateResultToRecord(projectId: string, result: GitWorktreeCreateRes
 async function saveWorktreeRecord(record: WorktreeRecord): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO worktrees (id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, status, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO worktrees (id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       record.id,
       record.project_id,
@@ -153,6 +155,7 @@ async function saveWorktreeRecord(record: WorktreeRecord): Promise<void> {
       record.path,
       record.base_branch,
       record.deps_prompt_dismissed,
+      record.provider_overrides,
       record.status,
       record.created_at,
       record.updated_at,
@@ -247,6 +250,25 @@ export const useWorktreeStore = create<WorktreeStore>((set, get) => ({
       },
     }));
     return valid;
+  },
+
+  updateWorktreeProviderOverrides: async (worktreeId, providerOverrides) => {
+    const db = await getDb();
+    const ts = Date.now().toString();
+    await db.execute("UPDATE worktrees SET provider_overrides = $1, updated_at = $2 WHERE id = $3", [
+      providerOverrides,
+      ts,
+      worktreeId,
+    ]);
+    set((state) => ({
+      worktrees: state.worktrees.map((worktree) =>
+        worktree.id === worktreeId
+          ? { ...worktree, provider_overrides: providerOverrides, updated_at: ts }
+          : worktree
+      ),
+    }));
+    await useProjectStore.getState().fetchAll("interactive");
+    await useProjectStore.getState().cleanupUnusedCodexProfiles();
   },
 
   checkDeps: async (worktree) => {

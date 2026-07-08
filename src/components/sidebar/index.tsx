@@ -25,6 +25,7 @@ import { openWindowsTerminal } from "../../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../../lib/projectStartupCommand";
 import { shouldSidebarBootstrapProjects } from "../../lib/projectLoadPolicy";
 import { getProviderSwitchAppType, parseProjectEnvVars } from "../../lib/providerSwitching";
+import { isSameProjectFileContext, projectWithWorktreePath, projectWithWorktreeProviderOverrides } from "../../lib/terminalProject";
 import { appendSyncedHistoryContextArg } from "../../lib/syncedHistoryContext";
 import { TreeContext, worktreeListCollapseId, type TreeActions } from "./TreeContext";
 import { Portal } from "../ui/Portal";
@@ -268,7 +269,11 @@ export function Sidebar({
 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [cloningProject, setCloningProject] = useState<Project | null>(null);
-  const [switchingProviderProject, setSwitchingProviderProject] = useState<Project | null>(null);
+  const [providerSwitchTarget, setProviderSwitchTarget] = useState<
+    | { kind: "project"; project: Project }
+    | { kind: "worktree"; project: Project; worktree: WorktreeRecord }
+    | null
+  >(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addToGroupId, setAddToGroupId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(
@@ -826,7 +831,8 @@ export function Sidebar({
   };
 
   const openWorktreeSession = async (project: Project, worktree: WorktreeRecord, targetPaneId?: string, startupCmd?: string, title?: string) => {
-    const options = await buildSyncedAwareProjectSplitOptions(project);
+    const projectOptions = projectWithWorktreeProviderOverrides(project, worktree);
+    const options = await buildSyncedAwareProjectSplitOptions(projectOptions);
     await createSession(
       options.projectId,
       worktree.path,
@@ -1026,7 +1032,7 @@ export function Sidebar({
 
   const handleOpenProjectFiles = useCallback(async (project: Project) => {
     try {
-      if (fileProject?.id !== project.id && isProjectFileDirty()) {
+      if (!isSameProjectFileContext(fileProject, project) && isProjectFileDirty()) {
         const confirmed = window.confirm(t("sidebar.toast.unsavedFileConfirm"));
         if (!confirmed) return;
       }
@@ -1037,7 +1043,11 @@ export function Sidebar({
       logError("Failed to open project file browser", err);
       toast.error(t("sidebar.toast.openProjectFilesFailed"), { description: String(err) });
     }
-  }, [closeHistory, fileProject?.id, openFileProject, t]);
+  }, [closeHistory, fileProject, openFileProject, t]);
+
+  const handleOpenWorktreeFiles = useCallback(async (project: Project, worktree: WorktreeRecord) => {
+    await handleOpenProjectFiles(projectWithWorktreePath(project, worktree));
+  }, [handleOpenProjectFiles]);
 
   const handleBackToProjectTree = useCallback(() => {
     setShowFileExplorer(false);
@@ -1601,7 +1611,7 @@ export function Sidebar({
                     className="context-menu-item"
                     role="menuitem"
                     onClick={() => {
-                      setSwitchingProviderProject(contextMenu.project);
+                      setProviderSwitchTarget({ kind: "project", project: contextMenu.project });
                       setContextMenu(null);
                     }}
                   >
@@ -1690,6 +1700,34 @@ export function Sidebar({
                   <FolderOpen size={14} strokeWidth={1.5} />
                   {t("worktree.menu.openDirectory")}
                 </button>
+                <button
+                  className="context-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    void handleOpenWorktreeFiles(contextMenu.project, contextMenu.worktree);
+                    setContextMenu(null);
+                  }}
+                >
+                  <FileCode size={14} strokeWidth={1.5} />
+                  {t("sidebar.menu.browseFiles")}
+                </button>
+                {getProviderSwitchAppType(contextMenu.project) && (
+                  <button
+                    className="context-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setProviderSwitchTarget({
+                        kind: "worktree",
+                        project: contextMenu.project,
+                        worktree: contextMenu.worktree,
+                      });
+                      setContextMenu(null);
+                    }}
+                  >
+                    <ArrowLeftRight size={14} strokeWidth={1.5} />
+                    {t("sidebar.menu.switchProvider")}
+                  </button>
+                )}
                 <div className="context-menu-separator" role="separator" />
                 <button
                   className="context-menu-item danger"
@@ -1943,10 +1981,11 @@ export function Sidebar({
         />
       )}
       {editingProject && <ConfigModal project={editingProject} onClose={() => setEditingProject(null)} />}
-      {switchingProviderProject && (
+      {providerSwitchTarget && (
         <ProviderSwitchModal
-          project={switchingProviderProject}
-          onClose={() => setSwitchingProviderProject(null)}
+          project={providerSwitchTarget.project}
+          worktree={providerSwitchTarget.kind === "worktree" ? providerSwitchTarget.worktree : undefined}
+          onClose={() => setProviderSwitchTarget(null)}
         />
       )}
       <ConfirmDialog

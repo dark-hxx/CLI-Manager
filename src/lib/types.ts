@@ -18,6 +18,7 @@ export interface WorktreeRecord {
   path: string;
   base_branch: string;
   deps_prompt_dismissed: number;
+  provider_overrides: string;
   status: WorktreeStatus;
   created_at: string;
   updated_at: string;

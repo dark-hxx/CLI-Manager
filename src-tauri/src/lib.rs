@@ -108,6 +108,12 @@ const MIGRATION_ADD_WORKTREE_DEPS_PROMPT_SETTING_DESCRIPTION: &str =
 const MIGRATION_ADD_WORKTREE_DEPS_PROMPT_SETTING_SQL: &str =
     "ALTER TABLE projects ADD COLUMN worktree_deps_prompt_enabled INTEGER NOT NULL DEFAULT 0;";
 
+const MIGRATION_ADD_WORKTREE_PROVIDER_OVERRIDES_VERSION: i64 = 17;
+const MIGRATION_ADD_WORKTREE_PROVIDER_OVERRIDES_DESCRIPTION: &str =
+    "add_provider_overrides_to_worktrees";
+const MIGRATION_ADD_WORKTREE_PROVIDER_OVERRIDES_SQL: &str =
+    "ALTER TABLE worktrees ADD COLUMN provider_overrides TEXT NOT NULL DEFAULT '{}';";
+
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -308,6 +314,12 @@ fn migrations() -> Vec<Migration> {
             version: MIGRATION_ADD_WORKTREE_DEPS_PROMPT_SETTING_VERSION,
             description: MIGRATION_ADD_WORKTREE_DEPS_PROMPT_SETTING_DESCRIPTION,
             sql: MIGRATION_ADD_WORKTREE_DEPS_PROMPT_SETTING_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_ADD_WORKTREE_PROVIDER_OVERRIDES_VERSION,
+            description: MIGRATION_ADD_WORKTREE_PROVIDER_OVERRIDES_DESCRIPTION,
+            sql: MIGRATION_ADD_WORKTREE_PROVIDER_OVERRIDES_SQL,
             kind: MigrationKind::Up,
         },
     ]

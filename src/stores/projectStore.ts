@@ -159,11 +159,20 @@ async function selectWorktreesOrEmpty(db: Awaited<ReturnType<typeof getDb>>): Pr
   }
 }
 
-function collectActiveCodexProfileNames(projects: Project[]): string[] {
+function collectActiveCodexProfileNames(projects: Project[], worktrees: WorktreeRecord[] = []): string[] {
   const profileNames = new Set<string>();
   for (const project of projects) {
     if (getProviderSwitchAppType(project) !== "codex") continue;
     const override = getCodexProviderOverride(project);
+    if (override?.profileName) {
+      profileNames.add(override.profileName);
+    }
+  }
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  for (const worktree of worktrees) {
+    const project = projectsById.get(worktree.project_id);
+    if (!project || getProviderSwitchAppType(project) !== "codex") continue;
+    const override = getCodexProviderOverride(worktree);
     if (override?.profileName) {
       profileNames.add(override.profileName);
     }
@@ -244,8 +253,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   refreshProviderBadges: async () => {
     const projects = get().projects;
+    const worktrees = get().worktrees;
     const claudeProjects = projects.filter((p) => getProviderSwitchAppType(p) === "claude");
     const codexProjects = projects.filter((p) => getProviderSwitchAppType(p) === "codex");
+    const projectsById = new Map(projects.map((project) => [project.id, project]));
     const providerBadges: Record<string, ProviderBadge> = {};
 
     for (const project of codexProjects) {
@@ -262,6 +273,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const override = getClaudeProviderOverride(project);
       if (override) {
         providerBadges[project.id] = {
+          providerName: override.providerName,
+          vendorHint: override.vendorHint,
+        };
+      }
+    }
+
+    for (const worktree of worktrees) {
+      const project = projectsById.get(worktree.project_id);
+      if (!project) continue;
+      const appType = getProviderSwitchAppType(project);
+      const override = appType === "codex"
+        ? getCodexProviderOverride(worktree)
+        : appType === "claude"
+          ? getClaudeProviderOverride(worktree)
+          : null;
+      if (override) {
+        providerBadges[`wt:${worktree.id}`] = {
           providerName: override.providerName,
           vendorHint: override.vendorHint,
         };
@@ -297,7 +325,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   cleanupUnusedCodexProfiles: async () => {
     try {
       await invoke<CodexProfileCleanupResult>("ccswitch_cleanup_codex_profiles", {
-        keepProfileNames: collectActiveCodexProfileNames(get().projects),
+        keepProfileNames: collectActiveCodexProfileNames(get().projects, get().worktrees),
         codexConfigDir: useSettingsStore.getState().codexHookConfigDir ?? undefined,
       });
     } catch (err) {
