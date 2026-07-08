@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source("./");
 @import "@xterm/xterm/css/xterm.css";
 @import "./styles/animations.css";
 @import "./styles/themes.css";

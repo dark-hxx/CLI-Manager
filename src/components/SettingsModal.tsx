@@ -58,7 +58,6 @@ interface SettingsTabConfig {
 
 const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "general",
-  "developer",
   "terminal-theme",
   "shortcuts",
   "templates",
@@ -68,6 +67,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "hooks",
   "command-suggestions",
   "sidebar",
+  "developer",
   "about",
 ];
 
