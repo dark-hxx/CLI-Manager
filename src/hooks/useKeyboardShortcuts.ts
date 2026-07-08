@@ -128,6 +128,18 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
         return;
       }
 
+      // 关闭当前会话必须优先于编辑区跳过逻辑，否则终端输入焦点下 Ctrl+W 会被 PTY 吃掉。
+      if (isShortcutMatch(combo, shortcuts.closeTerminal)) {
+        if (viewMode === "compact") return;
+        e.preventDefault();
+        if (activeSessionId) {
+          window.dispatchEvent(new CustomEvent<TerminalTabCloseRequestDetail>(TERMINAL_TAB_CLOSE_REQUEST_EVENT, {
+            detail: { sessionIds: [activeSessionId] },
+          }));
+        }
+        return;
+      }
+
       // Skip global shortcuts while user is typing/editing.
       if (isEditingTarget || isXtermTarget) {
         return;
@@ -137,17 +149,6 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
         if (viewMode === "compact") return;
         e.preventDefault();
         createSession(undefined, newTerminalCwd ?? undefined, newTerminalTitle);
-        return;
-      }
-
-      if (isShortcutMatch(combo, shortcuts.closeTerminal)) {
-        if (viewMode === "compact") return;
-        e.preventDefault();
-        if (activeSessionId) {
-          window.dispatchEvent(new CustomEvent<TerminalTabCloseRequestDetail>(TERMINAL_TAB_CLOSE_REQUEST_EVENT, {
-            detail: { sessionIds: [activeSessionId] },
-          }));
-        }
         return;
       }
     };
