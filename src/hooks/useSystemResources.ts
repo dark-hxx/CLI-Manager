@@ -105,8 +105,7 @@ export function useSystemResources(
 
   useEffect(() => {
     if (!enabled) {
-      setSnapshot(null);
-      setHistory([]);
+      // 面板切走时只停止轮询，保留 snapshot/history，切回后继续追加
       setLoading(false);
       setError(null);
       return;

@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useId, useMemo, useState } from "react";
+import { Fragment, type CSSProperties, type ReactNode, useCallback, useId, useMemo, useState } from "react";
 import {
   Activity,
   AppWindow,
@@ -503,7 +503,7 @@ function MemoryCard({ snapshot }: { snapshot: SystemResourceSnapshot }) {
       icon={<MemoryStick size={15} />}
       title={t("systemResources.memory")}
       accent={MODULE_TITLE_COLOR}
-      right={<span className="text-[12px] tabular-nums" style={{ color: TERM_PANEL.dim }}>{formatBytes(used)} / {formatBytes(total)}</span>}
+      right={<span className="text-[12px] tabular-nums" style={{ color: TERM_PANEL.dim }}><span style={{ color: TERM_PANEL.fg }}>{formatBytes(used)}</span> / {formatBytes(total)}</span>}
     >
       <div className="grid grid-cols-[86px_minmax(0,1fr)] items-center gap-6">
         <Donut
@@ -633,7 +633,7 @@ function DiskCard({ snapshot }: { snapshot: SystemResourceSnapshot; history: Sys
       icon={<HardDrive size={15} />}
       title={t("systemResources.disk")}
       accent={MODULE_TITLE_COLOR}
-      right={snapshot.disks.length > 0 ? <span className="text-[12px] tabular-nums" style={{ color: TERM_PANEL.dim }}>{formatDiskBytes(totals.usedBytes)} / {formatDiskBytes(totals.totalBytes)}</span> : null}
+      right={snapshot.disks.length > 0 ? <span className="text-[12px] tabular-nums" style={{ color: TERM_PANEL.dim }}><span style={{ color: TERM_PANEL.fg }}>{formatDiskBytes(totals.usedBytes)}</span> / {formatDiskBytes(totals.totalBytes)}</span> : null}
     >
       {snapshot.disks.length === 0 ? (
         <InlineEmpty text={t("systemResources.unavailable")} />
@@ -655,13 +655,15 @@ function DiskCard({ snapshot }: { snapshot: SystemResourceSnapshot; history: Sys
             </Donut>
           </div>
 
-          <div className="min-w-[104px] flex-1 space-y-2">
+          <div className="grid min-w-[104px] flex-1 grid-cols-[auto_auto] items-center justify-end gap-x-5 gap-y-2 pr-2 text-[11px]">
             {diskRows.map((row) => (
-              <div key={row.label} className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[11px]">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: row.color }} />
-                <span className="truncate text-right" style={{ color: TERM_PANEL.dim }}>{row.label}</span>
-                <span className="max-w-[92px] truncate text-right font-semibold tabular-nums" style={{ color: TERM_PANEL.dim }}>{row.value}</span>
-              </div>
+              <Fragment key={row.label}>
+                <span className="flex min-w-0 items-center gap-1.5" style={{ color: TERM_PANEL.dim }}>
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: row.color }} />
+                  <span className="truncate">{row.label}</span>
+                </span>
+                <span className="max-w-[92px] truncate text-right text-[12px] font-semibold tabular-nums" style={{ color: TERM_PANEL.dim }}>{row.value}</span>
+              </Fragment>
             ))}
           </div>
 
