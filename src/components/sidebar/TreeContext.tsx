@@ -7,6 +7,7 @@ import type { SessionStatus } from "../../stores/terminalStore";
 export interface TreeActions {
   selectedId: string | null;
   selectedProjectIds: Set<string>;
+  selectedGroupIds: Set<string>;
   projectScopedTerminalViewEnabled: boolean;
   terminalScope: TerminalScope;
   newGroupParentId: string | null;
@@ -16,6 +17,7 @@ export interface TreeActions {
   providerBadges: Record<string, ProviderBadge>;
   onSelectProject: (e: ReactMouseEvent, p: Project) => void;
   onSelectProjectByKeyboard: (p: Project) => void;
+  onSelectGroup: (e: ReactMouseEvent, groupId: string, forceExpanded: boolean) => void;
   onSelectGroupScope: (groupId: string) => void;
   onOpenProject: (p: Project) => void;
   onStartGroup: (groupId: string) => void;

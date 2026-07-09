@@ -1297,6 +1297,21 @@
   border-color: color-mix(in srgb, var(--border) 12%, transparent);
 }
 
+/* 分组被选中（终端聚焦 / 多选）时的清晰高亮，需盖过 hover / data-open 的背景 */
+.ui-tree-group[data-selected="true"],
+.ui-tree-group[data-selected="true"]:hover,
+.ui-tree-group[data-selected="true"][data-open="true"] {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border) 58%);
+  background-color: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+[data-theme="dark"] .ui-tree-group[data-selected="true"],
+[data-theme="dark"] .ui-tree-group[data-selected="true"]:hover,
+[data-theme="dark"] .ui-tree-group[data-selected="true"][data-open="true"] {
+  border-color: color-mix(in srgb, var(--primary) 46%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
 .ui-tree-group[data-drop-target="true"] {
   background-color: color-mix(in srgb, var(--primary) 14%, transparent);
   border-color: color-mix(in srgb, var(--primary) 40%, transparent);

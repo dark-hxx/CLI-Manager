@@ -348,6 +348,7 @@ function TreeNodeItemImpl({
     actions.projectScopedTerminalViewEnabled &&
     actions.terminalScope.kind === "group" &&
     actions.terminalScope.groupId === g.id;
+  const isMultiSelected = actions.selectedGroupIds.has(g.id);
   const { setNodeRef: setIntoRef, isOver: isOverInto } = useDroppable({ id: `into:${g.id}` });
 
   if (actions.renamingGroupId === g.id) {
@@ -381,7 +382,7 @@ function TreeNodeItemImpl({
       data-tree-key={treeKey}
       aria-level={depth + 1}
       aria-expanded={isOpen}
-      aria-selected={isSelected}
+      aria-selected={isSelected || isMultiSelected}
       tabIndex={focusedNodeKey === treeKey ? 0 : -1}
       onPointerDownCapture={preventSecondaryPointerFocus}
       onFocus={() => onFocusNode(treeKey)}
@@ -392,19 +393,14 @@ function TreeNodeItemImpl({
           className={`ui-tree-node ui-tree-group ui-focus-ring flex items-center rounded-xl font-semibold cursor-pointer group/grp ${
             compact ? "gap-1.5 py-1 text-[11px]" : "gap-2 py-1.5 text-[12px]"
           }`}
-          data-selected={isSelected ? "true" : "false"}
+          data-selected={isSelected || isMultiSelected ? "true" : "false"}
           data-open={isOpen ? "true" : "false"}
           data-drop-target={isOverInto ? "true" : "false"}
           style={{ paddingLeft, paddingRight: compact ? 8 : 10, color: "var(--text-secondary)" }}
           onMouseDown={(e) => {
             if (e.button === 2) e.preventDefault();
           }}
-          onClick={() => {
-            if (actions.projectScopedTerminalViewEnabled) {
-              actions.onSelectGroupScope(g.id);
-            }
-            if (!forceExpanded) actions.toggleCollapsed(g.id);
-          }}
+          onClick={(e) => actions.onSelectGroup(e, g.id, forceExpanded)}
           onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
           {...listeners}
         >

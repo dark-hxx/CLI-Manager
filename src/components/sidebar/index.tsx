@@ -265,12 +265,16 @@ export function Sidebar({
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
   // Shift 连续多选的锚点（最近一次非 Shift 的选中项），用于按可见顺序取区间
   const selectionAnchorRef = useRef<string | null>(null);
+  // 文件夹（分组）多选独立于项目多选，用单独的锚点跟踪 Shift 区间起点
+  const groupSelectionAnchorRef = useRef<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<
     | null
     | { kind: "delete-project"; project: Project }
     | { kind: "delete-group"; groupId: string; groupName: string }
+    | { kind: "delete-groups"; groups: { groupId: string; groupName: string }[] }
   >(null);
   const [worktreePrompt, setWorktreePrompt] = useState<{
     project: Project;
@@ -380,6 +384,20 @@ export function Sidebar({
           if (!collapsedIds.has(node.group.id)) walk(node.children);
         } else if (node.type === "project") {
           ids.push(node.project.id);
+        }
+      }
+    };
+    walk(tree);
+    return ids;
+  }, [tree, collapsedIds]);
+  // 可见分组的扁平顺序（折叠时跳过隐藏的子分组），供文件夹 Shift 范围多选取区间
+  const visibleGroupIds = useMemo(() => {
+    const ids: string[] = [];
+    const walk = (nodes: TNode[]) => {
+      for (const node of nodes) {
+        if (node.type === "group") {
+          ids.push(node.group.id);
+          if (!collapsedIds.has(node.group.id)) walk(node.children);
         }
       }
     };
@@ -819,6 +837,16 @@ export function Sidebar({
     });
   }, [groups, projects]);
 
+  // 自愈清理：分组被删除/拖拽移除后，裁剪掉文件夹多选里已不存在的 id，避免残留脏选中。
+  useEffect(() => {
+    setSelectedGroupIds((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(groups.map((g) => g.id));
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [groups]);
+
   const openProjectExternally = useCallback(async (items: Project[]) => {
     if (items.length === 0) return;
     const launchItems = await Promise.all(items.map(async (project) => {
@@ -1191,6 +1219,7 @@ export function Sidebar({
     if (!projectScopedTerminalViewEnabled) return;
     setSelectedId(null);
     setSelectedProjectIds(new Set());
+    setSelectedGroupIds(new Set());
     selectionAnchorRef.current = groupId;
     onTerminalScopeChange?.({ kind: "group", groupId });
     if (activateFirstGroupSession(groupId)) {
@@ -1198,9 +1227,55 @@ export function Sidebar({
     }
   }, [activateFirstGroupSession, closeHistory, onTerminalScopeChange, projectScopedTerminalViewEnabled]);
 
+  // 文件夹（分组）点击统一入口：修饰键走多选，普通点击沿用聚焦分组 + 展开/折叠
+  const handleSelectGroup = useCallback((e: ReactMouseEvent, groupId: string, forceExpanded: boolean) => {
+    const additive = e.ctrlKey || e.metaKey; // Ctrl(Win/Linux) / Cmd(Mac) 切换单项
+    const rangeSelect = e.shiftKey;          // Shift 连续范围选择（Windows 风格）
+    const anchorId = groupSelectionAnchorRef.current;
+
+    // Shift 范围选择：从锚点到当前项，按可见顺序取区间
+    if (rangeSelect && anchorId && anchorId !== groupId) {
+      const order = visibleGroupIds;
+      const from = order.indexOf(anchorId);
+      const to = order.indexOf(groupId);
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from <= to ? [from, to] : [to, from];
+        const range = order.slice(lo, hi + 1);
+        setSelectedProjectIds((prev) => (prev.size === 0 ? prev : new Set())); // 两套多选互斥
+        setSelectedGroupIds((prev) => {
+          const next = additive ? new Set(prev) : new Set<string>();
+          range.forEach((id) => next.add(id));
+          return next;
+        });
+        return; // 锚点保持不变，便于以同一锚点继续扩展区间
+      }
+    }
+
+    if (additive) {
+      setSelectedProjectIds((prev) => (prev.size === 0 ? prev : new Set()));
+      setSelectedGroupIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(groupId)) next.delete(groupId);
+        else next.add(groupId);
+        return next;
+      });
+      groupSelectionAnchorRef.current = groupId;
+      return;
+    }
+
+    // 普通点击：清空文件夹多选，回到聚焦分组 + 展开/折叠
+    setSelectedGroupIds((prev) => (prev.size === 0 ? prev : new Set()));
+    groupSelectionAnchorRef.current = groupId;
+    if (projectScopedTerminalViewEnabled) {
+      handleSelectGroupScope(groupId);
+    }
+    if (!forceExpanded) toggleCollapsed(groupId);
+  }, [handleSelectGroupScope, projectScopedTerminalViewEnabled, toggleCollapsed, visibleGroupIds]);
+
   const handleSelectAllTerminalScope = useCallback(() => {
     setSelectedId(null);
     setSelectedProjectIds(new Set());
+    setSelectedGroupIds(new Set());
     selectionAnchorRef.current = null;
     onTerminalScopeChange?.(ALL_TERMINALS_SCOPE);
   }, [onTerminalScopeChange]);
@@ -1213,6 +1288,26 @@ export function Sidebar({
       return next;
     });
   }, []);
+
+  const handleToggleGroupSelection = useCallback((groupId: string) => {
+    setSelectedProjectIds((prev) => (prev.size === 0 ? prev : new Set()));
+    setSelectedGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+    groupSelectionAnchorRef.current = groupId;
+  }, []);
+
+  const handleRequestDeleteSelectedGroups = useCallback(() => {
+    const items = Array.from(selectedGroupIds)
+      .map((id) => groups.find((g) => g.id === id))
+      .filter((g): g is Group => !!g)
+      .map((g) => ({ groupId: g.id, groupName: g.name }));
+    if (items.length === 0) return;
+    setConfirmAction({ kind: "delete-groups", groups: items });
+  }, [groups, selectedGroupIds]);
 
   const handleRenameGroup = useCallback((id: string, _name: string) => {
     setRenamingGroupId(id);
@@ -1351,6 +1446,7 @@ export function Sidebar({
     () => ({
       selectedId,
       selectedProjectIds,
+      selectedGroupIds,
       projectScopedTerminalViewEnabled,
       terminalScope,
       newGroupParentId,
@@ -1360,6 +1456,7 @@ export function Sidebar({
       providerBadges,
       onSelectProject: handleSelectProject,
       onSelectProjectByKeyboard: handleSelectProjectByKeyboard,
+      onSelectGroup: handleSelectGroup,
       onSelectGroupScope: handleSelectGroupScope,
       onOpenProject: handleOpen,
       onStartGroup: handleStartGroup,
@@ -1385,6 +1482,7 @@ export function Sidebar({
     [
       selectedId,
       selectedProjectIds,
+      selectedGroupIds,
       projectScopedTerminalViewEnabled,
       terminalScope,
       newGroupParentId,
@@ -1394,6 +1492,7 @@ export function Sidebar({
       providerBadges,
       handleSelectProject,
       handleSelectProjectByKeyboard,
+      handleSelectGroup,
       handleSelectGroupScope,
       handleOpen,
       handleStartGroup,
@@ -1460,16 +1559,68 @@ export function Sidebar({
       };
     }
 
+    if (confirmAction.kind === "delete-group") {
+      return {
+        title: t("sidebar.confirm.deleteGroupTitle"),
+        message: t("sidebar.confirm.deleteGroupMessage", { name: confirmAction.groupName }),
+        confirmText: t("sidebar.menu.delete"),
+        danger: true,
+        onConfirm: async () => {
+          try {
+            const projectIds = collectProjectIdsForGroup(groups, projects, confirmAction.groupId);
+            const groupProjects = projects.filter((project) => projectIds.has(project.id));
+            const syncedKeys = groupProjects.flatMap((project) =>
+              getSyncedSessionKeysForProject(project, useExternalSessionSyncStore.getState().syncedSessions)
+            );
+            const sessionIds = useTerminalStore
+              .getState()
+              .sessions
+              .filter((session) =>
+                (session.projectId && projectIds.has(session.projectId))
+                || (session.fileEditor?.projectId && projectIds.has(session.fileEditor.projectId))
+              )
+              .map((session) => session.id);
+            for (const sessionId of sessionIds) {
+              await closeSession(sessionId);
+            }
+            for (const project of groupProjects) {
+              await deleteProject(project.id);
+            }
+            if (syncedKeys.length > 0) {
+              await removeSyncedSessions(syncedKeys);
+            }
+            await deleteGroup(confirmAction.groupId);
+            toast.success(t("sidebar.toast.groupDeleteSuccess"));
+            setConfirmAction(null);
+            if (selectedId && projectIds.has(selectedId)) setSelectedId(null);
+            setSelectedProjectIds((prev) => {
+              const next = new Set(prev);
+              projectIds.forEach((id) => next.delete(id));
+              return next;
+            });
+          } catch (err) {
+            toast.error(t("sidebar.toast.groupDeleteFailed"), { description: String(err) });
+          }
+        },
+      };
+    }
+
+    const deleteGroups = confirmAction.groups;
     return {
-      title: t("sidebar.confirm.deleteGroupTitle"),
-      message: t("sidebar.confirm.deleteGroupMessage", { name: confirmAction.groupName }),
+      title: t("sidebar.confirm.deleteGroupsTitle", { count: deleteGroups.length }),
+      message: t("sidebar.confirm.deleteGroupsMessage", { count: deleteGroups.length }),
       confirmText: t("sidebar.menu.delete"),
       danger: true,
       onConfirm: async () => {
         try {
-          const projectIds = collectProjectIdsForGroup(groups, projects, confirmAction.groupId);
-          const groupProjects = projects.filter((project) => projectIds.has(project.id));
-          const syncedKeys = groupProjects.flatMap((project) =>
+          const groupIds = deleteGroups.map((g) => g.groupId);
+          // 多个目录（含嵌套父子）取项目并集去重，避免重复删除
+          const projectIds = new Set<string>();
+          for (const groupId of groupIds) {
+            collectProjectIdsForGroup(groups, projects, groupId).forEach((id) => projectIds.add(id));
+          }
+          const affectedProjects = projects.filter((project) => projectIds.has(project.id));
+          const syncedKeys = affectedProjects.flatMap((project) =>
             getSyncedSessionKeysForProject(project, useExternalSessionSyncStore.getState().syncedSessions)
           );
           const sessionIds = useTerminalStore
@@ -1483,14 +1634,17 @@ export function Sidebar({
           for (const sessionId of sessionIds) {
             await closeSession(sessionId);
           }
-          for (const project of groupProjects) {
+          for (const project of affectedProjects) {
             await deleteProject(project.id);
           }
           if (syncedKeys.length > 0) {
             await removeSyncedSessions(syncedKeys);
           }
-          await deleteGroup(confirmAction.groupId);
-          toast.success(t("sidebar.toast.groupDeleteSuccess"));
+          // deleteGroup 会级联删除子分组，父级先删后子级 id 已不存在也是幂等无副作用
+          for (const groupId of groupIds) {
+            await deleteGroup(groupId);
+          }
+          toast.success(t("sidebar.toast.groupsDeleteSuccess", { count: groupIds.length }));
           setConfirmAction(null);
           if (selectedId && projectIds.has(selectedId)) setSelectedId(null);
           setSelectedProjectIds((prev) => {
@@ -1498,6 +1652,7 @@ export function Sidebar({
             projectIds.forEach((id) => next.delete(id));
             return next;
           });
+          setSelectedGroupIds(new Set());
         } catch (err) {
           toast.error(t("sidebar.toast.groupDeleteFailed"), { description: String(err) });
         }
@@ -1890,6 +2045,17 @@ export function Sidebar({
                     {t("sidebar.menu.focusGroupTerminals")}
                   </button>
                 )}
+                <button
+                  className="context-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    handleToggleGroupSelection(contextMenu.groupId);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Check size={14} strokeWidth={1.5} />
+                  {selectedGroupIds.has(contextMenu.groupId) ? t("sidebar.menu.deselect") : t("sidebar.menu.addToSelection")}
+                </button>
                 <div className="context-menu-separator" role="separator" />
                 <button
                   className="context-menu-item"
@@ -1928,6 +2094,19 @@ export function Sidebar({
                   {t("sidebar.menu.rename")}
                 </button>
                 <div className="context-menu-separator" role="separator" />
+                {selectedGroupIds.size > 0 && (
+                  <button
+                    className="context-menu-item danger"
+                    role="menuitem"
+                    onClick={() => {
+                      handleRequestDeleteSelectedGroups();
+                      setContextMenu(null);
+                    }}
+                  >
+                    <Trash2 size={14} strokeWidth={1.5} />
+                    {t("sidebar.menu.deleteSelectedGroups", { count: selectedGroupIds.size })}
+                  </button>
+                )}
                 <button
                   className="context-menu-item danger"
                   onClick={() => {
