@@ -83,6 +83,7 @@ interface HistoryStore {
   setProjectPathFilter: (projectPath: string | null) => Promise<void>;
   loadSessions: () => Promise<void>;
   loadMoreSessions: () => Promise<void>;
+  addConvertedSession: (summary: unknown) => string;
   openSession: (sessionKey: string) => Promise<void>;
   openSearchHit: (hit: HistorySearchHit) => Promise<void>;
   deleteSession: (sessionKey: string) => Promise<void>;
@@ -896,13 +897,16 @@ function applyMeta(summaries: HistorySessionSummary[], metaMap: SessionMetaMap):
       metaBySourcePath.get(`${source}:${normalizeMetaPath(summary.file_path)}`);
     return toView(summary, meta);
   });
-  views.sort((a, b) => {
+  return sortSessionViews(views);
+}
+
+function sortSessionViews(views: HistorySessionView[]): HistorySessionView[] {
+  return [...views].sort((a, b) => {
     if (a.starred !== b.starred) {
       return a.starred ? -1 : 1;
     }
     return b.updated_at - a.updated_at;
   });
-  return views;
 }
 
 function viewToSummary(view: HistorySessionView): HistorySessionSummary {
@@ -1297,6 +1301,29 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         hasMoreSessions: get().hasMoreSessions,
       });
     }
+  },
+
+  addConvertedSession: (summary) => {
+    const normalized = normalizeSummary(summary);
+    const sessionKey = makeSessionKey(
+      normalized.source,
+      normalized.session_id,
+      normalized.file_path
+    );
+    const nextView = toView(normalized, get().metaMap[sessionKey]);
+    set((state) => ({
+      sessions: sortSessionViews([
+        nextView,
+        ...state.sessions.filter((item) => item.sessionKey !== sessionKey),
+      ]),
+      sourceFilter:
+        state.sourceFilter !== "all" && state.sourceFilter !== normalized.source
+          ? "all"
+          : state.sourceFilter,
+      activeSessionKey: sessionKey,
+      focusedMessageIndex: null,
+    }));
+    return sessionKey;
   },
 
   openSession: async (sessionKey) => {

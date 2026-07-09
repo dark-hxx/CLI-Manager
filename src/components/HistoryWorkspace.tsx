@@ -141,6 +141,7 @@ interface HistoryConversionResult {
   cwd?: string | null;
   messageCount: number;
   resumeCommand: string;
+  summary: unknown;
 }
 
 function oppositeHistorySource(source: string): HistoryTargetSource | null {
@@ -181,6 +182,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const loadSessions = useHistoryStore((s) => s.loadSessions);
   const loadMoreSessions = useHistoryStore((s) => s.loadMoreSessions);
   const openSession = useHistoryStore((s) => s.openSession);
+  const addConvertedSession = useHistoryStore((s) => s.addConvertedSession);
   const deleteSession = useHistoryStore((s) => s.deleteSession);
   const openSearchHit = useHistoryStore((s) => s.openSearchHit);
   const setGlobalQuery = useHistoryStore((s) => s.setGlobalQuery);
@@ -784,13 +786,8 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           codexConfigDir: codexConfigDir?.trim() || null,
         });
 
-        if (sourceFilter !== "all") {
-          await setSourceFilter("all");
-        } else {
-          await loadSessions();
-        }
-
-        await openSession(makeConvertedSessionKey(result));
+        const sessionKey = addConvertedSession(result.summary);
+        await openSession(sessionKey || makeConvertedSessionKey(result));
         toast.success(t("history.toast.convertSuccess", {
           source: session.source === "claude" ? "Claude" : "Codex",
           target: result.targetSource === "claude" ? "Claude" : "Codex",
@@ -801,7 +798,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
         toast.error(t("history.toast.convertFailed"), { description: String(err) });
       }
     },
-    [claudeConfigDir, codexConfigDir, loadSessions, openSession, setSourceFilter, sourceFilter, t]
+    [addConvertedSession, claudeConfigDir, codexConfigDir, openSession, t]
   );
 
   const jumpToMessage = async (messageIndex: number) => {

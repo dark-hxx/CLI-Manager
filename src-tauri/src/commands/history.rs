@@ -500,6 +500,7 @@ pub struct HistoryConversionResult {
     pub cwd: Option<String>,
     pub message_count: usize,
     pub resume_command: String,
+    pub summary: HistorySessionSummary,
 }
 
 struct CodexThreadRegistration {
@@ -1003,7 +1004,8 @@ pub async fn history_convert_session(
 ) -> Result<HistoryConversionResult, String> {
     let (result, codex_registration) = tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir);
-        let file_ref = validate_session_file_ref(&file_path, &source, &project_key, &roots)?;
+        let file_ref =
+            validate_session_file_ref_for_conversion(&file_path, &source, &project_key, &roots)?;
         let target_source = target_source.trim().to_lowercase();
         let detail = build_session_detail(&file_ref, false)?;
         let result = convert_history_session(&detail, &target_source, &roots)?;
@@ -1042,6 +1044,39 @@ fn validate_session_file_ref(
         &base,
         collect_session_files(Some(&source), roots),
     )
+}
+
+fn validate_session_file_ref_for_conversion(
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    roots: &HistoryRoots,
+) -> Result<SessionFileRef, String> {
+    let source = source.trim().to_lowercase();
+    let project_key = project_key.trim();
+    if project_key.is_empty() {
+        return Err("invalid_project_key".to_string());
+    }
+
+    let base = history_source_base(&source, roots)?
+        .canonicalize()
+        .map_err(|_| "history_source_not_found".to_string())?;
+    let requested = PathBuf::from(file_path);
+    if !is_jsonl(&requested) {
+        return Err("invalid_session_file".to_string());
+    }
+    let requested = requested
+        .canonicalize()
+        .map_err(|_| format!("Session file not found: {file_path}"))?;
+    if !path_within_history_scope(&requested, &base) {
+        return Err("session_file_outside_history_scope".to_string());
+    }
+
+    Ok(SessionFileRef {
+        source,
+        project_key: project_key.to_string(),
+        path: requested,
+    })
 }
 
 fn history_source_base(source: &str, roots: &HistoryRoots) -> Result<PathBuf, String> {
@@ -3062,13 +3097,27 @@ fn convert_history_session(
         },
         path: target_path.clone(),
     };
+    let fingerprint = session_file_fingerprint(&file_ref.path);
+    let title = codex_history_index_text(detail).unwrap_or_else(|| detail.title.clone());
+    let summary = HistorySessionSummary {
+        session_id: session_id.clone(),
+        source: target_source.clone(),
+        project_key: file_ref.project_key.clone(),
+        title,
+        file_path: file_ref.path.to_string_lossy().to_string(),
+        cwd: cwd.clone(),
+        created_at: fingerprint.created_at,
+        updated_at: fingerprint.updated_at,
+        message_count,
+        branch: detail.branch.clone(),
+    };
 
     Ok(HistoryConversionResult {
         source,
         target_source: target_source.clone(),
         session_id: session_id.clone(),
-        project_key: file_ref.project_key,
-        file_path: file_ref.path.to_string_lossy().to_string(),
+        project_key: summary.project_key.clone(),
+        file_path: summary.file_path.clone(),
         cwd,
         message_count,
         resume_command: match target_source.as_str() {
@@ -3076,6 +3125,7 @@ fn convert_history_session(
             "codex" => format!("codex resume {session_id}"),
             _ => unreachable!(),
         },
+        summary,
     })
 }
 
@@ -7162,6 +7212,9 @@ mod tests {
         assert_eq!(result.target_source, "claude");
         assert_eq!(result.message_count, 2);
         assert!(result.resume_command.starts_with("claude --resume "));
+        assert_eq!(result.summary.source, "claude");
+        assert_eq!(result.summary.session_id, result.session_id);
+        assert_eq!(result.summary.message_count, 2);
 
         let files = collect_claude_session_files(&resolve_claude_history_root(&roots));
         assert_eq!(files.len(), 1);
@@ -7198,6 +7251,9 @@ mod tests {
         assert_eq!(result.target_source, "codex");
         assert_eq!(result.message_count, 2);
         assert!(result.resume_command.starts_with("codex resume "));
+        assert_eq!(result.summary.source, "codex");
+        assert_eq!(result.summary.session_id, result.session_id);
+        assert_eq!(result.summary.message_count, 2);
 
         let files = collect_codex_session_files(&resolve_codex_history_root(&roots));
         assert_eq!(files.len(), 1);

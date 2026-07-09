@@ -2,6 +2,7 @@
 
 ## [V1.2.7] - 2026-07-09
 ### 修复
+- **历史会话转换体验优化**：Claude / Codex 会话互转时跳过转换前的全量历史文件候选扫描，并在转换成功后把新会话直接插入当前列表再打开，避免列表清空重载造成卡顿。
 - **Claude 转 Codex 会话恢复**：转换后的 Codex rollout 会补齐 `session_id`、`cli_version`、`source=cli`、`thread_source=user` 等 Codex resume 必需元数据，并按用户自定义 Codex 配置目录写入历史索引与 `state_5.sqlite`，避免 `No saved session found` 和 `does not start with session metadata`。
 - **Codex 恢复后历史可见**：Claude 转 Codex 时同时写入模型上下文 `response_item` 与 TUI 重放所需的 `event_msg.user_message` / `event_msg.agent_message`，避免 resume 后模型知道上下文但控制台不显示旧对话。
 - **Claude 历史导出兼容**：转为 Claude 会话时将 assistant 内容写成 Claude 期望的 content block 数组，避免 `message.content.map is not a function`。

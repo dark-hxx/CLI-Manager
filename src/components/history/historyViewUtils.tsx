@@ -84,7 +84,7 @@ function sessionRelationKey(source: string, projectKey: string, sessionId: strin
 }
 
 export function inferSubagentParentSessionId(session: HistorySessionView): string | null {
-  const parts = session.file_path.replace(/\\/g, "/").split("/").filter(Boolean);
+  const parts = (session.file_path ?? "").replace(/\\/g, "/").split("/").filter(Boolean);
   const subagentsIndex = parts.findIndex((part) => part.toLowerCase() === "subagents");
   if (subagentsIndex <= 0) return null;
 
