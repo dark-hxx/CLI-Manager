@@ -56,11 +56,11 @@
   --text-muted: var(--terminal-popover-soft);
   --border: var(--term-panel-border, #2e2e2e);
   --primary: var(--terminal-theme-accent, #5b8def);
-  --interactive-hover-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 84%, var(--terminal-theme-accent, #5b8def) 16%);
-  --interactive-active-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 76%, var(--terminal-theme-accent, #5b8def) 24%);
-  --interactive-selected-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 64%, var(--terminal-theme-accent, #5b8def) 36%);
-  --interactive-selected-border: color-mix(in srgb, var(--terminal-theme-accent, #5b8def) 40%, var(--term-panel-border, #2e2e2e) 60%);
-  --interactive-focus-ring: color-mix(in srgb, var(--terminal-theme-accent, #5b8def) 26%, transparent);
+  --interactive-hover-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 84%, var(--primary) 16%);
+  --interactive-active-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 76%, var(--primary) 24%);
+  --interactive-selected-bg: color-mix(in srgb, var(--term-panel-card-inner, #181818) 64%, var(--primary) 36%);
+  --interactive-selected-border: color-mix(in srgb, var(--primary) 40%, var(--term-panel-border, #2e2e2e) 60%);
+  --interactive-focus-ring: color-mix(in srgb, var(--primary) 26%, transparent);
   --interactive-shadow: none;
   background-color: color-mix(in srgb, var(--term-panel-bg, #0a0a0a) 99%, transparent);
   border-color: var(--term-panel-border, #2e2e2e);
@@ -98,8 +98,21 @@
   -webkit-backdrop-filter: none;
 }
 
+#command-template-panel .ui-select-popover [role="option"] {
+  color: var(--terminal-popover-fg);
+}
+
+#command-template-panel .ui-select-popover [role="option"]:hover {
+  background-color: color-mix(in srgb, var(--term-panel-card-inner, #181818) 84%, var(--primary) 16%);
+}
+
+#command-template-panel .ui-select-popover [role="option"].bg-surface-container-highest {
+  background-color: color-mix(in srgb, var(--term-panel-card-inner, #181818) 86%, var(--primary) 14%);
+  color: var(--terminal-popover-fg);
+}
+
 #command-template-panel {
-  --primary: var(--term-panel-magenta, #c77dbb);
+  --primary: var(--term-panel-accent, var(--terminal-theme-accent, #5b8def));
   --interactive-focus-ring: color-mix(in srgb, var(--primary) 18%, transparent);
   color: var(--terminal-popover-fg);
 }
