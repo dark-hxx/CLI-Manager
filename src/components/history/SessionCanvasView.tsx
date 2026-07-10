@@ -66,15 +66,15 @@ function kindLabelKey(kind: SessionCanvasNodeKind): TranslationKey {
   return `history.canvas.kind.${kind}` as TranslationKey;
 }
 
-function nodeIcon(kind: SessionCanvasNodeKind) {
-  if (kind === "start") return <Network size={14} />;
-  if (kind === "turn") return <User size={14} />;
-  if (kind === "file") return <FileCode2 size={14} />;
-  if (kind === "test") return <Terminal size={14} />;
-  if (kind === "error") return <AlertCircle size={14} />;
-  if (kind === "subtask") return <GitBranch size={14} />;
-  if (kind === "tool") return <Wrench size={14} />;
-  return <Bot size={14} />;
+function nodeIcon(kind: SessionCanvasNodeKind, size = 14) {
+  if (kind === "start") return <Network size={size} />;
+  if (kind === "turn") return <User size={size} />;
+  if (kind === "file") return <FileCode2 size={size} />;
+  if (kind === "test") return <Terminal size={size} />;
+  if (kind === "error") return <AlertCircle size={size} />;
+  if (kind === "subtask") return <GitBranch size={size} />;
+  if (kind === "tool") return <Wrench size={size} />;
+  return <Bot size={size} />;
 }
 
 function formatTimestamp(timestamp: string | null, language: "zh-CN" | "en-US"): string {
@@ -263,6 +263,10 @@ export function SessionCanvasView({ session, model, onJumpToMessage, onOpenDiff 
     return <div className="ui-session-process-empty">{t("history.canvas.empty")}</div>;
   }
 
+  const pixelRatio = window.devicePixelRatio || 1;
+  const translateX = Math.round(transform.x * pixelRatio) / pixelRatio;
+  const translateY = Math.round(transform.y * pixelRatio) / pixelRatio;
+
   return (
     <div className="ui-session-canvas-view">
       <div className="ui-session-canvas-toolbar">
@@ -304,54 +308,70 @@ export function SessionCanvasView({ session, model, onJumpToMessage, onOpenDiff 
         onPointerCancel={finishPan}
       >
         <div
-          className="ui-session-canvas-scene"
-          style={{
-            width: sceneWidth,
-            height: sceneHeight,
-            transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
-          }}
+          className="ui-session-canvas-stage"
+          style={{ transform: `translate3d(${translateX}px, ${translateY}px, 0)` }}
         >
-          <svg className="ui-session-canvas-edges" width={sceneWidth} height={sceneHeight} aria-hidden="true">
-            {visibleEdges.map((edge) => (
-              <path
-                key={edge.id}
-                d={edgePath(edge, nodeMap)}
-                data-kind={edge.kind}
-                data-active={selectedNodeId === edge.source || selectedNodeId === edge.target}
-              />
-            ))}
-          </svg>
+          <div
+            className="ui-session-canvas-scene"
+            style={{
+              width: sceneWidth * transform.scale,
+              height: sceneHeight * transform.scale,
+            }}
+          >
+            <svg
+              className="ui-session-canvas-edges"
+              width={sceneWidth * transform.scale}
+              height={sceneHeight * transform.scale}
+              viewBox={`0 0 ${sceneWidth} ${sceneHeight}`}
+              aria-hidden="true"
+            >
+              {visibleEdges.map((edge) => (
+                <path
+                  key={edge.id}
+                  d={edgePath(edge, nodeMap)}
+                  data-kind={edge.kind}
+                  data-active={selectedNodeId === edge.source || selectedNodeId === edge.target}
+                />
+              ))}
+            </svg>
 
-          {visibleNodes.map((node) => {
-            return (
-              <button
-                key={node.id}
-                type="button"
-                data-canvas-node
-                data-kind={node.kind}
-                data-selected={selectedNodeId === node.id}
-                className="ui-session-canvas-node"
-                style={{ left: node.x, top: node.y, width: node.width, height: node.height }}
-                aria-label={t("history.canvas.nodeAria", { kind: t(kindLabelKey(node.kind)), title: node.title })}
-                onClick={() => setSelectedNodeId(node.id)}
-              >
-                <span className="ui-session-canvas-node-head">
-                  <span className="ui-session-canvas-node-kind">
-                    {nodeIcon(node.kind)}
-                    {t(kindLabelKey(node.kind))}
+            {visibleNodes.map((node) => {
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  data-canvas-node
+                  data-kind={node.kind}
+                  data-selected={selectedNodeId === node.id}
+                  className="ui-session-canvas-node"
+                  style={{
+                    left: node.x * transform.scale,
+                    top: node.y * transform.scale,
+                    width: node.width * transform.scale,
+                    height: node.height * transform.scale,
+                    fontSize: `${transform.scale}rem`,
+                  }}
+                  aria-label={t("history.canvas.nodeAria", { kind: t(kindLabelKey(node.kind)), title: node.title })}
+                  onClick={() => setSelectedNodeId(node.id)}
+                >
+                  <span className="ui-session-canvas-node-head">
+                    <span className="ui-session-canvas-node-kind">
+                      {nodeIcon(node.kind, 14 * transform.scale)}
+                      {t(kindLabelKey(node.kind))}
+                    </span>
+                    <time>{formatTimestamp(node.timestamp, language)}</time>
                   </span>
-                  <time>{formatTimestamp(node.timestamp, language)}</time>
-                </span>
-                <strong>{node.title}</strong>
-                <span className="ui-session-canvas-node-summary">{node.summary}</span>
-                <span className="ui-session-canvas-node-meta">
-                  {node.kind === "turn" && t("history.canvas.messageCount", { count: node.count })}
-                  {node.totalTokens > 0 && <b>{t("history.canvas.tokenCount", { count: node.totalTokens })}</b>}
-                  {node.status && <b>{node.status}</b>}
-                </span>
-              </button>
-            );
-          })}
+                  <strong>{node.title}</strong>
+                  <span className="ui-session-canvas-node-summary">{node.summary}</span>
+                  <span className="ui-session-canvas-node-meta">
+                    {node.kind === "turn" && t("history.canvas.messageCount", { count: node.count })}
+                    {node.totalTokens > 0 && <b>{t("history.canvas.tokenCount", { count: node.totalTokens })}</b>}
+                    {node.status && <b>{node.status}</b>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {selectedNode && (
