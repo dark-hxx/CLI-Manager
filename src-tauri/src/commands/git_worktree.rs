@@ -531,6 +531,17 @@ fn is_empty_dir(path: &Path) -> Result<bool, String> {
     Ok(entries.next().is_none())
 }
 
+/// worktree 移除后，若其所在的根目录（如 `<project>-worktrees`）已空，顺手清掉，
+/// 避免（尤其是批量）删除后残留一个空文件夹。`fs::remove_dir` 仅能删空目录，
+/// 非空/出错都安全忽略；git 下次 `worktree add` 会通过 create_dir_all 自动重建根目录。
+fn cleanup_empty_worktree_parent(worktree_path: &Path) {
+    if let Some(parent) = worktree_path.parent() {
+        if is_empty_dir(parent).unwrap_or(false) {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+}
+
 fn cleanup_stale_unregistered_worktree(
     project_path: &Path,
     target_path: &Path,
@@ -795,12 +806,14 @@ pub async fn git_worktree_remove(
                 return Err("worktree_branch_mismatch".to_string());
             }
             WorktreeRegistration::Missing => {
-                return cleanup_stale_unregistered_worktree(
+                let output = cleanup_stale_unregistered_worktree(
                     &project_path,
                     &target_path,
                     &branch,
                     delete_branch,
-                );
+                )?;
+                cleanup_empty_worktree_parent(&target_path);
+                return Ok(output);
             }
         }
 
@@ -828,6 +841,8 @@ pub async fn git_worktree_remove(
             );
         }
 
+        cleanup_empty_worktree_parent(&target_path);
+
         Ok(output.trim().to_string())
     })
     .await
@@ -837,8 +852,9 @@ pub async fn git_worktree_remove(
 #[cfg(test)]
 mod tests {
     use super::{
-        check_dependency_need, classify_worktree_registration, cleanup_stale_unregistered_worktree,
-        default_worktree_root, is_retryable_worktree_remove_error, is_stale_worktree_remove_error,
+        check_dependency_need, classify_worktree_registration, cleanup_empty_worktree_parent,
+        cleanup_stale_unregistered_worktree, default_worktree_root,
+        is_retryable_worktree_remove_error, is_stale_worktree_remove_error,
         parse_worktree_list_entries, path_to_git_arg, remove_registered_stale_worktree_dir,
         remove_worktree_path_with_retry, resolve_worktree_target_path,
         should_cleanup_worktree_branch_after_failed_add, validate_plain_branch_name,
@@ -1016,6 +1032,30 @@ mod tests {
             classify_worktree_registration(&entries, Path::new("C:/repo/wt/missing"), "wt/missing"),
             WorktreeRegistration::Missing
         );
+    }
+
+    #[test]
+    fn cleanup_empty_worktree_parent_removes_only_empty_root() {
+        let temp = tempfile::tempdir().unwrap();
+
+        // 空根目录：删掉最后一个 worktree 后，根目录应被清理
+        let root = temp.path().join("proj-worktrees");
+        let wt = root.join("task-1");
+        fs::create_dir_all(&wt).unwrap();
+        fs::remove_dir(&wt).unwrap(); // 模拟 git 已移除该 worktree 目录
+        cleanup_empty_worktree_parent(&wt);
+        assert!(!root.exists());
+
+        // 非空根目录（还有其它 worktree）：保持不动
+        let root2 = temp.path().join("proj2-worktrees");
+        let wt_a = root2.join("task-a");
+        let wt_b = root2.join("task-b");
+        fs::create_dir_all(&wt_a).unwrap();
+        fs::create_dir_all(&wt_b).unwrap();
+        fs::remove_dir(&wt_a).unwrap();
+        cleanup_empty_worktree_parent(&wt_a);
+        assert!(root2.exists());
+        assert!(wt_b.exists());
     }
 
     #[test]
