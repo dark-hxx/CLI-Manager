@@ -231,6 +231,10 @@ interface AiPathChip {
 // 匹配 @path，并吞掉可选的空格行号后缀（L2 / L2-L5 / L2-5），
 // 使 chip 能完整覆盖 formatAiAnchor 产出的 "@path L2-L5"，把裸路径藏在 chip 之下。
 const AI_PATH_TOKEN_REGEX = /@([^\s@]+)(?:\s+(L\d+(?:-L?\d+)?))?/g;
+const AI_PATH_INPUT_REGEX = /^@([^\s@]+)(?:\s+(L\d+(?:-L?\d+)?))?$/;
+// 图标 15px + gap 5px + 左右 padding 14px + 边框 2px。
+const AI_PATH_CHIP_CHROME_WIDTH = 36;
+const AI_PATH_CHIP_LABEL_SCALE = 0.86;
 
 // 从路径段提取文件名：去掉内联行号后缀（#L12-45 / :12）、目录尾斜杠，取末段。
 const extractAiPathFileName = (pathPart: string): string => {
@@ -251,6 +255,25 @@ const resolveAiPathLineLabel = (pathPart: string, spacedRange: string | undefine
   const m = raw.match(/L?(\d+)(?:-L?(\d+))?/i);
   if (!m) return null;
   return m[2] ? `L${m[1]}-L${m[2]}` : `L${m[1]}`;
+};
+
+const reserveAiPathChipInputSpacing = (text: string, cellWidth: number): string => {
+  const trimmed = text.replace(/[ \t]+$/u, "");
+  const match = AI_PATH_INPUT_REGEX.exec(trimmed);
+  if (!match) return text;
+
+  const fileName = extractAiPathFileName(match[1]);
+  if (!fileName) return text;
+  const lineLabel = resolveAiPathLineLabel(match[1], match[2]);
+  const label = lineLabel ? `${fileName} ${lineLabel}` : fileName;
+  const rawCells = Array.from(trimmed).length;
+  const labelCells = Array.from(label).length;
+  const chromeCells = AI_PATH_CHIP_CHROME_WIDTH / Math.max(cellWidth, 1);
+  const reservedCells = Math.max(
+    0,
+    Math.ceil(chromeCells + labelCells * AI_PATH_CHIP_LABEL_SCALE - rawCells),
+  );
+  return `${trimmed}${" ".repeat(reservedCells + 1)}`;
 };
 
 interface TextDiagnosticSummary {
@@ -1728,13 +1751,18 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const hasTerminalFileDragData = (dataTransfer: DataTransfer | null) => (
       Boolean(getTerminalFileDragText()) || hasDataTransferType(dataTransfer, TERMINAL_FILE_PATH_MIME)
     );
+    const reserveAiPathChipSpacingForTerminal = (text: string) => {
+      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
+      const cell = getTerminalRenderedCellSize(terminal, pasteTarget, fallbackFontSize);
+      return reserveAiPathChipInputSpacing(text, cell.width);
+    };
     const unregisterTerminalDropZone = registerTerminalDropZone({
       id: sessionId,
       getRect: () => {
         if (!isVisibleRef.current) return null;
         return pasteTarget.getBoundingClientRect();
       },
-      paste: pasteIntoTerminal,
+      paste: (text) => pasteIntoTerminal(reserveAiPathChipSpacingForTerminal(text)),
       focus: () => terminal.focus(),
     });
     const getShellForPathQuoting = async () => {
@@ -1813,7 +1841,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       e.preventDefault();
       e.stopPropagation();
       if (!text) return;
-      pasteIntoTerminal(text);
+      pasteIntoTerminal(reserveAiPathChipSpacingForTerminal(text));
       endTerminalFileDrag();
       terminal.focus();
     };
@@ -3791,14 +3819,14 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           {aiPathChips.map((chip) => (
             <span
               key={chip.key}
-              className={chip.maskOnly ? "ui-terminal-ai-path-chip ui-terminal-ai-path-chip--mask" : "ui-terminal-ai-path-chip"}
+              className={chip.maskOnly ? "ui-terminal-ai-path-chip-slot ui-terminal-ai-path-chip-slot--mask" : "ui-terminal-ai-path-chip-slot"}
               style={{
                 left: chip.left,
                 top: chip.top,
                 // 遮罩槽底色，先盖住底下的裸路径（含 TUI composer 背景），避免露出黑块
                 "--ai-chip-slot-bg": backgroundColor,
-                // chip 至少填满底下整段路径的宽度，右侧空白用槽底色填充
-                minWidth: chip.spanWidth,
+                // 遮罩槽严格占用原始路径宽度，避免可见 chip 扩展后覆盖相邻引用
+                width: chip.spanWidth,
                 height: chip.height,
                 fontFamily: effectiveFontFamily,
                 fontSize,
@@ -3806,7 +3834,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
               title={chip.label}
             >
               {!chip.maskOnly && (
-                <span className="ui-terminal-ai-path-chip-inner">
+                <span className="ui-terminal-ai-path-chip">
                   <img className="ui-terminal-ai-path-chip-icon" src={chip.icon} alt="" draggable={false} />
                   <span className="ui-terminal-ai-path-chip-label">{chip.label}</span>
                 </span>

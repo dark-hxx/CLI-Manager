@@ -1862,16 +1862,14 @@
   overflow: hidden;
 }
 
-/* 文件 chip：整段填满底下 @path 的宽度（min-width=spanWidth），
-   作为一个统一的引用块盖住裸路径——不管底下是终端黑底还是 TUI composer 背景，
-   都被 chip 完整遮住，不再露出突兀的黑块。图标+文件名左对齐，右侧空白是块自身底色。 */
-.ui-terminal-ai-path-chip {
+/* 路径遮罩槽：严格占用原始 @path 的字符宽度，只负责盖住裸路径。
+   可见 chip 独立按内容宽度渲染，避免完整路径较长时边框后方出现不等长空白。 */
+.ui-terminal-ai-path-chip-slot {
   position: absolute;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   box-sizing: border-box;
   padding: 0;
-  border-radius: 6px;
   /* 不透明双层：底层取终端背景色（--ai-chip-slot-bg，opaque），上层叠面板色调，
      确保完全遮挡，不透出底下黑色 */
   background-color: var(--ai-chip-slot-bg, var(--term-panel-bg, #1a1c20));
@@ -1879,25 +1877,35 @@
     color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent),
     color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent)
   );
-  border: 1px solid color-mix(in srgb, var(--term-panel-fg, #d6dae0) 22%, transparent);
-  color: var(--term-panel-fg, #d6dae0);
-  overflow: hidden;
+  overflow: visible;
   line-height: 1;
   user-select: none;
 }
 
-/* 跨行续行段：仅遮罩，不显示内容，弱化边框以避免看起来像独立小块 */
-.ui-terminal-ai-path-chip--mask {
-  border-color: transparent;
+/* 跨行续行段只保留遮罩，不重复显示文件信息。 */
+.ui-terminal-ai-path-chip-slot--mask {
+  display: block;
 }
 
-.ui-terminal-ai-path-chip-inner {
+/* 可见文件 chip：完整展示文件名；注入时预留额外终端字符槽，避免覆盖相邻引用。 */
+.ui-terminal-ai-path-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  box-sizing: border-box;
+  flex: none;
+  width: max-content;
   min-width: 0;
-  max-width: 100%;
+  height: 100%;
   padding: 0 8px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--term-panel-fg, #d6dae0) 22%, transparent);
+  border-radius: 6px;
+  color: var(--term-panel-fg, #d6dae0);
+  background-color: var(--ai-chip-slot-bg, var(--term-panel-bg, #1a1c20));
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent),
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent)
+  );
   white-space: nowrap;
   overflow: hidden;
 }
@@ -1910,8 +1918,6 @@
 }
 
 .ui-terminal-ai-path-chip-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.86em;
 }
