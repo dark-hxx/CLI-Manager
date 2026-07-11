@@ -6559,6 +6559,8 @@
 
 .ui-file-drag-preview {
   position: fixed;
+  left: 0;
+  top: 0;
   z-index: 10000;
   max-width: min(360px, calc(100vw - 24px));
   pointer-events: none;
@@ -6569,6 +6571,8 @@
   box-shadow: 0 14px 34px color-mix(in srgb, #000 34%, transparent);
   opacity: 0.94;
   overflow: hidden;
+  transform: translate3d(-10000px, -10000px, 0);
+  will-change: transform;
 }
 
 .ui-file-drag-preview[data-over-terminal="true"] {

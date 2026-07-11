@@ -1106,6 +1106,7 @@ terminal.paste(`${rawPath}${" ".repeat(6)}`);
 - Arrow, click, Backspace, and Delete operations must translate visual token boundaries to raw PTY indices.
 - While an atomic cursor jump is being delivered as repeated PTY arrow sequences, preserve the last validated input-start cell until the native xterm cursor reaches the logical target. Never recompute the mirror origin from a final logical cursor and an intermediate native cursor position.
 - While a whole-token deletion is being delivered as repeated Backspace/Delete sequences, render the target input once and keep masking the source input width until the xterm buffer and cursor match the target. Never expose per-character deletion frames through mirror fallback.
+- Keep the active mirror enabled when raw `@path` text wraps across xterm soft-wrapped rows or TUI-explicit visual rows. Once the application has validated an input-start cell, preserve that trusted anchor across application-controlled file insertions and bound its lifetime to the current input/session. Do not infer active-input ownership from unstable TUI screen text after redraws.
 - Whitespace between adjacent file tokens must render as one atomic visual separator even if legacy input contains extra spaces.
 - Enter must submit the existing raw `@path` without replacement or late serialization.
 - Passive references in submitted/history output may stay cell-bound overlays; only the active input requires atomic interaction.

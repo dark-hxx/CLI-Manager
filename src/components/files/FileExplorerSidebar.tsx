@@ -93,9 +93,12 @@ interface FileDragPreviewSource {
 }
 
 interface FileDragPreviewState {
+  source: FileDragPreviewSource;
+}
+
+interface FileDragPreviewFrame {
   x: number;
   y: number;
-  source: FileDragPreviewSource;
   overTerminal: boolean;
 }
 
@@ -792,6 +795,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const [dragPreview, setDragPreview] = useState<FileDragPreviewState | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pointerDragRef = useRef<FilePointerDragState | null>(null);
+  const dragPreviewElementRef = useRef<HTMLDivElement>(null);
+  const dragPreviewSourceRef = useRef<FileDragPreviewSource | null>(null);
+  const pendingDragPreviewFrameRef = useRef<FileDragPreviewFrame | null>(null);
+  const dragPreviewAnimationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     setExpandedAutoCollapseGroups(new Set());
@@ -1054,20 +1061,43 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     }, 0);
   }, []);
 
+  const flushDragPreview = useCallback(() => {
+    dragPreviewAnimationFrameRef.current = null;
+    const element = dragPreviewElementRef.current;
+    const frame = pendingDragPreviewFrameRef.current;
+    if (!element || !frame) return;
+
+    element.style.transform = `translate3d(${frame.x}px, ${frame.y}px, 0)`;
+    if (frame.overTerminal) element.dataset.overTerminal = "true";
+    else delete element.dataset.overTerminal;
+  }, []);
+
   const resetPointerDrag = useCallback(() => {
+    if (dragPreviewAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragPreviewAnimationFrameRef.current);
+      dragPreviewAnimationFrameRef.current = null;
+    }
     pointerDragRef.current = null;
+    dragPreviewSourceRef.current = null;
+    pendingDragPreviewFrameRef.current = null;
     setDragPreview(null);
     document.body.style.removeProperty("user-select");
   }, []);
 
   const updateDragPreview = useCallback((source: FileDragPreviewSource, x: number, y: number) => {
-    setDragPreview({
+    pendingDragPreviewFrameRef.current = {
       x: x - source.offsetX,
       y: y - source.offsetY,
-      source,
       overTerminal: Boolean(getTerminalFileDropZoneIdAtPoint(x, y)),
-    });
-  }, []);
+    };
+    if (dragPreviewSourceRef.current !== source) {
+      dragPreviewSourceRef.current = source;
+      setDragPreview({ source });
+    }
+    if (dragPreviewAnimationFrameRef.current === null) {
+      dragPreviewAnimationFrameRef.current = window.requestAnimationFrame(flushDragPreview);
+    }
+  }, [flushDragPreview]);
 
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -1540,9 +1570,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       {dragPreview && (
         <Portal>
           <div
+            ref={dragPreviewElementRef}
             className="ui-file-drag-preview"
-            data-over-terminal={dragPreview.overTerminal ? "true" : undefined}
-            style={{ left: dragPreview.x, top: dragPreview.y, width: dragPreview.source.width }}
+            style={{ width: dragPreview.source.width }}
             aria-hidden="true"
           >
             <div
