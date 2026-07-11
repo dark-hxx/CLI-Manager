@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { eventToCombo } from "../../hooks/useKeyboardShortcuts";
 import { copyAiText } from "../../lib/aiClipboard";
-import { formatAiAnchor, formatAiContextBlock, type AiTextSelection } from "../../lib/aiPathFormatter";
+import { formatAiAnchor, formatAiContextBlock, formatAiPathAnchorBlock, type AiTextSelection } from "../../lib/aiPathFormatter";
+import { sendTextToTerminal } from "../../lib/terminalFileDrag";
+import { toast } from "sonner";
 import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n } from "../../lib/i18n";
 import type { GitFileChange, TerminalSession } from "../../lib/types";
@@ -214,8 +216,28 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
 
   const handleEditorMount = useCallback<OnMount>((editor) => {
     editorRef.current = editor;
+    // 右键按下瞬间（选区还没被清）快照当前选区，供“发送到终端”使用。
+    editor.onMouseDown((event) => {
+      if (event.event.rightButton) {
+        const sel = editor.getSelection();
+        rightClickSelectionRef.current = sel && !sel.isEmpty()
+          ? {
+              startLine: sel.startLineNumber,
+              endLine: sel.endLineNumber,
+              text: editor.getModel()?.getValueInRange(sel),
+            }
+          : null;
+      }
+    });
+    editor.addAction({
+      id: "cli-manager.sendToTerminal",
+      label: t("files.editor.sendToTerminal"),
+      contextMenuGroupId: "9_cutcopypaste",
+      contextMenuOrder: 3,
+      run: () => sendSelectionToTerminalRef.current(),
+    });
     setEditorReadyNonce((value) => value + 1);
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const fileProject = session.fileEditor?.project;
@@ -338,6 +360,10 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     await saveActiveFile();
   }, [saveActiveFile, visibleFile]);
 
+  // 右键点到选区外时 Monaco 会把光标移过去、清空选区，导致读不到原选区行号。
+  // 这里在右键 mousedown（选区尚在）时快照，供“发送到终端”优先使用。
+  const rightClickSelectionRef = useRef<AiTextSelection | null>(null);
+
   const getEditorSelection = useCallback((): AiTextSelection | null => {
     const selection = editorRef.current?.getSelection();
     if (!editorRef.current || !selection || selection.isEmpty()) return null;
@@ -363,6 +389,32 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
       : null;
     void copyAiText(formatAiContextBlock(project, visibleFile.path, selection), t("files.toast.aiContextCopied"));
   }, [getEditorSelection, previewMode, project, t, visibleFile]);
+
+  // 把当前选中（或整文件引用）以 @path L2-L5 形式发送到当前终端，供 AI CLI 使用。
+  const sendSelectionToTerminal = useCallback(() => {
+    if (!project || !visibleFile) return;
+    const isSourceMode = (visibleFile.previewKind === "text" || visibleFile.previewKind === "markdown") && previewMode === "source";
+    // 右键触发时优先用右键按下瞬间的选区快照（否则光标可能已移出选区、丢了行号）。
+    const selection = isSourceMode
+      ? (rightClickSelectionRef.current ?? getEditorSelection())
+      : null;
+    rightClickSelectionRef.current = null;
+    // 只发送 @路径 + 行号（不含选中的代码文本），末尾补空格，
+    // 使终端能把整段渲染成文件 chip、且多次发送不粘连。
+    const text = `${formatAiPathAnchorBlock(visibleFile.path, selection)} `;
+    const ok = sendTextToTerminal(text);
+    if (ok) {
+      toast.success(t("files.editor.sendToTerminalDone"));
+    } else {
+      toast.error(t("files.editor.sendNoTerminal"));
+    }
+  }, [getEditorSelection, previewMode, project, t, visibleFile]);
+
+  // Monaco action 在 mount 时注册一次，用 ref 保证 run 时调用最新闭包。
+  const sendSelectionToTerminalRef = useRef(sendSelectionToTerminal);
+  useEffect(() => {
+    sendSelectionToTerminalRef.current = sendSelectionToTerminal;
+  }, [sendSelectionToTerminal]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {

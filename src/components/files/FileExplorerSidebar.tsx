@@ -1130,7 +1130,8 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   const handleFileDragStart = useCallback((event: ReactDragEvent<HTMLElement>, entry: ProjectFileEntry) => {
     if (!project) return;
-    const text = formatAiPathBlock(entry.path, entry.kind);
+    // 末尾补空格：多个路径连续拖入时保持分隔，避免 @a@b 粘连导致 chip 重叠。
+    const text = `${formatAiPathBlock(entry.path, entry.kind)} `;
     beginTerminalFileDrag(text);
     updateTerminalFileDragPointFromEvent(event);
     event.dataTransfer.effectAllowed = "copyMove";
@@ -1196,7 +1197,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         resetPointerDrag();
         return;
       }
-      beginTerminalFileDrag(formatAiPathBlock(state.entry.path, state.entry.kind));
+      beginTerminalFileDrag(`${formatAiPathBlock(state.entry.path, state.entry.kind)} `);
       document.body.style.userSelect = "none";
     }
 

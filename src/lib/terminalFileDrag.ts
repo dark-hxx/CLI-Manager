@@ -21,6 +21,8 @@ interface TerminalDragPointEvent {
 let currentDrag: TerminalFileDragPayload | null = null;
 let lastPoint: { x: number; y: number } | null = null;
 const dropZones = new Map<string, TerminalDropZone>();
+// 最近激活的真实终端 sessionId，供“发送到当前终端”在无明确目标时兜底。
+let lastActiveTerminalId: string | null = null;
 
 function isUsableCoordinate(x: number, y: number): boolean {
   return Number.isFinite(x) && Number.isFinite(y) && (x !== 0 || y !== 0);
@@ -97,6 +99,42 @@ export function commitTerminalFileDragDrop(): boolean {
     zone.paste(currentDrag.text);
     zone.focus();
     endTerminalFileDrag();
+    return true;
+  }
+
+  return false;
+}
+
+export function setLastActiveTerminalId(id: string | null) {
+  lastActiveTerminalId = id;
+}
+
+function isDropZoneVisible(zone: TerminalDropZone): boolean {
+  const rect = zone.getRect();
+  return Boolean(rect && rect.width > 0 && rect.height > 0);
+}
+
+// 把文本发送到目标终端：优先 preferredId，其次最近激活的终端，
+// 最后回退到唯一可见的终端。返回是否成功送达。
+export function sendTextToTerminal(text: string, preferredId?: string | null): boolean {
+  if (!text) return false;
+
+  const tryZone = (id: string | null | undefined): boolean => {
+    if (!id) return false;
+    const zone = dropZones.get(id);
+    if (!zone || !isDropZoneVisible(zone)) return false;
+    zone.paste(text);
+    zone.focus();
+    return true;
+  };
+
+  if (tryZone(preferredId)) return true;
+  if (tryZone(lastActiveTerminalId)) return true;
+
+  const visibleZones = Array.from(dropZones.values()).filter(isDropZoneVisible);
+  if (visibleZones.length === 1) {
+    visibleZones[0].paste(text);
+    visibleZones[0].focus();
     return true;
   }
 

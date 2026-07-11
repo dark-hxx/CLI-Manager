@@ -21,6 +21,7 @@ import {
   getTerminalTheme,
   isLightTerminalTheme,
 } from "../lib/terminalThemes";
+import { getMaterialFileIcon } from "@baybreezy/file-extension-icon";
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
 import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
@@ -211,6 +212,46 @@ interface TerminalSuggestionGhostState {
   height: number;
   maxWidth: number;
 }
+
+// 终端可见区域内识别到的 @path 引用，渲染为内联文件 chip（覆盖在原字符上）。
+interface AiPathChip {
+  key: string;
+  left: number;
+  top: number;
+  // 底下 @path 整段占用的像素宽度：外层遮罩槽用它盖住裸路径，
+  // 内层 chip 自身保持紧凑（仅内容宽度），避免长路径把 chip 撑得过长。
+  spanWidth: number;
+  height: number;
+  icon: string;
+  label: string;
+  // 跨行续行段：仅作遮罩（盖住裸路径余部），不再重复展示 icon+文件名。
+  maskOnly?: boolean;
+}
+
+// 匹配 @path，并吞掉可选的空格行号后缀（L2 / L2-L5 / L2-5），
+// 使 chip 能完整覆盖 formatAiAnchor 产出的 "@path L2-L5"，把裸路径藏在 chip 之下。
+const AI_PATH_TOKEN_REGEX = /@([^\s@]+)(?:\s+(L\d+(?:-L?\d+)?))?/g;
+
+// 从路径段提取文件名：去掉内联行号后缀（#L12-45 / :12）、目录尾斜杠，取末段。
+const extractAiPathFileName = (pathPart: string): string => {
+  let body = pathPart.replace(/[#:]L?\d+(?:-L?\d+)?$/i, "");
+  body = body.replace(/\/+$/, "");
+  const segments = body.split(/[/\\]/).filter(Boolean);
+  return segments.length > 0 ? segments[segments.length - 1] : body;
+};
+
+// 归一化行号标签：空格形式（match group）优先，否则从内联 #L.. 提取，统一成 L2 / L2-L5。
+const resolveAiPathLineLabel = (pathPart: string, spacedRange: string | undefined): string | null => {
+  let raw = spacedRange;
+  if (!raw) {
+    const inline = pathPart.match(/[#:](L?\d+(?:-L?\d+)?)$/i);
+    if (inline) raw = inline[1];
+  }
+  if (!raw) return null;
+  const m = raw.match(/L?(\d+)(?:-L?(\d+))?/i);
+  if (!m) return null;
+  return m[2] ? `L${m[1]}-L${m[2]}` : `L${m[1]}`;
+};
 
 interface TextDiagnosticSummary {
   length: number;
@@ -660,6 +701,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const [menuState, setMenuState] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
   const [inactiveReplayPending, setInactiveReplayPending] = useState(false);
   const [suggestionGhost, setSuggestionGhost] = useState<TerminalSuggestionGhostState | null>(null);
+  const [aiPathChips, setAiPathChips] = useState<AiPathChip[]>([]);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const osPlatformRef = useRef<OsPlatform>("unknown");
   const codexImeDebugRef = useRef<CodexImeDebugState>({
@@ -730,6 +772,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     suggestionRef.current = null;
     setSuggestionGhost(null);
   }, [terminalInputSuggestionProvider]);
+
+  // 切换会话时清空上一会话残留的 @path chip。
+  useEffect(() => {
+    setAiPathChips([]);
+  }, [sessionId]);
 
   const isTransparent = background.enabled && background.imagePath !== null && !hiddenForThisSession;
   const isTransparentRef = useRef(isTransparent);
@@ -2061,6 +2108,47 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return true;
     };
 
+    // 退格删整段 @path：基于扫屏（不依赖 inputBuffer，故 TUI 下也可靠），
+    // 读光标实际位置，构建“光标所在逻辑行、光标之前”的文本，若其正好以一个
+    // @token 结尾，则返回该 token 的字符数，供 handler 发送等量退格整段删除。
+    const getAiPathBackspaceCount = (): number => {
+      const buffer = terminal.buffer.active;
+      const cursorRow = buffer.cursorY; // 相对 viewport 顶部的屏幕行
+      const cursorX = buffer.cursorX;
+      if (cursorRow < 0 || cursorX <= 0) return 0;
+      const reusableCell = buffer.getNullCell();
+
+      // 找到光标所在逻辑行的起始屏幕行（向上回溯 isWrapped 续行）。
+      let startRow = cursorRow;
+      while (startRow > 0) {
+        const line = buffer.getLine(buffer.viewportY + startRow);
+        if (line?.isWrapped) startRow -= 1;
+        else break;
+      }
+
+      // 逐格构建“逻辑行起点 → 光标位置”的文本（含宽字符处理）。
+      let text = "";
+      for (let r = startRow; r <= cursorRow; r += 1) {
+        const line = buffer.getLine(buffer.viewportY + r);
+        if (!line) break;
+        const lastCol = r === cursorRow ? cursorX : terminal.cols;
+        for (let col = 0; col < lastCol; col += 1) {
+          const bufferCell = line.getCell(col, reusableCell);
+          if (!bufferCell) continue;
+          if (bufferCell.getWidth() === 0) continue;
+          text += bufferCell.getChars() || " ";
+        }
+      }
+
+      // 光标前文本是否恰好以一个 @token 结尾（含可选行号后缀）。
+      const trailing = text.match(/@[^\s@]+(?:\s+L\d+(?:-L?\d+)?)?$/);
+      if (!trailing) return 0;
+      const tokenText = trailing[0];
+      // 至少 2 字符（@ + 内容）才算引用，避免误删单个 @。
+      if (tokenText.length < 2) return 0;
+      return Array.from(tokenText).length;
+    };
+
     terminal.attachCustomKeyEventHandler((e) => {
       const isMacSelectAll = (
         osPlatformRef.current === "macos" ||
@@ -2087,6 +2175,25 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       ) {
         if (removeSelectedInputText()) {
           e.preventDefault();
+          return false;
+        }
+      }
+      // 退格：光标紧邻 @path 末尾时，整段删除该引用（含行号后缀）。
+      if (
+        e.type === "keydown" &&
+        e.key === "Backspace" &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.shiftKey
+      ) {
+        const count = getAiPathBackspaceCount();
+        if (count > 1) {
+          e.preventDefault();
+          markAttentionInputHandled();
+          // 逐个发送退格给 PTY，交给 shell/TUI 各自处理光标与重绘。
+          const backspaces = "\x7f".repeat(count);
+          invoke("pty_write", { sessionId, data: backspaces }).catch((err) => reportPtyWriteError("backspace-token", err));
           return false;
         }
       }
@@ -2213,6 +2320,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     let pendingAiSuggestionContext: TerminalInputSuggestionContext | null = null;
     let pendingAiSuggestionRequestId = 0;
     let suggestionDisposed = false;
+    // @path 内联 chip：rAF 合帧句柄 + 上一次结果（用于 diff 跳过无变化的 setState）
+    let aiPathChipRafId: number | null = null;
+    let lastAiPathChipsSignature = "";
     let suggestionTemplatesLoaded = false;
     let lastSubmittedCommand: string | null = null;
     let suggestionContextCache: {
@@ -2225,6 +2335,141 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const clearSuggestionGhost = () => {
       suggestionRef.current = null;
       setSuggestionGhost(null);
+    };
+
+    // 扫描终端可见行，把 @path 引用定位为内联 chip 覆盖层。
+    // 纯视觉：字符仍在缓冲区，回车照常把 @path 发给 CLI。跨行的 token 不渲染。
+    const scanAiPathChips = (): AiPathChip[] => {
+      const wrapper = wrapperRef.current;
+      const terminalContainer = containerRef.current;
+      if (!wrapper || !terminalContainer) return [];
+      const buffer = terminal.buffer.active;
+      const rows = terminal.rows;
+      const cols = terminal.cols;
+      const screen = terminalContainer.querySelector(".xterm-screen") as HTMLElement | null;
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const screenRect = (screen ?? terminalContainer).getBoundingClientRect();
+      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
+      const cell = getTerminalRenderedCellSize(terminal, terminalContainer, fallbackFontSize);
+      const offsetLeft = screenRect.left - wrapperRect.left;
+      const offsetTop = screenRect.top - wrapperRect.top;
+      const chips: AiPathChip[] = [];
+      const reusableCell = buffer.getNullCell();
+
+      // 每个字符在屏幕上的位置：屏幕行（相对 viewport 的 0..rows-1）+ 起始列。
+      interface CharPos { row: number; col: number; }
+
+      // 把连续的自动换行（isWrapped）屏幕行拼成一条“逻辑行”，逐格构建文本，
+      // 同时记录每个字符的屏幕行/列，以正确处理宽字符与跨行覆盖。
+      const buildLogicalLine = (startRow: number): { text: string; pos: CharPos[]; nextRow: number } => {
+        let text = "";
+        const pos: CharPos[] = [];
+        let row = startRow;
+        while (row < rows) {
+          if (row !== startRow) {
+            const contLine = buffer.getLine(buffer.viewportY + row);
+            if (!contLine || !contLine.isWrapped) break;
+          }
+          const line = buffer.getLine(buffer.viewportY + row);
+          if (!line) break;
+          for (let col = 0; col < cols; col += 1) {
+            const bufferCell = line.getCell(col, reusableCell);
+            if (!bufferCell) continue;
+            const width = bufferCell.getWidth();
+            if (width === 0) continue; // 宽字符占位尾格，跳过
+            const chars = bufferCell.getChars() || " ";
+            pos.push({ row, col });
+            text += chars;
+          }
+          row += 1;
+        }
+        return { text, pos, nextRow: row };
+      };
+
+      let row = 0;
+      while (row < rows) {
+        const line = buffer.getLine(buffer.viewportY + row);
+        // 若首个可见行本身是续行，仍从它开始独立成组（其真正行首在视口上方，忽略）。
+        const { text, pos, nextRow } = buildLogicalLine(row);
+        row = Math.max(nextRow, row + 1);
+        if (!line || text.indexOf("@") < 0) continue;
+
+        AI_PATH_TOKEN_REGEX.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = AI_PATH_TOKEN_REGEX.exec(text)) !== null) {
+          const token = match[0];
+          const pathPart = match[1];
+          const spacedRange = match[2];
+          const fileName = extractAiPathFileName(pathPart);
+          if (!fileName) continue;
+          const lineLabel = resolveAiPathLineLabel(pathPart, spacedRange);
+          const label = lineLabel ? `${fileName} ${lineLabel}` : fileName;
+
+          const startCharIdx = match.index;
+          const endCharIdx = match.index + token.length - 1;
+          if (startCharIdx >= pos.length || endCharIdx >= pos.length) continue;
+
+          // token 可能跨多个屏幕行（自动换行）——按屏幕行拆成连续段，逐段覆盖。
+          let segStart = startCharIdx;
+          let isFirstSegment = true;
+          while (segStart <= endCharIdx) {
+            const segRow = pos[segStart].row;
+            // 找到本段（同一屏幕行）的最后一个字符索引
+            let segEnd = segStart;
+            while (segEnd + 1 <= endCharIdx && pos[segEnd + 1].row === segRow) segEnd += 1;
+
+            const startCol = pos[segStart].col;
+            const afterCol = segEnd + 1 < pos.length && pos[segEnd + 1].row === segRow
+              ? pos[segEnd + 1].col
+              : cols;
+            const segCols = afterCol - startCol;
+            if (segCols > 0) {
+              chips.push({
+                key: `${segRow}:${startCol}:${token}`,
+                left: offsetLeft + startCol * cell.width,
+                top: offsetTop + segRow * cell.height,
+                spanWidth: segCols * cell.width,
+                height: cell.height,
+                icon: getMaterialFileIcon(fileName),
+                label,
+                // 只有第一段展示 icon+文件名，后续续行段仅作遮罩，盖住裸路径余部。
+                maskOnly: !isFirstSegment,
+              });
+            }
+            isFirstSegment = false;
+            segStart = segEnd + 1;
+          }
+        }
+      }
+      return chips;
+    };
+
+    const applyAiPathChips = () => {
+      // 只要终端可见就渲染 chip：焦点切到别的终端（本终端 isActive=false）时，
+      // 输入框里的 @path 仍应保持 chip 效果，不因失焦而消失。
+      if (suggestionDisposed || !isVisibleRef.current) {
+        if (lastAiPathChipsSignature !== "") {
+          lastAiPathChipsSignature = "";
+          setAiPathChips([]);
+        }
+        return;
+      }
+      const chips = scanAiPathChips();
+      const signature = chips
+        .map((chip) => `${chip.key}|${chip.left}|${chip.top}|${chip.spanWidth}|${chip.label}|${chip.maskOnly ? "m" : ""}`)
+        .join("~");
+      if (signature === lastAiPathChipsSignature) return;
+      lastAiPathChipsSignature = signature;
+      setAiPathChips(chips);
+    };
+
+    // rAF 合帧：高频事件（TUI 重绘/光标移动）只标脏，一帧最多扫一次。
+    const scheduleAiPathChips = () => {
+      if (aiPathChipRafId !== null) return;
+      aiPathChipRafId = window.requestAnimationFrame(() => {
+        aiPathChipRafId = null;
+        applyAiPathChips();
+      });
     };
 
     const cancelAiSuggestionRefresh = () => {
@@ -2999,12 +3244,14 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         return;
       }
       updateSuggestionGhostPosition(suggestionRef.current);
+      scheduleAiPathChips();
       if (!textarea || document.activeElement !== textarea) return;
       scheduleTerminalContainerScrollReset();
       scheduleHelperTextareaAnchorPin();
     });
     const renderDisposable = terminal.onRender(() => {
       scheduleTuiComposerBackgroundNormalization(terminal);
+      scheduleAiPathChips();
       if (!isComposingRef.current) {
         updateSuggestionGhostPosition(suggestionRef.current);
         return;
@@ -3180,6 +3427,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (compositionScrollRafId !== null) {
         cancelAnimationFrame(compositionScrollRafId);
         compositionScrollRafId = null;
+      }
+      if (aiPathChipRafId !== null) {
+        cancelAnimationFrame(aiPathChipRafId);
+        aiPathChipRafId = null;
       }
       if (containerScrollResetRafId !== null) {
         cancelAnimationFrame(containerScrollResetRafId);
@@ -3533,6 +3784,35 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           }}
         >
           {suggestionGhost.suffix}
+        </div>
+      )}
+      {isVisible && !searchOpen && aiPathChips.length > 0 && (
+        <div className="ui-terminal-ai-path-chip-layer" aria-hidden="true">
+          {aiPathChips.map((chip) => (
+            <span
+              key={chip.key}
+              className={chip.maskOnly ? "ui-terminal-ai-path-chip ui-terminal-ai-path-chip--mask" : "ui-terminal-ai-path-chip"}
+              style={{
+                left: chip.left,
+                top: chip.top,
+                // 遮罩槽底色，先盖住底下的裸路径（含 TUI composer 背景），避免露出黑块
+                "--ai-chip-slot-bg": backgroundColor,
+                // chip 至少填满底下整段路径的宽度，右侧空白用槽底色填充
+                minWidth: chip.spanWidth,
+                height: chip.height,
+                fontFamily: effectiveFontFamily,
+                fontSize,
+              } as CSSProperties}
+              title={chip.label}
+            >
+              {!chip.maskOnly && (
+                <span className="ui-terminal-ai-path-chip-inner">
+                  <img className="ui-terminal-ai-path-chip-icon" src={chip.icon} alt="" draggable={false} />
+                  <span className="ui-terminal-ai-path-chip-label">{chip.label}</span>
+                </span>
+              )}
+            </span>
+          ))}
         </div>
       )}
       {menuState && (

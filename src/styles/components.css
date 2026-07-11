@@ -1853,6 +1853,69 @@
   user-select: none;
 }
 
+/* 终端内 @path 引用的内联文件 chip 覆盖层：盖在原字符上，纯视觉 */
+.ui-terminal-ai-path-chip-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* 文件 chip：整段填满底下 @path 的宽度（min-width=spanWidth），
+   作为一个统一的引用块盖住裸路径——不管底下是终端黑底还是 TUI composer 背景，
+   都被 chip 完整遮住，不再露出突兀的黑块。图标+文件名左对齐，右侧空白是块自身底色。 */
+.ui-terminal-ai-path-chip {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0;
+  border-radius: 6px;
+  /* 不透明双层：底层取终端背景色（--ai-chip-slot-bg，opaque），上层叠面板色调，
+     确保完全遮挡，不透出底下黑色 */
+  background-color: var(--ai-chip-slot-bg, var(--term-panel-bg, #1a1c20));
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent),
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--term-panel-fg, #d6dae0) 22%, transparent);
+  color: var(--term-panel-fg, #d6dae0);
+  overflow: hidden;
+  line-height: 1;
+  user-select: none;
+}
+
+/* 跨行续行段：仅遮罩，不显示内容，弱化边框以避免看起来像独立小块 */
+.ui-terminal-ai-path-chip--mask {
+  border-color: transparent;
+}
+
+.ui-terminal-ai-path-chip-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 8px 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ui-terminal-ai-path-chip-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.ui-terminal-ai-path-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86em;
+}
+
 /* 终端风格皮肤：作用于 Tab 右键菜单（含子菜单），配色跟随当前终端主题色 */
 .context-menu.terminal-skin {
   background-color: color-mix(in srgb, var(--menu-bg) 92%, transparent);

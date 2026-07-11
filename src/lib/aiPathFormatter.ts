@@ -73,6 +73,17 @@ export function formatTerminalDragPath(
   return formatAiPath(project, relativePath, kind);
 }
 
+// 面向终端注入的引用锚点：@相对路径 + 行号范围，不带项目名前缀、不含选中的代码文本，
+// 便于终端把整段渲染成文件 chip（与拖入的 formatAiPathBlock 形态一致）。
+export function formatAiPathAnchorBlock(
+  relativePath: string,
+  selection?: AiTextSelection | null
+): string {
+  const path = formatAiPathBlock(relativePath, "file");
+  if (!selection) return path;
+  return `${path} ${lineText(selection)}`;
+}
+
 export function formatAiAnchor(
   project: Pick<Project, "name">,
   relativePath: string,

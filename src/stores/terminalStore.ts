@@ -14,6 +14,7 @@ import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKe
 import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject, parseProjectEnvVars } from "../lib/providerSwitching";
 import { useProjectStore } from "./projectStore";
 import { appendSyncedHistoryContextArg } from "../lib/syncedHistoryContext";
+import { setLastActiveTerminalId } from "../lib/terminalFileDrag";
 import { translateCurrent } from "../lib/i18n";
 import {
   addSessionToPaneTree,
@@ -1039,6 +1040,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   setActive: (id) => {
     const paneResult = setPaneActiveSession(get().paneTree, id);
     set({ activeSessionId: id, paneTree: paneResult.tree, activePaneId: paneResult.activePaneId ?? get().activePaneId });
+    // 记录最近激活的真实终端，供文件编辑器“发送到当前终端”兜底定位。
+    const session = get().sessions.find((item) => item.id === id);
+    if (session && hasBackendPty(session)) setLastActiveTerminalId(id);
     scheduleSaveActiveId(id);
   },
 
@@ -1289,7 +1293,15 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const sessions = [...get().sessions, editorSession];
     const tree = get().paneTree;
     const activePaneId = get().activePaneId;
-    const paneResult = addSessionToPaneTree(tree, activePaneId, editorSessionId, createPaneId);
+    // 打开文件编辑器时默认左右分屏：把编辑器放进新拆出的空 pane，
+    // 原终端保留在左侧，编辑器在右侧，便于边看代码边操作终端。
+    let paneResult: { tree: TerminalPaneNode; activePaneId: string };
+    if (tree && activePaneId) {
+      const split = splitPaneEmptyTree(tree, activePaneId, "horizontal", createPaneId);
+      paneResult = addSessionToPaneTree(split.tree, split.activePaneId, editorSessionId, createPaneId);
+    } else {
+      paneResult = addSessionToPaneTree(tree, activePaneId, editorSessionId, createPaneId);
+    }
 
     set({
       sessions,
