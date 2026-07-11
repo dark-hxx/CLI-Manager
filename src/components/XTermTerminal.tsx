@@ -1828,6 +1828,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     getCurrentWebview().onDragDropEvent(async (event) => {
       const payload = event.payload;
       if (payload.type !== "drop" || payload.paths.length === 0) return;
+      if (!isVisibleRef.current) return;
       const scaleFactor = await getCurrentWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
       if (fileDropCancelled) return;
       const position = payload.position.toLogical(scaleFactor);

@@ -12,6 +12,7 @@ import { WorktreeIcon } from "../WorktreeIcon";
 import { TreeNodeItem } from "./TreeNodeItem";
 import { useTreeActions, worktreeListCollapseId, type TreeActions } from "./TreeContext";
 import { useI18n } from "../../lib/i18n";
+import { DND_ACTIVATION_CONSTRAINT } from "../../lib/dragInteraction";
 
 interface ProjectTreeProps {
   tree: TNode[];
@@ -258,7 +259,7 @@ export function ProjectTree({
 }: ProjectTreeProps) {
   const { t } = useI18n();
   const actions = useTreeActions();
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
   const [focusedNodeKey, setFocusedNodeKey] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);

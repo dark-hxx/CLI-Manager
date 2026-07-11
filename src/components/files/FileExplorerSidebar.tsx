@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiPathBlock, formatAiRootTree, formatAiTree, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
 import { debugConsoleWarn } from "../../lib/debugConsole";
+import { POINTER_DRAG_START_PX } from "../../lib/dragInteraction";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import {
   beginTerminalFileDrag,
@@ -64,8 +65,6 @@ type Translate = ReturnType<typeof useI18n>["t"];
 
 const FILE_EXPLORER_ENTRY_MIME = "application/x-cli-manager-file-entry";
 const FILE_WATCH_REFRESH_DEBOUNCE_MS = 600;
-const POINTER_DRAG_START_PX = 6;
-
 interface AutoCollapseGroupState {
   expandedGroupPaths: Set<string>;
   ignoredPaths: Set<string>;
@@ -96,7 +95,6 @@ interface FileDragPreviewState {
   x: number;
   y: number;
   source: FileDragPreviewSource;
-  overTerminal: boolean;
 }
 
 const GIT_STATUS_LABELS: Record<GitFileChange["status"], TranslationKey> = {
@@ -792,6 +790,17 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const [dragPreview, setDragPreview] = useState<FileDragPreviewState | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pointerDragRef = useRef<FilePointerDragState | null>(null);
+  const dragPreviewElementRef = useRef<HTMLDivElement | null>(null);
+  const dragPreviewFrameRef = useRef<number | null>(null);
+  const pendingDragPreviewRef = useRef<{ source: FileDragPreviewSource; x: number; y: number } | null>(null);
+
+  useEffect(() => () => {
+    if (dragPreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragPreviewFrameRef.current);
+    }
+    if (pointerDragRef.current?.dragging) endTerminalFileDrag();
+    document.body.style.removeProperty("user-select");
+  }, []);
 
   useEffect(() => {
     setExpandedAutoCollapseGroups(new Set());
@@ -1056,16 +1065,32 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   const resetPointerDrag = useCallback(() => {
     pointerDragRef.current = null;
+    pendingDragPreviewRef.current = null;
+    if (dragPreviewFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragPreviewFrameRef.current);
+      dragPreviewFrameRef.current = null;
+    }
     setDragPreview(null);
     document.body.style.removeProperty("user-select");
   }, []);
 
   const updateDragPreview = useCallback((source: FileDragPreviewSource, x: number, y: number) => {
-    setDragPreview({
-      x: x - source.offsetX,
-      y: y - source.offsetY,
-      source,
-      overTerminal: Boolean(getTerminalFileDropZoneIdAtPoint(x, y)),
+    pendingDragPreviewRef.current = { source, x, y };
+    if (dragPreviewFrameRef.current !== null) return;
+
+    dragPreviewFrameRef.current = window.requestAnimationFrame(() => {
+      dragPreviewFrameRef.current = null;
+      const pending = pendingDragPreviewRef.current;
+      const element = dragPreviewElementRef.current;
+      if (!pending || !element) return;
+
+      const { source: pendingSource, x: nextX, y: nextY } = pending;
+      element.style.transform = `translate3d(${nextX - pendingSource.offsetX}px, ${nextY - pendingSource.offsetY}px, 0)`;
+      if (getTerminalFileDropZoneIdAtPoint(nextX, nextY)) {
+        element.dataset.overTerminal = "true";
+      } else {
+        delete element.dataset.overTerminal;
+      }
     });
   }, []);
 
@@ -1197,6 +1222,11 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         return;
       }
       beginTerminalFileDrag(formatAiPathBlock(state.entry.path, state.entry.kind));
+      setDragPreview({
+        x: event.clientX - state.preview.offsetX,
+        y: event.clientY - state.preview.offsetY,
+        source: state.preview,
+      });
       document.body.style.userSelect = "none";
     }
 
@@ -1539,9 +1569,12 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       {dragPreview && (
         <Portal>
           <div
+            ref={dragPreviewElementRef}
             className="ui-file-drag-preview"
-            data-over-terminal={dragPreview.overTerminal ? "true" : undefined}
-            style={{ left: dragPreview.x, top: dragPreview.y, width: dragPreview.source.width }}
+            style={{
+              width: dragPreview.source.width,
+              transform: `translate3d(${dragPreview.x}px, ${dragPreview.y}px, 0)`,
+            }}
             aria-hidden="true"
           >
             <div

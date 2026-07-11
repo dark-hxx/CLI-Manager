@@ -9,6 +9,7 @@ import { Folder, Terminal, Play, ChevronRight, AlertTriangle } from "../icons";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { WorktreeIcon } from "../WorktreeIcon";
 import { useI18n } from "../../lib/i18n";
+import { DND_SORTABLE_TRANSITION } from "../../lib/dragInteraction";
 
 function preventSecondaryPointerFocus(event: ReactPointerEvent<HTMLElement>) {
   if (event.button !== 2) return;
@@ -102,8 +103,16 @@ function TreeNodeItemImpl({
   const { t } = useI18n();
   const actions = useTreeActions();
   const itemId = node.type === "group" ? node.group.id : node.type === "project" ? node.project.id : `wt:${node.worktree.id}`;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: itemId, disabled: !sortableEnabled || node.type === "worktree" });
-  const sortableStyle = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: itemId,
+    disabled: !sortableEnabled || node.type === "worktree",
+    transition: DND_SORTABLE_TRANSITION,
+  });
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition: isDragging ? undefined : transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
   const compact = density === "compact";
   const indentBase = compact ? 6 : 8;
   const indentStep = compact ? 14 : 16;

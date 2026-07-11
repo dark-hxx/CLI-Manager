@@ -28,6 +28,7 @@ import {
   type TerminalToolbarVisibilitySettings,
 } from "../../../stores/settingsStore";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
+import { DND_ACTIVATION_CONSTRAINT, DND_SORTABLE_TRANSITION } from "../../../lib/dragInteraction";
 
 const SIDEBAR_DENSITY_OPTIONS: { value: SidebarDensity; labelKey: TranslationKey; descriptionKey: TranslationKey }[] = [
   {
@@ -139,10 +140,13 @@ function SortableStatsCardRow({
   title: ReactNode;
   actions: ReactNode;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    transition: DND_SORTABLE_TRANSITION,
+  });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
+    transition: isDragging ? undefined : transition,
     opacity: isDragging ? 0.55 : 1,
     position: "relative",
     zIndex: isDragging ? 1 : undefined,
@@ -198,7 +202,7 @@ export function SidebarSettingsPage() {
   const orderedResourceCardOptions = systemResourceCardOrder
     .map((key) => RESOURCE_CARD_OPTION_MAP.get(key))
     .filter((option): option is (typeof RESOURCE_CARD_OPTIONS)[number] => Boolean(option));
-  const statsCardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const statsCardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
 
   const updateStatsCardVisibility = (key: TerminalStatsCardKey, checked: boolean) => {
     void update("terminalStatsCardVisibility", { ...terminalStatsCardVisibility, [key]: checked });

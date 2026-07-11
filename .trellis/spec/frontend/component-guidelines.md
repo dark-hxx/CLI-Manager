@@ -446,6 +446,51 @@ const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
 
 **Tests**: For terminal drag UI changes, run `npx tsc --noEmit` and manually verify top-bar Workspan sorting, neutral pane center behavior, outer-region Workspan directional splitting, same-pane reorder, pane-center move, and left/right/top/bottom edge split previews in the Tauri desktop app.
 
+### Convention: Drag responsiveness uses shared thresholds and frame-bounded previews
+
+**What**: Sortable surfaces use `DND_ACTIVATION_CONSTRAINT` and `DND_SORTABLE_TRANSITION` from `src/lib/dragInteraction.ts`. Custom pointer drags use the same start distance, while cursor-following previews update DOM transforms at most once per animation frame.
+
+**Why**: Divergent 5-8px activation distances and dnd-kit's default 200ms transform transition make similar drag surfaces feel inconsistent. Calling a large parent component's `setState` on every `pointermove` also rerenders expensive trees and terminal children faster than the browser can paint.
+
+**Correct**:
+
+```tsx
+const sensors = useSensors(
+  useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT })
+);
+
+useSortable({ id, transition: DND_SORTABLE_TRANSITION });
+
+pendingPointRef.current = { x, y };
+frameRef.current ??= requestAnimationFrame(() => {
+  frameRef.current = null;
+  const pending = pendingPointRef.current;
+  if (pending && previewRef.current) {
+    previewRef.current.style.transform = `translate3d(${pending.x}px, ${pending.y}px, 0)`;
+  }
+});
+```
+
+**Wrong**:
+
+```tsx
+useSensor(PointerSensor, { activationConstraint: { distance: 8 } });
+
+const onPointerMove = (event: PointerEvent) => {
+  setPreview({ x: event.clientX, y: event.clientY });
+};
+```
+
+**Contracts**:
+
+- Keep a non-zero activation distance so clicks, double-click rename, buttons, and context menus remain usable.
+- Disable transform transitions for the actively dragged source; only displaced siblings use the short sortable transition.
+- Do not write an equivalent drop-preview object when pane id and edge are unchanged.
+- Hidden Workspans and hidden/fullscreen-excluded panes must disable their droppable regions.
+- React state may create and remove a custom drag preview, but pointer movement uses `requestAnimationFrame` plus direct DOM transform updates.
+
+**Tests**: Run `npx tsc --noEmit`; manually verify project/group sorting, terminal Tab/Workspan/toolbar sorting, settings-card sorting, file-tree preview tracking, pane-edge previews, and click/double-click behavior.
+
 ### Convention: Terminal split layout uses flat absolute positioning to preserve component identity
 
 **What**: `SplitTerminalView` renders pane leaves and dividers using flat absolute positioning with computed geometry rather than nested flexbox recursion. All pane leaves are direct children keyed by `pane.id` under a single parent container.

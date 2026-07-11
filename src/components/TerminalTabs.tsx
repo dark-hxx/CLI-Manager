@@ -25,6 +25,7 @@ import { useProjectStore } from "../stores/projectStore";
 import { isProjectFileDirty, useFileExplorerStore } from "../stores/fileExplorerStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { logError } from "../lib/logger";
+import { DND_ACTIVATION_CONSTRAINT, DND_SORTABLE_TRANSITION } from "../lib/dragInteraction";
 import type { TerminalPaneDropEdge, TerminalPaneLeaf, TerminalPaneSplitDirection } from "../stores/terminalPaneTree";
 import {
   collectPaneLeaves,
@@ -421,7 +422,11 @@ function SortableTab({
   menuStyle,
 }: SortableTabProps) {
   const { t } = useI18n();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, data: { paneId } });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    data: { paneId },
+    transition: DND_SORTABLE_TRANSITION,
+  });
   const tabElementRef = useRef<HTMLDivElement | null>(null);
   const contextMenuPointRef = useRef<SplitPickerAnchor | null>(null);
   const [editValue, setEditValue] = useState(title);
@@ -759,6 +764,7 @@ function SortableWorkspanTab({
     id: sortableId,
     disabled: dragDisabled,
     data: { type: "workspan", workspanId: workspan.id },
+    transition: DND_SORTABLE_TRANSITION,
   });
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
@@ -1590,7 +1596,11 @@ function PaneLeafView({
             )}
           </div>
         ))}
-        <PaneContentDropZones paneId={pane.id} activeDropPreview={activeDropPreview} />
+        <PaneContentDropZones
+          paneId={pane.id}
+          enabled={isLayoutVisible}
+          activeDropPreview={activeDropPreview}
+        />
       </div>
     </div>
   );
@@ -1735,12 +1745,20 @@ function arePaneLeafViewPropsEqual(prevProps: PaneLeafViewProps, nextProps: Pane
 
 const MemoPaneLeafView = memo(PaneLeafView, arePaneLeafViewPropsEqual);
 
-function PaneContentDropZones({ paneId, activeDropPreview }: { paneId: string; activeDropPreview?: PaneDropPreview }) {
-  const centerDrop = useDroppable({ id: `${PANE_CENTER_DROP_PREFIX}${paneId}` });
-  const leftDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:left` });
-  const rightDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:right` });
-  const topDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:top` });
-  const bottomDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:bottom` });
+function PaneContentDropZones({
+  paneId,
+  enabled,
+  activeDropPreview,
+}: {
+  paneId: string;
+  enabled: boolean;
+  activeDropPreview?: PaneDropPreview;
+}) {
+  const centerDrop = useDroppable({ id: `${PANE_CENTER_DROP_PREFIX}${paneId}`, disabled: !enabled });
+  const leftDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:left`, disabled: !enabled });
+  const rightDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:right`, disabled: !enabled });
+  const topDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:top`, disabled: !enabled });
+  const bottomDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:bottom`, disabled: !enabled });
   const activeEdge = activeDropPreview?.paneId === paneId ? activeDropPreview.edge : null;
 
   return (
@@ -1941,10 +1959,13 @@ function SortableToolbarButton({
   isDragging: boolean;
   children: ReactNode;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id,
+    transition: DND_SORTABLE_TRANSITION,
+  });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
+    transition: isDragging ? undefined : transition,
     opacity: isDragging ? 0.4 : 1,
     cursor: "grab",
   };
@@ -2106,8 +2127,8 @@ export function TerminalTabs({
   const splitPickerOpenTimerRef = useRef<number | null>(null);
   const splitPickerOutsideGuardUntilRef = useRef(0);
   const closeConfirmOutsideGuardUntilRef = useRef(0);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
+  const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: DND_ACTIVATION_CONSTRAINT }));
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const worktreeById = useMemo(() => new Map(worktrees.map((worktree) => [worktree.id, worktree])), [worktrees]);
@@ -2905,11 +2926,18 @@ export function TerminalTabs({
     return sourcePane.id !== targetPane.id || sourcePane.sessionIds.length > 1;
   }, [allPanes, findPaneForSession]);
 
+  const updateActiveDropPreview = useCallback((next: PaneDropPreview) => {
+    setActiveDropPreview((current) => {
+      if (!current || !next) return current === next ? current : next;
+      return current.paneId === next.paneId && current.edge === next.edge ? current : next;
+    });
+  }, []);
+
   const clearDragState = useCallback(() => {
     setActiveDragSessionId(null);
     setActiveDragWorkspanId(null);
-    setActiveDropPreview(null);
-  }, []);
+    updateActiveDropPreview(null);
+  }, [updateActiveDropPreview]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const dragId = String(event.active.id);
@@ -2928,7 +2956,7 @@ export function TerminalTabs({
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     if (!event.over) {
-      setActiveDropPreview(null);
+      updateActiveDropPreview(null);
       return;
     }
 
@@ -2939,24 +2967,24 @@ export function TerminalTabs({
         && activeWorkspanLayout?.panes.some((pane) => pane.id === dropTarget.paneId);
       const edge = dropTarget ? resolveWorkspanDropEdge(event, dropTarget) : null;
       if (targetPaneExists && edge && targetWorkspanId && targetWorkspanId !== activeDragWorkspanId) {
-        setActiveDropPreview({ paneId: dropTarget.paneId, edge });
+        updateActiveDropPreview({ paneId: dropTarget.paneId, edge });
         return;
       }
-      setActiveDropPreview(null);
+      updateActiveDropPreview(null);
       return;
     }
 
     if (!activeDragSessionId) {
-      setActiveDropPreview(null);
+      updateActiveDropPreview(null);
       return;
     }
     if (dropTarget?.type === "edge" && canSplitSessionToPaneEdge(activeDragSessionId, dropTarget.paneId)) {
-      setActiveDropPreview({ paneId: dropTarget.paneId, edge: dropTarget.edge });
+      updateActiveDropPreview({ paneId: dropTarget.paneId, edge: dropTarget.edge });
       return;
     }
 
-    setActiveDropPreview(null);
-  }, [activeDragSessionId, activeDragWorkspanId, activeWorkspanLayout, canSplitSessionToPaneEdge]);
+    updateActiveDropPreview(null);
+  }, [activeDragSessionId, activeDragWorkspanId, activeWorkspanLayout, canSplitSessionToPaneEdge, updateActiveDropPreview]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
