@@ -1889,6 +1889,7 @@
 
 /* 可见文件 chip：完整展示文件名；注入时预留额外终端字符槽，避免覆盖相邻引用。 */
 .ui-terminal-ai-path-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1898,7 +1899,7 @@
   min-width: 0;
   height: 100%;
   padding: 0 8px 0 6px;
-  border: 1px solid color-mix(in srgb, var(--term-panel-fg, #d6dae0) 22%, transparent);
+  border: 1px solid transparent;
   border-radius: 6px;
   color: var(--term-panel-fg, #d6dae0);
   background-color: var(--ai-chip-slot-bg, var(--term-panel-bg, #1a1c20));
@@ -1907,7 +1908,16 @@
     color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent)
   );
   white-space: nowrap;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.ui-terminal-ai-path-chip::before {
+  content: "";
+  position: absolute;
+  inset: -1px 0;
+  border: 1px solid color-mix(in srgb, var(--term-panel-fg, #d6dae0) 22%, transparent);
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 .ui-terminal-ai-path-chip-icon {

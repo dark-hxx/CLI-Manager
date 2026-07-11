@@ -246,6 +246,8 @@ interface TerminalRichInputState {
   input: string;
   cursorIndex: number;
   segments: TerminalRichInputSegment[];
+  inputStartCellIndex: number;
+  cols: number;
   left: number;
   top: number;
   width: number;
@@ -254,6 +256,25 @@ interface TerminalRichInputState {
   leadingWidth: number;
   masks: TerminalRichInputMask[];
 }
+
+interface TerminalRichCursorTransition {
+  input: string;
+  inputStartCellIndex: number;
+  targetCursorIndex: number;
+  cols: number;
+  startedAt: number;
+}
+
+interface TerminalRichDeleteTransition {
+  targetInput: string;
+  inputStartCellIndex: number;
+  targetCursorIndex: number;
+  sourceInputWidth: number;
+  cols: number;
+  startedAt: number;
+}
+
+const TERMINAL_RICH_TRANSITION_TIMEOUT_MS = 2_000;
 
 interface TextDiagnosticSummary {
   length: number;
@@ -649,6 +670,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const inputBuffer = useRef("");
   const inputCursorIndexRef = useRef(0);
   const richInputStateRef = useRef<TerminalRichInputState | null>(null);
+  const pendingRichCursorTransitionRef = useRef<TerminalRichCursorTransition | null>(null);
+  const pendingRichDeleteTransitionRef = useRef<TerminalRichDeleteTransition | null>(null);
   const fitRafRef = useRef<number | null>(null);
   const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
@@ -782,6 +805,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     inputBuffer.current = "";
     inputCursorIndexRef.current = 0;
     richInputStateRef.current = null;
+    pendingRichCursorTransitionRef.current = null;
+    pendingRichDeleteTransitionRef.current = null;
     setAiPathChips([]);
     setRichInput(null);
   }, [sessionId]);
@@ -2168,6 +2193,21 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return Array.from(tokenText).length;
     };
 
+    const startRichCursorTransition = (targetCursorIndex: number) => {
+      const current = richInputStateRef.current;
+      const currentInput = inputBuffer.current;
+      pendingRichDeleteTransitionRef.current = null;
+      pendingRichCursorTransitionRef.current = current && current.input === currentInput && current.cols === terminal.cols
+        ? {
+            input: currentInput,
+            inputStartCellIndex: current.inputStartCellIndex,
+            targetCursorIndex,
+            cols: current.cols,
+            startedAt: Date.now(),
+          }
+        : null;
+    };
+
     const tryHandleRichAtomicKey = (e: KeyboardEvent): boolean => {
       if (
         e.type !== "keydown" ||
@@ -2195,6 +2235,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         const count = currentCursor - segment.rawStart;
         if (count <= 0) return false;
         e.preventDefault();
+        startRichCursorTransition(segment.rawStart);
         inputCursorIndexRef.current = segment.rawStart;
         selectedInputSnapshot = null;
         markAttentionInputHandled();
@@ -2212,6 +2253,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         const count = segment.rawEnd - currentCursor;
         if (count <= 0) return false;
         e.preventDefault();
+        startRichCursorTransition(segment.rawEnd);
         inputCursorIndexRef.current = segment.rawEnd;
         selectedInputSnapshot = null;
         markAttentionInputHandled();
@@ -2229,9 +2271,22 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (!segment) return false;
 
       e.preventDefault();
+      pendingRichCursorTransitionRef.current = null;
       const chars = Array.from(currentInput);
       chars.splice(segment.rawStart, segment.rawEnd - segment.rawStart);
-      inputBuffer.current = chars.join("");
+      const nextInput = chars.join("");
+      const currentRichInput = richInputStateRef.current;
+      pendingRichDeleteTransitionRef.current = currentRichInput && currentRichInput.input === currentInput && currentRichInput.cols === terminal.cols
+        ? {
+            targetInput: nextInput,
+            inputStartCellIndex: currentRichInput.inputStartCellIndex,
+            targetCursorIndex: segment.rawStart,
+            sourceInputWidth: getTerminalCellWidth(currentInput),
+            cols: currentRichInput.cols,
+            startedAt: Date.now(),
+          }
+        : null;
+      inputBuffer.current = nextInput;
       inputCursorIndexRef.current = segment.rawStart;
       selectedInputSnapshot = null;
       markAttentionInputHandled();
@@ -2539,11 +2594,21 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
 
     const buildRichInputState = (): TerminalRichInputState | null => {
-      if (!isVisibleRef.current || isComposingRef.current) return null;
+      if (!isVisibleRef.current || isComposingRef.current) {
+        pendingRichCursorTransitionRef.current = null;
+        pendingRichDeleteTransitionRef.current = null;
+        return null;
+      }
       const input = inputBuffer.current;
-      if (!input || /[\r\n]/u.test(input)) return null;
+      const pendingDeleteCandidate = pendingRichDeleteTransitionRef.current;
+      const canContinueDeleteTransition = pendingDeleteCandidate?.targetInput === input;
+      if ((!input && !canContinueDeleteTransition) || /[\r\n]/u.test(input)) {
+        pendingRichCursorTransitionRef.current = null;
+        pendingRichDeleteTransitionRef.current = null;
+        return null;
+      }
       const segments = parseTerminalRichInput(input);
-      if (!segments.some((segment) => segment.kind === "file")) return null;
+      const hasFileSegment = segments.some((segment) => segment.kind === "file");
 
       const wrapper = wrapperRef.current;
       const terminalContainer = containerRef.current;
@@ -2558,9 +2623,59 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       const cursorIndex = snapTerminalRichCursor(segments, rawCursorIndex);
       const cursorPrefixWidth = getTerminalCellWidth(sliceTextByCursor(input, 0, rawCursorIndex));
       const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * cols) + buffer.cursorX;
-      const inputStartCellIndex = cursorCellIndex - cursorPrefixWidth;
+      const rawInputWidth = getTerminalCellWidth(input);
+      const calculatedInputStartCellIndex = cursorCellIndex - cursorPrefixWidth;
+      let inputStartCellIndex = calculatedInputStartCellIndex;
+      let activeDeleteTransition: TerminalRichDeleteTransition | null = null;
+      if (pendingDeleteCandidate) {
+        // 视觉层立即采用删除后的输入，但继续遮住删除前的完整字符范围，
+        // 避免 PTY 逐字符删除期间暴露中间状态并触发整行重排。
+        const deleteTransitionIsValid = (
+          pendingDeleteCandidate.targetInput === input &&
+          pendingDeleteCandidate.cols === cols &&
+          pendingDeleteCandidate.targetCursorIndex === rawCursorIndex &&
+          Date.now() - pendingDeleteCandidate.startedAt <= TERMINAL_RICH_TRANSITION_TIMEOUT_MS &&
+          cursorCellIndex >= pendingDeleteCandidate.inputStartCellIndex &&
+          cursorCellIndex <= pendingDeleteCandidate.inputStartCellIndex + pendingDeleteCandidate.sourceInputWidth
+        );
+        if (deleteTransitionIsValid) {
+          activeDeleteTransition = pendingDeleteCandidate;
+          inputStartCellIndex = pendingDeleteCandidate.inputStartCellIndex;
+        } else {
+          pendingRichDeleteTransitionRef.current = null;
+        }
+      }
+      const pendingTransition = pendingRichCursorTransitionRef.current;
+      if (!activeDeleteTransition && pendingTransition) {
+        // 原子跳转会一次写入多个方向键序列，xterm 原生光标会跨多个 render 才到达目标。
+        // 期间固定活动输入起点，避免用“已到终点的逻辑光标”反推仍在移动的原生光标。
+        const targetCursorCellIndex = pendingTransition.inputStartCellIndex + getTerminalCellWidth(
+          sliceTextByCursor(input, 0, pendingTransition.targetCursorIndex),
+        );
+        const transitionIsValid = (
+          pendingTransition.input === input &&
+          pendingTransition.cols === cols &&
+          pendingTransition.targetCursorIndex === rawCursorIndex &&
+          Date.now() - pendingTransition.startedAt <= TERMINAL_RICH_TRANSITION_TIMEOUT_MS &&
+          cursorCellIndex >= pendingTransition.inputStartCellIndex &&
+          cursorCellIndex <= pendingTransition.inputStartCellIndex + rawInputWidth
+        );
+        if (transitionIsValid) {
+          inputStartCellIndex = pendingTransition.inputStartCellIndex;
+          if (cursorCellIndex === targetCursorCellIndex) {
+            pendingRichCursorTransitionRef.current = null;
+          }
+        } else {
+          pendingRichCursorTransitionRef.current = null;
+        }
+      }
+      if (!hasFileSegment && !activeDeleteTransition) {
+        pendingRichCursorTransitionRef.current = null;
+        return null;
+      }
       if (inputStartCellIndex < 0) return null;
 
+      let bufferMatchesInput = true;
       let inputCellIndex = inputStartCellIndex;
       for (const char of input) {
         const charWidth = getTerminalCellWidth(char);
@@ -2568,14 +2683,48 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         const absoluteRow = Math.floor(inputCellIndex / cols);
         const column = inputCellIndex % cols;
         const renderedCell = buffer.getLine(absoluteRow)?.getCell(column);
-        if (!renderedCell) return null;
+        if (!renderedCell) {
+          bufferMatchesInput = false;
+          break;
+        }
         const renderedChars = renderedCell.getChars();
         if (char === " ") {
-          if (renderedChars.trim()) return null;
+          if (renderedChars.trim()) {
+            bufferMatchesInput = false;
+            break;
+          }
         } else if (renderedChars !== char) {
-          return null;
+          bufferMatchesInput = false;
+          break;
         }
         inputCellIndex += charWidth;
+      }
+
+      if (bufferMatchesInput && activeDeleteTransition) {
+        const sourceEndCellIndex = inputStartCellIndex + activeDeleteTransition.sourceInputWidth;
+        let trailingCellIndex = inputStartCellIndex + rawInputWidth;
+        while (trailingCellIndex < sourceEndCellIndex) {
+          const absoluteRow = Math.floor(trailingCellIndex / cols);
+          const column = trailingCellIndex % cols;
+          const renderedCell = buffer.getLine(absoluteRow)?.getCell(column);
+          if (!renderedCell || renderedCell.getChars().trim()) {
+            bufferMatchesInput = false;
+            break;
+          }
+          trailingCellIndex += 1;
+        }
+      }
+
+      if (!bufferMatchesInput && !activeDeleteTransition) return null;
+      if (bufferMatchesInput && activeDeleteTransition) {
+        const targetCursorCellIndex = inputStartCellIndex + getTerminalCellWidth(
+          sliceTextByCursor(input, 0, activeDeleteTransition.targetCursorIndex),
+        );
+        if (cursorCellIndex === targetCursorCellIndex) {
+          pendingRichDeleteTransitionRef.current = null;
+          if (!hasFileSegment) return null;
+          activeDeleteTransition = null;
+        }
       }
 
       const inputStartRow = Math.floor(inputStartCellIndex / cols);
@@ -2590,8 +2739,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       const offsetLeft = screenRect.left - wrapperRect.left;
       const offsetTop = screenRect.top - wrapperRect.top;
       const inputStartColumn = inputStartCellIndex % cols;
-      const rawInputWidth = getTerminalCellWidth(input);
-      const maskEndCellIndex = Math.max(inputStartCellIndex + rawInputWidth, cursorCellIndex + 1);
+      const maskedInputWidth = activeDeleteTransition
+        ? Math.max(rawInputWidth, activeDeleteTransition.sourceInputWidth)
+        : rawInputWidth;
+      const maskEndCellIndex = Math.max(inputStartCellIndex + maskedInputWidth, cursorCellIndex + 1);
       const masks: TerminalRichInputMask[] = [];
 
       let maskCellIndex = inputStartCellIndex;
@@ -2613,6 +2764,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         input,
         cursorIndex,
         segments,
+        inputStartCellIndex,
+        cols,
         left: offsetLeft,
         top: offsetTop + (inputStartRow - visibleStartRow) * cell.height,
         width: cols * cell.width,
@@ -3882,6 +4035,17 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const delta = nextIndex - currentIndex;
     terminal.focus();
     if (delta === 0) return;
+    const currentRichInput = richInputStateRef.current;
+    pendingRichDeleteTransitionRef.current = null;
+    pendingRichCursorTransitionRef.current = currentRichInput && currentRichInput.input === currentInput && currentRichInput.cols === terminal.cols
+      ? {
+          input: currentInput,
+          inputStartCellIndex: currentRichInput.inputStartCellIndex,
+          targetCursorIndex: nextIndex,
+          cols: currentRichInput.cols,
+          startedAt: Date.now(),
+        }
+      : null;
     inputCursorIndexRef.current = nextIndex;
     suggestionRef.current = null;
     setSuggestionGhost(null);
