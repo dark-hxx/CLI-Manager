@@ -1922,6 +1922,102 @@
   font-size: 0.86em;
 }
 
+/* 被动输出引用仍受原始字符槽约束；活动输入由 rich layer 完整渲染。 */
+.ui-terminal-ai-path-chip-slot > .ui-terminal-ai-path-chip {
+  max-width: 100%;
+}
+
+.ui-terminal-ai-path-chip-slot > .ui-terminal-ai-path-chip .ui-terminal-ai-path-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-terminal-rich-input-mask-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ui-terminal-rich-input-mask {
+  position: absolute;
+  background-color: var(--rich-input-bg, var(--term-panel-bg, #1a1c20));
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent),
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent)
+  );
+}
+
+.ui-terminal-rich-input-layer {
+  position: absolute;
+  z-index: 13;
+  isolation: isolate;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  pointer-events: none;
+  overflow: visible;
+  line-height: 1;
+  user-select: none;
+}
+
+.ui-terminal-rich-input-leading,
+.ui-terminal-rich-input-char {
+  flex: none;
+  box-sizing: border-box;
+}
+
+.ui-terminal-rich-input-char {
+  overflow: hidden;
+  white-space: pre;
+  pointer-events: auto;
+  cursor: text;
+  background-color: var(--rich-input-bg, var(--term-panel-bg, #1a1c20));
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent),
+    color-mix(in srgb, var(--term-panel-bg, #2a2d34) 82%, transparent)
+  );
+}
+
+.ui-terminal-rich-file-chip {
+  flex: none;
+  pointer-events: auto;
+  cursor: text;
+}
+
+.ui-terminal-rich-input-caret {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 0;
+  width: 0;
+  pointer-events: none;
+}
+
+.ui-terminal-rich-input-caret::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  left: -1px;
+  width: 2px;
+  background: var(--rich-input-caret-color, currentColor);
+  animation: ui-terminal-rich-input-caret-blink 1s step-end infinite;
+}
+
+@keyframes ui-terminal-rich-input-caret-blink {
+  0%, 48% { opacity: 1; }
+  49%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-terminal-rich-input-caret::after {
+    animation: none;
+  }
+}
+
 /* 终端风格皮肤：作用于 Tab 右键菜单（含子菜单），配色跟随当前终端主题色 */
 .context-menu.terminal-skin {
   background-color: color-mix(in srgb, var(--menu-bg) 92%, transparent);

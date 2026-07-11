@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Terminal, type IBufferCell, type IBufferLine, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
@@ -28,6 +28,13 @@ import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
 import { debugConsoleWarn } from "../lib/debugConsole";
 import { useI18n } from "../lib/i18n";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
+import {
+  findTerminalRichAtomicAfterCursor,
+  findTerminalRichAtomicBeforeCursor,
+  parseTerminalRichInput,
+  snapTerminalRichCursor,
+  type TerminalRichInputSegment,
+} from "../lib/terminalRichInput";
 import {
   TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT,
   TERMINAL_INPUT_SUGGESTION_AI_MODEL,
@@ -228,53 +235,25 @@ interface AiPathChip {
   maskOnly?: boolean;
 }
 
-// 匹配 @path，并吞掉可选的空格行号后缀（L2 / L2-L5 / L2-5），
-// 使 chip 能完整覆盖 formatAiAnchor 产出的 "@path L2-L5"，把裸路径藏在 chip 之下。
-const AI_PATH_TOKEN_REGEX = /@([^\s@]+)(?:\s+(L\d+(?:-L?\d+)?))?/g;
-const AI_PATH_INPUT_REGEX = /^@([^\s@]+)(?:\s+(L\d+(?:-L?\d+)?))?$/;
-// 图标 15px + gap 5px + 左右 padding 14px + 边框 2px。
-const AI_PATH_CHIP_CHROME_WIDTH = 36;
-const AI_PATH_CHIP_LABEL_SCALE = 0.86;
+interface TerminalRichInputMask {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
 
-// 从路径段提取文件名：去掉内联行号后缀（#L12-45 / :12）、目录尾斜杠，取末段。
-const extractAiPathFileName = (pathPart: string): string => {
-  let body = pathPart.replace(/[#:]L?\d+(?:-L?\d+)?$/i, "");
-  body = body.replace(/\/+$/, "");
-  const segments = body.split(/[/\\]/).filter(Boolean);
-  return segments.length > 0 ? segments[segments.length - 1] : body;
-};
-
-// 归一化行号标签：空格形式（match group）优先，否则从内联 #L.. 提取，统一成 L2 / L2-L5。
-const resolveAiPathLineLabel = (pathPart: string, spacedRange: string | undefined): string | null => {
-  let raw = spacedRange;
-  if (!raw) {
-    const inline = pathPart.match(/[#:](L?\d+(?:-L?\d+)?)$/i);
-    if (inline) raw = inline[1];
-  }
-  if (!raw) return null;
-  const m = raw.match(/L?(\d+)(?:-L?(\d+))?/i);
-  if (!m) return null;
-  return m[2] ? `L${m[1]}-L${m[2]}` : `L${m[1]}`;
-};
-
-const reserveAiPathChipInputSpacing = (text: string, cellWidth: number): string => {
-  const trimmed = text.replace(/[ \t]+$/u, "");
-  const match = AI_PATH_INPUT_REGEX.exec(trimmed);
-  if (!match) return text;
-
-  const fileName = extractAiPathFileName(match[1]);
-  if (!fileName) return text;
-  const lineLabel = resolveAiPathLineLabel(match[1], match[2]);
-  const label = lineLabel ? `${fileName} ${lineLabel}` : fileName;
-  const rawCells = Array.from(trimmed).length;
-  const labelCells = Array.from(label).length;
-  const chromeCells = AI_PATH_CHIP_CHROME_WIDTH / Math.max(cellWidth, 1);
-  const reservedCells = Math.max(
-    0,
-    Math.ceil(chromeCells + labelCells * AI_PATH_CHIP_LABEL_SCALE - rawCells),
-  );
-  return `${trimmed}${" ".repeat(reservedCells + 1)}`;
-};
+interface TerminalRichInputState {
+  input: string;
+  cursorIndex: number;
+  segments: TerminalRichInputSegment[];
+  left: number;
+  top: number;
+  width: number;
+  cellWidth: number;
+  cellHeight: number;
+  leadingWidth: number;
+  masks: TerminalRichInputMask[];
+}
 
 interface TextDiagnosticSummary {
   length: number;
@@ -669,6 +648,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const webglDisposeTimerRef = useRef<number | null>(null);
   const inputBuffer = useRef("");
   const inputCursorIndexRef = useRef(0);
+  const richInputStateRef = useRef<TerminalRichInputState | null>(null);
   const fitRafRef = useRef<number | null>(null);
   const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
@@ -725,6 +705,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const [inactiveReplayPending, setInactiveReplayPending] = useState(false);
   const [suggestionGhost, setSuggestionGhost] = useState<TerminalSuggestionGhostState | null>(null);
   const [aiPathChips, setAiPathChips] = useState<AiPathChip[]>([]);
+  const [richInput, setRichInput] = useState<TerminalRichInputState | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const osPlatformRef = useRef<OsPlatform>("unknown");
   const codexImeDebugRef = useRef<CodexImeDebugState>({
@@ -796,9 +777,13 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     setSuggestionGhost(null);
   }, [terminalInputSuggestionProvider]);
 
-  // 切换会话时清空上一会话残留的 @path chip。
+  // 切换会话时清空上一会话残留的输入镜像与 @path chip。
   useEffect(() => {
+    inputBuffer.current = "";
+    inputCursorIndexRef.current = 0;
+    richInputStateRef.current = null;
     setAiPathChips([]);
+    setRichInput(null);
   }, [sessionId]);
 
   const isTransparent = background.enabled && background.imagePath !== null && !hiddenForThisSession;
@@ -1751,10 +1736,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const hasTerminalFileDragData = (dataTransfer: DataTransfer | null) => (
       Boolean(getTerminalFileDragText()) || hasDataTransferType(dataTransfer, TERMINAL_FILE_PATH_MIME)
     );
-    const reserveAiPathChipSpacingForTerminal = (text: string) => {
-      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
-      const cell = getTerminalRenderedCellSize(terminal, pasteTarget, fallbackFontSize);
-      return reserveAiPathChipInputSpacing(text, cell.width);
+    const pasteTerminalFileText = (text: string) => {
+      const normalizedText = `${text.replace(/[ \t]+$/u, "")} `;
+      const previousInput = inputBuffer.current;
+      const previousCursorIndex = clampTextCursorIndex(previousInput, inputCursorIndexRef.current);
+      const expectedInput = insertTextAtCursor(previousInput, previousCursorIndex, normalizedText);
+      pasteIntoTerminal(normalizedText);
+      if (inputBuffer.current !== expectedInput) {
+        inputBuffer.current = expectedInput;
+        inputCursorIndexRef.current = previousCursorIndex + getTextCursorLength(normalizedText);
+      }
     };
     const unregisterTerminalDropZone = registerTerminalDropZone({
       id: sessionId,
@@ -1762,7 +1753,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         if (!isVisibleRef.current) return null;
         return pasteTarget.getBoundingClientRect();
       },
-      paste: (text) => pasteIntoTerminal(reserveAiPathChipSpacingForTerminal(text)),
+      paste: pasteTerminalFileText,
       focus: () => terminal.focus(),
     });
     const getShellForPathQuoting = async () => {
@@ -1841,7 +1832,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       e.preventDefault();
       e.stopPropagation();
       if (!text) return;
-      pasteIntoTerminal(reserveAiPathChipSpacingForTerminal(text));
+      pasteTerminalFileText(text);
       endTerminalFileDrag();
       terminal.focus();
     };
@@ -2177,6 +2168,87 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return Array.from(tokenText).length;
     };
 
+    const tryHandleRichAtomicKey = (e: KeyboardEvent): boolean => {
+      if (
+        e.type !== "keydown" ||
+        e.ctrlKey ||
+        e.altKey ||
+        e.metaKey ||
+        e.shiftKey ||
+        !richInputStateRef.current
+      ) {
+        return false;
+      }
+      if (!["ArrowLeft", "ArrowRight", "Backspace", "Delete"].includes(e.key)) return false;
+
+      const currentInput = inputBuffer.current;
+      const segments = parseTerminalRichInput(currentInput);
+      if (!segments.some((segment) => segment.kind === "file")) return false;
+      const currentCursor = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
+      const containingAtomicSegment = segments.find((segment) => (
+        segment.kind !== "text" && currentCursor > segment.rawStart && currentCursor < segment.rawEnd
+      ));
+
+      if (e.key === "ArrowLeft") {
+        const segment = containingAtomicSegment ?? findTerminalRichAtomicBeforeCursor(segments, currentCursor);
+        if (!segment) return false;
+        const count = currentCursor - segment.rawStart;
+        if (count <= 0) return false;
+        e.preventDefault();
+        inputCursorIndexRef.current = segment.rawStart;
+        selectedInputSnapshot = null;
+        markAttentionInputHandled();
+        clearSuggestionGhost();
+        cancelAiSuggestionRefresh();
+        invoke("pty_write", { sessionId, data: repeatControlSequence("\x1b[D", count) })
+          .catch((err) => reportPtyWriteError("rich_file_left", err));
+        scheduleAiPathChips();
+        return true;
+      }
+
+      if (e.key === "ArrowRight") {
+        const segment = containingAtomicSegment ?? findTerminalRichAtomicAfterCursor(segments, currentCursor);
+        if (!segment) return false;
+        const count = segment.rawEnd - currentCursor;
+        if (count <= 0) return false;
+        e.preventDefault();
+        inputCursorIndexRef.current = segment.rawEnd;
+        selectedInputSnapshot = null;
+        markAttentionInputHandled();
+        clearSuggestionGhost();
+        cancelAiSuggestionRefresh();
+        invoke("pty_write", { sessionId, data: repeatControlSequence("\x1b[C", count) })
+          .catch((err) => reportPtyWriteError("rich_file_right", err));
+        scheduleAiPathChips();
+        return true;
+      }
+
+      const segment = e.key === "Backspace"
+        ? (containingAtomicSegment ?? findTerminalRichAtomicBeforeCursor(segments, currentCursor))
+        : (containingAtomicSegment ?? findTerminalRichAtomicAfterCursor(segments, currentCursor));
+      if (!segment) return false;
+
+      e.preventDefault();
+      const chars = Array.from(currentInput);
+      chars.splice(segment.rawStart, segment.rawEnd - segment.rawStart);
+      inputBuffer.current = chars.join("");
+      inputCursorIndexRef.current = segment.rawStart;
+      selectedInputSnapshot = null;
+      markAttentionInputHandled();
+      clearSuggestionGhost();
+      cancelAiSuggestionRefresh();
+      const moveToBoundary = e.key === "Backspace"
+        ? repeatControlSequence("\x1b[C", segment.rawEnd - currentCursor)
+        : repeatControlSequence("\x1b[D", currentCursor - segment.rawStart);
+      const removeToken = e.key === "Backspace"
+        ? "\x7f".repeat(segment.rawEnd - segment.rawStart)
+        : repeatControlSequence("\x1b[3~", segment.rawEnd - segment.rawStart);
+      invoke("pty_write", { sessionId, data: `${moveToBoundary}${removeToken}` })
+        .catch((err) => reportPtyWriteError("rich_file_delete", err));
+      scheduleAiPathChips();
+      return true;
+    };
+
     terminal.attachCustomKeyEventHandler((e) => {
       const isMacSelectAll = (
         osPlatformRef.current === "macos" ||
@@ -2206,6 +2278,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           return false;
         }
       }
+      if (tryHandleRichAtomicKey(e)) return false;
       // 退格：光标紧邻 @path 末尾时，整段删除该引用（含行号后缀）。
       if (
         e.type === "keydown" &&
@@ -2351,6 +2424,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     // @path 内联 chip：rAF 合帧句柄 + 上一次结果（用于 diff 跳过无变化的 setState）
     let aiPathChipRafId: number | null = null;
     let lastAiPathChipsSignature = "";
+    let lastRichInputSignature = "";
     let suggestionTemplatesLoaded = false;
     let lastSubmittedCommand: string | null = null;
     let suggestionContextCache: {
@@ -2422,19 +2496,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         row = Math.max(nextRow, row + 1);
         if (!line || text.indexOf("@") < 0) continue;
 
-        AI_PATH_TOKEN_REGEX.lastIndex = 0;
-        let match: RegExpExecArray | null;
-        while ((match = AI_PATH_TOKEN_REGEX.exec(text)) !== null) {
-          const token = match[0];
-          const pathPart = match[1];
-          const spacedRange = match[2];
-          const fileName = extractAiPathFileName(pathPart);
-          if (!fileName) continue;
-          const lineLabel = resolveAiPathLineLabel(pathPart, spacedRange);
-          const label = lineLabel ? `${fileName} ${lineLabel}` : fileName;
-
-          const startCharIdx = match.index;
-          const endCharIdx = match.index + token.length - 1;
+        const fileSegments = parseTerminalRichInput(text).filter((segment) => segment.kind === "file");
+        for (const fileSegment of fileSegments) {
+          const token = fileSegment.raw;
+          const startCharIdx = fileSegment.rawStart;
+          const endCharIdx = fileSegment.rawEnd - 1;
           if (startCharIdx >= pos.length || endCharIdx >= pos.length) continue;
 
           // token 可能跨多个屏幕行（自动换行）——按屏幕行拆成连续段，逐段覆盖。
@@ -2458,8 +2524,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                 top: offsetTop + segRow * cell.height,
                 spanWidth: segCols * cell.width,
                 height: cell.height,
-                icon: getMaterialFileIcon(fileName),
-                label,
+                icon: getMaterialFileIcon(fileSegment.fileName),
+                label: fileSegment.label,
                 // 只有第一段展示 icon+文件名，后续续行段仅作遮罩，盖住裸路径余部。
                 maskOnly: !isFirstSegment,
               });
@@ -2470,6 +2536,102 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         }
       }
       return chips;
+    };
+
+    const buildRichInputState = (): TerminalRichInputState | null => {
+      if (!isVisibleRef.current || isComposingRef.current) return null;
+      const input = inputBuffer.current;
+      if (!input || /[\r\n]/u.test(input)) return null;
+      const segments = parseTerminalRichInput(input);
+      if (!segments.some((segment) => segment.kind === "file")) return null;
+
+      const wrapper = wrapperRef.current;
+      const terminalContainer = containerRef.current;
+      if (!wrapper || !terminalContainer) return null;
+      const screen = terminalContainer.querySelector(".xterm-screen") as HTMLElement | null;
+      if (!screen) return null;
+
+      const buffer = terminal.buffer.active;
+      const cols = terminal.cols;
+      if (cols <= 0) return null;
+      const rawCursorIndex = clampTextCursorIndex(input, inputCursorIndexRef.current);
+      const cursorIndex = snapTerminalRichCursor(segments, rawCursorIndex);
+      const cursorPrefixWidth = getTerminalCellWidth(sliceTextByCursor(input, 0, rawCursorIndex));
+      const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * cols) + buffer.cursorX;
+      const inputStartCellIndex = cursorCellIndex - cursorPrefixWidth;
+      if (inputStartCellIndex < 0) return null;
+
+      let inputCellIndex = inputStartCellIndex;
+      for (const char of input) {
+        const charWidth = getTerminalCellWidth(char);
+        if (charWidth <= 0) continue;
+        const absoluteRow = Math.floor(inputCellIndex / cols);
+        const column = inputCellIndex % cols;
+        const renderedCell = buffer.getLine(absoluteRow)?.getCell(column);
+        if (!renderedCell) return null;
+        const renderedChars = renderedCell.getChars();
+        if (char === " ") {
+          if (renderedChars.trim()) return null;
+        } else if (renderedChars !== char) {
+          return null;
+        }
+        inputCellIndex += charWidth;
+      }
+
+      const inputStartRow = Math.floor(inputStartCellIndex / cols);
+      const visibleStartRow = buffer.viewportY;
+      const visibleEndRow = buffer.viewportY + terminal.rows - 1;
+      if (inputStartRow < visibleStartRow || inputStartRow > visibleEndRow) return null;
+
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const screenRect = screen.getBoundingClientRect();
+      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
+      const cell = getTerminalRenderedCellSize(terminal, terminalContainer, fallbackFontSize);
+      const offsetLeft = screenRect.left - wrapperRect.left;
+      const offsetTop = screenRect.top - wrapperRect.top;
+      const inputStartColumn = inputStartCellIndex % cols;
+      const rawInputWidth = getTerminalCellWidth(input);
+      const maskEndCellIndex = Math.max(inputStartCellIndex + rawInputWidth, cursorCellIndex + 1);
+      const masks: TerminalRichInputMask[] = [];
+
+      let maskCellIndex = inputStartCellIndex;
+      while (maskCellIndex < maskEndCellIndex) {
+        const absoluteRow = Math.floor(maskCellIndex / cols);
+        if (absoluteRow > visibleEndRow) break;
+        const startColumn = maskCellIndex % cols;
+        const cellsInRow = Math.min(maskEndCellIndex - maskCellIndex, cols - startColumn);
+        masks.push({
+          left: offsetLeft + startColumn * cell.width,
+          top: offsetTop + (absoluteRow - visibleStartRow) * cell.height,
+          width: cellsInRow * cell.width,
+          height: cell.height,
+        });
+        maskCellIndex += cellsInRow;
+      }
+
+      return {
+        input,
+        cursorIndex,
+        segments,
+        left: offsetLeft,
+        top: offsetTop + (inputStartRow - visibleStartRow) * cell.height,
+        width: cols * cell.width,
+        cellWidth: cell.width,
+        cellHeight: cell.height,
+        leadingWidth: inputStartColumn * cell.width,
+        masks,
+      };
+    };
+
+    const applyRichInput = () => {
+      const next = buildRichInputState();
+      const signature = next
+        ? `${next.input}|${next.cursorIndex}|${next.left}|${next.top}|${next.width}|${next.cellWidth}|${next.cellHeight}|${next.leadingWidth}|${next.masks.map((mask) => `${mask.left},${mask.top},${mask.width}`).join(";")}`
+        : "";
+      if (signature === lastRichInputSignature) return;
+      lastRichInputSignature = signature;
+      richInputStateRef.current = next;
+      setRichInput(next);
     };
 
     const applyAiPathChips = () => {
@@ -2496,6 +2658,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (aiPathChipRafId !== null) return;
       aiPathChipRafId = window.requestAnimationFrame(() => {
         aiPathChipRafId = null;
+        applyRichInput();
         applyAiPathChips();
       });
     };
@@ -3710,6 +3873,128 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     ? { visibility: "hidden" }
     : undefined;
 
+  const moveRichInputCursor = (targetIndex: number) => {
+    const terminal = terminalRef.current;
+    if (!terminal || !richInputStateRef.current) return;
+    const currentInput = inputBuffer.current;
+    const currentIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
+    const nextIndex = clampTextCursorIndex(currentInput, targetIndex);
+    const delta = nextIndex - currentIndex;
+    terminal.focus();
+    if (delta === 0) return;
+    inputCursorIndexRef.current = nextIndex;
+    suggestionRef.current = null;
+    setSuggestionGhost(null);
+    useTerminalStore.getState().markAttentionInputHandled(sessionId);
+    const data = delta > 0
+      ? repeatControlSequence("\x1b[C", delta)
+      : repeatControlSequence("\x1b[D", -delta);
+    invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("rich_file_click", err));
+  };
+
+  const activeRichInput = isActive ? richInput : null;
+  const passiveAiPathChips = activeRichInput
+    ? aiPathChips.filter((chip) => !activeRichInput.masks.some((mask) => (
+        chip.left < mask.left + mask.width &&
+        chip.left + chip.spanWidth > mask.left &&
+        chip.top < mask.top + mask.height &&
+        chip.top + chip.height > mask.top
+      )))
+    : aiPathChips;
+
+  const richInputItems: ReactNode[] = [];
+  if (activeRichInput) {
+    let caretRendered = false;
+    const renderCaret = (cursorIndex: number, key: string) => {
+      if (caretRendered || activeRichInput.cursorIndex !== cursorIndex) return;
+      caretRendered = true;
+      richInputItems.push(
+        <span
+          key={key}
+          className="ui-terminal-rich-input-caret"
+          style={{ height: activeRichInput.cellHeight, "--rich-input-caret-color": searchAccent } as CSSProperties}
+        />
+      );
+    };
+
+    for (const segment of activeRichInput.segments) {
+      if (segment.kind === "file") {
+        renderCaret(segment.rawStart, `caret:${segment.rawStart}`);
+        richInputItems.push(
+          <span
+            key={`file:${segment.rawStart}:${segment.raw}`}
+            className="ui-terminal-ai-path-chip ui-terminal-rich-file-chip"
+            style={{ height: activeRichInput.cellHeight }}
+            title={segment.label}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              moveRichInputCursor(event.clientX < rect.left + rect.width / 2 ? segment.rawStart : segment.rawEnd);
+            }}
+          >
+            <img className="ui-terminal-ai-path-chip-icon" src={getMaterialFileIcon(segment.fileName)} alt="" draggable={false} />
+            <span className="ui-terminal-ai-path-chip-label">{segment.label}</span>
+          </span>
+        );
+        renderCaret(segment.rawEnd, `caret:${segment.rawEnd}`);
+        continue;
+      }
+
+      if (segment.kind === "separator") {
+        renderCaret(segment.rawStart, `caret:${segment.rawStart}`);
+        richInputItems.push(
+          <span
+            key={`separator:${segment.rawStart}:${segment.rawEnd}`}
+            className="ui-terminal-rich-input-char ui-terminal-rich-input-separator"
+            style={{
+              width: activeRichInput.cellWidth,
+              height: activeRichInput.cellHeight,
+              lineHeight: `${activeRichInput.cellHeight}px`,
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              moveRichInputCursor(event.clientX < rect.left + rect.width / 2 ? segment.rawStart : segment.rawEnd);
+            }}
+          >
+            {"\u00a0"}
+          </span>
+        );
+        renderCaret(segment.rawEnd, `caret:${segment.rawEnd}`);
+        continue;
+      }
+
+      let cursorIndex = segment.rawStart;
+      for (const char of segment.text) {
+        const charCursorIndex = cursorIndex;
+        renderCaret(charCursorIndex, `caret:${charCursorIndex}`);
+        richInputItems.push(
+          <span
+            key={`text:${charCursorIndex}:${char.codePointAt(0) ?? 0}`}
+            className="ui-terminal-rich-input-char"
+            style={{
+              width: Math.max(0, getTerminalCellWidth(char) * activeRichInput.cellWidth),
+              height: activeRichInput.cellHeight,
+              lineHeight: `${activeRichInput.cellHeight}px`,
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              moveRichInputCursor(event.clientX < rect.left + rect.width / 2 ? charCursorIndex : charCursorIndex + 1);
+            }}
+          >
+            {char === " " ? "\u00a0" : char}
+          </span>
+        );
+        cursorIndex += 1;
+      }
+    }
+    renderCaret(getTextCursorLength(activeRichInput.input), `caret:${getTextCursorLength(activeRichInput.input)}`);
+  }
+
   return (
     <div
       ref={wrapperRef}
@@ -3796,7 +4081,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         </div>
       )}
       <div ref={containerRef} className="h-full w-full overflow-hidden pl-2" style={terminalContainerStyle} />
-      {terminalInputSuggestionsEnabled && isActive && isVisible && !searchOpen && suggestionGhost && (
+      {terminalInputSuggestionsEnabled && isActive && isVisible && !searchOpen && !activeRichInput && suggestionGhost && (
         <div
           aria-hidden="true"
           className="terminal-input-suggestion-ghost"
@@ -3814,9 +4099,51 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           {suggestionGhost.suffix}
         </div>
       )}
-      {isVisible && !searchOpen && aiPathChips.length > 0 && (
+      {isActive && isVisible && !searchOpen && activeRichInput && (
+        <>
+          <div className="ui-terminal-rich-input-mask-layer" aria-hidden="true">
+            {activeRichInput.masks.map((mask, index) => (
+              <span
+                key={`${mask.left}:${mask.top}:${index}`}
+                className="ui-terminal-rich-input-mask"
+                style={{
+                  left: mask.left,
+                  top: mask.top,
+                  width: mask.width,
+                  height: mask.height,
+                  "--rich-input-bg": backgroundColor,
+                } as CSSProperties}
+              />
+            ))}
+          </div>
+          <div
+            className="ui-terminal-rich-input-layer"
+            aria-hidden="true"
+            style={{
+              left: activeRichInput.left,
+              top: activeRichInput.top,
+              width: activeRichInput.width,
+              minHeight: activeRichInput.cellHeight,
+              fontFamily: effectiveFontFamily,
+              fontSize,
+              color: searchForeground,
+              "--ai-chip-slot-bg": backgroundColor,
+              "--rich-input-bg": backgroundColor,
+            } as CSSProperties}
+          >
+            {activeRichInput.leadingWidth > 0 && (
+              <span
+                className="ui-terminal-rich-input-leading"
+                style={{ width: activeRichInput.leadingWidth, height: activeRichInput.cellHeight }}
+              />
+            )}
+            {richInputItems}
+          </div>
+        </>
+      )}
+      {isVisible && !searchOpen && passiveAiPathChips.length > 0 && (
         <div className="ui-terminal-ai-path-chip-layer" aria-hidden="true">
-          {aiPathChips.map((chip) => (
+          {passiveAiPathChips.map((chip) => (
             <span
               key={chip.key}
               className={chip.maskOnly ? "ui-terminal-ai-path-chip-slot ui-terminal-ai-path-chip-slot--mask" : "ui-terminal-ai-path-chip-slot"}

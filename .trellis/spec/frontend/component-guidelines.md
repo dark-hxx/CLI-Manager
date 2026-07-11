@@ -1075,3 +1075,38 @@ Removing `scrollOnEraseInDisplay: true` is a worse regression: Codex repaints vi
 
 **Tests**: Run `npx tsc --noEmit`; manually verify at least one light palette and one dark theme. In the light theme, check project-tree selection, terminal tabs, toolbar buttons, and terminal side-panel buttons are distinguishable at a glance without changing layout density.
 
+### Convention: Rich terminal input tokens use an active-input mirror
+
+**What**: File references in the active terminal input must be rendered through the rich-input mirror model. Keep the real `@path` in the PTY buffer, but project the buffer-validated `inputBuffer` into plain-text and atomic file segments with a synthetic caret. Do not simulate chip width by appending padding spaces to the command.
+
+**Why**: xterm uses a fixed character grid. An absolute HTML chip cannot change the native caret or following character positions, so padding/overlay fixes produce hidden carets, inconsistent gaps, or overlap. Mirroring the complete active input gives the visible token real layout width while preserving the raw PTY contract.
+
+**Correct**:
+
+```tsx
+const segments = parseTerminalRichInput(inputBuffer.current);
+const token = findTerminalRichAtomicBeforeCursor(segments, cursorIndex);
+
+// Move across the raw PTY value while rendering one atomic visual token.
+sendLeft(token.rawEnd - token.rawStart);
+renderSyntheticCaret(token.rawStart);
+```
+
+**Wrong**:
+
+```tsx
+// Padding changes the command and still leaves the native caret behind the overlay.
+terminal.paste(`${rawPath}${" ".repeat(6)}`);
+```
+
+**Contracts**:
+
+- Enable the mirror only while locally tracked input matches the actual xterm buffer and contains a file segment.
+- Stale input/history state must fail buffer validation and fall back to native xterm rendering.
+- Arrow, click, Backspace, and Delete operations must translate visual token boundaries to raw PTY indices.
+- Whitespace between adjacent file tokens must render as one atomic visual separator even if legacy input contains extra spaces.
+- Enter must submit the existing raw `@path` without replacement or late serialization.
+- Passive references in submitted/history output may stay cell-bound overlays; only the active input requires atomic interaction.
+
+**Tests**: Run `npx tsc --noEmit`; manually verify consecutive dragged files, caret movement before/after tokens, mouse boundary placement, whole-token deletion, Enter submission, IME input, wrapping, and fallback after command-history navigation in Claude, Codex, and a normal shell.
+
