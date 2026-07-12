@@ -83,6 +83,10 @@ const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
 const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
 const SUGGESTION_AI_DEBOUNCE_MS = 400;
 const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
+// Minimum time the app must stay in the background before a foreground return
+// triggers a glyph-atlas rebuild. GPU sleep / lock screen (the corruption
+// trigger) implies a long absence; quick alt-tabs skip the re-rasterization.
+const WEBGL_ATLAS_REFRESH_MIN_HIDDEN_MS = 10_000;
 // Box-drawing glyphs used by TUI input boxes (Claude Code / Codex draw "│ > … │").
 const TUI_BORDER_CHAR_PATTERN = /^[│┃║▏▎▍▌▋▊▉█┆┊╎╏]$/u;
 const TUI_BORDER_PREFIX_PATTERN = /^[\s│┃║▏▎▍▌▋▊▉█┆┊╎╏]+/u;
@@ -1594,6 +1598,41 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       scheduleTuiComposerBackgroundNormalization(terminalRef.current);
     }
   }, [isVisible, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsConstrained, linuxGraphicsDisableWebgl, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette]);
+
+  // The WebGL glyph atlas can be silently corrupted while the GPU sleeps
+  // (display sleep, lock screen, driver reset) without ever firing
+  // `webglcontextlost` — glyphs then render as wrong/missing characters until
+  // something rebuilds the atlas (e.g. a window resize). Rebuild it proactively
+  // when the app returns to the foreground after a long background stretch.
+  useEffect(() => {
+    let backgroundedAt: number | null = null;
+    const markBackgrounded = () => {
+      if (backgroundedAt === null) backgroundedAt = Date.now();
+    };
+    const maybeRefreshAtlas = () => {
+      if (backgroundedAt === null) return;
+      const hiddenFor = Date.now() - backgroundedAt;
+      backgroundedAt = null;
+      if (hiddenFor < WEBGL_ATLAS_REFRESH_MIN_HIDDEN_MS) return;
+      try {
+        webglAddonRef.current?.clearTextureAtlas();
+      } catch {
+        // Addon may be mid-disposal; the DOM renderer fallback needs no atlas.
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") markBackgrounded();
+      else maybeRefreshAtlas();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("blur", markBackgrounded);
+    window.addEventListener("focus", maybeRefreshAtlas);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("blur", markBackgrounded);
+      window.removeEventListener("focus", maybeRefreshAtlas);
+    };
+  }, []);
 
   // Focus follows the single globally active tab. Keyboard, cursor and IME stay
   // bound to this; a visible-but-unfocused split pane renders but never steals
