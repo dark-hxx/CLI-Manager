@@ -1004,6 +1004,44 @@ If a CLI draws large opaque panels or status rows over a terminal background ima
 
 Do not keep WebGL enabled while a terminal background image is active. The default renderer is the safer path for transparent backgrounds and xterm buffer-attr corrections; WebGL can preserve or redraw opaque TUI cells in ways that make Codex/Ratatui panels appear as black blocks.
 
+### Convention: Click-based terminal cursor movement uses the shortest line-editor path
+
+**What**: Mouse clicks inside tracked terminal input must move the PTY line editor, not only xterm's rendered cursor. Compare direct arrow movement with Home + right arrows and End + left arrows, then send the lowest-cost sequence. Use `terminal.modes.applicationCursorKeysMode` to select CSI (`ESC [`) or application (`ESC O`) key sequences.
+
+**Why**: Repeating one arrow escape per character makes long-distance clicks visibly crawl across the input. Writing an absolute cursor-position sequence to xterm would only change terminal rendering and desynchronize PowerShell, Readline, Claude Code, or Codex input state.
+
+**Correct**:
+
+```tsx
+const data = buildFastCursorMoveSequence(
+  currentCursorIndex,
+  targetCursorIndex,
+  inputLength,
+  !/[\r\n]/.test(currentInput),
+  terminal.modes.applicationCursorKeysMode
+);
+invoke("pty_write", { sessionId, data });
+```
+
+**Wrong**:
+
+```tsx
+// Long inputs visibly move one character at a time.
+const data = "\x1b[D".repeat(currentCursorIndex - targetCursorIndex);
+
+// Rendering-only cursor movement does not update the PTY line editor.
+terminal.write(`\x1b[${targetColumn}G`);
+```
+
+**Contracts**:
+
+- Keep `ENABLE_CLICK_CURSOR_POSITIONING` disabled until click relocation can meet the required responsiveness without desynchronizing the PTY line editor.
+- Prefer direct arrows when they are tied for the lowest cost, avoiding unnecessary Home/End semantics.
+- Do not use Home/End optimization when tracked input contains explicit CR/LF; line editors may treat them as current-line anchors instead of whole-input anchors.
+- Keep the tracked input cursor index synchronized with the selected target after the PTY write is queued.
+
+**Tests**: Cover line-start, line-end, nearby movement, explicit multiline fallback, and application cursor mode. Run `npx tsc --noEmit`; manually verify continued typing and deletion occur at the clicked character in PowerShell, Git Bash, Claude Code, and Codex.
+
 ### Convention: xterm Windows PTY and paste handling
 
 **What**: Internal xterm instances backed by the app's Windows PTY must use xterm's Windows compatibility and native paste path.

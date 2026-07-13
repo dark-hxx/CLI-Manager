@@ -26,6 +26,7 @@ import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
 import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
 import { debugConsoleWarn } from "../lib/debugConsole";
 import { translateCurrent, useI18n } from "../lib/i18n";
+import { buildFastCursorMoveSequence } from "../lib/terminalCursorMovement";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
 import {
   absolutePathToProjectRelative,
@@ -89,6 +90,7 @@ const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
 const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
 const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
 const SUGGESTION_AI_DEBOUNCE_MS = 400;
+const ENABLE_CLICK_CURSOR_POSITIONING = false;
 const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
 // Minimum time the app must stay in the background before a foreground return
 // triggers a glyph-atlas rebuild. GPU sleep / lock screen (the corruption
@@ -2032,15 +2034,18 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         Math.max(0, inputEndCellIndex - inputStartCellIndex)
       );
       const targetCursorIndex = resolveCursorIndexFromCellOffset(currentInput, targetCellOffset);
-      const delta = targetCursorIndex - currentCursorIndex;
-      if (delta === 0) {
+      const data = buildFastCursorMoveSequence(
+        currentCursorIndex,
+        targetCursorIndex,
+        getTextCursorLength(currentInput),
+        !/[\r\n]/.test(currentInput),
+        terminal.modes.applicationCursorKeysMode
+      );
+      if (!data) {
         terminal.focus();
         return;
       }
 
-      const data = delta > 0
-        ? repeatControlSequence("\x1b[C", delta)
-        : repeatControlSequence("\x1b[D", -delta);
       inputCursorIndexRef.current = targetCursorIndex;
       keyboardInputSelection = null;
       selectedInputSnapshot = null;
@@ -2050,7 +2055,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("click_cursor", err));
       terminal.focus();
     };
-    contextMenuTarget.addEventListener("click", moveInputCursorToClick);
+    if (ENABLE_CLICK_CURSOR_POSITIONING) {
+      contextMenuTarget.addEventListener("click", moveInputCursorToClick);
+    }
 
     let selectedInputSnapshot: string | null = null;
     let keyboardInputSelection: {
@@ -3508,7 +3515,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       fileDropCancelled = true;
       unlistenFileDrop?.();
       contextMenuTarget.removeEventListener("contextmenu", onContextMenu);
-      contextMenuTarget.removeEventListener("click", moveInputCursorToClick);
+      if (ENABLE_CLICK_CURSOR_POSITIONING) {
+        contextMenuTarget.removeEventListener("click", moveInputCursorToClick);
+      }
       contextMenuTarget.removeEventListener("mousedown", clearKeyboardInputSelectionOnMouseDown);
       terminalContainer.removeEventListener("keydown", onImeProcessKeyDown, nativeTextInputListenerOptions);
       terminalContainer.removeEventListener("beforeinput", onNativeTextBeforeInput, nativeTextInputListenerOptions);

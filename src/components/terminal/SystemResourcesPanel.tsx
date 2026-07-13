@@ -225,6 +225,7 @@ interface TrendSeries {
   points: number[];
   color: string;
   mode?: "full" | "up" | "down";
+  max?: number;
 }
 
 interface DiskTotals {
@@ -272,6 +273,11 @@ function TrendChart({
     ...line,
     points: line.points.length >= 2 ? line.points : [line.points[0] ?? 0, line.points[0] ?? 0],
   }));
+  const splitGapPx = 20;
+  const splitBaselineOffset = (splitGapPx / 2 / Math.max(1, height - 2)) * 100;
+  const splitUpBaseY = 50 - splitBaselineOffset;
+  const splitDownBaseY = 50 + splitBaselineOffset;
+  const splitAmplitude = 42 - splitBaselineOffset;
   const guideLines = split
     ? [
         { y: 8, dashed: false, strong: false },
@@ -286,10 +292,14 @@ function TrendChart({
         { y: 75, dashed: false, strong: false },
       ];
 
-  const toCoords = (points: number[], mode: TrendSeries["mode"] = "full") => points.map((point, index) => {
+  const toCoords = (points: number[], mode: TrendSeries["mode"] = "full", seriesMax?: number) => points.map((point, index) => {
     const x = points.length === 1 ? 0 : (index / (points.length - 1)) * 100;
-    const normalized = clampRatio(point / scaleMax);
-    const y = mode === "up" ? 50 - normalized * 38 : mode === "down" ? 50 + normalized * 38 : 90 - normalized * 72;
+    const normalized = clampRatio(point / Math.max(1, seriesMax ?? scaleMax));
+    const y = mode === "up"
+      ? splitUpBaseY - normalized * splitAmplitude
+      : mode === "down"
+        ? splitDownBaseY + normalized * splitAmplitude
+        : 90 - normalized * 72;
     return [x, y] as const;
   });
 
@@ -315,7 +325,7 @@ function TrendChart({
   };
 
   const areaPath = (coords: ReadonlyArray<readonly [number, number]>, mode: TrendSeries["mode"] = "full") => {
-    const baseY = mode === "up" || mode === "down" ? 50 : 96;
+    const baseY = mode === "up" ? splitUpBaseY : mode === "down" ? splitDownBaseY : 96;
     const first = coords[0];
     const last = coords[coords.length - 1];
     return `${linePath(coords)} L${last[0].toFixed(2)},${baseY} L${first[0].toFixed(2)},${baseY} Z`;
@@ -349,7 +359,7 @@ function TrendChart({
           />
         ))}
         {safeSeries.map((line, index) => {
-          const coords = toCoords(line.points, line.mode);
+          const coords = toCoords(line.points, line.mode, line.max);
           return (
             <g key={`${line.color}-${index}`}>
               <path d={areaPath(coords, line.mode)} fill={line.color} mask={`url(#${gradientId}-mask)`} opacity={areaOpacity} />
@@ -540,7 +550,8 @@ function NetworkCard({ snapshot, history }: { snapshot: SystemResourceSnapshot; 
   const { t } = useI18n();
   const uploadPoints = history.length > 0 ? history.map((item) => item.network.uploadBytesPerSec) : [snapshot.network.uploadBytesPerSec];
   const downloadPoints = history.length > 0 ? history.map((item) => item.network.downloadBytesPerSec) : [snapshot.network.downloadBytesPerSec];
-  const maxRate = Math.max(1, ...uploadPoints, ...downloadPoints);
+  const uploadMax = Math.max(1, ...uploadPoints);
+  const downloadMax = Math.max(1, ...downloadPoints);
   const todayLabel = t("systemResources.todayTotal");
 
   return (
@@ -561,17 +572,16 @@ function NetworkCard({ snapshot, history }: { snapshot: SystemResourceSnapshot; 
         </span>
       )}
     >
-      <div className="grid grid-cols-[minmax(140px,184px)_minmax(0,1fr)] items-stretch gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_80px] items-stretch gap-3">
         <TrendChart
-          height={62}
-          max={maxRate}
+          height={80}
           split
           areaOpacity={0.98}
           fadeStartOpacity={0.72}
           fadeEndOpacity={0.08}
           series={[
-            { points: uploadPoints, color: NETWORK_UPLOAD_COLOR, mode: "up" },
-            { points: downloadPoints, color: NETWORK_DOWNLOAD_COLOR, mode: "down" },
+            { points: uploadPoints, color: NETWORK_UPLOAD_COLOR, mode: "up", max: uploadMax },
+            { points: downloadPoints, color: NETWORK_DOWNLOAD_COLOR, mode: "down", max: downloadMax },
           ]}
         />
         <div
