@@ -1646,9 +1646,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     if (restorePlan.shouldRefreshViewport) {
       needsViewportRefreshRef.current = true;
     }
-    // Wait one frame to ensure display:block has taken effect and layout is stable.
+    // Wait for display:block to take effect and the layout to stabilize.
+    // scheduleFit(true) already performs the required full viewport refresh.
     scheduleFit(true);
-    scheduleViewportRefresh();
     if (terminalRef.current) {
       normalizeTuiComposerBackground(terminalRef.current);
       scheduleTuiComposerBackgroundNormalization(terminalRef.current);
