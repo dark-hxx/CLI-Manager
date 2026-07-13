@@ -1072,6 +1072,22 @@ export function Sidebar({
     [closeHistory, compactMode, createSession, onTerminalScopeChange, projectScopedTerminalViewEnabled, useExternalTerminal]
   );
 
+  const handleNewWorktreeTerminal = useCallback(
+    async (project: Project, worktree: WorktreeRecord) => {
+      const title = `${project.name} · ${worktree.name}`;
+      if (compactMode || useExternalTerminal) {
+        await openWindowsTerminal([{ title, cwd: worktree.path }]);
+      } else {
+        await createSession(project.id, worktree.path, title, undefined, undefined, project.shell || undefined, undefined, worktree.id);
+      }
+      if (projectScopedTerminalViewEnabled) {
+        onTerminalScopeChange?.({ kind: "worktree", projectId: worktree.project_id, worktreeId: worktree.id });
+      }
+      closeHistory();
+    },
+    [closeHistory, compactMode, createSession, onTerminalScopeChange, projectScopedTerminalViewEnabled, useExternalTerminal]
+  );
+
   const handleSplitProject = useCallback(
     async (project: Project, direction: TerminalPaneSplitDirection) => {
       if (!activeSessionId || compactMode || useExternalTerminal) return;
@@ -2127,6 +2143,17 @@ export function Sidebar({
                 >
                   <Play size={14} strokeWidth={1.5} />
                   {t("worktree.menu.open")}
+                </button>
+                <button
+                  className="context-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    void handleNewWorktreeTerminal(contextMenu.project, contextMenu.worktree);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Plus size={14} strokeWidth={1.5} />
+                  {t("worktree.menu.newTerminal")}
                 </button>
                 <button
                   className="context-menu-item"

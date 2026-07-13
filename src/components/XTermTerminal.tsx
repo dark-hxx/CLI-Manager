@@ -1997,11 +1997,26 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
     contextMenuTarget.addEventListener("mousedown", clearKeyboardInputSelectionOnMouseDown);
 
+    // \x15 (Ctrl+U) 在 bash/PSReadLine/Claude Code 等行编辑器中的语义是"删除光标之前"，
+    // 并非整行清除；光标不在行尾时（点击移光标、Shift+方向键选择后右键/Ctrl+C 复制中断）
+    // 后半段会残留，随后重打的文本与残留拼接，表现为"选区删除后又多出一份"。
+    // 因此清行前先按跟踪的光标位置右移到输入末尾，使 \x15 等价于整行清除。
+    const buildKillCurrentInputSequence = () => {
+      const currentInput = inputBuffer.current;
+      const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
+      const moveToEnd = repeatControlSequence(
+        "\x1b[C",
+        getTextCursorLength(currentInput) - currentCursorIndex
+      );
+      return `${moveToEnd}\x15`;
+    };
+
     const rewriteCurrentInput = (
       nextInput: string,
       stage: string,
       cursorIndex: number = getTextCursorLength(nextInput)
     ) => {
+      const killCurrentInput = buildKillCurrentInputSequence();
       const nextCursorIndex = clampTextCursorIndex(nextInput, cursorIndex);
       const cursorRestore = repeatControlSequence(
         "\x1b[D",
@@ -2015,7 +2030,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       markAttentionInputHandled();
       clearSuggestionGhost();
       cancelAiSuggestionRefresh();
-      invoke("pty_write", { sessionId, data: `\x15${nextInput}${cursorRestore}` })
+      invoke("pty_write", { sessionId, data: `${killCurrentInput}${nextInput}${cursorRestore}` })
         .catch((err) => reportPtyWriteError(stage, err));
     };
 
@@ -2025,6 +2040,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return true;
     };
 
+    // 返回清空当前输入所需的控制序列；null 表示本次输入不做"替换选区"。
     const consumeSelectedInputForReplacement = (data: string) => {
       if (
         !selectedInputSnapshot ||
@@ -2032,14 +2048,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !terminal.hasSelection() ||
         !isReplaceableInputData(data)
       ) {
-        return false;
+        return null;
       }
 
+      const killCurrentInput = buildKillCurrentInputSequence();
       inputBuffer.current = "";
       inputCursorIndexRef.current = 0;
       selectedInputSnapshot = null;
       terminal.clearSelection();
-      return true;
+      return killCurrentInput;
     };
 
     const resolveVisibleInputSelection = () => {
@@ -2869,7 +2886,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       });
       const ptyData = manualDirectCodexOverride ?? data;
       lastForwardedTerminalInput = { data, source, at: now };
-      invoke("pty_write", { sessionId, data: replacingSelectedInput ? `\x15${ptyData}` : ptyData }).catch((err) => reportPtyWriteError(source, err));
+      invoke("pty_write", { sessionId, data: replacingSelectedInput ? `${replacingSelectedInput}${ptyData}` : ptyData }).catch((err) => reportPtyWriteError(source, err));
       maybeLogCodexImeDuplicate(data);
       updateInputBufferFromTerminalData(data);
     }
