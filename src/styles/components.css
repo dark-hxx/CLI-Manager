@@ -6927,6 +6927,10 @@
   color: var(--on-surface);
 }
 
+.ui-file-tree-row:is(button, [role="button"]) {
+  cursor: pointer;
+}
+
 .ui-file-tree-row:hover {
   background-color: color-mix(in srgb, var(--term-panel-cyan, #5AC8E0) 13%, transparent);
 }
