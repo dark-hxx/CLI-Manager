@@ -47,8 +47,6 @@ tauri-plugin-process = "2"
 tauri-plugin-single-instance = { version = "2.4.2", features = ["semver"] }
 # 只读解析 cc-switch.db；复用 tauri-plugin-sql 依赖树中既有的 sqlx/libsqlite3-sys，无新增原生依赖
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
-# git 仓库查询（静默读取分支，避免文件 I/O 触发安全软件弹窗）
-git2 = "0.19"
 # 文件系统监听 + 去抖：fs-watcher 替代 Git 变更面板的定时轮询
 notify = "6"
 notify-debouncer-mini = "0.4"
@@ -56,6 +54,14 @@ fontdb = "0.23"
 tauri-plugin-clipboard-manager = "2"
 sysinfo = "0.39.5"
 local-ip-address = "0.6.13"
+
+# macOS universal 交叉编译时不能复用宿主架构的 OpenSSL，因此仅在 macOS 使用 vendored 构建。
+[target.'cfg(target_os = "macos")'.dependencies]
+git2 = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
+
+# 其他平台保持系统原生依赖解析，避免增加 Windows 构建工具要求和编译耗时。
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+git2 = "0.19"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Performance", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_Threading"] }
