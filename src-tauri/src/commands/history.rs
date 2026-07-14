@@ -1220,26 +1220,43 @@ fn resolve_session_file_ref(
     }
 
     for candidate in candidates {
-        if candidate.source != source || candidate.project_key != project_key {
+        if candidate.source != source {
             continue;
         }
         let Ok(candidate_path) = candidate.path.canonicalize() else {
             continue;
         };
-        if candidate_path == requested {
-            debug!(
-                "history session scope matched indexed candidate: source={}, project_key={}, requested={}, candidate={}",
-                source,
-                project_key,
-                requested.to_string_lossy(),
-                candidate_path.to_string_lossy()
-            );
-            return Ok(SessionFileRef {
-                source: candidate.source,
-                project_key: candidate.project_key,
-                path: requested,
-            });
+        if candidate_path != requested {
+            continue;
         }
+
+        let indexed_project_key = candidate.project_key;
+        let resolved_project_key = if source == "codex" {
+            get_or_scan_session_project(&candidate_path)
+                .cwd
+                .as_deref()
+                .and_then(project_key_from_cwd)
+                .unwrap_or_else(|| indexed_project_key.clone())
+        } else {
+            indexed_project_key.clone()
+        };
+        if resolved_project_key != project_key {
+            continue;
+        }
+
+        debug!(
+            "history session scope matched indexed candidate: source={}, project_key={}, indexed_project_key={}, requested={}, candidate={}",
+            source,
+            resolved_project_key,
+            indexed_project_key,
+            requested.to_string_lossy(),
+            candidate_path.to_string_lossy()
+        );
+        return Ok(SessionFileRef {
+            source: candidate.source,
+            project_key: resolved_project_key,
+            path: requested,
+        });
     }
 
     Err("session_file_not_indexed".to_string())
@@ -1315,6 +1332,20 @@ fn normalize_wsl_scope_unc(path: &str) -> String {
     }
 
     normalized
+}
+
+fn wsl_linux_path(path: &Path) -> Option<String> {
+    let raw = path.to_string_lossy();
+    let normalized = normalize_wsl_scope_unc(&raw);
+    crate::wsl::parse_wsl_unc_path(&normalized).map(|(_, linux_path)| linux_path)
+}
+
+fn codex_runtime_path(path: &Path) -> String {
+    wsl_linux_path(path).unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+fn should_register_codex_state_db(path: &Path) -> bool {
+    wsl_linux_path(path).is_none()
 }
 
 #[tauri::command]
@@ -3459,7 +3490,7 @@ fn append_codex_session_index(
         "thread_name": thread_name,
         "updated_at": updated_at,
         "cwd": cwd.unwrap_or_default(),
-        "rollout_path": rollout_path.to_string_lossy()
+        "rollout_path": codex_runtime_path(rollout_path)
     });
     append_jsonl_line(&path, &line)
 }
@@ -3510,7 +3541,7 @@ fn build_codex_thread_registration(
     CodexThreadRegistration {
         state_db_path: resolve_codex_state_db_path(roots),
         session_id: result.session_id.clone(),
-        rollout_path: result.file_path.clone(),
+        rollout_path: codex_runtime_path(Path::new(&result.file_path)),
         created_at: created_at_ms / 1000,
         updated_at: updated_at_ms / 1000,
         created_at_ms,
@@ -3531,6 +3562,13 @@ fn rfc3339_millis(timestamp: &str) -> Option<i64> {
 }
 
 async fn register_codex_thread(registration: &CodexThreadRegistration) -> Result<(), String> {
+    if !should_register_codex_state_db(&registration.state_db_path) {
+        info!(
+            "skip Windows-side Codex state registration for WSL database: {}",
+            registration.state_db_path.to_string_lossy()
+        );
+        return Ok(());
+    }
     if !registration.state_db_path.exists() {
         warn!(
             "skip Codex state registration: state db not found: {}",
@@ -7590,6 +7628,43 @@ mod tests {
     }
 
     #[test]
+    fn resolve_session_file_ref_reconciles_codex_project_key_from_cwd() {
+        let temp_dir = TempDir::new().unwrap();
+        let base = temp_dir.path().join("sessions");
+        let file = base.join("2026").join("07").join("rollout-session.jsonl");
+        write_text(
+            &file,
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/data/tabGo\"}}\n",
+        );
+
+        let candidate = SessionFileRef {
+            source: "codex".to_string(),
+            project_key: "2026".to_string(),
+            path: file.clone(),
+        };
+        let result = resolve_session_file_ref(
+            file.to_str().unwrap(),
+            "codex",
+            "tabGo",
+            &base.canonicalize().unwrap(),
+            vec![candidate.clone()],
+        )
+        .unwrap();
+        let wrong_project = expect_string_err(resolve_session_file_ref(
+            file.to_str().unwrap(),
+            "codex",
+            "other-project",
+            &base.canonicalize().unwrap(),
+            vec![candidate],
+        ));
+
+        assert_eq!(result.source, "codex");
+        assert_eq!(result.project_key, "tabGo");
+        assert_eq!(result.path, file.canonicalize().unwrap());
+        assert_eq!(wrong_project, "session_file_not_indexed");
+    }
+
+    #[test]
     fn resolve_session_file_ref_rejects_non_jsonl() {
         let temp_dir = TempDir::new().unwrap();
         let base = temp_dir.path().join("history");
@@ -7644,6 +7719,37 @@ mod tests {
         let history_base = PathBuf::from(r"\\?\UNC\wsl$\Ubuntu\home\silver\.codex\sessions");
 
         assert!(path_within_history_scope(&requested, &history_base));
+    }
+
+    #[test]
+    fn codex_runtime_path_uses_linux_path_for_wsl_unc() {
+        let standard = PathBuf::from(
+            r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\sessions\2026\07\rollout.jsonl",
+        );
+        let verbatim = PathBuf::from(
+            r"\\?\UNC\wsl$\Ubuntu-22.04\home\dministrator\.codex\sessions\2026\07\rollout.jsonl",
+        );
+        let native = PathBuf::from(r"C:\Users\Administrator\.codex\sessions\rollout.jsonl");
+
+        assert_eq!(
+            codex_runtime_path(&standard),
+            "/home/dministrator/.codex/sessions/2026/07/rollout.jsonl"
+        );
+        assert_eq!(
+            codex_runtime_path(&verbatim),
+            "/home/dministrator/.codex/sessions/2026/07/rollout.jsonl"
+        );
+        assert_eq!(codex_runtime_path(&native), native.to_string_lossy());
+    }
+
+    #[test]
+    fn codex_state_registration_is_disabled_for_wsl_database() {
+        let wsl_db =
+            PathBuf::from(r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\state_5.sqlite");
+        let native_db = PathBuf::from(r"C:\Users\Administrator\.codex\state_5.sqlite");
+
+        assert!(!should_register_codex_state_db(&wsl_db));
+        assert!(should_register_codex_state_db(&native_db));
     }
 
     #[test]

@@ -265,6 +265,24 @@ fn emit_status(app: &AppHandle, status: &HistoryIndexStatus) {
     let _ = app.emit("history-index-status", status.clone());
 }
 
+fn catalog_path_within_roots(source: &str, file_path: &str, roots: &HistoryRoots) -> bool {
+    let Ok(base) = history_source_base(source, roots) else {
+        return false;
+    };
+    let requested = Path::new(file_path);
+    if path_within_history_scope(requested, &base) {
+        return true;
+    }
+
+    let Ok(requested) = requested.canonicalize() else {
+        return false;
+    };
+    let Ok(base) = base.canonicalize() else {
+        return false;
+    };
+    path_within_history_scope(&requested, &base)
+}
+
 async fn seed_from_legacy_if_empty(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
@@ -290,6 +308,13 @@ async fn seed_from_legacy_if_empty(
 
     let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
     for entry in index.entries {
+        if !catalog_path_within_roots(
+            &entry.file_ref.source,
+            &entry.file_ref.path.to_string_lossy(),
+            roots,
+        ) {
+            continue;
+        }
         sqlx::query(
             "INSERT OR IGNORE INTO history_catalog_sessions(
                 roots_key, file_path, source, project_key, cwd, cwd_normalized,
@@ -431,7 +456,8 @@ pub(super) async fn list_sessions(
         .fetch_all(&mut conn)
         .await
         .map_err(|err| err.to_string())?;
-    rows.into_iter()
+    let sessions = rows
+        .into_iter()
         .map(|row| {
             Ok(HistorySessionSummary {
                 session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
@@ -449,7 +475,11 @@ pub(super) async fn list_sessions(
                 branch: row.try_get("branch").map_err(|err| err.to_string())?,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(sessions
+        .into_iter()
+        .filter(|session| catalog_path_within_roots(&session.source, &session.file_path, roots))
+        .collect())
 }
 
 fn fts_literal(query: &str) -> String {
@@ -516,6 +546,7 @@ pub(super) async fn search_sessions(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    hits.retain(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots));
     if hits.len() >= max_hits {
         return Ok(hits);
     }
@@ -563,7 +594,11 @@ pub(super) async fn search_sessions(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    hits.extend(message_hits);
+    hits.extend(
+        message_hits
+            .into_iter()
+            .filter(|hit| catalog_path_within_roots(&hit.source, &hit.file_path, roots)),
+    );
     Ok(hits)
 }
 
@@ -942,6 +977,40 @@ mod tests {
         let (_cwd, keys, basename) = project_candidates(r"D:\work\pythonProject\CLI-Manager");
         assert!(keys.iter().any(|key| key.contains("cli-manager")));
         assert_eq!(basename.as_deref(), Some("cli-manager"));
+    }
+
+    #[test]
+    fn catalog_scope_rejects_native_codex_entry_for_wsl_roots() {
+        let roots = HistoryRoots {
+            claude_config_dir: None,
+            codex_config_dir: Some(PathBuf::from(
+                r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex",
+            )),
+        };
+        let wsl_file = r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\sessions\2026\07\14\rollout.jsonl";
+        let native_file = r"\\?\C:\Users\Administrator\.codex\sessions\2026\07\02\rollout.jsonl";
+
+        assert!(catalog_path_within_roots("codex", wsl_file, &roots));
+        assert!(!catalog_path_within_roots("codex", native_file, &roots));
+    }
+
+    #[test]
+    fn catalog_scope_accepts_canonical_native_entry() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let codex_dir = temp_dir.path().join(".codex");
+        let file = codex_dir.join("sessions").join("rollout.jsonl");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"{}\n").unwrap();
+        let roots = HistoryRoots {
+            claude_config_dir: None,
+            codex_config_dir: Some(codex_dir),
+        };
+
+        assert!(catalog_path_within_roots(
+            "codex",
+            &file.canonicalize().unwrap().to_string_lossy(),
+            &roots,
+        ));
     }
 
     #[tokio::test]

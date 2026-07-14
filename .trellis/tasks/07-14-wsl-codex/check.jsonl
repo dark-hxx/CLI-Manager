@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"核对 WSL 路径、SQLite 与运行时路径契约"}
+{"file":".trellis/spec/backend/history-index-contracts.md","reason":"核对历史索引安全校验与测试要求"}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"核对变更记录和最终交付范围"}

@@ -307,3 +307,94 @@ wsl.exe -d Ubuntu --exec sh -lc \
 **Decision**: 选择 Option 2。Plan 9 协议在目录枚举和元数据读取上不可靠（实证：fs::read_dir 静默失败、libgit2 Owner 错误），驱动器映射引入额外配置复杂度。`wsl.exe` 始终可用且直接访问 Linux 文件系统。
 
 **Security**: `wsl.exe` 命令仅在 `is_wsl_config_dir` 确认后执行；libgit2 所有权验证关闭窗口为微秒级，WSL 是本机文件系统非远程共享。
+
+---
+
+## Scenario: WSL Codex history validation and conversion
+
+### 1. Scope / Trigger
+
+- Trigger: opening, editing, deleting, resuming, or converting a Codex rollout whose config root is under `\\wsl.localhost\...`.
+- Goal: Windows-side history validation remains strict without confusing the date directory with the rollout's real project, and conversion never writes Codex's WSL SQLite state through 9P.
+
+### 2. Signatures
+
+```rust
+fn resolve_session_file_ref(...) -> Result<SessionFileRef, String>
+fn catalog_path_within_roots(source: &str, file_path: &str, roots: &HistoryRoots) -> bool
+fn codex_runtime_path(path: &Path) -> String
+fn should_register_codex_state_db(path: &Path) -> bool
+```
+
+- Existing Tauri command signatures remain unchanged.
+- `HistoryConversionResult.file_path` remains a Windows-readable path for the frontend.
+
+### 3. Contracts
+
+- WSL Codex inventory may initially derive `project_key` from `sessions/<year>/...`, but validation must reconcile the matched file with the rollout `cwd` before comparing the requested project key.
+- Source and canonical path must match before reading the rollout for project reconciliation; do not parse every candidate file.
+- The SQLite catalog and legacy index are caches, not path authorities. Seeded rows, list results, and search results must be filtered against the currently configured source root before reaching the frontend.
+- When the configured Codex root changes from native Windows to WSL, an old `C:\...\.codex\sessions\...` row must be omitted rather than passed to detail validation and surfaced as `session_file_outside_history_scope`.
+- Codex-owned `session_index.jsonl` and state metadata must store the Linux rollout path (`/home/...`), not the Windows UNC path.
+- A WSL `state_5.sqlite` is owned by the Codex process inside Linux. Windows `sqlx` must not open it read-write, even with `busy_timeout`, because WAL/SHM locking is not reliable across Plan 9.
+- WSL conversion remains successful after writing rollout/history/session indexes. The explicit `codex resume <id>` command lets Codex discover the rollout and repair its state DB inside WSL.
+- Native Windows Codex state registration remains strict and unchanged.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Matched Codex path, enumerated key `2026`, rollout `cwd=/data/tabGo`, requested key `tabGo` | Accept and return `project_key=tabGo` |
+| Matched path but reconciled project key differs | `session_file_not_indexed` |
+| Source or canonical path differs | `session_file_not_indexed` |
+| Cached native Codex path while the active Codex root is WSL | Omit it from legacy seeding, list results, and search results |
+| WSL state DB path | Skip Windows-side SQL registration and return success |
+| Native state DB write fails | Preserve `codex_state_register_failed` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: only the path-matched Codex rollout is opened to reconcile `cwd`; viewing and editing WSL history work without scanning all rollout contents.
+- Good: a background catalog refresh may still be running, but stale rows outside the active source root never enter the visible list or search results.
+- Base: an old rollout has no `cwd`; validation falls back to its enumerated project key.
+- Bad: compare `project_key` before comparing canonical paths, because WSL date directories produce `2026` while the catalog stores the real project name.
+- Bad: trust `roots_key` alone when reading cached catalog rows; old or concurrently refreshed cache data can still contain a path from the previous runtime root.
+- Bad: copy or directly update a live WSL WAL database through UNC.
+
+### 6. Tests Required
+
+- A Codex candidate with path-derived key `2026` and rollout `cwd=/data/tabGo` accepts requested key `tabGo` and rejects an unrelated key.
+- Catalog scope filtering accepts the active WSL rollout, rejects a native Windows rollout under WSL roots, and accepts canonical native paths under native roots.
+- WSL standard and verbatim UNC rollout paths convert to the same Linux runtime path; native paths remain unchanged.
+- WSL state DB paths disable direct registration; native state DB paths keep it enabled.
+- Run `cargo test history --lib`, `cargo check`, and `npx tsc --noEmit`.
+- On Windows with Codex running in WSL, verify conversion succeeds while `state_5.sqlite-wal/-shm` are open and `codex resume <id>` loads the converted rollout.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+if candidate.source != source || candidate.project_key != project_key {
+    continue;
+}
+return cached_rows;
+SqliteConnection::connect(state_db_on_wsl_unc).await?;
+```
+
+#### Correct
+
+```rust
+if candidate.source == source && candidate_path == requested {
+    let project_key = project_key_from_rollout_cwd(&candidate_path)
+        .unwrap_or(candidate.project_key);
+    // Compare the authoritative key only for the matched path.
+}
+
+cached_rows.retain(|row| {
+    catalog_path_within_roots(&row.source, &row.file_path, roots)
+});
+
+if should_register_codex_state_db(&state_db_path) {
+    register_codex_thread_native(...).await?;
+}
+```
