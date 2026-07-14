@@ -462,3 +462,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 简化 Worktree Tab 标题
+
+**Date**: 2026-07-14
+**Task**: 简化 Worktree Tab 标题
+**Branch**: `master`
+
+### Summary
+
+统一新建、分屏、历史恢复及范围内 Worktree 终端标题为任务名，并更新 TEMP 变更记录与功能清单。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5619a3e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

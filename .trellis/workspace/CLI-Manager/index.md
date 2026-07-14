@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-07-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~464 | Active |
+| `journal-1.md` | ~497 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-07-14 | 简化 Worktree Tab 标题 | `5619a3e` | `master` |
 | 13 | 2026-07-14 | 修复 Worktree 今日项目用量统计 | `12a2b50` | `master` |
 | 12 | 2026-07-14 | 统一应用内文本输入弹窗 | `4132e23` | `master` |
 | 11 | 2026-07-14 | 修复本地路径打开权限 | `8701471` | `master` |
