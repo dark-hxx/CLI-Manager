@@ -46,9 +46,9 @@ const { t } = useI18n();
 
 **Tests**: Run `npx tsc --noEmit` and `npm run build`; manually verify Settings > General language switching changes the touched UI and persists after restart. Smoke-test hover cards/tooltips, right-side action buttons, session history, stats panels, toast/system notifications, and hook notifications when those areas are touched.
 
-### Convention: Text input prompts use themed application dialogs
+### Convention: Text input and confirmation prompts use themed application dialogs
 
-**What**: User-facing flows that request text input must use a themed application dialog such as `useAppPrompt`. Do not call `window.prompt` anywhere in frontend code.
+**What**: User-facing flows that request text input or confirmation must use themed application dialogs such as `useAppPrompt` and `useAppConfirm`. Do not call `window.prompt` or `window.confirm` anywhere in frontend code.
 
 **Why**: WebView prompt styling and behavior vary by platform, do not follow the application theme, and create an inconsistent desktop experience.
 
@@ -58,13 +58,17 @@ const { t } = useI18n();
 const { prompt, promptDialog } = useAppPrompt();
 const name = await prompt({ title: t("settings.statuslineProfiles.createPrompt") });
 
-return <>{promptDialog}</>;
+const { confirm, confirmDialog } = useAppConfirm();
+const confirmed = await confirm({ title: t("sidebar.toast.unsavedFileConfirm"), danger: true });
+
+return <>{promptDialog}{confirmDialog}</>;
 ```
 
 **Wrong**:
 
 ```tsx
 const name = window.prompt("Enter a name");
+const confirmed = window.confirm("Discard changes?");
 ```
 
 **Contracts**:
@@ -72,9 +76,10 @@ const name = window.prompt("Enter a name");
 - Dialog text must use the existing i18n system.
 - Cancel resolves without performing the operation.
 - Name-like values are trimmed and empty values cannot be submitted by default. Use an explicit `allowEmpty` option only when blank input has a defined action such as clearing an optional custom name.
+- Confirmation dialogs resolve to `true` only after explicit confirmation; cancel, Escape, close, replacement, or component unmount resolve to `false`.
 - Sequential workflows such as import conflict resolution must stop without committing when the user cancels.
 
-**Tests**: Run `rg "window\\.prompt" src` and expect no matches; run `npx tsc --noEmit`; manually verify submit, Enter, Escape, cancel, default values, empty input, and both supported languages.
+**Tests**: Run `rg "window\\.(prompt|confirm)" src` and expect no matches; run `npx tsc --noEmit`; manually verify submit, confirm, Enter, Escape, cancel, default values, empty input, danger styling, and both supported languages.
 
 ### Convention: Persisted font family values must be CSS-serialized before applying
 

@@ -25,6 +25,7 @@ import { backgroundAssetUrl } from "../../../lib/assetUrl";
 import { formatFileSize } from "../../../lib/utils";
 import { logError } from "../../../lib/logger";
 import { useI18n } from "../../../lib/i18n";
+import { useAppConfirm } from "@/components/ui/useAppConfirm";
 
 interface SavedBackground {
   relativePath: string;
@@ -77,6 +78,7 @@ const POSITION_LABEL_EN: Record<TerminalBackgroundPosition, string> = {
 
 export function TerminalBackgroundSection({ embedded = false }: { embedded?: boolean }) {
   const { language } = useI18n();
+  const { confirm, confirmDialog } = useAppConfirm();
   const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const terminalBackground = useSettingsStore((s) => s.terminalBackground);
   const update = useSettingsStore((s) => s.update);
@@ -166,22 +168,23 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
     }
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
     if (!imagePath && !terminalBackgroundMissing) return;
-    if (!window.confirm(text("移除背景图?", "Remove background image?"))) return;
-    void (async () => {
-      await update("terminalBackground", {
-        ...terminalBackground,
-        imagePath: null,
-        imageSizeBytes: null,
-      });
-      clearTerminalBackgroundMissing();
-      try {
-        await invoke("cleanup_unused_backgrounds", { keepRelativePaths: [] });
-      } catch (err) {
-        logError("cleanup_unused_backgrounds failed", { err });
-      }
-    })();
+    if (!(await confirm({
+      title: text("移除背景图?", "Remove background image?"),
+      danger: true,
+    }))) return;
+    await update("terminalBackground", {
+      ...terminalBackground,
+      imagePath: null,
+      imageSizeBytes: null,
+    });
+    clearTerminalBackgroundMissing();
+    try {
+      await invoke("cleanup_unused_backgrounds", { keepRelativePaths: [] });
+    } catch (err) {
+      logError("cleanup_unused_backgrounds failed", { err });
+    }
   };
 
   const detailsDisabled = !enabled;
@@ -280,7 +283,7 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
                       {saving ? text("保存中...", "Saving...") : imagePath ? text("更换图片", "Change Image") : text("选择图片...", "Choose Image...")}
                     </Button>
                     {imagePath && (
-                      <Button variant="subtle" color="red" size="xs" onClick={handleClear} disabled={saving}>
+                      <Button variant="subtle" color="red" size="xs" onClick={() => void handleClear()} disabled={saving}>
                         {text("清除", "Clear")}
                       </Button>
                     )}
@@ -404,6 +407,7 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
           </Card>
         </Stack>
       </Stack>
+      {confirmDialog}
     </section>
   );
 }

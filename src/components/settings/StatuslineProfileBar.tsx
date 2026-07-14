@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { StatuslineProfileState } from "@/lib/statuslineProfiles";
 import { useI18n } from "@/lib/i18n";
 import { useAppPrompt } from "@/components/ui/useAppPrompt";
+import { useAppConfirm } from "@/components/ui/useAppConfirm";
 
 interface Props<T> {
   state: StatuslineProfileState<T> | null;
@@ -32,6 +33,7 @@ export function StatuslineProfileBar<T>({
 }: Props<T>) {
   const { t } = useI18n();
   const { prompt, promptDialog } = useAppPrompt();
+  const { confirm, confirmDialog } = useAppConfirm();
   const active = state?.profiles.find((profile) => profile.id === state.activeProfileId);
   const profileName = (name: string) => name === "__current__" ? t("settings.statuslineProfiles.current") : name;
   const run = (action: () => Promise<void>) => action().catch((error) => toast.error(t("settings.statuslineProfiles.operationFailed"), { description: String(error) }));
@@ -44,8 +46,13 @@ export function StatuslineProfileBar<T>({
           data={(state?.profiles ?? []).map((profile) => ({ value: profile.id, label: profileName(profile.name) }))}
           onChange={(value) => {
             if (!value || value === state?.activeProfileId) return;
-            if (dirty && !window.confirm(t("settings.statuslineProfiles.discardConfirm"))) return;
-            void run(() => onSwitch(value));
+            void (async () => {
+              if (dirty && !(await confirm({
+                title: t("settings.statuslineProfiles.discardConfirm"),
+                danger: true,
+              }))) return;
+              await run(() => onSwitch(value));
+            })();
           }}
           placeholder={t("settings.statuslineProfiles.loading")}
           disabled={!state || busy}
@@ -92,9 +99,12 @@ export function StatuslineProfileBar<T>({
             </Menu.Item>
             {(state?.profiles ?? []).filter((profile) => profile.id !== state?.activeProfileId).map((profile) => (
               <Menu.Item key={profile.id} color="red" leftSection={<Trash2 size={14} />} onClick={() => {
-                if (window.confirm(t("settings.statuslineProfiles.deleteConfirm").replace("{name}", profileName(profile.name)))) {
-                  void run(() => onDelete(profile.id));
-                }
+                void confirm({
+                  title: t("settings.statuslineProfiles.deleteConfirm").replace("{name}", profileName(profile.name)),
+                  danger: true,
+                }).then((confirmed) => {
+                  if (confirmed) void run(() => onDelete(profile.id));
+                });
               }}>
                 {t("settings.statuslineProfiles.deleteNamed").replace("{name}", profileName(profile.name))}
               </Menu.Item>
@@ -113,6 +123,7 @@ export function StatuslineProfileBar<T>({
         </Group>
       )}
       {promptDialog}
+      {confirmDialog}
     </>
   );
 }

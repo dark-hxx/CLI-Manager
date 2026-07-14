@@ -23,6 +23,7 @@ import { SettingsListItem } from "@/components/settings/SettingsListItem";
 import { StatuslineProfileBar } from "@/components/settings/StatuslineProfileBar";
 import { useStatuslineProfiles, type StatuslineImportAnalysis, type StatuslineImportDecision, type StatuslineProfileState } from "@/lib/statuslineProfiles";
 import { useAppPrompt } from "@/components/ui/useAppPrompt";
+import { useAppConfirm } from "@/components/ui/useAppConfirm";
 
 const COLOR_DEFINITIONS = [
   ["", "默认 (Default)", "transparent"], ["black", "黑色 (Black)", "#000000"], ["red", "红色 (Red)", "#cc0000"],
@@ -150,6 +151,7 @@ function ClaudeStatuslineEditor({
   reloadToken: number;
 }) {
   const { language, t } = useI18n();
+  const { confirm, confirmDialog } = useAppConfirm();
   const terminalFontFamily = useSettingsStore((state) => state.fontFamily);
   const ccSwitchDbPath = useSettingsStore((state) => state.ccSwitchDbPath);
   const normalizedTerminalFontFamily = useMemo(() => normalizeTerminalFontFamily(terminalFontFamily), [terminalFontFamily]);
@@ -379,7 +381,7 @@ function ClaudeStatuslineEditor({
   };
 
   const installFonts = async () => {
-    if (!window.confirm(t("settings.statusline.powerlineFontInstallConfirm"))) return;
+    if (!(await confirm({ title: t("settings.statusline.powerlineFontInstallConfirm") }))) return;
     setInstallingFonts(true);
     try {
       const result = await invoke<PowerlineFontInstallResult>("statusline_powerline_install_fonts");
@@ -563,6 +565,7 @@ function ClaudeStatuslineEditor({
           )}
         </DragOverlay>
       </DndContext>
+      {confirmDialog}
     </Stack>
   );
 }

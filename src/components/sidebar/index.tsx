@@ -18,6 +18,7 @@ import type { TerminalPaneSplitDirection } from "../../stores/terminalPaneTree";
 import type { HistorySourceFilter, Project, TreeNode as TNode, Group, TerminalScope, WorktreeRecord } from "../../lib/types";
 import { ConfigModal } from "../ConfigModal";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { useAppConfirm } from "../ui/useAppConfirm";
 import { ProviderSwitchModal } from "../ProviderSwitchModal";
 import { WorktreeFinishDialog } from "../worktree/WorktreeFinishDialog";
 import { openWindowsTerminal } from "../../lib/externalTerminal";
@@ -179,6 +180,7 @@ export function Sidebar({
   onTerminalScopeChange,
 }: SidebarProps) {
   const { t } = useI18n();
+  const { confirm, confirmDialog: appConfirmDialog } = useAppConfirm();
   const {
     tree,
     projects,
@@ -1236,7 +1238,10 @@ export function Sidebar({
   const handleOpenProjectFiles = useCallback(async (project: Project) => {
     try {
       if (!isSameProjectFileContext(fileProject, project) && isProjectFileDirty()) {
-        const confirmed = window.confirm(t("sidebar.toast.unsavedFileConfirm"));
+        const confirmed = await confirm({
+          title: t("sidebar.toast.unsavedFileConfirm"),
+          danger: true,
+        });
         if (!confirmed) return;
       }
       await openFileProject(project);
@@ -1246,7 +1251,7 @@ export function Sidebar({
       logError("Failed to open project file browser", err);
       toast.error(t("sidebar.toast.openProjectFilesFailed"), { description: String(err) });
     }
-  }, [closeHistory, fileProject, openFileProject, t]);
+  }, [closeHistory, confirm, fileProject, openFileProject, t]);
 
   const handleOpenWorktreeFiles = useCallback(async (project: Project, worktree: WorktreeRecord) => {
     await handleOpenProjectFiles(projectWithWorktreePath(project, worktree));
@@ -1859,6 +1864,7 @@ export function Sidebar({
       data-sidebar-density={sidebarDensity}
       style={{ width: compactMode ? "100%" : sidebarWidth }}
     >
+      {appConfirmDialog}
       <div className="ui-sidebar-top">
         <SidebarHeader
           collapsed={compactMode ? false : sidebarCollapsed}

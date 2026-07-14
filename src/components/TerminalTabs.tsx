@@ -60,6 +60,7 @@ import { WorktreeIcon } from "./WorktreeIcon";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
 import { useAppPrompt } from "./ui/useAppPrompt";
+import { useAppConfirm } from "./ui/useAppConfirm";
 import { useHistoryStore } from "../stores/historyStore";
 import { useSystemResources } from "../hooks/useSystemResources";
 import {
@@ -2089,6 +2090,7 @@ export function TerminalTabs({
 }: TerminalTabsProps = {}) {
   const { t } = useI18n();
   const { prompt, promptDialog } = useAppPrompt();
+  const { confirm, confirmDialog } = useAppConfirm();
   const { sessions, activeSessionId, workspans, activeWorkspanId, tabNotifications } = useTerminalStore(
     useShallow((s) => ({
       sessions: s.sessions,
@@ -2941,7 +2943,10 @@ export function TerminalTabs({
     try {
       const sameFileContext = isSameProjectFileContext(fileProject, project);
       if (!sameFileContext && isProjectFileDirty()) {
-        const confirmed = window.confirm(t("sidebar.toast.unsavedFileConfirm"));
+        const confirmed = await confirm({
+          title: t("sidebar.toast.unsavedFileConfirm"),
+          danger: true,
+        });
         if (!confirmed) return false;
       }
       if (sameFileContext) return true;
@@ -2952,7 +2957,7 @@ export function TerminalTabs({
       toast.error(t("sidebar.toast.openProjectFilesFailed"), { description: String(err) });
       return false;
     }
-  }, [fileProject, openFileProject, t]);
+  }, [confirm, fileProject, openFileProject, t]);
 
   const closeFilesPanel = useCallback(() => {
     if (sidePanelMerged) {
@@ -3712,6 +3717,7 @@ export function TerminalTabs({
       style={terminalWellStyle}
     >
       {promptDialog}
+      {confirmDialog}
       <SplitProjectPicker
         picker={splitPicker}
         tree={projectTree}
