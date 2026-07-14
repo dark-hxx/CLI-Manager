@@ -32,6 +32,7 @@ import { decodeOscPathValue, parseOsc7Cwd } from "../lib/terminalOscPath";
 import { findTerminalFileLinks, resolveTerminalFileSystemPath } from "../lib/terminalFileLinks";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
+import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
 import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
 import {
   clampTextCursorIndex,
@@ -530,13 +531,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const hiddenForThisSession = useTerminalStore((s) => s.hiddenBackgroundSessionIds.has(sessionId));
 
   const [assetUrl, setAssetUrl] = useState<string | null>(null);
-  const [menuState, setMenuState] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
   const [inactiveReplayPending, setInactiveReplayPending] = useState(false);
   const [visibilityRestorePending, setVisibilityRestorePending] = useState(false);
   const [suggestionGhost, setSuggestionGhost] = useState<TerminalSuggestionGhostState | null>(null);
   const [linuxGraphicsConstrained, setLinuxGraphicsConstrained] = useState(false);
   const [linuxGraphicsDisableWebgl, setLinuxGraphicsDisableWebgl] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  const { menuState, menuRef, openMenu, closeContextMenu } = useTerminalContextMenu();
   const osPlatformRef = useRef<OsPlatform>("unknown");
   const codexImeDebugRef = useRef<CodexImeDebugState>({
     compositionEndAt: -1,
@@ -1821,10 +1821,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         keyboardInputSelection = null;
         selectedInputSnapshot = null;
         terminal.focus();
-        setMenuState(null);
+        closeContextMenu();
         return;
       }
-      setMenuState({ x: e.clientX, y: e.clientY, hasSelection: false });
+      openMenu(e.clientX, e.clientY, false);
     };
     contextMenuTarget.addEventListener("contextmenu", onContextMenu);
 
@@ -3543,8 +3543,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     color: searchForeground,
   };
 
-  const closeContextMenu = () => setMenuState(null);
-
   const handleMenuCopy = () => {
     const terminal = terminalRef.current;
     closeContextMenu();
@@ -3608,28 +3606,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const hasManageActions = Boolean(
     onNewTab || onCloseSession || onCloseOthers || onCloseToLeft || onCloseToRight || onSplitRight || onSplitDown
   );
-
-  useEffect(() => {
-    if (!menuState) return;
-    const close = () => setMenuState(null);
-    const onPointerDown = (e: MouseEvent) => {
-      if (menuRef.current?.contains(e.target as Node)) return;
-      setMenuState(null);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuState(null);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("scroll", close, true);
-    window.addEventListener("blur", close);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("scroll", close, true);
-      window.removeEventListener("blur", close);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menuState]);
 
   // When the background image is active, an opaque wrapper background would
   // cover the pseudo-element image layer and break the transparency model.
