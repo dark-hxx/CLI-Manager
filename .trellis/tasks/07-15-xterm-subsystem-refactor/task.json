@@ -1,0 +1,31 @@
+{
+  "id": "xterm-subsystem-refactor",
+  "name": "xterm-subsystem-refactor",
+  "title": "XTermTerminal 子系统化重构（编排层 + Display/Input/Osc）",
+  "description": "",
+  "status": "todo",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-07-15",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/components/XTermTerminal.tsx",
+    "src/hooks/useTerminalSearch.ts",
+    "src/hooks/useTerminalContextMenu.ts",
+    "src/lib/terminalOscParse.ts"
+  ],
+  "notes": "第1层纯函数抽离(fa85bb4)、域K搜索(f1980a6)、域L右键菜单(4419f91)、域D OSC解析(cde76a5) 已完成。本 task 覆盖剩余的编排层重构 + Display/Input 子系统化 + 修复 a/b。",
+  "meta": {}
+}
