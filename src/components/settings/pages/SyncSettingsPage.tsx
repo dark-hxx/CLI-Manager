@@ -49,10 +49,11 @@ const DOMAIN_OPTIONS: { value: SyncDataDomain; label: string; labelEn: string }[
   { value: "projects", label: "项目", labelEn: "Projects" },
   { value: "groups", label: "分组", labelEn: "Groups" },
   { value: "command_templates", label: "命令模板", labelEn: "Command Templates" },
+  { value: "third_party_hook_notifications", label: "", labelEn: "" },
 ];
 
 export function SyncSettingsPage() {
-  const { language } = useI18n();
+  const { language, t } = useI18n();
   const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
   const {
     webdavUrl,
@@ -103,6 +104,7 @@ export function SyncSettingsPage() {
     "projects",
     "groups",
     "command_templates",
+    "third_party_hook_notifications",
   ]);
   const [showImportConfirm, setShowImportConfirm] = useState<string | null>(null);
   const syncModeOptions = SYNC_MODE_OPTIONS.map((option) => ({
@@ -116,7 +118,9 @@ export function SyncSettingsPage() {
   }));
   const domainOptions = DOMAIN_OPTIONS.map((option) => ({
     value: option.value,
-    label: language === "zh-CN" ? option.label : option.labelEn,
+    label: option.value === "third_party_hook_notifications"
+      ? t("settings.sync.domain.thirdPartyHookNotifications")
+      : language === "zh-CN" ? option.label : option.labelEn,
   }));
   const formatDateTime = (value: string | number | Date) => new Date(value).toLocaleString(language, { hour12: false });
 
@@ -210,7 +214,12 @@ export function SyncSettingsPage() {
       }
       setPreview(nextPreview);
       setPreviewMode(mode);
-      setSelectedDomains(["projects", "groups", "command_templates"]);
+      setSelectedDomains([
+        "projects",
+        "groups",
+        "command_templates",
+        "third_party_hook_notifications",
+      ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       toast.error(mode === "upload" ? text("读取同步摘要失败", "Failed to read sync summary") : text("读取云端快照失败", "Failed to read cloud snapshot"), { description: message });
@@ -616,6 +625,7 @@ export function SyncSettingsPage() {
               <Text size="sm" c="var(--on-surface-variant)">{text("上传将覆盖远程配置，下载将覆盖本地配置。", "Upload overwrites remote configuration; download overwrites local configuration.")}</Text>
               <Text size="sm" c="var(--on-surface-variant)">{text("建议在切换设备前先上传，在新设备上下载。", "Upload before switching devices, then download on the new device.")}</Text>
               <Text size="sm" c="var(--on-surface-variant)">{text("密码使用系统安全存储，不会被明文保存。", "Passwords use system secure storage and are not saved as plain text.")}</Text>
+              <Text size="sm" c="yellow" fw={600}>{t("settings.sync.webdavPlaintextWarning")}</Text>
             </Stack>
           </Card>
         </>
@@ -706,9 +716,10 @@ export function SyncSettingsPage() {
             <Text fw={600} c="var(--on-surface)">{text("使用说明", "Notes")}</Text>
             <Stack mt="xs" gap={4}>
               <Text size="sm" c="var(--on-surface-variant)">{text("导出文件名格式：cli-manager-sync-YYYYMMDD-HHmmss.zip（保留历史）。", "Export file name: cli-manager-sync-YYYYMMDD-HHmmss.zip (history kept).")}</Text>
-              <Text size="sm" c="var(--on-surface-variant)">{text("导入时将覆盖本地所有项目、分组和模板配置，操作不可撤销。", "Import overwrites all local projects, groups, and templates. This cannot be undone.")}</Text>
+              <Text size="sm" c="var(--on-surface-variant)">{t("settings.sync.localImportOverwriteNote")}</Text>
+              <Text size="sm" c="var(--on-surface-variant)">{t("settings.sync.localImportScope")}</Text>
               <Text size="sm" c="var(--on-surface-variant)">{text("可将目录指向云盘同步盘（OneDrive / 坚果云 / Dropbox 等）以实现跨设备同步。", "Point the directory to a cloud drive folder such as OneDrive, Nutstore, or Dropbox for cross-device sync.")}</Text>
-              <Text size="sm" c="var(--on-surface-variant)">{text("同步内容仅包括项目、分组、命令模板，不包括 WebDAV 密码与终端会话。", "Sync includes projects, groups, and command templates only; WebDAV passwords and terminal sessions are excluded.")}</Text>
+              <Text size="sm" c="yellow" fw={600}>{t("settings.sync.localPlaintextWarning")}</Text>
             </Stack>
           </Card>
         </>
@@ -754,10 +765,12 @@ export function SyncSettingsPage() {
                     </Card>
                   )}
                   <Text mt="xs" size="xs" c="var(--on-surface-variant)">
-                    {text(
-                      `${item.projects} 个项目 · ${item.groups} 个分组 · ${item.commandTemplates} 个模板`,
-                      `${item.projects} projects · ${item.groups} groups · ${item.commandTemplates} templates`
-                    )}
+                    {t("settings.sync.previewCounts", {
+                      projects: item.projects,
+                      groups: item.groups,
+                      templates: item.commandTemplates,
+                      targets: item.thirdPartyHookTargets,
+                    })}
                   </Text>
                   <Stack mt="xs" gap={4}>
                     <Text size="xs" c="var(--on-surface-variant)">{text("项目：", "Projects: ")}{item.projectNames.join(language === "zh-CN" ? "、" : ", ") || text("无", "None")}</Text>
@@ -826,7 +839,7 @@ export function SyncSettingsPage() {
                 <AlertTriangle size={16} />
               </ThemeIcon>
               <Text size="sm" c="var(--on-surface-variant)" style={{ overflowWrap: "anywhere" }}>
-                  {text("从 ", "Importing from ")}<span className="font-mono">{showImportConfirm}</span>{text(" 导入将覆盖本地所有项目、分组和模板配置，此操作不可撤销。", " will overwrite all local projects, groups, and templates. This cannot be undone.")}
+                {t("settings.sync.localImportOverwrite", { path: showImportConfirm })}
               </Text>
             </Group>
             <Group justify="flex-end" gap="xs">

@@ -13,6 +13,7 @@
 ### 新增
 - **文件编辑器多编码文本兼容**：项目文件预览、编辑、内容搜索和 Git Diff 支持自动识别 UTF-8/BOM、UTF-16 BOM 及 GBK、Big5、Shift_JIS、Windows-125x 等常见文本编码；保存时保持原编码和 BOM，遇到原编码无法表示的新字符时阻止写入，避免乱码或静默转码。非 UTF-8 Diff 为保护原始字节禁用行级与 Hunk 级回滚，整文件 Git 操作保持可用。
 - **第三方 Hook 通知（Issue #134）**：Hook 设置页新增“三方 Hook 通知”，支持配置多组 DingTalk、Feishu、WeCom、Bark、PushPlus、WxPusher、ServerChan、Telegram、ntfy、Gotify 和 Custom HTTP 通知目标；CLI-Manager 收到 Claude/Codex Hook 后由实际接收端异步批量 fan-out，支持按事件筛选、测试发送、平台业务码判断和少量 emoji 摘要文案。远程通知只发送 CLI 来源、项目名、事件、时间和通知 ID，不发送 Prompt、终端输出、绝对路径、session/tab id 或 transcript；第三方请求失败不会阻塞 Hook 204、本地 toast、系统通知、终端状态更新或 daemon 后台任务。
+- **第三方 Hook 通知配置同步**：WebDAV 快照与本地 zip 同步包新增完整三方 Hook 通知配置，包含全局开关、目标、事件筛选及 Webhook、Token、Secret、自定义 Header/Body 等凭证；下载支持独立选择恢复域，旧快照不会清空本地配置，远端目标恢复前统一校验并限制为 20 个。同步设置页仅展示目标数量，不泄露凭证，并以警告色明确提示这些凭证会明文写入 `sync.json`、HTTP 无传输加密且 HTTPS 仅保护传输链路；WebDAV 密码仍只保存在系统凭据存储中。
 
 ### 历史与统计
 - **历史用量分析全屏看板**：历史用量分析改为应用窗口内全屏工作区，Token / 费用趋势独占中间整行，底部按项目排行、模型排行、24 小时活跃和 Token 构成四列展示，并保留原有筛选、下钻和其他统计能力。

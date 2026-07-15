@@ -4,14 +4,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { getDb, batchInsert } from "../lib/db";
 import { getCliManagerDataPaths } from "../lib/appPaths";
 import { useProjectStore } from "./projectStore";
+import { useSettingsStore } from "./settingsStore";
 import { useWorktreeStore } from "./worktreeStore";
 import { logInfo } from "../lib/logger";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../lib/shell";
+import { sanitizeThirdPartyHookTargets } from "../lib/thirdPartyNotifications";
 
 export type SyncStatus = "idle" | "syncing" | "success" | "error" | "conflict";
 export type SyncMode = "cloud" | "local";
 export type AutoSyncAction = "off" | "upload" | "download";
-export type SyncDataDomain = "projects" | "groups" | "command_templates";
+export type SyncDataDomain = "projects" | "groups" | "command_templates" | "third_party_hook_notifications";
 
 interface SyncMeta {
   device_id: string;
@@ -51,6 +53,7 @@ export interface SyncSnapshotSummary {
   projects: number;
   groups: number;
   commandTemplates: number;
+  thirdPartyHookTargets: number;
   projectNames: string[];
   groupNames: string[];
   templateNames: string[];
@@ -122,7 +125,12 @@ async function getStore() {
 
 const SYNC_DATA_VERSION = 1;
 const AUTO_SYNC_ACTIONS: readonly AutoSyncAction[] = ["off", "upload", "download"];
-const SYNC_DATA_DOMAINS: readonly SyncDataDomain[] = ["projects", "groups", "command_templates"];
+const SYNC_DATA_DOMAINS: readonly SyncDataDomain[] = [
+  "projects",
+  "groups",
+  "command_templates",
+  "third_party_hook_notifications",
+];
 const HTTP_NOT_FOUND_PATTERN = /HTTP error:\s*(404|409)\b/i;
 const REMOTE_SYNC_UNAVAILABLE_MESSAGE = "无法从云端同步";
 const PROJECT_SYNC_SELECT =
@@ -204,6 +212,12 @@ function normalizeWorktreeStatus(value: unknown): string {
 
 function toInteger(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+}
+
+function asSyncSettings(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 async function refreshSyncedStores() {
@@ -608,6 +622,7 @@ async function collectLocalSyncData(
   const groups = await db.select<Record<string, unknown>[]>(GROUP_SYNC_SELECT);
   const commandTemplates = await db.select<Record<string, unknown>[]>(TEMPLATE_SYNC_SELECT);
   const worktrees = await db.select<Record<string, unknown>[]>(WORKTREE_SYNC_SELECT);
+  const settings = useSettingsStore.getState();
   return {
     version: SYNC_DATA_VERSION,
     device_id: deviceId,
@@ -618,18 +633,23 @@ async function collectLocalSyncData(
       groups,
       command_templates: commandTemplates,
       worktrees,
-      settings: {},
+      settings: {
+        thirdPartyHookNotificationsEnabled: settings.thirdPartyHookNotificationsEnabled,
+        thirdPartyHookTargets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets),
+      },
     },
   };
 }
 
 function summarizeSyncData(data: SyncData, fallbackDeviceName: string): SyncSnapshotSummary {
+  const settings = asSyncSettings(data.data.settings);
   return {
     deviceName: data.device_name?.trim() || fallbackDeviceName,
     lastModified: data.last_modified,
     projects: data.data.projects.length,
     groups: data.data.groups.length,
     commandTemplates: data.data.command_templates.length,
+    thirdPartyHookTargets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets).length,
     projectNames: data.data.projects.slice(0, 5).map((item) => String(item.name ?? "未命名项目")),
     groupNames: data.data.groups.slice(0, 5).map((item) => String(item.name ?? "未命名分组")),
     templateNames: data.data.command_templates.slice(0, 5).map((item) => String(item.name ?? "未命名模板")),
@@ -643,6 +663,7 @@ function createMissingRemoteSummary(deviceName: string): SyncSnapshotSummary {
     projects: 0,
     groups: 0,
     commandTemplates: 0,
+    thirdPartyHookTargets: 0,
     projectNames: [],
     groupNames: [],
     templateNames: [],
@@ -660,10 +681,33 @@ async function applySyncData(
   const shouldApplyGroups = selectedDomains.includes("groups");
   const shouldApplyProjects = selectedDomains.includes("projects");
   const shouldApplyTemplates = selectedDomains.includes("command_templates");
+  const shouldApplyThirdPartyHookNotifications = selectedDomains.includes("third_party_hook_notifications");
   const backupProjects = await db.select<Record<string, unknown>[]>("SELECT * FROM projects");
   const backupGroups = await db.select<Record<string, unknown>[]>("SELECT * FROM groups");
   const backupTemplates = await db.select<Record<string, unknown>[]>("SELECT * FROM command_templates");
   const backupWorktrees = await db.select<Record<string, unknown>[]>("SELECT * FROM worktrees");
+  const currentSettings = useSettingsStore.getState();
+  const backupThirdPartyHookNotificationsEnabled = currentSettings.thirdPartyHookNotificationsEnabled;
+  const backupThirdPartyHookTargets = currentSettings.thirdPartyHookTargets;
+  const remoteSettings = asSyncSettings(data.data.settings);
+  const hasRemoteThirdPartyHookNotificationsEnabled = Object.prototype.hasOwnProperty.call(
+    remoteSettings,
+    "thirdPartyHookNotificationsEnabled",
+  );
+  const hasRemoteThirdPartyHookTargets = Object.prototype.hasOwnProperty.call(
+    remoteSettings,
+    "thirdPartyHookTargets",
+  );
+  const shouldApplyThirdPartyHookTargets =
+    shouldApplyThirdPartyHookNotifications && hasRemoteThirdPartyHookTargets;
+  const remoteThirdPartyHookTargets = shouldApplyThirdPartyHookTargets
+    ? sanitizeThirdPartyHookTargets(remoteSettings.thirdPartyHookTargets)
+    : backupThirdPartyHookTargets;
+  const appliedSettingsKeys: Array<
+    "thirdPartyHookNotificationsEnabled" | "thirdPartyHookTargets"
+  > = [];
+  const shouldApplyDatabaseData = shouldApplyTemplates || shouldApplyProjects || shouldApplyGroups;
+  let databaseMutated = false;
 
   const nowStr = Date.now().toString();
   const os = await getOsPlatform();
@@ -800,7 +844,8 @@ async function applySyncData(
   };
 
   try {
-    if (shouldApplyTemplates || shouldApplyProjects || shouldApplyGroups) {
+    if (shouldApplyDatabaseData) {
+      databaseMutated = true;
       await db.execute("DELETE FROM command_templates");
     }
     if (shouldApplyProjects || shouldApplyGroups) {
@@ -829,6 +874,22 @@ async function applySyncData(
       await insertTemplates(finalTemplates, finalProjectIds);
     }
 
+    if (
+      shouldApplyThirdPartyHookNotifications &&
+      hasRemoteThirdPartyHookNotificationsEnabled &&
+      typeof remoteSettings.thirdPartyHookNotificationsEnabled === "boolean"
+    ) {
+      await useSettingsStore.getState().update(
+        "thirdPartyHookNotificationsEnabled",
+        remoteSettings.thirdPartyHookNotificationsEnabled,
+      );
+      appliedSettingsKeys.push("thirdPartyHookNotificationsEnabled");
+    }
+    if (shouldApplyThirdPartyHookTargets) {
+      await useSettingsStore.getState().update("thirdPartyHookTargets", remoteThirdPartyHookTargets);
+      appliedSettingsKeys.push("thirdPartyHookTargets");
+    }
+
     await db.execute(
       "INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)",
       [deviceId, data.last_modified, data.last_modified]
@@ -838,22 +899,42 @@ async function applySyncData(
   } catch (error) {
     console.error("Failed to apply sync data, restoring backup:", error);
 
-    try {
-      await db.execute("DELETE FROM command_templates");
-      await db.execute("DELETE FROM worktrees");
-      await db.execute("DELETE FROM projects");
-      await db.execute("DELETE FROM groups");
+    if (appliedSettingsKeys.includes("thirdPartyHookNotificationsEnabled")) {
+      try {
+        await useSettingsStore.getState().update(
+          "thirdPartyHookNotificationsEnabled",
+          backupThirdPartyHookNotificationsEnabled,
+        );
+      } catch (restoreSettingsError) {
+        console.error("Failed to restore synced notification enable setting:", restoreSettingsError);
+      }
+    }
+    if (appliedSettingsKeys.includes("thirdPartyHookTargets")) {
+      try {
+        await useSettingsStore.getState().update("thirdPartyHookTargets", backupThirdPartyHookTargets);
+      } catch (restoreSettingsError) {
+        console.error("Failed to restore synced notification targets:", restoreSettingsError);
+      }
+    }
 
-      const backupGroupIds = new Set(backupGroups.map((group) => String(group.id)));
-      const backupProjectIds = new Set(backupProjects.map((project) => String(project.id)));
-      await insertGroups(backupGroups);
-      await insertProjects(backupProjects, backupGroupIds);
-      await insertWorktrees(backupWorktrees, backupProjectIds);
-      await insertTemplates(backupTemplates, backupProjectIds);
+    if (databaseMutated) {
+      try {
+        await db.execute("DELETE FROM command_templates");
+        await db.execute("DELETE FROM worktrees");
+        await db.execute("DELETE FROM projects");
+        await db.execute("DELETE FROM groups");
 
-      logInfo("Backup restored successfully");
-    } catch (restoreError) {
-      console.error("Failed to restore backup:", restoreError);
+        const backupGroupIds = new Set(backupGroups.map((group) => String(group.id)));
+        const backupProjectIds = new Set(backupProjects.map((project) => String(project.id)));
+        await insertGroups(backupGroups);
+        await insertProjects(backupProjects, backupGroupIds);
+        await insertWorktrees(backupWorktrees, backupProjectIds);
+        await insertTemplates(backupTemplates, backupProjectIds);
+
+        logInfo("Backup restored successfully");
+      } catch (restoreError) {
+        console.error("Failed to restore backup:", restoreError);
+      }
     }
 
     throw error;
