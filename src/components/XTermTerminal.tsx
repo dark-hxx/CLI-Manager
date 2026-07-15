@@ -1115,18 +1115,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       // even though WebGL is disabled while a background image is active.
       allowTransparency: true,
       theme: withVisibleSelectionTheme(isTransparentRef.current ? applyTransparency(baseTheme, background.overlayDarken) : baseTheme, false),
-      // OSC 8 超链接（codex 等 CLI 输出）默认点击行为是 window.open，在 Tauri
-      // webview 里会被拦成"是否导航"确认框。接管为系统默认浏览器打开，仅放行
-      // http/https，避免恶意 scheme。
-      linkHandler: {
-        activate: (_event, uri) => openHttpUrl(sessionId, uri),
-      },
     });
     const baseDisposables: TerminalSubsystemDisposable[] = [];
     const displayDisposables: TerminalSubsystemDisposable[] = [];
     const inputDisposables: TerminalSubsystemDisposable[] = [];
     // Keep Claude Code / other TUIs from overriding the app-wide thin cursor via DECSCUSR.
     baseDisposables.push(terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true));
+    // Some full-screen TUIs can tag a broad redraw region with one repository
+    // OSC 8 URI, making unrelated rows look clickable and open the same URL.
+    // Consume OSC 8 metadata while keeping visible URL and file link providers.
+    baseDisposables.push(terminal.parser.registerOscHandler(8, () => true));
 
     const fitAddon = new FitAddon();
     const imageAddon = new ImageAddon({
