@@ -52,6 +52,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Settings,
   SquareSplitHorizontal,
   SquareSplitVertical,
   Terminal,
@@ -2122,7 +2123,7 @@ export function Sidebar({
                     setContextMenu(null);
                   }}
                 >
-                  <Pencil size={14} strokeWidth={1.5} />
+                  <Settings size={14} strokeWidth={1.5} />
                   {t("sidebar.menu.edit")}
                 </button>
                 <div className="context-menu-separator" role="separator" />

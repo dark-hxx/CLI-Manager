@@ -17,8 +17,9 @@ pub mod pty;
 mod shell_resolver;
 pub mod statusline;
 pub mod statusline_profiles;
-mod third_party_notification;
 mod sync;
+mod text_encoding;
+mod third_party_notification;
 mod webdav;
 mod wsl;
 
@@ -604,26 +605,28 @@ pub fn run() {
                 } else {
                     let handle = app.handle().clone();
                     std::thread::spawn(move || match app_paths::cli_manager_data_dir() {
-                    Ok(data_dir) => {
-                        match daemon::client::connect_or_spawn(
-                            handle.clone(),
-                            &data_dir,
-                            cfg!(debug_assertions),
-                        ) {
-                            Ok(client) => {
-                                log::info!(
-                                    "pty daemon connected: 127.0.0.1:{}",
-                                    client.info().port
-                                );
-                                handle.state::<daemon::client::DaemonBridge>().set(client);
-                            }
-                            Err(err) => {
-                                log::warn!("pty daemon unavailable, falling back in-process: {err}")
+                        Ok(data_dir) => {
+                            match daemon::client::connect_or_spawn(
+                                handle.clone(),
+                                &data_dir,
+                                cfg!(debug_assertions),
+                            ) {
+                                Ok(client) => {
+                                    log::info!(
+                                        "pty daemon connected: 127.0.0.1:{}",
+                                        client.info().port
+                                    );
+                                    handle.state::<daemon::client::DaemonBridge>().set(client);
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "pty daemon unavailable, falling back in-process: {err}"
+                                    )
+                                }
                             }
                         }
-                    }
-                    Err(err) => log::warn!("pty daemon skipped (no data dir): {err}"),
-                });
+                        Err(err) => log::warn!("pty daemon skipped (no data dir): {err}"),
+                    });
                 }
             }
             // 注入 appLocalData 目录用于历史索引磁盘缓存（加速冷启动加载）。
@@ -722,8 +725,10 @@ pub fn run() {
             commands::fs::file_search,
             commands::fs::file_search_content,
             commands::fs::file_read_text,
+            commands::fs::file_read_project_text,
             commands::fs::file_read_image,
             commands::fs::file_write_text,
+            commands::fs::file_write_project_text,
             commands::fs::file_create_file,
             commands::fs::file_create_dir,
             commands::fs::file_rename,

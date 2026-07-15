@@ -191,8 +191,19 @@ fn decode_with_known_types<T: for<'de> Deserialize<'de>>(
 }
 
 const CLIENT_FRAME_TYPES: &[&str] = &[
-    "auth", "ping", "list", "create", "write", "resize", "close", "close_all", "attach", "detach",
-    "reconcile", "status", "shutdown",
+    "auth",
+    "ping",
+    "list",
+    "create",
+    "write",
+    "resize",
+    "close",
+    "close_all",
+    "attach",
+    "detach",
+    "reconcile",
+    "status",
+    "shutdown",
 ];
 
 const DAEMON_FRAME_TYPES: &[&str] = &[
@@ -257,8 +268,7 @@ mod tests {
 
     #[test]
     fn unknown_fields_are_ignored() {
-        let decoded =
-            decode_client_frame(r#"{"type":"ping","id":3,"futureField":"x"}"#).unwrap();
+        let decoded = decode_client_frame(r#"{"type":"ping","id":3,"futureField":"x"}"#).unwrap();
         assert_eq!(decoded, ClientFrame::Ping { id: 3 });
     }
 

@@ -11,6 +11,7 @@ use tauri::{AppHandle, State};
 
 use crate::file_watcher::FileWatcherBridge;
 use crate::shell_resolver::silent_command;
+use crate::text_encoding::{decode_text, encode_text};
 
 const TEXT_FILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -65,6 +66,16 @@ pub struct FileEntry {
 pub struct TextFilePayload {
     pub content: String,
     pub size_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTextFilePayload {
+    pub content: String,
+    pub size_bytes: u64,
+    pub encoding: String,
+    pub has_bom: bool,
+    pub guessed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -360,20 +371,31 @@ pub async fn file_read_text(
     relative_path: String,
 ) -> Result<TextFilePayload, String> {
     tokio::task::spawn_blocking(move || {
-        let root = canonical_root(&root_path)?;
-        let path = resolve_existing_path(&root, &relative_path)?;
-        let metadata = fs::metadata(&path).map_err(|err| format!("metadata_failed: {err}"))?;
-        if !metadata.is_file() {
-            return Err("not_file".into());
-        }
-        if metadata.len() > TEXT_FILE_MAX_BYTES {
-            return Err("file_too_large".into());
-        }
-        let bytes = fs::read(&path).map_err(|err| format!("read_file_failed: {err}"))?;
+        let (bytes, size_bytes) = read_text_file_bytes(&root_path, &relative_path)?;
         let content = String::from_utf8(bytes).map_err(|_| "not_utf8".to_string())?;
         Ok(TextFilePayload {
             content,
-            size_bytes: metadata.len(),
+            size_bytes,
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn file_read_project_text(
+    root_path: String,
+    relative_path: String,
+) -> Result<ProjectTextFilePayload, String> {
+    tokio::task::spawn_blocking(move || {
+        let (bytes, size_bytes) = read_text_file_bytes(&root_path, &relative_path)?;
+        let decoded = decode_text(&bytes)?;
+        Ok(ProjectTextFilePayload {
+            content: decoded.content,
+            size_bytes,
+            encoding: decoded.encoding,
+            has_bom: decoded.has_bom,
+            guessed: decoded.guessed,
         })
     })
     .await
@@ -414,16 +436,54 @@ pub async fn file_write_text(
     content: String,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let root = canonical_root(&root_path)?;
-        let path = resolve_target_path(&root, &relative_path)?;
-        if let Some(parent) = path.parent() {
-            ensure_existing_child_within_root(&root, parent)?;
-        }
-        ensure_target_safe_for_write(&root, &path)?;
-        fs::write(&path, content).map_err(|err| format!("write_file_failed: {err}"))
+        write_text_file_bytes(&root_path, &relative_path, content.into_bytes())
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn file_write_project_text(
+    root_path: String,
+    relative_path: String,
+    content: String,
+    encoding: String,
+    has_bom: bool,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let bytes = encode_text(&content, &encoding, has_bom)?;
+        write_text_file_bytes(&root_path, &relative_path, bytes)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+fn read_text_file_bytes(root_path: &str, relative_path: &str) -> Result<(Vec<u8>, u64), String> {
+    let root = canonical_root(root_path)?;
+    let path = resolve_existing_path(&root, relative_path)?;
+    let metadata = fs::metadata(&path).map_err(|err| format!("metadata_failed: {err}"))?;
+    if !metadata.is_file() {
+        return Err("not_file".into());
+    }
+    if metadata.len() > TEXT_FILE_MAX_BYTES {
+        return Err("file_too_large".into());
+    }
+    let bytes = fs::read(&path).map_err(|err| format!("read_file_failed: {err}"))?;
+    Ok((bytes, metadata.len()))
+}
+
+fn write_text_file_bytes(
+    root_path: &str,
+    relative_path: &str,
+    bytes: impl AsRef<[u8]>,
+) -> Result<(), String> {
+    let root = canonical_root(root_path)?;
+    let path = resolve_target_path(&root, relative_path)?;
+    if let Some(parent) = path.parent() {
+        ensure_existing_child_within_root(&root, parent)?;
+    }
+    ensure_target_safe_for_write(&root, &path)?;
+    fs::write(&path, bytes).map_err(|err| format!("write_file_failed: {err}"))
 }
 
 #[tauri::command]
@@ -1068,10 +1128,10 @@ fn collect_content_matches(
             Ok(bytes) => bytes,
             Err(_) => continue,
         };
-        let Ok(content) = String::from_utf8(bytes) else {
+        let Ok(decoded) = decode_text(&bytes) else {
             continue;
         };
-        collect_content_matches_in_file(root, &path, &name, &content, needle, out)?;
+        collect_content_matches_in_file(root, &path, &name, &decoded.content, needle, out)?;
         if out.len() >= CONTENT_SEARCH_MAX_RESULTS {
             return Ok(());
         }
@@ -1393,5 +1453,77 @@ mod tests {
         assert!(matches
             .iter()
             .any(|item| item.path == "src/other.ts" && item.line_number == 1));
+    }
+
+    #[test]
+    fn content_search_decodes_gbk_project_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let (bytes, _, had_errors) = encoding_rs::GBK.encode("第一行\n中文目标内容\n第三行\n");
+        assert!(!had_errors);
+        fs::write(root.join("legacy.cs"), bytes.as_ref()).unwrap();
+        let root = root.canonicalize().unwrap();
+
+        let mut matches = Vec::new();
+        collect_content_matches(&root, &root, "目标", &mut matches).unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path, "legacy.cs");
+        assert_eq!(matches[0].line_number, 2);
+        assert_eq!(matches[0].line_text, "中文目标内容");
+    }
+
+    #[tokio::test]
+    async fn project_text_commands_preserve_gbk_and_reject_unmappable_content() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("legacy.cs");
+        let original = "你好，世界。\n";
+        let (original_bytes, _, had_errors) = encoding_rs::GBK.encode(original);
+        assert!(!had_errors);
+        fs::write(&file, original_bytes.as_ref()).unwrap();
+
+        let root_path = root.to_string_lossy().to_string();
+        assert_eq!(
+            file_read_text(root_path.clone(), "legacy.cs".to_string())
+                .await
+                .unwrap_err(),
+            "not_utf8"
+        );
+        let payload = file_read_project_text(root_path.clone(), "legacy.cs".to_string())
+            .await
+            .unwrap();
+        assert_eq!(payload.content, original);
+        assert_eq!(payload.encoding, "gbk");
+        assert!(!payload.has_bom);
+
+        let updated = "你好，新的世界。\n";
+        file_write_project_text(
+            root_path.clone(),
+            "legacy.cs".to_string(),
+            updated.to_string(),
+            payload.encoding.clone(),
+            payload.has_bom,
+        )
+        .await
+        .unwrap();
+        let (expected_bytes, _, expected_errors) = encoding_rs::GBK.encode(updated);
+        assert!(!expected_errors);
+        assert_eq!(fs::read(&file).unwrap(), expected_bytes.as_ref());
+
+        let before_failed_save = fs::read(&file).unwrap();
+        let error = file_write_project_text(
+            root_path,
+            "legacy.cs".to_string(),
+            "你好🙂".to_string(),
+            payload.encoding,
+            payload.has_bom,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "text_encoding_unmappable");
+        assert_eq!(fs::read(&file).unwrap(), before_failed_save);
     }
 }

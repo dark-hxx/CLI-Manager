@@ -6,12 +6,7 @@ use reqwest::{Client, Url};
 use std::time::{Duration, Instant};
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
-const CONTROLLED_HEADERS: &[&str] = &[
-    "host",
-    "content-length",
-    "transfer-encoding",
-    "connection",
-];
+const CONTROLLED_HEADERS: &[&str] = &["host", "content-length", "transfer-encoding", "connection"];
 
 pub fn build_client() -> Result<Client, NotificationError> {
     Client::builder()
@@ -23,16 +18,25 @@ pub fn build_client() -> Result<Client, NotificationError> {
 }
 
 pub fn validate_url(raw: &str) -> Result<Url, NotificationError> {
-    let url = Url::parse(raw.trim())
-        .map_err(|_| NotificationError::new("invalid_url", "invalid url"))?;
+    let url =
+        Url::parse(raw.trim()).map_err(|_| NotificationError::new("invalid_url", "invalid url"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
-        return Err(NotificationError::new("invalid_url_scheme", "only http/https is allowed"));
+        return Err(NotificationError::new(
+            "invalid_url_scheme",
+            "only http/https is allowed",
+        ));
     }
     if url.host_str().is_none() {
-        return Err(NotificationError::new("invalid_url_host", "url host is required"));
+        return Err(NotificationError::new(
+            "invalid_url_host",
+            "url host is required",
+        ));
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(NotificationError::new("url_credentials_forbidden", "url credentials are not allowed"));
+        return Err(NotificationError::new(
+            "url_credentials_forbidden",
+            "url credentials are not allowed",
+        ));
     }
     Ok(url)
 }
@@ -40,10 +44,15 @@ pub fn validate_url(raw: &str) -> Result<Url, NotificationError> {
 pub fn ensure_safe_header_name(name: &str) -> Result<(), NotificationError> {
     let normalized = name.trim().to_ascii_lowercase();
     if normalized.is_empty()
-        || normalized.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-')
+        || normalized
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '-')
         || CONTROLLED_HEADERS.contains(&normalized.as_str())
     {
-        return Err(NotificationError::new("invalid_header", "header is not allowed"));
+        return Err(NotificationError::new(
+            "invalid_header",
+            "header is not allowed",
+        ));
     }
     Ok(())
 }
@@ -80,7 +89,10 @@ pub async fn execute(
         .await
         .map_err(|err| NotificationError::new("http_response_failed", err.to_string()))?;
     if body.len() > MAX_RESPONSE_BYTES {
-        return Err(NotificationError::new("response_too_large", "response body is too large"));
+        return Err(NotificationError::new(
+            "response_too_large",
+            "response body is too large",
+        ));
     }
     Ok(HttpResponseSnapshot {
         status,

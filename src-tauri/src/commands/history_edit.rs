@@ -126,12 +126,17 @@ fn parse_line_value(file_lines: &SessionFileLines, line_index: usize) -> Result<
 
 /// 行级复核：目标行必须仍解析出同 role 的消息，且规范文本与前端加载时一致。
 /// 前端 `expected_text = editable_text ?? content`，两侧口径见 scan 的省略规则。
-fn ensure_line_matches(value: &Value, expected_role: &str, expected_text: &str) -> Result<String, String> {
+fn ensure_line_matches(
+    value: &Value,
+    expected_role: &str,
+    expected_text: &str,
+) -> Result<String, String> {
     let parsed = parse_message(value).ok_or_else(|| "history_line_conflict".to_string())?;
     if parsed.role != expected_role {
         return Err("history_line_conflict".to_string());
     }
-    let editable = extract_editable_text(value).ok_or_else(|| "message_not_editable".to_string())?;
+    let editable =
+        extract_editable_text(value).ok_or_else(|| "message_not_editable".to_string())?;
     if editable != expected_text && parsed.content != expected_text {
         return Err("history_line_conflict".to_string());
     }
@@ -155,7 +160,10 @@ fn apply_text_to_line(value: &mut Value, new_text: &str) -> Result<(), String> {
     } else {
         None
     };
-    apply_text_to_content(content.ok_or_else(|| "message_not_editable".to_string())?, new_text)
+    apply_text_to_content(
+        content.ok_or_else(|| "message_not_editable".to_string())?,
+        new_text,
+    )
 }
 
 fn apply_text_to_content(content: &mut Value, new_text: &str) -> Result<(), String> {
@@ -255,7 +263,11 @@ fn find_codex_event_pair(
     None
 }
 
-fn rewrite_codex_event_message(file_lines: &mut SessionFileLines, event_line: usize, new_text: &str) -> Result<(), String> {
+fn rewrite_codex_event_message(
+    file_lines: &mut SessionFileLines,
+    event_line: usize,
+    new_text: &str,
+) -> Result<(), String> {
     let mut value = parse_line_value(file_lines, event_line)?;
     if let Some(slot) = value
         .get_mut("payload")
@@ -456,7 +468,12 @@ fn update_message_in_file(
     apply_text_to_line(&mut value, new_text)?;
     file_lines.lines[line_index] = serialize_line(&value)?;
     write_session_file_lines(&file_ref.path, &file_lines)?;
-    finish_edit(file_ref, Some(before_text), Some(new_text.to_string()), backup)
+    finish_edit(
+        file_ref,
+        Some(before_text),
+        Some(new_text.to_string()),
+        backup,
+    )
 }
 
 /// 单条删除 = 批量删除的单目标特例，保证两条入口共用同一套守卫/重链/配对逻辑。
@@ -474,7 +491,11 @@ fn delete_message_in_file(
         expected_text: expected_text.to_string(),
     }];
     let outcome = delete_messages_in_file(file_ref, backups_dir, &targets, expected_updated_at)?;
-    let before_text = outcome.removed.into_iter().next().map(|removed| removed.text);
+    let before_text = outcome
+        .removed
+        .into_iter()
+        .next()
+        .map(|removed| removed.text);
     Ok(HistoryEditOutcome {
         detail: outcome.detail,
         before_text,
@@ -503,8 +524,14 @@ fn delete_messages_in_file(
             return Err("history_line_conflict".to_string());
         }
         let value = parse_line_value(&file_lines, target.line_index)?;
-        let before_text = ensure_line_matches(&value, &target.expected_role, &target.expected_text)?;
-        validated.push((target.line_index, value, target.expected_role.clone(), before_text));
+        let before_text =
+            ensure_line_matches(&value, &target.expected_role, &target.expected_text)?;
+        validated.push((
+            target.line_index,
+            value,
+            target.expected_role.clone(),
+            before_text,
+        ));
     }
     let backup = ensure_backup(&file_ref.path, backups_dir)?;
 
@@ -512,7 +539,9 @@ fn delete_messages_in_file(
     let mut remove_indices: HashSet<usize> = validated.iter().map(|(idx, ..)| *idx).collect();
     for (line_index, value, role, before_text) in &validated {
         if is_codex_message_line(value) {
-            if let Some(pair_line) = find_codex_event_pair(&file_lines, *line_index, role, before_text) {
+            if let Some(pair_line) =
+                find_codex_event_pair(&file_lines, *line_index, role, before_text)
+            {
                 remove_indices.insert(pair_line);
             }
         }
@@ -547,7 +576,11 @@ fn delete_messages_in_file(
         backup_path: Some(backup.to_string_lossy().to_string()),
         removed: validated
             .into_iter()
-            .map(|(line_index, _, role, text)| HistoryRemovedMessage { line_index, role, text })
+            .map(|(line_index, _, role, text)| HistoryRemovedMessage {
+                line_index,
+                role,
+                text,
+            })
             .collect(),
     })
 }
@@ -642,9 +675,8 @@ fn reinsert_message_in_file(
         .find(|idx| editable_message_line(&file_lines, *idx).is_some());
     if let Some(anchor_index) = anchor_above {
         insert_after_message(&mut file_lines, anchor_index, role, text)?;
-    } else if let Some(target_index) =
-        (line_index_hint.min(line_count)..line_count)
-            .find(|idx| editable_message_line(&file_lines, *idx).is_some())
+    } else if let Some(target_index) = (line_index_hint.min(line_count)..line_count)
+        .find(|idx| editable_message_line(&file_lines, *idx).is_some())
     {
         insert_before_message(&mut file_lines, target_index, role, text)?;
     } else {
@@ -733,7 +765,9 @@ fn insert_before_message(
     }
     if is_codex_message_line(&target) {
         let (response, event) = build_codex_inserted_lines(&target, role, text);
-        file_lines.lines.insert(target_index, serialize_line(&event)?);
+        file_lines
+            .lines
+            .insert(target_index, serialize_line(&event)?);
         file_lines
             .lines
             .insert(target_index, serialize_line(&response)?);
@@ -1124,7 +1158,10 @@ mod tests {
         assert_eq!(lines[1]["message"]["content"], json!("edited question"));
         // 其他行原样保留
         assert_eq!(lines[1]["uuid"], json!("u1"));
-        assert_eq!(lines[2]["message"]["content"][0]["text"], json!("answer one"));
+        assert_eq!(
+            lines[2]["message"]["content"][0]["text"],
+            json!("answer one")
+        );
         // detail 反映新文本
         assert!(outcome
             .detail
@@ -1272,9 +1309,13 @@ mod tests {
                 expected_text: "answer one".to_string(),
             },
         ];
-        let outcome =
-            delete_messages_in_file(&file_ref(&session, "claude"), &backups, &targets, updated_at)
-                .unwrap();
+        let outcome = delete_messages_in_file(
+            &file_ref(&session, "claude"),
+            &backups,
+            &targets,
+            updated_at,
+        )
+        .unwrap();
 
         assert_eq!(outcome.removed.len(), 2);
         assert_eq!(outcome.removed[0].text, "question one");
@@ -1573,7 +1614,8 @@ mod tests {
             "edited",
             fingerprint_updated_at(&session) + 1,
         )
-        .err().unwrap();
+        .err()
+        .unwrap();
 
         assert_eq!(err, "history_file_changed");
         // 文件未被改动
@@ -1598,7 +1640,8 @@ mod tests {
             "edited",
             updated_at,
         )
-        .err().unwrap();
+        .err()
+        .unwrap();
         assert_eq!(conflict, "history_line_conflict");
 
         // 非消息行不可编辑
@@ -1611,7 +1654,8 @@ mod tests {
             "edited",
             updated_at,
         )
-        .err().unwrap();
+        .err()
+        .unwrap();
         assert_eq!(not_editable, "history_line_conflict");
     }
 
@@ -1672,13 +1716,23 @@ mod tests {
         let session_ref = file_ref(&session, "claude");
 
         assert_eq!(
-            update_message_in_file(&session_ref, &backups, 1, "user", "question one", "  ", updated_at)
-                .err().unwrap(),
+            update_message_in_file(
+                &session_ref,
+                &backups,
+                1,
+                "user",
+                "question one",
+                "  ",
+                updated_at
+            )
+            .err()
+            .unwrap(),
             "empty_message_text"
         );
         assert_eq!(
             insert_message_in_file(&session_ref, &backups, 1, "system", "text", updated_at)
-                .err().unwrap(),
+                .err()
+                .unwrap(),
             "invalid_insert_role"
         );
     }

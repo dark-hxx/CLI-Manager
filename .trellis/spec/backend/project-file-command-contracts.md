@@ -23,8 +23,10 @@ file_list_dir(root_path: String, relative_path: String) -> Result<Vec<FileEntry>
 file_search(root_path: String, query: String) -> Result<Vec<FileEntry>, String>
 file_search_content(root_path: String, query: String) -> Result<Vec<ContentSearchMatch>, String>
 file_read_text(root_path: String, relative_path: String) -> Result<TextFilePayload, String>
+file_read_project_text(root_path: String, relative_path: String) -> Result<ProjectTextFilePayload, String>
 file_read_image(root_path: String, relative_path: String) -> Result<ImageFilePayload, String>
 file_write_text(root_path: String, relative_path: String, content: String) -> Result<(), String>
+file_write_project_text(root_path: String, relative_path: String, content: String, encoding: String, has_bom: bool) -> Result<(), String>
 file_create_file(root_path: String, parent_path: String, name: String, overwrite: bool) -> Result<(), String>
 file_create_dir(root_path: String, parent_path: String, name: String, overwrite: bool) -> Result<(), String>
 file_rename(root_path: String, relative_path: String, new_name: String, overwrite: bool) -> Result<(), String>
@@ -39,6 +41,7 @@ Payloads:
 FileEntry { name: String, path: String, kind: String, is_symlink: bool, size_bytes: u64, modified_ms: Option<u64> }
 ContentSearchMatch { path: String, name: String, line_number: usize, line_text: String, before: Vec<String>, after: Vec<String> }
 TextFilePayload { content: String, size_bytes: u64 }
+ProjectTextFilePayload { content: String, size_bytes: u64, encoding: String, has_bom: bool, guessed: bool }
 ImageFilePayload { data_base64: String, mime_type: String, size_bytes: u64 }
 ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 ```
@@ -53,10 +56,13 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - `FileEntry.is_symlink` serializes to frontend `isSymlink`; it marks the entry itself as a symlink/reparse-style link, not whether the resolved target is a directory.
 - For WSL UNC roots, `file_list_dir` must avoid Windows Plan 9 directory enumeration and use `wsl.exe -d <distro> --exec find -H <path> -mindepth 1 -maxdepth 1 -printf "%f\0%y\0%Y\0%s\0%T@\0"` so command-line symlink roots are traversable and child directory symlinks can be reported as `kind="directory", is_symlink=true`.
 - The project-creation WSL symlink picker must filter entries to `kind === "directory" && isSymlink === true`; ordinary directories remain visible in the normal project file browser but are not shown in the symlink picker.
-- `file_read_text` only returns UTF-8 text and rejects files larger than `TEXT_FILE_MAX_BYTES`.
+- `file_read_text` only returns UTF-8 text and rejects files larger than `TEXT_FILE_MAX_BYTES`; this stable command remains the internal Replay/sync file contract.
+- `file_read_project_text` is the user-project editor command. It detects UTF-8/BOM, UTF-16 BOM, and common legacy encodings, rejects binary/undecodable content, and returns canonical encoding plus BOM metadata.
+- `file_write_text` keeps its existing UTF-8 signature and behavior for internal data.
+- `file_write_project_text` strictly encodes with the metadata returned by `file_read_project_text`; it must preserve BOM policy and reject unmappable characters instead of replacing them or silently converting to UTF-8.
 - `file_read_image` returns base64 plus MIME type and rejects files larger than `IMAGE_FILE_MAX_BYTES`.
 - `file_search` and `file_search_content` must be bounded: skip known heavy/generated directories, cap returned results, and never broaden WebView file access.
-- `file_search_content` scans only UTF-8 text files within the project root, skips large files and common binary extensions, and returns at most one representative match per file with 1-based line numbers and bounded context snippets.
+- `file_search_content` scans supported user-project text encodings within the project root, skips large/binary/undecodable files and common binary extensions, and returns at most one representative match per file with 1-based line numbers and bounded context snippets.
 - `overwrite=false` must return `target_exists` when the destination exists.
 - `overwrite=true` may replace the target after Rust revalidates the destination stays inside root.
 
@@ -79,9 +85,13 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 | Destination exists without overwrite | `target_exists` |
 | Text file is too large | `file_too_large` |
 | Text file is not UTF-8 | `not_utf8` |
+| Project text file is binary | `binary_file` |
+| Project text encoding cannot be decoded | `text_decode_failed` |
+| Project text encoding label is unsupported on save | `unsupported_text_encoding` |
+| Edited text contains characters unavailable in the original encoding | `text_encoding_unmappable` |
 | Image extension unsupported | `unsupported_image` |
 | Search query is empty or whitespace | returns empty list |
-| Content search file is too large or not UTF-8 | skip file |
+| Content search file is too large, binary, or undecodable | skip file |
 | Search hits exceed backend cap | return capped list |
 
 ### 5. Good/Base/Bad Cases
@@ -92,6 +102,8 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - Good: `file_watch_start(projectPath)` uses a debounced recursive watcher for local Windows paths and returns a stable error such as `wsl_watch_unsupported` when notify cannot be used.
 - Good: watcher events for `src/main.ts` emit `changedPaths: ["src/main.ts"]`, allowing the frontend to refresh `src` instead of every expanded directory.
 - Base: `file_write_text(rootPath, "src/App.tsx", content)` writes only if `src` remains inside `rootPath`.
+- Good: `file_read_project_text` opens GBK or UTF-16 BOM source files and `file_write_project_text` writes them back with the same encoding/BOM.
+- Bad: an unmappable character in a legacy-encoded file is replaced with `?` or triggers an implicit UTF-8 conversion.
 - Base: `file_search(rootPath, "app")` can match file names or project-relative paths, but skips generated directories such as `node_modules`.
 - Bad: the WSL symlink picker must not show ordinary directories with `isSymlink=false`.
 - Bad: `file_delete(rootPath, "")` must fail with `cannot_delete_root`.
@@ -109,6 +121,8 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - Unit-test WSL `find` output parsing marks directory symlinks as `kind="directory", is_symlink=true` and ordinary directories/files as `is_symlink=false`.
 - Unit-test content search returns line/context data and skips heavy/generated directories.
 - Unit-test content search returns only one match per file even when a file contains multiple matching lines.
+- Unit-test project text read/write preserves GBK bytes and leaves the file unchanged when saving unmappable content.
+- Unit-test shared encoding logic covers UTF-8 BOM, UTF-16 LE/BE BOM, legacy encoding detection, binary rejection, and strict encoding failure.
 - Unit-test watcher path filtering keeps project-relative paths stable and ignores generated/noisy directories.
 
 ### 7. Wrong vs Correct

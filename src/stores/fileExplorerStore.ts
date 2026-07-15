@@ -17,6 +17,11 @@ import { isSameProjectFileContext } from "../lib/terminalProject";
 
 type ClipboardMode = "copy" | "move";
 type FileEntryKind = "file" | "directory";
+type DecodedProjectTextFilePayload = ProjectTextFilePayload & {
+  encoding: string;
+  hasBom: boolean;
+  guessed: boolean;
+};
 
 interface FileClipboard {
   mode: ClipboardMode;
@@ -31,8 +36,33 @@ interface ActiveProjectFile {
   content: string;
   savedContent: string;
   image: ProjectImageFilePayload | null;
+  encoding: string | null;
+  hasBom: boolean;
   sizeBytes: number;
   modifiedMs?: number | null;
+}
+
+function errorHasCode(error: unknown, code: string): boolean {
+  return String(error).includes(code);
+}
+
+function fileReadErrorMessage(error: unknown): string {
+  if (errorHasCode(error, "binary_file")) return translateCurrent("files.error.binaryFile");
+  if (errorHasCode(error, "file_too_large")) return translateCurrent("files.error.tooLarge");
+  if (errorHasCode(error, "text_decode_failed") || errorHasCode(error, "text_encoding_unknown")) {
+    return translateCurrent("files.error.encodingUnknown");
+  }
+  return translateCurrent("files.error.readFailed");
+}
+
+function fileSaveErrorMessage(error: unknown): string {
+  if (errorHasCode(error, "text_encoding_unmappable")) {
+    return translateCurrent("files.error.encodingUnmappable");
+  }
+  if (errorHasCode(error, "unsupported_text_encoding") || errorHasCode(error, "text_encode_failed")) {
+    return translateCurrent("files.error.encodingUnsupported");
+  }
+  return translateCurrent("files.error.saveFailed");
 }
 
 interface ActiveProjectDiff {
@@ -389,13 +419,15 @@ async function loadProjectFile(
           content: "",
           savedContent: "",
           image,
+          encoding: null,
+          hasBom: false,
           sizeBytes: image.sizeBytes,
           modifiedMs: entry.modifiedMs ?? null,
         },
       };
     }
 
-    const text = await invoke<ProjectTextFilePayload>("file_read_text", {
+    const text = await invoke<DecodedProjectTextFilePayload>("file_read_project_text", {
       rootPath: project.path,
       relativePath: entry.path,
     });
@@ -407,6 +439,8 @@ async function loadProjectFile(
         content: text.content,
         savedContent: text.content,
         image: null,
+        encoding: text.encoding,
+        hasBom: text.hasBom,
         sizeBytes: text.sizeBytes,
         modifiedMs: entry.modifiedMs ?? null,
       },
@@ -420,10 +454,12 @@ async function loadProjectFile(
         content: "",
         savedContent: "",
         image: null,
+        encoding: null,
+        hasBom: false,
         sizeBytes: entry.sizeBytes,
         modifiedMs: entry.modifiedMs ?? null,
       },
-      errorMessage: String(err),
+      errorMessage: fileReadErrorMessage(err),
     };
   }
 }
@@ -893,7 +929,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         activeDiff: null,
       });
       if (errorMessage) {
-        toast.warning("无法预览此文件", { description: errorMessage });
+        toast.warning(translateCurrent("files.toast.previewFailed"), { description: errorMessage });
       }
     } catch (err) {
       set({ loading: false });
@@ -979,19 +1015,33 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   saveFile: async (path) => {
     const project = get().project;
     const file = get().openFiles.find((item) => item.path === path);
-    if (!project || !file || file.previewKind === "image") return;
-    await invoke("file_write_text", {
-      rootPath: project.path,
-      relativePath: file.path,
-      content: file.content,
-    });
+    if (!project || !file || file.previewKind === "image" || !file.encoding) return;
+    try {
+      await invoke("file_write_project_text", {
+        rootPath: project.path,
+        relativePath: file.path,
+        content: file.content,
+        encoding: file.encoding,
+        hasBom: file.hasBom,
+      });
+    } catch (err) {
+      logError("Failed to save project file", err);
+      toast.error(translateCurrent("files.toast.saveFailed"), {
+        description: fileSaveErrorMessage(err),
+      });
+      throw err;
+    }
     const saved = { ...file, savedContent: file.content };
     set({
       openFiles: get().openFiles.map((file) => file.path === saved.path ? saved : file),
       activeFile: get().activeFilePath === saved.path ? saved : get().activeFile,
     });
-    await get().refreshGitChanges();
-    toast.success("文件已保存");
+    try {
+      await get().refreshGitChanges();
+    } catch (err) {
+      logError("Failed to refresh Git changes after saving project file", err);
+    }
+    toast.success(translateCurrent("files.toast.saved"));
   },
 
   saveActiveFile: async () => {

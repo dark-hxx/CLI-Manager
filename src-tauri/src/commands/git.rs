@@ -1,11 +1,13 @@
 use git2::{build::CheckoutBuilder, DiffOptions, Repository, ResetType, StatusOptions};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::Path;
 use tauri::{AppHandle, State};
 
 use crate::git_watcher::GitWatcherBridge;
 use crate::shell_resolver::silent_command;
+use crate::text_encoding::{decode_text, decode_text_fragment, is_utf8_encoding, DecodedText};
 
 const GIT_DIFF_LINE_STATS_STATUS_LIMIT: usize = 500;
 const GIT_DIFF_LINE_STATS_LINE_LIMIT: usize = 200_000;
@@ -167,6 +169,13 @@ pub struct GitWorktreeSnapshot {
     pub patch_bytes: usize,
     pub patch_truncated: bool,
     pub files: Vec<GitFileChange>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileDiffPayload {
+    pub content: String,
+    pub can_revert_hunks: bool,
 }
 
 /// 获取指定路径的 Git 文件变更列表
@@ -790,7 +799,7 @@ fn build_worktree_patch(repo: &Repository) -> Result<String, String> {
     let diff = repo
         .diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
         .map_err(|e| format!("snapshot_diff_failed: {e}"))?;
-    format_diff_to_text_allow_empty(diff)
+    format_diff_to_text_allow_empty(&diff)
 }
 
 fn build_worktree_snapshot(
@@ -964,7 +973,7 @@ pub async fn git_get_file_diff(
     project_path: String,
     file_path: String,
     status: String,
-) -> Result<String, String> {
+) -> Result<GitFileDiffPayload, String> {
     log::info!(
         "[git_get_file_diff] project_path: {}, file_path: {}, status: {}",
         project_path,
@@ -973,6 +982,7 @@ pub async fn git_get_file_diff(
     );
 
     tokio::task::spawn_blocking(move || {
+        validate_repo_relative_path(&file_path)?;
         let effective_project_path = effective_git_project_path(&project_path);
         let path = Path::new(&effective_project_path);
 
@@ -993,8 +1003,9 @@ pub async fn git_get_file_diff(
                         "该条目是目录（可能为嵌套 Git 仓库），无法显示文件 diff".to_string()
                     );
                 }
-                let content = std::fs::read_to_string(&file_full_path)
-                    .map_err(|e| format!("读取文件失败: {}", e))?;
+                let bytes =
+                    std::fs::read(&file_full_path).map_err(|e| format!("读取文件失败: {}", e))?;
+                let content = decode_text(&bytes)?.content;
 
                 let lines = content.lines().collect::<Vec<_>>();
                 let mut diff_text = format!("diff --git a/{} b/{}\n", file_path, file_path);
@@ -1009,22 +1020,28 @@ pub async fn git_get_file_diff(
                     diff_text.push('\n');
                 }
 
-                Ok(diff_text)
+                Ok(GitFileDiffPayload {
+                    content: diff_text,
+                    can_revert_hunks: false,
+                })
             }
             "A" => {
                 // 新增文件（已暂存）：对比 index vs worktree
+                let encoding = detect_file_diff_encoding(&repo, path, &file_path)?;
                 let mut diff_opts = git2::DiffOptions::new();
                 diff_opts.pathspec(&file_path);
                 diff_opts.context_lines(3);
+                diff_opts.force_text(encoding.is_some());
 
                 let diff = repo
                     .diff_index_to_workdir(None, Some(&mut diff_opts))
                     .map_err(|e| format!("生成 diff 失败: {}", e))?;
 
-                format_diff_to_text(diff, &file_path)
+                format_diff_for_display(diff, &file_path, encoding.as_ref())
             }
             "D" => {
                 // 删除文件：对比 HEAD vs worktree（文件已不存在）
+                let encoding = detect_file_diff_encoding(&repo, path, &file_path)?;
                 let head = repo.head().map_err(|e| format!("获取 HEAD 失败: {}", e))?;
                 let head_tree = head
                     .peel_to_tree()
@@ -1033,15 +1050,17 @@ pub async fn git_get_file_diff(
                 let mut diff_opts = git2::DiffOptions::new();
                 diff_opts.pathspec(&file_path);
                 diff_opts.context_lines(3);
+                diff_opts.force_text(encoding.is_some());
 
                 let diff = repo
                     .diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
                     .map_err(|e| format!("生成 diff 失败: {}", e))?;
 
-                format_diff_to_text(diff, &file_path)
+                format_diff_for_display(diff, &file_path, encoding.as_ref())
             }
             _ => {
                 // 修改文件（M）、重命名（R）：对比 HEAD vs worktree
+                let encoding = detect_file_diff_encoding(&repo, path, &file_path)?;
                 let head = repo.head().map_err(|e| format!("获取 HEAD 失败: {}", e))?;
                 let head_tree = head
                     .peel_to_tree()
@@ -1050,12 +1069,13 @@ pub async fn git_get_file_diff(
                 let mut diff_opts = git2::DiffOptions::new();
                 diff_opts.pathspec(&file_path);
                 diff_opts.context_lines(3);
+                diff_opts.force_text(encoding.is_some());
 
                 let diff = repo
                     .diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
                     .map_err(|e| format!("生成 diff 失败: {}", e))?;
 
-                format_diff_to_text(diff, &file_path)
+                format_diff_for_display(diff, &file_path, encoding.as_ref())
             }
         }
     })
@@ -1274,20 +1294,166 @@ pub async fn git_fork_worktree_snapshot(
     .map_err(|e| format!("task_failed: {e}"))?
 }
 
-fn format_diff_to_text(diff: git2::Diff, file_path: &str) -> Result<String, String> {
-    let patch_text = format_diff_to_text_allow_empty(diff)?;
-    if patch_text.is_empty() {
+fn detect_file_diff_encoding(
+    repo: &Repository,
+    workdir: &Path,
+    file_path: &str,
+) -> Result<Option<DecodedText>, String> {
+    let worktree_path = workdir.join(file_path);
+    let bytes = if worktree_path.is_file() {
+        Some(std::fs::read(&worktree_path).map_err(|e| format!("读取文件失败: {e}"))?)
+    } else {
+        let head_tree = match repo.head().and_then(|head| head.peel_to_tree()) {
+            Ok(tree) => tree,
+            Err(_) => return Ok(None),
+        };
+        let entry = match head_tree.get_path(Path::new(file_path)) {
+            Ok(entry) => entry,
+            Err(_) => return Ok(None),
+        };
+        let blob = match repo.find_blob(entry.id()) {
+            Ok(blob) => blob,
+            Err(_) => return Ok(None),
+        };
+        Some(blob.content().to_vec())
+    };
+
+    match bytes.as_deref().map(decode_text) {
+        Some(Ok(decoded)) => Ok(Some(decoded)),
+        Some(Err("binary_file")) | None => Ok(None),
+        Some(Err(error)) => Err(error.to_string()),
+    }
+}
+
+fn format_diff_for_display(
+    diff: git2::Diff,
+    file_path: &str,
+    encoding_hint: Option<&DecodedText>,
+) -> Result<GitFileDiffPayload, String> {
+    let detected_from_diff;
+    let encoding = if let Some(hint) = encoding_hint {
+        Some(hint)
+    } else {
+        let body = collect_diff_body_bytes(&diff)?;
+        if body.is_empty() {
+            None
+        } else {
+            detected_from_diff = decode_text(&body)?;
+            Some(&detected_from_diff)
+        }
+    };
+
+    let (content, can_revert_hunks) = match encoding {
+        None => (format_diff_to_text_allow_empty(&diff)?, true),
+        Some(detected) if is_utf8_encoding(&detected.encoding) => {
+            (format_diff_to_text_allow_empty(&diff)?, true)
+        }
+        Some(detected) => (
+            format_diff_to_display_text(&diff, &detected.encoding, detected.has_bom)?,
+            false,
+        ),
+    };
+
+    if content.is_empty() {
         return Err(format!("文件 {} 无变更", file_path));
     }
 
-    log::info!(
-        "[git_get_file_diff] diff 生成成功，长度: {}",
-        patch_text.len()
-    );
-    Ok(patch_text)
+    log::info!("[git_get_file_diff] diff 生成成功，长度: {}", content.len());
+    Ok(GitFileDiffPayload {
+        content,
+        can_revert_hunks,
+    })
 }
 
-fn format_diff_to_text_allow_empty(diff: git2::Diff) -> Result<String, String> {
+fn collect_diff_body_bytes(diff: &git2::Diff) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            body.extend_from_slice(line.content());
+        }
+        true
+    })
+    .map_err(|e| format!("打印 diff 失败: {e}"))?;
+    Ok(body)
+}
+
+fn format_diff_to_display_text(
+    diff: &git2::Diff,
+    encoding: &str,
+    has_bom: bool,
+) -> Result<String, String> {
+    let mut display_text = String::new();
+    let mut decode_error = None;
+    let mut pending_utf16le_newline_byte = false;
+
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        if decode_error.is_some() {
+            return true;
+        }
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            let Some(fragment) = normalize_diff_body_fragment(
+                line.content(),
+                encoding,
+                &mut pending_utf16le_newline_byte,
+            ) else {
+                return true;
+            };
+            display_text.push(line.origin());
+            match decode_text_fragment(fragment.as_ref(), encoding, has_bom) {
+                Ok(content) => display_text.push_str(&content),
+                Err(error) => {
+                    decode_error = Some(error);
+                }
+            }
+        } else {
+            match std::str::from_utf8(line.content()) {
+                Ok(content) => display_text.push_str(content),
+                Err(_) => {
+                    decode_error = Some("text_decode_failed");
+                }
+            }
+        }
+        true
+    })
+    .map_err(|e| format!("打印 diff 失败: {e}"))?;
+
+    if let Some(error) = decode_error {
+        return Err(error.to_string());
+    }
+    Ok(display_text)
+}
+
+fn normalize_diff_body_fragment<'a>(
+    bytes: &'a [u8],
+    encoding: &str,
+    pending_utf16le_newline_byte: &mut bool,
+) -> Option<Cow<'a, [u8]>> {
+    if !encoding.eq_ignore_ascii_case("utf-16le") {
+        return Some(Cow::Borrowed(bytes));
+    }
+
+    let mut input = bytes;
+    if *pending_utf16le_newline_byte && input.first() == Some(&0) {
+        input = &input[1..];
+    }
+    *pending_utf16le_newline_byte = false;
+    if input.is_empty() {
+        return None;
+    }
+
+    if input.last() == Some(&b'\n') {
+        *pending_utf16le_newline_byte = true;
+    }
+    if input.len() % 2 == 1 && input.last() == Some(&b'\n') {
+        let mut normalized = Vec::with_capacity(input.len() + 1);
+        normalized.extend_from_slice(input);
+        normalized.push(0);
+        return Some(Cow::Owned(normalized));
+    }
+    Some(Cow::Borrowed(input))
+}
+
+fn format_diff_to_text_allow_empty(diff: &git2::Diff) -> Result<String, String> {
     let mut patch_text = String::new();
 
     diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
@@ -2643,8 +2809,8 @@ mod tests {
     use super::{
         build_reverse_hunk_patch, build_reverse_lines_patch, build_worktree_snapshot,
         build_wsl_git_command_args, collect_git_changes_from_repo, git_delete_untracked_paths,
-        git_fork_worktree_snapshot, git_restore_worktree_snapshot, is_nested_repo_entry,
-        is_no_stash_created, parse_wsl_git_status, parse_wsl_numstat,
+        git_fork_worktree_snapshot, git_get_file_diff, git_restore_worktree_snapshot,
+        is_nested_repo_entry, is_no_stash_created, parse_wsl_git_status, parse_wsl_numstat,
         remove_untracked_snapshot_file, scan_git_repository_paths, should_skip_diff_line_stats,
         validate_branch_name, validate_repo_relative_path, validate_snapshot_branch_name,
         GIT_DIFF_LINE_STATS_STATUS_LIMIT,
@@ -2680,6 +2846,18 @@ mod tests {
         (snapshot.head, snapshot.patch)
     }
 
+    fn commit_all(repo: &Repository, message: &str) {
+        let mut index = repo.index().unwrap();
+        index.add_all(["*"], IndexAddOption::DEFAULT, None).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = Signature::now("CLI Manager", "cli-manager@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+            .unwrap();
+    }
+
     fn tracked_file(repo_path: &str) -> String {
         fs::read_to_string(Path::new(repo_path).join("tracked.txt"))
             .unwrap()
@@ -2690,6 +2868,77 @@ mod tests {
         let repo = Repository::open(repo_path).unwrap();
         let head = repo.head().unwrap();
         head.shorthand().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn file_diff_decodes_gbk_and_disables_partial_revert() {
+        let (_temp, repo_path) = init_temp_repo();
+        let repo = Repository::open(&repo_path).unwrap();
+        let file = Path::new(&repo_path).join("legacy.cs");
+        let old_text = "旧版本中文内容，用于验证传统编码差异。\n";
+        let new_text = "新版本中文内容，用于验证传统编码差异。\n";
+        let (old_bytes, _, old_errors) = encoding_rs::GBK.encode(old_text);
+        assert!(!old_errors);
+        fs::write(&file, old_bytes.as_ref()).unwrap();
+        commit_all(&repo, "add legacy file");
+        let (new_bytes, _, new_errors) = encoding_rs::GBK.encode(new_text);
+        assert!(!new_errors);
+        fs::write(&file, new_bytes.as_ref()).unwrap();
+        drop(repo);
+
+        let payload = git_get_file_diff(repo_path, "legacy.cs".to_string(), "M".to_string())
+            .await
+            .unwrap();
+
+        assert!(payload.content.contains(old_text.trim()));
+        assert!(payload.content.contains(new_text.trim()));
+        assert!(!payload.can_revert_hunks);
+    }
+
+    #[tokio::test]
+    async fn file_diff_decodes_utf16_text_instead_of_treating_it_as_binary() {
+        let (_temp, repo_path) = init_temp_repo();
+        let repo = Repository::open(&repo_path).unwrap();
+        let file = Path::new(&repo_path).join("legacy-utf16.cs");
+        let old_text = "共同第一行。\nUTF16 旧版本中文内容。\n共同第三行。\n";
+        let new_text = "共同第一行。\nUTF16 新版本中文内容。\n共同第三行。\n";
+        fs::write(
+            &file,
+            crate::text_encoding::encode_text(old_text, "utf-16le", true).unwrap(),
+        )
+        .unwrap();
+        commit_all(&repo, "add utf16 file");
+        fs::write(
+            &file,
+            crate::text_encoding::encode_text(new_text, "utf-16le", true).unwrap(),
+        )
+        .unwrap();
+        drop(repo);
+
+        let payload = git_get_file_diff(repo_path, "legacy-utf16.cs".to_string(), "M".to_string())
+            .await
+            .unwrap();
+
+        assert!(payload.content.contains("共同第一行。"));
+        assert!(payload.content.contains("UTF16 旧版本中文内容。"));
+        assert!(payload.content.contains("UTF16 新版本中文内容。"));
+        assert!(payload.content.contains("共同第三行。"));
+        assert!(!payload.content.contains("Binary files"));
+        assert!(!payload.can_revert_hunks);
+    }
+
+    #[tokio::test]
+    async fn utf8_file_diff_keeps_partial_revert_enabled() {
+        let (_temp, repo_path) = init_temp_repo();
+        fs::write(Path::new(&repo_path).join("tracked.txt"), "changed\n").unwrap();
+
+        let payload = git_get_file_diff(repo_path, "tracked.txt".to_string(), "M".to_string())
+            .await
+            .unwrap();
+
+        assert!(payload.content.contains("-base"));
+        assert!(payload.content.contains("+changed"));
+        assert!(payload.can_revert_hunks);
     }
 
     #[test]

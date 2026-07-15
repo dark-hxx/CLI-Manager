@@ -166,8 +166,7 @@ fn host_command_output(
         command.env(key, value);
     }
 
-    output_with_timeout(command, timeout)
-        .map_err(|err| format!("执行 {program} 失败: {err}"))
+    output_with_timeout(command, timeout).map_err(|err| format!("执行 {program} 失败: {err}"))
 }
 
 fn wsl_command_output(

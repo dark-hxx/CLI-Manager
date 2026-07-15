@@ -28,7 +28,10 @@ pub fn build_request(
         "ntfy" => build_ntfy(target, message),
         "gotify" => build_gotify(target, message),
         "custom" => build_custom(target, message),
-        _ => Err(NotificationError::new("unsupported_provider", "unsupported provider")),
+        _ => Err(NotificationError::new(
+            "unsupported_provider",
+            "unsupported provider",
+        )),
     }
 }
 
@@ -58,7 +61,10 @@ pub fn parse_response(
                 ))
             }
         }
-        _ => Err(NotificationError::new("unsupported_provider", "unsupported provider")),
+        _ => Err(NotificationError::new(
+            "unsupported_provider",
+            "unsupported provider",
+        )),
     }
 }
 
@@ -119,7 +125,10 @@ fn build_bark(
         optional_string(&target.config, "basicUsername"),
         optional_string(&target.config, "basicPassword"),
     ) {
-        headers.push(("Authorization".to_string(), basic_auth(&username, &password)));
+        headers.push((
+            "Authorization".to_string(),
+            basic_auth(&username, &password),
+        ));
     }
     Ok(json_post(url, headers, Value::Object(body)))
 }
@@ -156,14 +165,25 @@ fn build_wxpusher(
     if let Some(spt) = optional_string(&target.config, "spt") {
         body.insert("spt".to_string(), Value::String(spt));
     } else {
-        body.insert("appToken".to_string(), Value::String(required_string(&target.config, "appToken")?));
+        body.insert(
+            "appToken".to_string(),
+            Value::String(required_string(&target.config, "appToken")?),
+        );
         if let Some(uids) = optional_string_array(&target.config, "uids") {
-            body.insert("uids".to_string(), Value::Array(uids.into_iter().map(Value::String).collect()));
+            body.insert(
+                "uids".to_string(),
+                Value::Array(uids.into_iter().map(Value::String).collect()),
+            );
         }
         if let Some(topic_ids) = optional_i64_array(&target.config, "topicIds") {
             body.insert(
                 "topicIds".to_string(),
-                Value::Array(topic_ids.into_iter().map(|id| Value::Number(id.into())).collect()),
+                Value::Array(
+                    topic_ids
+                        .into_iter()
+                        .map(|id| Value::Number(id.into()))
+                        .collect(),
+                ),
             );
         }
     }
@@ -206,7 +226,10 @@ fn build_telegram(
     body.insert("text".to_string(), Value::String(message.body.clone()));
     body.insert("disable_web_page_preview".to_string(), Value::Bool(true));
     if let Some(thread_id) = optional_i64(&target.config, "messageThreadId") {
-        body.insert("message_thread_id".to_string(), Value::Number(thread_id.into()));
+        body.insert(
+            "message_thread_id".to_string(),
+            Value::Number(thread_id.into()),
+        );
     }
     Ok(json_post(
         format!("https://api.telegram.org/bot{token}/sendMessage"),
@@ -232,7 +255,11 @@ fn build_ntfy(
     append_auth_headers(target, &mut headers);
     Ok(HttpRequestSpec {
         method: HttpMethod::Post,
-        url: format!("{}/{}", server.trim_end_matches('/'), topic.trim_matches('/')),
+        url: format!(
+            "{}/{}",
+            server.trim_end_matches('/'),
+            topic.trim_matches('/')
+        ),
         headers,
         body: RequestBody::Text(message.body.clone()),
     })
@@ -271,7 +298,12 @@ fn build_custom(
     {
         "GET" => HttpMethod::Get,
         "POST" => HttpMethod::Post,
-        _ => return Err(NotificationError::new("invalid_method", "only GET/POST is allowed")),
+        _ => {
+            return Err(NotificationError::new(
+                "invalid_method",
+                "only GET/POST is allowed",
+            ))
+        }
     };
     let url_template = required_string(&target.config, "url")?;
     let mut query = Vec::new();
@@ -283,13 +315,19 @@ fn build_custom(
             ));
         }
     }
-    let url = append_query(validate_url(&render_template(&url_template, message))?, &query);
+    let url = append_query(
+        validate_url(&render_template(&url_template, message))?,
+        &query,
+    );
     let mut headers = Vec::new();
     if let Some(items) = target.config.get("headers").and_then(Value::as_array) {
         for item in items {
             let key = render_template(&required_string(item, "key")?, message);
             ensure_safe_header_name(&key)?;
-            headers.push((key, render_template(&required_string(item, "value")?, message)));
+            headers.push((
+                key,
+                render_template(&required_string(item, "value")?, message),
+            ));
         }
     }
     let body = match method {
@@ -299,9 +337,11 @@ fn build_custom(
             .as_str()
         {
             "json" => {
-                let value = target.config.get("jsonBody").cloned().unwrap_or_else(|| {
-                    json!({ "title": "{{title}}", "body": "{{body}}" })
-                });
+                let value = target
+                    .config
+                    .get("jsonBody")
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "title": "{{title}}", "body": "{{body}}" }));
                 RequestBody::Json(render_json_templates(value, message))
             }
             "form" => {
@@ -317,10 +357,16 @@ fn build_custom(
                 RequestBody::Form(fields)
             }
             "text" => RequestBody::Text(render_template(
-                &optional_string(&target.config, "textBody").unwrap_or_else(|| "{{body}}".to_string()),
+                &optional_string(&target.config, "textBody")
+                    .unwrap_or_else(|| "{{body}}".to_string()),
                 message,
             )),
-            _ => return Err(NotificationError::new("invalid_body_type", "invalid body type")),
+            _ => {
+                return Err(NotificationError::new(
+                    "invalid_body_type",
+                    "invalid body type",
+                ))
+            }
         },
     };
     Ok(HttpRequestSpec {
@@ -387,7 +433,10 @@ fn parse_json_code(
     }
     Err(NotificationError::new(
         "business_code_failed",
-        format!("{field}={}", code.map_or_else(|| "<missing>".to_string(), |v| v.to_string())),
+        format!(
+            "{field}={}",
+            code.map_or_else(|| "<missing>".to_string(), |v| v.to_string())
+        ),
     ))
 }
 
@@ -403,15 +452,27 @@ fn parse_telegram(response: &HttpResponseSnapshot) -> Result<ProviderAccepted, N
                 .map(|id| id.to_string()),
         });
     }
-    Err(NotificationError::new("business_code_failed", "telegram ok=false"))
+    Err(NotificationError::new(
+        "business_code_failed",
+        "telegram ok=false",
+    ))
 }
 
-fn parse_id(response: &HttpResponseSnapshot, allow_any_2xx: bool) -> Result<ProviderAccepted, NotificationError> {
+fn parse_id(
+    response: &HttpResponseSnapshot,
+    allow_any_2xx: bool,
+) -> Result<ProviderAccepted, NotificationError> {
     if allow_any_2xx && !(200..300).contains(&response.status) {
-        return Err(NotificationError::new("http_status_failed", format!("http status {}", response.status)));
+        return Err(NotificationError::new(
+            "http_status_failed",
+            format!("http status {}", response.status),
+        ));
     }
     if !allow_any_2xx && response.status != 200 {
-        return Err(NotificationError::new("http_status_failed", format!("http status {}", response.status)));
+        return Err(NotificationError::new(
+            "http_status_failed",
+            format!("http status {}", response.status),
+        ));
     }
     let value = response_json(response)?;
     let id = value.get("id").and_then(|id| {
@@ -426,7 +487,10 @@ fn parse_id(response: &HttpResponseSnapshot, allow_any_2xx: bool) -> Result<Prov
             delivery_id: Some(delivery_id),
         })
     } else {
-        Err(NotificationError::new("missing_delivery_id", "delivery id is missing"))
+        Err(NotificationError::new(
+            "missing_delivery_id",
+            "delivery id is missing",
+        ))
     }
 }
 
@@ -466,7 +530,10 @@ fn hmac_base64(key: &[u8], payload: &[u8]) -> Result<String, NotificationError> 
 }
 
 fn basic_auth(username: &str, password: &str) -> String {
-    format!("Basic {}", STANDARD.encode(format!("{username}:{password}")))
+    format!(
+        "Basic {}",
+        STANDARD.encode(format!("{username}:{password}"))
+    )
 }
 
 fn append_auth_headers(target: &ThirdPartyTarget, headers: &mut Vec<(String, String)>) {
@@ -481,7 +548,10 @@ fn append_auth_headers(target: &ThirdPartyTarget, headers: &mut Vec<(String, Str
                 optional_string(&target.config, "basicUsername"),
                 optional_string(&target.config, "basicPassword"),
             ) {
-                headers.push(("Authorization".to_string(), basic_auth(&username, &password)));
+                headers.push((
+                    "Authorization".to_string(),
+                    basic_auth(&username, &password),
+                ));
             }
         }
         _ => {}

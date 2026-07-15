@@ -190,6 +190,7 @@ export function ThemeSettingsPage() {
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const fontSize = useSettingsStore((s) => s.fontSize);
+  const terminalScrollbackCustomEnabled = useSettingsStore((s) => s.terminalScrollbackCustomEnabled);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
   const normalizedFontFamily = normalizeTerminalFontFamily(fontFamily);
@@ -213,6 +214,9 @@ export function ThemeSettingsPage() {
   const [query, setQuery] = useState("");
   const [fontSizeDraft, setFontSizeDraft] = useState(fontSize);
   const [terminalScrollbackRowsDraft, setTerminalScrollbackRowsDraft] = useState(terminalScrollbackRows);
+  const displayedTerminalScrollbackRows = terminalScrollbackCustomEnabled
+    ? terminalScrollbackRowsDraft
+    : TERMINAL_SCROLLBACK_ROWS_DEFAULT;
   const [osPlatform, setOsPlatform] = useState<OsPlatform>("windows");
   const [systemFonts, setSystemFonts] = useState<SystemFontFamily[]>([]);
   const [systemFontsLoading, setSystemFontsLoading] = useState(false);
@@ -692,6 +696,7 @@ export function ThemeSettingsPage() {
                     w={320}
                     label={
                       <Stack gap={4}>
+                        <Text size="xs" c="inherit">{text("默认使用 9000 行；开启自定义后可设置 1000–50000 行。", "Defaults to 9000 rows; enable Custom to choose 1000–50000 rows.")}</Text>
                         <Text size="xs" c="inherit">{text("内存占用：行数越大，每个终端占用越高。", "Memory: more rows consume more memory per terminal.")}</Text>
                         <Text size="xs" c="inherit">{text("多终端影响：同时开很多 Codex/Claude 会话时更明显。", "Multi-terminal impact is more obvious when many Codex/Claude sessions are open.")}</Text>
                         <Text size="xs" c="inherit">
@@ -711,33 +716,47 @@ export function ThemeSettingsPage() {
                     </ActionIcon>
                   </Tooltip>
                 </Group>
-                <NumberInput
-                  min={TERMINAL_SCROLLBACK_ROWS_MIN}
-                  max={TERMINAL_SCROLLBACK_ROWS_MAX}
-                  step={1000}
-                  value={terminalScrollbackRowsDraft}
-                  onChange={(value) => setTerminalScrollbackRowsDraft(typeof value === "number" ? value : Number(value))}
-                  onBlur={() => commitTerminalScrollbackRows()}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") commitTerminalScrollbackRows();
-                  }}
-                  size="xs"
-                  w={104}
-                  aria-label={text("终端回滚行数数值", "Terminal scrollback rows value")}
-                />
+                <Group gap="sm" wrap="nowrap">
+                  <Switch
+                    size="sm"
+                    color="cliPrimary"
+                    label={text("自定义", "Custom")}
+                    checked={terminalScrollbackCustomEnabled}
+                    onChange={(event) => void update("terminalScrollbackCustomEnabled", event.currentTarget.checked)}
+                    aria-label={text("自定义终端回滚行数", "Customize terminal scrollback rows")}
+                  />
+                  <NumberInput
+                    min={TERMINAL_SCROLLBACK_ROWS_MIN}
+                    max={TERMINAL_SCROLLBACK_ROWS_MAX}
+                    step={1000}
+                    value={displayedTerminalScrollbackRows}
+                    onChange={(value) => setTerminalScrollbackRowsDraft(typeof value === "number" ? value : Number(value))}
+                    onBlur={() => commitTerminalScrollbackRows()}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") commitTerminalScrollbackRows();
+                    }}
+                    disabled={!terminalScrollbackCustomEnabled}
+                    size="xs"
+                    w={104}
+                    aria-label={text("终端回滚行数数值", "Terminal scrollback rows value")}
+                  />
+                </Group>
               </Group>
               <Slider
                 min={TERMINAL_SCROLLBACK_ROWS_MIN}
                 max={TERMINAL_SCROLLBACK_ROWS_MAX}
                 step={1000}
-                value={terminalScrollbackRowsDraft}
+                value={displayedTerminalScrollbackRows}
                 onChange={setTerminalScrollbackRowsDraft}
                 onChangeEnd={(value) => commitTerminalScrollbackRows(value)}
+                disabled={!terminalScrollbackCustomEnabled}
                 color="cliPrimary"
                 aria-label={text("终端回滚行数滑杆", "Terminal scrollback rows slider")}
               />
               <Text size="xs" c="var(--text-muted)">
-                {text("控制内置终端可向上回看的历史行数。", "Controls how many history rows the built-in terminal can scroll back.")}
+                {terminalScrollbackCustomEnabled
+                  ? text("控制内置终端可向上回看的历史行数。", "Controls how many history rows the built-in terminal can scroll back.")
+                  : text("当前使用默认 9000 行；开启自定义后可调整。", "Using the default 9000 rows; enable Custom to adjust it.")}
               </Text>
             </Stack>
 

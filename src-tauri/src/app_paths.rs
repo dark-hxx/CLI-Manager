@@ -194,11 +194,13 @@ fn migrate_store_file_with_ignored_keys(
             };
             source_object.retain(|key, _| !ignored_keys.contains(&key.as_str()));
             if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|err| format!("data_migration_failed: {err}"))?;
+                fs::create_dir_all(parent)
+                    .map_err(|err| format!("data_migration_failed: {err}"))?;
             }
             let bytes = serde_json::to_vec_pretty(&Value::Object(source_object))
                 .map_err(|err| format!("data_migration_serialize_failed: {err}"))?;
-            fs::write(target, bytes).map_err(|err| format!("data_migration_write_failed: {err}"))?;
+            fs::write(target, bytes)
+                .map_err(|err| format!("data_migration_write_failed: {err}"))?;
             return Ok(());
         }
         return copy_if_missing(source, target);

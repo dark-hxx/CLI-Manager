@@ -43,6 +43,8 @@ hmac = "0.12.1"
 chrono = { version = "0.4", features = ["serde"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 memchr = "2"
+encoding_rs = "0.8.35"
+chardetng = "1.0.0"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = { version = "2.4.2", features = ["semver"] }

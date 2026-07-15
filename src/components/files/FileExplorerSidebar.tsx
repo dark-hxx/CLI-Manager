@@ -335,6 +335,10 @@ function AutoCollapsedGroupRow({
       style={{ paddingLeft: 8 + depth * 14 }}
       data-tooltip={isOpen ? t("files.autoCollapse.collapse") : t("files.autoCollapse.expand")}
       onClick={onToggle}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
     >
       <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
         <ChevronRight size={12} style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }} />

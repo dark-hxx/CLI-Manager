@@ -40,6 +40,11 @@ interface GitDiffViewerProps {
   useTerminalTheme?: boolean;
 }
 
+interface GitFileDiffPayload {
+  content: string;
+  canRevertHunks: boolean;
+}
+
 const TERMINAL_DIFF_ROOT_STYLE = {
   "--surface": "var(--terminal-theme-background, #0c0e10)",
   "--surface-container-low": "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 86%, var(--terminal-theme-foreground, #f8fafc) 8%)",
@@ -109,12 +114,14 @@ export function GitDiffViewer({
   const [reverting, setReverting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [canRevertHunks, setCanRevertHunks] = useState(false);
 
   useEffect(() => {
     if (providedDiffText !== undefined) {
       setDiffText(providedDiffText);
       setError(null);
       setLoading(false);
+      setCanRevertHunks(false);
       return;
     }
 
@@ -122,22 +129,33 @@ export function GitDiffViewer({
       setDiffText("");
       setError(null);
       setLoading(false);
+      setCanRevertHunks(false);
       return;
     }
 
     let cancelled = false;
     setLoading(true);
+    setCanRevertHunks(false);
 
-    invoke<string>("git_get_file_diff", { projectPath, filePath, status })
-      .then((diff) => {
+    invoke<GitFileDiffPayload>("git_get_file_diff", { projectPath, filePath, status })
+      .then((payload) => {
         if (cancelled) return;
-        setDiffText(diff);
+        setDiffText(payload.content);
+        setCanRevertHunks(payload.canRevertHunks);
         setError(null);
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("[DiffViewerModal] 获取 diff 失败:", err);
-        setError(err instanceof Error ? err.message : String(err));
+        setCanRevertHunks(false);
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("binary_file")) {
+          setError(t("files.error.binaryFile"));
+        } else if (message.includes("text_decode_failed") || message.includes("text_encoding_unknown")) {
+          setError(t("files.error.encodingUnknown"));
+        } else {
+          setError(message);
+        }
       })
       .finally(() => {
         if (cancelled) return;
@@ -147,7 +165,7 @@ export function GitDiffViewer({
     return () => {
       cancelled = true;
     };
-  }, [projectPath, filePath, status, providedDiffText]);
+  }, [projectPath, filePath, status, providedDiffText, t]);
 
   // diff 解析放在 hooks 区（行选择 hook 依赖 hunks，不能在条件 return 之后）。
   const parsed = useMemo(() => {
@@ -192,7 +210,8 @@ export function GitDiffViewer({
   }, []);
 
   // 仅已跟踪文件可回滚；点击后关闭本弹窗并交由上层确认（规避与 z-50 ConfirmDialog 的层级冲突）。
-  const canDiscard = status !== "U" && status !== "??" && !!onRequestDiscard;
+  const canDiscardFile = status !== "U" && status !== "??" && !!onRequestDiscard;
+  const canRevertPartial = canDiscardFile && canRevertHunks;
 
   // Hunk 级回滚：成功后关闭弹窗（内容已变）；失败提示刷新（dry-run 兜底，未损坏文件）。
   const handleRevertHunk = async (hunkIndex: number) => {
@@ -255,7 +274,7 @@ export function GitDiffViewer({
             </h2>
           </div>
           <div className="flex items-center gap-2">
-            {canDiscard && (
+            {canDiscardFile && (
               <button
                 onClick={() => {
                   if (closeOnRevert) onClose?.();
@@ -318,7 +337,7 @@ export function GitDiffViewer({
                 hunks={parsedDiff.hunks}
                 tokens={tokens}
                 selectedChanges={selectedKeys}
-                gutterEvents={canDiscard ? { onClick: toggleSelect } : undefined}
+                gutterEvents={canRevertPartial ? { onClick: toggleSelect } : undefined}
               >
                 {(hunks) =>
                   hunks.flatMap((hunk, index) => [
@@ -333,7 +352,7 @@ export function GitDiffViewer({
                         <span className="truncate text-[11px] text-text-muted">
                           {hunk.content}
                         </span>
-                        {canDiscard && (
+                        {canRevertPartial && (
                           <button
                             onClick={() => handleRevertHunk(index)}
                             disabled={reverting}
@@ -375,8 +394,21 @@ export function GitDiffViewer({
           )}
         </div>
 
+        {!loading && !error && canDiscardFile && !canRevertHunks && parsedDiff && (
+          <div
+            className="border-t px-4 py-2 text-[11px]"
+            style={{
+              borderColor: "color-mix(in srgb, var(--border) 24%, transparent)",
+              backgroundColor: "var(--surface-container-low)",
+              color: "var(--text-muted)",
+            }}
+          >
+            {t("git.diff.nonUtf8PartialRevertDisabled")}
+          </div>
+        )}
+
         {/* 行选择操作条 */}
-        {canDiscard && parsedDiff && (
+        {canRevertPartial && parsedDiff && (
           <div
             className="flex items-center justify-between gap-3 border-t px-4 py-2 text-[11px]"
             style={{

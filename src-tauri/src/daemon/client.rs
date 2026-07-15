@@ -399,7 +399,9 @@ pub fn connect_or_spawn(
                             std::thread::sleep(Duration::from_millis(500));
                             return spawn_and_connect(app_handle, &info_path);
                         }
-                        log::warn!("daemon version mismatch with active sessions, keeping old daemon");
+                        log::warn!(
+                            "daemon version mismatch with active sessions, keeping old daemon"
+                        );
                     }
                     return Ok(client);
                 }
@@ -419,10 +421,7 @@ pub fn connect_or_spawn(
     spawn_and_connect(app_handle, &info_path)
 }
 
-fn spawn_and_connect(
-    app_handle: AppHandle,
-    info_path: &Path,
-) -> Result<Arc<DaemonClient>, String> {
+fn spawn_and_connect(app_handle: AppHandle, info_path: &Path) -> Result<Arc<DaemonClient>, String> {
     spawn_daemon_process()?;
     for _ in 0..SPAWN_RETRY_MAX {
         std::thread::sleep(SPAWN_RETRY_INTERVAL);

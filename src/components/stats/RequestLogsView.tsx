@@ -179,7 +179,7 @@ export function RequestLogsView({ onOpenSession }: RequestLogsViewProps) {
   return (
     <div className="space-y-3">
       <Card className="border-border/70 bg-bg-secondary p-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[120px_minmax(140px,1fr)_minmax(140px,1fr)_minmax(160px,1fr)_auto_auto]">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[120px_minmax(120px,1fr)_minmax(120px,1fr)_minmax(140px,1fr)_132px_auto_132px_auto_auto_auto]">
           <Select
             value={draft.source}
             onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value as RequestLogSourceFilter }))}
@@ -211,6 +211,21 @@ export function RequestLogsView({ onOpenSession }: RequestLogsViewProps) {
             placeholder={t("requestLogs.filter.session")}
             aria-label={t("requestLogs.filter.session")}
           />
+          <StatsDatePicker
+            mode="date"
+            value={draft.startDate}
+            onChange={(value) => setDraft((current) => ({ ...current, startDate: value }))}
+            className={controlClass}
+            ariaLabel={t("requestLogs.filter.startDate")}
+          />
+          <span className="flex items-center justify-center text-[11px] text-text-muted">{t("common.to")}</span>
+          <StatsDatePicker
+            mode="date"
+            value={draft.endDate}
+            onChange={(value) => setDraft((current) => ({ ...current, endDate: value }))}
+            className={controlClass}
+            ariaLabel={t("requestLogs.filter.endDate")}
+          />
           <Button onClick={applyFilters} disabled={invalidRange} size="sm">
             <Search size={13} />
             {t("requestLogs.query")}
@@ -219,24 +234,7 @@ export function RequestLogsView({ onOpenSession }: RequestLogsViewProps) {
             <RotateCcw size={13} />
             {t("requestLogs.reset")}
           </Button>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <StatsDatePicker
-            mode="date"
-            value={draft.startDate}
-            onChange={(value) => setDraft((current) => ({ ...current, startDate: value }))}
-            className={`${controlClass} min-w-[132px]`}
-            ariaLabel={t("requestLogs.filter.startDate")}
-          />
-          <span className="text-[11px] text-text-muted">{t("common.to")}</span>
-          <StatsDatePicker
-            mode="date"
-            value={draft.endDate}
-            onChange={(value) => setDraft((current) => ({ ...current, endDate: value }))}
-            className={`${controlClass} min-w-[132px]`}
-            ariaLabel={t("requestLogs.filter.endDate")}
-          />
-          <Button onClick={() => void syncAndRefresh()} disabled={syncing} className="ml-auto" size="sm">
+          <Button onClick={() => void syncAndRefresh()} disabled={syncing} size="sm">
             <RefreshCw size={13} className={syncing ? "animate-spin" : ""} />
             {syncing ? t("requestLogs.syncing") : t("requestLogs.refresh")}
           </Button>
@@ -254,8 +252,8 @@ export function RequestLogsView({ onOpenSession }: RequestLogsViewProps) {
         ].map((item) => {
           const Icon = item.icon;
           return (
-            <Card key={item.label} className="border-border/70 bg-bg-secondary p-3">
-              <div className="flex items-center gap-2 text-[11px] font-medium text-text-muted"><Icon size={13} />{item.label}</div>
+            <Card key={item.label} className="border-border bg-bg-secondary p-3 text-center shadow-sm">
+              <div className="flex items-center justify-center gap-2 text-[11px] font-medium text-text-muted"><Icon size={13} />{item.label}</div>
               <div className="mt-1 text-[20px] font-semibold tracking-tight text-text-primary">{item.value}</div>
             </Card>
           );
@@ -270,18 +268,18 @@ export function RequestLogsView({ onOpenSession }: RequestLogsViewProps) {
         )}
         {result && result.data.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1080px] border-collapse text-left text-[12px]">
+            <table className="w-full min-w-[1080px] border-collapse text-center text-[12px]">
               <thead className="bg-bg-tertiary text-[11px] font-semibold text-text-muted">
                 <tr>
                   <th className="px-3 py-2.5">{t("requestLogs.column.time")}</th>
                   <th className="px-3 py-2.5">{t("requestLogs.column.source")}</th>
                   <th className="px-3 py-2.5">{t("requestLogs.column.model")}</th>
                   <th className="px-3 py-2.5">{t("requestLogs.column.projectSession")}</th>
-                  <th className="px-3 py-2.5 text-right">{t("requestLogs.column.input")}</th>
-                  <th className="px-3 py-2.5 text-right">{t("requestLogs.column.output")}</th>
-                  <th className="px-3 py-2.5 text-right">{t("requestLogs.column.cost")}</th>
+                  <th className="px-3 py-2.5">{t("requestLogs.column.input")}</th>
+                  <th className="px-3 py-2.5">{t("requestLogs.column.output")}</th>
+                  <th className="px-3 py-2.5">{t("requestLogs.column.cost")}</th>
                   <th className="px-3 py-2.5">{t("requestLogs.column.status")}</th>
-                  <th className="px-3 py-2.5 text-right">{t("requestLogs.column.action")}</th>
+                  <th className="px-3 py-2.5">{t("requestLogs.column.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -298,7 +296,7 @@ export function RequestLogsView({ onOpenSession }: RequestLogsViewProps) {
                       <div className="truncate font-medium text-text-primary" title={item.project_key}>{item.project_key || t("requestLogs.unknownProject")}</div>
                       <div className="mt-0.5 truncate text-[10px] text-text-muted" title={item.session_id}>{item.session_id}</div>
                     </td>
-                    <td className="px-3 py-2.5 text-right font-medium text-text-primary">
+                    <td className="px-3 py-2.5 font-medium text-text-primary">
                       <div>{formatCompact(item.input_tokens, language)}</div>
                       {(item.cache_read_tokens > 0 || item.cache_creation_tokens > 0) && (
                         <div className="mt-0.5 text-[10px] font-normal text-text-muted">
@@ -309,14 +307,14 @@ export function RequestLogsView({ onOpenSession }: RequestLogsViewProps) {
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-medium text-text-primary">{formatCompact(item.output_tokens, language)}</td>
-                    <td className="px-3 py-2.5 text-right font-medium text-text-primary">
+                    <td className="px-3 py-2.5 font-medium text-text-primary">{formatCompact(item.output_tokens, language)}</td>
+                    <td className="px-3 py-2.5 font-medium text-text-primary">
                       {item.unpriced_tokens > 0 ? <span className="text-warning">{t("requestLogs.unpriced")}</span> : formatCost(item.total_cost_usd)}
                     </td>
                     <td className="px-3 py-2.5">
                       <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">{t("requestLogs.status.recorded")}</span>
                     </td>
-                    <td className="px-3 py-2.5 text-right">
+                    <td className="px-3 py-2.5">
                       {item.session_available ? (
                         <Button
                           onClick={() => void onOpenSession(sessionKey(item.source, item.session_id, item.file_path))}

@@ -10,8 +10,8 @@ use super::protocol::{
     SessionStatusInfo, MAX_FRAME_BYTES,
 };
 use crate::claude_hook::{spawn_hook_listener, HookPayloadSink};
-use crate::third_party_notification::DispatcherHandle;
 use crate::pty::manager::{PtyEventSink, PtyManager, PtyProcessStatus};
+use crate::third_party_notification::DispatcherHandle;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -798,9 +798,7 @@ mod tests {
 
     #[test]
     fn session_id_validation() {
-        assert!(is_valid_session_id(
-            "0e0f7b0a-1234-4c5d-9e8f-aabbccddeeff"
-        ));
+        assert!(is_valid_session_id("0e0f7b0a-1234-4c5d-9e8f-aabbccddeeff"));
         assert!(!is_valid_session_id(""));
         assert!(!is_valid_session_id("../etc/passwd"));
         assert!(!is_valid_session_id(&"x".repeat(65)));
@@ -808,8 +806,14 @@ mod tests {
 
     #[test]
     fn hook_events_map_to_task_status() {
-        assert_eq!(map_hook_event_to_task_status("UserPromptSubmit"), Some("running"));
-        assert_eq!(map_hook_event_to_task_status("PermissionRequest"), Some("attention"));
+        assert_eq!(
+            map_hook_event_to_task_status("UserPromptSubmit"),
+            Some("running")
+        );
+        assert_eq!(
+            map_hook_event_to_task_status("PermissionRequest"),
+            Some("attention")
+        );
         assert_eq!(map_hook_event_to_task_status("Stop"), Some("done"));
         assert_eq!(map_hook_event_to_task_status("StopFailure"), Some("failed"));
         assert_eq!(map_hook_event_to_task_status("SessionStart"), None);

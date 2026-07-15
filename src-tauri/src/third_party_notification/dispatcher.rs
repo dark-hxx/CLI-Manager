@@ -41,7 +41,10 @@ impl DispatcherHandle {
             let client = match build_client() {
                 Ok(client) => client,
                 Err(err) => {
-                    warn!("third-party notification http client init failed: {}", err.code);
+                    warn!(
+                        "third-party notification http client init failed: {}",
+                        err.code
+                    );
                     return;
                 }
             };
@@ -130,7 +133,15 @@ async fn send_one(
     let started = std::time::Instant::now();
     let spec = match adapters::build_request(&target, &message, Utc::now()) {
         Ok(spec) => spec,
-        Err(err) => return failed(provider, target_id, started.elapsed().as_millis(), None, err),
+        Err(err) => {
+            return failed(
+                provider,
+                target_id,
+                started.elapsed().as_millis(),
+                None,
+                err,
+            )
+        }
     };
     let host = host_for_log(&spec.url);
     let response = match execute(&client, spec).await {
@@ -140,7 +151,13 @@ async fn send_one(
                 "third-party notification http failed: provider={} target={} host={} code={}",
                 provider, target_id, host, err.code
             );
-            return failed(provider, target_id, started.elapsed().as_millis(), None, err);
+            return failed(
+                provider,
+                target_id,
+                started.elapsed().as_millis(),
+                None,
+                err,
+            );
         }
     };
     let elapsed_ms = response.elapsed_ms;
@@ -363,9 +380,13 @@ mod tests {
         })
         .unwrap();
         assert!(message.title.contains("❌ 执行错误"));
-        assert!(message.body.contains("📌 内容：Claude Code - Unknown Project 执行失败"));
+        assert!(message
+            .body
+            .contains("📌 内容：Claude Code - Unknown Project 执行失败"));
         assert!(message.body.contains("🏷️ 类型：❌ 执行错误"));
-        assert!(message.body.ends_with("📌 内容：Claude Code - Unknown Project 执行失败"));
+        assert!(message
+            .body
+            .ends_with("📌 内容：Claude Code - Unknown Project 执行失败"));
     }
 
     #[test]
@@ -378,8 +399,12 @@ mod tests {
         })
         .unwrap();
         assert!(message.title.contains("🛡️ 待审批"));
-        assert!(message.body.contains("📌 内容：Claude Code - law-promotion 需要你的审批"));
-        assert!(message.body.ends_with("📌 内容：Claude Code - law-promotion 需要你的审批"));
+        assert!(message
+            .body
+            .contains("📌 内容：Claude Code - law-promotion 需要你的审批"));
+        assert!(message
+            .body
+            .ends_with("📌 内容：Claude Code - law-promotion 需要你的审批"));
     }
 
     #[test]

@@ -29,7 +29,8 @@ const SETTINGS_VERSION: u32 = 3;
 const STATUSLINE_DIR: &str = "statusline";
 const SETTINGS_FILE: &str = "settings.json";
 const BUNDLED_POWERLINE_FONT_NAME: &str = "SymbolsNerdFontMono-Regular.ttf";
-const BUNDLED_POWERLINE_FONT: &[u8] = include_bytes!("../resources/fonts/SymbolsNerdFontMono-Regular.ttf");
+const BUNDLED_POWERLINE_FONT: &[u8] =
+    include_bytes!("../resources/fonts/SymbolsNerdFontMono-Regular.ttf");
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -273,22 +274,43 @@ fn home_dir() -> Result<PathBuf, String> {
 fn powerline_font_dirs() -> Result<Vec<PathBuf>, String> {
     let home = home_dir()?;
     #[cfg(target_os = "windows")]
-    return Ok(vec![home.join("AppData/Local/Microsoft/Windows/Fonts"), PathBuf::from(r"C:\Windows\Fonts")]);
+    return Ok(vec![
+        home.join("AppData/Local/Microsoft/Windows/Fonts"),
+        PathBuf::from(r"C:\Windows\Fonts"),
+    ]);
     #[cfg(target_os = "macos")]
-    return Ok(vec![home.join("Library/Fonts"), PathBuf::from("/Library/Fonts"), PathBuf::from("/System/Library/Fonts")]);
+    return Ok(vec![
+        home.join("Library/Fonts"),
+        PathBuf::from("/Library/Fonts"),
+        PathBuf::from("/System/Library/Fonts"),
+    ]);
     #[cfg(target_os = "linux")]
-    return Ok(vec![home.join(".local/share/fonts"), home.join(".fonts"), PathBuf::from("/usr/share/fonts"), PathBuf::from("/usr/local/share/fonts")]);
+    return Ok(vec![
+        home.join(".local/share/fonts"),
+        home.join(".fonts"),
+        PathBuf::from("/usr/share/fonts"),
+        PathBuf::from("/usr/local/share/fonts"),
+    ]);
     #[allow(unreachable_code)]
     Ok(Vec::new())
 }
 
 fn looks_like_powerline_font(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
-    name.contains("powerline") || name.contains("nerdfont") || name.contains("nerd font") || name.contains("meslo") || name.contains("cascadiacodepl") || name.contains("fira code nerd")
+    name.contains("powerline")
+        || name.contains("nerdfont")
+        || name.contains("nerd font")
+        || name.contains("meslo")
+        || name.contains("cascadiacodepl")
+        || name.contains("fira code nerd")
 }
 
 fn powerline_font_status(matched_font: Option<String>) -> PowerlineFontStatus {
-    PowerlineFontStatus { installed: matched_font.is_some(), checked_symbol: "\u{e0b0}", matched_font }
+    PowerlineFontStatus {
+        installed: matched_font.is_some(),
+        checked_symbol: "\u{e0b0}",
+        matched_font,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -299,8 +321,12 @@ fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
     ] {
         let mut command = silent_command("reg.exe");
         command.args(["query", key]);
-        let Ok(output) = output_with_timeout(command, Duration::from_secs(10)) else { continue };
-        if !output.status.success() { continue; }
+        let Ok(output) = output_with_timeout(command, Duration::from_secs(10)) else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let value_name = line.split("REG_").next().unwrap_or(line).trim();
             if looks_like_powerline_font(value_name) {
@@ -325,7 +351,10 @@ fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
         return Ok(powerline_font_status(None));
     };
     if output.status.success() {
-        for family in String::from_utf8_lossy(&output.stdout).lines().flat_map(|line| line.split(',')) {
+        for family in String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .flat_map(|line| line.split(','))
+        {
             let family = family.trim();
             if looks_like_powerline_font(family) {
                 return Ok(powerline_font_status(Some(family.to_string())));
@@ -352,29 +381,58 @@ fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
 fn preferred_powerline_font(fonts: &[PathBuf]) -> Option<&Path> {
     fonts
         .iter()
-        .find(|path| path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(BUNDLED_POWERLINE_FONT_NAME)))
-        .or_else(|| fonts.iter().find(|path| {
-            path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
-                let name = name.to_ascii_lowercase();
-                !name.contains("bold") && !name.contains("italic") && !name.contains("oblique")
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(BUNDLED_POWERLINE_FONT_NAME))
+        })
+        .or_else(|| {
+            fonts.iter().find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        let name = name.to_ascii_lowercase();
+                        !name.contains("bold")
+                            && !name.contains("italic")
+                            && !name.contains("oblique")
+                    })
             })
-        }))
+        })
         .map(PathBuf::as_path)
 }
 
 #[cfg(target_os = "windows")]
 fn activate_powerline_fonts(target: &Path, fonts: &[PathBuf]) -> Result<(), String> {
-    let font = preferred_powerline_font(fonts).ok_or_else(|| "powerline_fonts_not_found".to_string())?;
-    let installed_font = target.join(font.file_name().ok_or_else(|| "powerline_font_invalid_name".to_string())?);
+    let font =
+        preferred_powerline_font(fonts).ok_or_else(|| "powerline_fonts_not_found".to_string())?;
+    let installed_font = target.join(
+        font.file_name()
+            .ok_or_else(|| "powerline_font_invalid_name".to_string())?,
+    );
     let mut wide_path = installed_font.as_os_str().encode_wide().collect::<Vec<_>>();
     wide_path.push(0);
     if unsafe { AddFontResourceExW(wide_path.as_ptr(), 0, std::ptr::null()) } == 0 {
         return Err("powerline_font_activation_failed".to_string());
     }
 
-    let value_name = format!("CLI-Manager {} (TrueType)", installed_font.file_stem().and_then(|name| name.to_str()).unwrap_or("Powerline"));
+    let value_name = format!(
+        "CLI-Manager {} (TrueType)",
+        installed_font
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Powerline")
+    );
     let mut command = silent_command("reg.exe");
-    command.args(["add", r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts", "/v", &value_name, "/t", "REG_SZ", "/d"])
+    command
+        .args([
+            "add",
+            r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+            "/v",
+            &value_name,
+            "/t",
+            "REG_SZ",
+            "/d",
+        ])
         .arg(&installed_font)
         .arg("/f");
     let output = output_with_timeout(command, Duration::from_secs(10))
@@ -393,7 +451,11 @@ fn activate_powerline_fonts(target: &Path, _fonts: &[PathBuf]) -> Result<(), Str
     command.args(["-f"]).arg(target);
     let output = output_with_timeout(command, Duration::from_secs(30))
         .map_err(|error| format!("powerline_font_cache_failed: {error}"))?;
-    if output.status.success() { Ok(()) } else { Err("powerline_font_cache_failed".to_string()) }
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("powerline_font_cache_failed".to_string())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -402,14 +464,22 @@ fn activate_powerline_fonts(_target: &Path, _fonts: &[PathBuf]) -> Result<(), St
 }
 
 fn install_powerline_fonts() -> Result<PowerlineFontInstallResult, String> {
-    let target = powerline_font_dirs()?.into_iter().next().ok_or_else(|| "powerline_font_platform_unsupported".to_string())?;
-    fs::create_dir_all(&target).map_err(|err| format!("powerline_font_create_dir_failed: {err}"))?;
+    let target = powerline_font_dirs()?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "powerline_font_platform_unsupported".to_string())?;
+    fs::create_dir_all(&target)
+        .map_err(|err| format!("powerline_font_create_dir_failed: {err}"))?;
     let installed_font = target.join(BUNDLED_POWERLINE_FONT_NAME);
     fs::write(&installed_font, BUNDLED_POWERLINE_FONT)
         .map_err(|err| format!("powerline_font_write_failed: {err}"))?;
     let fonts = vec![PathBuf::from(BUNDLED_POWERLINE_FONT_NAME)];
     activate_powerline_fonts(&target, &fonts)?;
-    Ok(PowerlineFontInstallResult { success: true, message: "powerline_fonts_installed".to_string(), installed_count: 1 })
+    Ok(PowerlineFontInstallResult {
+        success: true,
+        message: "powerline_fonts_installed".to_string(),
+        installed_count: 1,
+    })
 }
 
 fn legacy_settings_path() -> Result<PathBuf, String> {
@@ -488,8 +558,7 @@ pub(crate) fn load_legacy_settings() -> Result<Option<StatuslineSettings>, Strin
         return Ok(None);
     }
     parse_settings(
-        &fs::read_to_string(path)
-            .map_err(|err| format!("statusline_legacy_read_failed: {err}"))?,
+        &fs::read_to_string(path).map_err(|err| format!("statusline_legacy_read_failed: {err}"))?,
     )
     .map(Some)
 }
@@ -604,7 +673,10 @@ pub fn install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String>
     let path = claude_settings_path()?;
     let mut root = read_json_object(&path)?;
     backup_file(&path)?;
-    root.insert("statusLine".to_string(), managed_status_line(refresh_interval)?);
+    root.insert(
+        "statusLine".to_string(),
+        managed_status_line(refresh_interval)?,
+    );
     let bytes = serde_json::to_vec_pretty(&Value::Object(root)).map_err(|err| err.to_string())?;
     atomic_write(&path, &bytes)?;
     get_status()
@@ -719,7 +791,12 @@ fn git_branch(payload: &Value) -> Option<String> {
 fn git_status_counts(payload: &Value) -> (usize, usize, usize, usize) {
     if let Some(preview) = payload.get("preview_git") {
         let count = |key: &str| preview.get(key).and_then(Value::as_u64).unwrap_or(0) as usize;
-        return (count("staged"), count("unstaged"), count("untracked"), count("conflicts"));
+        return (
+            count("staged"),
+            count("unstaged"),
+            count("untracked"),
+            count("conflicts"),
+        );
     }
     let Some(repo) = git_repo(payload) else {
         return (0, 0, 0, 0);
@@ -939,20 +1016,24 @@ fn render_widget_raw(item: &WidgetItem, payload: &Value) -> Option<String> {
                 String::new()
             }
         }
-        "git-root-dir" => string_at(payload, &["preview_git", "root_dir"]).or_else(|| git_repo(payload)
-            .and_then(|repo| {
-                repo.workdir()
-                    .and_then(Path::file_name)
-                    .map(|name| name.to_string_lossy().to_string())
-            }))
+        "git-root-dir" => string_at(payload, &["preview_git", "root_dir"])
+            .or_else(|| {
+                git_repo(payload).and_then(|repo| {
+                    repo.workdir()
+                        .and_then(Path::file_name)
+                        .map(|name| name.to_string_lossy().to_string())
+                })
+            })
             .unwrap_or_default(),
-        "git-sha" => string_at(payload, &["preview_git", "sha"]).or_else(|| git_repo(payload)
-            .and_then(|repo| {
-                repo.head()
-                    .ok()?
-                    .target()
-                    .map(|oid| oid.to_string()[..7].to_string())
-            }))
+        "git-sha" => string_at(payload, &["preview_git", "sha"])
+            .or_else(|| {
+                git_repo(payload).and_then(|repo| {
+                    repo.head()
+                        .ok()?
+                        .target()
+                        .map(|oid| oid.to_string()[..7].to_string())
+                })
+            })
             .unwrap_or_default(),
         "git-insertions" => format_number(number_at(payload, &["cost", "total_lines_added"])),
         "git-deletions" => format_number(number_at(payload, &["cost", "total_lines_removed"])),
@@ -1041,12 +1122,17 @@ fn ansi_color(name: &str, background: bool) -> Option<String> {
         let code = value.parse::<u8>().ok()?;
         return Some(format!("{};5;{code}", if background { 48 } else { 38 }));
     }
-    let hex = normalized.strip_prefix("hex:").or_else(|| normalized.strip_prefix('#'));
+    let hex = normalized
+        .strip_prefix("hex:")
+        .or_else(|| normalized.strip_prefix('#'));
     if let Some(value) = hex.filter(|value| value.len() == 6) {
         let r = u8::from_str_radix(&value[0..2], 16).ok()?;
         let g = u8::from_str_radix(&value[2..4], 16).ok()?;
         let b = u8::from_str_radix(&value[4..6], 16).ok()?;
-        return Some(format!("{};2;{r};{g};{b}", if background { 48 } else { 38 }));
+        return Some(format!(
+            "{};2;{r};{g};{b}",
+            if background { 48 } else { 38 }
+        ));
     }
     let code = match normalized.to_ascii_lowercase().as_str() {
         "black" => 30,
@@ -1081,54 +1167,444 @@ struct PowerlineThemePalettes {
 fn powerline_theme(name: &str, color_level: u8) -> Option<PowerlinePalette> {
     let palettes = match name {
         "nord" => PowerlineThemePalettes {
-            ansi16: (&["black", "brightWhite", "brightWhite", "black", "black"], &["bgBrightCyan", "bgBrightBlack", "bgBlue", "bgBrightYellow", "bgBrightGreen"]),
-            ansi256: (&["ansi256:16", "ansi256:254", "ansi256:231", "ansi256:231", "ansi256:16"], &["ansi256:73", "ansi256:239", "ansi256:25", "ansi256:96", "ansi256:152"]),
-            truecolor: (&["hex:2E3440", "hex:D8DEE9", "hex:FDF6E3", "hex:2E3440", "hex:2E3440"], &["hex:88C0D0", "hex:4C566A", "hex:5E81AC", "hex:B48EAD", "hex:A3BE8C"]),
+            ansi16: (
+                &["black", "brightWhite", "brightWhite", "black", "black"],
+                &[
+                    "bgBrightCyan",
+                    "bgBrightBlack",
+                    "bgBlue",
+                    "bgBrightYellow",
+                    "bgBrightGreen",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:16",
+                    "ansi256:254",
+                    "ansi256:231",
+                    "ansi256:231",
+                    "ansi256:16",
+                ],
+                &[
+                    "ansi256:73",
+                    "ansi256:239",
+                    "ansi256:25",
+                    "ansi256:96",
+                    "ansi256:152",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:2E3440",
+                    "hex:D8DEE9",
+                    "hex:FDF6E3",
+                    "hex:2E3440",
+                    "hex:2E3440",
+                ],
+                &[
+                    "hex:88C0D0",
+                    "hex:4C566A",
+                    "hex:5E81AC",
+                    "hex:B48EAD",
+                    "hex:A3BE8C",
+                ],
+            ),
         },
         "nord-aurora" => PowerlineThemePalettes {
-            ansi16: (&["brightWhite", "black", "black", "black", "black"], &["bgRed", "bgBrightYellow", "bgBrightBlue", "bgGreen", "bgBrightMagenta"]),
-            ansi256: (&["ansi256:231", "ansi256:16", "ansi256:231", "ansi256:16", "ansi256:16"], &["ansi256:131", "ansi256:220", "ansi256:68", "ansi256:108", "ansi256:176"]),
-            truecolor: (&["hex:ECEFF4", "hex:2E3440", "hex:FDF6E3", "hex:2E3440", "hex:2E3440"], &["hex:BF616A", "hex:EBCB8B", "hex:5E81AC", "hex:A3BE8C", "hex:B48EAD"]),
+            ansi16: (
+                &["brightWhite", "black", "black", "black", "black"],
+                &[
+                    "bgRed",
+                    "bgBrightYellow",
+                    "bgBrightBlue",
+                    "bgGreen",
+                    "bgBrightMagenta",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:231",
+                    "ansi256:16",
+                    "ansi256:231",
+                    "ansi256:16",
+                    "ansi256:16",
+                ],
+                &[
+                    "ansi256:131",
+                    "ansi256:220",
+                    "ansi256:68",
+                    "ansi256:108",
+                    "ansi256:176",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:ECEFF4",
+                    "hex:2E3440",
+                    "hex:FDF6E3",
+                    "hex:2E3440",
+                    "hex:2E3440",
+                ],
+                &[
+                    "hex:BF616A",
+                    "hex:EBCB8B",
+                    "hex:5E81AC",
+                    "hex:A3BE8C",
+                    "hex:B48EAD",
+                ],
+            ),
         },
         "monokai" => PowerlineThemePalettes {
-            ansi16: (&["black", "brightWhite", "black", "white", "black"], &["bgBrightGreen", "bgBrightBlack", "bgBrightYellow", "bgMagenta", "bgBrightCyan"]),
-            ansi256: (&["ansi256:235", "ansi256:255", "ansi256:235", "ansi256:16", "ansi256:235"], &["ansi256:148", "ansi256:238", "ansi256:186", "ansi256:141", "ansi256:81"]),
-            truecolor: (&["hex:272822", "hex:F8F8F2", "hex:272822", "hex:272822", "hex:272822"], &["hex:A6E22E", "hex:49483E", "hex:E6DB74", "hex:AE81FF", "hex:66D9EF"]),
+            ansi16: (
+                &["black", "brightWhite", "black", "white", "black"],
+                &[
+                    "bgBrightGreen",
+                    "bgBrightBlack",
+                    "bgBrightYellow",
+                    "bgMagenta",
+                    "bgBrightCyan",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:235",
+                    "ansi256:255",
+                    "ansi256:235",
+                    "ansi256:16",
+                    "ansi256:235",
+                ],
+                &[
+                    "ansi256:148",
+                    "ansi256:238",
+                    "ansi256:186",
+                    "ansi256:141",
+                    "ansi256:81",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:272822",
+                    "hex:F8F8F2",
+                    "hex:272822",
+                    "hex:272822",
+                    "hex:272822",
+                ],
+                &[
+                    "hex:A6E22E",
+                    "hex:49483E",
+                    "hex:E6DB74",
+                    "hex:AE81FF",
+                    "hex:66D9EF",
+                ],
+            ),
         },
         "solarized" => PowerlineThemePalettes {
-            ansi16: (&["brightWhite", "black", "brightWhite", "black", "black"], &["bgBlue", "bgBrightYellow", "bgBrightBlack", "bgCyan", "bgBrightWhite"]),
-            ansi256: (&["ansi256:231", "ansi256:234", "ansi256:254", "ansi256:16", "ansi256:234"], &["ansi256:33", "ansi256:136", "ansi256:240", "ansi256:37", "ansi256:254"]),
-            truecolor: (&["hex:073642", "hex:073642", "hex:FDF6E3", "hex:073642", "hex:073642"], &["hex:268BD2", "hex:B58900", "hex:586E75", "hex:2AA198", "hex:EEE8D5"]),
+            ansi16: (
+                &["brightWhite", "black", "brightWhite", "black", "black"],
+                &[
+                    "bgBlue",
+                    "bgBrightYellow",
+                    "bgBrightBlack",
+                    "bgCyan",
+                    "bgBrightWhite",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:231",
+                    "ansi256:234",
+                    "ansi256:254",
+                    "ansi256:16",
+                    "ansi256:234",
+                ],
+                &[
+                    "ansi256:33",
+                    "ansi256:136",
+                    "ansi256:240",
+                    "ansi256:37",
+                    "ansi256:254",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:073642",
+                    "hex:073642",
+                    "hex:FDF6E3",
+                    "hex:073642",
+                    "hex:073642",
+                ],
+                &[
+                    "hex:268BD2",
+                    "hex:B58900",
+                    "hex:586E75",
+                    "hex:2AA198",
+                    "hex:EEE8D5",
+                ],
+            ),
         },
         "minimal" => PowerlineThemePalettes {
-            ansi16: (&["brightWhite", "black", "white", "black", "black"], &["bgBrightBlack", "bgBrightWhite", "bgBlack", "bgWhite", "bgBrightWhite"]),
-            ansi256: (&["ansi256:255", "ansi256:232", "ansi256:255", "ansi256:232", "ansi256:252"], &["ansi256:240", "ansi256:251", "ansi256:233", "ansi256:248", "ansi256:236"]),
-            truecolor: (&["hex:FFFFFF", "hex:1C1C1C", "hex:FFFFFF", "hex:1C1C1C", "hex:E4E4E4"], &["hex:585858", "hex:D0D0D0", "hex:1A1A1A", "hex:A8A8A8", "hex:303030"]),
+            ansi16: (
+                &["brightWhite", "black", "white", "black", "black"],
+                &[
+                    "bgBrightBlack",
+                    "bgBrightWhite",
+                    "bgBlack",
+                    "bgWhite",
+                    "bgBrightWhite",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:255",
+                    "ansi256:232",
+                    "ansi256:255",
+                    "ansi256:232",
+                    "ansi256:252",
+                ],
+                &[
+                    "ansi256:240",
+                    "ansi256:251",
+                    "ansi256:233",
+                    "ansi256:248",
+                    "ansi256:236",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:FFFFFF",
+                    "hex:1C1C1C",
+                    "hex:FFFFFF",
+                    "hex:1C1C1C",
+                    "hex:E4E4E4",
+                ],
+                &[
+                    "hex:585858",
+                    "hex:D0D0D0",
+                    "hex:1A1A1A",
+                    "hex:A8A8A8",
+                    "hex:303030",
+                ],
+            ),
         },
         "dracula" => PowerlineThemePalettes {
-            ansi16: (&["brightWhite", "black", "brightWhite", "black", "white"], &["bgMagenta", "bgBrightWhite", "bgRed", "bgBrightCyan", "bgBrightBlack"]),
-            ansi256: (&["ansi256:235", "ansi256:235", "ansi256:235", "ansi256:235", "ansi256:231"], &["ansi256:141", "ansi256:253", "ansi256:204", "ansi256:117", "ansi256:236"]),
-            truecolor: (&["hex:282A36", "hex:282A36", "hex:282A36", "hex:282A36", "hex:F8F8F2"], &["hex:BD93F9", "hex:F8F8F2", "hex:FF5555", "hex:8BE9FD", "hex:44475A"]),
+            ansi16: (
+                &["brightWhite", "black", "brightWhite", "black", "white"],
+                &[
+                    "bgMagenta",
+                    "bgBrightWhite",
+                    "bgRed",
+                    "bgBrightCyan",
+                    "bgBrightBlack",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:235",
+                    "ansi256:235",
+                    "ansi256:235",
+                    "ansi256:235",
+                    "ansi256:231",
+                ],
+                &[
+                    "ansi256:141",
+                    "ansi256:253",
+                    "ansi256:204",
+                    "ansi256:117",
+                    "ansi256:236",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:282A36",
+                    "hex:282A36",
+                    "hex:282A36",
+                    "hex:282A36",
+                    "hex:F8F8F2",
+                ],
+                &[
+                    "hex:BD93F9",
+                    "hex:F8F8F2",
+                    "hex:FF5555",
+                    "hex:8BE9FD",
+                    "hex:44475A",
+                ],
+            ),
         },
         "catppuccin" => PowerlineThemePalettes {
-            ansi16: (&["black", "brightWhite", "black", "brightWhite", "black"], &["bgBrightMagenta", "bgBrightBlack", "bgBrightGreen", "bgBlue", "bgBrightYellow"]),
-            ansi256: (&["ansi256:235", "ansi256:255", "ansi256:235", "ansi256:235", "ansi256:235"], &["ansi256:176", "ansi256:238", "ansi256:150", "ansi256:210", "ansi256:111"]),
-            truecolor: (&["hex:1E1E2E", "hex:CDD6F4", "hex:1E1E2E", "hex:1E1E2E", "hex:CDD6F4"], &["hex:CBA6F7", "hex:45475A", "hex:A6E3A1", "hex:F38BA8", "hex:585B70"]),
+            ansi16: (
+                &["black", "brightWhite", "black", "brightWhite", "black"],
+                &[
+                    "bgBrightMagenta",
+                    "bgBrightBlack",
+                    "bgBrightGreen",
+                    "bgBlue",
+                    "bgBrightYellow",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:235",
+                    "ansi256:255",
+                    "ansi256:235",
+                    "ansi256:235",
+                    "ansi256:235",
+                ],
+                &[
+                    "ansi256:176",
+                    "ansi256:238",
+                    "ansi256:150",
+                    "ansi256:210",
+                    "ansi256:111",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:1E1E2E",
+                    "hex:CDD6F4",
+                    "hex:1E1E2E",
+                    "hex:1E1E2E",
+                    "hex:CDD6F4",
+                ],
+                &[
+                    "hex:CBA6F7",
+                    "hex:45475A",
+                    "hex:A6E3A1",
+                    "hex:F38BA8",
+                    "hex:585B70",
+                ],
+            ),
         },
         "gruvbox" => PowerlineThemePalettes {
-            ansi16: (&["brightWhite", "black", "black", "brightWhite", "black"], &["bgRed", "bgBrightYellow", "bgBrightWhite", "bgBlue", "bgBrightGreen"]),
-            ansi256: (&["ansi256:16", "ansi256:235", "ansi256:235", "ansi256:16", "ansi256:235"], &["ansi256:167", "ansi256:214", "ansi256:246", "ansi256:109", "ansi256:142"]),
-            truecolor: (&["hex:EBDBB2", "hex:282828", "hex:282828", "hex:FDF6E3", "hex:282828"], &["hex:CC241D", "hex:FABD2F", "hex:A89984", "hex:458588", "hex:98971A"]),
+            ansi16: (
+                &["brightWhite", "black", "black", "brightWhite", "black"],
+                &[
+                    "bgRed",
+                    "bgBrightYellow",
+                    "bgBrightWhite",
+                    "bgBlue",
+                    "bgBrightGreen",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:16",
+                    "ansi256:235",
+                    "ansi256:235",
+                    "ansi256:16",
+                    "ansi256:235",
+                ],
+                &[
+                    "ansi256:167",
+                    "ansi256:214",
+                    "ansi256:246",
+                    "ansi256:109",
+                    "ansi256:142",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:EBDBB2",
+                    "hex:282828",
+                    "hex:282828",
+                    "hex:FDF6E3",
+                    "hex:282828",
+                ],
+                &[
+                    "hex:CC241D",
+                    "hex:FABD2F",
+                    "hex:A89984",
+                    "hex:458588",
+                    "hex:98971A",
+                ],
+            ),
         },
         "onedark" => PowerlineThemePalettes {
-            ansi16: (&["black", "brightWhite", "black", "brightWhite", "black"], &["bgBrightBlue", "bgBrightBlack", "bgBrightGreen", "bgRed", "bgBrightYellow"]),
-            ansi256: (&["ansi256:235", "ansi256:251", "ansi256:235", "ansi256:16", "ansi256:235"], &["ansi256:75", "ansi256:237", "ansi256:114", "ansi256:204", "ansi256:180"]),
-            truecolor: (&["hex:282C34", "hex:ABB2BF", "hex:282C34", "hex:282C34", "hex:282C34"], &["hex:61AFEF", "hex:3E4452", "hex:98C379", "hex:E06C75", "hex:E5C07B"]),
+            ansi16: (
+                &["black", "brightWhite", "black", "brightWhite", "black"],
+                &[
+                    "bgBrightBlue",
+                    "bgBrightBlack",
+                    "bgBrightGreen",
+                    "bgRed",
+                    "bgBrightYellow",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:235",
+                    "ansi256:251",
+                    "ansi256:235",
+                    "ansi256:16",
+                    "ansi256:235",
+                ],
+                &[
+                    "ansi256:75",
+                    "ansi256:237",
+                    "ansi256:114",
+                    "ansi256:204",
+                    "ansi256:180",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:282C34",
+                    "hex:ABB2BF",
+                    "hex:282C34",
+                    "hex:282C34",
+                    "hex:282C34",
+                ],
+                &[
+                    "hex:61AFEF",
+                    "hex:3E4452",
+                    "hex:98C379",
+                    "hex:E06C75",
+                    "hex:E5C07B",
+                ],
+            ),
         },
         "tokyonight" => PowerlineThemePalettes {
-            ansi16: (&["brightWhite", "black", "brightWhite", "black", "black"], &["bgBlue", "bgBrightWhite", "bgMagenta", "bgBrightYellow", "bgBrightCyan"]),
-            ansi256: (&["ansi256:16", "ansi256:234", "ansi256:16", "ansi256:234", "ansi256:234"], &["ansi256:111", "ansi256:248", "ansi256:176", "ansi256:221", "ansi256:80"]),
-            truecolor: (&["hex:1A1B26", "hex:1A1B26", "hex:1A1B26", "hex:1A1B26", "hex:1A1B26"], &["hex:7AA2F7", "hex:D5D6DB", "hex:BB9AF7", "hex:E0AF68", "hex:7DCFFF"]),
+            ansi16: (
+                &["brightWhite", "black", "brightWhite", "black", "black"],
+                &[
+                    "bgBlue",
+                    "bgBrightWhite",
+                    "bgMagenta",
+                    "bgBrightYellow",
+                    "bgBrightCyan",
+                ],
+            ),
+            ansi256: (
+                &[
+                    "ansi256:16",
+                    "ansi256:234",
+                    "ansi256:16",
+                    "ansi256:234",
+                    "ansi256:234",
+                ],
+                &[
+                    "ansi256:111",
+                    "ansi256:248",
+                    "ansi256:176",
+                    "ansi256:221",
+                    "ansi256:80",
+                ],
+            ),
+            truecolor: (
+                &[
+                    "hex:1A1B26",
+                    "hex:1A1B26",
+                    "hex:1A1B26",
+                    "hex:1A1B26",
+                    "hex:1A1B26",
+                ],
+                &[
+                    "hex:7AA2F7",
+                    "hex:D5D6DB",
+                    "hex:BB9AF7",
+                    "hex:E0AF68",
+                    "hex:7DCFFF",
+                ],
+            ),
         },
         _ => return None,
     };
@@ -1139,12 +1615,27 @@ fn powerline_theme(name: &str, color_level: u8) -> Option<PowerlinePalette> {
     })
 }
 
-fn styled_segment(text: &str, foreground: Option<&str>, background: Option<&str>, bold: bool) -> String {
+fn styled_segment(
+    text: &str,
+    foreground: Option<&str>,
+    background: Option<&str>,
+    bold: bool,
+) -> String {
     let mut codes = Vec::new();
-    if bold { codes.push("1".to_string()); }
-    if let Some(code) = foreground.and_then(|value| ansi_color(value, false)) { codes.push(code); }
-    if let Some(code) = background.and_then(|value| ansi_color(value, true)) { codes.push(code); }
-    if codes.is_empty() { text.to_string() } else { format!("\x1b[{}m{text}\x1b[0m", codes.join(";")) }
+    if bold {
+        codes.push("1".to_string());
+    }
+    if let Some(code) = foreground.and_then(|value| ansi_color(value, false)) {
+        codes.push(code);
+    }
+    if let Some(code) = background.and_then(|value| ansi_color(value, true)) {
+        codes.push(code);
+    }
+    if codes.is_empty() {
+        text.to_string()
+    } else {
+        format!("\x1b[{}m{text}\x1b[0m", codes.join(";"))
+    }
 }
 
 fn apply_style(text: &str, item: &WidgetItem) -> String {
@@ -1205,20 +1696,46 @@ fn preview_label(widget_type: &str, language: &str) -> Option<&'static str> {
         })
 }
 
-fn render_internal(settings: &StatuslineSettings, payload: &Value, preview_language: Option<&str>) -> Result<String, String> {
+fn render_internal(
+    settings: &StatuslineSettings,
+    payload: &Value,
+    preview_language: Option<&str>,
+) -> Result<String, String> {
     validate_settings(settings)?;
     if settings.powerline.enabled {
-        let mut rows: Vec<Vec<(&WidgetItem, String)>> = settings.lines.iter().take(3).map(|line| line.iter().filter(|item| !matches!(item.widget_type.as_str(), "separator" | "flex-separator")).filter_map(|item| {
-            let mut value = render_widget_raw(item, payload)?;
-            if let Some(label) = preview_language.and_then(|language| preview_label(&item.widget_type, language)) { value = format!("{label}: {value}"); }
-            Some((item, value))
-        }).collect()).collect();
+        let mut rows: Vec<Vec<(&WidgetItem, String)>> = settings
+            .lines
+            .iter()
+            .take(3)
+            .map(|line| {
+                line.iter()
+                    .filter(|item| {
+                        !matches!(item.widget_type.as_str(), "separator" | "flex-separator")
+                    })
+                    .filter_map(|item| {
+                        let mut value = render_widget_raw(item, payload)?;
+                        if let Some(label) = preview_language
+                            .and_then(|language| preview_label(&item.widget_type, language))
+                        {
+                            value = format!("{label}: {value}");
+                        }
+                        Some((item, value))
+                    })
+                    .collect()
+            })
+            .collect();
         if settings.powerline.auto_align {
             let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
             for column in 0..columns {
-                let width = rows.iter().filter_map(|row| row.get(column).map(|(_, value)| value.chars().count())).max().unwrap_or(0);
+                let width = rows
+                    .iter()
+                    .filter_map(|row| row.get(column).map(|(_, value)| value.chars().count()))
+                    .max()
+                    .unwrap_or(0);
                 for row in &mut rows {
-                    if let Some((_, value)) = row.get_mut(column) { value.push_str(&" ".repeat(width.saturating_sub(value.chars().count()))); }
+                    if let Some((_, value)) = row.get_mut(column) {
+                        value.push_str(&" ".repeat(width.saturating_sub(value.chars().count())));
+                    }
                 }
             }
         }
@@ -1227,22 +1744,52 @@ fn render_internal(settings: &StatuslineSettings, payload: &Value, preview_langu
         let mut global_index = 0usize;
         let mut rendered = Vec::new();
         for row in rows {
-            if row.is_empty() { continue; }
+            if row.is_empty() {
+                continue;
+            }
             let mut text = String::new();
             let mut previous_bg: Option<String> = None;
             for (index, (item, value)) in row.iter().enumerate() {
-                let theme_index = if settings.powerline.continue_theme_across_lines { global_index } else { index };
+                let theme_index = if settings.powerline.continue_theme_across_lines {
+                    global_index
+                } else {
+                    index
+                };
                 let (fg, bg) = if theme == "custom" {
                     (item.color.as_deref(), item.background_color.as_deref())
                 } else if let Some((fg, bg)) = palette {
-                    (Some(fg[theme_index % fg.len()]), Some(bg[theme_index % bg.len()]))
-                } else { (item.color.as_deref(), item.background_color.as_deref()) };
-                if index == 0 {
-                    if let Some(cap) = settings.powerline.start_caps.first() { text.push_str(&styled_segment(cap, bg, None, false)); }
+                    (
+                        Some(fg[theme_index % fg.len()]),
+                        Some(bg[theme_index % bg.len()]),
+                    )
                 } else {
-                    let separator = settings.powerline.separators.get((index - 1) % settings.powerline.separators.len().max(1)).map(String::as_str).unwrap_or("\u{e0b0}");
-                    let invert = settings.powerline.separator_invert_background.get((index - 1) % settings.powerline.separator_invert_background.len().max(1)).copied().unwrap_or(false);
-                    let rendered_separator = if invert { styled_segment(separator, bg, previous_bg.as_deref(), false) } else { styled_segment(separator, previous_bg.as_deref(), bg, false) };
+                    (item.color.as_deref(), item.background_color.as_deref())
+                };
+                if index == 0 {
+                    if let Some(cap) = settings.powerline.start_caps.first() {
+                        text.push_str(&styled_segment(cap, bg, None, false));
+                    }
+                } else {
+                    let separator = settings
+                        .powerline
+                        .separators
+                        .get((index - 1) % settings.powerline.separators.len().max(1))
+                        .map(String::as_str)
+                        .unwrap_or("\u{e0b0}");
+                    let invert = settings
+                        .powerline
+                        .separator_invert_background
+                        .get(
+                            (index - 1)
+                                % settings.powerline.separator_invert_background.len().max(1),
+                        )
+                        .copied()
+                        .unwrap_or(false);
+                    let rendered_separator = if invert {
+                        styled_segment(separator, bg, previous_bg.as_deref(), false)
+                    } else {
+                        styled_segment(separator, previous_bg.as_deref(), bg, false)
+                    };
                     text.push_str(&rendered_separator);
                 }
                 let left_padding = if index == 0 { "   " } else { " " };
@@ -1255,9 +1802,13 @@ fn render_internal(settings: &StatuslineSettings, payload: &Value, preview_langu
                 previous_bg = bg.map(str::to_string);
                 global_index += 1;
             }
-            if let Some(cap) = settings.powerline.end_caps.first() { text.push_str(&styled_segment(cap, previous_bg.as_deref(), None, false)); }
+            if let Some(cap) = settings.powerline.end_caps.first() {
+                text.push_str(&styled_segment(cap, previous_bg.as_deref(), None, false));
+            }
             rendered.push(text);
-            if !settings.powerline.continue_theme_across_lines { global_index = 0; }
+            if !settings.powerline.continue_theme_across_lines {
+                global_index = 0;
+            }
         }
         return Ok(rendered.join("\n"));
     }
@@ -1288,7 +1839,9 @@ fn render_internal(settings: &StatuslineSettings, payload: &Value, preview_langu
                             .unwrap_or("\u{e0b0}"),
                     );
                 }
-                if let Some(label) = preview_language.and_then(|language| preview_label(&item.widget_type, language)) {
+                if let Some(label) =
+                    preview_language.and_then(|language| preview_label(&item.widget_type, language))
+                {
                     text.push_str(label);
                     text.push_str(": ");
                 }
@@ -1306,7 +1859,11 @@ pub fn render(settings: &StatuslineSettings, payload: &Value) -> Result<String, 
     render_internal(settings, payload, Some("zh-CN"))
 }
 
-pub fn render_preview(settings: &StatuslineSettings, payload: &Value, language: &str) -> Result<String, String> {
+pub fn render_preview(
+    settings: &StatuslineSettings,
+    payload: &Value,
+    language: &str,
+) -> Result<String, String> {
     render_internal(settings, payload, Some(language))
 }
 
@@ -1635,7 +2192,10 @@ mod tests {
         let settings = StatuslineSettings {
             lines: vec![
                 vec![widget("1", "model", None)],
-                vec![widget("2", "git-branch", None), widget("3", "git-status", None)],
+                vec![
+                    widget("2", "git-branch", None),
+                    widget("3", "git-status", None),
+                ],
             ],
             ..Default::default()
         };
@@ -1693,18 +2253,34 @@ mod tests {
     }
     #[test]
     fn ansi_color_supports_extended_formats() {
-        assert_eq!(ansi_color("ansi256:123", false).as_deref(), Some("38;5;123"));
-        assert_eq!(ansi_color("hex:112233", true).as_deref(), Some("48;2;17;34;51"));
+        assert_eq!(
+            ansi_color("ansi256:123", false).as_deref(),
+            Some("38;5;123")
+        );
+        assert_eq!(
+            ansi_color("hex:112233", true).as_deref(),
+            Some("48;2;17;34;51")
+        );
         assert_eq!(ansi_color("bgBrightRed", true).as_deref(), Some("101"));
     }
     #[test]
     fn powerline_renders_caps_and_theme() {
-        let mut settings = StatuslineSettings { lines: vec![vec![widget("1", "model", None), widget("2", "thinking-effort", None)]], ..Default::default() };
+        let mut settings = StatuslineSettings {
+            lines: vec![vec![
+                widget("1", "model", None),
+                widget("2", "thinking-effort", None),
+            ]],
+            ..Default::default()
+        };
         settings.powerline.enabled = true;
         settings.powerline.theme = Some("nord".to_string());
         settings.powerline.start_caps = vec!["[".to_string()];
         settings.powerline.end_caps = vec!["]".to_string()];
-        let output = render(&settings, &json!({"model":{"display_name":"Opus"},"effort":{"level":"high"}})).unwrap();
+        let output = render(
+            &settings,
+            &json!({"model":{"display_name":"Opus"},"effort":{"level":"high"}}),
+        )
+        .unwrap();
         assert!(output.contains('['));
         assert!(output.contains(']'));
         assert!(output.contains("   模型: Opus "));
@@ -1712,16 +2288,25 @@ mod tests {
     }
     #[test]
     fn powerline_theme_respects_color_level() {
-        let mut settings = StatuslineSettings { lines: vec![vec![widget("1", "model", None)]], ..Default::default() };
+        let mut settings = StatuslineSettings {
+            lines: vec![vec![widget("1", "model", None)]],
+            ..Default::default()
+        };
         settings.powerline.enabled = true;
         settings.powerline.theme = Some("nord".to_string());
         let payload = json!({"model":{"display_name":"Opus"}});
         settings.color_level = 1;
-        assert!(render(&settings, &payload).unwrap().contains("\x1b[30;106m"));
+        assert!(render(&settings, &payload)
+            .unwrap()
+            .contains("\x1b[30;106m"));
         settings.color_level = 2;
-        assert!(render(&settings, &payload).unwrap().contains("\x1b[38;5;16;48;5;73m"));
+        assert!(render(&settings, &payload)
+            .unwrap()
+            .contains("\x1b[38;5;16;48;5;73m"));
         settings.color_level = 3;
-        assert!(render(&settings, &payload).unwrap().contains("\x1b[38;2;46;52;64;48;2;136;192;208m"));
+        assert!(render(&settings, &payload)
+            .unwrap()
+            .contains("\x1b[38;2;46;52;64;48;2;136;192;208m"));
     }
     #[test]
     fn detects_common_powerline_font_names() {
@@ -1744,6 +2329,9 @@ mod tests {
     fn bundled_powerline_font_has_expected_family() {
         let mut db = fontdb::Database::new();
         db.load_font_data(BUNDLED_POWERLINE_FONT.to_vec());
-        assert!(db.faces().flat_map(|face| &face.families).any(|(family, _)| family == "Symbols Nerd Font Mono"));
+        assert!(db
+            .faces()
+            .flat_map(|face| &face.families)
+            .any(|(family, _)| family == "Symbols Nerd Font Mono"));
     }
 }

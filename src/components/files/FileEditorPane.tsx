@@ -40,6 +40,11 @@ interface GitLineMarker {
   kind: GitLineChangeKind;
 }
 
+interface GitFileDiffPayload {
+  content: string;
+  canRevertHunks: boolean;
+}
+
 function clearSearchDecorations(editor: MonacoEditor, decorationIdsRef: MutableRefObject<string[]>): void {
   if (decorationIdsRef.current.length === 0) return;
   decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, []);
@@ -245,16 +250,16 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     if (visibleFile.previewKind === "markdown" && previewMode !== "source") return;
 
     let cancelled = false;
-    void invoke<string>("git_get_file_diff", {
+    void invoke<GitFileDiffPayload>("git_get_file_diff", {
       projectPath: project.path,
       filePath: visibleFile.path,
       status: activeGitChange.status,
     })
-      .then((diffText) => {
+      .then((payload) => {
         if (cancelled || editorRef.current !== editor) return;
         const currentModel = editor.getModel();
         if (!currentModel) return;
-        const markers = parseGitDiffLineMarkers(diffText, currentModel.getLineCount());
+        const markers = parseGitDiffLineMarkers(payload.content, currentModel.getLineCount());
         gitDecorationIdsRef.current = editor.deltaDecorations(
           gitDecorationIdsRef.current,
           makeGitLineDecorations(markers)
@@ -335,7 +340,11 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
 
   const save = useCallback(async () => {
     if (!visibleFile || visibleFile.previewKind === "image") return;
-    await saveActiveFile();
+    try {
+      await saveActiveFile();
+    } catch {
+      // Store 已提示错误；保留 dirty 状态。
+    }
   }, [saveActiveFile, visibleFile]);
 
   const getEditorSelection = useCallback((): AiTextSelection | null => {
@@ -408,18 +417,22 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
   };
 
   const saveAndRun = async () => {
-    if (pendingAction?.kind === "close-file") {
-      await saveFile(pendingAction.path);
-      closeFile(pendingAction.path);
+    try {
+      if (pendingAction?.kind === "close-file") {
+        await saveFile(pendingAction.path);
+        closeFile(pendingAction.path);
+        setPendingAction(null);
+        return;
+      }
+      for (const file of dirtyFiles) {
+        await saveFile(file.path);
+      }
+      visibleFiles.forEach((file) => closeFile(file.path));
       setPendingAction(null);
-      return;
+      onClose();
+    } catch {
+      // 保存失败时保持确认框和未保存文件不变。
     }
-    for (const file of dirtyFiles) {
-      await saveFile(file.path);
-    }
-    visibleFiles.forEach((file) => closeFile(file.path));
-    setPendingAction(null);
-    onClose();
   };
 
   const requestCloseFile = (path: string) => {

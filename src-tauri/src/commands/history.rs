@@ -6762,7 +6762,9 @@ pub(crate) fn parse_message(value: &Value) -> Option<HistoryMessage> {
 pub(crate) fn extract_editable_text(value: &Value) -> Option<String> {
     let root_type = value.get("type").and_then(Value::as_str)?;
     if root_type == "user" || root_type == "assistant" {
-        let content = value.get("message").and_then(|message| message.get("content"))?;
+        let content = value
+            .get("message")
+            .and_then(|message| message.get("content"))?;
         return editable_text_from_content(content, &["text"]);
     }
     if root_type == "response_item" {
@@ -8808,7 +8810,10 @@ mod tests {
         assert_eq!(messages[1].line_index, Some(3));
         assert!(messages[1].editable);
         // 多 text 块：展示 content 以 \n 连接，规范文本以 \n\n 连接，不一致时必须显式返回
-        assert_eq!(messages[1].editable_text.as_deref(), Some("part one\n\npart two"));
+        assert_eq!(
+            messages[1].editable_text.as_deref(),
+            Some("part one\n\npart two")
+        );
         // tool_use 行没有规范文本块，禁止编辑但保留行号（供只读定位）
         assert_eq!(messages[2].line_index, Some(4));
         assert!(!messages[2].editable);
@@ -8872,8 +8877,16 @@ mod tests {
         let detail = build_session_detail(&file_ref, true).unwrap();
 
         assert_eq!(detail.messages.len(), 2);
-        let parent = detail.messages.iter().find(|m| m.content == "parent").unwrap();
-        let child = detail.messages.iter().find(|m| m.content == "child").unwrap();
+        let parent = detail
+            .messages
+            .iter()
+            .find(|m| m.content == "parent")
+            .unwrap();
+        let child = detail
+            .messages
+            .iter()
+            .find(|m| m.content == "child")
+            .unwrap();
         // 父会话消息保留行映射；子任务消息属于其他文件，必须清空行映射并禁用编辑
         assert_eq!(parent.line_index, Some(0));
         assert!(parent.editable);

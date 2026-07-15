@@ -49,13 +49,24 @@
 ```rust
 /// 尾部 '/' 且目录内存在 .git（目录或文件形式，覆盖 submodule/worktree gitlink）→ true
 fn is_nested_repo_entry(repo: &Repository, file_path: &str) -> bool
+
+Git 文件 Diff 返回结构化展示结果：
+
+```rust
+GitFileDiffPayload { content: String, can_revert_hunks: bool }
+git_get_file_diff(project_path: String, file_path: String, status: String) -> Result<GitFileDiffPayload, String>
+```
 ```
 
 ### Contracts
 
 - libgit2 `statuses()` + `recurse_untracked_dirs(true)` 下：普通未跟踪目录会被展开为文件条目；**只有嵌套 git 仓库**保留为带尾部 `/` 的目录条目（如 `sub-repo-a/`）。
 - 命中 `is_nested_repo_entry` 的条目：`continue` 跳过，不进入 `GitFileChange` 列表。
-- `git_get_file_diff` 的 `"U" | "??"` 分支：`read_to_string` 前有 `is_dir()` 兜底守卫，目录条目返回友好中文错误，而非原始 OS 错误（Windows 下曾表现为 os error 123/5/3，随环境浮动）。
+- `git_get_file_diff` 的 `"U" | "??"` 分支：读取文件字节前有 `is_dir()` 兜底守卫，目录条目返回友好中文错误，而非原始 OS 错误（Windows 下曾表现为 os error 123/5/3，随环境浮动）。
+- 未跟踪文本文件通过项目文本编码检测读取并生成全新增 Diff；二进制或无法解码内容返回稳定错误。
+- 已跟踪非 UTF-8 文本的 UI Diff 可强制按文本生成并按检测编码解码；`can_revert_hunks=false`，前端必须禁用行级/Hunk 级 Patch 回滚，但整文件回滚仍可用。
+- UTF-8 UI Diff 保持原 Patch 文本并返回 `can_revert_hunks=true`。
+- Worktree Snapshot/恢复继续使用原 `format_diff_to_text_allow_empty` Patch 链路，不得消费转码后的 UI Diff。
 
 ### Validation & Error Matrix
 
@@ -64,6 +75,8 @@ fn is_nested_repo_entry(repo: &Repository, file_path: &str) -> bool
 | 条目尾部 `/` 且 `<dir>/.git` 存在 | 跳过，不进变更列表 |
 | 条目尾部 `/` 但无 `.git`（理论不出现） | 保留，不误伤 |
 | diff 请求路径为目录 | `Err("该条目是目录（可能为嵌套 Git 仓库），无法显示文件 diff")` |
+| 非 UTF-8 文本 Diff | 返回可读 `content`，`canRevertHunks=false` |
+| UTF-8 文本 Diff | 返回原 Patch `content`，`canRevertHunks=true` |
 
 ### Tests
 

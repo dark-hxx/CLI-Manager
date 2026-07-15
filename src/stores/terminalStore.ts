@@ -1644,15 +1644,18 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     };
     const state = get();
     const sessions = [...state.sessions, editorSession];
-    const activeWorkspan = state.workspans.find((workspan) => workspan.id === state.activeWorkspanId) ?? null;
+    const workspanEnabled = useSettingsStore.getState().workspanEnabled;
+    const targetWorkspan = !workspanEnabled
+      ? state.workspans.find((workspan) => workspan.id === state.activeWorkspanId) ?? state.workspans[0] ?? null
+      : null;
     let workspans: TerminalWorkspan[];
     let activeWorkspanId: string;
-    if (activeWorkspan?.paneTree) {
-      const paneResult = addSessionToPaneTree(activeWorkspan.paneTree, activeWorkspan.activePaneId, editorSessionId, createPaneId);
-      workspans = updateTerminalWorkspan(state.workspans, activeWorkspan.id, (workspan) => (
+    if (targetWorkspan) {
+      const paneResult = addSessionToPaneTree(targetWorkspan.paneTree, targetWorkspan.activePaneId, editorSessionId, createPaneId);
+      workspans = updateTerminalWorkspan(state.workspans, targetWorkspan.id, (workspan) => (
         syncTerminalWorkspanLayout(workspan, paneResult.tree, paneResult.activePaneId, editorSessionId)
       ));
-      activeWorkspanId = activeWorkspan.id;
+      activeWorkspanId = targetWorkspan.id;
     } else {
       const workspan = createTerminalWorkspan(createWorkspanId(), createPaneId(), editorSessionId);
       workspans = [...state.workspans, workspan];

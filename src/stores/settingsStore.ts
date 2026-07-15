@@ -98,7 +98,7 @@ export const TERMINAL_FONT_SIZE_MAX = 32;
 export const TERMINAL_FONT_SIZE_DEFAULT = 14;
 export const TERMINAL_SCROLLBACK_ROWS_MIN = 1000;
 export const TERMINAL_SCROLLBACK_ROWS_MAX = 50000;
-export const TERMINAL_SCROLLBACK_ROWS_DEFAULT = 5000;
+export const TERMINAL_SCROLLBACK_ROWS_DEFAULT = 9000;
 export const TERMINAL_PANEL_WIDTH_MAX = 500;
 export const TERMINAL_PANEL_WIDTH_DEFAULTS: TerminalPanelWidthSettings = {
   merged: 300,
@@ -274,6 +274,7 @@ interface Settings {
   lightThemePalette: LightThemePalette;
   darkThemePalette: DarkThemePalette;
   fontSize: number;
+  terminalScrollbackCustomEnabled: boolean;
   terminalScrollbackRows: number;
   fontFamily: string;
   uiFontFamily: string;
@@ -386,6 +387,7 @@ const DEFAULTS: Settings = {
   lightThemePalette: "emerald-mist",
   darkThemePalette: "terminal-green",
   fontSize: TERMINAL_FONT_SIZE_DEFAULT,
+  terminalScrollbackCustomEnabled: false,
   terminalScrollbackRows: TERMINAL_SCROLLBACK_ROWS_DEFAULT,
   fontFamily: "Cascadia Code, Consolas, monospace",
   uiFontFamily:
@@ -1034,6 +1036,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       TERMINAL_SCROLLBACK_ROWS_MAX,
       DEFAULTS.terminalScrollbackRows
     );
+    entries.terminalScrollbackCustomEnabled =
+      typeof entries.terminalScrollbackCustomEnabled === "boolean"
+        ? entries.terminalScrollbackCustomEnabled
+        : DEFAULTS.terminalScrollbackCustomEnabled;
 
     entries.keyboardShortcuts = migrateKeyboardShortcuts(entries.keyboardShortcuts);
 

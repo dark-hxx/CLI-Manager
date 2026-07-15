@@ -105,7 +105,14 @@ import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useTemplateStore } from "../stores/templateStore";
 import { formatStartupInputForPty, useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
-import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN, useSettingsStore, type LightThemePalette, type DarkThemePalette } from "../stores/settingsStore";
+import {
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
+  TERMINAL_SCROLLBACK_ROWS_DEFAULT,
+  useSettingsStore,
+  type LightThemePalette,
+  type DarkThemePalette,
+} from "../stores/settingsStore";
 
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
@@ -445,13 +452,17 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     foreground: formatSpecialColorReply(10, "#d8dee9"),
     background: formatSpecialColorReply(11, "#0c0e10"),
   });
+  const terminalScrollbackCustomEnabled = useSettingsStore((s) => s.terminalScrollbackCustomEnabled);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
+  const effectiveTerminalScrollbackRows = terminalScrollbackCustomEnabled
+    ? terminalScrollbackRows
+    : TERMINAL_SCROLLBACK_ROWS_DEFAULT;
   const lowMemoryMode = useSettingsStore((s) => s.lowMemoryMode);
   const disableHardwareAcceleration = useSettingsStore((s) => s.disableHardwareAcceleration);
   const terminalInputSuggestionsEnabled = useSettingsStore((s) => s.terminalInputSuggestionsEnabled);
   const terminalInputSuggestionProvider = useSettingsStore((s) => s.terminalInputSuggestionProvider);
-  const inactiveBufferLimitRef = useRef(getInactiveBufferLimit(terminalScrollbackRows));
-  inactiveBufferLimitRef.current = getInactiveBufferLimit(terminalScrollbackRows);
+  const inactiveBufferLimitRef = useRef(getInactiveBufferLimit(effectiveTerminalScrollbackRows));
+  inactiveBufferLimitRef.current = getInactiveBufferLimit(effectiveTerminalScrollbackRows);
 
   const background = useSettingsStore(
     useShallow((s) => ({
@@ -1366,12 +1377,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     if (sizeChanged || weightChanged || rendererChanged) {
       scheduleFit(true);
     }
-    if (terminal.options.scrollback !== terminalScrollbackRows) {
-      terminal.options.scrollback = terminalScrollbackRows;
+    if (terminal.options.scrollback !== effectiveTerminalScrollbackRows) {
+      terminal.options.scrollback = effectiveTerminalScrollbackRows;
     }
     normalizeTuiComposerBackground(terminal);
     scheduleTuiComposerBackgroundNormalization(terminal);
-  }, [fontSize, effectiveFontFamily, terminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen]);
+  }, [fontSize, effectiveFontFamily, effectiveTerminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen]);
 
   // Visibility drives live rendering. A pane tab is "visible" when it is the
   // shown tab in its own pane — which, in a split, includes panes that are not
@@ -1509,7 +1520,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       fontFamily: effectiveFontFamily,
       fontWeight: "normal",
       fontWeightBold: "bold",
-      scrollback: terminalScrollbackRows,
+      scrollback: effectiveTerminalScrollbackRows,
       scrollOnEraseInDisplay: true,
       allowProposedApi: true,
       windowsPty: { backend: "conpty" },

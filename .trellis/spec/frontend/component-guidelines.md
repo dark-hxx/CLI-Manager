@@ -324,6 +324,19 @@ setVisibilityRestorePending(false);
 - Manually switch back to a terminal with background output; verify the final buffer appears without blanking, partial replay, lost scrollback, or shell restart.
 - Manually verify the timeout fallback cannot leave the terminal permanently hidden.
 
+### Convention: Custom terminal scrollback keeps one effective row count
+
+**What**: `terminalScrollbackCustomEnabled` defaults to `false`. When it is disabled, every terminal uses `TERMINAL_SCROLLBACK_ROWS_DEFAULT` (9000). When enabled, terminals use the validated `terminalScrollbackRows` value in the 1000–50000 range.
+
+**Contracts**:
+
+- Terminal construction, xterm option hot updates, and hidden-output buffer sizing must all use the same effective row count.
+- Changing the switch or row value must update the existing xterm instance; do not recreate the terminal, reconnect the PTY, or reset addons/input state.
+- Keep the saved custom value while the switch is disabled so re-enabling restores the user's value.
+- Hidden terminal output remains bounded; disabling custom rows does not mean unlimited scrollback.
+
+**Tests**: Run `npx tsc --noEmit`; manually toggle Custom in Settings > Terminal and verify existing/new/hidden terminals use 9000 rows while disabled and the saved custom value while enabled.
+
 ### Convention: Session history transcripts use a history render layer before Markdown
 
 **What**: When rendering Claude/Codex session history message bodies, use `src/components/history/SessionTranscriptContent.tsx` instead of rendering raw message content directly with `MarkdownContent`. `SessionTranscriptContent` may detect session-log structures such as XML-ish blocks, workflow-state blocks, Git status lines, long lists, paths, commit hashes, and status tokens; ordinary Markdown content must still delegate to `HistoryMarkdownContent` / shared `MarkdownContent`.
