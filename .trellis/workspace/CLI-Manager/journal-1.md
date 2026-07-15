@@ -627,3 +627,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 修复 Claude 状态栏 Powerline 符号显示
+
+**Date**: 2026-07-15
+**Task**: 修复 Claude 状态栏 Powerline 符号显示
+**Branch**: `master`
+
+### Summary
+
+定位 WebView2 无法解析系统注册字体的根因，改为通过 CSS @font-face 直接加载内置 Powerline 字体，并补充回归契约与 TEMP 变更记录。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8e10baa` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
