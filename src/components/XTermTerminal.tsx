@@ -32,6 +32,7 @@ import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
 import { useTerminalOsc } from "../hooks/useTerminalOsc";
 import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
+import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
 import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
 import {
   clampTextCursorIndex,
@@ -55,18 +56,7 @@ import {
   wrapTerminalPasteTextForCtrlShiftV,
 } from "../lib/terminalKeyboard";
 import { formatShellPathList, joinLocalPath, normalizeShellForKnownOs } from "../lib/terminalShellPath";
-import {
-  TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT,
-  TERMINAL_INPUT_SUGGESTION_AI_MODEL,
-  getLocalTerminalInputSuggestions,
-  getTerminalPathInputSuggestions,
-  getTerminalInputSuggestionAiResult,
-  mergeTerminalInputSuggestions,
-  resolveSubmittedDirectoryChange,
-  type TerminalInputSuggestion,
-  type TerminalInputSuggestionContext,
-} from "../lib/terminalInputSuggestions";
-import type { CommandHistoryEntry, CommandTemplate, TerminalSession } from "../lib/types";
+import { resolveSubmittedDirectoryChange } from "../lib/terminalInputSuggestions";
 import {
   endTerminalFileDrag,
   getTerminalFileDropZoneIdAtPoint,
@@ -93,7 +83,6 @@ import {
 import { Portal } from "./ui/Portal";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
-import { useTemplateStore } from "../stores/templateStore";
 import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
 import {
   TERMINAL_FONT_SIZE_MAX,
@@ -110,9 +99,6 @@ const SEARCH_HIGHLIGHT_LIMIT = 1000;
 const IMAGE_ADDON_PIXEL_LIMIT = 4 * 1024 * 1024;
 const IMAGE_ADDON_SEQUENCE_LIMIT = 8 * 1024 * 1024;
 const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
-const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
-const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
-const SUGGESTION_AI_DEBOUNCE_MS = 400;
 const ENABLE_CLICK_CURSOR_POSITIONING = false;
 const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
 // Minimum time the app must stay in the background before a foreground return
@@ -166,14 +152,6 @@ type XtermBufferLineApiView = IBufferLine & {
   // xterm's public buffer line is read-only; v6 keeps the mutable line here.
   _line?: MutableXtermLine;
 };
-
-interface TerminalSuggestionGhostState {
-  suffix: string;
-  left: number;
-  top: number;
-  height: number;
-  maxWidth: number;
-}
 
 interface TextDiagnosticSummary {
   length: number;
@@ -415,8 +393,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
   const displayTransformOutputRef = useRef<(text: string) => string>((text) => text);
   const displayAfterWriteRef = useRef<((terminal: Terminal) => void) | null>(null);
-  const suggestionRef = useRef<TerminalInputSuggestion | null>(null);
-  const acceptSuggestionRef = useRef<() => boolean>(() => false);
   const cleanedAttachmentRootsRef = useRef<Set<string>>(new Set());
   const terminalScrollbackCustomEnabled = useSettingsStore((s) => s.terminalScrollbackCustomEnabled);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
@@ -543,16 +519,36 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     closeTerminalSearch,
   } = useTerminalSearch(terminalRef, searchAddonRef, searchDecorationColors);
 
+  const {
+    attachSuggestions,
+    clearSuggestion: clearSuggestionGhost,
+    cancelAiSuggestionRefresh,
+    scheduleSuggestionRefresh,
+    updateSuggestionGhostPosition,
+    acceptSuggestion,
+    onCommandSubmitted,
+  } = useTerminalInput({
+    sessionId,
+    wrapperRef,
+    containerRef,
+    isActiveRef,
+    isVisibleRef,
+    isComposingRef,
+    fontSize,
+    getInput: () => inputBuffer.current,
+    canShowSuggestionAtCurrentInputEnd,
+    getTerminalRenderedCellSize,
+    setSuggestionGhost,
+  });
+
   // Clear suggestions when search opens (must come after hook call to read searchOpen)
   useEffect(() => {
     if (terminalInputSuggestionsEnabled && !searchOpen) return;
-    suggestionRef.current = null;
-    setSuggestionGhost(null);
+    clearSuggestionGhost();
   }, [searchOpen, terminalInputSuggestionsEnabled]);
 
   useEffect(() => {
-    suggestionRef.current = null;
-    setSuggestionGhost(null);
+    clearSuggestionGhost();
   }, [terminalInputSuggestionProvider]);
 
   const {
@@ -1908,7 +1904,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.altKey &&
         !e.metaKey
       ) {
-        if (acceptSuggestionRef.current()) {
+        if (acceptSuggestion()) {
           e.preventDefault();
           return false;
         }
@@ -1922,7 +1918,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.altKey &&
         !e.metaKey
       ) {
-        if (acceptSuggestionRef.current()) {
+        if (acceptSuggestion()) {
           e.preventDefault();
           return false;
         }
@@ -1936,7 +1932,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.metaKey &&
         (e.code === "Space" || e.key === " ")
       ) {
-        if (acceptSuggestionRef.current()) {
+        if (acceptSuggestion()) {
           e.preventDefault();
           return false;
         }
@@ -2013,277 +2009,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     // Forward keyboard input to PTY and record command history
     const addCommand = useCommandHistoryStore.getState().addCommand;
     const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
-    let suggestionRequestId = 0;
-    let suggestionRefreshTimerId: number | null = null;
-    let aiSuggestionTimerId: number | null = null;
-    let aiSuggestionInFlight = false;
-    let aiSuggestionQueued = false;
-    let pendingAiSuggestionContext: TerminalInputSuggestionContext | null = null;
-    let pendingAiSuggestionRequestId = 0;
-    let suggestionDisposed = false;
-    let suggestionTemplatesLoaded = false;
-    let lastSubmittedCommand: string | null = null;
-    let suggestionContextCache: {
-      loadedAt: number;
-      projectId: string | null;
-      history: CommandHistoryEntry[];
-      templates: CommandTemplate[];
-    } | null = null;
-
-    const clearSuggestionGhost = () => {
-      suggestionRef.current = null;
-      setSuggestionGhost(null);
-    };
-
-    const cancelAiSuggestionRefresh = () => {
-      if (aiSuggestionTimerId !== null) {
-        window.clearTimeout(aiSuggestionTimerId);
-        aiSuggestionTimerId = null;
-      }
-      pendingAiSuggestionContext = null;
-      aiSuggestionQueued = false;
-    };
-
-    const updateSuggestionGhostPosition = (suggestion: TerminalInputSuggestion | null) => {
-      if (!suggestion || suggestionDisposed || !isActiveRef.current || !isVisibleRef.current || isComposingRef.current) {
-        clearSuggestionGhost();
-        return;
-      }
-      if (!canShowSuggestionAtCurrentInputEnd(terminal, inputBuffer.current)) {
-        clearSuggestionGhost();
-        return;
-      }
-      const wrapper = wrapperRef.current;
-      const terminalContainer = containerRef.current;
-      if (!wrapper || !terminalContainer) {
-        clearSuggestionGhost();
-        return;
-      }
-
-      const screen = terminalContainer.querySelector(".xterm-screen") as HTMLElement | null;
-      const wrapperRect = wrapper.getBoundingClientRect();
-      const screenRect = (screen ?? terminalContainer).getBoundingClientRect();
-      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
-      const cell = getTerminalRenderedCellSize(terminal, terminalContainer, fallbackFontSize);
-      const buffer = terminal.buffer.active;
-      const left = screenRect.left - wrapperRect.left + Math.max(0, buffer.cursorX) * cell.width;
-      const top = screenRect.top - wrapperRect.top + Math.max(0, buffer.cursorY) * cell.height;
-      const maxWidth = Math.max(0, wrapperRect.right - wrapperRect.left - left - 8);
-      if (maxWidth < cell.width || top < 0 || top > wrapperRect.height) {
-        clearSuggestionGhost();
-        return;
-      }
-
-      const nextGhost = {
-        suffix: suggestion.suffix,
-        left,
-        top,
-        height: Math.max(1, cell.height),
-        maxWidth,
-      };
-      setSuggestionGhost((current) => {
-        if (
-          current &&
-          current.suffix === nextGhost.suffix &&
-          current.left === nextGhost.left &&
-          current.top === nextGhost.top &&
-          current.height === nextGhost.height &&
-          current.maxWidth === nextGhost.maxWidth
-        ) {
-          return current;
-        }
-        return nextGhost;
-      });
-    };
-
-    const loadSuggestionContext = async (projectId: string | null) => {
-      const now = Date.now();
-      if (
-        suggestionContextCache &&
-        suggestionContextCache.projectId === projectId &&
-        now - suggestionContextCache.loadedAt <= SUGGESTION_CONTEXT_CACHE_TTL_MS
-      ) {
-        return suggestionContextCache;
-      }
-
-      const templateStore = useTemplateStore.getState();
-      if (!suggestionTemplatesLoaded && templateStore.templates.length === 0) {
-        suggestionTemplatesLoaded = true;
-        await templateStore.fetchTemplates().catch(() => {});
-      }
-      const [history, templates] = await Promise.all([
-        useCommandHistoryStore.getState().getRecent(null, 120),
-        Promise.resolve(useTemplateStore.getState().getForContext(projectId, sessionId)),
-      ]);
-      suggestionContextCache = {
-        loadedAt: Date.now(),
-        projectId,
-        history,
-        templates,
-      };
-      return suggestionContextCache;
-    };
-
-    const buildSuggestionContext = (
-      input: string,
-      session: TerminalSession | undefined,
-      history: CommandHistoryEntry[],
-      templates: CommandTemplate[]
-    ): TerminalInputSuggestionContext => {
-      const currentSettings = useSettingsStore.getState();
-      const projectId = session?.projectId ?? null;
-      return {
-        input,
-        projectId,
-        cwd: session?.cwd ?? null,
-        shell: session?.shell ?? null,
-        sessionId,
-        previousCommand: lastSubmittedCommand,
-        history,
-        templates,
-        provider: currentSettings.terminalInputSuggestionProvider,
-        model: TERMINAL_INPUT_SUGGESTION_AI_MODEL,
-        debugLogging: currentSettings.debugMode,
-        aiConfig: {
-          enabled: currentSettings.terminalInputSuggestionLlmEnabled,
-          baseUrl: currentSettings.terminalInputSuggestionBaseUrl,
-          apiKey: currentSettings.terminalInputSuggestionApiKey,
-          model: currentSettings.terminalInputSuggestionModel,
-          prompt: currentSettings.terminalInputSuggestionUseBuiltinPrompt
-            ? TERMINAL_INPUT_SUGGESTION_BUILTIN_PROMPT
-            : currentSettings.terminalInputSuggestionCustomPrompt,
-        },
-      };
-    };
-
-    const suggestionContextHasUsableAiConfig = (context: TerminalInputSuggestionContext) => Boolean(
-      context.aiConfig?.enabled &&
-      context.aiConfig.baseUrl.trim() &&
-      context.aiConfig.apiKey.trim() &&
-      context.aiConfig.model.trim() &&
-      context.aiConfig.prompt.trim()
-    );
-
-    const runPendingAiSuggestion = async () => {
-      if (aiSuggestionInFlight) {
-        aiSuggestionQueued = true;
-        return;
-      }
-      const context = pendingAiSuggestionContext;
-      const requestId = pendingAiSuggestionRequestId;
-      if (!context) return;
-      pendingAiSuggestionContext = null;
-      aiSuggestionQueued = false;
-      aiSuggestionInFlight = true;
-      const suggestionResult = await getTerminalInputSuggestionAiResult(context);
-      aiSuggestionInFlight = false;
-      if (suggestionResult.aiAttempt) {
-        useSettingsStore.getState().recordTerminalInputSuggestionUsage(suggestionResult.aiAttempt);
-      }
-      if (
-        !suggestionDisposed &&
-        requestId === suggestionRequestId &&
-        useSettingsStore.getState().terminalInputSuggestionsEnabled &&
-        context.input === inputBuffer.current &&
-        suggestionResult.suggestions.length > 0
-      ) {
-        const suggestion = suggestionResult.suggestions[0];
-        suggestionRef.current = suggestion;
-        updateSuggestionGhostPosition(suggestion);
-      }
-      if (aiSuggestionQueued && pendingAiSuggestionContext) {
-        void runPendingAiSuggestion();
-      }
-    };
-
-    const scheduleAiSuggestionRefresh = (context: TerminalInputSuggestionContext, requestId: number) => {
-      if (!suggestionContextHasUsableAiConfig(context)) {
-        cancelAiSuggestionRefresh();
-        return;
-      }
-      pendingAiSuggestionContext = context;
-      pendingAiSuggestionRequestId = requestId;
-      if (aiSuggestionTimerId !== null) {
-        window.clearTimeout(aiSuggestionTimerId);
-      }
-      aiSuggestionTimerId = window.setTimeout(() => {
-        aiSuggestionTimerId = null;
-        void runPendingAiSuggestion();
-      }, SUGGESTION_AI_DEBOUNCE_MS);
-    };
-
-    const refreshSuggestionGhost = async () => {
-      const requestId = ++suggestionRequestId;
-      const settings = useSettingsStore.getState();
-      const input = inputBuffer.current;
-      if (
-        suggestionDisposed ||
-        !settings.terminalInputSuggestionsEnabled ||
-        !input ||
-        input.includes("\n") ||
-        input.includes("\r") ||
-        isComposingRef.current
-      ) {
-        cancelAiSuggestionRefresh();
-        clearSuggestionGhost();
-        return;
-      }
-
-      const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
-      const projectId = session?.projectId ?? null;
-      const { history, templates } = await loadSuggestionContext(projectId);
-      if (suggestionDisposed || requestId !== suggestionRequestId || input !== inputBuffer.current) return;
-      if (!useSettingsStore.getState().terminalInputSuggestionsEnabled) {
-        cancelAiSuggestionRefresh();
-        clearSuggestionGhost();
-        return;
-      }
-
-      const context = buildSuggestionContext(input, session, history, templates);
-      const localSuggestions = getLocalTerminalInputSuggestions(context, { limit: 1 });
-      const suggestion = localSuggestions[0] ?? null;
-      suggestionRef.current = suggestion;
-      updateSuggestionGhostPosition(suggestion);
-      scheduleAiSuggestionRefresh(context, requestId);
-
-      void getTerminalPathInputSuggestions(context, { limit: 1 })
-        .then((pathSuggestions) => {
-          if (
-            suggestionDisposed ||
-            requestId !== suggestionRequestId ||
-            input !== inputBuffer.current ||
-            !useSettingsStore.getState().terminalInputSuggestionsEnabled ||
-            suggestionRef.current?.source === "ai"
-          ) {
-            return;
-          }
-          const mergedSuggestion = mergeTerminalInputSuggestions([...localSuggestions, ...pathSuggestions], { limit: 1 })[0] ?? null;
-          suggestionRef.current = mergedSuggestion;
-          updateSuggestionGhostPosition(mergedSuggestion);
-        })
-        .catch(() => {});
-    };
-
-    const scheduleSuggestionRefresh = () => {
-      if (suggestionRefreshTimerId !== null) {
-        window.clearTimeout(suggestionRefreshTimerId);
-      }
-      suggestionRefreshTimerId = window.setTimeout(() => {
-        suggestionRefreshTimerId = null;
-        void refreshSuggestionGhost();
-      }, SUGGESTION_LOCAL_DEBOUNCE_MS);
-    };
-
-    acceptSuggestionRef.current = () => {
-      const suggestion = suggestionRef.current;
-      const settings = useSettingsStore.getState();
-      if (!settings.terminalInputSuggestionsEnabled || !suggestion?.suffix) return false;
-      clearSuggestionGhost();
-      forwardTerminalInput(suggestion.suffix, "onData");
-      settings.recordTerminalInputSuggestionUsage({ accepted: true });
-      return true;
-    };
-
     const maybeLogCodexImeDuplicate = (data: string) => {
       if (!isCodexSession()) return;
       const debugState = codexImeDebugRef.current;
@@ -2324,8 +2049,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (data === "\r") {
         const cmd = inputBuffer.current;
         if (cmd.trim()) {
-          lastSubmittedCommand = cmd.trim();
-          suggestionContextCache = null;
+          onCommandSubmitted(cmd.trim());
           const submittedCwd = useTerminalStore.getState().sessions.find((item) => item.id === sessionId)?.cwd ?? null;
           void resolveSubmittedDirectoryChange(cmd, submittedCwd)
             .then((cwd) => updateSessionCwdIfChanged(cwd))
@@ -2423,6 +2147,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       maybeLogCodexImeDuplicate(data);
       updateInputBufferFromTerminalData(data);
     }
+
+    const detachInputSuggestions = attachSuggestions(terminal, (data) => {
+      forwardTerminalInput(data, "onData");
+    });
 
     // Contract: terminal.onData is input direction and belongs to the input subsystem.
     inputDisposables.push(terminal.onData((data) => {
@@ -2736,7 +2464,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         scheduleCompositionAnchorFix();
         return;
       }
-      updateSuggestionGhostPosition(suggestionRef.current);
+      updateSuggestionGhostPosition();
       if (!textarea || document.activeElement !== textarea) return;
       scheduleTerminalContainerScrollReset();
       scheduleHelperTextareaAnchorPin();
@@ -2745,7 +2473,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       handleVisibilityRestoreRender(terminal, range);
       scheduleTuiComposerBackgroundNormalization(terminal);
       if (!isComposingRef.current) {
-        updateSuggestionGhostPosition(suggestionRef.current);
+        updateSuggestionGhostPosition();
         return;
       }
       clearSuggestionGhost();
@@ -2879,19 +2607,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     return () => {
       cancelled = true;
-      suggestionDisposed = true;
-      if (suggestionRefreshTimerId !== null) {
-        window.clearTimeout(suggestionRefreshTimerId);
-        suggestionRefreshTimerId = null;
-      }
-      if (aiSuggestionTimerId !== null) {
-        window.clearTimeout(aiSuggestionTimerId);
-        aiSuggestionTimerId = null;
-      }
-      pendingAiSuggestionContext = null;
-      aiSuggestionQueued = false;
-      acceptSuggestionRef.current = () => false;
-      clearSuggestionGhost();
+      detachInputSuggestions();
       cancelPendingCursorShow();
       pasteTarget.removeEventListener("paste", onPaste, pasteListenerOptions);
       unregisterTerminalDropZone();

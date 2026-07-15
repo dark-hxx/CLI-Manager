@@ -303,6 +303,32 @@ const detachPtyOutput = display.attachPtyOutput();
 
 **Tests**: Run `npx tsc --noEmit` and `node scripts/terminalVisibility.test.mjs`. Manually verify tab switching with background output, resize, WebGL restoration, and IME composition after any Display controller change.
 
+### Convention: Async terminal suggestions are scoped to one input attachment
+
+**What**: `useTerminalInput.attachSuggestions()` resets all suggestion state and assigns an attachment generation. Delayed template/history/path/AI results must verify that generation before they update the ghost suggestion.
+
+**Why**: Input suggestions are asynchronous while terminal sessions can be disposed and recreated immediately. Resetting shared refs alone lets an old request observe the new session's reset state and paint stale text into its terminal.
+
+**Correct**:
+
+```tsx
+const generation = resetSuggestionState();
+const isCurrentAttachment = () => (
+  attachmentGenerationRef.current === generation && !suggestionDisposedRef.current
+);
+
+const result = await getTerminalInputSuggestionAiResult(context);
+if (!isCurrentAttachment() || context.input !== getInput()) return;
+```
+
+**Contracts**:
+
+- `attachSuggestions()` resets timers, in-flight flags, request ids, cache, previous-command state, and the visible ghost before registering a new session.
+- Every asynchronous completion and delayed timer checks the current attachment generation before mutating a ref or React state.
+- Cleanup invalidates only its own attachment; it must not clear callbacks installed by a newer session.
+
+**Tests**: Run `npx tsc --noEmit`. With AI suggestions enabled, type a prefix and immediately switch sessions or close/reopen the tab; no ghost text from the old session may appear. Also verify local, path, and AI suggestions still accept with Tab, Right Arrow, and Ctrl+Space.
+
 ### Convention: Visibility-restoration refresh stays masked until xterm render completes
 
 **What**: When `XTermTerminal` changes from hidden to visible, keep the existing queued-write recovery and full viewport refresh, but hide the xterm drawing container until `Terminal.onRender` reports a range covering the current viewport. Reveal on the next animation frame and keep a bounded timeout fallback.
