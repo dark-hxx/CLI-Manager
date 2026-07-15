@@ -6,9 +6,8 @@ import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -24,7 +23,6 @@ import {
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
 import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
-import { debugConsoleWarn } from "../lib/debugConsole";
 import { translateCurrent, useI18n } from "../lib/i18n";
 import { buildFastCursorMoveSequence } from "../lib/terminalCursorMovement";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
@@ -33,6 +31,7 @@ import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
 import { useTerminalOsc } from "../hooks/useTerminalOsc";
+import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
 import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
 import {
   clampTextCursorIndex,
@@ -107,13 +106,7 @@ import {
 
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
-const ACTIVE_WRITE_FRAME_BUDGET = 64 * 1024;
-const ACTIVE_WRITE_QUEUE_MAX_CHARS = 16 * 1024 * 1024;
-const ACTIVE_WRITE_QUEUE_LOG_INTERVAL_MS = 2000;
 const SEARCH_HIGHLIGHT_LIMIT = 1000;
-const INACTIVE_BUFFER_MIN_CHARS = 256 * 1024;
-const INACTIVE_BUFFER_MAX_CHARS = 8 * 1024 * 1024;
-const INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW = 256;
 const IMAGE_ADDON_PIXEL_LIMIT = 4 * 1024 * 1024;
 const IMAGE_ADDON_SEQUENCE_LIMIT = 8 * 1024 * 1024;
 const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
@@ -121,7 +114,6 @@ const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
 const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
 const SUGGESTION_AI_DEBOUNCE_MS = 400;
 const ENABLE_CLICK_CURSOR_POSITIONING = false;
-const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
 const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
 // Minimum time the app must stay in the background before a foreground return
 // triggers a glyph-atlas rebuild. GPU sleep / lock screen (the corruption
@@ -132,7 +124,7 @@ const TUI_BORDER_CHAR_PATTERN = /^[│┃║▏▎▍▌▋▊▉█┆┊╎╏
 const TUI_BORDER_PREFIX_PATTERN = /^[\s│┃║▏▎▍▌▋▊▉█┆┊╎╏]+/u;
 import { toast } from "sonner";
 import { logError, logInfo, logWarn } from "../lib/logger";
-import { registerTerminalSnapshotSource, markTerminalSnapshotDirty } from "../lib/sessionSnapshotPersistence";
+import { registerTerminalSnapshotSource } from "../lib/sessionSnapshotPersistence";
 
 const XTERM_BG_COLOR_MASK = 0x03ffffff;
 const XTERM_COLOR_MODE_RGB = 0x03000000;
@@ -210,11 +202,6 @@ const summarizeTextForDiagnostics = (value: string): TextDiagnosticSummary => {
     fingerprint: (hash >>> 0).toString(36),
   };
 };
-
-const getInactiveBufferLimit = (scrollbackRows: number) => Math.min(
-  INACTIVE_BUFFER_MAX_CHARS,
-  Math.max(INACTIVE_BUFFER_MIN_CHARS, scrollbackRows * INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW)
-);
 
 const disposeTerminalSubsystem = (disposables: TerminalSubsystemDisposable[]) => {
   for (let index = disposables.length - 1; index >= 0; index -= 1) {
@@ -405,11 +392,6 @@ interface Props extends TerminalContextMenuActions {
   darkThemePalette?: DarkThemePalette;
 }
 
-interface ActiveWriteQueueItem {
-  text: string;
-  inactiveReplay: boolean;
-}
-
 export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo", onNewTab, onCloseSession, onCloseOthers, onCloseToLeft, onCloseToRight, onSplitRight, onSplitDown }: Props) {
   const { t } = useI18n();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -417,33 +399,22 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
-  const webglAddonRef = useRef<WebglAddon | null>(null);
-  const webglDisposeTimerRef = useRef<number | null>(null);
-  const webglContextLostRef = useRef(false);
   const inputBuffer = useRef("");
   const inputCursorIndexRef = useRef(0);
-  const fitRafRef = useRef<number | null>(null);
   // Input owns this ref. Display may only read it to suppress fit during IME composition.
   const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
   // The orchestrator mirrors the visibility prop; display/viewport code reads it only.
   const isVisibleRef = useRef(isVisible);
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const inactiveBufferRef = useRef<string[]>([]);
-  const inactiveBufferSizeRef = useRef(0);
-  const activeWriteQueueRef = useRef<ActiveWriteQueueItem[]>([]);
-  const activeWriteQueueSizeRef = useRef(0);
-  const activeWriteQueueLastDropLogAtRef = useRef(0);
-  const activeWriteRafRef = useRef<number | null>(null);
-  const needsViewportRefreshRef = useRef(false);
-  const inactiveReplayStickToBottomRef = useRef(false);
-  const inactiveReplayPendingWritesRef = useRef(0);
-  const inactiveReplayPendingRef = useRef(false);
   const visibilityRestorePendingRef = useRef(false);
   const visibilityRestoreRevealTimerRef = useRef<number | null>(null);
   const visibilityRestoreRevealRafRef = useRef<number | null>(null);
   const cursorShowTimerRef = useRef<number | null>(null);
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
+  const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
+  const displayTransformOutputRef = useRef<(text: string) => string>((text) => text);
+  const displayAfterWriteRef = useRef<((terminal: Terminal) => void) | null>(null);
   const suggestionRef = useRef<TerminalInputSuggestion | null>(null);
   const acceptSuggestionRef = useRef<() => boolean>(() => false);
   const cleanedAttachmentRootsRef = useRef<Set<string>>(new Set());
@@ -456,8 +427,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const disableHardwareAcceleration = useSettingsStore((s) => s.disableHardwareAcceleration);
   const terminalInputSuggestionsEnabled = useSettingsStore((s) => s.terminalInputSuggestionsEnabled);
   const terminalInputSuggestionProvider = useSettingsStore((s) => s.terminalInputSuggestionProvider);
-  const inactiveBufferLimitRef = useRef(getInactiveBufferLimit(effectiveTerminalScrollbackRows));
-  inactiveBufferLimitRef.current = getInactiveBufferLimit(effectiveTerminalScrollbackRows);
 
   const background = useSettingsStore(
     useShallow((s) => ({
@@ -586,99 +555,41 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     setSuggestionGhost(null);
   }, [terminalInputSuggestionProvider]);
 
-  const clearHiddenWebglDisposeTimer = () => {
-    if (webglDisposeTimerRef.current === null) return;
-    window.clearTimeout(webglDisposeTimerRef.current);
-    webglDisposeTimerRef.current = null;
-  };
-
-  const disposeWebglRenderer = () => {
-    if (!webglAddonRef.current) return false;
-    webglAddonRef.current.dispose();
-    webglAddonRef.current = null;
-    return true;
-  };
-
-  const canUseWebglRenderer = (theme: ReturnType<typeof getTerminalTheme>) => (
-    !disableHardwareAcceleration
-    && !linuxGraphicsDisableWebgl
-    && !webglContextLostRef.current
-    && !isTransparentRef.current
-    && !isLightTerminalTheme(theme)
-  );
-
-  const createWebglAddon = () => {
-    const addon = new WebglAddon();
-    addon.onContextLoss(() => {
-      webglContextLostRef.current = true;
-      addon.dispose();
-      if (webglAddonRef.current === addon) {
-        webglAddonRef.current = null;
-      }
-      logWarn("Terminal WebGL context lost; keeping the default renderer for this session", { sessionId });
-    });
-    return addon;
-  };
-
-  const syncWebglRenderer = (terminal: Terminal, theme: ReturnType<typeof getTerminalTheme>) => {
-    if (!canUseWebglRenderer(theme)) {
-      return disposeWebglRenderer();
-    }
-    if (lowMemoryMode && !isVisibleRef.current) return false;
-    if (webglAddonRef.current) return false;
-    try {
-      const addon = createWebglAddon();
-      terminal.loadAddon(addon);
-      webglAddonRef.current = addon;
-      return true;
-    } catch {
-      // WebGL not supported, fall back to xterm's default renderer.
-      return false;
-    }
-  };
-
-  const fitWhenStable = (force = false) => {
-    const container = containerRef.current;
-    const fitAddon = fitAddonRef.current;
-    const terminal = terminalRef.current;
-    if (!container || !fitAddon || !terminal) return;
-    if (!force && (!isVisibleRef.current || isComposingRef.current)) return;
-    if (container.offsetWidth <= 0 || container.offsetHeight <= 0) return;
-
-    const dims = fitAddon.proposeDimensions();
-    if (!dims || dims.cols < MIN_TERMINAL_COLS || dims.rows < MIN_TERMINAL_ROWS) return;
-    const beforeCols = terminal.cols;
-    const beforeRows = terminal.rows;
-    fitAddon.fit();
-    const terminalSizeChanged = terminal.cols !== beforeCols || terminal.rows !== beforeRows;
-    if (force || terminalSizeChanged || needsViewportRefreshRef.current) {
-      refreshTerminalViewport(terminal);
-      needsViewportRefreshRef.current = false;
-    }
-  };
-
-  const scheduleFit = (force = false) => {
-    if (fitRafRef.current !== null) {
-      cancelAnimationFrame(fitRafRef.current);
-    }
-    fitRafRef.current = requestAnimationFrame(() => {
-      fitRafRef.current = requestAnimationFrame(() => {
-        fitRafRef.current = null;
-        fitWhenStable(force);
-      });
-    });
-  };
-
-  const scheduleViewportRefresh = () => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const terminal = terminalRef.current;
-        if (!terminal) return;
-        refreshTerminalViewport(terminal);
-        scheduleFit(true);
-      });
-    });
-  };
+  const {
+    syncWebglRenderer,
+    scheduleHiddenWebglDispose,
+    clearHiddenWebglDisposeTimer,
+    clearWebglTextureAtlas,
+    disposeWebglRenderer,
+    scheduleFit,
+    scheduleViewportRefresh,
+    markViewportRefreshNeeded,
+    getOutputRestorePlanState,
+    flushInactiveBufferForReplay,
+    resumeActiveWriteQueue,
+    getPendingOutputSnapshot,
+    attachPtyOutput,
+    resetOutputState,
+    cancelScheduledFit,
+    resetViewportRefreshState,
+  } = useTerminalDisplay({
+    sessionId,
+    containerRef,
+    terminalRef,
+    fitAddonRef,
+    isVisibleRef,
+    isComposingRef,
+    lowMemoryMode,
+    terminalScrollbackRows: effectiveTerminalScrollbackRows,
+    disableHardwareAcceleration,
+    linuxGraphicsDisableWebgl,
+    isTransparentRef,
+    normalizeOutputRef: displayNormalizeOutputRef,
+    transformOutputRef: displayTransformOutputRef,
+    afterTerminalWriteRef: displayAfterWriteRef,
+    onInactiveReplayPendingChange: setInactiveReplayPending,
+    onPtyOutputListenError: (err) => logError("Failed to listen PTY output", { sessionId, err }),
+  });
 
   useEffect(() => {
     const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
@@ -717,6 +628,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     osPlatformRef,
     onPtyWriteError: reportPtyWriteError,
   });
+  displayNormalizeOutputRef.current = normalizeTerminalOutput;
 
   const getSessionToolContext = () => {
     const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
@@ -756,7 +668,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       || CLAUDE_COMMAND_PATTERN.test(context.startupCmd)
     );
   };
-
   const shouldNormalizeTuiComposerBackground = (context = getSessionToolContext()) => (
     isTransparentRef.current || (isClaudeOrCodexSession(context) && isLightTerminalRef.current)
   );
@@ -988,6 +899,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       normalizeTuiComposerBackground(terminal);
     });
   };
+  displayAfterWriteRef.current = (terminal) => {
+    normalizeTuiComposerBackground(terminal);
+    scheduleTuiComposerBackgroundNormalization(terminal);
+  };
 
   const processCursorVisibility = (text: string) => {
     const cursorPattern = /\x1b\[\?25[hl]/g;
@@ -1009,12 +924,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     return processed + text.slice(lastIndex);
   };
-
-  const setInactiveReplayPendingVisible = (pending: boolean) => {
-    if (inactiveReplayPendingRef.current === pending) return;
-    inactiveReplayPendingRef.current = pending;
-    setInactiveReplayPending(pending);
-  };
+  displayTransformOutputRef.current = processCursorVisibility;
 
   const clearVisibilityRestoreRevealSchedule = () => {
     if (visibilityRestoreRevealTimerRef.current !== null) {
@@ -1066,120 +976,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     });
   };
 
-  const hasQueuedInactiveReplay = () => activeWriteQueueRef.current.some((item) => item.inactiveReplay);
-
-  const finishInactiveReplayIfReady = (terminal: Terminal) => {
-    if (!inactiveReplayStickToBottomRef.current) return;
-    if (
-      hasQueuedInactiveReplay()
-      || inactiveReplayPendingWritesRef.current > 0
-    ) {
-      return;
-    }
-    inactiveReplayStickToBottomRef.current = false;
-    terminal.scrollToBottom();
-    setInactiveReplayPendingVisible(false);
-  };
-
-  const flushActiveWriteQueue = () => {
-    activeWriteRafRef.current = null;
-    if (!isVisibleRef.current || activeWriteQueueRef.current.length === 0) {
-      if (!isVisibleRef.current && activeWriteQueueRef.current.length > 0 && useSettingsStore.getState().debugMode) {
-        logInfo("[terminal-visibility] active write flush deferred while hidden", {
-          sessionId,
-          queuedChars: activeWriteQueueSizeRef.current,
-          queuedChunks: activeWriteQueueRef.current.length,
-        });
-      }
-      return;
-    }
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-
-    const writeTerminalChunk = (chunk: string, inactiveReplay: boolean) => {
-      if (inactiveReplay) inactiveReplayPendingWritesRef.current += 1;
-      terminal.write(chunk, () => {
-        if (inactiveReplay) {
-          inactiveReplayPendingWritesRef.current = Math.max(0, inactiveReplayPendingWritesRef.current - 1);
-        }
-        if (terminalRef.current !== terminal) return;
-        if (inactiveReplay) terminal.scrollToBottom();
-        normalizeTuiComposerBackground(terminal);
-        scheduleTuiComposerBackgroundNormalization(terminal);
-        if (inactiveReplay) finishInactiveReplayIfReady(terminal);
-      });
-    };
-
-    let budget = ACTIVE_WRITE_FRAME_BUDGET;
-    while (budget > 0 && activeWriteQueueRef.current.length > 0) {
-      const item = activeWriteQueueRef.current[0];
-      const chunk = item.text;
-      if (chunk.length <= budget) {
-        writeTerminalChunk(chunk, item.inactiveReplay);
-        activeWriteQueueRef.current.shift();
-        activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - chunk.length);
-        budget -= chunk.length;
-        continue;
-      }
-      writeTerminalChunk(chunk.slice(0, budget), item.inactiveReplay);
-      activeWriteQueueRef.current[0] = { ...item, text: chunk.slice(budget) };
-      activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - budget);
-      budget = 0;
-    }
-
-    if (activeWriteQueueRef.current.length > 0) {
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
-    } else {
-      finishInactiveReplayIfReady(terminal);
-    }
-  };
-
-  const enqueueActiveWrite = (text: string, inactiveReplay = false) => {
-    if (!text) return;
-    let nextText = processCursorVisibility(text);
-    let droppedChars = 0;
-    if (nextText.length >= ACTIVE_WRITE_QUEUE_MAX_CHARS) {
-      droppedChars += activeWriteQueueSizeRef.current + nextText.length - ACTIVE_WRITE_QUEUE_MAX_CHARS;
-      nextText = nextText.slice(-ACTIVE_WRITE_QUEUE_MAX_CHARS);
-      activeWriteQueueRef.current = [];
-      activeWriteQueueSizeRef.current = 0;
-    }
-    activeWriteQueueRef.current.push({ text: nextText, inactiveReplay });
-    activeWriteQueueSizeRef.current += nextText.length;
-    while (activeWriteQueueSizeRef.current > ACTIVE_WRITE_QUEUE_MAX_CHARS && activeWriteQueueRef.current.length > 0) {
-      const overflow = activeWriteQueueSizeRef.current - ACTIVE_WRITE_QUEUE_MAX_CHARS;
-      const head = activeWriteQueueRef.current[0];
-      if (!head || head.text.length <= overflow) {
-        const removed = activeWriteQueueRef.current.shift();
-        const removedLength = removed?.text.length ?? 0;
-        activeWriteQueueSizeRef.current -= removedLength;
-        droppedChars += removedLength;
-        continue;
-      }
-      activeWriteQueueRef.current[0] = { ...head, text: head.text.slice(overflow) };
-      activeWriteQueueSizeRef.current -= overflow;
-      droppedChars += overflow;
-    }
-    if (droppedChars > 0) {
-      const now = Date.now();
-      if (now - activeWriteQueueLastDropLogAtRef.current >= ACTIVE_WRITE_QUEUE_LOG_INTERVAL_MS) {
-        activeWriteQueueLastDropLogAtRef.current = now;
-        debugConsoleWarn("[oom-diagnostics:webview]", {
-          area: "xterm",
-          phase: "activeWriteQueueTrim",
-          sessionId,
-          droppedChars,
-          queuedChars: activeWriteQueueSizeRef.current,
-          maxQueuedChars: ACTIVE_WRITE_QUEUE_MAX_CHARS,
-          thresholdExceeded: true,
-        });
-      }
-    }
-    if (activeWriteRafRef.current === null) {
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
-    }
-  };
-
   // Hot-update terminal options without recreating the terminal.
   // `isTransparent` is in the dep array so toggling the background image
   // immediately recomputes the theme (otherwise the WebGL clear color stays
@@ -1229,61 +1025,48 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     if (!isVisible) {
       finishVisibilityRestoreReveal();
-      clearHiddenWebglDisposeTimer();
-      if ((lowMemoryMode || linuxGraphicsConstrained) && webglAddonRef.current) {
-        webglDisposeTimerRef.current = window.setTimeout(() => {
-          webglDisposeTimerRef.current = null;
-          if (isVisibleRef.current) return;
-          if (disposeWebglRenderer()) {
-            needsViewportRefreshRef.current = true;
-          }
-        }, HIDDEN_WEBGL_DISPOSE_DELAY_MS);
-      }
+      scheduleHiddenWebglDispose(lowMemoryMode || linuxGraphicsConstrained);
       return;
     }
 
     clearHiddenWebglDisposeTimer();
     const terminal = terminalRef.current;
     const baseTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
-    if (terminal && syncWebglRenderer(terminal, baseTheme)) {
-      needsViewportRefreshRef.current = true;
+    const rendererRestored = terminal ? syncWebglRenderer(terminal, baseTheme) : false;
+    if (rendererRestored) {
+      markViewportRefreshNeeded();
     }
 
     if (!fitAddonRef.current || !containerRef.current) return;
+    const outputRestoreState = getOutputRestorePlanState();
     const restorePlan = planTerminalVisibilityRestore({
       wasVisible,
       isVisible,
-      inactiveBufferLength: inactiveBufferRef.current.length,
-      activeWriteQueueLength: activeWriteQueueRef.current.length,
-      activeWriteRafScheduled: activeWriteRafRef.current !== null,
+      inactiveBufferLength: outputRestoreState.inactiveBufferLength,
+      activeWriteQueueLength: outputRestoreState.activeWriteQueueLength,
+      activeWriteRafScheduled: outputRestoreState.activeWriteRafScheduled,
     });
     // Flush data stashed while this tab was hidden
-    if (restorePlan.shouldFlushInactiveBuffer && terminalRef.current) {
-      const combined = inactiveBufferRef.current.join("");
-      inactiveBufferRef.current = [];
-      inactiveBufferSizeRef.current = 0;
-      inactiveReplayStickToBottomRef.current = true;
-      inactiveReplayPendingWritesRef.current = 0;
-      setInactiveReplayPendingVisible(true);
-      terminalRef.current.scrollToBottom();
-      enqueueActiveWrite(combined, true);
+    if (restorePlan.shouldFlushInactiveBuffer) {
+      flushInactiveBufferForReplay();
     }
-    if (restorePlan.shouldResumeActiveWriteQueue && activeWriteRafRef.current === null) {
+    if (restorePlan.shouldResumeActiveWriteQueue) {
       if (useSettingsStore.getState().debugMode) {
         logInfo("[terminal-visibility] resuming queued active writes after visibility restore", {
           sessionId,
-          queuedChars: activeWriteQueueSizeRef.current,
-          queuedChunks: activeWriteQueueRef.current.length,
+          queuedChunks: outputRestoreState.activeWriteQueueLength,
         });
       }
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
+      resumeActiveWriteQueue();
+    }
+    if (restorePlan.shouldRefreshViewport || rendererRestored) {
+      beginVisibilityRestoreReveal();
     }
     if (restorePlan.shouldRefreshViewport) {
-      beginVisibilityRestoreReveal();
-      needsViewportRefreshRef.current = true;
+      markViewportRefreshNeeded();
     }
     // Wait for display:block to take effect and the layout to stabilize.
-    // scheduleFit(true) already performs the required full viewport refresh.
+    // Display refresh is gated by explicit viewport-refresh state, not by every fit.
     scheduleFit(true);
     if (terminalRef.current) {
       normalizeTuiComposerBackground(terminalRef.current);
@@ -1307,7 +1090,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       backgroundedAt = null;
       if (hiddenFor < WEBGL_ATLAS_REFRESH_MIN_HIDDEN_MS) return;
       try {
-        webglAddonRef.current?.clearTextureAtlas();
+        clearWebglTextureAtlas();
       } catch {
         // Addon may be mid-disposal; the DOM renderer fallback needs no atlas.
       }
@@ -1415,16 +1198,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const unregisterSnapshotSource = registerTerminalSnapshotSource(sessionId, () => serializeAddon.serialize());
     baseDisposables.push(searchAddon.onDidChangeResults(handleSearchResults));
 
-    let webglAddon: WebglAddon | null = null;
-    if (!(lowMemoryMode && !isVisibleRef.current) && canUseWebglRenderer(baseTheme)) {
-      try {
-        webglAddon = createWebglAddon();
-        terminal.loadAddon(webglAddon);
-        webglAddonRef.current = webglAddon;
-      } catch {
-        // WebGL not supported, fall back to canvas
-      }
-    }
+    syncWebglRenderer(terminal, baseTheme);
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -2663,83 +2437,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       });
     }));
 
-    // Per-session TextDecoder with stream mode：
-    // 跨 chunk 的多字节 UTF-8 必须使用 streaming decode，否则截断的 head/tail
-    // 字节会被解码为 U+FFFD + 残字节，残字节进入 xterm 后会污染 SGR 解析状态
-    // （表现为背景色串列、左侧异常红色竖条）。后端虽已保证字节边界对齐
-    // （src-tauri/src/pty/boundary.rs），前端 stream 模式作为双重防御。
-    // 不使用模块级共享 decoder：stream 模式会保留状态，跨会话共享会导致污染。
-    const textDecoder = new TextDecoder("utf-8");
-
-    // Listen for PTY output (Base64 encoded to preserve control characters)
-    // Batch chunks per animation frame to keep main thread responsive on high-throughput output.
-    let unlisten: UnlistenFn | null = null;
+    const detachPtyOutput = attachPtyOutput();
     let cancelled = false;
-    let pendingChunks: string[] = [];
-    let writeRafId: number | null = null;
-    const stashInactiveText = (text: string) => {
-      if (!text) return;
-      const maxBufferChars = inactiveBufferLimitRef.current;
-      if (text.length >= maxBufferChars) {
-        const suffix = text.slice(-maxBufferChars);
-        inactiveBufferRef.current = [suffix];
-        inactiveBufferSizeRef.current = suffix.length;
-        return;
-      }
-
-      inactiveBufferRef.current.push(text);
-      inactiveBufferSizeRef.current += text.length;
-      while (inactiveBufferSizeRef.current > maxBufferChars && inactiveBufferRef.current.length > 0) {
-        const overflow = inactiveBufferSizeRef.current - maxBufferChars;
-        const head = inactiveBufferRef.current[0];
-        if (!head || head.length <= overflow) {
-          const removed = inactiveBufferRef.current.shift();
-          if (removed) inactiveBufferSizeRef.current -= removed.length;
-          continue;
-        }
-        inactiveBufferRef.current[0] = head.slice(overflow);
-        inactiveBufferSizeRef.current -= overflow;
-      }
-    };
-    const flushPendingWrites = () => {
-      writeRafId = null;
-      if (cancelled || pendingChunks.length === 0) return;
-      const combined = pendingChunks.length === 1 ? pendingChunks[0] : pendingChunks.join("");
-      pendingChunks = [];
-      if (isVisibleRef.current) {
-        enqueueActiveWrite(combined);
-      } else {
-        stashInactiveText(combined);
-      }
-    };
-    // Contract: pty-output is display direction and belongs to the display subsystem.
-    listen<string>(`pty-output-${sessionId}`, (event) => {
-      if (cancelled) return;
-      const binaryString = atob(event.payload);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i += 1) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const text = normalizeTerminalOutput(textDecoder.decode(bytes, { stream: true }));
-      if (!text) return;
-      // 标记脏，供定时节流落盘判断是否需要重新序列化该终端。
-      markTerminalSnapshotDirty(sessionId);
-      if (isVisibleRef.current) {
-        pendingChunks.push(text);
-        if (writeRafId === null) {
-          writeRafId = requestAnimationFrame(flushPendingWrites);
-        }
-      } else {
-        // Tab hidden — stash to a bounded ring buffer; flush when reactivated
-        stashInactiveText(text);
-      }
-    }).then((fn) => {
-      if (cancelled) {
-        fn();
-      } else {
-        unlisten = fn;
-      }
-    });
 
     const terminalContainer = containerRef.current;
     const textarea = terminalContainer.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
@@ -3216,10 +2915,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       disposeTerminalSubsystem(displayDisposables);
       wheelTarget.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
       resizeObserver.disconnect();
-      if (fitRafRef.current !== null) {
-        cancelAnimationFrame(fitRafRef.current);
-        fitRafRef.current = null;
-      }
+      cancelScheduledFit();
       if (compositionScrollRafId !== null) {
         cancelAnimationFrame(compositionScrollRafId);
         compositionScrollRafId = null;
@@ -3240,47 +2936,26 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         window.clearTimeout(compositionAnchorTimeoutId);
         compositionAnchorTimeoutId = null;
       }
-      if (writeRafId !== null) {
-        cancelAnimationFrame(writeRafId);
-        writeRafId = null;
-      }
       try {
         const serializedOutput = serializeAddon.serialize();
-        const pendingOutput = [
-          ...activeWriteQueueRef.current,
-          ...pendingChunks,
-          ...inactiveBufferRef.current,
-        ].join("");
+        const pendingOutput = getPendingOutputSnapshot();
         useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, `${serializedOutput}${pendingOutput}`);
       } catch (err) {
         logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
-      }
-      if (activeWriteRafRef.current !== null) {
-        cancelAnimationFrame(activeWriteRafRef.current);
-        activeWriteRafRef.current = null;
       }
       if (tuiComposerNormalizeRafRef.current !== null) {
         cancelAnimationFrame(tuiComposerNormalizeRafRef.current);
         tuiComposerNormalizeRafRef.current = null;
       }
-      pendingChunks = [];
+      detachPtyOutput();
+      resetOutputState();
       clearHiddenWebglDisposeTimer();
       clearVisibilityRestoreRevealSchedule();
       visibilityRestorePendingRef.current = false;
-      activeWriteQueueRef.current = [];
-      activeWriteQueueSizeRef.current = 0;
-      inactiveReplayStickToBottomRef.current = false;
-      inactiveReplayPendingWritesRef.current = 0;
-      inactiveReplayPendingRef.current = false;
-      inactiveBufferRef.current = [];
-      inactiveBufferSizeRef.current = 0;
-      needsViewportRefreshRef.current = false;
+      resetViewportRefreshState();
       unregisterSnapshotSource();
-      unlisten?.();
       disposeTerminalSubsystem(baseDisposables);
-      webglAddonRef.current?.dispose();
-      webglAddonRef.current = null;
-      webglAddon = null;
+      disposeWebglRenderer();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;

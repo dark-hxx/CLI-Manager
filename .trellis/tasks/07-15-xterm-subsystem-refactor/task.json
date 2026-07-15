@@ -22,11 +22,12 @@
   "parent": null,
   "relatedFiles": [
     "src/components/XTermTerminal.tsx",
+    "src/hooks/useTerminalDisplay.ts",
     "src/hooks/useTerminalOsc.ts",
     "src/hooks/useTerminalSearch.ts",
     "src/hooks/useTerminalContextMenu.ts",
     "src/lib/terminalOscParse.ts"
   ],
-  "notes": "第1层纯函数抽离(fa85bb4)、域K搜索(f1980a6)、域L右键菜单(4419f91)、域D OSC解析(cde76a5) 已完成。本 task 覆盖剩余的编排层重构 + Display/Input 子系统化 + 修复 a/b。进度：OSC 子系统 hook 已抽出并通过手动验证；Display 阶段需修复右侧面板打开触发 Codex reflow 后滚动条跳顶/贴底恢复问题。",
+  "notes": "第1层纯函数抽离(fa85bb4)、域K搜索(f1980a6)、域L右键菜单(4419f91)、域D OSC解析(cde76a5) 已完成。本 task 覆盖剩余的编排层重构 + Display/Input 子系统化 + 修复 a/b。进度：OSC 子系统 hook 已抽出并通过手动验证，提交 47dff31；第3步 Display 已抽出 WebGL、fit/viewport、写队列、隐藏输出缓冲与 pty-output 监听，保留重构前行为语义。用户验证确认 Claude 反复缩放切 tab 的渲染异常、Codex 缩放时从上到下重载的现象均为重构前既有缺陷；不归入本次 Display 提交，留待第5步独立根因修复。下一步：抽 useTerminalInput。",
   "meta": {}
 }

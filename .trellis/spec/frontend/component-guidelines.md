@@ -272,6 +272,37 @@ terminalRef.current = null;
 
 **Tests**: Run `npx tsc --noEmit`. Manually enable low memory mode, switch away from a terminal for more than 10 seconds, verify the session keeps running, then switch back and confirm the current viewport repaints without restarting the shell or losing scrollback.
 
+### Convention: Terminal display state stays in the Display controller
+
+**What**: `useTerminalDisplay` owns renderer state and output-direction state: `WebglAddon`, fit/viewport scheduling, active write queue, inactive output buffer, and the `pty-output-{sessionId}` listener. `XTermTerminal` only orchestrates the terminal instance and passes narrow ref/callback contracts into the hook.
+
+**Why**: Display, input, and OSC handling previously shared one large lifecycle closure. Moving only the display-owned refs and listener into one controller means an input change cannot accidentally alter output buffering or renderer cleanup.
+
+**Correct**:
+
+```tsx
+const display = useTerminalDisplay({
+  terminalRef,
+  fitAddonRef,
+  isVisibleRef,
+  isComposingRef,
+  normalizeOutputRef,
+  transformOutputRef,
+});
+
+// Output direction belongs to Display.
+const detachPtyOutput = display.attachPtyOutput();
+```
+
+**Contracts**:
+
+- The orchestrator owns writes to `terminalRef` and `isVisibleRef`; Display reads them only.
+- Input owns writes to `isComposingRef`; Display reads it only to suppress a fit during IME composition.
+- Display-owned queue, buffer, renderer, and PTY-listener refs must not be recreated in `XTermTerminal` or accessed by Input.
+- Display transforms output through the supplied OSC/cursor callbacks before writing; it must not import Input state or register `terminal.onData`.
+
+**Tests**: Run `npx tsc --noEmit` and `node scripts/terminalVisibility.test.mjs`. Manually verify tab switching with background output, resize, WebGL restoration, and IME composition after any Display controller change.
+
 ### Convention: Visibility-restoration refresh stays masked until xterm render completes
 
 **What**: When `XTermTerminal` changes from hidden to visible, keep the existing queued-write recovery and full viewport refresh, but hide the xterm drawing container until `Terminal.onRender` reports a range covering the current viewport. Reveal on the next animation frame and keep a bounded timeout fallback.
