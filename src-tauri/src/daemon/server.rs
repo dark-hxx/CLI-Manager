@@ -349,7 +349,14 @@ impl DaemonServer {
         let hook_host = Arc::clone(&server.host);
         let dispatcher = DispatcherHandle::start("daemon");
         let hook_sink: HookPayloadSink = Arc::new(move |payload| {
-            maybe_activate_app_for_hook(&payload);
+            // 仅当没有已连接的前端客户端时（app 已彻底退到后台，例如托盘退出后
+            // 转入后台继续执行）才拉起 app 处理审批。app 正在运行时，事件会通过
+            // 下方 broadcast_hook 送达前端，由前端决定是否通知/切换，绝不在此
+            // 抢占前台——否则用户在其他应用里工作时会被 PermissionRequest（含
+            // Codex 改代码时的误报）强制切回 CLI-Manager。
+            if hook_host.client_count() == 0 {
+                maybe_activate_app_for_hook(&payload);
+            }
             dispatcher.try_enqueue(payload.to_notification_job());
             match serde_json::to_value(&payload) {
                 Ok(value) => {

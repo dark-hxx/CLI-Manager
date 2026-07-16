@@ -668,8 +668,6 @@ function App() {
   }, [terminalFullscreen, t]);
 
   const handleActivateHookNotificationTarget = useCallback(async (tabId: string) => {
-    await focusMainWindow();
-
     const terminalStore = useTerminalStore.getState();
     const targetSession = terminalStore.sessions.find((session) => session.id === tabId);
     if (!targetSession) {
@@ -698,6 +696,12 @@ function App() {
       });
     }
     terminalStore.setActive(tabId);
+
+    // 只在窗口未聚焦时才切换窗口，避免 PermissionRequest 等事件在用户专注其他工作时强制打断
+    const isFocused = await isMainWindowFocused();
+    if (!isFocused) {
+      await focusMainWindow();
+    }
   }, []);
 
   useKeyboardShortcuts({ onToggleTerminalFullscreen: handleToggleTerminalFullscreen });
