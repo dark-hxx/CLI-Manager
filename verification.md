@@ -46,3 +46,15 @@
 - cargo check 通过。
 - npm run build 通过；仅有既有的动态/静态混合导入和大 chunk 警告。
 - 未执行真实 Telegram/飞书消息下的单实例回调与受管进程重启冒烟；需使用新构建安装包验证。
+
+## 远程项目目录与 Provider 标识增量验证（2026-07-16）
+
+- `/cli_manager_list` 按 CLI-Manager `groups.parent_id` 目录树输出项目，保留多级目录；没有有效目录的项目统一进入“未分组 / Ungrouped”。
+- 每个项目固定显示 Agent 和 Provider：项目级 `provider_overrides` 优先；未覆盖时读取 cc-switch 当前 Claude/Codex 全局 Provider；cc-switch 不可用时安全回退为“跟随全局”。
+- 同名项目可通过目录、Agent、Provider 和路径区分；当前项目标题也同步包含 Agent 与 Provider，不再只显示名称。
+- 项目序号和切换脚本使用同一份树形排序快照，保证 `/cli_manager_switch <序号>` 与列表展示严格一致；项目 ID 摘要令牌算法未变。
+- 新增中文/英文、嵌套目录、未分组、孤立目录、重复名称、项目级 Provider、全局 Provider 与 Provider 名称回退测试。
+- `cargo test cc_connect::tests --lib` 通过：20 项通过、0 项失败。
+- `cargo check` 通过。
+- `npm run build` 通过；仅有既有的动态/静态混合导入和大 chunk 警告。
+- 本次未修改 cc-connect 源码、全局 npm 包或可执行文件，且未打包安装包。

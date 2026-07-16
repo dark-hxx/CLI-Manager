@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, Row, SqliteConnection};
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::env;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -672,6 +672,40 @@ struct RegisteredProject {
     name: String,
     path: String,
     agent: CcConnectAgent,
+    group_path: Vec<RegisteredGroupSegment>,
+    provider_name: Option<String>,
+    provider_is_global: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegisteredGroupSegment {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegisteredGroup {
+    id: String,
+    name: String,
+    parent_id: Option<String>,
+    sort_order: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegisteredProjectRow {
+    id: String,
+    name: String,
+    path: String,
+    agent: CcConnectAgent,
+    group_id: Option<String>,
+    sort_order: i64,
+    provider_overrides: String,
+}
+
+#[derive(Debug, Default)]
+struct ProviderCatalog {
+    current_by_app: BTreeMap<String, String>,
+    names_by_app_and_id: BTreeMap<(String, String), String>,
 }
 
 fn build_managed_config(
@@ -1009,15 +1043,14 @@ fn render_project_list(
     profile: &CcConnectProfile,
     registered_projects: &[RegisteredProject],
 ) -> String {
+    let current_summary = registered_projects
+        .iter()
+        .find(|project| project.id == profile.project_id)
+        .map(|project| project_summary(profile.language, project))
+        .unwrap_or_else(|| single_line(&profile.project_name));
     let mut output = match profile.language {
-        CcConnectLanguage::Zh => format!(
-            "CLI-Manager 项目（当前：{}）\n",
-            single_line(&profile.project_name)
-        ),
-        CcConnectLanguage::En => format!(
-            "CLI-Manager projects (current: {})\n",
-            single_line(&profile.project_name)
-        ),
+        CcConnectLanguage::Zh => format!("CLI-Manager 项目（当前：{current_summary}）"),
+        CcConnectLanguage::En => format!("CLI-Manager projects (current: {current_summary})"),
     };
     if registered_projects.is_empty() {
         output.push_str(match profile.language {
@@ -1026,7 +1059,42 @@ fn render_project_list(
         });
         return output;
     }
+
+    let mut previous_group_ids = Vec::<String>::new();
+    let mut ungrouped_header_rendered = false;
     for (index, project) in registered_projects.iter().enumerate() {
+        let item_depth = if project.group_path.is_empty() {
+            previous_group_ids.clear();
+            if !ungrouped_header_rendered {
+                output.push_str(match profile.language {
+                    CcConnectLanguage::Zh => "\n📁 未分组",
+                    CcConnectLanguage::En => "\n📁 Ungrouped",
+                });
+                ungrouped_header_rendered = true;
+            }
+            1
+        } else {
+            let common_depth = project
+                .group_path
+                .iter()
+                .zip(&previous_group_ids)
+                .take_while(|(group, previous_id)| group.id == **previous_id)
+                .count();
+            for (offset, group) in project.group_path[common_depth..].iter().enumerate() {
+                let depth = common_depth + offset;
+                output.push_str(&format!(
+                    "\n{}📁 {}",
+                    "  ".repeat(depth),
+                    single_line(&group.name)
+                ));
+            }
+            previous_group_ids = project
+                .group_path
+                .iter()
+                .map(|group| group.id.clone())
+                .collect();
+            project.group_path.len()
+        };
         let current = project.id == profile.project_id;
         let unavailable = !Path::new(&project.path).is_dir();
         let state = match (profile.language, current, unavailable) {
@@ -1036,11 +1104,19 @@ fn render_project_list(
             (CcConnectLanguage::En, _, true) => " [path unavailable]",
             _ => "",
         };
+        let item_indent = "  ".repeat(item_depth);
+        let detail_indent = format!("{item_indent}   ");
+        let path_label = match profile.language {
+            CcConnectLanguage::Zh => "路径：",
+            CcConnectLanguage::En => "Path: ",
+        };
         output.push_str(&format!(
-            "\n{}. {}{}\n   {}",
+            "\n{item_indent}{}. {}{}\n{detail_indent}{} · {}\n{detail_indent}{path_label}{}",
             index + 1,
             single_line(&project.name),
             state,
+            agent_display_name(project.agent),
+            provider_display_value(profile.language, project),
             single_line(&user_path_string(Path::new(&project.path)))
         ));
     }
@@ -1049,6 +1125,36 @@ fn render_project_list(
         CcConnectLanguage::En => "\n\nSwitch project: /cli_manager_switch <number>",
     });
     output
+}
+
+fn agent_display_name(agent: CcConnectAgent) -> &'static str {
+    match agent {
+        CcConnectAgent::Claude => "Claude Code",
+        CcConnectAgent::Codex => "Codex",
+    }
+}
+
+fn provider_display_value(language: CcConnectLanguage, project: &RegisteredProject) -> String {
+    let provider_name = project.provider_name.as_deref().map(single_line);
+    match (language, project.provider_is_global, provider_name) {
+        (CcConnectLanguage::Zh, true, Some(name)) => format!("Provider：{name}（全局）"),
+        (CcConnectLanguage::Zh, true, None) => "Provider：跟随全局".to_string(),
+        (CcConnectLanguage::Zh, false, Some(name)) => format!("Provider：{name}"),
+        (CcConnectLanguage::Zh, false, None) => "Provider：项目指定".to_string(),
+        (CcConnectLanguage::En, true, Some(name)) => format!("Provider: {name} (global)"),
+        (CcConnectLanguage::En, true, None) => "Provider: follow global".to_string(),
+        (CcConnectLanguage::En, false, Some(name)) => format!("Provider: {name}"),
+        (CcConnectLanguage::En, false, None) => "Provider: project override".to_string(),
+    }
+}
+
+fn project_summary(language: CcConnectLanguage, project: &RegisteredProject) -> String {
+    format!(
+        "{} · {} · {}",
+        single_line(&project.name),
+        agent_display_name(project.agent),
+        provider_display_value(language, project)
+    )
 }
 
 fn single_line(value: &str) -> String {
@@ -1337,6 +1443,316 @@ fn profile_issue_codes(profile: &CcConnectProfile) -> Vec<String> {
     issues
 }
 
+fn default_cc_switch_db_path() -> Option<PathBuf> {
+    let home = env::var_os("USERPROFILE")
+        .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os("HOME").filter(|value| !value.is_empty()))?;
+    Some(PathBuf::from(home).join(".cc-switch").join("cc-switch.db"))
+}
+
+async fn load_provider_catalog() -> ProviderCatalog {
+    let Some(database_path) = default_cc_switch_db_path().filter(|path| path.is_file()) else {
+        return ProviderCatalog::default();
+    };
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .read_only(true)
+        .busy_timeout(Duration::from_secs(1));
+    let Ok(mut connection) = SqliteConnection::connect_with(&options).await else {
+        return ProviderCatalog::default();
+    };
+    let rows = sqlx::query(
+        "SELECT id, app_type, name, is_current FROM providers \
+         WHERE app_type IN ('claude', 'codex') \
+         ORDER BY app_type ASC, sort_index ASC, name COLLATE NOCASE ASC",
+    )
+    .fetch_all(&mut connection)
+    .await;
+    let _ = connection.close().await;
+    let Ok(rows) = rows else {
+        return ProviderCatalog::default();
+    };
+
+    let mut catalog = ProviderCatalog::default();
+    for row in rows {
+        let (Ok(id), Ok(app_type), Ok(name), Ok(is_current)) = (
+            row.try_get::<String, _>("id"),
+            row.try_get::<String, _>("app_type"),
+            row.try_get::<String, _>("name"),
+            row.try_get::<bool, _>("is_current"),
+        ) else {
+            continue;
+        };
+        let app_type = app_type.trim().to_ascii_lowercase();
+        let name = single_line(&name);
+        if app_type.is_empty() || id.trim().is_empty() || name.is_empty() {
+            continue;
+        }
+        catalog
+            .names_by_app_and_id
+            .insert((app_type.clone(), id.trim().to_string()), name.clone());
+        if is_current {
+            catalog.current_by_app.entry(app_type).or_insert(name);
+        }
+    }
+    catalog
+}
+
+fn project_provider(
+    agent: CcConnectAgent,
+    provider_overrides: &str,
+    catalog: &ProviderCatalog,
+) -> (Option<String>, bool) {
+    let app_type = match agent {
+        CcConnectAgent::Claude => "claude",
+        CcConnectAgent::Codex => "codex",
+    };
+    let project_override = serde_json::from_str::<serde_json::Value>(provider_overrides)
+        .ok()
+        .and_then(|value| value.get(app_type).cloned())
+        .and_then(|value| value.as_object().cloned())
+        .and_then(|value| {
+            let provider_id = value
+                .get("providerId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let provider_name = value
+                .get("providerName")
+                .and_then(serde_json::Value::as_str)
+                .map(single_line)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    catalog
+                        .names_by_app_and_id
+                        .get(&(app_type.to_string(), provider_id.to_string()))
+                        .cloned()
+                })
+                .unwrap_or_else(|| provider_id.to_string());
+            Some(provider_name)
+        });
+    if let Some(provider_name) = project_override {
+        return (Some(provider_name), false);
+    }
+    (catalog.current_by_app.get(app_type).cloned(), true)
+}
+
+fn compare_display_names(left: &str, right: &str) -> std::cmp::Ordering {
+    let left_ascii = left.chars().all(|character| character.is_ascii());
+    let right_ascii = right.chars().all(|character| character.is_ascii());
+    left_ascii
+        .cmp(&right_ascii)
+        .then_with(|| left.to_lowercase().cmp(&right.to_lowercase()))
+}
+
+fn compare_registered_groups(
+    left: &RegisteredGroup,
+    right: &RegisteredGroup,
+) -> std::cmp::Ordering {
+    left.sort_order
+        .cmp(&right.sort_order)
+        .then_with(|| compare_display_names(&left.name, &right.name))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn compare_registered_project_rows(
+    left: &RegisteredProjectRow,
+    right: &RegisteredProjectRow,
+) -> std::cmp::Ordering {
+    left.sort_order
+        .cmp(&right.sort_order)
+        .then_with(|| compare_display_names(&left.name, &right.name))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn registered_project_from_row(
+    row: &RegisteredProjectRow,
+    group_path: &[RegisteredGroupSegment],
+    catalog: &ProviderCatalog,
+) -> RegisteredProject {
+    let (provider_name, provider_is_global) =
+        project_provider(row.agent, &row.provider_overrides, catalog);
+    RegisteredProject {
+        id: row.id.clone(),
+        name: row.name.clone(),
+        path: row.path.clone(),
+        agent: row.agent,
+        group_path: group_path.to_vec(),
+        provider_name,
+        provider_is_global,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_registered_group(
+    group_id: &str,
+    groups_by_id: &HashMap<String, RegisteredGroup>,
+    child_group_ids: &HashMap<Option<String>, Vec<String>>,
+    project_indices_by_group: &HashMap<Option<String>, Vec<usize>>,
+    project_rows: &[RegisteredProjectRow],
+    catalog: &ProviderCatalog,
+    visited_group_ids: &mut HashSet<String>,
+    included_project_indices: &mut HashSet<usize>,
+    group_path: &mut Vec<RegisteredGroupSegment>,
+    output: &mut Vec<RegisteredProject>,
+) {
+    if !visited_group_ids.insert(group_id.to_string()) {
+        return;
+    }
+    let Some(group) = groups_by_id.get(group_id) else {
+        return;
+    };
+    group_path.push(RegisteredGroupSegment {
+        id: group.id.clone(),
+        name: group.name.clone(),
+    });
+    if let Some(children) = child_group_ids.get(&Some(group_id.to_string())) {
+        for child_id in children {
+            append_registered_group(
+                child_id,
+                groups_by_id,
+                child_group_ids,
+                project_indices_by_group,
+                project_rows,
+                catalog,
+                visited_group_ids,
+                included_project_indices,
+                group_path,
+                output,
+            );
+        }
+    }
+    if let Some(project_indices) = project_indices_by_group.get(&Some(group_id.to_string())) {
+        for index in project_indices {
+            if included_project_indices.insert(*index) {
+                output.push(registered_project_from_row(
+                    &project_rows[*index],
+                    group_path,
+                    catalog,
+                ));
+            }
+        }
+    }
+    group_path.pop();
+}
+
+fn order_registered_projects(
+    groups: Vec<RegisteredGroup>,
+    project_rows: Vec<RegisteredProjectRow>,
+    catalog: &ProviderCatalog,
+) -> Vec<RegisteredProject> {
+    let groups_by_id = groups
+        .iter()
+        .cloned()
+        .map(|group| (group.id.clone(), group))
+        .collect::<HashMap<_, _>>();
+    let mut child_group_ids = HashMap::<Option<String>, Vec<String>>::new();
+    for group in &groups {
+        let parent_id = group
+            .parent_id
+            .as_ref()
+            .filter(|parent_id| groups_by_id.contains_key(*parent_id))
+            .cloned();
+        child_group_ids
+            .entry(parent_id)
+            .or_default()
+            .push(group.id.clone());
+    }
+    for child_ids in child_group_ids.values_mut() {
+        child_ids.sort_by(|left, right| {
+            compare_registered_groups(&groups_by_id[left], &groups_by_id[right])
+        });
+    }
+
+    let mut project_indices_by_group = HashMap::<Option<String>, Vec<usize>>::new();
+    for (index, project) in project_rows.iter().enumerate() {
+        let group_id = project
+            .group_id
+            .as_ref()
+            .filter(|group_id| groups_by_id.contains_key(*group_id))
+            .cloned();
+        project_indices_by_group
+            .entry(group_id)
+            .or_default()
+            .push(index);
+    }
+    for project_indices in project_indices_by_group.values_mut() {
+        project_indices.sort_by(|left, right| {
+            compare_registered_project_rows(&project_rows[*left], &project_rows[*right])
+        });
+    }
+
+    let mut output = Vec::with_capacity(project_rows.len());
+    let mut visited_group_ids = HashSet::new();
+    let mut included_project_indices = HashSet::new();
+    let mut group_path = Vec::new();
+    if let Some(root_group_ids) = child_group_ids.get(&None) {
+        for group_id in root_group_ids {
+            append_registered_group(
+                group_id,
+                &groups_by_id,
+                &child_group_ids,
+                &project_indices_by_group,
+                &project_rows,
+                catalog,
+                &mut visited_group_ids,
+                &mut included_project_indices,
+                &mut group_path,
+                &mut output,
+            );
+        }
+    }
+
+    let mut remaining_group_ids = groups
+        .iter()
+        .filter(|group| !visited_group_ids.contains(&group.id))
+        .map(|group| group.id.clone())
+        .collect::<Vec<_>>();
+    remaining_group_ids.sort_by(|left, right| {
+        compare_registered_groups(&groups_by_id[left], &groups_by_id[right])
+    });
+    for group_id in remaining_group_ids {
+        append_registered_group(
+            &group_id,
+            &groups_by_id,
+            &child_group_ids,
+            &project_indices_by_group,
+            &project_rows,
+            catalog,
+            &mut visited_group_ids,
+            &mut included_project_indices,
+            &mut group_path,
+            &mut output,
+        );
+    }
+
+    if let Some(project_indices) = project_indices_by_group.get(&None) {
+        for index in project_indices {
+            if included_project_indices.insert(*index) {
+                output.push(registered_project_from_row(
+                    &project_rows[*index],
+                    &[],
+                    catalog,
+                ));
+            }
+        }
+    }
+    let mut remaining_project_indices = (0..project_rows.len())
+        .filter(|index| !included_project_indices.contains(index))
+        .collect::<Vec<_>>();
+    remaining_project_indices.sort_by(|left, right| {
+        compare_registered_project_rows(&project_rows[*left], &project_rows[*right])
+    });
+    for index in remaining_project_indices {
+        output.push(registered_project_from_row(
+            &project_rows[index],
+            &[],
+            catalog,
+        ));
+    }
+    output
+}
+
 fn load_registered_projects() -> Result<Vec<RegisteredProject>, String> {
     let database_path = crate::app_paths::db_path()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1351,19 +1767,45 @@ fn load_registered_projects() -> Result<Vec<RegisteredProject>, String> {
         let mut connection = SqliteConnection::connect_with(&options)
             .await
             .map_err(|err| format!("open CLI-Manager project database failed: {err}"))?;
-        let rows = sqlx::query(
-            "SELECT id, name, path, cli_tool FROM projects \
-             ORDER BY sort_order ASC, name COLLATE NOCASE ASC, id ASC",
+        let group_rows = sqlx::query("SELECT id, name, parent_id, sort_order FROM groups")
+            .fetch_all(&mut connection)
+            .await
+            .map_err(|err| format!("query CLI-Manager groups failed: {err}"))?;
+        let project_rows = sqlx::query(
+            "SELECT id, name, path, cli_tool, group_id, sort_order, provider_overrides \
+             FROM projects",
         )
         .fetch_all(&mut connection)
         .await
         .map_err(|err| format!("query CLI-Manager projects failed: {err}"))?;
-        rows.into_iter()
+        let _ = connection.close().await;
+
+        let groups = group_rows
+            .into_iter()
+            .map(|row| {
+                Ok(RegisteredGroup {
+                    id: row
+                        .try_get("id")
+                        .map_err(|err| format!("read group ID failed: {err}"))?,
+                    name: row
+                        .try_get("name")
+                        .map_err(|err| format!("read group name failed: {err}"))?,
+                    parent_id: row
+                        .try_get("parent_id")
+                        .map_err(|err| format!("read group parent failed: {err}"))?,
+                    sort_order: row
+                        .try_get("sort_order")
+                        .map_err(|err| format!("read group sort order failed: {err}"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let projects = project_rows
+            .into_iter()
             .map(|row| {
                 let cli_tool: String = row
                     .try_get("cli_tool")
                     .map_err(|err| format!("read project CLI tool failed: {err}"))?;
-                Ok(RegisteredProject {
+                Ok(RegisteredProjectRow {
                     id: row
                         .try_get("id")
                         .map_err(|err| format!("read project ID failed: {err}"))?,
@@ -1378,9 +1820,24 @@ fn load_registered_projects() -> Result<Vec<RegisteredProject>, String> {
                     } else {
                         CcConnectAgent::Claude
                     },
+                    group_id: row
+                        .try_get("group_id")
+                        .map_err(|err| format!("read project group failed: {err}"))?,
+                    sort_order: row
+                        .try_get("sort_order")
+                        .map_err(|err| format!("read project sort order failed: {err}"))?,
+                    provider_overrides: row
+                        .try_get("provider_overrides")
+                        .map_err(|err| format!("read project provider override failed: {err}"))?,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, String>>()?;
+        let provider_catalog = load_provider_catalog().await;
+        Ok(order_registered_projects(
+            groups,
+            projects,
+            &provider_catalog,
+        ))
     })
 }
 
@@ -2615,6 +3072,43 @@ mod tests {
             name: name.to_string(),
             path: path_string(project_path),
             agent: CcConnectAgent::Claude,
+            group_path: Vec::new(),
+            provider_name: None,
+            provider_is_global: true,
+        }
+    }
+
+    fn sample_group(
+        id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        sort_order: i64,
+    ) -> RegisteredGroup {
+        RegisteredGroup {
+            id: id.to_string(),
+            name: name.to_string(),
+            parent_id: parent_id.map(str::to_string),
+            sort_order,
+        }
+    }
+
+    fn sample_project_row(
+        id: &str,
+        name: &str,
+        project_path: &Path,
+        agent: CcConnectAgent,
+        group_id: Option<&str>,
+        sort_order: i64,
+        provider_overrides: &str,
+    ) -> RegisteredProjectRow {
+        RegisteredProjectRow {
+            id: id.to_string(),
+            name: name.to_string(),
+            path: path_string(project_path),
+            agent,
+            group_id: group_id.map(str::to_string),
+            sort_order,
+            provider_overrides: provider_overrides.to_string(),
         }
     }
     #[test]
@@ -2919,6 +3413,182 @@ mod tests {
         assert!(script.contains("[Guid]::NewGuid().ToString('N')"));
         assert!(!script.contains(&path_string(current.path())));
     }
+
+    #[test]
+    fn project_list_groups_directories_and_disambiguates_provider() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project_dir.path());
+        profile.project_id = "claude-amazon".to_string();
+        profile.project_name = "amazon".to_string();
+
+        let mut claude = sample_registered_project("claude-amazon", "amazon", project_dir.path());
+        claude.group_path = vec![
+            RegisteredGroupSegment {
+                id: "claude-root".to_string(),
+                name: "claude".to_string(),
+            },
+            RegisteredGroupSegment {
+                id: "claude-amazon-group".to_string(),
+                name: "amazon".to_string(),
+            },
+        ];
+        claude.provider_name = Some("anyRouter-fable5".to_string());
+
+        let mut codex = sample_registered_project("codex-amazon", "amazon", project_dir.path());
+        codex.agent = CcConnectAgent::Codex;
+        codex.group_path = vec![
+            RegisteredGroupSegment {
+                id: "codex-root".to_string(),
+                name: "codex".to_string(),
+            },
+            RegisteredGroupSegment {
+                id: "codex-amazon-group".to_string(),
+                name: "amazon".to_string(),
+            },
+        ];
+        codex.provider_name = Some("Amz项目".to_string());
+        codex.provider_is_global = false;
+
+        let mut ungrouped =
+            sample_registered_project("ungrouped-amazon", "amazon", project_dir.path());
+        ungrouped.provider_name = Some("muyuan".to_string());
+
+        let projects = vec![claude, codex, ungrouped];
+        let list = render_project_list(&profile, &projects);
+        assert!(list.contains(
+            "CLI-Manager 项目（当前：amazon · Claude Code · Provider：anyRouter-fable5（全局））"
+        ));
+        assert!(list.contains("📁 claude\n  📁 amazon\n    1. amazon [当前]"));
+        assert!(list.contains("Claude Code · Provider：anyRouter-fable5（全局）"));
+        assert!(list.contains("📁 codex\n  📁 amazon\n    2. amazon"));
+        assert!(list.contains("Codex · Provider：Amz项目"));
+        assert!(list.contains("📁 未分组\n  3. amazon"));
+        assert!(list.contains("Claude Code · Provider：muyuan（全局）"));
+
+        profile.language = CcConnectLanguage::En;
+        let english = render_project_list(&profile, &projects);
+        assert!(english.contains("Provider: anyRouter-fable5 (global)"));
+        assert!(english.contains("📁 Ungrouped"));
+        assert!(english.contains("Path: "));
+    }
+
+    #[test]
+    fn project_provider_prefers_project_override_and_resolves_global_names() {
+        let mut catalog = ProviderCatalog::default();
+        catalog
+            .current_by_app
+            .insert("claude".to_string(), "anyRouter-fable5".to_string());
+        catalog.names_by_app_and_id.insert(
+            ("codex".to_string(), "provider-codex".to_string()),
+            "Amz项目".to_string(),
+        );
+
+        assert_eq!(
+            project_provider(CcConnectAgent::Claude, "{}", &catalog),
+            (Some("anyRouter-fable5".to_string()), true)
+        );
+        assert_eq!(
+            project_provider(
+                CcConnectAgent::Claude,
+                r#"{"claude":{"providerId":"provider-claude","providerName":"muyuan"}}"#,
+                &catalog,
+            ),
+            (Some("muyuan".to_string()), false)
+        );
+        assert_eq!(
+            project_provider(
+                CcConnectAgent::Codex,
+                r#"{"codex":{"providerId":"provider-codex","providerName":null}}"#,
+                &catalog,
+            ),
+            (Some("Amz项目".to_string()), false)
+        );
+        assert_eq!(
+            project_provider(CcConnectAgent::Codex, "not-json", &catalog),
+            (None, true)
+        );
+    }
+
+    #[test]
+    fn registered_projects_follow_sidebar_tree_order_and_keep_ungrouped_entries() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let groups = vec![
+            sample_group("terminal", "终端", None, 0),
+            sample_group("terminal-app", "应用", Some("terminal"), 0),
+            sample_group("claude", "claude", None, 0),
+            sample_group("claude-amazon", "amazon", Some("claude"), 0),
+            sample_group("orphan", "遗留目录", Some("missing-parent"), 2),
+        ];
+        let projects = vec![
+            sample_project_row(
+                "ungrouped",
+                "同名项目",
+                project_dir.path(),
+                CcConnectAgent::Codex,
+                None,
+                0,
+                "{}",
+            ),
+            sample_project_row(
+                "claude-project",
+                "同名项目",
+                project_dir.path(),
+                CcConnectAgent::Claude,
+                Some("claude-amazon"),
+                0,
+                "{}",
+            ),
+            sample_project_row(
+                "terminal-project",
+                "终端项目",
+                project_dir.path(),
+                CcConnectAgent::Claude,
+                Some("terminal-app"),
+                0,
+                "{}",
+            ),
+            sample_project_row(
+                "orphan-project",
+                "遗留项目",
+                project_dir.path(),
+                CcConnectAgent::Claude,
+                Some("orphan"),
+                0,
+                "{}",
+            ),
+        ];
+        let ordered = order_registered_projects(groups, projects, &ProviderCatalog::default());
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|project| project.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "terminal-project",
+                "claude-project",
+                "orphan-project",
+                "ungrouped"
+            ]
+        );
+        assert_eq!(
+            ordered[0]
+                .group_path
+                .iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["终端", "应用"]
+        );
+        assert_eq!(
+            ordered[2]
+                .group_path
+                .iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["遗留目录"]
+        );
+        assert!(ordered[3].group_path.is_empty());
+    }
+
     #[test]
     fn managed_config_matches_installed_cc_connect_when_requested() {
         let Ok(binary) = std::env::var("CLI_MANAGER_TEST_CC_CONNECT") else {
