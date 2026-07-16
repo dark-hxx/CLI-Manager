@@ -198,6 +198,27 @@ fn current_branch_name(repo: &Repository) -> Result<String, String> {
         .ok_or_else(|| "branch_name_unknown".to_string())
 }
 
+/// Trellis 把开发者身份写在 `.trellis/.developer`，该文件被 gitignore（仅本地），
+/// 所以 `git worktree add` 不会把它带进新 worktree —— 结果新 worktree 里 Trellis
+/// 认不出开发者、任务流程走不下去。这里在 worktree 创建后，best-effort 地把主仓库的
+/// 身份文件复制过去。文件不存在（主仓库自己也没初始化）或复制失败都安全忽略，
+/// 不影响 worktree 本身的创建结果。
+fn seed_trellis_developer_identity(main_repo: &Path, worktree_path: &Path) {
+    let source = main_repo.join(".trellis").join(".developer");
+    if !source.is_file() {
+        return;
+    }
+    let dest_dir = worktree_path.join(".trellis");
+    if !dest_dir.is_dir() {
+        return;
+    }
+    let dest = dest_dir.join(".developer");
+    if dest.exists() {
+        return;
+    }
+    let _ = fs::copy(&source, &dest);
+}
+
 fn default_worktree_root(project_path: &Path) -> Result<PathBuf, String> {
     let project_name = project_path
         .file_name()
@@ -677,6 +698,8 @@ pub async fn git_worktree_create(
             return Err(format!("git_failed: {snippet}"));
         }
 
+        seed_trellis_developer_identity(&project_path, &target_path);
+
         Ok(GitWorktreeCreateResult {
             name: task_name,
             branch,
@@ -857,7 +880,8 @@ mod tests {
         is_retryable_worktree_remove_error, is_stale_worktree_remove_error,
         parse_worktree_list_entries, path_to_git_arg, remove_registered_stale_worktree_dir,
         remove_worktree_path_with_retry, resolve_worktree_target_path,
-        should_cleanup_worktree_branch_after_failed_add, validate_plain_branch_name,
+        seed_trellis_developer_identity, should_cleanup_worktree_branch_after_failed_add,
+        validate_plain_branch_name,
         validate_task_name, validate_worktree_branch, WorktreeRegistration,
     };
     use std::fs;
@@ -1056,6 +1080,55 @@ mod tests {
         cleanup_empty_worktree_parent(&wt_a);
         assert!(root2.exists());
         assert!(wt_b.exists());
+    }
+
+    #[test]
+    fn seeds_trellis_developer_identity_into_worktree() {
+        let temp = tempfile::tempdir().unwrap();
+        let main_repo = temp.path().join("main");
+        let worktree = temp.path().join("wt");
+
+        // 主仓库有 .trellis/.developer，worktree 也已存在 .trellis 目录
+        fs::create_dir_all(main_repo.join(".trellis")).unwrap();
+        fs::write(main_repo.join(".trellis").join(".developer"), "name=hxx").unwrap();
+        fs::create_dir_all(worktree.join(".trellis")).unwrap();
+
+        seed_trellis_developer_identity(&main_repo, &worktree);
+
+        let dest = worktree.join(".trellis").join(".developer");
+        assert!(dest.is_file());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "name=hxx");
+    }
+
+    #[test]
+    fn seed_trellis_developer_identity_is_noop_when_source_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let main_repo = temp.path().join("main");
+        let worktree = temp.path().join("wt");
+        fs::create_dir_all(main_repo.join(".trellis")).unwrap();
+        fs::create_dir_all(worktree.join(".trellis")).unwrap();
+
+        // 主仓库自己都没初始化身份：不应创建目标文件
+        seed_trellis_developer_identity(&main_repo, &worktree);
+        assert!(!worktree.join(".trellis").join(".developer").exists());
+    }
+
+    #[test]
+    fn seed_trellis_developer_identity_does_not_overwrite_existing() {
+        let temp = tempfile::tempdir().unwrap();
+        let main_repo = temp.path().join("main");
+        let worktree = temp.path().join("wt");
+        fs::create_dir_all(main_repo.join(".trellis")).unwrap();
+        fs::write(main_repo.join(".trellis").join(".developer"), "name=main").unwrap();
+        fs::create_dir_all(worktree.join(".trellis")).unwrap();
+        fs::write(worktree.join(".trellis").join(".developer"), "name=existing").unwrap();
+
+        // worktree 已有身份：保持不动
+        seed_trellis_developer_identity(&main_repo, &worktree);
+        assert_eq!(
+            fs::read_to_string(worktree.join(".trellis").join(".developer")).unwrap(),
+            "name=existing"
+        );
     }
 
     #[test]
