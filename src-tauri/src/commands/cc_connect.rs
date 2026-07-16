@@ -1,4 +1,5 @@
 use crate::shell_resolver::{output_with_timeout, silent_command};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::SqliteConnectOptions;
@@ -17,6 +18,7 @@ use tauri::{AppHandle, Manager, State};
 const PROFILE_FILE_NAME: &str = "profile.json";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const PROJECT_LIST_FILE_NAME: &str = "cli-manager-projects.txt";
+const PROJECT_SWITCH_SCRIPT_FILE_NAME: &str = "cli-manager-switch.ps1";
 const LOG_FILE_NAME: &str = "cc-connect.log";
 const MAX_LOG_LINES: usize = 1_000;
 const DEFAULT_LOG_PAGE_SIZE: usize = 200;
@@ -674,17 +676,12 @@ struct RegisteredProject {
 
 fn build_managed_config(
     profile: &CcConnectProfile,
-    registered_projects: &[RegisteredProject],
-    cli_manager_executable: &Path,
     project_list_path: &Path,
+    project_switch_script_path: &Path,
 ) -> Result<ManagedConfig, String> {
     let allow_from = normalize_allow_from(profile.platform, &profile.allow_from)?;
-    let (commands, aliases) = build_remote_project_commands(
-        profile,
-        registered_projects,
-        cli_manager_executable,
-        project_list_path,
-    )?;
+    let (commands, aliases) =
+        build_remote_project_commands(profile, project_list_path, project_switch_script_path)?;
     let mut options = BTreeMap::new();
     options.insert(
         "allow_from".to_string(),
@@ -815,9 +812,8 @@ fn build_managed_config(
 
 fn build_remote_project_commands(
     profile: &CcConnectProfile,
-    registered_projects: &[RegisteredProject],
-    cli_manager_executable: &Path,
     project_list_path: &Path,
+    project_switch_script_path: &Path,
 ) -> Result<(Vec<ManagedCommand>, Vec<ManagedAlias>), String> {
     let work_dir = config_path_value(&remote_manager_dir()?);
     let list_path = powershell_single_quoted(&user_path_string(project_list_path));
@@ -829,53 +825,41 @@ fn build_remote_project_commands(
         "$OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; \
          Get-Content -Raw -Encoding UTF8 -LiteralPath {list_path}; $null='{{{{0:}}}}'"
     );
-    let mut commands = vec![ManagedCommand {
-        name: "cli-manager-list".to_string(),
-        description: list_description.to_string(),
-        exec: list_exec,
-        work_dir: work_dir.clone(),
-    }];
-    let mut aliases = Vec::with_capacity(registered_projects.len());
-    let executable = powershell_single_quoted(&user_path_string(cli_manager_executable));
-
-    for (index, project) in registered_projects.iter().enumerate() {
-        let number = index + 1;
-        let token = project_switch_token(&project.id);
-        let result_path = switch_result_path(&token)?;
-        let result = powershell_single_quoted(&user_path_string(&result_path));
-        let switch_arg = powershell_single_quoted(&format!("{REMOTE_SWITCH_ARG_PREFIX}{token}"));
-        let timeout_message = match profile.language {
-            CcConnectLanguage::Zh => "CLI-Manager 项目切换请求超时。",
-            CcConnectLanguage::En => "The CLI-Manager project switch request timed out.",
-        };
-        let timeout_message = powershell_single_quoted(timeout_message);
-        let exec = format!(
-            "$OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; \
-             $result={result}; Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue; \
-             Start-Process -FilePath {executable} -ArgumentList {switch_arg} -Wait -WindowStyle Hidden | Out-Null; \
-             $deadline=(Get-Date).AddSeconds(10); \
-             while (!(Test-Path -LiteralPath $result) -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 100 }}; \
-             if (Test-Path -LiteralPath $result) {{ Get-Content -Raw -Encoding UTF8 -LiteralPath $result }} \
-             else {{ Write-Output {timeout_message} }}; $null='{{{{0:}}}}'"
-        );
-        let internal_name = format!("cli-manager-switch-{number}");
-        commands.push(ManagedCommand {
-            name: internal_name.clone(),
-            description: match profile.language {
-                CcConnectLanguage::Zh => format!("切换到 CLI-Manager 项目 {}", project.name),
-                CcConnectLanguage::En => {
-                    format!("Switch to CLI-Manager project {}", project.name)
-                }
+    let switch_script = powershell_single_quoted(&user_path_string(project_switch_script_path));
+    let switch_description = match profile.language {
+        CcConnectLanguage::Zh => "按序号切换 CLI-Manager 项目，例如 /cli_manager_switch 2",
+        CcConnectLanguage::En => {
+            "Switch CLI-Manager project by number, for example /cli_manager_switch 2"
+        }
+    };
+    // cc-connect v1.4.1 removes ASCII quote characters while tokenizing command
+    // arguments. A single-quoted here-string therefore keeps newlines and every
+    // remaining PowerShell metacharacter as data; its ASCII footer cannot be
+    // supplied by the remote user. The pinned cc-connect hash protects this
+    // parser contract until a newer version is reviewed explicitly.
+    let switch_exec = format!(
+        "$raw=@'\n{{{{args:}}}}\n'@\n\
+         $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($raw))\n\
+         powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+         -File {switch_script} $encoded"
+    );
+    Ok((
+        vec![
+            ManagedCommand {
+                name: "cli_manager_list".to_string(),
+                description: list_description.to_string(),
+                exec: list_exec,
+                work_dir: work_dir.clone(),
             },
-            exec,
-            work_dir: work_dir.clone(),
-        });
-        aliases.push(ManagedAlias {
-            name: format!("/cli-manager-switch {number}"),
-            command: format!("/{internal_name}"),
-        });
-    }
-    Ok((commands, aliases))
+            ManagedCommand {
+                name: "cli_manager_switch".to_string(),
+                description: switch_description.to_string(),
+                exec: switch_exec,
+                work_dir,
+            },
+        ],
+        Vec::new(),
+    ))
 }
 
 fn powershell_single_quoted(value: &str) -> String {
@@ -890,16 +874,135 @@ fn project_list_path() -> Result<PathBuf, String> {
     Ok(remote_manager_dir()?.join(PROJECT_LIST_FILE_NAME))
 }
 
-fn switch_result_path(token: &str) -> Result<PathBuf, String> {
-    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("invalid CLI-Manager project switch token".to_string());
-    }
-    Ok(remote_manager_dir()?.join(format!("switch-result-{token}.txt")))
+fn project_switch_script_path() -> Result<PathBuf, String> {
+    Ok(remote_manager_dir()?.join(PROJECT_SWITCH_SCRIPT_FILE_NAME))
 }
 
-fn remote_switch_token_from_args(args: &[String]) -> Option<&str> {
-    args.iter()
-        .find_map(|arg| arg.strip_prefix(REMOTE_SWITCH_ARG_PREFIX))
+fn is_switch_identifier(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn switch_result_path(request_id: &str) -> Result<PathBuf, String> {
+    if !is_switch_identifier(request_id) {
+        return Err("invalid CLI-Manager project switch request ID".to_string());
+    }
+    Ok(remote_manager_dir()?.join(format!("switch-result-{request_id}.txt")))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RemoteSwitchRequest {
+    project_token: String,
+    request_id: String,
+}
+
+fn remote_switch_request_from_args(args: &[String]) -> Option<RemoteSwitchRequest> {
+    args.iter().find_map(|arg| {
+        let payload = arg.strip_prefix(REMOTE_SWITCH_ARG_PREFIX)?;
+        let (project_token, request_id) = payload.split_once(':').unwrap_or((payload, payload));
+        Some(RemoteSwitchRequest {
+            project_token: project_token.to_string(),
+            request_id: request_id.to_string(),
+        })
+    })
+}
+
+fn base64_utf8(value: &str) -> String {
+    BASE64_STANDARD.encode(value.as_bytes())
+}
+
+fn render_project_switch_script(
+    profile: &CcConnectProfile,
+    registered_projects: &[RegisteredProject],
+    cli_manager_executable: &Path,
+) -> Result<String, String> {
+    let project_tokens = registered_projects
+        .iter()
+        .map(|project| format!("    '{}'", project_switch_token(&project.id)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let cli_manager = base64_utf8(&user_path_string(cli_manager_executable));
+    let result_directory = base64_utf8(&user_path_string(&remote_manager_dir()?));
+    let (invalid_message, range_message, timeout_message) = match profile.language {
+        CcConnectLanguage::Zh => (
+            "请输入有效的项目序号，例如 /cli_manager_switch 2。",
+            "项目序号超出范围，请先发送 /cli_manager_list 查看可用项目。",
+            "CLI-Manager 项目切换请求超时。",
+        ),
+        CcConnectLanguage::En => (
+            "Enter a valid project number, for example /cli_manager_switch 2.",
+            "The project number is out of range. Send /cli_manager_list to view available projects.",
+            "The CLI-Manager project switch request timed out.",
+        ),
+    };
+    let invalid_message = base64_utf8(invalid_message);
+    let range_message = base64_utf8(range_message);
+    let timeout_message = base64_utf8(timeout_message);
+    Ok(format!(
+        r#"$ErrorActionPreference = 'Stop'
+$OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
+
+function Decode-Base64Utf8([string]$Value) {{
+    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}}
+
+$invalidMessage = Decode-Base64Utf8 '{invalid_message}'
+$rangeMessage = Decode-Base64Utf8 '{range_message}'
+$timeoutMessage = Decode-Base64Utf8 '{timeout_message}'
+
+if ($args.Count -ne 1) {{
+    Write-Output $invalidMessage
+    exit 0
+}}
+
+$raw = ''
+try {{
+    $raw = Decode-Base64Utf8 $args[0]
+}} catch {{
+    Write-Output $invalidMessage
+    exit 0
+}}
+if ($raw -notmatch '^[1-9][0-9]*$') {{
+    Write-Output $invalidMessage
+    exit 0
+}}
+
+$projectNumber = 0
+if (-not [int]::TryParse($raw, [ref]$projectNumber)) {{
+    Write-Output $invalidMessage
+    exit 0
+}}
+
+$tokens = @(
+{project_tokens}
+)
+if ($projectNumber -gt $tokens.Count) {{
+    Write-Output $rangeMessage
+    exit 0
+}}
+
+$cliManager = Decode-Base64Utf8 '{cli_manager}'
+$resultDirectory = Decode-Base64Utf8 '{result_directory}'
+$token = $tokens[$projectNumber - 1]
+$request = [Guid]::NewGuid().ToString('N')
+$result = Join-Path -Path $resultDirectory -ChildPath "switch-result-$request.txt"
+$argument = "{REMOTE_SWITCH_ARG_PREFIX}" + $token + ':' + $request
+Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $cliManager -ArgumentList $argument -Wait -WindowStyle Hidden | Out-Null
+$deadline = (Get-Date).AddSeconds(10)
+while (!(Test-Path -LiteralPath $result) -and (Get-Date) -lt $deadline) {{
+    Start-Sleep -Milliseconds 100
+}}
+if (Test-Path -LiteralPath $result) {{
+    try {{
+        Get-Content -Raw -Encoding UTF8 -LiteralPath $result
+    }} finally {{
+        Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
+    }}
+}} else {{
+    Write-Output $timeoutMessage
+}}
+"#
+    ))
 }
 
 fn render_project_list(
@@ -942,8 +1045,8 @@ fn render_project_list(
         ));
     }
     output.push_str(match profile.language {
-        CcConnectLanguage::Zh => "\n\n切换项目：/cli-manager-switch <序号>",
-        CcConnectLanguage::En => "\n\nSwitch project: /cli-manager-switch <number>",
+        CcConnectLanguage::Zh => "\n\n切换项目：/cli_manager_switch <序号>",
+        CcConnectLanguage::En => "\n\nSwitch project: /cli_manager_switch <number>",
     });
     output
 }
@@ -1000,6 +1103,17 @@ fn write_file_atomically(path: &Path, payload: &[u8], label: &str) -> Result<(),
     result
 }
 
+fn write_file_atomically_if_changed(
+    path: &Path,
+    payload: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    if fs::read(path).is_ok_and(|current| current == payload) {
+        return Ok(());
+    }
+    write_file_atomically(path, payload, label)
+}
+
 #[cfg(target_os = "windows")]
 fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
@@ -1039,24 +1153,35 @@ fn write_managed_config(profile: &CcConnectProfile) -> Result<PathBuf, String> {
         .map_err(|err| format!("create cc-connect data dir failed: {err}"))?;
     let path = config_path()?;
     let list_path = project_list_path()?;
+    let switch_script_path = project_switch_script_path()?;
     let registered_projects = load_registered_projects()?;
     let cli_manager_executable = std::env::current_exe()
         .map_err(|err| format!("resolve CLI-Manager executable failed: {err}"))?;
     let payload = toml::to_string_pretty(&build_managed_config(
         profile,
-        &registered_projects,
-        &cli_manager_executable,
         &list_path,
+        &switch_script_path,
     )?)
     .map_err(|err| format!("serialize cc-connect config failed: {err}"))?;
     let list_payload = render_project_list(profile, &registered_projects);
+    let switch_script_payload =
+        render_project_switch_script(profile, &registered_projects, &cli_manager_executable)?;
     let config_snapshot = FileSnapshot::capture(path.clone(), "cc-connect config")?;
     let list_snapshot = FileSnapshot::capture(list_path.clone(), "CLI-Manager project list")?;
+    let switch_script_snapshot = FileSnapshot::capture(
+        switch_script_path.clone(),
+        "CLI-Manager project switch script",
+    )?;
     if let Err(write_error) = (|| {
         write_file_atomically(
             &list_path,
             list_payload.as_bytes(),
             "CLI-Manager project list",
+        )?;
+        write_file_atomically_if_changed(
+            &switch_script_path,
+            switch_script_payload.as_bytes(),
+            "CLI-Manager project switch script",
         )?;
         write_file_atomically(&path, payload.as_bytes(), "cc-connect config")
     })() {
@@ -1065,6 +1190,9 @@ fn write_managed_config(profile: &CcConnectProfile) -> Result<PathBuf, String> {
             rollback_errors.push(err);
         }
         if let Err(err) = list_snapshot.restore() {
+            rollback_errors.push(err);
+        }
+        if let Err(err) = switch_script_snapshot.restore() {
             rollback_errors.push(err);
         }
         return if rollback_errors.is_empty() {
@@ -1257,7 +1385,7 @@ fn load_registered_projects() -> Result<Vec<RegisteredProject>, String> {
 }
 
 fn registered_project_by_token(token: &str) -> Result<RegisteredProject, String> {
-    if switch_result_path(token).is_err() {
+    if !is_switch_identifier(token) {
         return Err("invalid CLI-Manager project switch token".to_string());
     }
     load_registered_projects()?
@@ -1551,7 +1679,7 @@ impl FileSnapshot {
 
     fn restore(&self) -> Result<(), String> {
         if let Some(contents) = self.contents.as_deref() {
-            write_file_atomically(&self.path, contents, self.label)
+            write_file_atomically_if_changed(&self.path, contents, self.label)
         } else {
             match fs::remove_file(&self.path) {
                 Ok(()) => Ok(()),
@@ -1593,6 +1721,10 @@ impl CcConnectManager {
         let config_snapshot = FileSnapshot::capture(config_path()?, "cc-connect config")?;
         let project_list_snapshot =
             FileSnapshot::capture(project_list_path()?, "CLI-Manager project list")?;
+        let project_switch_script_snapshot = FileSnapshot::capture(
+            project_switch_script_path()?,
+            "CLI-Manager project switch script",
+        )?;
         let profile_snapshot = FileSnapshot::capture(profile_path()?, "cc-connect profile")?;
         if let Err(save_error) = (|| {
             save_request_credentials(&request)?;
@@ -1607,6 +1739,9 @@ impl CcConnectManager {
                 rollback_errors.push(err);
             }
             if let Err(err) = project_list_snapshot.restore() {
+                rollback_errors.push(err);
+            }
+            if let Err(err) = project_switch_script_snapshot.restore() {
                 rollback_errors.push(err);
             }
             if let Err(err) = credential_snapshot.restore() {
@@ -1668,6 +1803,10 @@ impl CcConnectManager {
         let config_snapshot = FileSnapshot::capture(config_path()?, "cc-connect config")?;
         let project_list_snapshot =
             FileSnapshot::capture(project_list_path()?, "CLI-Manager project list")?;
+        let project_switch_script_snapshot = FileSnapshot::capture(
+            project_switch_script_path()?,
+            "CLI-Manager project switch script",
+        )?;
         let profile_snapshot = FileSnapshot::capture(profile_path()?, "cc-connect profile")?;
         if let Err(save_error) = (|| {
             write_managed_config(&profile)?;
@@ -1681,6 +1820,9 @@ impl CcConnectManager {
                 rollback_errors.push(err);
             }
             if let Err(err) = project_list_snapshot.restore() {
+                rollback_errors.push(err);
+            }
+            if let Err(err) = project_switch_script_snapshot.restore() {
                 rollback_errors.push(err);
             }
             return if rollback_errors.is_empty() {
@@ -2110,7 +2252,7 @@ impl CcConnectManager {
 }
 
 pub fn handle_single_instance_args(app: &AppHandle, args: &[String]) -> bool {
-    let Some(token) = remote_switch_token_from_args(args) else {
+    let Some(request) = remote_switch_request_from_args(args) else {
         return false;
     };
     let language = load_profile()
@@ -2118,7 +2260,7 @@ pub fn handle_single_instance_args(app: &AppHandle, args: &[String]) -> bool {
         .flatten()
         .map(|profile| profile.language)
         .unwrap_or(CcConnectLanguage::Zh);
-    let result_path = match switch_result_path(token) {
+    let result_path = match switch_result_path(&request.request_id) {
         Ok(path) => path,
         Err(err) => {
             log::warn!("ignored invalid cc-connect remote switch request: {err}");
@@ -2126,7 +2268,7 @@ pub fn handle_single_instance_args(app: &AppHandle, args: &[String]) -> bool {
         }
     };
     let manager = app.state::<CcConnectManager>().inner().clone();
-    let token = token.to_string();
+    let token = request.project_token;
     std::thread::spawn(move || {
         let outcome = manager.switch_project_from_remote(&token);
         let (message, restart_required) = match outcome {
@@ -2663,17 +2805,11 @@ mod tests {
     fn managed_config_is_safe() {
         let project = tempfile::tempdir().unwrap();
         let profile = sample_profile(project.path());
-        let projects = vec![sample_registered_project(
-            &profile.project_id,
-            &profile.project_name,
-            project.path(),
-        )];
         let raw = toml::to_string(
             &build_managed_config(
                 &profile,
-                &projects,
-                Path::new(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
                 Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-projects.txt"),
+                Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-switch.ps1"),
             )
             .unwrap(),
         )
@@ -2708,23 +2844,18 @@ mod tests {
         assert!(!disabled.iter().any(|item| item.as_str() == Some("new")));
         assert_eq!(
             value["commands"][0]["name"].as_str(),
-            Some("cli-manager-list")
+            Some("cli_manager_list")
         );
         assert_eq!(
             value["commands"][1]["name"].as_str(),
-            Some("cli-manager-switch-1")
+            Some("cli_manager_switch")
         );
-        assert_eq!(
-            value["aliases"][0]["name"].as_str(),
-            Some("/cli-manager-switch 1")
-        );
-        assert_eq!(
-            value["aliases"][0]["command"].as_str(),
-            Some("/cli-manager-switch-1")
-        );
+        assert_eq!(value["commands"].as_array().unwrap().len(), 2);
+        assert!(value["aliases"].as_array().unwrap().is_empty());
         let switch_exec = value["commands"][1]["exec"].as_str().unwrap();
-        assert!(switch_exec.contains(&project_switch_token("project-1")));
-        assert!(switch_exec.contains("{{0:}}"));
+        assert!(switch_exec.contains("cli-manager-switch.ps1"));
+        assert!(switch_exec.contains("$raw=@'\n{{args:}}\n'@"));
+        assert!(switch_exec.contains("ToBase64String"));
         assert!(!switch_exec.contains(&path_string(project.path())));
     }
     #[test]
@@ -2740,27 +2871,53 @@ mod tests {
         let list = render_project_list(&profile, &projects);
         assert!(list.contains("1. Current Project [当前]"));
         assert!(list.contains("2. Missing [路径不可用]"));
-        assert!(list.contains("/cli-manager-switch <序号>"));
+        assert!(list.contains("/cli_manager_switch <序号>"));
         assert!(!list.contains("Current\nProject"));
 
         let first = project_switch_token("project-1");
+        let second = project_switch_token("project-2");
         assert_eq!(first.len(), 32);
         assert_eq!(first, project_switch_token("project-1"));
-        assert_ne!(first, project_switch_token("project-2"));
+        assert_ne!(first, second);
         assert!(switch_result_path(&first).is_ok());
         assert!(switch_result_path("../invalid").is_err());
         assert_eq!(powershell_single_quoted("a'b"), "'a''b'");
+        let request_id = "0123456789abcdef0123456789abcdef";
         assert_eq!(
-            remote_switch_token_from_args(&[
+            remote_switch_request_from_args(&[
+                "cli-manager.exe".to_string(),
+                format!("{REMOTE_SWITCH_ARG_PREFIX}{first}:{request_id}"),
+            ]),
+            Some(RemoteSwitchRequest {
+                project_token: first.clone(),
+                request_id: request_id.to_string(),
+            })
+        );
+        assert_eq!(
+            remote_switch_request_from_args(&[
                 "cli-manager.exe".to_string(),
                 format!("{REMOTE_SWITCH_ARG_PREFIX}{first}"),
             ]),
-            Some(first.as_str())
+            Some(RemoteSwitchRequest {
+                project_token: first.clone(),
+                request_id: first.clone(),
+            })
         );
         assert_eq!(
-            remote_switch_token_from_args(&["cli-manager.exe".to_string()]),
+            remote_switch_request_from_args(&["cli-manager.exe".to_string()]),
             None
         );
+        let script = render_project_switch_script(
+            &profile,
+            &projects,
+            Path::new(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
+        )
+        .unwrap();
+        assert!(script.find(&first).unwrap() < script.find(&second).unwrap());
+        assert!(script.contains("$args.Count -ne 1"));
+        assert!(script.contains("'^[1-9][0-9]*$'"));
+        assert!(script.contains("[Guid]::NewGuid().ToString('N')"));
+        assert!(!script.contains(&path_string(current.path())));
     }
     #[test]
     fn managed_config_matches_installed_cc_connect_when_requested() {
@@ -2769,16 +2926,10 @@ mod tests {
         };
         let project = tempfile::tempdir().unwrap();
         let profile = sample_profile(project.path());
-        let projects = vec![sample_registered_project(
-            &profile.project_id,
-            &profile.project_name,
-            project.path(),
-        )];
         let config = build_managed_config(
             &profile,
-            &projects,
-            Path::new(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
             Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-projects.txt"),
+            Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-switch.ps1"),
         )
         .unwrap();
         let config_path = project.path().join("config.toml");
@@ -2792,13 +2943,9 @@ mod tests {
         let profile = sample_profile(project.path());
         let list_path = project.path().join("projects.txt");
         fs::write(&list_path, "项目一\n1. 示例").unwrap();
-        let (commands, _) = build_remote_project_commands(
-            &profile,
-            &[],
-            Path::new(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
-            &list_path,
-        )
-        .unwrap();
+        let (commands, _) =
+            build_remote_project_commands(&profile, &list_path, &project.path().join("switch.ps1"))
+                .unwrap();
         let command = commands[0].exec.replace("{{0:}}", "");
         let output = Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", &command])
@@ -2813,6 +2960,132 @@ mod tests {
             String::from_utf8(output.stdout).unwrap().trim(),
             "项目一\n1. 示例"
         );
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn project_switch_script_rejects_invalid_or_out_of_range_arguments() {
+        let project = tempfile::tempdir().unwrap();
+        let profile = sample_profile(project.path());
+        let projects = vec![
+            sample_registered_project("project-1", "First", project.path()),
+            sample_registered_project("project-2", "Second", project.path()),
+        ];
+        let script_path = project.path().join("switch.ps1");
+        fs::write(
+            &script_path,
+            render_project_switch_script(
+                &profile,
+                &projects,
+                Path::new(r"C:\does-not-run\cli-manager.exe"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let run = |encoded: Option<String>| {
+            let mut command = Command::new("powershell.exe");
+            command
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ])
+                .arg(&script_path);
+            if let Some(encoded) = encoded {
+                command.arg(encoded);
+            }
+            command.output().unwrap()
+        };
+        assert!(run(None).status.success());
+        for raw in ["", "0", "-1", "abc", "1;Write-Output hacked", "1 extra"] {
+            let output = run(Some(base64_utf8(raw)));
+            assert!(output.status.success());
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(stdout.contains("请输入有效的项目序号"));
+            assert!(!stdout.contains("hacked"));
+        }
+        let output = run(Some("not-base64".to_string()));
+        assert!(output.status.success());
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("请输入有效的项目序号"));
+        let output = run(Some(base64_utf8("3")));
+        assert!(output.status.success());
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("项目序号超出范围"));
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn project_switch_command_encodes_user_arguments() {
+        fn split_cc_connect_v1_4_1_args(raw: &str) -> Vec<String> {
+            let mut tokens = Vec::new();
+            let mut current = String::new();
+            let mut in_single = false;
+            let mut in_double = false;
+            for ch in raw.chars() {
+                match ch {
+                    '\'' if !in_double => in_single = !in_single,
+                    '"' if !in_single => in_double = !in_double,
+                    ' ' | '\t' if !in_single && !in_double => {
+                        if !current.is_empty() {
+                            tokens.push(std::mem::take(&mut current));
+                        }
+                    }
+                    _ => current.push(ch),
+                }
+            }
+            if !current.is_empty() {
+                tokens.push(current);
+            }
+            tokens
+        }
+
+        let project = tempfile::tempdir().unwrap();
+        let profile = sample_profile(project.path());
+        let projects = vec![sample_registered_project(
+            "project-1",
+            "First",
+            project.path(),
+        )];
+        let script_path = project.path().join("switch.ps1");
+        fs::write(
+            &script_path,
+            render_project_switch_script(
+                &profile,
+                &projects,
+                Path::new(r"C:\does-not-run\cli-manager.exe"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let list_path = project.path().join("projects.txt");
+        let (commands, _) =
+            build_remote_project_commands(&profile, &list_path, &script_path).unwrap();
+        let ascii_footer_attempt =
+            split_cc_connect_v1_4_1_args("/cli_manager_switch 1\n'@\nWrite-Output hacked\n#")[1..]
+                .join(" ");
+        for raw in [
+            "1;Write-Output hacked",
+            "1\nWrite-Output hacked",
+            "1’; Write-Output hacked; #",
+            "1‘; Write-Output hacked; #",
+            "1‛; Write-Output hacked; #",
+            "1\n’@\nWrite-Output hacked\n#",
+            &ascii_footer_attempt,
+        ] {
+            let command = commands[1].exec.replace("{{args:}}", raw);
+            let output = Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &command])
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(!stdout.lines().any(|line| line.trim() == "hacked"));
+            if output.status.success() {
+                assert!(stdout.contains("请输入有效的项目序号"));
+            }
+        }
     }
     #[test]
     fn log_redaction_and_cursor_work() {

@@ -36,10 +36,13 @@
 
 ## 远程项目切换增量验证（2026-07-16）
 
-- 新增 /cli-manager-list，输出托管配置生成时 CLI-Manager 已登记的项目、路径、当前项目及不可用路径状态。
-- 新增 /cli-manager-switch <序号>，通过固定别名和项目 ID 摘要令牌请求已运行的 CLI-Manager 更新 profile/config，再延迟重启受管 cc-connect。
+- 新增 /cli_manager_list（兼容连字符写法），输出托管配置生成时 CLI-Manager 已登记的项目、路径、当前项目及不可用路径状态。
+- 修复 Telegram 菜单展开全部项目的问题：托管配置只注册一个 `/cli_manager_switch <序号>` 命令，不再为每个项目生成 `cli-manager-switch-N` 命令或 alias。
+- 单一切换命令调用 CLI-Manager 生成的参数校验脚本；脚本按与项目列表相同的快照将序号映射为项目 ID 摘要令牌，再请求已运行的 CLI-Manager 更新 profile/config 并延迟重启受管 cc-connect。
+- 切换请求使用独立请求 ID 返回结果，避免并发切换复用同一结果文件；脚本严格拒绝缺参、零、负数、非数字、额外参数、越界序号及 PowerShell 注入形式。
 - 切换参数不接受任意路径；/dir、/shell、/commands 等高风险命令仍保持禁用。
-- cargo test cc_connect::tests --lib 通过：15 项通过、0 项失败；包含真实 cc-connect v1.4.1 配置格式验证和 Windows PowerShell UTF-8 清单输出。
+- 未修改 cc-connect 源码、全局 npm 包或可执行文件，仅使用其 v1.4.1 原生自定义命令参数能力。
+- cargo test cc_connect::tests --lib 通过：17 项通过、0 项失败；包含真实 cc-connect v1.4.1 配置格式验证、Windows PowerShell UTF-8 清单输出、参数边界及 here-string + Base64 参数隔离验证。
 - cargo check 通过。
 - npm run build 通过；仅有既有的动态/静态混合导入和大 chunk 警告。
 - 未执行真实 Telegram/飞书消息下的单实例回调与受管进程重启冒烟；需使用新构建安装包验证。
