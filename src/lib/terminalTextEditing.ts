@@ -38,3 +38,27 @@ export const removeTextAtCursor = (text: string, cursorIndex: number) => {
 export const repeatControlSequence = (sequence: string, count: number) => (
   count > 0 ? sequence.repeat(count) : ""
 );
+
+export const buildTrackedInputClearSequence = (text: string, cursorIndex: number) => {
+  const inputLength = getTextCursorLength(text);
+  const currentCursorIndex = clampTextCursorIndex(text, cursorIndex);
+  const moveToEnd = repeatControlSequence("\x1b[C", inputLength - currentCursorIndex);
+  return `${moveToEnd}${repeatControlSequence("\x7f", inputLength)}`;
+};
+
+export type NativeWholeInputClearTarget = "codex" | "claude" | null;
+
+export const resolveNativeWholeInputClearSequence = ({
+  target,
+  hasInput,
+  wholeInputSelected,
+  taskRunning,
+}: {
+  target: NativeWholeInputClearTarget;
+  hasInput: boolean;
+  wholeInputSelected: boolean;
+  taskRunning: boolean;
+}) => {
+  if (!target || !hasInput || !wholeInputSelected || taskRunning) return null;
+  return target === "codex" ? "\x03" : "\x15";
+};

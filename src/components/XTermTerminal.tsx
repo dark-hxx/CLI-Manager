@@ -29,14 +29,26 @@ import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
 import { useTerminalOsc } from "../hooks/useTerminalOsc";
 import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
 import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
-import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
+import { getTerminalCellWidth } from "../lib/terminalCellWidth";
 import {
+  createWholeInputSelection,
+  findInputPromptContentStartColumn,
+  getInputCellOffset,
+  getInputCellSpan,
+  getWholeInputVisualCellSpan,
+  resolveCursorIndexFromInputCellOffset,
+  resolveInputStartCellIndex,
+  resolveInputStartCellIndexCandidates,
+} from "../lib/terminalInputSelection";
+import {
+  buildTrackedInputClearSequence,
   clampTextCursorIndex,
   getTextCursorLength,
   insertTextAtCursor,
   removeTextAtCursor,
   removeTextBeforeCursor,
   repeatControlSequence,
+  resolveNativeWholeInputClearSequence,
   sliceTextByCursor,
 } from "../lib/terminalTextEditing";
 import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
@@ -348,6 +360,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const inputBuffer = useRef("");
   const inputCursorIndexRef = useRef(0);
+  const inputStartCellIndexRef = useRef<number | null>(null);
   // Input owns this ref. Display may only read it to suppress fit during IME composition.
   const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
@@ -1266,10 +1279,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
       const buffer = terminal.buffer.active;
       const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
-      const cursorPrefixWidth = getTerminalCellWidth(sliceTextByCursor(currentInput, 0, currentCursorIndex));
       const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-      const inputStartCellIndex = cursorCellIndex - cursorPrefixWidth;
-      const inputEndCellIndex = inputStartCellIndex + getTerminalCellWidth(currentInput);
+      const inputStartCellIndex = inputStartCellIndexRef.current ?? resolveInputStartCellIndex(
+        cursorCellIndex,
+        currentInput,
+        currentCursorIndex,
+        terminal.cols
+      );
+      const inputStartColumn = inputStartCellIndex % terminal.cols;
+      const inputEndCellIndex = inputStartCellIndex + getInputCellSpan(currentInput, terminal.cols, inputStartColumn);
       const clickCellIndex = ((buffer.viewportY + clickRow) * terminal.cols) + clickColumn;
       const inputStartRow = Math.floor(inputStartCellIndex / terminal.cols);
       const inputEndRow = Math.floor(inputEndCellIndex / terminal.cols);
@@ -1280,7 +1298,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         Math.max(0, clickCellIndex - inputStartCellIndex),
         Math.max(0, inputEndCellIndex - inputStartCellIndex)
       );
-      const targetCursorIndex = resolveCursorIndexFromCellOffset(currentInput, targetCellOffset);
+      const targetCursorIndex = resolveCursorIndexFromInputCellOffset(
+        currentInput,
+        targetCellOffset,
+        terminal.cols,
+        inputStartColumn
+      );
       const data = buildFastCursorMoveSequence(
         currentCursorIndex,
         targetCursorIndex,
@@ -1294,6 +1317,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       }
 
       inputCursorIndexRef.current = targetCursorIndex;
+      inputStartCellIndexRef.current = inputStartCellIndex;
       keyboardInputSelection = null;
       selectedInputSnapshot = null;
       clearSuggestionGhost();
@@ -1320,18 +1344,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
     contextMenuTarget.addEventListener("mousedown", clearKeyboardInputSelectionOnMouseDown);
 
-    // \x15 (Ctrl+U) 在 bash/PSReadLine/Claude Code 等行编辑器中的语义是"删除光标之前"，
-    // 并非整行清除；光标不在行尾时（点击移光标、Shift+方向键选择后右键/Ctrl+C 复制中断）
-    // 后半段会残留，随后重打的文本与残留拼接，表现为"选区删除后又多出一份"。
-    // 因此清行前先按跟踪的光标位置右移到输入末尾，使 \x15 等价于整行清除。
+    // Codex/Claude 的多行 TUI 不会把 Ctrl+U 解释为清空整个输入区。
+    // 先移到输入末尾，再按跟踪的字符数逐个退格，才能跨逻辑行可靠清空。
     const buildKillCurrentInputSequence = () => {
       const currentInput = inputBuffer.current;
       const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
-      const moveToEnd = repeatControlSequence(
-        "\x1b[C",
-        getTextCursorLength(currentInput) - currentCursorIndex
-      );
-      return `${moveToEnd}\x15`;
+      return buildTrackedInputClearSequence(currentInput, currentCursorIndex);
     };
 
     const rewriteCurrentInput = (
@@ -1347,6 +1365,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       );
       inputBuffer.current = nextInput;
       inputCursorIndexRef.current = nextCursorIndex;
+      if (!nextInput) inputStartCellIndexRef.current = null;
       terminal.clearSelection();
       keyboardInputSelection = null;
       selectedInputSnapshot = null;
@@ -1382,71 +1401,64 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return killCurrentInput;
     };
 
-    const resolveVisibleInputSelection = () => {
+    const resolveCurrentInputCellRange = (
+      currentInput: string,
+      selectionBounds?: { startCellIndex: number; endCellIndex: number }
+    ) => {
       const buffer = terminal.buffer.active;
-      const rowText = (row: number) => {
-        const line = buffer.getLine(buffer.viewportY + row);
-        return line ? line.translateToString(true) : null;
+      const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
+      const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
+      const candidates = resolveInputStartCellIndexCandidates(cursorCellIndex, currentInput, currentCursorIndex, terminal.cols);
+      const refCandidate = inputStartCellIndexRef.current;
+      const inputStartCandidates = [
+        ...(refCandidate === null ? [] : [refCandidate]),
+        ...candidates.filter((candidate) => candidate !== refCandidate),
+      ];
+      const inputStartCellIndex = selectionBounds && inputStartCandidates.length
+        ? inputStartCandidates.reduce((best, candidate) => {
+          const candidateColumn = candidate % terminal.cols;
+          const candidateEnd = candidate + getInputCellSpan(currentInput, terminal.cols, candidateColumn);
+          const bestColumn = best % terminal.cols;
+          const bestEnd = best + getInputCellSpan(currentInput, terminal.cols, bestColumn);
+          const overlap = Math.max(0, Math.min(candidateEnd, selectionBounds.endCellIndex) - Math.max(candidate, selectionBounds.startCellIndex));
+          const bestOverlap = Math.max(0, Math.min(bestEnd, selectionBounds.endCellIndex) - Math.max(best, selectionBounds.startCellIndex));
+          return overlap > bestOverlap ? candidate : best;
+        })
+        : (refCandidate ?? resolveInputStartCellIndex(
+          cursorCellIndex,
+          currentInput,
+          currentCursorIndex,
+          terminal.cols
+        ));
+      const inputStartColumn = inputStartCellIndex % terminal.cols;
+      const inputCellSpan = getInputCellSpan(currentInput, terminal.cols, inputStartColumn);
+      return {
+        inputStartCellIndex,
+        inputEndCellIndex: inputStartCellIndex + inputCellSpan,
+        inputStartColumn,
+        inputCellSpan,
       };
-      const rowIsHorizontalRule = (row: number) => {
-        const text = rowText(row);
-        if (text === null) return false;
-        const trimmed = text.trim();
-        return trimmed.length > 0 && /^[─━═╌╍┄┅┈┉╴╶]+$/u.test(trimmed);
-      };
-      const findPromptContentStartColumn = (line: IBufferLine) => {
-        const limit = Math.min(terminal.cols, line.length);
-        for (let x = 0; x < limit; x += 1) {
-          const cell = line.getCell(x);
-          const chars = cell?.getChars() ?? "";
-          if (!cell || !chars.trim() || TUI_BORDER_CHAR_PATTERN.test(chars)) continue;
-          if (!TUI_COMPOSER_PROMPT_PATTERN.test(chars)) return null;
-          let start = x + Math.max(1, cell.getWidth());
-          while (start < limit) {
-            const nextCell = line.getCell(start);
-            const nextChars = nextCell?.getChars() ?? "";
-            if (nextChars !== " ") break;
-            start += Math.max(1, nextCell?.getWidth() ?? 1);
-          }
-          return start;
-        }
-        return null;
-      };
-      const getContentEndColumn = (line: IBufferLine, minColumn: number) => {
-        const limit = Math.min(terminal.cols, line.length);
-        for (let x = limit - 1; x >= minColumn; x -= 1) {
-          const cell = line.getCell(x);
-          const chars = cell?.getChars() ?? "";
-          if (!cell || cell.getWidth() === 0 || !chars.trim() || TUI_BORDER_CHAR_PATTERN.test(chars)) continue;
-          return Math.min(terminal.cols, x + Math.max(1, cell.getWidth()));
-        }
-        return minColumn;
-      };
+    };
 
-      for (let row = terminal.rows - 1; row >= 0; row -= 1) {
-        const line = buffer.getLine(buffer.viewportY + row);
+    const resolveVisibleInputStartCellIndex = () => {
+      const buffer = terminal.buffer.active;
+      const cursorRow = buffer.baseY + buffer.cursorY;
+      for (let row = cursorRow; row >= buffer.viewportY; row -= 1) {
+        const line = buffer.getLine(row);
         if (!line) continue;
-        const startColumn = findPromptContentStartColumn(line);
-        if (startColumn === null) continue;
-
-        let endRow = row;
-        let endColumn = getContentEndColumn(line, startColumn);
-        for (let nextRow = row + 1; nextRow < terminal.rows; nextRow += 1) {
-          const nextLine = buffer.getLine(buffer.viewportY + nextRow);
-          if (!nextLine || rowIsHorizontalRule(nextRow) || !nextLine.isWrapped) break;
-          const nextEndColumn = getContentEndColumn(nextLine, 0);
-          if (nextEndColumn <= 0) break;
-          endRow = nextRow;
-          endColumn = nextEndColumn;
+        const limit = Math.min(terminal.cols, line.length);
+        const cells = Array.from({ length: limit }, (_, column) => {
+          const cell = line.getCell(column);
+          return {
+            chars: cell?.getChars() ?? "",
+            width: cell?.getWidth() ?? 1,
+          };
+        });
+        const contentColumn = findInputPromptContentStartColumn(cells);
+        if (contentColumn !== null) {
+          return (row * terminal.cols) + contentColumn;
         }
-
-        const startCellIndex = ((buffer.viewportY + row) * terminal.cols) + startColumn;
-        const endCellIndex = ((buffer.viewportY + endRow) * terminal.cols) + endColumn;
-        const length = endCellIndex - startCellIndex;
-        if (length <= 0) return null;
-        return { startColumn, startRow: buffer.viewportY + row, length };
       }
-
       return null;
     };
 
@@ -1460,26 +1472,26 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         return true;
       }
 
-      const inputCellWidth = getTerminalCellWidth(currentInput);
-      if (inputCellWidth <= 0) {
-        terminal.focus();
-        return true;
-      }
-
-      const visibleSelection = resolveVisibleInputSelection();
-      if (visibleSelection) {
-        terminal.select(visibleSelection.startColumn, visibleSelection.startRow, visibleSelection.length);
-        terminal.focus();
-        return true;
-      }
-
+      const range = resolveCurrentInputCellRange(currentInput);
       const buffer = terminal.buffer.active;
       const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-      const cursorPrefixWidth = getTerminalCellWidth(sliceTextByCursor(currentInput, 0, inputCursorIndexRef.current));
-      const startCellIndex = Math.max(0, cursorCellIndex - cursorPrefixWidth);
-      const startRow = Math.floor(startCellIndex / terminal.cols);
-      const startColumn = startCellIndex % terminal.cols;
-      terminal.select(startColumn, startRow, inputCellWidth);
+      const inputStartCellIndex = resolveVisibleInputStartCellIndex() ?? range.inputStartCellIndex;
+      const inputStartColumn = inputStartCellIndex % terminal.cols;
+      const visualCellSpan = getWholeInputVisualCellSpan({
+        text: currentInput,
+        cursorIndex: inputCursorIndexRef.current,
+        cols: terminal.cols,
+        inputStartCellIndex,
+        cursorCellIndex,
+      });
+      if (visualCellSpan <= 0) {
+        terminal.focus();
+        return true;
+      }
+
+      inputStartCellIndexRef.current = inputStartCellIndex;
+      keyboardInputSelection = createWholeInputSelection(currentInput, inputStartCellIndex);
+      terminal.select(inputStartColumn, Math.floor(inputStartCellIndex / terminal.cols), visualCellSpan);
       terminal.focus();
       return true;
     };
@@ -1495,9 +1507,13 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         return;
       }
 
+      const inputStartColumn = selection.inputStartCellIndex % terminal.cols;
       const startCellIndex = selection.inputStartCellIndex
-        + getTerminalCellWidth(sliceTextByCursor(currentInput, 0, startIndex));
-      const selectionCellWidth = getTerminalCellWidth(sliceTextByCursor(currentInput, startIndex, endIndex));
+        + getInputCellOffset(currentInput, startIndex, terminal.cols, inputStartColumn);
+      const selectionCellWidth = (
+        getInputCellOffset(currentInput, endIndex, terminal.cols, inputStartColumn)
+        - getInputCellOffset(currentInput, startIndex, terminal.cols, inputStartColumn)
+      );
       terminal.select(startCellIndex % terminal.cols, Math.floor(startCellIndex / terminal.cols), selectionCellWidth);
     };
 
@@ -1511,13 +1527,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       }
 
       const selection = keyboardInputSelection ?? (() => {
-        const buffer = terminal.buffer.active;
-        const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-        const cursorPrefixWidth = getTerminalCellWidth(sliceTextByCursor(currentInput, 0, currentCursorIndex));
         return {
           anchorIndex: currentCursorIndex,
           focusIndex: currentCursorIndex,
-          inputStartCellIndex: Math.max(0, cursorCellIndex - cursorPrefixWidth),
+          inputStartCellIndex: resolveCurrentInputCellRange(currentInput).inputStartCellIndex,
         };
       })();
 
@@ -1566,38 +1579,36 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const removeSelectedInputText = () => {
       const selectedText = terminal.getSelection();
       const currentInput = inputBuffer.current;
-      const findSelectedTextRange = (preferredStartIndex?: number) => {
-        if (!selectedText || !currentInput) return null;
-        const candidates = [
-          selectedText,
-          selectedText.replace(/\r\n?/g, "\n"),
-          selectedText.replace(/\r\n?|\n/g, ""),
-        ].filter((text, index, list) => Boolean(text) && list.indexOf(text) === index);
-        const inputChars = Array.from(currentInput);
+      const currentInputLength = getTextCursorLength(currentInput);
+      const clearWholeInputNatively = (startIndex: number, endIndex: number) => {
+        const context = getSessionToolContext();
+        const target = isCodexSession(context)
+          ? "codex"
+          : isClaudeSession(context)
+            ? "claude"
+            : null;
+        const taskRunning = useTerminalStore.getState().getRunningTaskSessionIds().includes(sessionId);
+        const data = resolveNativeWholeInputClearSequence({
+          target,
+          hasInput: currentInputLength > 0,
+          wholeInputSelected: startIndex === 0 && endIndex === currentInputLength,
+          taskRunning,
+        });
+        if (!data) return false;
 
-        for (const candidate of candidates) {
-          const candidateChars = Array.from(candidate);
-          if (!candidateChars.length || candidateChars.length > inputChars.length) continue;
-
-          const ranges: Array<{ startIndex: number; endIndex: number }> = [];
-          for (let index = 0; index <= inputChars.length - candidateChars.length; index += 1) {
-            const matched = candidateChars.every((char, offset) => inputChars[index + offset] === char);
-            if (matched) {
-              ranges.push({ startIndex: index, endIndex: index + candidateChars.length });
-            }
-          }
-
-          if (ranges.length === 1 || (ranges.length && preferredStartIndex !== undefined)) {
-            return ranges.reduce((best, range) => (
-              Math.abs(range.startIndex - (preferredStartIndex ?? range.startIndex)) <
-              Math.abs(best.startIndex - (preferredStartIndex ?? best.startIndex))
-                ? range
-                : best
-            ));
-          }
-        }
-
-        return null;
+        inputBuffer.current = "";
+        inputCursorIndexRef.current = 0;
+        inputStartCellIndexRef.current = null;
+        terminal.clearSelection();
+        keyboardInputSelection = null;
+        selectedInputSnapshot = null;
+        markAttentionInputHandled();
+        clearSuggestionGhost();
+        cancelAiSuggestionRefresh();
+        invoke("pty_write", { sessionId, data })
+          .catch((err) => reportPtyWriteError("native_selection_delete_all", err));
+        terminal.focus();
+        return true;
       };
       const deleteInputRange = (startIndex: number, endIndex: number, stage: string) => {
         if (startIndex >= endIndex) return false;
@@ -1606,38 +1617,43 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         return true;
       };
 
-      if (keyboardInputSelection && terminal.hasSelection()) {
+      if (keyboardInputSelection) {
         const startIndex = Math.min(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
         const endIndex = Math.max(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
+        if (clearWholeInputNatively(startIndex, endIndex)) return true;
         if (deleteInputRange(startIndex, endIndex, "keyboard_selection_delete")) return true;
       }
       keyboardInputSelection = null;
 
       if (terminal.hasSelection() && currentInput) {
         const selectionPosition = terminal.getSelectionPosition();
-        const visibleSelection = resolveVisibleInputSelection();
-        if (selectionPosition && visibleSelection) {
-          const inputStartCellIndex = (visibleSelection.startRow * terminal.cols) + visibleSelection.startColumn;
-          const inputEndCellIndex = inputStartCellIndex + visibleSelection.length;
+        if (selectionPosition) {
           const selectionStartCellIndex = (selectionPosition.start.y * terminal.cols) + selectionPosition.start.x;
           const selectionEndCellIndex = (selectionPosition.end.y * terminal.cols) + selectionPosition.end.x;
-          const selectedStartCellIndex = Math.max(inputStartCellIndex, Math.min(selectionStartCellIndex, selectionEndCellIndex));
-          const selectedEndCellIndex = Math.min(inputEndCellIndex, Math.max(selectionStartCellIndex, selectionEndCellIndex));
+          const normalizedSelectionBounds = {
+            startCellIndex: Math.min(selectionStartCellIndex, selectionEndCellIndex),
+            endCellIndex: Math.max(selectionStartCellIndex, selectionEndCellIndex),
+          };
+          const range = resolveCurrentInputCellRange(currentInput, normalizedSelectionBounds);
+          const selectedStartCellIndex = Math.max(range.inputStartCellIndex, Math.min(selectionStartCellIndex, selectionEndCellIndex));
+          const selectedEndCellIndex = Math.min(range.inputEndCellIndex, Math.max(selectionStartCellIndex, selectionEndCellIndex));
 
           if (selectedEndCellIndex > selectedStartCellIndex) {
-            const startIndex = resolveCursorIndexFromCellOffset(currentInput, selectedStartCellIndex - inputStartCellIndex);
-            const endIndex = resolveCursorIndexFromCellOffset(currentInput, selectedEndCellIndex - inputStartCellIndex);
-            const textRange = findSelectedTextRange(startIndex);
-            if (textRange && deleteInputRange(textRange.startIndex, textRange.endIndex, "selection_delete_text")) {
-              return true;
-            }
+            inputStartCellIndexRef.current = range.inputStartCellIndex;
+            const startIndex = resolveCursorIndexFromInputCellOffset(
+              currentInput,
+              selectedStartCellIndex - range.inputStartCellIndex,
+              terminal.cols,
+              range.inputStartColumn
+            );
+            const endIndex = resolveCursorIndexFromInputCellOffset(
+              currentInput,
+              selectedEndCellIndex - range.inputStartCellIndex,
+              terminal.cols,
+              range.inputStartColumn
+            );
             if (deleteInputRange(startIndex, endIndex, "selection_delete")) return true;
           }
-        }
-
-        const textRange = findSelectedTextRange();
-        if (textRange && deleteInputRange(textRange.startIndex, textRange.endIndex, "selection_delete_text")) {
-          return true;
         }
       }
 
@@ -1656,9 +1672,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         return true;
       }
 
-      const textRange = findSelectedTextRange();
-      if (!textRange) return false;
-      return deleteInputRange(textRange.startIndex, textRange.endIndex, "selection_delete_text");
+      return false;
     };
 
     terminal.attachCustomKeyEventHandler((e) => {
@@ -1886,6 +1900,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     // 前置：data 是已经决定写入 PTY 的终端输入；后置：命令历史缓冲与运行状态跟随更新。
     // 副作用：回车时会按现有策略推断 cmd command_started，这个推断不能扩散到普通 shell。
     const updateInputBufferFromTerminalData = (data: string) => {
+      const rememberInputStartIfNeeded = () => {
+        if (inputBuffer.current || inputStartCellIndexRef.current !== null) return;
+        const buffer = terminal.buffer.active;
+        inputStartCellIndexRef.current = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
+      };
+
       if (data === "\r") {
         const cmd = inputBuffer.current;
         if (cmd.trim()) {
@@ -1901,14 +1921,17 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         }
         inputBuffer.current = "";
         inputCursorIndexRef.current = 0;
+        inputStartCellIndexRef.current = null;
         cancelAiSuggestionRefresh();
         clearSuggestionGhost();
       } else if (data === "\x7f" || data === "\b") {
         const next = removeTextBeforeCursor(inputBuffer.current, inputCursorIndexRef.current);
         inputBuffer.current = next.text;
         inputCursorIndexRef.current = next.cursorIndex;
+        if (!next.text) inputStartCellIndexRef.current = null;
         scheduleSuggestionRefresh();
       } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        rememberInputStartIfNeeded();
         const cursorIndex = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current);
         inputBuffer.current = insertTextAtCursor(inputBuffer.current, cursorIndex, data);
         inputCursorIndexRef.current = cursorIndex + getTextCursorLength(data);
@@ -1916,6 +1939,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       } else if (data.length > 1) {
         const pastedText = data.replace(/^\x1b\[200~/, "").replace(/\x1b\[201~$/, "");
         if (!pastedText.startsWith("\x1b")) {
+          rememberInputStartIfNeeded();
           const normalizedPaste = pastedText.replace(/\r\n?/g, "\n");
           const cursorIndex = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current);
           inputBuffer.current = insertTextAtCursor(inputBuffer.current, cursorIndex, normalizedPaste);
@@ -1933,6 +1957,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           const next = removeTextAtCursor(inputBuffer.current, inputCursorIndexRef.current);
           inputBuffer.current = next.text;
           inputCursorIndexRef.current = next.cursorIndex;
+          if (!next.text) inputStartCellIndexRef.current = null;
           scheduleSuggestionRefresh();
         } else {
           cancelAiSuggestionRefresh();
