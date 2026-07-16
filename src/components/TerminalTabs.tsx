@@ -37,7 +37,6 @@ import { collectWorkspanSessionIds, type TerminalWorkspan } from "../stores/term
 import { SplitTerminalView } from "./SplitTerminalView";
 import { XTermTerminal } from "./XTermTerminal";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
-import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { BackgroundTasksPanel, type BackgroundTaskMeta } from "./BackgroundTasksPanel";
 import { TerminalStatsPanel } from "./terminal/TerminalStatsPanel";
 import { SystemResourcesPanel } from "./terminal/SystemResourcesPanel";
@@ -3322,7 +3321,6 @@ export function TerminalTabs({
     const toolbarTooltips: Record<string, string> = {
       new: t("terminal.toolbar.newTerminal"),
       templates: t("commandTemplate.title"),
-      commandHistory: t("commandHistory.title"),
       fullscreen: fullscreen ? t("terminal.toolbar.exitImmersiveFullscreen") : t("terminal.toolbar.immersiveFullscreen"),
       sessionHistory: `${t("terminal.toolbar.sessionHistory")} (${sessionHistoryShortcutHint})`,
       replay: replayPanelActive ? t("terminal.toolbar.closeReplayPanel") : t("terminal.toolbar.openReplayPanel"),
@@ -3353,14 +3351,6 @@ export function TerminalTabs({
         <CommandTemplatePanel
           popoverSide="left"
           toneClassName="ui-action-template"
-          popoverStyle={terminalActionSidebarStyle}
-        />
-      ),
-      commandHistory: (
-        <CommandHistoryPanel
-          compact
-          popoverSide="left"
-          toneClassName="ui-action-command-history"
           popoverStyle={terminalActionSidebarStyle}
         />
       ),

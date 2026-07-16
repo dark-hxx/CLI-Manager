@@ -303,6 +303,22 @@ const detachPtyOutput = display.attachPtyOutput();
 
 **Tests**: Run `npx tsc --noEmit` and `node scripts/terminalVisibility.test.mjs`. Manually verify tab switching with background output, resize, WebGL restoration, and IME composition after any Display controller change.
 
+### Convention: Terminal focus requires active and visible layout state
+
+**What**: `XTermTerminal` may focus xterm only when the session is both globally active and currently visible. On Tab, Workspan, history-workspace, or split-pane transitions, defer `terminal.focus()` to the next animation frame after `display:block` layout takes effect.
+
+**Why**: `isActive` can update before pane/workspan visibility. Synchronous focus against a hidden xterm helper textarea is lost when layout finishes, forcing the user to click again; focusing every visible split would instead steal input from the globally active pane.
+
+**Contracts**:
+
+- Depend on both `isActive` and `isVisible`.
+- Blur when either value is false.
+- Re-check `terminalRef`, `isActiveRef`, and `isVisibleRef` inside the animation-frame callback.
+- Cancel the pending frame during effect cleanup.
+- A visible but inactive split pane renders live output but never takes keyboard or IME focus.
+
+**Tests**: Switch by mouse, keyboard, Workspan, and split pane; return from history and fullscreen; type immediately without clicking and confirm input reaches only the active visible terminal.
+
 ### Convention: Async terminal suggestions are scoped to one input attachment
 
 **What**: `useTerminalInput.attachSuggestions()` resets all suggestion state and assigns an attachment generation. Delayed template/history/path/AI results must verify that generation before they update the ghost suggestion.
@@ -1161,43 +1177,13 @@ If a CLI draws large opaque panels or status rows over a terminal background ima
 
 Do not keep WebGL enabled while a terminal background image is active. The default renderer is the safer path for transparent backgrounds and xterm buffer-attr corrections; WebGL can preserve or redraw opaque TUI cells in ways that make Codex/Ratatui panels appear as black blocks.
 
-### Convention: Click-based terminal cursor movement uses the shortest line-editor path
+### Convention: Click-based terminal cursor relocation is unsupported
 
-**What**: Mouse clicks inside tracked terminal input must move the PTY line editor, not only xterm's rendered cursor. Compare direct arrow movement with Home + right arrows and End + left arrows, then send the lowest-cost sequence. Use `terminal.modes.applicationCursorKeysMode` to select CSI (`ESC [`) or application (`ESC O`) key sequences.
+**What**: Clicking terminal content does not reposition the PTY line-editor cursor. The application must not register a click handler that emits cursor-movement sequences.
 
-**Why**: Repeating one arrow escape per character makes long-distance clicks visibly crawl across the input. Writing an absolute cursor-position sequence to xterm would only change terminal rendering and desynchronize PowerShell, Readline, Claude Code, or Codex input state.
+**Why**: Rendered xterm coordinates are not a reliable representation of shell or TUI input state. Enabling this behavior desynchronizes the visible caret, the PTY line editor, and TUI-owned input boxes.
 
-**Correct**:
-
-```tsx
-const data = buildFastCursorMoveSequence(
-  currentCursorIndex,
-  targetCursorIndex,
-  inputLength,
-  !/[\r\n]/.test(currentInput),
-  terminal.modes.applicationCursorKeysMode
-);
-invoke("pty_write", { sessionId, data });
-```
-
-**Wrong**:
-
-```tsx
-// Long inputs visibly move one character at a time.
-const data = "\x1b[D".repeat(currentCursorIndex - targetCursorIndex);
-
-// Rendering-only cursor movement does not update the PTY line editor.
-terminal.write(`\x1b[${targetColumn}G`);
-```
-
-**Contracts**:
-
-- Keep `ENABLE_CLICK_CURSOR_POSITIONING` disabled until click relocation can meet the required responsiveness without desynchronizing the PTY line editor.
-- Prefer direct arrows when they are tied for the lowest cost, avoiding unnecessary Home/End semantics.
-- Do not use Home/End optimization when tracked input contains explicit CR/LF; line editors may treat them as current-line anchors instead of whole-input anchors.
-- Keep the tracked input cursor index synchronized with the selected target after the PTY write is queued.
-
-**Tests**: Cover line-start, line-end, nearby movement, explicit multiline fallback, and application cursor mode. Run `npx tsc --noEmit`; manually verify continued typing and deletion occur at the clicked character in PowerShell, Git Bash, Claude Code, and Codex.
+**Tests**: Verify normal click-to-focus and mouse text selection still work. Do not add a click-to-caret acceptance test because cursor relocation is intentionally absent.
 
 ### Convention: xterm Windows PTY and paste handling
 
@@ -1243,6 +1229,30 @@ invoke("pty_write", { sessionId, data });
 - [ ] Claude Code multi-line paste preserves line order and is not submitted line-by-line.
 - [ ] CMD still accepts normal paste and Enter behavior.
 - [ ] Browser text/image paste, app-internal file drag, and system file drop all focus the intended visible terminal only once.
+
+### Convention: Terminal input selection state stays in the Input controller
+
+**What**: useTerminalInput.attachSelection() owns current-input selection state and its mouse listeners: select-all, Shift+Arrow expansion, Arrow collapse, selection deletion/replacement, and the disabled-by-default click-cursor path. XTermTerminal may route keyboard branches to the returned controller, but must not recreate its selection snapshots or cursor-range state.
+
+**Why**: Selection editing combines xterm viewport cells with the PTY line-editor sequence. Keeping its state inside Input prevents changes to display rendering, output buffering, or context-menu UI from silently changing selection semantics.
+
+**Correct**:
+
+    const selection = attachSelection(terminal, {
+      markAttentionInputHandled,
+      reportPtyWriteError,
+    });
+    inputDisposables.push({ dispose: selection.dispose });
+
+**Contracts**:
+
+- Create one controller per terminal attachment; its selection state must start empty and dispose() must remove its DOM listeners.
+- Input owns the current-input buffer and cursor index. Callers must use the controller API rather than passing or mutating those refs.
+- Use the existing terminalTextEditing and terminalCellWidth helpers for cursor indices and display cells. Do not approximate CJK/wide-character offsets with string length.
+- The shared TUI composer markers belong in src/lib/terminalTui.ts; selection and rendering import the same patterns instead of defining local copies.
+- forwardTerminalInput() consumes a replacement selection before writing to the PTY, then clears only the state required by the original input path.
+
+**Tests**: Run npx tsc --noEmit; manually verify Ctrl/Cmd+A, Shift+Left/Right, collapse with Left/Right, Backspace/Delete, typing to replace a selection, Ctrl/Cmd+C selection copy versus Ctrl+C interrupt, and switching sessions after a selection.
 
 ### Common Mistake: Letting xterm sync updates clear the screen while the user is reading scrollback
 

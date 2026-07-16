@@ -117,7 +117,6 @@ const RESOURCE_CARD_OPTION_MAP = new Map<SystemResourceCardKey, (typeof RESOURCE
 
 const TERMINAL_TOOLBAR_OPTIONS: { key: TerminalToolbarOptionKey; labelKey: TranslationKey }[] = [
   { key: "templates", labelKey: "settings.general.toolbar.templates" },
-  { key: "commandHistory", labelKey: "settings.general.toolbar.commandHistory" },
   { key: "fullscreen", labelKey: "settings.general.toolbar.fullscreen" },
   { key: "sessionHistory", labelKey: "settings.general.toolbar.sessionHistory" },
   { key: "replay", labelKey: "settings.general.toolbar.replay" },

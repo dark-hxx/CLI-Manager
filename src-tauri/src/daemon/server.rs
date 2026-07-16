@@ -349,7 +349,14 @@ impl DaemonServer {
         let hook_host = Arc::clone(&server.host);
         let dispatcher = DispatcherHandle::start("daemon");
         let hook_sink: HookPayloadSink = Arc::new(move |payload| {
-            maybe_activate_app_for_hook(&payload);
+            // 仅当没有已连接的前端客户端时（app 已彻底退到后台，例如托盘退出后
+            // 转入后台继续执行）才拉起 app 处理审批。app 正在运行时，事件会通过
+            // 下方 broadcast_hook 送达前端，由前端决定是否通知/切换，绝不在此
+            // 抢占前台——否则用户在其他应用里工作时会被 PermissionRequest（含
+            // Codex 改代码时的误报）强制切回 CLI-Manager。
+            if hook_host.client_count() == 0 {
+                maybe_activate_app_for_hook(&payload);
+            }
             dispatcher.try_enqueue(payload.to_notification_job());
             match serde_json::to_value(&payload) {
                 Ok(value) => {
@@ -565,25 +572,25 @@ impl DaemonServer {
                 if !is_valid_session_id(&session_id) {
                     return err_frame(id, "invalid session id");
                 }
+                // Keep the replay snapshot and subscription registration atomic
+                // relative to on_output (sessions -> clients). Output produced
+                // before this block is replayed; output produced after it is live.
                 let attach_info = self.host.sessions.lock().ok().and_then(|sessions| {
-                    sessions
-                        .get(&session_id)
-                        .map(|entry| (entry.meta.clone(), entry.buffer.replay_bytes()))
+                    let entry = sessions.get(&session_id)?;
+                    let meta = entry.meta.clone();
+                    let replay = entry.buffer.replay_bytes();
+                    let mut clients = self.host.clients.lock().ok()?;
+                    let client = clients.get_mut(&client_id)?;
+                    client.attached.insert(session_id.clone());
+                    Some((meta, replay))
                 });
                 match attach_info {
-                    Some((meta, replay)) => {
-                        if let Ok(mut clients) = self.host.clients.lock() {
-                            if let Some(client) = clients.get_mut(&client_id) {
-                                client.attached.insert(session_id.clone());
-                            }
-                        }
-                        DaemonFrame::Attached {
-                            id,
-                            session_id,
-                            replay_base64: STANDARD.encode(replay),
-                            meta,
-                        }
-                    }
+                    Some((meta, replay)) => DaemonFrame::Attached {
+                        id,
+                        session_id,
+                        replay_base64: STANDARD.encode(replay),
+                        meta,
+                    },
                     None => err_frame(id, "session not found"),
                 }
             }
@@ -783,6 +790,72 @@ fn maybe_activate_app_for_hook(payload: &crate::claude_hook::ClaudeHookPayload) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attach_returns_replay_and_registers_client() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let address = listener.local_addr().expect("read test listener address");
+        let peer = TcpStream::connect(address).expect("connect test client");
+        let (server_stream, _) = listener.accept().expect("accept test client");
+        let host = Arc::new(DaemonHost::new());
+        let session_id = "0e0f7b0a-1234-4c5d-9e8f-aabbccddeeff";
+        let client_id = 7;
+        let mut buffer = SessionBuffer::new();
+        buffer.push_frame(b"replay-before-attach");
+        host.sessions.lock().expect("lock sessions").insert(
+            session_id.to_string(),
+            SessionEntry {
+                meta: SessionMeta {
+                    session_id: session_id.to_string(),
+                    cwd: None,
+                    shell: None,
+                    alive: true,
+                    task_status: None,
+                    task_updated_at_ms: None,
+                    created_at_ms: 1,
+                },
+                buffer,
+            },
+        );
+        host.clients.lock().expect("lock clients").insert(
+            client_id,
+            ClientHandle {
+                writer: Arc::new(Mutex::new(server_stream)),
+                attached: HashSet::new(),
+            },
+        );
+        let server = DaemonServer {
+            host: Arc::clone(&host),
+            next_client_id: AtomicU64::new(8),
+            token: String::new(),
+            version: String::new(),
+            info_path: PathBuf::new(),
+        };
+
+        let reply = server.handle_frame(
+            client_id,
+            ClientFrame::Attach {
+                id: 11,
+                session_id: session_id.to_string(),
+            },
+        );
+
+        match reply {
+            DaemonFrame::Attached { replay_base64, .. } => {
+                assert_eq!(STANDARD.decode(replay_base64).unwrap(), b"replay-before-attach");
+            }
+            other => panic!("unexpected attach reply: {other:?}"),
+        }
+        assert!(host
+            .clients
+            .lock()
+            .expect("lock clients")
+            .get(&client_id)
+            .expect("client exists")
+            .attached
+            .contains(session_id));
+        drop(peer);
+    }
 
     #[test]
     fn session_buffer_caps_by_dropping_whole_frames() {

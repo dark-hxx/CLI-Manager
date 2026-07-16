@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Terminal, type IBufferCell, type IBufferLine, type IDisposable, type ILink, type ITheme } from "@xterm/xterm";
+import { Terminal, type IBufferLine, type IDisposable, type ILink, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
@@ -18,9 +18,7 @@ import {
   isLightTerminalTheme,
 } from "../lib/terminalThemes";
 import { backgroundAssetUrl } from "../lib/assetUrl";
-import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
 import { translateCurrent, useI18n } from "../lib/i18n";
-import { buildFastCursorMoveSequence } from "../lib/terminalCursorMovement";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
 import { findTerminalFileLinks, resolveTerminalFileSystemPath } from "../lib/terminalFileLinks";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
@@ -30,30 +28,9 @@ import { useTerminalOsc } from "../hooks/useTerminalOsc";
 import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
 import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
 import { getTerminalCellWidth } from "../lib/terminalCellWidth";
-import {
-  createWholeInputSelection,
-  findInputPromptContentStartColumn,
-  getInputCellOffset,
-  getInputCellSpan,
-  getWholeInputVisualCellSpan,
-  resolveCursorIndexFromInputCellOffset,
-  resolveInputStartCellIndex,
-  resolveInputStartCellIndexCandidates,
-} from "../lib/terminalInputSelection";
-import {
-  buildTrackedInputClearSequence,
-  clampTextCursorIndex,
-  getTextCursorLength,
-  insertTextAtCursor,
-  removeTextAtCursor,
-  removeTextBeforeCursor,
-  repeatControlSequence,
-  resolveNativeWholeInputClearSequence,
-  sliceTextByCursor,
-} from "../lib/terminalTextEditing";
+import { normalizeTerminalTuiComposerBackground } from "../lib/terminalTuiDisplay";
 import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
 import { terminalShortcutMatches, wrapTerminalPasteTextForCtrlShiftV } from "../lib/terminalKeyboard";
-import { resolveSubmittedDirectoryChange } from "../lib/terminalInputSuggestions";
 import {
   didRenderFullTerminalViewport,
   planTerminalVisibilityRestore,
@@ -66,77 +43,34 @@ import {
 } from "../lib/linuxGraphics";
 import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../lib/shell";
 import { Portal } from "./ui/Portal";
-import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
-import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
+import { formatStartupInputForPty, useTerminalStore, type PtyAttachResult } from "../stores/terminalStore";
 import {
-  TERMINAL_FONT_SIZE_MAX,
-  TERMINAL_FONT_SIZE_MIN,
   TERMINAL_SCROLLBACK_ROWS_DEFAULT,
   useSettingsStore,
   type LightThemePalette,
   type DarkThemePalette,
 } from "../stores/settingsStore";
 
-const MIN_TERMINAL_COLS = 40;
-const MIN_TERMINAL_ROWS = 8;
 const SEARCH_HIGHLIGHT_LIMIT = 1000;
 const IMAGE_ADDON_PIXEL_LIMIT = 4 * 1024 * 1024;
 const IMAGE_ADDON_SEQUENCE_LIMIT = 8 * 1024 * 1024;
 const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
-const ENABLE_CLICK_CURSOR_POSITIONING = false;
 const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
 // Minimum time the app must stay in the background before a foreground return
 // triggers a glyph-atlas rebuild. GPU sleep / lock screen (the corruption
 // trigger) implies a long absence; quick alt-tabs skip the re-rasterization.
 const WEBGL_ATLAS_REFRESH_MIN_HIDDEN_MS = 10_000;
-// Box-drawing glyphs used by TUI input boxes (Claude Code / Codex draw "│ > … │").
-const TUI_BORDER_CHAR_PATTERN = /^[│┃║▏▎▍▌▋▊▉█┆┊╎╏]$/u;
-const TUI_BORDER_PREFIX_PATTERN = /^[\s│┃║▏▎▍▌▋▊▉█┆┊╎╏]+/u;
 import { toast } from "sonner";
 import { logError, logInfo, logWarn } from "../lib/logger";
 import { registerTerminalSnapshotSource } from "../lib/sessionSnapshotPersistence";
 
-const XTERM_BG_COLOR_MASK = 0x03ffffff;
-const XTERM_COLOR_MODE_RGB = 0x03000000;
-const XTERM_INVERSE_FLAG = 0x04000000;
-const CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG = 0xe7eefc;
-const TUI_COMPOSER_PRELUDE_ROWS = 1;
-const TUI_COMPOSER_CONTINUATION_ROWS = 4;
-const TUI_COMPOSER_PROMPT_PATTERN = /^[\u203a\u276f\u00bb\u2023>]\s?/u;
-const SLASH_COMMAND_MENU_LINE_PATTERN = /^\/[a-z0-9][a-z0-9:_-]*(?:\s|$)/i;
-const AI_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|claude\s+code|yolo\s+mode|mcp\s+(?:client|startup)|\/model\s+to\s+change)/i;
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const AI_TUI_FILE_PASTE_SHORTCUT_DATA = "\x1bv";
 const CODEX_IME_DEBUG_WINDOW_MS = 250;
 const CODEX_IME_DUPLICATE_WINDOW_MS = 120;
-const IME_PROCESS_KEY_CODE = 229;
-const IME_PROCESS_KEY_RECOVERY_WINDOW_MS = 400;
-const IME_COMPOSITION_END_SUPPRESS_WINDOW_MS = 80;
-const IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS = 80;
-const NATIVE_TEXT_INPUT_DEDUP_WINDOW_MS = 16;
-const CJK_NATIVE_PUNCTUATION_PATTERN = /^[\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]+$/u;
-
-type TerminalInputSource = "onData" | "nativeTextInput";
-
 type TerminalSubsystemDisposable = IDisposable;
-
-type MutableXtermCell = IBufferCell & {
-  fg: number;
-  bg: number;
-};
-
-interface MutableXtermLine {
-  length: number;
-  loadCell(index: number, cell: MutableXtermCell): MutableXtermCell;
-  setCell(index: number, cell: MutableXtermCell): void;
-}
-
-type XtermBufferLineApiView = IBufferLine & {
-  // xterm's public buffer line is read-only; v6 keeps the mutable line here.
-  _line?: MutableXtermLine;
-};
 
 interface TextDiagnosticSummary {
   length: number;
@@ -255,10 +189,6 @@ const canShowSuggestionAtCurrentInputEnd = (terminal: Terminal, input: string) =
   return beforeCursor.endsWith(input);
 };
 
-const isLikelyMacPlatform = (os: OsPlatform) => (
-  os === "macos" || (os === "unknown" && navigator.platform.toLowerCase().includes("mac"))
-);
-
 // When search is active, SearchAddon calls terminal.select() on each match to
 // position it. A visible selection color would then cover the yellow match
 // decoration, so the current match looks "selected blue" until focus leaves.
@@ -358,15 +288,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
-  const inputBuffer = useRef("");
-  const inputCursorIndexRef = useRef(0);
-  const inputStartCellIndexRef = useRef<number | null>(null);
-  // Input owns this ref. Display may only read it to suppress fit during IME composition.
-  const isComposingRef = useRef(false);
   const isActiveRef = useRef(isActive);
   // The orchestrator mirrors the visibility prop; display/viewport code reads it only.
   const isVisibleRef = useRef(isVisible);
-  const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const visibilityRestorePendingRef = useRef(false);
   const visibilityRestoreRevealTimerRef = useRef<number | null>(null);
   const visibilityRestoreRevealRafRef = useRef<number | null>(null);
@@ -502,24 +426,21 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   } = useTerminalSearch(terminalRef, searchAddonRef, searchDecorationColors);
 
   const {
-    attachSuggestions,
+    isComposingRef,
+    attachInputForwarding,
     clearSuggestion: clearSuggestionGhost,
-    cancelAiSuggestionRefresh,
-    scheduleSuggestionRefresh,
-    updateSuggestionGhostPosition,
     acceptSuggestion,
-    onCommandSubmitted,
     attachPasteAndDrop,
     pasteText,
+    attachSelection,
+    attachIme,
   } = useTerminalInput({
     sessionId,
     wrapperRef,
     containerRef,
     isActiveRef,
     isVisibleRef,
-    isComposingRef,
     fontSize,
-    getInput: () => inputBuffer.current,
     canShowSuggestionAtCurrentInputEnd,
     getTerminalRenderedCellSize,
     setSuggestionGhost,
@@ -551,6 +472,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     resumeActiveWriteQueue,
     getPendingOutputSnapshot,
     attachPtyOutput,
+    attachViewport,
     resetOutputState,
     cancelScheduledFit,
     resetViewportRefreshState,
@@ -650,229 +572,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       || CLAUDE_COMMAND_PATTERN.test(context.startupCmd)
     );
   };
-  const shouldNormalizeTuiComposerBackground = (context = getSessionToolContext()) => (
-    isTransparentRef.current || (isClaudeOrCodexSession(context) && isLightTerminalRef.current)
-  );
-
   const normalizeTuiComposerBackground = (terminal: Terminal) => {
-    const toolContext = getSessionToolContext();
-    if (!shouldNormalizeTuiComposerBackground(toolContext)) return;
-    const buffer = terminal.buffer.active;
-    const probeCell = buffer.getNullCell() as MutableXtermCell;
-    const minRow = 0;
-    const codexSession = isCodexSession(toolContext);
-    const claudeSession = isClaudeSession(toolContext);
-    const knownAiSession = codexSession || claudeSession;
-    const useBroadViewportNormalization = isTransparentRef.current || (codexSession && isLightTerminalRef.current);
-    const useClaudeLightPatchNormalization = !useBroadViewportNormalization && claudeSession && isLightTerminalRef.current;
-
-    const getViewportLine = (row: number) => buffer.getLine(buffer.viewportY + row);
-    const normalizePromptText = (line: IBufferLine) => (
-      line.translateToString(true).trimStart().replace(TUI_BORDER_PREFIX_PATTERN, "")
-    );
-    const isTuiPromptLine = (line: IBufferLine) => TUI_COMPOSER_PROMPT_PATTERN.test(normalizePromptText(line));
-    const hasKnownAiTuiSignature = () => {
-      for (let row = minRow; row < terminal.rows; row += 1) {
-        const line = getViewportLine(row);
-        if (line && AI_TUI_VIEWPORT_PATTERN.test(line.translateToString(true))) return true;
-      }
-      return false;
-    };
-    const getLineBackgroundState = (line: IBufferLine) => {
-      const limit = Math.min(terminal.cols, line.length);
-      let hasExplicitBackground = false;
-      let inverseCells = 0;
-      let hasInverse = false;
-      for (let x = 0; x < limit; x += 1) {
-        const cell = line.getCell(x, probeCell);
-        if (!cell) continue;
-        if (cell.getBgColorMode() !== 0) hasExplicitBackground = true;
-        if (cell.isInverse() !== 0) {
-          hasInverse = true;
-          inverseCells += 1;
-        }
-      }
-      return {
-        hasExplicitBackground,
-        hasInverse,
-        hasWideInverse: inverseCells >= Math.max(4, Math.floor(terminal.cols * 0.25)),
-      };
-    };
-    const isPatchLikeLine = (line: IBufferLine) => {
-      const text = line.translateToString(true).trim();
-      return /^(?:\d+\s+)?(?:[+-](?![+-]{2,})|@@|diff --git |index |--- |\+\+\+ |\*\*\* (?:Begin|End) Patch|\*\*\* (?:Update|Add|Delete) File:|```(?:diff|patch)?\s*$)/.test(text);
-    };
-    const clearLineBackground = (line: IBufferLine, clearInverse: boolean, clearForeground: boolean = false) => {
-      const mutableLine = (line as XtermBufferLineApiView)._line;
-      if (!mutableLine) return false;
-      const limit = Math.min(terminal.cols, mutableLine.length);
-      let changed = false;
-      for (let x = 0; x < limit; x += 1) {
-        mutableLine.loadCell(x, probeCell);
-        // Drop only visual field styling; optionally reset low-contrast ANSI text on patch rows.
-        const nextBg = probeCell.bg & ~XTERM_BG_COLOR_MASK;
-        const fgWithoutColor = clearForeground ? probeCell.fg & ~XTERM_BG_COLOR_MASK : probeCell.fg;
-        const nextFg = clearInverse ? fgWithoutColor & ~XTERM_INVERSE_FLAG : fgWithoutColor;
-        if (nextBg === probeCell.bg && nextFg === probeCell.fg) continue;
-        probeCell.bg = nextBg;
-        probeCell.fg = nextFg;
-        mutableLine.setCell(x, probeCell);
-        changed = true;
-      }
-      return changed;
-    };
-
-    let firstChangedRow = terminal.rows;
-    let lastChangedRow = -1;
-    const markChangedRow = (row: number) => {
-      firstChangedRow = Math.min(firstChangedRow, row);
-      lastChangedRow = Math.max(lastChangedRow, row);
-    };
-    const isSlashCommandPromptLine = (line: IBufferLine) => {
-      const text = normalizePromptText(line);
-      return TUI_COMPOSER_PROMPT_PATTERN.test(text) && /^[\u203a\u276f\u00bb\u2023>]\s*\/\S*$/u.test(text);
-    };
-    const getSlashCommandMenuLineState = (line: IBufferLine) => {
-      const text = line.translateToString(true);
-      const trimmed = text.trimStart();
-      const commandMatch = SLASH_COMMAND_MENU_LINE_PATTERN.exec(trimmed);
-      if (!commandMatch) return null;
-
-      const leadingSpaces = text.length - trimmed.length;
-      const commandEnd = leadingSpaces + commandMatch[0].trimEnd().length;
-      const limit = Math.min(terminal.cols, line.length, text.length);
-      let visibleDescriptionCells = 0;
-      let highlightedDescriptionCells = 0;
-      for (let x = commandEnd; x < limit; x += 1) {
-        const cell = line.getCell(x, probeCell);
-        if (!cell || cell.getWidth() === 0 || cell.getChars().trim() === "") continue;
-        visibleDescriptionCells += 1;
-        if ((cell.getFgColorMode() !== 0 || cell.isBold() !== 0) && cell.isDim() === 0) {
-          highlightedDescriptionCells += 1;
-        }
-      }
-
-      return {
-        selectedByForeground: highlightedDescriptionCells >= Math.max(
-          6,
-          Math.floor(visibleDescriptionCells * 0.35),
-        ),
-      };
-    };
-    const syncOwnedSlashMenuBackground = (line: IBufferLine, selected: boolean) => {
-      const mutableLine = (line as XtermBufferLineApiView)._line;
-      if (!mutableLine) return false;
-      const limit = Math.min(terminal.cols, mutableLine.length);
-      let changed = false;
-      for (let x = 0; x < limit; x += 1) {
-        mutableLine.loadCell(x, probeCell);
-        const hasOwnedBackground = probeCell.isBgRGB()
-          && probeCell.getBgColor() === CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG;
-        const nextBg = selected
-          ? (probeCell.bg & ~XTERM_BG_COLOR_MASK) | XTERM_COLOR_MODE_RGB | CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG
-          : hasOwnedBackground
-            ? probeCell.bg & ~XTERM_BG_COLOR_MASK
-            : probeCell.bg;
-        if (nextBg === probeCell.bg) continue;
-        probeCell.bg = nextBg;
-        mutableLine.setCell(x, probeCell);
-        changed = true;
-      }
-      return changed;
-    };
-    const syncClaudeLightSlashMenuHighlights = () => {
-      let promptRow = -1;
-      const commandRows: Array<{ row: number; line: IBufferLine; selectedByForeground: boolean }> = [];
-      for (let row = minRow; row < terminal.rows; row += 1) {
-        const line = getViewportLine(row);
-        if (line && isSlashCommandPromptLine(line)) promptRow = row;
-      }
-      if (promptRow >= 0) {
-        for (let row = promptRow + 1; row < terminal.rows; row += 1) {
-          const line = getViewportLine(row);
-          if (!line) continue;
-          const state = getSlashCommandMenuLineState(line);
-          if (!state) continue;
-          commandRows.push({ row, line, selectedByForeground: state.selectedByForeground });
-        }
-      }
-
-      const foregroundSelectedRow = commandRows.find((item) => item.selectedByForeground)?.row;
-      const selectedRow = foregroundSelectedRow ?? commandRows[0]?.row ?? -1;
-      for (let row = minRow; row < terminal.rows; row += 1) {
-        const line = getViewportLine(row);
-        if (!line) continue;
-        if (!syncOwnedSlashMenuBackground(line, row === selectedRow)) continue;
-        markChangedRow(row);
-      }
-    };
-
-    if (useBroadViewportNormalization && (knownAiSession || hasKnownAiTuiSignature())) {
-      for (let row = minRow; row < terminal.rows; row += 1) {
-        const line = getViewportLine(row);
-        if (!line) continue;
-        const backgroundState = getLineBackgroundState(line);
-        if (!backgroundState.hasExplicitBackground && !backgroundState.hasInverse) continue;
-        if (!clearLineBackground(line, backgroundState.hasInverse)) continue;
-        markChangedRow(row);
-      }
-      if (lastChangedRow >= firstChangedRow) {
-        terminal.refresh(firstChangedRow, lastChangedRow);
-      }
-      return;
-    }
-
-    if (useClaudeLightPatchNormalization) {
-      for (let row = minRow; row < terminal.rows; row += 1) {
-        const line = getViewportLine(row);
-        if (!line || !isPatchLikeLine(line)) continue;
-        const backgroundState = getLineBackgroundState(line);
-        if (!backgroundState.hasExplicitBackground && !backgroundState.hasInverse) continue;
-        if (!clearLineBackground(line, backgroundState.hasInverse, true)) continue;
-        markChangedRow(row);
-      }
-      syncClaudeLightSlashMenuHighlights();
-      if (lastChangedRow >= firstChangedRow) {
-        terminal.refresh(firstChangedRow, lastChangedRow);
-      }
-      return;
-    }
-
-    for (let promptRow = terminal.rows - 1; promptRow >= minRow; promptRow -= 1) {
-      const promptLine = getViewportLine(promptRow);
-      if (!promptLine || !isTuiPromptLine(promptLine)) continue;
-
-      const startRow = Math.max(minRow, promptRow - TUI_COMPOSER_PRELUDE_ROWS);
-      const maxRow = Math.min(terminal.rows - 1, promptRow + TUI_COMPOSER_CONTINUATION_ROWS);
-      for (let row = startRow; row <= maxRow; row += 1) {
-        const line = getViewportLine(row);
-        if (!line) break;
-        const backgroundState = getLineBackgroundState(line);
-        if (row < promptRow) {
-          if (!backgroundState.hasExplicitBackground && !backgroundState.hasWideInverse) continue;
-          if (!clearLineBackground(line, backgroundState.hasWideInverse)) continue;
-          markChangedRow(row);
-          continue;
-        }
-        if (
-          row > promptRow
-          && !line.isWrapped
-          && !backgroundState.hasExplicitBackground
-          && !backgroundState.hasWideInverse
-        ) {
-          break;
-        }
-        if (!backgroundState.hasExplicitBackground && !backgroundState.hasWideInverse) continue;
-        if (!clearLineBackground(line, backgroundState.hasWideInverse)) continue;
-        markChangedRow(row);
-      }
-    }
-
-    if (lastChangedRow >= firstChangedRow) {
-      terminal.refresh(firstChangedRow, lastChangedRow);
-    }
+    const context = getSessionToolContext();
+    normalizeTerminalTuiComposerBackground(terminal, {
+      shouldNormalize: isTransparentRef.current || (isClaudeOrCodexSession(context) && isLightTerminalRef.current),
+      isTransparent: isTransparentRef.current,
+      isLightTheme: isLightTerminalRef.current,
+      isCodexSession: isCodexSession(context),
+      isClaudeSession: isClaudeSession(context),
+    });
   };
-
   const scheduleTuiComposerBackgroundNormalization = (terminal: Terminal | null = terminalRef.current) => {
     if (!terminal || tuiComposerNormalizeRafRef.current !== null) return;
     tuiComposerNormalizeRafRef.current = window.requestAnimationFrame(() => {
@@ -1098,12 +807,21 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     isActiveRef.current = isActive;
     const terminal = terminalRef.current;
     if (!terminal) return;
-    if (isActive) {
-      terminal.focus();
-    } else {
+    if (!isActive || !isVisible) {
       terminal.blur();
+      return;
     }
-  }, [isActive]);
+    const focusRaf = window.requestAnimationFrame(() => {
+      if (
+        terminalRef.current === terminal
+        && isActiveRef.current
+        && isVisibleRef.current
+      ) {
+        terminal.focus();
+      }
+    });
+    return () => window.cancelAnimationFrame(focusRaf);
+  }, [isActive, isVisible]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1205,7 +923,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     } else {
       writeDeferredStartup();
     }
-    if (isActive) {
+    if (isActive && isVisible) {
       terminal.focus();
     }
 
@@ -1219,14 +937,18 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     const detachPasteAndDrop = attachPasteAndDrop(terminal);
     const contextMenuTarget = containerRef.current;
+    const inputSelection = attachSelection(terminal, {
+      markAttentionInputHandled,
+      reportPtyWriteError,
+    });
+    inputDisposables.push({ dispose: inputSelection.dispose });
     const onContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (terminal.hasSelection()) {
         void copySelection();
         terminal.clearSelection();
-        keyboardInputSelection = null;
-        selectedInputSnapshot = null;
+        inputSelection.clearInputSelectionState();
         terminal.focus();
         closeContextMenu();
         return;
@@ -1234,446 +956,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       openMenu(e.clientX, e.clientY, false);
     };
     contextMenuTarget.addEventListener("contextmenu", onContextMenu);
-
-    const moveInputCursorToClick = (e: MouseEvent) => {
-      if (
-        e.defaultPrevented ||
-        e.button !== 0 ||
-        e.detail !== 1 ||
-        e.shiftKey ||
-        e.ctrlKey ||
-        e.altKey ||
-        e.metaKey ||
-        isComposingRef.current ||
-        terminal.hasSelection()
-      ) {
-        return;
-      }
-
-      const currentInput = inputBuffer.current;
-      if (!currentInput) return;
-
-      const terminalContainer = containerRef.current;
-      const screen = terminalContainer?.querySelector(".xterm-screen") as HTMLElement | null;
-      if (!terminalContainer || !screen) return;
-
-      const screenRect = screen.getBoundingClientRect();
-      if (
-        e.clientX < screenRect.left ||
-        e.clientX > screenRect.right ||
-        e.clientY < screenRect.top ||
-        e.clientY > screenRect.bottom
-      ) {
-        return;
-      }
-
-      const cell = getTerminalRenderedCellSize(terminal, terminalContainer, fontSize);
-      const clickColumn = Math.min(
-        Math.max(0, Math.floor((e.clientX - screenRect.left) / Math.max(1, cell.width))),
-        Math.max(0, terminal.cols)
-      );
-      const clickRow = Math.min(
-        Math.max(0, Math.floor((e.clientY - screenRect.top) / Math.max(1, cell.height))),
-        Math.max(0, terminal.rows - 1)
-      );
-
-      const buffer = terminal.buffer.active;
-      const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
-      const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-      const inputStartCellIndex = inputStartCellIndexRef.current ?? resolveInputStartCellIndex(
-        cursorCellIndex,
-        currentInput,
-        currentCursorIndex,
-        terminal.cols
-      );
-      const inputStartColumn = inputStartCellIndex % terminal.cols;
-      const inputEndCellIndex = inputStartCellIndex + getInputCellSpan(currentInput, terminal.cols, inputStartColumn);
-      const clickCellIndex = ((buffer.viewportY + clickRow) * terminal.cols) + clickColumn;
-      const inputStartRow = Math.floor(inputStartCellIndex / terminal.cols);
-      const inputEndRow = Math.floor(inputEndCellIndex / terminal.cols);
-      const clickRowAbsolute = buffer.viewportY + clickRow;
-      if (clickRowAbsolute < inputStartRow || clickRowAbsolute > inputEndRow) return;
-
-      const targetCellOffset = Math.min(
-        Math.max(0, clickCellIndex - inputStartCellIndex),
-        Math.max(0, inputEndCellIndex - inputStartCellIndex)
-      );
-      const targetCursorIndex = resolveCursorIndexFromInputCellOffset(
-        currentInput,
-        targetCellOffset,
-        terminal.cols,
-        inputStartColumn
-      );
-      const data = buildFastCursorMoveSequence(
-        currentCursorIndex,
-        targetCursorIndex,
-        getTextCursorLength(currentInput),
-        !/[\r\n]/.test(currentInput),
-        terminal.modes.applicationCursorKeysMode
-      );
-      if (!data) {
-        terminal.focus();
-        return;
-      }
-
-      inputCursorIndexRef.current = targetCursorIndex;
-      inputStartCellIndexRef.current = inputStartCellIndex;
-      keyboardInputSelection = null;
-      selectedInputSnapshot = null;
-      clearSuggestionGhost();
-      cancelAiSuggestionRefresh();
-      markAttentionInputHandled();
-      invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("click_cursor", err));
-      terminal.focus();
-    };
-    if (ENABLE_CLICK_CURSOR_POSITIONING) {
-      contextMenuTarget.addEventListener("click", moveInputCursorToClick);
-    }
-
-    let selectedInputSnapshot: string | null = null;
-    let keyboardInputSelection: {
-      anchorIndex: number;
-      focusIndex: number;
-      inputStartCellIndex: number;
-    } | null = null;
-
-    const clearKeyboardInputSelectionOnMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
-      keyboardInputSelection = null;
-      selectedInputSnapshot = null;
-    };
-    contextMenuTarget.addEventListener("mousedown", clearKeyboardInputSelectionOnMouseDown);
-
-    // Codex/Claude 的多行 TUI 不会把 Ctrl+U 解释为清空整个输入区。
-    // 先移到输入末尾，再按跟踪的字符数逐个退格，才能跨逻辑行可靠清空。
-    const buildKillCurrentInputSequence = () => {
-      const currentInput = inputBuffer.current;
-      const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
-      return buildTrackedInputClearSequence(currentInput, currentCursorIndex);
-    };
-
-    const rewriteCurrentInput = (
-      nextInput: string,
-      stage: string,
-      cursorIndex: number = getTextCursorLength(nextInput)
-    ) => {
-      const killCurrentInput = buildKillCurrentInputSequence();
-      const nextCursorIndex = clampTextCursorIndex(nextInput, cursorIndex);
-      const cursorRestore = repeatControlSequence(
-        "\x1b[D",
-        getTextCursorLength(nextInput) - nextCursorIndex
-      );
-      inputBuffer.current = nextInput;
-      inputCursorIndexRef.current = nextCursorIndex;
-      if (!nextInput) inputStartCellIndexRef.current = null;
-      terminal.clearSelection();
-      keyboardInputSelection = null;
-      selectedInputSnapshot = null;
-      markAttentionInputHandled();
-      clearSuggestionGhost();
-      cancelAiSuggestionRefresh();
-      invoke("pty_write", { sessionId, data: `${killCurrentInput}${nextInput}${cursorRestore}` })
-        .catch((err) => reportPtyWriteError(stage, err));
-    };
-
-    const isReplaceableInputData = (data: string) => {
-      if (!data || data === "\r" || data === "\x7f" || data === "\b") return false;
-      if (data.startsWith("\x1b") && !data.startsWith("\x1b[200~")) return false;
-      return true;
-    };
-
-    // 返回清空当前输入所需的控制序列；null 表示本次输入不做"替换选区"。
-    const consumeSelectedInputForReplacement = (data: string) => {
-      if (
-        !selectedInputSnapshot ||
-        selectedInputSnapshot !== inputBuffer.current ||
-        !terminal.hasSelection() ||
-        !isReplaceableInputData(data)
-      ) {
-        return null;
-      }
-
-      const killCurrentInput = buildKillCurrentInputSequence();
-      inputBuffer.current = "";
-      inputCursorIndexRef.current = 0;
-      selectedInputSnapshot = null;
-      terminal.clearSelection();
-      return killCurrentInput;
-    };
-
-    const resolveCurrentInputCellRange = (
-      currentInput: string,
-      selectionBounds?: { startCellIndex: number; endCellIndex: number }
-    ) => {
-      const buffer = terminal.buffer.active;
-      const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
-      const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-      const candidates = resolveInputStartCellIndexCandidates(cursorCellIndex, currentInput, currentCursorIndex, terminal.cols);
-      const refCandidate = inputStartCellIndexRef.current;
-      const inputStartCandidates = [
-        ...(refCandidate === null ? [] : [refCandidate]),
-        ...candidates.filter((candidate) => candidate !== refCandidate),
-      ];
-      const inputStartCellIndex = selectionBounds && inputStartCandidates.length
-        ? inputStartCandidates.reduce((best, candidate) => {
-          const candidateColumn = candidate % terminal.cols;
-          const candidateEnd = candidate + getInputCellSpan(currentInput, terminal.cols, candidateColumn);
-          const bestColumn = best % terminal.cols;
-          const bestEnd = best + getInputCellSpan(currentInput, terminal.cols, bestColumn);
-          const overlap = Math.max(0, Math.min(candidateEnd, selectionBounds.endCellIndex) - Math.max(candidate, selectionBounds.startCellIndex));
-          const bestOverlap = Math.max(0, Math.min(bestEnd, selectionBounds.endCellIndex) - Math.max(best, selectionBounds.startCellIndex));
-          return overlap > bestOverlap ? candidate : best;
-        })
-        : (refCandidate ?? resolveInputStartCellIndex(
-          cursorCellIndex,
-          currentInput,
-          currentCursorIndex,
-          terminal.cols
-        ));
-      const inputStartColumn = inputStartCellIndex % terminal.cols;
-      const inputCellSpan = getInputCellSpan(currentInput, terminal.cols, inputStartColumn);
-      return {
-        inputStartCellIndex,
-        inputEndCellIndex: inputStartCellIndex + inputCellSpan,
-        inputStartColumn,
-        inputCellSpan,
-      };
-    };
-
-    const resolveVisibleInputStartCellIndex = () => {
-      const buffer = terminal.buffer.active;
-      const cursorRow = buffer.baseY + buffer.cursorY;
-      for (let row = cursorRow; row >= buffer.viewportY; row -= 1) {
-        const line = buffer.getLine(row);
-        if (!line) continue;
-        const limit = Math.min(terminal.cols, line.length);
-        const cells = Array.from({ length: limit }, (_, column) => {
-          const cell = line.getCell(column);
-          return {
-            chars: cell?.getChars() ?? "",
-            width: cell?.getWidth() ?? 1,
-          };
-        });
-        const contentColumn = findInputPromptContentStartColumn(cells);
-        if (contentColumn !== null) {
-          return (row * terminal.cols) + contentColumn;
-        }
-      }
-      return null;
-    };
-
-    const selectCurrentInputText = () => {
-      const currentInput = inputBuffer.current;
-      keyboardInputSelection = null;
-      selectedInputSnapshot = currentInput || null;
-      terminal.clearSelection();
-      if (!currentInput) {
-        terminal.focus();
-        return true;
-      }
-
-      const range = resolveCurrentInputCellRange(currentInput);
-      const buffer = terminal.buffer.active;
-      const cursorCellIndex = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-      const inputStartCellIndex = resolveVisibleInputStartCellIndex() ?? range.inputStartCellIndex;
-      const inputStartColumn = inputStartCellIndex % terminal.cols;
-      const visualCellSpan = getWholeInputVisualCellSpan({
-        text: currentInput,
-        cursorIndex: inputCursorIndexRef.current,
-        cols: terminal.cols,
-        inputStartCellIndex,
-        cursorCellIndex,
-      });
-      if (visualCellSpan <= 0) {
-        terminal.focus();
-        return true;
-      }
-
-      inputStartCellIndexRef.current = inputStartCellIndex;
-      keyboardInputSelection = createWholeInputSelection(currentInput, inputStartCellIndex);
-      terminal.select(inputStartColumn, Math.floor(inputStartCellIndex / terminal.cols), visualCellSpan);
-      terminal.focus();
-      return true;
-    };
-
-    const renderKeyboardInputSelection = (
-      currentInput: string,
-      selection: NonNullable<typeof keyboardInputSelection>
-    ) => {
-      const startIndex = Math.min(selection.anchorIndex, selection.focusIndex);
-      const endIndex = Math.max(selection.anchorIndex, selection.focusIndex);
-      if (startIndex === endIndex) {
-        terminal.clearSelection();
-        return;
-      }
-
-      const inputStartColumn = selection.inputStartCellIndex % terminal.cols;
-      const startCellIndex = selection.inputStartCellIndex
-        + getInputCellOffset(currentInput, startIndex, terminal.cols, inputStartColumn);
-      const selectionCellWidth = (
-        getInputCellOffset(currentInput, endIndex, terminal.cols, inputStartColumn)
-        - getInputCellOffset(currentInput, startIndex, terminal.cols, inputStartColumn)
-      );
-      terminal.select(startCellIndex % terminal.cols, Math.floor(startCellIndex / terminal.cols), selectionCellWidth);
-    };
-
-    const extendKeyboardInputSelection = (direction: -1 | 1) => {
-      const currentInput = inputBuffer.current;
-      const currentCursorIndex = clampTextCursorIndex(currentInput, inputCursorIndexRef.current);
-      const targetCursorIndex = clampTextCursorIndex(currentInput, currentCursorIndex + direction);
-      if (!currentInput || targetCursorIndex === currentCursorIndex) {
-        terminal.focus();
-        return;
-      }
-
-      const selection = keyboardInputSelection ?? (() => {
-        return {
-          anchorIndex: currentCursorIndex,
-          focusIndex: currentCursorIndex,
-          inputStartCellIndex: resolveCurrentInputCellRange(currentInput).inputStartCellIndex,
-        };
-      })();
-
-      const nextSelection = { ...selection, focusIndex: targetCursorIndex };
-      keyboardInputSelection = nextSelection;
-      selectedInputSnapshot = null;
-      inputCursorIndexRef.current = targetCursorIndex;
-      renderKeyboardInputSelection(currentInput, nextSelection);
-      clearSuggestionGhost();
-      cancelAiSuggestionRefresh();
-      markAttentionInputHandled();
-      invoke("pty_write", { sessionId, data: direction < 0 ? "\x1b[D" : "\x1b[C" })
-        .catch((err) => reportPtyWriteError("keyboard_selection", err));
-      terminal.focus();
-    };
-
-    const collapseKeyboardInputSelection = (direction: -1 | 1) => {
-      if (!keyboardInputSelection) return false;
-      const startIndex = Math.min(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
-      const endIndex = Math.max(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
-      if (startIndex === endIndex) {
-        keyboardInputSelection = null;
-        return false;
-      }
-
-      const currentCursorIndex = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current);
-      const targetCursorIndex = direction < 0 ? startIndex : endIndex;
-      const delta = targetCursorIndex - currentCursorIndex;
-      const data = delta > 0
-        ? repeatControlSequence("\x1b[C", delta)
-        : repeatControlSequence("\x1b[D", -delta);
-      keyboardInputSelection = null;
-      selectedInputSnapshot = null;
-      inputCursorIndexRef.current = targetCursorIndex;
-      terminal.clearSelection();
-      clearSuggestionGhost();
-      cancelAiSuggestionRefresh();
-      markAttentionInputHandled();
-      if (data) {
-        invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("keyboard_selection_collapse", err));
-      }
-      terminal.focus();
-      return true;
-    };
-
-    const removeSelectedInputText = () => {
-      const selectedText = terminal.getSelection();
-      const currentInput = inputBuffer.current;
-      const currentInputLength = getTextCursorLength(currentInput);
-      const clearWholeInputNatively = (startIndex: number, endIndex: number) => {
-        const context = getSessionToolContext();
-        const target = isCodexSession(context)
-          ? "codex"
-          : isClaudeSession(context)
-            ? "claude"
-            : null;
-        const taskRunning = useTerminalStore.getState().getRunningTaskSessionIds().includes(sessionId);
-        const data = resolveNativeWholeInputClearSequence({
-          target,
-          hasInput: currentInputLength > 0,
-          wholeInputSelected: startIndex === 0 && endIndex === currentInputLength,
-          taskRunning,
-        });
-        if (!data) return false;
-
-        inputBuffer.current = "";
-        inputCursorIndexRef.current = 0;
-        inputStartCellIndexRef.current = null;
-        terminal.clearSelection();
-        keyboardInputSelection = null;
-        selectedInputSnapshot = null;
-        markAttentionInputHandled();
-        clearSuggestionGhost();
-        cancelAiSuggestionRefresh();
-        invoke("pty_write", { sessionId, data })
-          .catch((err) => reportPtyWriteError("native_selection_delete_all", err));
-        terminal.focus();
-        return true;
-      };
-      const deleteInputRange = (startIndex: number, endIndex: number, stage: string) => {
-        if (startIndex >= endIndex) return false;
-        const nextInput = `${sliceTextByCursor(currentInput, 0, startIndex)}${sliceTextByCursor(currentInput, endIndex)}`;
-        rewriteCurrentInput(nextInput, stage, startIndex);
-        return true;
-      };
-
-      if (keyboardInputSelection) {
-        const startIndex = Math.min(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
-        const endIndex = Math.max(keyboardInputSelection.anchorIndex, keyboardInputSelection.focusIndex);
-        if (clearWholeInputNatively(startIndex, endIndex)) return true;
-        if (deleteInputRange(startIndex, endIndex, "keyboard_selection_delete")) return true;
-      }
-      keyboardInputSelection = null;
-
-      if (terminal.hasSelection() && currentInput) {
-        const selectionPosition = terminal.getSelectionPosition();
-        if (selectionPosition) {
-          const selectionStartCellIndex = (selectionPosition.start.y * terminal.cols) + selectionPosition.start.x;
-          const selectionEndCellIndex = (selectionPosition.end.y * terminal.cols) + selectionPosition.end.x;
-          const normalizedSelectionBounds = {
-            startCellIndex: Math.min(selectionStartCellIndex, selectionEndCellIndex),
-            endCellIndex: Math.max(selectionStartCellIndex, selectionEndCellIndex),
-          };
-          const range = resolveCurrentInputCellRange(currentInput, normalizedSelectionBounds);
-          const selectedStartCellIndex = Math.max(range.inputStartCellIndex, Math.min(selectionStartCellIndex, selectionEndCellIndex));
-          const selectedEndCellIndex = Math.min(range.inputEndCellIndex, Math.max(selectionStartCellIndex, selectionEndCellIndex));
-
-          if (selectedEndCellIndex > selectedStartCellIndex) {
-            inputStartCellIndexRef.current = range.inputStartCellIndex;
-            const startIndex = resolveCursorIndexFromInputCellOffset(
-              currentInput,
-              selectedStartCellIndex - range.inputStartCellIndex,
-              terminal.cols,
-              range.inputStartColumn
-            );
-            const endIndex = resolveCursorIndexFromInputCellOffset(
-              currentInput,
-              selectedEndCellIndex - range.inputStartCellIndex,
-              terminal.cols,
-              range.inputStartColumn
-            );
-            if (deleteInputRange(startIndex, endIndex, "selection_delete")) return true;
-          }
-        }
-      }
-
-      if (!selectedText && selectedInputSnapshot === currentInput && currentInput) {
-        rewriteCurrentInput("", "selection_delete_all");
-        return true;
-      }
-
-      if (!selectedText || !currentInput) {
-        selectedInputSnapshot = null;
-        return false;
-      }
-
-      if (selectedInputSnapshot === currentInput) {
-        rewriteCurrentInput("", "selection_delete_all");
-        return true;
-      }
-
-      return false;
-    };
 
     terminal.attachCustomKeyEventHandler((e) => {
       const isMacSelectAll = (
@@ -1688,7 +970,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         ((isMacSelectAll && e.metaKey && !e.ctrlKey) || (!isMacSelectAll && e.ctrlKey && !e.metaKey))
       ) {
         e.preventDefault();
-        selectCurrentInputText();
+        inputSelection.selectCurrentInputText();
         return false;
       }
 
@@ -1701,7 +983,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         (e.key === "ArrowLeft" || e.key === "ArrowRight")
       ) {
         e.preventDefault();
-        extendKeyboardInputSelection(e.key === "ArrowLeft" ? -1 : 1);
+        inputSelection.extendKeyboardInputSelection(e.key === "ArrowLeft" ? -1 : 1);
         return false;
       }
 
@@ -1712,7 +994,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.altKey &&
         !e.metaKey &&
         (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
-        collapseKeyboardInputSelection(e.key === "ArrowLeft" ? -1 : 1)
+        inputSelection.collapseKeyboardInputSelection(e.key === "ArrowLeft" ? -1 : 1)
       ) {
         e.preventDefault();
         return false;
@@ -1725,7 +1007,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.altKey &&
         !e.metaKey
       ) {
-        if (removeSelectedInputText()) {
+        if (inputSelection.removeSelectedInputText()) {
           e.preventDefault();
           return false;
         }
@@ -1814,13 +1096,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         const copyAndClearSelection = () => {
           void copySelection();
           terminal.clearSelection();
-          keyboardInputSelection = null;
-          selectedInputSnapshot = null;
+          inputSelection.clearInputSelectionState();
         };
         const sendInterrupt = () => {
           markAttentionInputHandled();
-          keyboardInputSelection = null;
-          selectedInputSnapshot = null;
+          inputSelection.clearInputSelectionState();
           invoke("pty_write", { sessionId, data: "\x03" }).catch((err) => reportPtyWriteError("interrupt", err));
         };
         const isMacCopy = isMacSelectAll && e.metaKey && !e.ctrlKey;
@@ -1860,9 +1140,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return true;
     });
 
-    // Forward keyboard input to PTY and record command history
-    const addCommand = useCommandHistoryStore.getState().addCommand;
-    const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
     const maybeLogCodexImeDuplicate = (data: string) => {
       if (!isCodexSession()) return;
       const debugState = codexImeDebugRef.current;
@@ -1897,621 +1174,72 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       debugState.lastNearCompositionAt = now;
     };
 
-    // 前置：data 是已经决定写入 PTY 的终端输入；后置：命令历史缓冲与运行状态跟随更新。
-    // 副作用：回车时会按现有策略推断 cmd command_started，这个推断不能扩散到普通 shell。
-    const updateInputBufferFromTerminalData = (data: string) => {
-      const rememberInputStartIfNeeded = () => {
-        if (inputBuffer.current || inputStartCellIndexRef.current !== null) return;
-        const buffer = terminal.buffer.active;
-        inputStartCellIndexRef.current = ((buffer.baseY + buffer.cursorY) * terminal.cols) + buffer.cursorX;
-      };
-
-      if (data === "\r") {
-        const cmd = inputBuffer.current;
-        if (cmd.trim()) {
-          onCommandSubmitted(cmd.trim());
-          const submittedCwd = useTerminalStore.getState().sessions.find((item) => item.id === sessionId)?.cwd ?? null;
-          void resolveSubmittedDirectoryChange(cmd, submittedCwd)
-            .then((cwd) => updateSessionCwdIfChanged(cwd))
-            .catch(() => {});
-          addCommand(getProjectId(), cmd);
-          // 回车猜测仅作为 cmd 的 command_started 信号（store 按 origin 过滤）；
-          // 其余 shell 由 shell integration OSC 序列驱动，猜测会误判。
-          useTerminalStore.getState().handleShellRuntimeEvent({ sessionId, event: "command_started", origin: "input" });
-        }
-        inputBuffer.current = "";
-        inputCursorIndexRef.current = 0;
-        inputStartCellIndexRef.current = null;
-        cancelAiSuggestionRefresh();
-        clearSuggestionGhost();
-      } else if (data === "\x7f" || data === "\b") {
-        const next = removeTextBeforeCursor(inputBuffer.current, inputCursorIndexRef.current);
-        inputBuffer.current = next.text;
-        inputCursorIndexRef.current = next.cursorIndex;
-        if (!next.text) inputStartCellIndexRef.current = null;
-        scheduleSuggestionRefresh();
-      } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
-        rememberInputStartIfNeeded();
-        const cursorIndex = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current);
-        inputBuffer.current = insertTextAtCursor(inputBuffer.current, cursorIndex, data);
-        inputCursorIndexRef.current = cursorIndex + getTextCursorLength(data);
-        scheduleSuggestionRefresh();
-      } else if (data.length > 1) {
-        const pastedText = data.replace(/^\x1b\[200~/, "").replace(/\x1b\[201~$/, "");
-        if (!pastedText.startsWith("\x1b")) {
-          rememberInputStartIfNeeded();
-          const normalizedPaste = pastedText.replace(/\r\n?/g, "\n");
-          const cursorIndex = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current);
-          inputBuffer.current = insertTextAtCursor(inputBuffer.current, cursorIndex, normalizedPaste);
-          inputCursorIndexRef.current = cursorIndex + getTextCursorLength(normalizedPaste);
-          scheduleSuggestionRefresh();
-        } else if (data === "\x1b[D" || data === "\x1bOD") {
-          inputCursorIndexRef.current = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current - 1);
-          cancelAiSuggestionRefresh();
-          clearSuggestionGhost();
-        } else if (data === "\x1b[C" || data === "\x1bOC") {
-          inputCursorIndexRef.current = clampTextCursorIndex(inputBuffer.current, inputCursorIndexRef.current + 1);
-          cancelAiSuggestionRefresh();
-          clearSuggestionGhost();
-        } else if (data === "\x1b[3~") {
-          const next = removeTextAtCursor(inputBuffer.current, inputCursorIndexRef.current);
-          inputBuffer.current = next.text;
-          inputCursorIndexRef.current = next.cursorIndex;
-          if (!next.text) inputStartCellIndexRef.current = null;
-          scheduleSuggestionRefresh();
-        } else {
-          cancelAiSuggestionRefresh();
-          clearSuggestionGhost();
-        }
-      } else {
-        cancelAiSuggestionRefresh();
-        clearSuggestionGhost();
-      }
-    };
-
-    // 前置：data 必须是 xterm 已解析出的用户输入，或浏览器 IME text input 兜底拿到的最终文本。
-    // 后置：文本写入当前 PTY，并同步命令历史缓冲；副作用是触发 attention 标记、可能记录命令开始事件。
-    // 这里统一入口是为了让 xterm onData 与 IME 兜底保持完全一致，避免中文标点只写 PTY 不进历史缓冲。
-    let lastForwardedTerminalInput: { data: string; source: TerminalInputSource; at: number } | null = null;
-    const isImeDuplicateCandidate = (data: string) => {
-      if (!data || data === "\r" || data === "\x7f" || data === "\b" || data.startsWith("\x1b")) return false;
-      const normalized = data.replace(/\r\n?/g, "\n");
-      return Boolean(normalized.trim()) && /[^\x00-\x7f]/.test(normalized);
-    };
-    const shouldDropCrossSourceImeDuplicate = (data: string, source: TerminalInputSource, now: number) => {
-      if (!isImeDuplicateCandidate(data) || !lastForwardedTerminalInput) return false;
-      const deltaMs = now - lastForwardedTerminalInput.at;
-      return (
-        lastForwardedTerminalInput.source !== source &&
-        lastForwardedTerminalInput.data === data &&
-        deltaMs >= 0 &&
-        deltaMs <= IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS
-      );
-    };
-
-    function forwardTerminalInput(data: string, source: TerminalInputSource) {
-      const now = performance.now();
-      if (shouldDropCrossSourceImeDuplicate(data, source, now)) {
-        return;
-      }
-      markAttentionInputHandled();
-      const replacingSelectedInput = consumeSelectedInputForReplacement(data);
-      if (!replacingSelectedInput) {
-        selectedInputSnapshot = null;
-      }
-      keyboardInputSelection = null;
-      const inputBufferBefore = inputBuffer.current;
-      const manualDirectCodexOverride = resolveManualDirectCodexEnterData({
-        data,
-        inputBuffer: inputBufferBefore,
-        os: osPlatformRef.current,
-      });
-      const ptyData = manualDirectCodexOverride ?? data;
-      lastForwardedTerminalInput = { data, source, at: now };
-      invoke("pty_write", { sessionId, data: replacingSelectedInput ? `${replacingSelectedInput}${ptyData}` : ptyData }).catch((err) => reportPtyWriteError(source, err));
-      maybeLogCodexImeDuplicate(data);
-      updateInputBufferFromTerminalData(data);
-    }
-
-    const detachInputSuggestions = attachSuggestions(terminal, (data) => {
-      forwardTerminalInput(data, "onData");
+    const inputForwarding = attachInputForwarding(terminal, {
+      selection: inputSelection,
+      osPlatformRef,
+      markAttentionInputHandled,
+      reportPtyWriteError,
+      updateSessionCwdIfChanged,
+      onInputForwarded: maybeLogCodexImeDuplicate,
     });
+    inputDisposables.push({ dispose: inputForwarding.dispose });
 
-    // Contract: terminal.onData is input direction and belongs to the input subsystem.
-    inputDisposables.push(terminal.onData((data) => {
-      forwardTerminalInput(data, "onData");
-    }));
-
-    // Sync resize to PTY
-    displayDisposables.push(terminal.onResize(({ cols, rows }) => {
-      if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
-      invoke("pty_resize", { sessionId, cols, rows }).catch((err) => {
-        logError("PTY resize failed in XTermTerminal", { sessionId, cols, rows, err });
-      });
-    }));
-
-    const detachPtyOutput = attachPtyOutput();
-    let cancelled = false;
-
-    const terminalContainer = containerRef.current;
-    const textarea = terminalContainer.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
-    const viewport = terminalContainer.querySelector(".xterm-viewport") as HTMLElement | null;
-    const nativeTextInputListenerOptions = { capture: true } as const;
-    let lastImeProcessKeyAt = -1;
-    let lastCompositionEndAt = -1;
-    let lastNativeTextInputAt = -1;
-    let lastNativeTextInputData = "";
-    let compositionScrollRafId: number | null = null;
-    let containerScrollResetRafId: number | null = null;
-    let helperTextareaAnchorRafId: number | null = null;
-    let compositionAnchorRafId: number | null = null;
-    let compositionAnchorTimeoutId: number | null = null;
-    let compositionScrollLock: { element: HTMLElement; scrollTop: number; scrollLeft: number }[] = [];
-    // Frozen at compositionstart: the cell where the user actually began typing.
-    // During composition the pinyin is NOT forwarded to the PTY, so the TUI does
-    // not redraw and the real input position cannot move — even while a compact
-    // progress bar thrashes the hardware cursor. We anchor once and reuse it,
-    // instead of re-deriving the position from the (drifting) buffer cursor.
-    let compositionAnchorCell: { x: number; y: number } | null = null;
-
-    const captureCompositionScroll = () => {
-      compositionScrollLock = [terminalContainer, viewport]
-        .filter((element): element is HTMLElement => Boolean(element))
-        .map((element) => ({
-          element,
-          scrollTop: element.scrollTop,
-          scrollLeft: element.scrollLeft,
+    const ptyOutput = attachPtyOutput({
+      waitForReplay: useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId),
+    });
+    if (useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId)) {
+      void ptyOutput.ready.then(async () => {
+        if (terminalRef.current !== terminal) return;
+        const attach = await invoke<PtyAttachResult>("pty_attach", { sessionId });
+        if (terminalRef.current !== terminal) return;
+        ptyOutput.completeReplay(attach.replayBase64);
+        useTerminalStore.setState((state) => ({
+          daemonAttachPendingSessionIds: new Set(
+            [...state.daemonAttachPendingSessionIds].filter((id) => id !== sessionId)
+          ),
         }));
-    };
-
-    const restoreCompositionScroll = () => {
-      for (const { element, scrollTop, scrollLeft } of compositionScrollLock) {
-        if (element.scrollTop !== scrollTop) element.scrollTop = scrollTop;
-        if (element.scrollLeft !== scrollLeft) element.scrollLeft = scrollLeft;
-      }
-    };
-
-    const scheduleCompositionScrollRestore = () => {
-      restoreCompositionScroll();
-      if (compositionScrollRafId !== null) {
-        cancelAnimationFrame(compositionScrollRafId);
-      }
-      compositionScrollRafId = requestAnimationFrame(() => {
-        compositionScrollRafId = null;
-        restoreCompositionScroll();
+        if (!attach.attached) {
+          toast.error(t("terminal.backgroundTasks.restoreFailed"));
+        }
+      }).catch((err) => {
+        ptyOutput.completeReplay("");
+        useTerminalStore.setState((state) => ({
+          daemonAttachPendingSessionIds: new Set(
+            [...state.daemonAttachPendingSessionIds].filter((id) => id !== sessionId)
+          ),
+        }));
+        logError("Failed to attach daemon terminal output", { sessionId, err });
+        toast.error(t("terminal.backgroundTasks.restoreFailed"), { description: String(err) });
       });
-    };
-
-    const resetTerminalContainerScroll = () => {
-      if (terminalContainer.scrollTop !== 0) terminalContainer.scrollTop = 0;
-      if (terminalContainer.scrollLeft !== 0) terminalContainer.scrollLeft = 0;
-    };
-
-    const scheduleTerminalContainerScrollReset = () => {
-      resetTerminalContainerScroll();
-      if (containerScrollResetRafId !== null) {
-        cancelAnimationFrame(containerScrollResetRafId);
-      }
-      containerScrollResetRafId = requestAnimationFrame(() => {
-        containerScrollResetRafId = null;
-        resetTerminalContainerScroll();
-      });
-    };
-
-    const estimateCellSize = () => {
-      const fallbackFontSize = typeof terminal.options.fontSize === "number" ? terminal.options.fontSize : fontSize;
-      return getTerminalRenderedCellSize(terminal, terminalContainer, fallbackFontSize);
-    };
-
-    const resolveCompositionAnchorCell = () => {
-      const buffer = terminal.buffer.active;
-      const inputPromptPattern = /^(?:[>$#\u203a\u276f\u00bb\u2023]|PS(?:\s|>))/u;
-      const clampX = (x: number) => Math.min(Math.max(0, x), Math.max(0, terminal.cols - 1));
-      const clampY = (y: number) => Math.min(Math.max(0, y), Math.max(0, terminal.rows - 1));
-      const cursor = {
-        x: clampX(buffer.cursorX),
-        y: clampY(buffer.cursorY),
-      };
-
-      const rowText = (row: number) => {
-        const line = buffer.getLine(buffer.viewportY + row);
-        return line ? line.translateToString(true) : null;
-      };
-
-      // Input box FIRST row: carries a "> " prompt after stripping any leading
-      // box-drawing border (Claude Code / Codex draw "│ > … │").
-      const rowIsPromptRow = (row: number) => {
-        const text = rowText(row);
-        if (text === null) return false;
-        const trimmed = text.trimStart().replace(TUI_BORDER_PREFIX_PATTERN, "");
-        return Boolean(trimmed) && inputPromptPattern.test(trimmed);
-      };
-
-      // The input box is delimited by horizontal rules ("─────"), NOT vertical
-      // borders — Claude Code draws "───── / > line1 / ·  line2 / ─────". Detect
-      // the bottom rule so the downward scan knows where the box ends.
-      const rowIsHorizontalRule = (row: number) => {
-        const text = rowText(row);
-        if (text === null) return false;
-        const trimmed = text.trim();
-        return trimmed.length > 0 && /^[─━═╌╍┄┅┈┉╴╶]+$/u.test(trimmed);
-      };
-
-      // Anchor just past the last real (non-blank, non-border) glyph on a row.
-      const anchorAtRowTextEnd = (row: number) => {
-        const line = buffer.getLine(buffer.viewportY + row);
-        if (!line) return { x: 0, y: clampY(row) };
-        for (let x = Math.min(terminal.cols, line.length) - 1; x >= 0; x -= 1) {
-          const cell = line.getCell(x);
-          const chars = cell?.getChars().trim();
-          // Skip blanks and any border glyph; anchor right after the typed text.
-          if (!cell || !chars || TUI_BORDER_CHAR_PATTERN.test(chars)) continue;
-          return { x: clampX(x + Math.max(1, cell.getWidth())), y: clampY(row) };
-        }
-        // Blank row (a freshly opened continuation line): sit at its indent so
-        // the IME lands where the next glyph will appear.
-        const text = line.translateToString(true);
-        const indent = text.length - text.replace(/^\s+/u, "").length;
-        return { x: clampX(indent > 0 ? indent : 1), y: clampY(row) };
-      };
-
-      // Locate the input box (always the bottom-most one — immune to the
-      // hardware cursor the TUI flings around). Scan UP for its prompt row, then
-      // find the bottom horizontal rule below it. The active input line is the
-      // box's last row: in a multi-line box the user types on it while only the
-      // first row keeps the "> " prompt and continuation rows are bare indents.
-      // A single-line box (only the prompt row has content, with a blank pad row
-      // before the rule) anchors on the prompt row itself. Purely structural.
-      for (let row = terminal.rows - 1; row >= 0; row -= 1) {
-        if (!rowIsPromptRow(row)) continue;
-
-        let ruleRow = terminal.rows;
-        for (let r = row + 1; r < terminal.rows; r += 1) {
-          if (rowIsHorizontalRule(r)) { ruleRow = r; break; }
-        }
-        const boxBottom = Math.max(row, ruleRow - 1);
-
-        // The TUI (Claude Code / Codex) paints its own text caret as a single
-        // reverse-video cell (CSI 7m) inside the box — verified via buffer dump:
-        // it tracks the real caret on the prompt row, on continuation rows, and
-        // even mid-box, while the hardware cursor gets parked far-right or below
-        // the box. Plain shells never set this attribute (xterm draws their
-        // cursor as a render overlay, not a buffer cell attribute), so this scan
-        // only ever fires for a TUI — and when it does, it IS the visual caret.
-        for (let r = row; r <= boxBottom; r += 1) {
-          const line = buffer.getLine(buffer.viewportY + r);
-          if (!line) continue;
-          const width = Math.min(terminal.cols, line.length);
-          for (let x = 0; x < width; x += 1) {
-            const cell = line.getCell(x);
-            if (cell && cell.isInverse() !== 0) {
-              return { x: clampX(x), y: clampY(r) };
-            }
-          }
-        }
-
-        // No inverse caret found. A borderless prompt — a plain shell, or a TUI
-        // like Codex that draws no ─ rule — keeps the REAL terminal cursor on the
-        // caret (verified via dump: no inverse cell, hardware cursor tracks the
-        // caret on prompt / continuation / mid rows alike). Trust it directly.
-        // (Claude Code flings its cursor away but always draws the rule + inverse,
-        // handled above; only its rare dropped frame — rule present but inverse
-        // momentarily gone — falls through to the structural anchor below.)
-        if (ruleRow >= terminal.rows && cursor.y >= row) {
-          return cursor;
-        }
-
-        // Bordered TUI whose inverse caret dropped this frame: fall back to
-        // purely structural anchoring.
-        // Last non-blank row inside the box.
-        let lastContentRow = row;
-        for (let r = row + 1; r <= boxBottom; r += 1) {
-          if ((rowText(r) ?? "").trim().length > 0) lastContentRow = r;
-        }
-
-        // Only the prompt row carries content → single-line box, anchor there
-        // (its trailing blank pad row is not an input line). Otherwise the box is
-        // multi-line and the active line is its bottom row (possibly a blank,
-        // freshly-opened continuation line the user just wrapped to).
-        const anchorRow = lastContentRow === row ? row : boxBottom;
-
-        // Plain shell, single line, cursor genuinely on it → exact in-line caret.
-        const anchor = anchorRow === row && cursor.y === row
-          ? cursor
-          : anchorAtRowTextEnd(anchorRow);
-
-        return anchor;
-      }
-
-      // No input box on screen (full-screen TUI without a prompt): the hardware
-      // cursor is the only signal left.
-      return cursor;
-    };
-
-    const applyCompositionAnchorFix = () => {
-      if (!isComposingRef.current) return;
-      const compositionView = terminalContainer.querySelector(".composition-view") as HTMLElement | null;
-      if (!textarea && !compositionView) return;
-      const anchor = compositionAnchorCell ?? resolveCompositionAnchorCell();
-      const cell = estimateCellSize();
-      const leftValue = Math.max(0, anchor.x * cell.width);
-      const topValue = Math.max(0, anchor.y * cell.height);
-      const heightValue = Math.max(1, cell.height);
-      const left = `${leftValue}px`;
-      const top = `${topValue}px`;
-      const height = `${heightValue}px`;
-
-      if (compositionView) {
-        compositionView.style.left = left;
-        compositionView.style.top = top;
-        compositionView.style.height = height;
-        compositionView.style.lineHeight = height;
-      }
-      if (textarea) {
-        const compositionBounds = compositionView?.getBoundingClientRect();
-        const widthValue = compositionBounds && compositionBounds.width > 0
-          ? compositionBounds.width
-          : Math.max(1, cell.width);
-        textarea.style.left = left;
-        textarea.style.top = top;
-        textarea.style.width = `${widthValue}px`;
-        textarea.style.height = height;
-        textarea.style.lineHeight = height;
-      }
-    };
-
-    const scheduleCompositionAnchorFix = () => {
-      applyCompositionAnchorFix();
-      if (compositionAnchorRafId !== null) {
-        cancelAnimationFrame(compositionAnchorRafId);
-      }
-      compositionAnchorRafId = requestAnimationFrame(() => {
-        compositionAnchorRafId = null;
-        applyCompositionAnchorFix();
-      });
-      if (compositionAnchorTimeoutId !== null) {
-        window.clearTimeout(compositionAnchorTimeoutId);
-      }
-      compositionAnchorTimeoutId = window.setTimeout(() => {
-        compositionAnchorTimeoutId = null;
-        applyCompositionAnchorFix();
-      }, 0);
-    };
-
-    const pinHelperTextareaAnchor = () => {
-      if (!textarea || isComposingRef.current) return;
-      // Pre-position the hidden helper textarea ON the caret cell instead of
-      // pushing it off-screen. Some IMEs — notably Sogou — anchor their
-      // candidate popup to the textarea position at the instant composition
-      // STARTS and never follow it afterwards. If the textarea sits at
-      // "-9999em" at that moment, the popup is clamped to the window's top-left
-      // corner for the entire composition (and our mid-composition re-anchoring
-      // never gets a chance to move it). Keep it on the caret and hide it with
-      // opacity:0 in place, so the popup opens at the cursor from the first key.
-      const anchor = resolveCompositionAnchorCell();
-      const cell = estimateCellSize();
-      textarea.style.left = `${Math.max(0, anchor.x * cell.width)}px`;
-      textarea.style.top = `${Math.max(0, anchor.y * cell.height)}px`;
-      textarea.style.opacity = "0";
-      // Keep the hidden input measurable: xterm's IME fallback for active IME
-      // punctuation reads textarea diffs after keyCode 229, and some IMEs drop
-      // the first character when the helper textarea is 0x0.
-      textarea.style.width = "1px";
-      textarea.style.height = `${Math.max(1, cell.height)}px`;
-      textarea.style.lineHeight = `${Math.max(1, cell.height)}px`;
-    };
-
-    const scheduleHelperTextareaAnchorPin = () => {
-      pinHelperTextareaAnchor();
-      if (helperTextareaAnchorRafId !== null) {
-        cancelAnimationFrame(helperTextareaAnchorRafId);
-      }
-      helperTextareaAnchorRafId = requestAnimationFrame(() => {
-        helperTextareaAnchorRafId = null;
-        pinHelperTextareaAnchor();
-      });
-    };
-
-    const cancelHelperTextareaAnchorPin = () => {
-      if (helperTextareaAnchorRafId !== null) {
-        cancelAnimationFrame(helperTextareaAnchorRafId);
-        helperTextareaAnchorRafId = null;
-      }
-    };
-
-    scheduleHelperTextareaAnchorPin();
-    terminalContainer.addEventListener("scroll", scheduleTerminalContainerScrollReset, { passive: true });
-    inputDisposables.push(terminal.onCursorMove(() => {
-      if (!isActiveRef.current) return;
-      if (isComposingRef.current) {
-        clearSuggestionGhost();
-        scheduleCompositionScrollRestore();
-        scheduleCompositionAnchorFix();
-        return;
-      }
-      updateSuggestionGhostPosition();
-      if (!textarea || document.activeElement !== textarea) return;
-      scheduleTerminalContainerScrollReset();
-      scheduleHelperTextareaAnchorPin();
-    }));
+    }
+    const detachViewport = attachViewport(terminal);
+    displayDisposables.push({ dispose: detachViewport });
     displayDisposables.push(terminal.onRender((range) => {
       handleVisibilityRestoreRender(terminal, range);
       scheduleTuiComposerBackgroundNormalization(terminal);
-      if (!isComposingRef.current) {
-        updateSuggestionGhostPosition();
-        return;
-      }
-      clearSuggestionGhost();
-      scheduleCompositionScrollRestore();
-      scheduleCompositionAnchorFix();
     }));
-
-    // 中文 IME 的直出标点可能不会稳定进入 xterm 的 textarea diff：
-    // Windows 常见信号是 keyCode 229；macOS 中文输入法的全角标点（如 "（"）
-    // 可能只有 insertText。这里仅延迟补交这类小范围原生 text input，
-    // 不阻断 xterm 自己的 composition / input 事件链，避免单字提交被吞或空格确认候选残留。
-    const nowForImeInput = () => performance.now();
-    const isHelperTextareaEvent = (event: Event) => Boolean(textarea) && event.target === textarea;
-    const shouldRecoverNativeTextInput = (event: InputEvent) => {
-      if (!isHelperTextareaEvent(event) || event.inputType !== "insertText" || !event.data) return false;
-      if (/^[\t\n\v\f\r ]+$/.test(event.data)) return false;
-      if (isComposingRef.current || event.isComposing) return false;
-      const now = nowForImeInput();
-      if (lastCompositionEndAt >= 0 && now - lastCompositionEndAt <= IME_COMPOSITION_END_SUPPRESS_WINDOW_MS) return false;
-      if (isLikelyMacPlatform(osPlatformRef.current) && CJK_NATIVE_PUNCTUATION_PATTERN.test(event.data)) return true;
-      const hasRecentImeProcessKey = lastImeProcessKeyAt >= 0 && now - lastImeProcessKeyAt <= IME_PROCESS_KEY_RECOVERY_WINDOW_MS;
-      return hasRecentImeProcessKey;
-    };
-    const scheduleNativeTextInputRecovery = (data: string, eventAt: number) => {
-      window.setTimeout(() => {
-        if (cancelled || terminalRef.current !== terminal) return;
-        const lastForwarded = lastForwardedTerminalInput;
-        if (
-          lastForwarded?.source === "onData"
-          && lastForwarded.data === data
-          && lastForwarded.at >= eventAt
-          && lastForwarded.at - eventAt <= IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS
-        ) {
-          return;
-        }
-        forwardTerminalInput(data, "nativeTextInput");
-      }, 0);
-    };
-    const recoverNativeTextInput = (event: InputEvent) => {
-      if (!shouldRecoverNativeTextInput(event)) return false;
-      const data = event.data ?? "";
-      const now = nowForImeInput();
-      if (lastNativeTextInputData === data && now - lastNativeTextInputAt <= NATIVE_TEXT_INPUT_DEDUP_WINDOW_MS) return true;
-      lastNativeTextInputAt = now;
-      lastNativeTextInputData = data;
-      scheduleNativeTextInputRecovery(data, now);
-      return true;
-    };
-    const onNativeTextBeforeInput = (event: Event) => {
-      recoverNativeTextInput(event as InputEvent);
-    };
-    const onNativeTextInput = (event: Event) => {
-      recoverNativeTextInput(event as InputEvent);
-    };
-    const onImeProcessKeyDown = (event: KeyboardEvent) => {
-      if (!isHelperTextareaEvent(event) || event.keyCode !== IME_PROCESS_KEY_CODE || event.ctrlKey || event.altKey || event.metaKey) return;
-      lastImeProcessKeyAt = nowForImeInput();
-    };
-
-    terminalContainer.addEventListener("keydown", onImeProcessKeyDown, nativeTextInputListenerOptions);
-    terminalContainer.addEventListener("beforeinput", onNativeTextBeforeInput, nativeTextInputListenerOptions);
-    terminalContainer.addEventListener("input", onNativeTextInput, nativeTextInputListenerOptions);
-
-    const onCompositionStart = () => {
-      isComposingRef.current = true;
-      clearSuggestionGhost();
-      lastImeProcessKeyAt = -1;
-      // Freeze the anchor at the cell where typing began. The buffer cursor is
-      // trustworthy at this instant (the user just placed the caret here), and
-      // it must not be re-read afterwards — TUI redraws can move the hardware
-      // cursor mid-composition without the input position changing.
-      compositionAnchorCell = resolveCompositionAnchorCell();
-      cancelHelperTextareaAnchorPin();
-      captureCompositionScroll();
-      scheduleCompositionScrollRestore();
-      scheduleCompositionAnchorFix();
-    };
-    const onCompositionUpdate = () => {
-      scheduleCompositionScrollRestore();
-      scheduleCompositionAnchorFix();
-    };
-    const onCompositionEnd = () => {
-      isComposingRef.current = false;
-      lastCompositionEndAt = nowForImeInput();
-      compositionAnchorCell = null;
-      if (isCodexSession()) {
-        const textareaValue = textarea?.value ?? "";
+    const detachIme = attachIme(terminal, {
+      forwarding: inputForwarding,
+      osPlatformRef,
+      scheduleFit,
+      onCompositionCommitted: (textareaValue) => {
+        if (!isCodexSession()) return;
         codexImeDebugRef.current.compositionEndAt = Date.now();
         codexImeDebugRef.current.compositionEndSummary = summarizeTextForDiagnostics(textareaValue);
         codexImeDebugRef.current.lastNearCompositionFingerprint = null;
         codexImeDebugRef.current.lastNearCompositionAt = -1;
-      }
-      scheduleCompositionScrollRestore();
-      scheduleHelperTextareaAnchorPin();
-      scheduleFit(true);
-    };
-
-    textarea?.addEventListener("compositionstart", onCompositionStart);
-    textarea?.addEventListener("compositionupdate", onCompositionUpdate);
-    textarea?.addEventListener("compositionend", onCompositionEnd);
-
-    // Ctrl + wheel adjusts global font size (writes settings store, like Windows Terminal but persistent).
-    const wheelTarget = containerRef.current;
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const current = useSettingsStore.getState().fontSize;
-      const next = Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, current + (e.deltaY > 0 ? -1 : 1)));
-      if (next !== current) {
-        void useSettingsStore.getState().update("fontSize", next);
-      }
-    };
-    wheelTarget.addEventListener("wheel", onWheel, { passive: false, capture: true });
-
-    // Resize observer — skip fit when container is hidden or IME composition is active.
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const width = Math.round(entry.contentRect.width);
-      const height = Math.round(entry.contentRect.height);
-      const lastSize = lastObservedSizeRef.current;
-      if (lastSize && Math.abs(lastSize.width - width) < 2 && Math.abs(lastSize.height - height) < 2) {
-        return;
-      }
-      lastObservedSizeRef.current = { width, height };
-      scheduleFit();
+      },
     });
-    resizeObserver.observe(containerRef.current);
+    inputDisposables.push({ dispose: detachIme });
 
 
     return () => {
-      cancelled = true;
-      detachInputSuggestions();
       cancelPendingCursorShow();
       detachPasteAndDrop();
       contextMenuTarget.removeEventListener("contextmenu", onContextMenu);
-      if (ENABLE_CLICK_CURSOR_POSITIONING) {
-        contextMenuTarget.removeEventListener("click", moveInputCursorToClick);
-      }
-      contextMenuTarget.removeEventListener("mousedown", clearKeyboardInputSelectionOnMouseDown);
-      terminalContainer.removeEventListener("keydown", onImeProcessKeyDown, nativeTextInputListenerOptions);
-      terminalContainer.removeEventListener("beforeinput", onNativeTextBeforeInput, nativeTextInputListenerOptions);
-      terminalContainer.removeEventListener("input", onNativeTextInput, nativeTextInputListenerOptions);
-      textarea?.removeEventListener("compositionstart", onCompositionStart);
-      textarea?.removeEventListener("compositionupdate", onCompositionUpdate);
-      textarea?.removeEventListener("compositionend", onCompositionEnd);
-      terminalContainer.removeEventListener("scroll", scheduleTerminalContainerScrollReset);
       disposeTerminalSubsystem(inputDisposables);
       disposeTerminalSubsystem(displayDisposables);
-      wheelTarget.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
-      resizeObserver.disconnect();
       cancelScheduledFit();
-      if (compositionScrollRafId !== null) {
-        cancelAnimationFrame(compositionScrollRafId);
-        compositionScrollRafId = null;
-      }
-      if (containerScrollResetRafId !== null) {
-        cancelAnimationFrame(containerScrollResetRafId);
-        containerScrollResetRafId = null;
-      }
-      if (helperTextareaAnchorRafId !== null) {
-        cancelAnimationFrame(helperTextareaAnchorRafId);
-        helperTextareaAnchorRafId = null;
-      }
-      if (compositionAnchorRafId !== null) {
-        cancelAnimationFrame(compositionAnchorRafId);
-        compositionAnchorRafId = null;
-      }
-      if (compositionAnchorTimeoutId !== null) {
-        window.clearTimeout(compositionAnchorTimeoutId);
-        compositionAnchorTimeoutId = null;
-      }
       try {
         const serializedOutput = serializeAddon.serialize();
         const pendingOutput = getPendingOutputSnapshot();
@@ -2523,7 +1251,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         cancelAnimationFrame(tuiComposerNormalizeRafRef.current);
         tuiComposerNormalizeRafRef.current = null;
       }
-      detachPtyOutput();
+      ptyOutput.dispose();
       resetOutputState();
       clearHiddenWebglDisposeTimer();
       clearVisibilityRestoreRevealSchedule();

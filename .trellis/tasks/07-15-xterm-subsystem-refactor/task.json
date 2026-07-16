@@ -27,8 +27,14 @@
     "src/hooks/useTerminalOsc.ts",
     "src/hooks/useTerminalSearch.ts",
     "src/hooks/useTerminalContextMenu.ts",
-    "src/lib/terminalOscParse.ts"
+    "src/stores/terminalStore.ts",
+    "src-tauri/src/daemon/server.rs",
+    "src/lib/terminalOscParse.ts",
+    "src/lib/terminalIme.ts",
+    "src/lib/terminalTuiDisplay.ts",
+    "docs/terminal-validation-checklist.md",
+    "docs/terminal-known-issues.md"
   ],
-  "notes": "第1层纯函数抽离(fa85bb4)、域K搜索(f1980a6)、域L右键菜单(4419f91)、域D OSC解析(cde76a5) 已完成。本 task 覆盖剩余的编排层重构 + Display/Input 子系统化 + 修复 a/b。进度：OSC 子系统 hook 已抽出并通过手动验证，提交 47dff31；第3步 Display 已抽出 WebGL、fit/viewport、写队列、隐藏输出缓冲与 pty-output 监听，保留重构前行为语义，提交 7c70cdd。第4步拆为可验证的小切片：第一切片已将命令建议的缓存、定时器、异步请求隔离和浮层定位迁入 useTerminalInput，提交 3a874f6；第二切片已将普通粘贴、截图附件、应用内/系统文件拖放及快捷键/菜单粘贴迁入同一 Input 控制器。选区、onData 转发与 IME 仍待后续迁移。用户验证确认 Claude 反复缩放切 tab 的渲染异常、Codex 缩放时从上到下重载的现象均为重构前既有缺陷；完成所有抽取重构后，再单独决定根因修复范围。",
+  "notes": "第1层纯函数抽离(fa85bb4)、域K搜索(f1980a6)、域L右键菜单(4419f91)、域D OSC解析(cde76a5) 已完成。本 task 覆盖剩余的编排层重构 + Display/Input/Osc 子系统化。已完成：OSC hook（1481650）；Display 的 WebGL、fit/viewport、写队列、隐藏输出缓冲与 PTY 输出监听（e2fbdcf）；Input 的建议（6c0f3d0）、粘贴/拖放（f9f04e5）、选区（22ed780）、输入缓冲、PTY 输入转发与 IME 生命周期；Display 的 PTY resize、容器 resize 与字体缩放。点击定位已完全移除，正常点击聚焦和鼠标选区保留。最终架构 review 已完成：Input 的私有缓冲 API 不再暴露给编排层，Display 复用设置层字体边界常量。最终人工回归新增问题处理中：daemon Attach 已收口回放快照与订阅注册，Display 监听就绪后再 attach 并排序回放/实时帧；恢复会话保留 CLI 图标元数据但不重跑命令；Tab 在 active+visible 后下一帧聚焦；仅移除终端工具栏历史命令入口、对应设置开关和终端输入历史上报，命令提示页、历史统计/清理及历史建议保持不变。Ctrl/Cmd+A 新输入追加、Claude/Codex 历史命令 Shift 选区、TUI 选区与光标偏移、Claude/Codex 缩放渲染、tab 恢复扫描和右侧面板触发 Codex 跳顶均确认正式版本也存在，统一记录在 docs/terminal-known-issues.md。全量人工验证清单见 docs/terminal-validation-checklist.md；静态检查、Rust 检查与定向测试已通过，等待最终人工验证后再由用户明确确认提交。",
   "meta": {}
 }

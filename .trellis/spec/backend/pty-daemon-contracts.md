@@ -24,6 +24,8 @@
 - **★hook 链路不因重启断裂**：现状 hook 端口随 app 每次启动变化且被烘焙进 PTY 子进程 env——daemon 化后 PTY 进程比 app 长寿，因此 hook 上报必须收口到 daemon 的稳定转发端口。app 的 `claude_hook.rs` 本地 server 保留，仅接收 daemon 转发（升级路径：daemon 模式下 `pty_create` 注入 daemon 端口而非 app 端口）。
 - 鉴权：仅 `127.0.0.1`；token 随机 UUID，首帧校验失败立即断连并记日志；`daemon.json` 写入用户主目录（继承用户 ACL），不进日志。所有请求帧字段做格式/范围校验（sessionId 必须是已知 UUID，cols/rows 有界），非法帧断连——WebView→Rust→daemon 全程按不可信输入处理。
 - Ring buffer：每会话保留尾部输出，字节上限默认 2 MiB/会话（≈对齐 `SNAPSHOT_MAX_LINES=2000` 的量级），attach 回放该 buffer；超限丢头部，必须在 ANSI 安全边界处丢弃。
+- **★attach 输出交接必须无缝且有序**：daemon 侧必须在同一临界区内取得 ring-buffer 回放快照并把当前客户端加入会话订阅。前端恢复会话时必须先完成 `pty-output-{sessionId}` 监听注册，再调用 `pty_attach`；attach 应答返回前到达的实时帧先暂存，最终按“回放快照 → 暂存实时帧 → 后续实时帧”顺序写入 Display。禁止在任务中心或 `restoreSessions` 中先 attach、后挂载 XTerm，也禁止用持久化 scrollback 兜底掩盖该时序缺口。
+- daemon 恢复会话必须保留原 `startupCmd` 作为 Tab 厂商/CLI 图标元数据，但不得重新执行该命令；一次性待 attach 状态属于 `terminalStore` 运行态，不得写入 `sessions.json`。
 - 生命周期：
   - app 启动：读 daemon.json → 版本握手成功且 pid 存活 → attach `list` 全部会话；文件不存在/连接失败/token 拒绝 → 视为无 daemon，拉起新 daemon（Windows 仅使用 `CREATE_NO_WINDOW`，Unix `setsid`）；拉起失败 → **降级进程内 PTY，应用必须照常可用**，仅 toast 提示后台续跑不可用。
   - app 正常退出：默认 `detach`（daemon 续跑）；用户在 Phase 1 弹窗选"仍然退出"→ 先 `close_all` 再退出（保持"仍然退出=中断任务"语义不变）。
@@ -46,6 +48,7 @@
 - token 校验失败（文件被篡改/串版本）→ 断连 + 删除文件重拉。
 - 传输中断（daemon 崩溃）→ app 侧对全部 attach 会话发 exit 状态（error），提示用户；xterm 标签保留可手动重开。
 - 单会话 attach 回放失败 → 该会话空画面 + warn，不影响其他会话。
+- attach 期间持续输出 → 回放与实时输出均保留且不重复；前端监听失败或 daemon 会话在 list 后消失 → 结束待 attach 状态并提示恢复失败，不重跑 `startupCmd`。
 - 非法帧/超长帧（>8 MiB）→ 断连防 DoS。
 - WSL 会话：env 转发（`apply_wsl_env_forwarding`）在 daemon 侧执行，行为与现状一致。
 
@@ -62,6 +65,7 @@
 
 - Rust 单测：协议帧编解码（含未知字段/未知 type）、auth 失败断连、ring buffer 上限与 ANSI 边界丢弃、daemon.json 读写与 pid 存活判定、dev/安装版文件名选择；Windows daemon flags 必须等于 `CREATE_NO_WINDOW` 且不得包含 `DETACHED_PROCESS` / `CREATE_NEW_PROCESS_GROUP`。
 - `cd src-tauri && cargo check && cargo test`；`npx tsc --noEmit`。
+- Rust 回归测试必须同时断言 Attach 返回已有 replay，且对应客户端已进入该 session 的订阅集合。
 - 手动：真退出→daemon 续跑→重开 attach 回放；杀 daemon→app 降级可用；杀 app→daemon 10 分钟内因仍有会话不自灭；无会话 10 分钟后 daemon 自灭且 daemon.json 删除；"仍然退出"确实 close_all；hook 通知在 app 重启后仍能绑定 Tab 状态；WSL/PowerShell/CMD/Pwsh 各建一次会话行为一致；dev 与安装版并行互不串扰。
 
 ### 7. Wrong vs Correct

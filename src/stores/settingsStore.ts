@@ -172,7 +172,6 @@ const SHORTCUT_ACTIONS: readonly ShortcutAction[] = [
 
 export interface TerminalToolbarVisibilitySettings {
   templates: boolean;
-  commandHistory: boolean;
   fullscreen: boolean;
   sessionHistory: boolean;
   replay: boolean;
@@ -413,7 +412,6 @@ const DEFAULTS: Settings = {
   unsplitBehavior: "merge",
   terminalToolbarVisibility: {
     templates: true,
-    commandHistory: false,
     fullscreen: true,
     sessionHistory: true,
     replay: false,
@@ -428,7 +426,7 @@ const DEFAULTS: Settings = {
     stats: true,
     gitChanges: true,
   },
-  terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "replay", "files", "gitChanges", "stats", "systemResources", "backgroundTasks"],
+  terminalToolbarOrder: ["new", "templates", "fullscreen", "sessionHistory", "replay", "files", "gitChanges", "stats", "systemResources", "backgroundTasks"],
   terminalSidePanelMerged: true,
   terminalSidePanelSingleOpen: true,
   terminalSidePanelSkin: "terminal",
@@ -634,7 +632,6 @@ export function migrateTerminalToolbarVisibility(value: unknown): TerminalToolba
 
   return {
     templates: typeof raw.templates === "boolean" ? raw.templates : defaults.templates,
-    commandHistory: typeof raw.commandHistory === "boolean" ? raw.commandHistory : defaults.commandHistory,
     fullscreen: typeof raw.fullscreen === "boolean" ? raw.fullscreen : defaults.fullscreen,
     sessionHistory: typeof raw.sessionHistory === "boolean" ? raw.sessionHistory : defaults.sessionHistory,
     replay: typeof raw.replay === "boolean" ? raw.replay : defaults.replay,

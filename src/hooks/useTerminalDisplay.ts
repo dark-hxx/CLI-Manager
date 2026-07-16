@@ -3,12 +3,17 @@ import type { ITheme, Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { refreshTerminalViewport } from "../lib/terminalVisibility";
 import { isLightTerminalTheme } from "../lib/terminalThemes";
 import { debugConsoleWarn } from "../lib/debugConsole";
-import { logInfo, logWarn } from "../lib/logger";
+import { logError, logInfo, logWarn } from "../lib/logger";
 import { markTerminalSnapshotDirty } from "../lib/sessionSnapshotPersistence";
-import { useSettingsStore } from "../stores/settingsStore";
+import {
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
+  useSettingsStore,
+} from "../stores/settingsStore";
 
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
@@ -72,7 +77,12 @@ export interface UseTerminalDisplayResult {
   flushInactiveBufferForReplay: () => void;
   resumeActiveWriteQueue: () => void;
   getPendingOutputSnapshot: () => string;
-  attachPtyOutput: () => () => void;
+  attachPtyOutput: (options?: { waitForReplay?: boolean }) => {
+    ready: Promise<void>;
+    completeReplay: (replayBase64: string) => void;
+    dispose: () => void;
+  };
+  attachViewport: (terminal: Terminal) => () => void;
   resetOutputState: () => void;
   cancelScheduledFit: () => void;
   resetViewportRefreshState: () => void;
@@ -115,6 +125,7 @@ export function useTerminalDisplay({
   const ptyPendingChunksRef = useRef<string[]>([]);
   const ptyWriteRafIdRef = useRef<number | null>(null);
   const ptyUnlistenRef = useRef<UnlistenFn | null>(null);
+  const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
 
   inactiveBufferLimitRef.current = getInactiveBufferLimit(terminalScrollbackRows);
 
@@ -359,9 +370,11 @@ export function useTerminalDisplay({
     ...inactiveBufferRef.current,
   ].join("");
 
-  const attachPtyOutput = () => {
+  const attachPtyOutput = (options: { waitForReplay?: boolean } = {}) => {
     const textDecoder = new TextDecoder("utf-8");
     let cancelled = false;
+    let waitingForReplay = options.waitForReplay === true;
+    const bufferedLivePayloads: string[] = [];
     const flushPendingWrites = () => {
       ptyWriteRafIdRef.current = null;
       if (cancelled || ptyPendingChunksRef.current.length === 0) return;
@@ -373,16 +386,15 @@ export function useTerminalDisplay({
         stashInactiveText(combined);
       }
     };
-    void listen<string>(`pty-output-${sessionId}`, (event) => {
-      if (cancelled) return;
-      const binaryString = atob(event.payload);
+    const queuePayload = (payload: string, markSnapshotDirty: boolean) => {
+      const binaryString = atob(payload);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i += 1) {
         bytes[i] = binaryString.charCodeAt(i);
       }
       const text = normalizeOutputRef.current(textDecoder.decode(bytes, { stream: true }));
       if (!text) return;
-      markTerminalSnapshotDirty(sessionId);
+      if (markSnapshotDirty) markTerminalSnapshotDirty(sessionId);
       if (isVisibleRef.current) {
         ptyPendingChunksRef.current.push(text);
         if (ptyWriteRafIdRef.current === null) {
@@ -391,16 +403,32 @@ export function useTerminalDisplay({
       } else {
         stashInactiveText(text);
       }
+    };
+    const ready = listen<string>(`pty-output-${sessionId}`, (event) => {
+      if (cancelled) return;
+      if (waitingForReplay) {
+        bufferedLivePayloads.push(event.payload);
+        return;
+      }
+      queuePayload(event.payload, true);
     }).then((fn) => {
       if (cancelled) {
         fn();
       } else {
         ptyUnlistenRef.current = fn;
       }
-    }).catch(onPtyOutputListenError);
+    });
+    void ready.catch(onPtyOutputListenError);
 
-    return () => {
+    const completeReplay = (replayBase64: string) => {
+      if (cancelled || !waitingForReplay) return;
+      if (replayBase64) queuePayload(replayBase64, false);
+      waitingForReplay = false;
+      bufferedLivePayloads.splice(0).forEach((payload) => queuePayload(payload, true));
+    };
+    const dispose = () => {
       cancelled = true;
+      bufferedLivePayloads.length = 0;
       if (ptyWriteRafIdRef.current !== null) {
         cancelAnimationFrame(ptyWriteRafIdRef.current);
         ptyWriteRafIdRef.current = null;
@@ -408,6 +436,51 @@ export function useTerminalDisplay({
       ptyPendingChunksRef.current = [];
       ptyUnlistenRef.current?.();
       ptyUnlistenRef.current = null;
+    };
+    return { ready, completeReplay, dispose };
+  };
+
+  const attachViewport = (terminal: Terminal) => {
+    const container = containerRef.current;
+    if (!container) return () => {};
+    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+      if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
+      invoke("pty_resize", { sessionId, cols, rows }).catch((err) => {
+        logError("PTY resize failed in terminal display", { sessionId, cols, rows, err });
+      });
+    });
+    const wheelListenerOptions = { passive: false, capture: true } as const;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const current = useSettingsStore.getState().fontSize;
+      const next = Math.min(
+        TERMINAL_FONT_SIZE_MAX,
+        Math.max(TERMINAL_FONT_SIZE_MIN, current + (event.deltaY > 0 ? -1 : 1)),
+      );
+      if (next !== current) {
+        void useSettingsStore.getState().update("fontSize", next);
+      }
+    };
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      const lastSize = lastObservedSizeRef.current;
+      if (lastSize && Math.abs(lastSize.width - width) < 2 && Math.abs(lastSize.height - height) < 2) {
+        return;
+      }
+      lastObservedSizeRef.current = { width, height };
+      scheduleFit();
+    });
+    container.addEventListener("wheel", onWheel, wheelListenerOptions);
+    resizeObserver.observe(container);
+    return () => {
+      resizeDisposable.dispose();
+      container.removeEventListener("wheel", onWheel, wheelListenerOptions);
+      resizeObserver.disconnect();
     };
   };
 
@@ -501,6 +574,7 @@ export function useTerminalDisplay({
     resumeActiveWriteQueue,
     getPendingOutputSnapshot,
     attachPtyOutput,
+    attachViewport,
     resetOutputState,
     cancelScheduledFit,
     resetViewportRefreshState,
