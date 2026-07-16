@@ -48,6 +48,17 @@ function buildSshHost(input: CreateSshHostInput): SshHost {
   };
 }
 
+function validateSshHost(host: SshHost, currentId?: string): void {
+  if (!host.name) throw new Error("ssh_host_name_required");
+  if (!host.config_alias && !host.host) throw new Error("ssh_host_address_required");
+  if (host.jump_host_id && host.jump_host_id === currentId) {
+    throw new Error("ssh_host_jump_self_reference");
+  }
+  if (/\w+:\/\/[^\s/@]+:[^\s/@]+@/i.test(host.proxy_command)) {
+    throw new Error("ssh_proxy_credentials_forbidden");
+  }
+}
+
 export const useSshHostStore = create<SshHostStore>((set, get) => ({
   hosts: [],
   loaded: false,
@@ -62,8 +73,7 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
 
   createHost: async (input) => {
     const host = buildSshHost(input);
-    if (!host.name) throw new Error("ssh_host_name_required");
-    if (!host.config_alias && !host.host) throw new Error("ssh_host_address_required");
+    validateSshHost(host);
     const db = await getDb();
     await db.execute(
       `INSERT INTO ssh_hosts (
@@ -103,9 +113,7 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
     next.sort_order = input.sort_order ?? current.sort_order;
     next.created_at = current.created_at;
     next.updated_at = Date.now().toString();
-    if (!next.name) throw new Error("ssh_host_name_required");
-    if (!next.config_alias && !next.host) throw new Error("ssh_host_address_required");
-    if (next.jump_host_id === id) throw new Error("ssh_host_jump_self_reference");
+    validateSshHost(next, id);
     await db.execute(
       `UPDATE ssh_hosts SET
          name = $1, group_name = $2, host = $3, port = $4, username = $5,

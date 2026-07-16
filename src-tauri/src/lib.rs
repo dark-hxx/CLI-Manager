@@ -783,6 +783,8 @@ pub fn run() {
             commands::cc_connect::cc_connect_get_logs,
             take_pending_background_session,
             commands::terminal_shell::terminal_shell_scan,
+            commands::ssh::ssh_client_status,
+            commands::ssh::ssh_test_connection,
             commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,

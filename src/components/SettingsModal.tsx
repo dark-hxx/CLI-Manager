@@ -7,6 +7,7 @@ import {
   Keyboard,
   PanelLeft,
   RadioTower,
+  Server,
   RefreshCw,
   ServerCog,
   Settings2,
@@ -34,6 +35,7 @@ import { ProviderSettingsPage } from "./settings/pages/ProviderSettingsPage";
 import { ModelPricingSettingsPage } from "./settings/pages/ModelPricingSettingsPage";
 import { AboutSettingsPage } from "./settings/pages/AboutSettingsPage";
 import { CcConnectSettingsPage } from "./settings/pages/CcConnectSettingsPage";
+import { SshHostsSettingsPage } from "./settings/pages/SshHostsSettingsPage";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { normalizeFontFamilyStack } from "../lib/systemFonts";
@@ -48,6 +50,7 @@ export type SettingsTab =
   | "providers"
   | "model-pricing"
   | "cc-connect"
+  | "ssh-hosts"
   | "sync"
   | "hooks"
   | "statusline"
@@ -70,6 +73,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "providers",
   "model-pricing",
   "cc-connect",
+  "ssh-hosts",
   "sync",
   "hooks",
   "statusline",
@@ -137,6 +141,13 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     title: "settings.tabs.ccConnect.title",
     description: "settings.tabs.ccConnect.description",
     icon: RadioTower,
+  },
+  "ssh-hosts": {
+    label: "settings.tabs.sshHosts.label",
+    title: "settings.tabs.sshHosts.title",
+    description: "settings.tabs.sshHosts.description",
+    icon: Server,
+    searchPlaceholder: "settings.tabs.sshHosts.search",
   },
   sync: {
     label: "settings.tabs.sync.label",
@@ -255,6 +266,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "providers") return <ProviderSettingsPage searchValue={searchValue} />;
     if (activeTab === "model-pricing") return <ModelPricingSettingsPage searchValue={searchValue} />;
     if (activeTab === "cc-connect") return <CcConnectSettingsPage />;
+    if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} />;
     if (activeTab === "sync") return <SyncSettingsPage />;
     if (activeTab === "hooks") return <HookSettingsPage />;
     if (activeTab === "statusline") return <StatuslineSettingsPage searchValue={searchValue} />;
