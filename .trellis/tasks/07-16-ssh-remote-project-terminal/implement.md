@@ -99,6 +99,8 @@
 
 ### Stage 5：SSH Terminal Launch Plan
 
+状态：已完成并通过阶段 review（2026-07-17）。验证：SSH Launch Plan、命令转义、daemon 协议和兼容性 Rust 单测、`cargo check`、`npx tsc --noEmit`。
+
 1. 定义结构化 SSH Launch Plan 和 IPC/daemon 协议字段。
 2. Rust 根据 Host 配置生成 OpenSSH 参数，前端不拼 SSH 命令。
 3. 使用安全 POSIX wrapper 进入 `remote_path` 并执行启动命令。
@@ -108,6 +110,8 @@
 验收：从项目树、分屏、复制 Tab、批量启动等所有入口打开 SSH 项目均使用同一 Launch Plan。
 
 ### Stage 6：会话状态、恢复与后台任务
+
+状态：已完成并通过阶段 review（2026-07-17）。验证：会话状态持久化、断开分类、daemon attach/退出恢复路径 review、`cargo test --lib`、`cargo check`、`npx tsc --noEmit`。
 
 1. TerminalSession 持久化 environmentType/sshHostId/remotePath/connectionState。
 2. Tab/hover/侧栏显示连接主机和状态。
@@ -119,6 +123,8 @@
 
 ### Stage 7：Capability Router 与全应用降级
 
+状态：已完成并通过阶段 review（2026-07-17）。验证：全应用能力入口审计、SSH 空路径本地误匹配根因修复、文件/Worktree 硬拒绝 review、`cargo test --lib`、`npx tsc --noEmit`。
+
 1. 增加项目运行环境能力解析器。
 2. 文件、Git、Worktree、历史、Hook、统计、Provider 等入口统一查询能力。
 3. SSH P1 禁止调用本地 fs/git/worktree/history API。
@@ -128,6 +134,8 @@
 验收：遍历 `scenario-matrix.md` 的功能矩阵，无任何远程路径误入本地接口。
 
 ### Stage 8：安全、同步、i18n 与收尾
+
+状态：已完成并通过阶段 review（2026-07-17）。验证：同步字段白名单与重新绑定 review、SSH 参数日志脱敏、zh-CN/en-US 文案检查、`cargo test --lib`、`cargo check`、`npx tsc --noEmit`。
 
 1. 日志脱敏和远程命令转义测试。
 2. WebDAV/导出排除秘密与机器相关私钥路径，导入后要求重新绑定。
@@ -162,4 +170,4 @@
 - [x] UI 已批准。
 - [x] `Changelog Target` 已记录。
 - [x] 用户审阅并批准本 `implement.md`。
-- [ ] 执行 `task.py start`，进入 in_progress。
+- [x] 执行 `task.py start`，进入 in_progress。
