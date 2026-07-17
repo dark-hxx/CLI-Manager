@@ -71,3 +71,28 @@
 - cc-connect 设置页独立严格 TypeScript 检查通过。
 - 全量 `tsc --noEmit` 仍被上游 `a7e773d` 引用但未提交的 `src/lib/syncSettings.ts` 阻断，并伴随 `syncStore.ts` 的既有 TS2538；本次改动未新增 TypeScript 错误。
 - 未修改 cc-connect 源码、全局 npm 安装或用户配置文件；尚未打包和启动 Tauri 窗口手动验证。
+
+## cc-connect Telegram 任务排队增量验证（2026-07-17）
+
+- 日志确认 Telegram 已连接并能接收消息；无回复发生在消息进入 Codex app-server 后，后续消息因首个任务不结束而进入 cc-connect 队列。
+- 进程树确认 Codex 全局 `codebase-memory-mcp` 卡在 `git -C F:\test\work\amz\amazon rev-parse --git-dir`，任务尚未进入模型请求阶段。
+- 同一路径在未注入配置时触发 Git dubious ownership；通过 `GIT_CONFIG_COUNT/KEY/VALUE` 临时注入当前项目 `safe.directory` 后，命令在 1 秒内返回 `.git`。
+- 修复仅写入 CLI-Manager 启动的 cc-connect 子进程环境，并由 Codex/MCP 后代进程继承；不会执行 `git config --global`，也不会信任当前登记项目以外的目录。
+
+## cc-connect 项目 Provider、微信与企业微信增量验证（2026-07-18）
+
+- 根因结论：远程 Codex 的 Git 信任与 Provider 路由缺失发生在 CLI-Manager 启动 cc-connect 的进程边界，因此修复落在受管子进程环境和 Codex 启动包装层，而不是在 Telegram 消息或 cc-connect 响应层增加重试。
+- 远程 Codex 直接读取已登记项目的 `provider_overrides.codex.providerId`；项目默认 Agent 不是 Codex、但远程 Agent 手动选择 Codex 时，也会读取该项目的 Codex override 或当前全局 Codex Provider。
+- 复用 cc-switch 的 Provider 解析与真实 `CODEX_HOME` profile 写入逻辑；CLI-Manager 托管的 `codex` wrapper 强制在 `app-server` 前传入 `--profile`，密钥只进入受管进程环境，不写入 wrapper、TOML 或项目目录。
+- 微信个人号使用 cc-connect v1.4.1 原生 `type = "weixin"` ilink 通道，配置 Bearer Token、显式 `allow_from` 和按项目隔离的 `account_id`。
+- 企业微信使用 cc-connect v1.4.1 原生 `type = "wecom"` WebSocket 智能机器人通道，配置 `mode = "websocket"`、BotID、Secret 和显式 `allow_from`；不实现额外协议，也未修改 cc-connect 源码或全局安装。
+- 微信、企业微信凭据与 Telegram、飞书一致存入 Windows 凭据管理器；托管 TOML 仅保留环境变量占位符，Agent 子进程会清空平台凭据变量，避免密钥继续向下继承。
+- 场景检查覆盖：本地终端会话已打开/未打开、项目默认 Claude/远程选择 Codex、项目级/全局 Codex Provider、代理开/关、日志开/关、四种消息平台及凭据缺失阻断；多窗口、分屏、Worktree 与 hook 状态不参与该独立受管进程链路。
+- 触点清单已复核：`cc_connect.rs`（配置、凭据、项目快照、进程环境）、`ccswitch.rs`（Provider 解析/profile 写入）、`CcConnectSettingsPage.tsx`（真实设置入口）、`i18n.ts`（中英文）、cc-connect v1.4.1 `docs/weixin.md` / `docs/wecom.md` 与 `config.example.toml`（原生契约）；终端 PTY、daemon、Worktree 与 hook 调用链确认无业务改动。
+- `cargo check` 通过。
+- `cargo test commands::cc_connect::tests --lib` 通过：28 项通过、0 项失败。
+- `cargo test commands::ccswitch::tests --lib` 通过：33 项通过、0 项失败，确认抽出的 Provider 查询与 profile 写入入口未破坏现有切换逻辑。
+- 指定本机 cc-connect v1.4.1 可执行文件运行真实配置语法验证通过：Telegram、飞书、微信和企业微信四类托管 TOML 均通过 `cc-connect config format`。
+- `git diff --check` 通过，仅有工作区既有的 LF/CRLF 转换提示。
+- 全量 `tsc --noEmit` 仍被上游缺失的 `src/lib/syncSettings.ts` 和 `syncStore.ts` 既有 TS2538 阻断；本次新增设置页未产生新的 TypeScript 诊断。
+- 尚未使用真实微信 ilink Token 或企业微信 BotID/Secret 做账号链路验证；本次未打包、未 push。

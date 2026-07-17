@@ -2,7 +2,11 @@
 
 ## [TEMP]
 
+### 新增
+- **cc-connect 微信平台**：远程连接新增微信个人号（原生 `weixin` ilink Token）与企业微信（原生 `wecom` WebSocket 智能机器人）配置；凭据继续存入 Windows 凭据管理器，托管 TOML 仅写环境变量占位符。
+
 ### 修复
+- **cc-connect 远程任务排队与 Provider 修复**：启动受管 cc-connect 时通过进程级 Git 配置仅信任当前已登记项目，避免 Codex 的 MCP 服务因项目目录所有权检查卡在 `git rev-parse`；远程 Codex 启动前直接按项目 `provider_overrides` 刷新 cc-switch profile，并由 CLI-Manager 托管包装命令强制传入 `--profile`、`CODEX_HOME` 和仅存在于子进程环境中的 Provider 密钥，不再依赖本地终端是否已打开，也不再误用全局 Provider。
 - **cc-connect 可执行文件选择修复**：手动选择或输入 cc-connect 原生程序后立即校验文件、版本与 SHA-256，并允许重新检测尚未保存的路径；Windows `\\?\` 扩展路径在界面显示和 profile 保存时统一转换为普通路径，已有配置自动兼容。
 - **Claude 状态栏 Powerline 符号修复**：WebView 直接加载应用内置符号字体，不再依赖 Windows 用户字体缓存，修复实时预览、Powerline 选项和应用内终端中的分隔符与端帽显示为方框的问题。
 - **后台终端恢复输出与图标修复**：daemon attach 将回放快照与实时订阅注册收口为同一临界区，前端在 PTY 输出监听就绪后再恢复并按顺序写入回放与实时帧；恢复后的 Claude/Codex Tab 保留 CLI 启动元数据用于图标识别，但不会重跑启动命令。

@@ -321,6 +321,16 @@ env_key = "CLI_MANAGER_CODEX_PROVIDER_<hash>_API_KEY"
   be returned to WebView, written to the generated profile, written to project
   files, or embedded in the startup command. PTY env injection is the only place
   the plaintext secret is applied.
+- **Managed cc-connect launch**: remote Codex sessions resolve the registered
+  project's `provider_overrides.codex.providerId` directly from the CLI-Manager
+  database, refresh the same generated profile in the real Codex home, and prepend
+  a CLI-Manager-owned `codex` wrapper to the cc-connect child process `PATH`. The
+  wrapper adds `--profile <profileName>` before `app-server`; `CODEX_HOME` and the
+  profile's secret env key are scoped to the managed process tree. This path must
+  not depend on a local terminal session having been opened first.
+- **Remote wrapper contents**: the wrapper may contain only environment-variable
+  names and command routing. It must never contain the Provider secret, modify
+  cc-connect source, or rewrite the user's base `config.toml` / `auth.json`.
 - **Unsafe TOML fallback**: if the raw TOML contains the resolved plaintext secret, do not
   copy it; fall back to the generated non-secret routing profile.
 - **Launch command**: for exact Codex projects with empty `startup_cmd`, the

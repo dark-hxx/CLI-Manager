@@ -31,10 +31,11 @@ import {
 import { toast } from "sonner";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../../lib/i18n";
 import { useProjectStore } from "../../../stores/projectStore";
+import { useSettingsStore } from "../../../stores/settingsStore";
 import { ConfirmDialog } from "../../ConfirmDialog";
 
 type AgentKind = "claude" | "codex";
-type PlatformKind = "telegram" | "feishu";
+type PlatformKind = "telegram" | "feishu" | "weixin" | "wecom";
 type ReplyLanguage = "zh" | "en";
 
 interface CcConnectProfile {
@@ -51,6 +52,8 @@ interface CcConnectProfile {
   proxyUrl: string | null;
   loggingEnabled: boolean;
   language: ReplyLanguage;
+  ccSwitchDbPath: string | null;
+  codexConfigDir: string | null;
 }
 
 interface CcConnectStatus {
@@ -113,6 +116,8 @@ const EMPTY_PROFILE: CcConnectProfile = {
   proxyUrl: null,
   loggingEnabled: false,
   language: "zh",
+  ccSwitchDbPath: null,
+  codexConfigDir: null,
 };
 
 const BLOCKER_KEYS: Record<string, TranslationKey> = {
@@ -164,6 +169,8 @@ export function CcConnectSettingsPage() {
   const projects = useProjectStore((state) => state.projects);
   const projectsLoaded = useProjectStore((state) => state.loaded);
   const fetchProjects = useProjectStore((state) => state.fetchAll);
+  const ccSwitchDbPath = useSettingsStore((state) => state.ccSwitchDbPath);
+  const codexConfigDir = useSettingsStore((state) => state.codexHookConfigDir);
   const [status, setStatus] = useState<CcConnectStatus | null>(null);
   const [profile, setProfile] = useState<CcConnectProfile>(() => ({
     ...EMPTY_PROFILE,
@@ -172,6 +179,9 @@ export function CcConnectSettingsPage() {
   const [telegramToken, setTelegramToken] = useState("");
   const [feishuAppId, setFeishuAppId] = useState("");
   const [feishuAppSecret, setFeishuAppSecret] = useState("");
+  const [weixinToken, setWeixinToken] = useState("");
+  const [wecomBotId, setWecomBotId] = useState("");
+  const [wecomBotSecret, setWecomBotSecret] = useState("");
   const [logs, setLogs] = useState<CcConnectLogLine[]>([]);
   const [working, setWorking] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -399,10 +409,15 @@ export function CcConnectSettingsPage() {
             ...profile,
             projectName: currentProject.name,
             projectPath: currentProject.path,
+            ccSwitchDbPath,
+            codexConfigDir,
           },
           telegramToken: telegramToken.trim() || null,
           feishuAppId: feishuAppId.trim() || null,
           feishuAppSecret: feishuAppSecret.trim() || null,
+          weixinToken: weixinToken.trim() || null,
+          wecomBotId: wecomBotId.trim() || null,
+          wecomBotSecret: wecomBotSecret.trim() || null,
         },
       });
       setStatus(next);
@@ -410,6 +425,9 @@ export function CcConnectSettingsPage() {
       setTelegramToken("");
       setFeishuAppId("");
       setFeishuAppSecret("");
+      setWeixinToken("");
+      setWecomBotId("");
+      setWecomBotSecret("");
       toast.success(t("settings.ccConnect.toast.saveSuccess"));
     } catch (error) {
       toast.error(t("settings.ccConnect.toast.saveFailed"), { description: errorMessage(error) });
@@ -447,6 +465,9 @@ export function CcConnectSettingsPage() {
       setTelegramToken("");
       setFeishuAppId("");
       setFeishuAppSecret("");
+      setWeixinToken("");
+      setWecomBotId("");
+      setWecomBotSecret("");
       toast.success(t("settings.ccConnect.toast.clearSuccess"));
     } catch (error) {
       toast.error(t("settings.ccConnect.toast.clearFailed"), { description: errorMessage(error) });
@@ -478,9 +499,12 @@ export function CcConnectSettingsPage() {
     return key ? t(key) : code;
   };
 
-  const credentialInputPending = profile.platform === "telegram"
-    ? telegramToken.trim().length > 0
-    : feishuAppId.trim().length > 0 || feishuAppSecret.trim().length > 0;
+  const credentialInputPending = {
+    telegram: telegramToken.trim().length > 0,
+    feishu: feishuAppId.trim().length > 0 || feishuAppSecret.trim().length > 0,
+    weixin: weixinToken.trim().length > 0,
+    wecom: wecomBotId.trim().length > 0 || wecomBotSecret.trim().length > 0,
+  }[profile.platform];
   const credentialStored = !credentialInputPending
     && status?.profile?.platform === profile.platform
     && status.credentialsReady;
@@ -505,6 +529,18 @@ export function CcConnectSettingsPage() {
     : status?.running
       ? t("settings.ccConnect.running")
       : t("settings.ccConnect.stopped");
+  const platformOptions = [
+    { value: "telegram", label: t("settings.ccConnect.platformTelegram") },
+    { value: "feishu", label: t("settings.ccConnect.platformFeishu") },
+    { value: "weixin", label: t("settings.ccConnect.platformWeixin") },
+    { value: "wecom", label: t("settings.ccConnect.platformWecom") },
+  ];
+  const allowFromHelpKey = ({
+    telegram: "settings.ccConnect.allowFromTelegramHelp",
+    feishu: "settings.ccConnect.allowFromFeishuHelp",
+    weixin: "settings.ccConnect.allowFromWeixinHelp",
+    wecom: "settings.ccConnect.allowFromWecomHelp",
+  } satisfies Record<PlatformKind, TranslationKey>)[profile.platform];
 
   return (
     <Stack gap="md" maw={1040}>
@@ -567,13 +603,13 @@ export function CcConnectSettingsPage() {
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
           <Select label={t("settings.ccConnect.project")} placeholder={t("settings.ccConnect.projectPlaceholder")} nothingFoundMessage={t("settings.ccConnect.projectEmpty")} data={projectOptions} value={profile.projectId || null} onChange={selectProject} searchable />
           <Select label={t("settings.ccConnect.agent")} data={[{ value: "claude", label: "Claude Code" }, { value: "codex", label: "Codex" }]} value={profile.agent} onChange={(value) => value && updateProfile("agent", value as AgentKind)} />
-          <Select label={t("settings.ccConnect.platform")} data={[{ value: "telegram", label: t("settings.ccConnect.platformTelegram") }, { value: "feishu", label: t("settings.ccConnect.platformFeishu") }]} value={profile.platform} onChange={(value) => value && updateProfile("platform", value as PlatformKind)} />
+          <Select label={t("settings.ccConnect.platform")} data={platformOptions} value={profile.platform} onChange={(value) => value && updateProfile("platform", value as PlatformKind)} />
           <Select label={t("settings.ccConnect.language")} data={[{ value: "zh", label: t("settings.ccConnect.languageZh") }, { value: "en", label: t("settings.ccConnect.languageEn") }]} value={profile.language} onChange={(value) => value && updateProfile("language", value as ReplyLanguage)} />
         </SimpleGrid>
         <TextInput
           mt="sm"
           label={t("settings.ccConnect.allowFrom")}
-          description={profile.platform === "telegram" ? t("settings.ccConnect.allowFromTelegramHelp") : t("settings.ccConnect.allowFromFeishuHelp")}
+          description={t(allowFromHelpKey)}
           value={profile.allowFrom}
           onChange={(event) => updateProfile("allowFrom", event.currentTarget.value)}
         />
@@ -634,7 +670,7 @@ export function CcConnectSettingsPage() {
             formTouchedRef.current = true;
             setDirty(true);
           }} />
-        ) : (
+        ) : profile.platform === "feishu" ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
             <PasswordInput label={t("settings.ccConnect.feishuAppId")} value={feishuAppId} onChange={(event) => {
               setFeishuAppId(event.currentTarget.value);
@@ -643,6 +679,31 @@ export function CcConnectSettingsPage() {
             }} />
             <PasswordInput label={t("settings.ccConnect.feishuAppSecret")} value={feishuAppSecret} onChange={(event) => {
               setFeishuAppSecret(event.currentTarget.value);
+              formTouchedRef.current = true;
+              setDirty(true);
+            }} />
+          </SimpleGrid>
+        ) : profile.platform === "weixin" ? (
+          <PasswordInput
+            mt="md"
+            label={t("settings.ccConnect.weixinToken")}
+            description={t("settings.ccConnect.weixinTokenHelp")}
+            value={weixinToken}
+            onChange={(event) => {
+              setWeixinToken(event.currentTarget.value);
+              formTouchedRef.current = true;
+              setDirty(true);
+            }}
+          />
+        ) : (
+          <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
+            <TextInput label={t("settings.ccConnect.wecomBotId")} value={wecomBotId} onChange={(event) => {
+              setWecomBotId(event.currentTarget.value);
+              formTouchedRef.current = true;
+              setDirty(true);
+            }} />
+            <PasswordInput label={t("settings.ccConnect.wecomBotSecret")} value={wecomBotSecret} onChange={(event) => {
+              setWecomBotSecret(event.currentTarget.value);
               formTouchedRef.current = true;
               setDirty(true);
             }} />
