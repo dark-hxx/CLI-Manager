@@ -729,6 +729,7 @@ pub fn run() {
             commands::terminal::pty_daemon_sessions,
             commands::terminal::pty_attach,
             commands::cc_connect::cc_connect_get_status,
+            commands::cc_connect::cc_connect_inspect_executable,
             commands::cc_connect::cc_connect_save_profile,
             commands::cc_connect::cc_connect_clear_credentials,
             commands::cc_connect::cc_connect_start,

@@ -77,6 +77,15 @@ interface CcConnectStatus {
   lastExitAtMs: number | null;
 }
 
+interface CcConnectExecutableStatus {
+  installed: boolean;
+  executablePath: string;
+  version: string | null;
+  sha256: string | null;
+  compatible: boolean;
+  detectionError: string | null;
+}
+
 interface CcConnectLogLine {
   seq: number;
   timestampMs: number;
@@ -131,6 +140,12 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function normalizeWindowsExtendedPath(value: string) {
+  return value
+    .replace(/^\\\\\?\\UNC\\/i, "\\\\")
+    .replace(/^\\\\\?\\/, "");
+}
+
 function formatTimestamp(value: number | null, language: AppLanguage) {
   if (!value) return "—";
   return new Intl.DateTimeFormat(language === "en-US" ? "en-GB" : "zh-CN", {
@@ -161,10 +176,14 @@ export function CcConnectSettingsPage() {
   const [working, setWorking] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [executableDirty, setExecutableDirty] = useState(false);
+  const [executableChecking, setExecutableChecking] = useState(false);
+  const [executableInspection, setExecutableInspection] = useState<CcConnectExecutableStatus | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [yoloConfirmOpen, setYoloConfirmOpen] = useState(false);
   const logCursorRef = useRef(0);
   const statusRequestRef = useRef(0);
+  const executableInspectionRequestRef = useRef(0);
+  const executableCheckingRef = useRef(false);
   const statusInFlightRef = useRef(false);
   const logInFlightRef = useRef(false);
   const formTouchedRef = useRef(false);
@@ -172,20 +191,26 @@ export function CcConnectSettingsPage() {
 
   const hydrateProfile = useCallback((next: CcConnectStatus) => {
     if (next.profile) setProfile(next.profile);
+    executableInspectionRequestRef.current += 1;
+    executableCheckingRef.current = false;
+    setExecutableInspection(null);
+    setExecutableChecking(false);
     formTouchedRef.current = false;
     setDirty(false);
     setExecutableDirty(false);
   }, []);
 
   const refreshStatus = useCallback(async (force = false, hydrate = false, silent = false) => {
-    if (statusInFlightRef.current || workingRef.current) return;
+    if (statusInFlightRef.current || workingRef.current || executableCheckingRef.current) return;
     statusInFlightRef.current = true;
     const requestId = ++statusRequestRef.current;
     try {
       const next = await invoke<CcConnectStatus>("cc_connect_get_status", { refreshDetection: force });
       if (requestId !== statusRequestRef.current) return;
       setStatus(next);
-      if (hydrate && !formTouchedRef.current) hydrateProfile(next);
+      if (hydrate && !formTouchedRef.current && !executableCheckingRef.current) {
+        hydrateProfile(next);
+      }
     } catch (error) {
       if (!silent && requestId === statusRequestRef.current) {
         toast.error(t("settings.ccConnect.toast.loadFailed"), { description: errorMessage(error) });
@@ -263,6 +288,43 @@ export function CcConnectSettingsPage() {
     setDirty(true);
   };
 
+  const updateExecutablePath = (value: string | null) => {
+    updateProfile("executablePath", value ? normalizeWindowsExtendedPath(value) : null);
+    executableInspectionRequestRef.current += 1;
+    executableCheckingRef.current = false;
+    setExecutableInspection(null);
+    setExecutableChecking(false);
+    setExecutableDirty(true);
+  };
+
+  const inspectExecutable = useCallback(async (executablePath: string | null, silent = false) => {
+    const candidate = executablePath?.trim();
+    if (!candidate) return;
+    const requestId = ++executableInspectionRequestRef.current;
+    executableCheckingRef.current = true;
+    setExecutableChecking(true);
+    try {
+      const next = await invoke<CcConnectExecutableStatus>("cc_connect_inspect_executable", {
+        executablePath: candidate,
+      });
+      if (requestId !== executableInspectionRequestRef.current) return;
+      setExecutableInspection(next);
+      setProfile((current) => ({ ...current, executablePath: next.executablePath }));
+      setExecutableDirty(false);
+    } catch (error) {
+      if (!silent && requestId === executableInspectionRequestRef.current) {
+        toast.error(t("settings.ccConnect.toast.selectExecutableFailed"), {
+          description: errorMessage(error),
+        });
+      }
+    } finally {
+      if (requestId === executableInspectionRequestRef.current) {
+        executableCheckingRef.current = false;
+        setExecutableChecking(false);
+      }
+    }
+  }, [t]);
+
   const requestYoloChange = (enabled: boolean) => {
     if (!enabled) {
       updateProfile("yoloEnabled", false);
@@ -300,12 +362,24 @@ export function CcConnectSettingsPage() {
         filters: [{ name: "cc-connect", extensions: ["exe"] }],
       });
       if (typeof selected === "string") {
-        updateProfile("executablePath", selected);
-        setExecutableDirty(true);
+        updateExecutablePath(selected);
+        await inspectExecutable(selected);
       }
     } catch (error) {
       toast.error(t("settings.ccConnect.toast.selectExecutableFailed"), { description: errorMessage(error) });
     }
+  };
+
+  const rescanExecutable = async () => {
+    const candidate = profile.executablePath?.trim();
+    if (candidate) {
+      await inspectExecutable(candidate);
+      return;
+    }
+    executableInspectionRequestRef.current += 1;
+    setExecutableInspection(null);
+    setExecutableDirty(false);
+    await refreshStatus(true, false, false);
   };
 
   const saveProfile = async () => {
@@ -422,7 +496,10 @@ export function CcConnectSettingsPage() {
       && currentProject.name === profile.projectName
       && normalizeProjectPath(currentProject.path) === normalizeProjectPath(profile.projectPath),
   );
-  const busy = working !== null || Boolean(status?.starting);
+  const displayedExecutable = executableInspection ?? (!executableDirty ? status : null);
+  const displayedDetectionError = executableInspection?.detectionError
+    ?? (!executableDirty ? status?.detectionError : null);
+  const busy = working !== null || executableChecking || Boolean(status?.starting);
   const processLabel = status?.starting
     ? t("settings.ccConnect.starting")
     : status?.running
@@ -441,18 +518,18 @@ export function CcConnectSettingsPage() {
             <Text mt={6} size="xs" c="var(--text-muted)">{t("settings.ccConnect.overview.description")}</Text>
           </div>
           <Group gap="xs">
-            <Badge color={!status ? "gray" : status.installed ? "green" : "gray"} variant="light">
-              {!status
+            <Badge color={displayedExecutable?.installed ? "green" : "gray"} variant="light">
+              {executableChecking
                 ? t("settings.ccConnect.detecting")
-                : status.installed
+                : displayedExecutable?.installed
                   ? t("settings.ccConnect.installed")
                   : t("settings.ccConnect.notInstalled")}
             </Badge>
-            {executableDirty ? (
+            {executableDirty && !executableChecking ? (
               <Badge color="yellow" variant="light">{t("settings.ccConnect.executableUnverified")}</Badge>
-            ) : status?.installed && (
-              <Badge color={status.compatible ? "green" : "red"} variant="light">
-                {status.compatible ? t("settings.ccConnect.compatible") : t("settings.ccConnect.incompatible")}
+            ) : !executableChecking && displayedExecutable?.installed && (
+              <Badge color={displayedExecutable.compatible ? "green" : "red"} variant="light">
+                {displayedExecutable.compatible ? t("settings.ccConnect.compatible") : t("settings.ccConnect.incompatible")}
               </Badge>
             )}
           </Group>
@@ -462,8 +539,7 @@ export function CcConnectSettingsPage() {
             label={t("settings.ccConnect.executablePath")}
             value={profile.executablePath ?? status?.executablePath ?? ""}
             onChange={(event) => {
-              updateProfile("executablePath", event.currentTarget.value || null);
-              setExecutableDirty(true);
+              updateExecutablePath(event.currentTarget.value || null);
             }}
             rightSection={<FolderSearch size={16} />}
           />
@@ -472,17 +548,17 @@ export function CcConnectSettingsPage() {
               <Button size="xs" variant="default" disabled={busy} onClick={() => void chooseExecutable()} leftSection={<FolderSearch size={14} />}>
                 {t("settings.ccConnect.chooseExecutable")}
               </Button>
-              <Button size="xs" variant="subtle" disabled={busy || executableDirty} onClick={() => void refreshStatus(true, false, false)} leftSection={<RefreshCw size={14} />}>
+              <Button size="xs" variant="subtle" disabled={busy} onClick={() => void rescanExecutable()} leftSection={<RefreshCw size={14} />}>
                 {t("settings.ccConnect.rescan")}
               </Button>
             </Group>
           </Stack>
         </SimpleGrid>
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="sm" spacing="sm">
-          <Text size="xs" c="var(--text-muted)">{t("settings.ccConnect.version")}: {executableDirty ? "—" : status?.version ?? "—"}</Text>
-          <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.ccConnect.sha256")}: {executableDirty ? "—" : status?.sha256 ?? "—"}</Text>
+          <Text size="xs" c="var(--text-muted)">{t("settings.ccConnect.version")}: {executableChecking ? "—" : displayedExecutable?.version ?? "—"}</Text>
+          <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.ccConnect.sha256")}: {executableChecking ? "—" : displayedExecutable?.sha256 ?? "—"}</Text>
         </SimpleGrid>
-        {status?.detectionError && <Text mt="xs" size="xs" c="red">{status.detectionError}</Text>}
+        {displayedDetectionError && <Text mt="xs" size="xs" c="red">{displayedDetectionError}</Text>}
       </Card>
 
       <Card className="border border-border bg-surface-container-low" p="md" radius="lg">

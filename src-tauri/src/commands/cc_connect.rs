@@ -172,6 +172,17 @@ pub struct CcConnectStatus {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CcConnectExecutableStatus {
+    pub installed: bool,
+    pub executable_path: String,
+    pub version: Option<String>,
+    pub sha256: Option<String>,
+    pub compatible: bool,
+    pub detection_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CcConnectLogLine {
     pub seq: u64,
     pub timestamp_ms: i64,
@@ -335,6 +346,41 @@ impl CcConnectManager {
             });
         }
         result
+    }
+
+    fn inspect_executable(&self, explicit_path: &str) -> CcConnectExecutableStatus {
+        let requested_path = explicit_path.trim();
+        let executable_path =
+            normalize_executable_path_value(Some(requested_path)).unwrap_or_default();
+        if requested_path.is_empty() {
+            return CcConnectExecutableStatus {
+                installed: false,
+                executable_path,
+                version: None,
+                sha256: None,
+                compatible: false,
+                detection_error: Some("cc-connect executable path is required".to_string()),
+            };
+        }
+
+        match self.detect(Some(requested_path), true) {
+            Ok(binary) => CcConnectExecutableStatus {
+                installed: true,
+                executable_path: user_path_string(&binary.path),
+                version: binary.version,
+                sha256: Some(binary.sha256),
+                compatible: binary.compatible,
+                detection_error: None,
+            },
+            Err(err) => CcConnectExecutableStatus {
+                installed: false,
+                executable_path,
+                version: None,
+                sha256: None,
+                compatible: false,
+                detection_error: Some(err),
+            },
+        }
     }
 
     fn check_codex_app_server(&self, refresh: bool) -> Result<(), String> {
@@ -1258,6 +1304,12 @@ fn user_path_string(path: &Path) -> String {
     value
 }
 
+fn normalize_executable_path_value(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| user_path_string(Path::new(value)))
+}
+
 fn config_path_value(path: &Path) -> String {
     user_path_string(path).replace('\\', "/")
 }
@@ -1402,9 +1454,10 @@ fn load_profile() -> Result<Option<CcConnectProfile>, String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(format!("read cc-connect profile failed: {err}")),
     };
-    serde_json::from_str(&raw)
-        .map(Some)
-        .map_err(|err| format!("parse cc-connect profile failed: {err}"))
+    let mut profile: CcConnectProfile = serde_json::from_str(&raw)
+        .map_err(|err| format!("parse cc-connect profile failed: {err}"))?;
+    profile.executable_path = normalize_executable_path_value(profile.executable_path.as_deref());
+    Ok(Some(profile))
 }
 
 fn persist_profile(profile: &CcConnectProfile) -> Result<(), String> {
@@ -1442,15 +1495,10 @@ fn normalize_profile(
     if profile.proxy_enabled {
         profile.proxy_url = normalize_proxy_url(profile.proxy_url.as_deref())?;
     }
-    profile.executable_path = profile
-        .executable_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+    profile.executable_path = normalize_executable_path_value(profile.executable_path.as_deref());
     if let Some(explicit_path) = profile.executable_path.as_deref() {
         let binary = manager.detect(Some(explicit_path), true)?;
-        profile.executable_path = Some(path_string(&binary.path));
+        profile.executable_path = Some(user_path_string(&binary.path));
     }
     Ok(profile)
 }
@@ -3066,6 +3114,16 @@ pub async fn cc_connect_get_status(
         .map_err(|err| format!("cc-connect status task failed: {err}"))?
 }
 #[tauri::command]
+pub async fn cc_connect_inspect_executable(
+    manager: State<'_, CcConnectManager>,
+    executable_path: String,
+) -> Result<CcConnectExecutableStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.inspect_executable(&executable_path))
+        .await
+        .map_err(|err| format!("cc-connect executable inspection task failed: {err}"))
+}
+#[tauri::command]
 pub async fn cc_connect_save_profile(
     manager: State<'_, CcConnectManager>,
     request: CcConnectSaveProfileRequest,
@@ -3398,6 +3456,10 @@ mod tests {
             r"D:\npm\cc-connect.exe"
         );
         assert_eq!(
+            normalize_executable_path_value(Some(r"  \\?\D:\npm\cc-connect.exe  ")),
+            Some(r"D:\npm\cc-connect.exe".to_string())
+        );
+        assert_eq!(
             config_path_value(Path::new(r"\\?\F:\test\work")),
             "F:/test/work"
         );
@@ -3409,6 +3471,26 @@ mod tests {
             config_path_value(Path::new(r"F:\test\work")),
             "F:/test/work"
         );
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn explicit_executable_inspection_returns_a_user_path_and_digest() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("cc-connect.exe");
+        fs::write(&executable, b"not an official cc-connect binary").unwrap();
+
+        let status = CcConnectManager::new().inspect_executable(&path_string(&executable));
+
+        assert!(status.installed);
+        assert!(!status.compatible);
+        assert_eq!(status.version, None);
+        assert_eq!(status.sha256, Some(sha256_file(&executable).unwrap()));
+        assert_eq!(
+            status.executable_path,
+            user_path_string(&executable.canonicalize().unwrap())
+        );
+        assert!(!status.executable_path.starts_with(r"\\?\"));
+        assert_eq!(status.detection_error, None);
     }
     #[test]
     fn managed_config_is_safe() {

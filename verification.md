@@ -58,3 +58,16 @@
 - `cargo check` 通过。
 - `npm run build` 通过；仅有既有的动态/静态混合导入和大 chunk 警告。
 - 本次未修改 cc-connect 源码、全局 npm 包或可执行文件，且未打包安装包。
+
+## cc-connect 可执行文件手动选择增量验证（2026-07-17）
+
+- 根因确认：Windows 文件对话框和 Rust `canonicalize()` 会返回 `\\?\` 扩展路径；后端此前把该路径直接写入 profile，而前端优先展示 profile，导致界面重新出现扩展前缀。
+- 根因确认：选择新程序此前只更新前端表单并禁用“重新检测”，没有把新路径提交给检测链路，因此仍显示旧程序的“已检测”状态。
+- profile 读取与保存现统一转换为普通用户路径；已有 `\\?\D:\...` 和 `\\?\UNC\...` 配置无需手工修改即可正常回显。
+- 新增只读的显式可执行文件检测 IPC；选择文件后立即校验文件、SHA-256 和版本，手动输入路径后也可点击“重新检测”。
+- 本机 `D:\nvm\nvmnew\v22.19.0\node_modules\cc-connect\bin\cc-connect.exe` 验证存在，版本为 `1.4.1`，SHA-256 为 `D3F7B0C673A4D5539A461639C98ECA054D18B1FA38FC1AFC6422A7BBF3A2B18D`。
+- `cargo test commands::cc_connect::tests --lib` 通过：24 项通过、0 项失败；新增覆盖扩展路径归一化和显式程序检测。
+- `cargo check` 通过。
+- cc-connect 设置页独立严格 TypeScript 检查通过。
+- 全量 `tsc --noEmit` 仍被上游 `a7e773d` 引用但未提交的 `src/lib/syncSettings.ts` 阻断，并伴随 `syncStore.ts` 的既有 TS2538；本次改动未新增 TypeScript 错误。
+- 未修改 cc-connect 源码、全局 npm 安装或用户配置文件；尚未打包和启动 Tauri 窗口手动验证。
