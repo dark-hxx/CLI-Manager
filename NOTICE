@@ -8,3 +8,8 @@ Commercial licenses are available separately from the copyright holder.
 Portions of the built-in Claude statusline are derived from ccstatusline and
 ccstatusline-zh v2.2.23, licensed under the MIT License. See
 third-party/ccstatusline-zh-LICENSE.
+
+Portions of the terminal process management, resize debouncing, flow control,
+and replay architecture are adapted from Code - OSS (Visual Studio Code),
+Copyright (c) Microsoft Corporation, licensed under the MIT License. See
+third-party/vscode-LICENSE.

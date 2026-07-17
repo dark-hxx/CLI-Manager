@@ -1,4 +1,4 @@
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -6,12 +6,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
-use uuid::Uuid;
 
-use crate::third_party_notification::{DispatcherHandle, HookNotificationJob};
+use crate::third_party_notification::HookNotificationJob;
 
-const EVENT_NAME: &str = "claude-hook-notification";
 const REQUEST_PATH: &str = "/api/claude-hook";
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -19,11 +16,6 @@ const MAX_HEADER_BYTES: usize = 16 * 1024;
 /// hook 上报的消费出口：主进程实现为 Tauri 事件，daemon 实现为帧广播 + 缓存
 /// （Issue #123 Phase 2 复用点：HTTP 解析/校验逻辑两侧共享，只有出口不同）。
 pub type HookPayloadSink = Arc<dyn Fn(ClaudeHookPayload) + Send + Sync + 'static>;
-
-pub struct ClaudeHookBridge {
-    port: u16,
-    token: String,
-}
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,47 +80,6 @@ impl ClaudeHookPayload {
             cwd: self.cwd.clone(),
             timestamp: self.timestamp.clone(),
         }
-    }
-}
-
-impl ClaudeHookBridge {
-    pub fn start(app_handle: AppHandle) -> Self {
-        match TcpListener::bind(("127.0.0.1", 0)) {
-            Ok(listener) => {
-                let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
-                let token = Uuid::new_v4().to_string();
-                let dispatcher = DispatcherHandle::start("app");
-                let sink: HookPayloadSink = Arc::new(move |payload| {
-                    dispatcher.try_enqueue(payload.to_notification_job());
-                    if let Err(err) = app_handle.emit(EVENT_NAME, payload) {
-                        warn!("cli hook bridge emit failed: {}", err);
-                    }
-                });
-                spawn_hook_listener(listener, token.clone(), sink);
-                info!("cli hook bridge listening: 127.0.0.1:{}", port);
-                Self { port, token }
-            }
-            Err(err) => {
-                error!("cli hook bridge failed to bind: {}", err);
-                Self::disabled()
-            }
-        }
-    }
-
-    pub fn disabled() -> Self {
-        Self {
-            port: 0,
-            token: String::new(),
-        }
-    }
-
-    pub fn apply_env(&self, session_id: &str, env_vars: &mut HashMap<String, String>) {
-        if self.port == 0 || self.token.is_empty() {
-            return;
-        }
-        env_vars.insert("CLI_MANAGER_TAB_ID".to_string(), session_id.to_string());
-        env_vars.insert("CLI_MANAGER_NOTIFY_PORT".to_string(), self.port.to_string());
-        env_vars.insert("CLI_MANAGER_NOTIFY_TOKEN".to_string(), self.token.clone());
     }
 }
 

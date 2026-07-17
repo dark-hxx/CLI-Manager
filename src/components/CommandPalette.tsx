@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { create } from "zustand";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { invoke } from "@tauri-apps/api/core";
 import { useProjectStore } from "../stores/projectStore";
 import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
@@ -14,6 +13,7 @@ import { logError } from "../lib/logger";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
+import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 
 export const useCommandPaletteStore = create<{
   isOpen: boolean;
@@ -182,7 +182,7 @@ export function CommandPalette() {
           action: () => {
             const sid = useTerminalStore.getState().activeSessionId;
             if (sid) {
-              invoke("pty_write", { sessionId: sid, data: t.command + "\r" }).catch((err) => {
+              terminalProcessManager.write(sid, t.command + "\r").catch((err) => {
                 toast.error("执行模板命令失败", { description: String(err) });
                 logError("CommandPalette failed to run template", {
                   templateId: t.id,

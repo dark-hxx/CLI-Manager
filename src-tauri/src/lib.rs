@@ -593,45 +593,31 @@ pub fn run() {
             conpty_sideload::initialize(app.handle());
             // 保留应用自身调试日志，但压掉 sqlx 的逐条 SQL 输出。
             log::set_max_level(log_level);
-            app.manage(claude_hook::ClaudeHookBridge::start(app.handle().clone()));
-            // Issue #123 Phase 2：后台线程发现/拉起 PTY daemon，成功后写入 bridge；
-            // 失败只记日志，命令层自动降级进程内 PTY，不阻塞启动。
-            // 逃生舱：CLI_MANAGER_DISABLE_DAEMON=1 强制进程内 PTY（排障用）。
+            // PtyHost 是唯一生产终端路径。后台线程发现/拉起 daemon，成功后写入 bridge；
+            // 失败只记日志并让终端创建明确失败，不恢复已删除的进程内 PTY 路径。
             {
-                let daemon_disabled = std::env::var("CLI_MANAGER_DISABLE_DAEMON")
-                    .map(|value| {
-                        let value = value.trim();
-                        value == "1" || value.eq_ignore_ascii_case("true")
-                    })
-                    .unwrap_or(false);
-                if daemon_disabled {
-                    log::info!("pty daemon disabled via CLI_MANAGER_DISABLE_DAEMON");
-                } else {
-                    let handle = app.handle().clone();
-                    std::thread::spawn(move || match app_paths::cli_manager_data_dir() {
-                        Ok(data_dir) => {
-                            match daemon::client::connect_or_spawn(
-                                handle.clone(),
-                                &data_dir,
-                                cfg!(debug_assertions),
-                            ) {
-                                Ok(client) => {
-                                    log::info!(
-                                        "pty daemon connected: 127.0.0.1:{}",
-                                        client.info().port
-                                    );
-                                    handle.state::<daemon::client::DaemonBridge>().set(client);
-                                }
-                                Err(err) => {
-                                    log::warn!(
-                                        "pty daemon unavailable, falling back in-process: {err}"
-                                    )
-                                }
+                let handle = app.handle().clone();
+                std::thread::spawn(move || match app_paths::cli_manager_data_dir() {
+                    Ok(data_dir) => {
+                        match daemon::client::connect_or_spawn(
+                            handle.clone(),
+                            &data_dir,
+                            cfg!(debug_assertions),
+                        ) {
+                            Ok(client) => {
+                                log::info!(
+                                    "pty daemon connected: 127.0.0.1:{}",
+                                    client.info().port
+                                );
+                                handle.state::<daemon::client::DaemonBridge>().set(client);
                             }
+                            Err(err) => log::warn!(
+                                "pty daemon unavailable; terminal creation disabled: {err}"
+                            ),
                         }
-                        Err(err) => log::warn!("pty daemon skipped (no data dir): {err}"),
-                    });
-                }
+                    }
+                    Err(err) => log::warn!("pty daemon skipped (no data dir): {err}"),
+                });
             }
             // 注入 appLocalData 目录用于历史索引磁盘缓存（加速冷启动加载）。
             {
@@ -703,7 +689,6 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(pty::manager::PtyManager::new())
         .manage(PendingBackgroundSession::default())
         .manage(daemon::client::DaemonBridge::new())
         .manage(file_watcher::FileWatcherBridge::new())
@@ -718,16 +703,12 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            commands::terminal::pty_create,
-            commands::terminal::pty_write,
-            commands::terminal::pty_resize,
-            commands::terminal::pty_close,
-            commands::terminal::pty_close_all,
+            commands::terminal::pty_prepare_create,
             commands::terminal::pty_reconcile_active_sessions,
             commands::terminal::pty_status,
             commands::terminal::pty_daemon_active,
+            commands::terminal::pty_host_get_endpoint,
             commands::terminal::pty_daemon_sessions,
-            commands::terminal::pty_attach,
             commands::cc_connect::cc_connect_get_status,
             commands::cc_connect::cc_connect_save_profile,
             commands::cc_connect::cc_connect_clear_credentials,
@@ -897,7 +878,8 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = &event {
-                app.state::<commands::cc_connect::CcConnectManager>().shutdown();
+                app.state::<commands::cc_connect::CcConnectManager>()
+                    .shutdown();
             }
 
             #[cfg(target_os = "macos")]

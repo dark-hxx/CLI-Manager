@@ -1,5 +1,4 @@
 import { useRef, type RefObject } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { parseOsc7Cwd } from "../lib/terminalOscPath";
 import {
   LEGACY_RUNTIME_OSC_PREFIX,
@@ -12,6 +11,7 @@ import {
 } from "../lib/terminalOscParse";
 import { useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
 import type { OsPlatform } from "../lib/shell";
+import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 
 const OSC_CARRY_BUFFER_MAX = 8192;
 
@@ -193,7 +193,7 @@ export function useTerminalOsc({
           queryId === 10
             ? terminalColorRepliesRef.current.foreground
             : terminalColorRepliesRef.current.background;
-        invoke("pty_write", { sessionId, data: reply }).catch((err) => onPtyWriteError("osc_color_reply", err));
+        terminalProcessManager.write(sessionId, reply).catch((err) => onPtyWriteError("osc_color_reply", err));
       } else {
         output += combined.slice(start, terminator.index + terminator.length);
       }

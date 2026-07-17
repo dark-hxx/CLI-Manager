@@ -14,7 +14,7 @@ pub mod server;
 /// `KILL_ON_JOB_CLOSE` 的 Job Object——之后 daemon 创建的全部 PTY 子进程
 /// 自动进入同一 Job，daemon 无论正常退出还是被强杀，系统都会回收整棵
 /// 子进程树，物理杜绝 PTY 孤儿。非 Windows 平台为 no-op（PTY 子进程随
-/// 会话关闭由 portable-pty 回收；daemon 自身 detach 由拉起方处理）。
+/// 会话关闭由平台 PTY 控制器回收；daemon 自身 detach 由拉起方处理）。
 pub fn setup_process_governance() {
     #[cfg(target_os = "windows")]
     unsafe {

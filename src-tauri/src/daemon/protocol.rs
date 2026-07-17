@@ -9,6 +9,10 @@ use std::collections::HashMap;
 
 /// 单帧最大字节数（含换行前的 JSON 文本）。超限视为非法帧，断连。
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+pub const BINARY_PROTOCOL_VERSION: u8 = 1;
+pub const BINARY_KIND_OUTPUT: u8 = 1;
+pub const BINARY_KIND_REPLAY: u8 = 2;
+const BINARY_HEADER_BYTES: usize = 20;
 
 /// 客户端 → daemon 请求帧。`id` 用于应答关联（Auth 除外，Auth 必须是首帧）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -38,6 +42,13 @@ pub enum ClientFrame {
         session_id: String,
         /// UTF-8 文本按原样传输（与 `pty_write` 的 data 参数一致）。
         data: String,
+    },
+    /// 确认前端已完成 xterm 解析的输出字符数，用于 daemon 背压。
+    Ack {
+        id: u64,
+        session_id: String,
+        sequence: u64,
+        char_count: usize,
     },
     Resize {
         id: u64,
@@ -97,6 +108,16 @@ pub struct SessionStatusInfo {
     pub exit_code: Option<i32>,
 }
 
+/// 尺寸感知的回放记录。空 data 表示仅发生 resize。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayEntry {
+    pub cols: u16,
+    pub rows: u16,
+    pub sequence: u64,
+    pub data_base64: String,
+}
+
 /// daemon → 客户端帧：请求应答与主动推送共用一条流。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -136,11 +157,16 @@ pub enum DaemonFrame {
         id: u64,
         session_id: String,
         replay_base64: String,
+        replay: Vec<ReplayEntry>,
+        latest_sequence: u64,
         meta: SessionMeta,
     },
     /// 主动推送：PTY 输出（base64；daemon 侧 safe_emit_boundary 切帧，转发层禁止再分片）。
     Output {
         session_id: String,
+        sequence: u64,
+        cols: u16,
+        rows: u16,
         data_base64: String,
     },
     /// 主动推送：会话进程退出。
@@ -167,6 +193,40 @@ pub fn encode_frame<T: Serialize>(frame: &T) -> String {
     let mut line = serde_json::to_string(frame).expect("frame serialization cannot fail");
     line.push('\n');
     line
+}
+
+/// WebSocket 二进制终端帧：version/kind/sessionLen/sequence/cols/rows/dataLen + payload。
+pub fn encode_binary_terminal_frame(
+    kind: u8,
+    session_id: &str,
+    sequence: u64,
+    cols: u16,
+    rows: u16,
+    data: &[u8],
+) -> Result<Vec<u8>, String> {
+    if !matches!(kind, BINARY_KIND_OUTPUT | BINARY_KIND_REPLAY) {
+        return Err("invalid binary frame kind".to_string());
+    }
+    let session_bytes = session_id.as_bytes();
+    let session_len = u16::try_from(session_bytes.len())
+        .map_err(|_| "session id too long for binary frame".to_string())?;
+    let data_len = u32::try_from(data.len())
+        .map_err(|_| "terminal payload too large for binary frame".to_string())?;
+    if BINARY_HEADER_BYTES + session_bytes.len() + data.len() > MAX_FRAME_BYTES {
+        return Err("binary frame too large".to_string());
+    }
+
+    let mut frame = Vec::with_capacity(BINARY_HEADER_BYTES + session_bytes.len() + data.len());
+    frame.push(BINARY_PROTOCOL_VERSION);
+    frame.push(kind);
+    frame.extend_from_slice(&session_len.to_be_bytes());
+    frame.extend_from_slice(&sequence.to_be_bytes());
+    frame.extend_from_slice(&cols.to_be_bytes());
+    frame.extend_from_slice(&rows.to_be_bytes());
+    frame.extend_from_slice(&data_len.to_be_bytes());
+    frame.extend_from_slice(session_bytes);
+    frame.extend_from_slice(data);
+    Ok(frame)
 }
 
 fn frame_type_of(value: &serde_json::Value) -> Option<String> {
@@ -196,6 +256,7 @@ const CLIENT_FRAME_TYPES: &[&str] = &[
     "list",
     "create",
     "write",
+    "ack",
     "resize",
     "close",
     "close_all",
@@ -251,6 +312,9 @@ mod tests {
     fn daemon_frame_roundtrip() {
         let frame = DaemonFrame::Output {
             session_id: "abc".into(),
+            sequence: 1,
+            cols: 80,
+            rows: 24,
             data_base64: "aGk=".into(),
         };
         let decoded = decode_daemon_frame(encode_frame(&frame).trim_end()).unwrap();
@@ -282,5 +346,21 @@ mod tests {
             decode_client_frame(r#"{"id":1}"#),
             Err(ProtocolError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn binary_terminal_frame_has_stable_header_and_payload() {
+        let frame =
+            encode_binary_terminal_frame(BINARY_KIND_OUTPUT, "session-1", 42, 120, 30, b"hello")
+                .unwrap();
+        assert_eq!(frame[0], BINARY_PROTOCOL_VERSION);
+        assert_eq!(frame[1], BINARY_KIND_OUTPUT);
+        assert_eq!(u16::from_be_bytes([frame[2], frame[3]]), 9);
+        assert_eq!(u64::from_be_bytes(frame[4..12].try_into().unwrap()), 42);
+        assert_eq!(u16::from_be_bytes(frame[12..14].try_into().unwrap()), 120);
+        assert_eq!(u16::from_be_bytes(frame[14..16].try_into().unwrap()), 30);
+        assert_eq!(u32::from_be_bytes(frame[16..20].try_into().unwrap()), 5);
+        assert_eq!(&frame[20..29], b"session-1");
+        assert_eq!(&frame[29..], b"hello");
     }
 }

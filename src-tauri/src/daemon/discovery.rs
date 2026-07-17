@@ -15,6 +15,9 @@ const DEV_DAEMON_INFO_FILE_NAME: &str = "daemon.dev.json";
 #[serde(rename_all = "camelCase")]
 pub struct DaemonInfo {
     pub port: u16,
+    /// WebView 直连 PtyHost 的本机 WebSocket 端口。
+    #[serde(default)]
+    pub ws_port: u16,
     /// hook 上报转发端口（稳定端口，PTY 子进程环境变量指向它，app 重启不失效）。
     #[serde(default)]
     pub hook_port: u16,
@@ -92,6 +95,7 @@ mod tests {
     fn sample() -> DaemonInfo {
         DaemonInfo {
             port: 12345,
+            ws_port: 12347,
             hook_port: 12346,
             token: "tok".into(),
             pid: 42,

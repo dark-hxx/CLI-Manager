@@ -7,7 +7,7 @@
 ### 1. Scope / Trigger
 
 - Trigger: 改动启动会话恢复、工作区快照持久化、`restoreSessions` 分流、或 TUI(codex/claude) 会话的恢复方式时。
-- 跨层：`sessionStore`(tauri-plugin-store) ↔ `terminalStore.restoreSessions` ↔ PTY(`pty_create`) ↔ CLI resume 命令。
+- 跨层：`sessionStore`(tauri-plugin-store) ↔ `terminalStore.restoreSessions` ↔ `TerminalProcessManager`/PtyHost attach-or-create ↔ CLI resume 命令。
 
 ### 2. Signatures
 
@@ -27,11 +27,12 @@
   - shell 会话：贴回 `initialTerminalOutput`（shell 不清屏，历史可见）。
 - `restoreSessions` 重建 session 时**必须保留 `cliSessionId`**——漏掉会导致落盘时 id 丢失、下次恢复只能走兜底。
 - resume 命令必须经 `prepareStartupCommandForPty` + `formatStartupInputForPty` 包装，禁止裸写。
-- 持续保存：定时节流 10s(`SNAPSHOT_THROTTLE_MS`)，脏检测跳过无新输出的终端，单终端尾部限行 `SNAPSHOT_MAX_LINES=2000`，仅有真实 PTY 会话时启动定时器。正常退出前 `flushTerminalSnapshotsNow()` 在 `pty_close_all` 之前强制落盘最终画面。
+- 持续保存：定时节流 10s(`SNAPSHOT_THROTTLE_MS`)，脏检测跳过无新输出的终端，单终端尾部限行 `SNAPSHOT_MAX_LINES=2000`，仅有真实 PTY 会话时启动定时器。正常退出且明确丢弃会话时，`flushTerminalSnapshotsNow()` 必须在 `TerminalProcessManager.closeAll()` 之前强制落盘最终画面。
 - 启动问询：有可恢复真实 PTY 会话 → 弹窗询问；无 → 静默进入不弹窗。拒绝 → `sessionStore.clear()` 只清工作区快照，**不碰 SQLite `session_meta`**。
 - 环境隔离：Tauri `cfg(dev)` 必须选择 `sessions.dev.json`；安装包继续使用 `sessions.json`。开发版不得读取、迁移或清理安装版会话快照。
 - 开关关闭：启动时必须清理当前环境快照，不得显示恢复弹窗或调用 `terminalStore.restoreSessions`。重新开启后只恢复此后新保存的快照。
-- 恢复不等于任务续跑：PTY 子进程随应用关闭即销毁，退出期间不后台执行。CLI 会话靠 resume 续**对话上下文**（非续被打断的那次生成）。
+- daemon 会话优先：启动恢复先调用 `pty_daemon_sessions`。daemon 中仍存在的 session 保留原 session id/startup metadata，标记为待 attach；`XTermTerminal` 必须先订阅输出，再通过 `TerminalProcessManager.attach` 应用尺寸化 replay，禁止重跑 `startupCmd`。
+- 快照/resume 是最终兜底：只有 daemon 会话不存在或 daemon 不可恢复时，CLI 会话才靠 resume 续**对话上下文**，普通 shell 才贴回静态 scrollback。
 
 ### 4. Validation & Error Matrix
 

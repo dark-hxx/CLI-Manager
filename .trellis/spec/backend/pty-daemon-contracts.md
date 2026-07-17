@@ -2,6 +2,76 @@
 
 > Issue #123 Phase 2。把 PTY 宿主从主进程抽为独立守护进程 `cli-manager-daemon`：UI 是客户端，应用真退出后任务继续跑，重启 attach 回放。前置 Phase 1（`background-task-continuation-contracts.md`）已上线。**本契约经用户确认后方可实施。**
 
+## Scenario: VS Code-style PtyHost Direct Transport (Current Contract)
+
+> 本节覆盖并取代下文旧的“进程内 PTY fallback / Tauri output re-emit / raw ring buffer”条款；旧段落仅保留历史背景。
+
+### 1. Scope / Trigger
+
+- Trigger: 修改 `TerminalProcessManager`、`PtyHostSocket`、daemon protocol/server、Replay、flow control 或 `pty/platform/*`。
+- 数据流：xterm write callback → ACK → WebSocket → daemon flow control；daemon platform PTY → 5ms buffer → sequence frame → WebSocket binary → xterm。
+
+### 2. Signatures
+
+- Bootstrap commands: `pty_host_get_endpoint() -> Option<{ url, token, protocolVersion, daemonVersion }>`；`pty_prepare_create(...) -> { sessionId, cwd, envVars, shell }` 仅负责 provider/hook 环境准备，不创建进程。
+- Discovery: `{ port, wsPort, hookPort, token, pid, version }`。
+- Control frames: JSON `auth/ping/list/create/write/ack/resize/close/close_all/attach/detach/reconcile/status`。
+- Binary frame header: `version:u8, kind:u8, sessionLen:u16, sequence:u64, cols:u16, rows:u16, dataLen:u32`（big-endian），后接 UTF-8 session id 与原始 PTY bytes。
+- `ack`: `{ session_id, sequence, char_count }`；`char_count` 使用 UTF-16 code units，与 xterm/JavaScript string length 一致。
+
+### 3. Contracts
+
+- WebSocket 仅绑定 `127.0.0.1`，路径固定 `/pty`；Origin 仅允许 Tauri localhost 与本地 dev origin；首帧 token 鉴权。
+- Output/replay 必须使用 binary frame；Tauri command 仅用于 endpoint bootstrap 和 provider/hook 环境准备，真正的 create/write/resize/close 由同一 WebSocket 客户端执行。
+- daemon 输出最多合并 5ms；客户端未确认字符达到 `100000` 后暂停 PTY reader，直到降到 `5000` 以下；ACK 只能前进，重复/倒序 ACK 不得重复扣减。
+- Replay entry 为 `{ cols, rows, sequence, data }`；连续空 resize 合并。Attach 在同一锁序内取得 replay 并注册订阅，WebSocket 发送顺序为 replay binary → attached control → live binary。
+- 隐藏终端仍订阅并解析输出；不得建立 inactive raw buffer 或切回时批量重放。可释放 WebGL，但不得释放 xterm、PTY 订阅或 scrollback。
+- Windows 使用直接 ConPTY API；兼容开关开启时通过受控绝对路径加载打包的 `conpty.dll`，否则使用 kernel32 API，禁止按裸 DLL 名搜索。ConPTY 子进程创建标志不得包含 `CREATE_NEW_PROCESS_GROUP`，并保留 `PSEUDOCONSOLE_RESIZE_QUIRK | PSEUDOCONSOLE_WIN32_INPUT_MODE`。Unix 使用 `openpty`、`setsid`、`TIOCSCTTY`、stdio dup 与进程组 kill；PTY fd 必须设置 `FD_CLOEXEC`，子进程 exec 前必须恢复默认信号处理并清空继承的信号掩码。生产依赖不得重新加入 `portable-pty`。
+- WebSocket 心跳 5 秒一次，15 秒无 Pong 判定失联；重连后重新 attach，并按 sequence 过滤已显示 replay。
+- `create` 请求的响应若因断线丢失，前端必须以同一 session id 重连并 attach 探测：会话存在则恢复 replay 并视为创建成功，不存在才向调用方返回原始创建错误。`close`/`close_all`/孤儿清理必须同步移除 daemon 客户端的 attach、ACK 与 sequence 状态。
+
+### 4. Validation & Error Matrix
+
+- endpoint 缺失 / protocolVersion 不匹配 → create 失败并清理已创建会话，不回退进程内 PTY。
+- 非 loopback / Origin 非白名单 / token 错误 → 握手或 auth 拒绝。
+- binary header 长度、kind、version 或 payload 长度非法 → 客户端断开并触发重连。
+- ACK sequence 重复、倒序或大于 last sent → 忽略，不改变未确认字符数。
+- WebSocket 中断 → daemon 保留会话和 Replay；前端心跳重连、attach、sequence 去重。
+- Unix 交叉检查缺少 GTK/sysroot → 报告环境阻塞，不得把它描述为 Unix 编译通过。
+
+### 5. Good/Base/Bad Cases
+
+- Good: 100 MiB 连续输出逐帧 ACK，hash 一致，无丢失/重复；慢 WebView 触发 daemon 背压而不是裁剪。
+- Base: 新会话由 Tauri command 生成 session id 并完成 provider/hook env，随后 WebSocket create 在启动 PTY 前注册当前客户端；create/write/resize/output/close 全部直连 PtyHost。
+- Bad: 收到 binary output 后立刻 ACK，而不是等 `terminal.write(..., callback)` → xterm 尚未解析时 daemon 继续灌入，内存失控。
+- Bad: WebSocket 重连后无 sequence 过滤地重放完整 ring → 用户看到重复输出。
+
+### 6. Tests Required
+
+- Rust: binary header、协议未知字段/type、尺寸化 Replay/resize 合并、buffer cap、WebSocket binary writer、direct ConPTY spawn/write/read/resize；断言 ConPTY 子进程不使用 `CREATE_NEW_PROCESS_GROUP` 且保留 resize/Win32 input flags。
+- Frontend: `npx tsc --noEmit`；验证 binary decoder、ACK 在 xterm write callback 后发送、隐藏 Tab 持续更新。
+- Backend: `cargo check && cargo test`。Unix 必须在真实 macOS/Linux CI 或具备 GTK/sysroot 的构建机执行；Windows 交叉编译缺少 GTK sysroot 不算代码失败，也不算通过。
+- 手动矩阵：PowerShell/pwsh/CMD/Git Bash/WSL、Bash/Zsh/Fish；普通 Tab/分屏/Pane 全屏/应用全屏/Workspan；最小化/托盘/退出后 daemon 续跑；hook 装/未装。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+socket.onmessage = (frame) => {
+  terminal.write(frame.data);
+  acknowledge(frame.sequence, frame.data.length);
+};
+```
+
+#### Correct
+
+```ts
+terminal.write(frame.data, () => {
+  acknowledge(frame.sequence, frame.rawUtf16Length);
+});
+```
+
 ## Scenario: Host PTY Sessions in a Detached Daemon Process
 
 ### 1. Scope / Trigger

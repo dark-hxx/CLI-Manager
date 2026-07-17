@@ -1,5 +1,37 @@
 # Component Guidelines
 
+## Convention: Terminal output uses PtyHost binary frames and xterm parse ACK
+
+**What**: `XTermTerminal` receives PTY data only through `TerminalProcessManager` / `PtyHostSocket`. Hidden terminals remain attached and parse output. ACK is sent from the `terminal.write` callback, never when the WebSocket message arrives.
+
+**Why**: This keeps process transport out of components, prevents hidden-tab replay corruption, and makes daemon backpressure represent xterm parser progress instead of network delivery.
+
+**Contracts**:
+
+- Output/replay frames carry `sessionId`, `sequence`, `cols`, `rows`, and raw bytes.
+- Replay applies recorded dimensions before its data and is not ACK-counted.
+- Live frames may be combined for one xterm write, but ACK uses the last live sequence and the summed raw UTF-16 length.
+- No component or store may call `listen("pty-output-...")` or invoke `pty_write/pty_resize/pty_close` directly.
+- Large-buffer horizontal resize is delayed 100ms; vertical resize remains immediate; visibility restore forces a full resize/refresh.
+
+**Wrong**:
+
+```tsx
+listen(`pty-output-${sessionId}`, ({ payload }) => terminal.write(atob(payload)));
+```
+
+**Correct**:
+
+```tsx
+terminalProcessManager.subscribeOutput(sessionId, (frame) => {
+  terminal.write(decode(frame.data), () => {
+    terminalProcessManager.acknowledgeOutput(sessionId, frame.sequence, rawLength);
+  });
+});
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually verify background output, reconnect replay, split/fullscreen resize, IME, WebGL fallback, and no duplicate output after daemon reconnect.
+
 > How components are built in this project.
 
 ---

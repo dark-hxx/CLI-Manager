@@ -13,6 +13,8 @@ const CONPTY_RESOURCE_ROOT: &str = "resources/conpty";
 const CONPTY_DLL: &str = "conpty.dll";
 const OPENCONSOLE_EXE: &str = "OpenConsole.exe";
 #[cfg(target_os = "windows")]
+const CONPTY_DLL_PATH_ENV: &str = "CLI_MANAGER_CONPTY_DLL_PATH";
+#[cfg(target_os = "windows")]
 const WINDOWS_CONPTY_COMPATIBILITY_FIX_SETTING: &str = "windowsConptyCompatibilityFixEnabled";
 #[cfg(target_os = "windows")]
 const WINDOWS_25H2_BUILD: u32 = 26200;
@@ -25,10 +27,16 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
             return;
         }
         match bundled_conpty_dir(app).and_then(prepend_conpty_dir_to_path) {
-            Ok(Some(dir)) => info!(
-                "bundled ConPTY sideload enabled: dir={}",
-                dir.to_string_lossy()
-            ),
+            Ok(Some(dir)) => {
+                let dll_path = dir.join(CONPTY_DLL);
+                unsafe {
+                    std::env::set_var(CONPTY_DLL_PATH_ENV, &dll_path);
+                }
+                info!(
+                    "bundled ConPTY sideload enabled: dir={}",
+                    dir.to_string_lossy()
+                );
+            }
             Ok(None) => info!("bundled ConPTY sideload skipped: unsupported architecture"),
             Err(err) => warn!("bundled ConPTY sideload unavailable: {err}"),
         }

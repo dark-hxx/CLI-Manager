@@ -1,8 +1,8 @@
 //! 主进程侧 daemon 客户端：发现/拉起 daemon、鉴权连接、请求-应答关联、
-//! 推送帧 re-emit（`pty-output-{id}`/`pty-status-{id}`/`claude-hook-notification`）。
+//! 低频请求代理与 hook 通知转发；终端输出由 WebView 直连 WebSocket 接收。
 //!
-//! 契约：daemon 不可用必须降级进程内 PTY，应用照常可用——因此本模块所有
-//! 失败路径都只返回 Err/None，绝不 panic、不阻塞启动主链路。
+//! PtyHost daemon 是唯一生产终端路径；本模块失败时返回 Err/None，绝不 panic，
+//! 由命令层向前端明确报告终端暂不可用。
 
 use super::discovery::{
     daemon_info_path, is_pid_alive, read_daemon_info, remove_daemon_info, DaemonInfo,
@@ -12,6 +12,7 @@ use super::protocol::{
     MAX_FRAME_BYTES,
 };
 use crate::pty::manager::PtyProcessStatus;
+use base64::Engine;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -45,7 +46,7 @@ pub struct DaemonClient {
 }
 
 /// Tauri managed state：daemon 客户端插槽。
-/// None = daemon 不可用（降级进程内 PTY）。
+/// None = daemon 尚未就绪或连接已失效。
 pub struct DaemonBridge {
     inner: Mutex<Option<Arc<DaemonClient>>>,
 }
@@ -63,7 +64,7 @@ impl DaemonBridge {
         }
     }
 
-    /// 取存活的客户端；连接已断则清槽返回 None（后续命令自动降级）。
+    /// 取存活的客户端；连接已断则清槽返回 None。
     pub fn get(&self) -> Option<Arc<DaemonClient>> {
         let mut inner = self.inner.lock().ok()?;
         match inner.as_ref() {
@@ -163,10 +164,15 @@ impl DaemonClient {
         match frame {
             DaemonFrame::Output {
                 session_id,
+                sequence,
                 data_base64,
+                ..
             } => {
-                // 与 TauriPtyEventSink 完全一致的事件与载荷，前端零感知。
-                let _ = app_handle.emit(&format!("pty-output-{session_id}"), data_base64);
+                let char_count = base64::engine::general_purpose::STANDARD
+                    .decode(data_base64.as_bytes())
+                    .map(|data| String::from_utf8_lossy(&data).encode_utf16().count())
+                    .unwrap_or(0);
+                self.send_ack(&session_id, sequence, char_count);
             }
             DaemonFrame::Exit {
                 session_id,
@@ -203,6 +209,25 @@ impl DaemonClient {
 
     pub fn next_request_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn send_ack(&self, session_id: &str, sequence: u64, char_count: usize) {
+        if !self.is_connected() || char_count == 0 {
+            return;
+        }
+        let id = self.next_request_id();
+        let frame = ClientFrame::Ack {
+            id,
+            session_id: session_id.to_string(),
+            sequence,
+            char_count,
+        };
+        let Ok(mut writer) = self.writer.lock() else {
+            return;
+        };
+        if writer.write_all(encode_frame(&frame).as_bytes()).is_err() {
+            self.connected.store(false, Ordering::SeqCst);
+        }
     }
 
     /// 发请求并等待对应 id 的应答（超时/断连返回 Err）。
@@ -245,91 +270,10 @@ impl DaemonClient {
         }
     }
 
-    pub fn create(
-        &self,
-        session_id: &str,
-        cwd: Option<String>,
-        env_vars: Option<HashMap<String, String>>,
-        shell: Option<String>,
-    ) -> Result<(), String> {
-        let id = self.next_request_id();
-        self.expect_ok(
-            &ClientFrame::Create {
-                id,
-                session_id: session_id.to_string(),
-                cwd,
-                env_vars,
-                shell,
-            },
-            id,
-        )
-    }
-
-    pub fn write(&self, session_id: &str, data: &str) -> Result<(), String> {
-        let id = self.next_request_id();
-        self.expect_ok(
-            &ClientFrame::Write {
-                id,
-                session_id: session_id.to_string(),
-                data: data.to_string(),
-            },
-            id,
-        )
-    }
-
-    pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let id = self.next_request_id();
-        self.expect_ok(
-            &ClientFrame::Resize {
-                id,
-                session_id: session_id.to_string(),
-                cols,
-                rows,
-            },
-            id,
-        )
-    }
-
-    pub fn close(&self, session_id: &str) -> Result<(), String> {
-        let id = self.next_request_id();
-        self.expect_ok(
-            &ClientFrame::Close {
-                id,
-                session_id: session_id.to_string(),
-            },
-            id,
-        )
-    }
-
-    pub fn close_all(&self) -> Result<(), String> {
-        let id = self.next_request_id();
-        self.expect_ok(&ClientFrame::CloseAll { id }, id)
-    }
-
     pub fn list(&self) -> Result<Vec<SessionMeta>, String> {
         let id = self.next_request_id();
         match self.request(id, &ClientFrame::List { id })? {
             DaemonFrame::Sessions { sessions, .. } => Ok(sessions),
-            DaemonFrame::Err { message, .. } => Err(message),
-            other => Err(format!("daemon unexpected reply: {other:?}")),
-        }
-    }
-
-    /// attach 会话：订阅输出推送并取得 ring buffer 回放（base64）。
-    pub fn attach(&self, session_id: &str) -> Result<(String, SessionMeta), String> {
-        let id = self.next_request_id();
-        match self.request(
-            id,
-            &ClientFrame::Attach {
-                id,
-                session_id: session_id.to_string(),
-            },
-        )? {
-            DaemonFrame::Attached {
-                replay_base64,
-                meta,
-                ..
-            } => Ok((replay_base64, meta)),
             DaemonFrame::Err { message, .. } => Err(message),
             other => Err(format!("daemon unexpected reply: {other:?}")),
         }
@@ -376,7 +320,7 @@ impl DaemonClient {
     }
 }
 
-/// 发现或拉起 daemon 并建立连接。失败返回 Err（调用方降级进程内 PTY）。
+/// 发现或拉起 daemon 并建立连接。失败返回 Err，由调用方向前端报告不可用。
 pub fn connect_or_spawn(
     app_handle: AppHandle,
     data_dir: &Path,

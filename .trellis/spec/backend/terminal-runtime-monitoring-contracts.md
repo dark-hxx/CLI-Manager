@@ -117,16 +117,19 @@ let installed = running_hook && attention_hook && stop_hook && hooks_feature_ins
 
 ### 2. Signatures
 
-- Tauri command signature remains stable:
+- Tauri bootstrap command prepares the session id and launch environment; the WebSocket `create` frame starts the PTY:
 
 ```rust
-pub async fn pty_create(
-    session_id: String,
+pub async fn pty_prepare_create(
+    app_handle: AppHandle,
+    daemon_bridge: State<'_, DaemonBridge>,
     cwd: Option<String>,
-    shell: Option<String>,
     env_vars: Option<HashMap<String, String>>,
-    state: State<'_, AppState>,
-) -> Result<String, String>
+    shell: Option<String>,
+    hook_env_enabled: Option<bool>,
+    claude_provider: Option<ClaudeProviderLaunchConfig>,
+    codex_provider: Option<CodexProviderLaunchConfig>,
+) -> Result<PreparedPtyCreate, String>
 ```
 
 - PTY manager contract:
@@ -136,8 +139,9 @@ pub fn create(
     &self,
     session_id: &str,
     cwd: Option<&str>,
-    shell: Option<&str>,
     env_vars: Option<HashMap<String, String>>,
+    shell: Option<&str>,
+    sink: Arc<dyn PtyEventSink>,
 ) -> Result<(), String>
 ```
 
@@ -160,7 +164,7 @@ export interface ShellRuntimePayload {
 
 | Key | Required | Owner | Contract |
 |---|---:|---|---|
-| `CLI_MANAGER_TAB_ID` | Yes | Rust `pty_create` | Must equal the frontend session id for the PTY. |
+| `CLI_MANAGER_TAB_ID` | Yes | Rust `pty_prepare_create` | Must equal the prepared session id later sent in the WebSocket `create` frame. |
 | `CLI_MANAGER_SHELL_RUNTIME_MONITORING` | Optional | Frontend `terminalStore` | Value `"1"` enables shell runtime monitoring for a new PTY. Missing or any other value disables injection. |
 
 - Setting default and opt-in behavior:
@@ -257,7 +261,7 @@ Hook-driven `attention` must win over shell runtime state until the user activat
   - Git Bash initial reader delay exists only for Windows `gitbash`, not for PowerShell / cmd / WSL / Unix shells.
   - macOS/Linux with omitted shell or Windows-only stale shell never resolves to `powershell.exe`, `cmd.exe`, or `wsl.exe`.
   - Non-PowerShell shells keep their normal argument list.
-  - `pty_create` always injects `CLI_MANAGER_TAB_ID`.
+  - `pty_prepare_create` always injects `CLI_MANAGER_TAB_ID` before returning launch env to `TerminalProcessManager`.
 
 ### 7. Wrong vs Correct
 
@@ -307,12 +311,12 @@ Ok((git_bash_path, Vec::new()))
 Ok((git_bash_path, vec!["--login".to_string(), "-i".to_string()]))
 ```
 
-## Scenario: Windows bundled ConPTY/OpenConsole sideload
+## Scenario: Windows bundled ConPTY/OpenConsole direct loading
 
 ### 1. Scope / Trigger
 
-- Trigger: Windows internal PTY behavior depends on the ConPTY implementation that `portable-pty` loads before the first terminal session is created.
-- This is an infra contract because it spans Tauri resource bundling, Rust app startup, process environment, and `portable-pty` runtime DLL loading.
+- Trigger: Windows internal PTY behavior depends on which ConPTY implementation the direct platform adapter loads before the first terminal session is created.
+- This is an infra contract because it spans Tauri resource bundling, Rust app startup, process environment, and direct Win32 DLL/API loading.
 
 ### 2. Signatures
 
@@ -332,8 +336,8 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>)
 | Tauri config | `bundle.resources` must include `resources/conpty/**/*`. |
 | Runtime setting | `settings.json.windowsConptyCompatibilityFixEnabled` controls whether bundled ConPTY sideload runs. Missing setting is initialized at startup from the Windows build number. |
 | Default boundary | Windows build `< 26200` defaults enabled; build `>= 26200` defaults disabled; build detection failure defaults enabled. |
-| Runtime init | On Windows, if the setting is enabled, resolve the matching resource directory through `BaseDirectory::Resource` and prepend it to process `PATH`. |
-| Load order | Init must run before the first `portable-pty` `openpty`; `portable-pty` checks `conpty.dll` before falling back to `kernel32.dll`. |
+| Runtime init | On Windows, if the setting is enabled, resolve the matching resource directory through `BaseDirectory::Resource`, prepend it to process `PATH`, and set `CLI_MANAGER_CONPTY_DLL_PATH` to the absolute bundled DLL path. |
+| Load order | Init must run before the first direct ConPTY spawn; `pty/platform/windows.rs` loads only the absolute configured DLL path and otherwise calls the `kernel32.dll` ConPTY exports. |
 | Non-Windows | No-op; do not mutate `PATH`. |
 
 ### 4. Validation & Error Matrix
@@ -354,7 +358,7 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>)
 - Good: Windows 25H2 or newer initializes the setting to disabled; users can still enable it manually from Developer settings and restart.
 - Base: development checkout missing resources logs a warning and still opens terminals through system ConPTY.
 - Base: changing the setting in the WebView requires app relaunch because ConPTY DLL selection is process-startup state.
-- Bad: mutating `PATH` after `portable-pty` has already loaded `conpty.dll` is too late and must not be treated as effective.
+- Bad: setting `CLI_MANAGER_CONPTY_DLL_PATH` after the direct adapter has already selected its API for a PTY is too late and must not be treated as effective.
 - Bad: bundling only `conpty.dll` without matching `OpenConsole.exe` can load an incomplete runtime and must be rejected.
 
 ### 6. Tests Required
@@ -375,9 +379,9 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>)
 #### Wrong
 
 ```rust
-// Too late: the DLL may already be loaded by portable-pty.
+// Too late: the PTY has already selected and used a ConPTY API implementation.
 pty_manager.create(...)?;
-std::env::set_var("PATH", conpty_dir);
+std::env::set_var("CLI_MANAGER_CONPTY_DLL_PATH", conpty_dll);
 ```
 
 #### Correct
@@ -396,18 +400,16 @@ conpty_sideload::initialize(app.handle());
 
 ### 2. Signatures
 
-```rust
-pub async fn pty_close(
-    pty_manager: tauri::State<'_, PtyManager>,
-    session_id: String,
-) -> Result<(), String>
+```text
+TerminalProcessManager.close(session_id: string): Promise<void>
+TerminalProcessManager.closeAll(): Promise<void>
 
-pub async fn pty_close_all(
-    pty_manager: tauri::State<'_, PtyManager>,
-) -> Result<(), String>
+WebSocket control frames:
+{ "type": "close", "id": number, "session_id": string }
+{ "type": "close_all", "id": number }
 
 pub async fn pty_reconcile_active_sessions(
-    pty_manager: tauri::State<'_, PtyManager>,
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
     active_session_ids: Vec<String>,
 ) -> Result<PtyOrphanCleanupSummary, String>
 
@@ -421,14 +423,14 @@ pub fn reconcile_active_sessions(
 
 ### 3. Contracts
 
-- `pty_close` remains the per-session close command used by tab close and split cleanup.
-- `pty_close_all` closes every session currently tracked by `PtyManager`; app exit must call it before clearing persisted session state and destroying the window.
+- `TerminalProcessManager.close` remains the per-session close path used by tab close and split cleanup; it sends the WebSocket `close` control frame.
+- `TerminalProcessManager.closeAll` sends the WebSocket `close_all` control frame and closes every session currently tracked by daemon `PtyManager`; app exit must call it before destroying the window.
 - `pty_reconcile_active_sessions` is a conservative fallback only: the frontend reports currently active PTY-backed terminal session ids, and the backend compares that set with `PtyManager.sessions`.
 - Orphan reconciliation must never scan or kill by process name; only missing session ids already owned by `PtyManager` are eligible.
 - Orphan reconciliation must ignore an empty active list, protect newly-created sessions, mark missing sessions first, and only close a missing session after the grace period.
-- Windows cleanup must target the PTY root PID returned by `portable_pty::Child::process_id()` and terminate that process tree.
+- Windows cleanup must target the PTY root PID returned by `PlatformPtyChild::process_id()` and terminate that process tree.
 - Windows cleanup must not scan by process name (`codex.exe`, `bash.exe`, etc.); only the owned PTY process tree is eligible.
-- Non-Windows cleanup keeps the existing direct child kill behavior unless a platform-specific process-tree mechanism is explicitly added later.
+- Unix cleanup must signal the process group created by `setsid`, then use direct child kill as a fallback.
 - On Windows, `close_all` should batch process-tree termination into a single `taskkill /F /T /PID <pid> ...` call for all known PTY root PIDs, then still call each child handle's direct kill as a fallback.
 - `close_all` must not hold the global sessions map lock while running `taskkill` or joining reader threads. Snapshot/remove sessions first, then perform blocking cleanup.
 - `close()` remains the per-session path; do not make tab close wait for unrelated sessions.
@@ -437,12 +439,12 @@ pub fn reconcile_active_sessions(
 
 | Condition | Required behavior |
 |---|---|
-| `pty_close` receives an unknown `session_id` | Treat as a no-op and return `Ok(())`. |
+| WebSocket `close` receives an unknown `session_id` | Treat as a no-op and return `ok`. |
 | Windows child PID is available | Run process-tree termination for that PID, then still call child kill as a fallback. |
-| Windows process-tree termination fails | Log a warning and fall back to `portable_pty::Child::kill()`; do not block tab close. |
+| Windows process-tree termination fails | Log a warning and fall back to `PlatformPtyChild::kill()`; do not block tab close. |
 | Windows child PID is missing | Skip tree termination and use direct child kill. |
-| `pty_close_all` runs while sessions are active on Windows | Remove/snapshot all sessions, batch owned root PIDs into one `taskkill /F /T` call, then direct-kill each child and join readers. |
-| `pty_close_all` runs while sessions are active on non-Windows | Keep the existing per-session close behavior unless a platform-specific tree cleanup is added. |
+| WebSocket `close_all` runs while sessions are active on Windows | Remove/snapshot all sessions, batch owned root PIDs into one `taskkill /F /T` call, then direct-kill each child and join readers. |
+| WebSocket `close_all` runs while sessions are active on Unix | Signal each owned process group, direct-kill each child as fallback, then join readers. |
 | App exit cleanup fails to close PTYs | Log the error and continue the exit path so the app does not hang. |
 | `pty_reconcile_active_sessions` receives an empty active list | Skip cleanup and return a summary with `skipped_empty_active_list=true`. |
 | A backend session is absent from the active list but newly created | Keep it alive during the startup protection window. |
@@ -466,7 +468,7 @@ pub fn reconcile_active_sessions(
 - Frontend checks: `npx tsc --noEmit` or `npm run build` when the exit path changes.
 - Manual Windows verification: open a Git Bash/Codex terminal, close its tab, and confirm the associated process tree no longer remains in Task Manager.
 - Manual Windows verification: exit the app with active PTY sessions and confirm owned PTY child processes are gone.
-- Manual Windows verification: temporarily remove a tab from frontend state without calling `pty_close`, then confirm the backend marks it missing before killing it after the grace period.
+- Manual Windows verification: temporarily remove a tab from frontend state without calling `TerminalProcessManager.close`, then confirm the backend marks it missing before killing it after the grace period.
 - Regression check: app exit with multiple active PTYs should not spawn one `taskkill` per session on Windows; the full-exit cleanup path should remain bounded by one batch command plus reader joins.
 
 ### 7. Wrong vs Correct

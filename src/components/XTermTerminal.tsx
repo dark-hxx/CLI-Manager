@@ -33,7 +33,6 @@ import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
 import { wrapTerminalPasteTextForCtrlShiftV } from "../lib/terminalKeyboard";
 import {
   didRenderFullTerminalViewport,
-  planTerminalVisibilityRestore,
   refreshTerminalViewport,
 } from "../lib/terminalVisibility";
 import {
@@ -44,7 +43,8 @@ import {
 import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../lib/shell";
 import { Portal } from "./ui/Portal";
 import { useProjectStore } from "../stores/projectStore";
-import { formatStartupInputForPty, useTerminalStore, type PtyAttachResult } from "../stores/terminalStore";
+import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
+import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 import {
   TERMINAL_SCROLLBACK_ROWS_DEFAULT,
   useSettingsStore,
@@ -323,7 +323,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const hiddenForThisSession = useTerminalStore((s) => s.hiddenBackgroundSessionIds.has(sessionId));
 
   const [assetUrl, setAssetUrl] = useState<string | null>(null);
-  const [inactiveReplayPending, setInactiveReplayPending] = useState(false);
   const [visibilityRestorePending, setVisibilityRestorePending] = useState(false);
   const [suggestionGhost, setSuggestionGhost] = useState<TerminalSuggestionGhostState | null>(null);
   const [linuxGraphicsConstrained, setLinuxGraphicsConstrained] = useState(false);
@@ -466,10 +465,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     scheduleFit,
     scheduleViewportRefresh,
     markViewportRefreshNeeded,
-    getOutputRestorePlanState,
-    flushInactiveBufferForReplay,
-    resumeActiveWriteQueue,
-    getPendingOutputSnapshot,
     attachPtyOutput,
     attachViewport,
     resetOutputState,
@@ -483,14 +478,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     isVisibleRef,
     isComposingRef,
     lowMemoryMode,
-    terminalScrollbackRows: effectiveTerminalScrollbackRows,
     disableHardwareAcceleration,
     linuxGraphicsDisableWebgl,
     isTransparentRef,
     normalizeOutputRef: displayNormalizeOutputRef,
     transformOutputRef: displayTransformOutputRef,
     afterTerminalWriteRef: displayAfterWriteRef,
-    onInactiveReplayPendingChange: setInactiveReplayPending,
     onPtyOutputListenError: (err) => logError("Failed to listen PTY output", { sessionId, err }),
   });
 
@@ -704,11 +697,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     scheduleTuiComposerBackgroundNormalization(terminal);
   }, [fontSize, effectiveFontFamily, effectiveTerminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen]);
 
-  // Visibility drives live rendering. A pane tab is "visible" when it is the
-  // shown tab in its own pane — which, in a split, includes panes that are not
-  // the globally focused one. When a tab becomes visible, flush any output
-  // stashed while it was hidden and refit to its current size. This keeps a
-  // split's unfocused half rendering live instead of freezing until clicked.
+  // Hidden terminals stay attached and continue parsing output. Visibility only
+  // controls renderer resources and when pending layout work is flushed.
   useEffect(() => {
     const wasVisible = isVisibleRef.current;
     isVisibleRef.current = isVisible;
@@ -728,35 +718,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     }
 
     if (!fitAddonRef.current || !containerRef.current) return;
-    const outputRestoreState = getOutputRestorePlanState();
-    const restorePlan = planTerminalVisibilityRestore({
-      wasVisible,
-      isVisible,
-      inactiveBufferLength: outputRestoreState.inactiveBufferLength,
-      activeWriteQueueLength: outputRestoreState.activeWriteQueueLength,
-      activeWriteRafScheduled: outputRestoreState.activeWriteRafScheduled,
-    });
-    // Flush data stashed while this tab was hidden
-    if (restorePlan.shouldFlushInactiveBuffer) {
-      flushInactiveBufferForReplay();
-    }
-    if (restorePlan.shouldResumeActiveWriteQueue) {
-      if (useSettingsStore.getState().debugMode) {
-        logInfo("[terminal-visibility] resuming queued active writes after visibility restore", {
-          sessionId,
-          queuedChunks: outputRestoreState.activeWriteQueueLength,
-        });
-      }
-      resumeActiveWriteQueue();
-    }
-    if (restorePlan.shouldRefreshViewport || rendererRestored) {
+    const becameVisible = !wasVisible && isVisible;
+    if (becameVisible || rendererRestored) {
       beginVisibilityRestoreReveal();
-    }
-    if (restorePlan.shouldRefreshViewport) {
       markViewportRefreshNeeded();
     }
-    // Wait for display:block to take effect and the layout to stabilize.
-    // Display refresh is gated by explicit viewport-refresh state, not by every fit.
     scheduleFit(true);
     if (terminalRef.current) {
       normalizeTuiComposerBackground(terminalRef.current);
@@ -907,10 +873,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const initialTerminalOutput = sessionSnapshot?.initialTerminalOutput;
     const writeDeferredStartup = () => {
       if (!sessionSnapshot?.deferStartupUntilInitialOutput || !sessionSnapshot.startupCmd) return;
-      invoke("pty_write", {
+      terminalProcessManager.write(
         sessionId,
-        data: formatStartupInputForPty(sessionSnapshot.startupCmd, normalizeShellKey(sessionSnapshot.shell) ?? null),
-      }).catch((err) => reportPtyWriteError("deferredStartup", err));
+        formatStartupInputForPty(sessionSnapshot.startupCmd, normalizeShellKey(sessionSnapshot.shell) ?? null),
+      ).catch((err) => reportPtyWriteError("deferredStartup", err));
     };
     if (initialTerminalOutput) {
       terminal.write(initialTerminalOutput, () => {
@@ -1026,7 +992,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           if (matched) {
             markAttentionInputHandled();
             const newlineData = isCodexSession() ? "\x1b\r" : "\n";
-            invoke("pty_write", { sessionId, data: newlineData }).catch((err) => reportPtyWriteError("newline", err));
+            terminalProcessManager.write(sessionId, newlineData).catch((err) => reportPtyWriteError("newline", err));
           }
           return false;
         }
@@ -1090,7 +1056,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         const sendInterrupt = () => {
           markAttentionInputHandled();
           inputSelection.clearInputSelectionState();
-          invoke("pty_write", { sessionId, data: "\x03" }).catch((err) => reportPtyWriteError("interrupt", err));
+          terminalProcessManager.write(sessionId, "\x03").catch((err) => reportPtyWriteError("interrupt", err));
         };
         const isMacCopy = isMacSelectAll && e.metaKey && !e.ctrlKey;
         const isPlainCtrlC = e.ctrlKey && !e.metaKey;
@@ -1179,9 +1145,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     if (useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId)) {
       void ptyOutput.ready.then(async () => {
         if (terminalRef.current !== terminal) return;
-        const attach = await invoke<PtyAttachResult>("pty_attach", { sessionId });
+        const attach = await terminalProcessManager.attach(sessionId);
         if (terminalRef.current !== terminal) return;
-        ptyOutput.completeReplay(attach.replayBase64);
+        const replayCompleted = await ptyOutput.completeReplay(attach.replay);
+        if (!replayCompleted) return;
         useTerminalStore.setState((state) => ({
           daemonAttachPendingSessionIds: new Set(
             [...state.daemonAttachPendingSessionIds].filter((id) => id !== sessionId)
@@ -1190,8 +1157,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         if (!attach.attached) {
           toast.error(t("terminal.backgroundTasks.restoreFailed"));
         }
-      }).catch((err) => {
-        ptyOutput.completeReplay("");
+      }).catch(async (err) => {
+        const replayCompleted = await ptyOutput.completeReplay([]);
+        if (!replayCompleted) return;
         useTerminalStore.setState((state) => ({
           daemonAttachPendingSessionIds: new Set(
             [...state.daemonAttachPendingSessionIds].filter((id) => id !== sessionId)
@@ -1231,8 +1199,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       cancelScheduledFit();
       try {
         const serializedOutput = serializeAddon.serialize();
-        const pendingOutput = getPendingOutputSnapshot();
-        useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, `${serializedOutput}${pendingOutput}`);
+        useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, serializedOutput);
       } catch (err) {
         logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
       }
@@ -1337,7 +1304,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     closeContextMenu();
     if (!terminal) return;
     useTerminalStore.getState().markAttentionInputHandled(sessionId);
-    invoke("pty_write", { sessionId, data: "\x0c" }).catch((err) => reportPtyWriteError("clear", err));
+    terminalProcessManager.write(sessionId, "\x0c").catch((err) => reportPtyWriteError("clear", err));
     terminal.focus();
   };
 
@@ -1369,7 +1336,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       } as CSSProperties)
     : ({ "--terminal-font-family": effectiveFontFamily, backgroundColor } as CSSProperties);
   const visibilityRestoreStarting = isVisible && !isVisibleRef.current;
-  const terminalContainerStyle: CSSProperties | undefined = inactiveReplayPending || visibilityRestorePending || visibilityRestoreStarting
+  const terminalContainerStyle: CSSProperties | undefined = visibilityRestorePending || visibilityRestoreStarting
     ? { visibility: "hidden" }
     : undefined;
 

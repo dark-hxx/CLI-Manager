@@ -50,6 +50,7 @@ import { normalizeFontFamilyStack } from "./lib/systemFonts";
 import { ALL_TERMINALS_SCOPE } from "./lib/terminalScope";
 import { getTerminalTheme, isLightTerminalTheme } from "./lib/terminalThemes";
 import { resolveProjectForSession } from "./lib/terminalProject";
+import { terminalProcessManager } from "./terminal/core/TerminalProcessManager";
 import type { TerminalScope } from "./lib/types";
 import "./App.css";
 
@@ -913,7 +914,7 @@ function App() {
     });
     // Phase 2：拒绝恢复 = 不要这批旧标签。daemon 中对应会话若还在跑，
     // 必须一并关闭，否则成为无人认领的后台任务且阻止 daemon 空闲自灭。
-    void invoke("pty_close_all").catch((err) => {
+    void terminalProcessManager.closeAll().catch((err) => {
       logWarn("Failed to close daemon sessions after user rejected restore", err);
     });
   }, []);
@@ -1146,7 +1147,7 @@ function App() {
       await runCloseAutoSync();
       setExitPhase("closing");
       // Issue #123：正常退出前把各终端最终画面强制落盘，供下次启动问询式恢复。
-      // 必须在 pty_close_all 之前，避免关闭 PTY 触发的重绘/清屏影响 serialize 结果；
+      // 必须在 PtyHost closeAll 之前，避免关闭 PTY 触发的重绘/清屏影响 serialize 结果；
       // 此处不再 clear() 工作区快照——那会让"关闭后恢复"永远拿不到数据。
       if (!discardSessions) {
         await flushTerminalSnapshotsNow();
@@ -1157,7 +1158,7 @@ function App() {
         if (discardSessions) {
           logInfo("exit: closing all PTY sessions", { source });
           try {
-            await invoke("pty_close_all");
+            await terminalProcessManager.closeAll();
             logInfo("exit: close_all completed", { source });
           } catch (err) {
             logWarn("Failed to close all PTY sessions before exit", { source, err });
@@ -1166,7 +1167,7 @@ function App() {
           let closedCount = 0;
           for (const sessionId of ptySessionIds) {
             try {
-              await invoke("pty_close", { sessionId });
+              await terminalProcessManager.close(sessionId);
               closedCount += 1;
             } catch (err) {
               logWarn("Failed to close foreground PTY session before exit", { source, sessionId, err });
@@ -1194,7 +1195,7 @@ function App() {
   // Issue #123 Phase 1/2：转入后台。
   // daemon 可用 → 真退出应用，任务由守护进程续跑（下次启动 attach 回放）；
   // daemon 不可用 → 托盘常驻降级：仅隐藏窗口，严禁触碰退出链路
-  // （runExitCleanup / pty_close_all）——PTY、hook server、快照节流全部存活。
+  // （runExitCleanup / PtyHost closeAll）——PTY、hook server、快照节流全部存活。
   const minimizeToTray = useCallback(async () => {
     try {
       await getCurrentWindow().hide();

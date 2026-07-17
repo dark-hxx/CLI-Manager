@@ -32,7 +32,6 @@ log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
-portable-pty = "0.8"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
 tauri-plugin-dialog = "2"
@@ -58,6 +57,7 @@ fontdb = "0.23"
 tauri-plugin-clipboard-manager = "2"
 sysinfo = "0.39.5"
 local-ip-address = "0.6.13"
+tungstenite = "0.30.0"
 
 # macOS universal 交叉编译时不能复用宿主架构的 OpenSSL，因此仅在 macOS 使用 vendored 构建。
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -76,8 +76,11 @@ keyring-core = "1"
 zbus-secret-service-keyring-store = { version = "1", features = ["rt-tokio-crypto-rust"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Performance", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Performance", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_Security"] }
 windows-native-keyring-store = "1"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", features = ["fs", "ioctl", "process", "signal", "term"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -23,4 +23,4 @@ c46dcd04f52b97f6a8cf53e8f547c85a821660bed18de2b3344afcd4a8389ad6  x64/conpty.dll
 52c5a30d823d830812bc3fe104f02d847c23c6b8cd10c970b9bdbc53ff8f3f37  x86/OpenConsole.exe
 ```
 
-Purpose: `portable-pty` first tries to load `conpty.dll` before falling back to `kernel32.dll`. CLI-Manager prepends the matching resource directory to `PATH` on Windows so old OS ConPTY builds use this newer OpenConsole host.
+Purpose: CLI-Manager's direct ConPTY adapter first tries to load `conpty.dll` from the configured runtime path and falls back to the `kernel32.dll` ConPTY API. CLI-Manager prepends the matching resource directory to `PATH` when the Windows compatibility setting is enabled so affected Windows builds can use this newer OpenConsole host.

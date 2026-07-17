@@ -2,13 +2,17 @@ import { useRef, type RefObject } from "react";
 import type { ITheme, Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { refreshTerminalViewport } from "../lib/terminalVisibility";
 import { isLightTerminalTheme } from "../lib/terminalThemes";
-import { debugConsoleWarn } from "../lib/debugConsole";
-import { logError, logInfo, logWarn } from "../lib/logger";
+import { logError, logWarn } from "../lib/logger";
 import { markTerminalSnapshotDirty } from "../lib/sessionSnapshotPersistence";
+import { TerminalResizeDebouncer } from "../terminal/browser/TerminalResizeDebouncer";
+import {
+  terminalProcessManager,
+  type TerminalOutputDelivery,
+} from "../terminal/core/TerminalProcessManager";
+import type { TerminalBinaryFrame } from "../terminal/transport/PtyHostSocket";
 import {
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
@@ -18,26 +22,20 @@ import {
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
 const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
-const ACTIVE_WRITE_FRAME_BUDGET = 64 * 1024;
-const ACTIVE_WRITE_QUEUE_MAX_CHARS = 16 * 1024 * 1024;
-const ACTIVE_WRITE_QUEUE_LOG_INTERVAL_MS = 2000;
-const INACTIVE_BUFFER_MIN_CHARS = 256 * 1024;
-const INACTIVE_BUFFER_MAX_CHARS = 8 * 1024 * 1024;
-const INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW = 256;
 
 type NormalizeTerminalOutput = (text: string) => string;
 type TransformTerminalOutput = (text: string) => string;
 type AfterTerminalWrite = (terminal: Terminal) => void;
 
-interface ActiveWriteQueueItem {
+interface PendingTerminalWrite {
   text: string;
-  inactiveReplay: boolean;
+  charCount: number;
+  commit: ((charCount: number) => void) | null;
+  replay: boolean;
+  replayBatchEnd: boolean;
+  cols: number;
+  rows: number;
 }
-
-const getInactiveBufferLimit = (scrollbackRows: number) => Math.min(
-  INACTIVE_BUFFER_MAX_CHARS,
-  Math.max(INACTIVE_BUFFER_MIN_CHARS, scrollbackRows * INACTIVE_BUFFER_CHARS_PER_SCROLLBACK_ROW)
-);
 
 interface UseTerminalDisplayOptions {
   sessionId: string;
@@ -47,14 +45,12 @@ interface UseTerminalDisplayOptions {
   isVisibleRef: RefObject<boolean>;
   isComposingRef: RefObject<boolean>;
   lowMemoryMode: boolean;
-  terminalScrollbackRows: number;
   disableHardwareAcceleration: boolean;
   linuxGraphicsDisableWebgl: boolean;
   isTransparentRef: RefObject<boolean>;
   normalizeOutputRef: RefObject<NormalizeTerminalOutput>;
   transformOutputRef: RefObject<TransformTerminalOutput>;
   afterTerminalWriteRef: RefObject<AfterTerminalWrite | null>;
-  onInactiveReplayPendingChange: (pending: boolean) => void;
   onPtyOutputListenError: (err: unknown) => void;
   onViewportRefreshNeeded?: () => void;
 }
@@ -68,18 +64,10 @@ export interface UseTerminalDisplayResult {
   scheduleFit: (force?: boolean) => void;
   scheduleViewportRefresh: () => void;
   markViewportRefreshNeeded: () => void;
-  enqueueActiveWrite: (text: string, inactiveReplay?: boolean) => void;
-  getOutputRestorePlanState: () => {
-    inactiveBufferLength: number;
-    activeWriteQueueLength: number;
-    activeWriteRafScheduled: boolean;
-  };
-  flushInactiveBufferForReplay: () => void;
-  resumeActiveWriteQueue: () => void;
-  getPendingOutputSnapshot: () => string;
+  enqueueActiveWrite: (text: string, onCommitted?: () => void) => void;
   attachPtyOutput: (options?: { waitForReplay?: boolean }) => {
     ready: Promise<void>;
-    completeReplay: (replayBase64: string) => void;
+    completeReplay: (replay: TerminalBinaryFrame[]) => Promise<boolean>;
     dispose: () => void;
   };
   attachViewport: (terminal: Terminal) => () => void;
@@ -96,14 +84,12 @@ export function useTerminalDisplay({
   isVisibleRef,
   isComposingRef,
   lowMemoryMode,
-  terminalScrollbackRows,
   disableHardwareAcceleration,
   linuxGraphicsDisableWebgl,
   isTransparentRef,
   normalizeOutputRef,
   transformOutputRef,
   afterTerminalWriteRef,
-  onInactiveReplayPendingChange,
   onPtyOutputListenError,
   onViewportRefreshNeeded,
 }: UseTerminalDisplayOptions): UseTerminalDisplayResult {
@@ -112,22 +98,13 @@ export function useTerminalDisplay({
   const webglContextLostRef = useRef(false);
   const fitRafRef = useRef<number | null>(null);
   const needsViewportRefreshRef = useRef(false);
-  const inactiveBufferLimitRef = useRef(getInactiveBufferLimit(terminalScrollbackRows));
-  const inactiveBufferRef = useRef<string[]>([]);
-  const inactiveBufferSizeRef = useRef(0);
-  const activeWriteQueueRef = useRef<ActiveWriteQueueItem[]>([]);
-  const activeWriteQueueSizeRef = useRef(0);
-  const activeWriteQueueLastDropLogAtRef = useRef(0);
-  const activeWriteRafRef = useRef<number | null>(null);
-  const inactiveReplayStickToBottomRef = useRef(false);
-  const inactiveReplayPendingWritesRef = useRef(0);
-  const inactiveReplayPendingRef = useRef(false);
-  const ptyPendingChunksRef = useRef<string[]>([]);
+  const ptyPendingChunksRef = useRef<PendingTerminalWrite[]>([]);
   const ptyWriteRafIdRef = useRef<number | null>(null);
+  const ptyWriteInProgressRef = useRef(false);
   const ptyUnlistenRef = useRef<UnlistenFn | null>(null);
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
-
-  inactiveBufferLimitRef.current = getInactiveBufferLimit(terminalScrollbackRows);
+  const resizeDebouncerRef = useRef<TerminalResizeDebouncer | null>(null);
+  const forwardPtyResizeRef = useRef(true);
 
   const clearHiddenWebglDisposeTimer = () => {
     if (webglDisposeTimerRef.current === null) return;
@@ -196,221 +173,105 @@ export function useTerminalDisplay({
     webglAddonRef.current?.clearTextureAtlas();
   };
 
-  const setInactiveReplayPendingVisible = (pending: boolean) => {
-    if (inactiveReplayPendingRef.current === pending) return;
-    inactiveReplayPendingRef.current = pending;
-    onInactiveReplayPendingChange(pending);
-  };
-
-  const hasQueuedInactiveReplay = () => activeWriteQueueRef.current.some((item) => item.inactiveReplay);
-
-  const finishInactiveReplayIfReady = (terminal: Terminal) => {
-    if (!inactiveReplayStickToBottomRef.current) return;
-    if (
-      hasQueuedInactiveReplay()
-      || inactiveReplayPendingWritesRef.current > 0
-    ) {
-      return;
-    }
-    inactiveReplayStickToBottomRef.current = false;
-    terminal.scrollToBottom();
-    setInactiveReplayPendingVisible(false);
-  };
-
-  const flushActiveWriteQueue = () => {
-    activeWriteRafRef.current = null;
-    if (!isVisibleRef.current || activeWriteQueueRef.current.length === 0) {
-      if (!isVisibleRef.current && activeWriteQueueRef.current.length > 0 && useSettingsStore.getState().debugMode) {
-        logInfo("[terminal-visibility] active write flush deferred while hidden", {
-          sessionId,
-          queuedChars: activeWriteQueueSizeRef.current,
-          queuedChunks: activeWriteQueueRef.current.length,
-        });
-      }
-      return;
-    }
+  const enqueueActiveWrite = (text: string, onCommitted?: () => void) => {
+    if (!text) return;
     const terminal = terminalRef.current;
     if (!terminal) return;
-
-    const writeTerminalChunk = (chunk: string, inactiveReplay: boolean) => {
-      if (inactiveReplay) inactiveReplayPendingWritesRef.current += 1;
-      terminal.write(chunk, () => {
-        if (inactiveReplay) {
-          inactiveReplayPendingWritesRef.current = Math.max(0, inactiveReplayPendingWritesRef.current - 1);
-        }
-        if (terminalRef.current !== terminal) return;
-        if (inactiveReplay) terminal.scrollToBottom();
-        afterTerminalWriteRef.current?.(terminal);
-        if (inactiveReplay) finishInactiveReplayIfReady(terminal);
-      });
-    };
-
-    let budget = ACTIVE_WRITE_FRAME_BUDGET;
-    while (budget > 0 && activeWriteQueueRef.current.length > 0) {
-      const item = activeWriteQueueRef.current[0];
-      const chunk = item.text;
-      if (chunk.length <= budget) {
-        writeTerminalChunk(chunk, item.inactiveReplay);
-        activeWriteQueueRef.current.shift();
-        activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - chunk.length);
-        budget -= chunk.length;
-        continue;
-      }
-      writeTerminalChunk(chunk.slice(0, budget), item.inactiveReplay);
-      activeWriteQueueRef.current[0] = { ...item, text: chunk.slice(budget) };
-      activeWriteQueueSizeRef.current = Math.max(0, activeWriteQueueSizeRef.current - budget);
-      budget = 0;
-    }
-
-    if (activeWriteQueueRef.current.length > 0) {
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
-    } else {
-      finishInactiveReplayIfReady(terminal);
-    }
+    terminal.write(transformOutputRef.current(text), () => {
+      if (terminalRef.current !== terminal) return;
+      afterTerminalWriteRef.current?.(terminal);
+      onCommitted?.();
+    });
   };
-
-  const enqueueActiveWrite = (text: string, inactiveReplay = false) => {
-    if (!text) return;
-    let nextText = transformOutputRef.current(text);
-    let droppedChars = 0;
-    if (nextText.length >= ACTIVE_WRITE_QUEUE_MAX_CHARS) {
-      droppedChars += activeWriteQueueSizeRef.current + nextText.length - ACTIVE_WRITE_QUEUE_MAX_CHARS;
-      nextText = nextText.slice(-ACTIVE_WRITE_QUEUE_MAX_CHARS);
-      activeWriteQueueRef.current = [];
-      activeWriteQueueSizeRef.current = 0;
-    }
-    activeWriteQueueRef.current.push({ text: nextText, inactiveReplay });
-    activeWriteQueueSizeRef.current += nextText.length;
-    while (activeWriteQueueSizeRef.current > ACTIVE_WRITE_QUEUE_MAX_CHARS && activeWriteQueueRef.current.length > 0) {
-      const overflow = activeWriteQueueSizeRef.current - ACTIVE_WRITE_QUEUE_MAX_CHARS;
-      const head = activeWriteQueueRef.current[0];
-      if (!head || head.text.length <= overflow) {
-        const removed = activeWriteQueueRef.current.shift();
-        const removedLength = removed?.text.length ?? 0;
-        activeWriteQueueSizeRef.current -= removedLength;
-        droppedChars += removedLength;
-        continue;
-      }
-      activeWriteQueueRef.current[0] = { ...head, text: head.text.slice(overflow) };
-      activeWriteQueueSizeRef.current -= overflow;
-      droppedChars += overflow;
-    }
-    if (droppedChars > 0) {
-      const now = Date.now();
-      if (now - activeWriteQueueLastDropLogAtRef.current >= ACTIVE_WRITE_QUEUE_LOG_INTERVAL_MS) {
-        activeWriteQueueLastDropLogAtRef.current = now;
-        debugConsoleWarn("[oom-diagnostics:webview]", {
-          area: "xterm",
-          phase: "activeWriteQueueTrim",
-          sessionId,
-          droppedChars,
-          queuedChars: activeWriteQueueSizeRef.current,
-          maxQueuedChars: ACTIVE_WRITE_QUEUE_MAX_CHARS,
-          thresholdExceeded: true,
-        });
-      }
-    }
-    if (activeWriteRafRef.current === null) {
-      activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
-    }
-  };
-
-  const stashInactiveText = (text: string) => {
-    if (!text) return;
-    const maxBufferChars = inactiveBufferLimitRef.current;
-    if (text.length >= maxBufferChars) {
-      const suffix = text.slice(-maxBufferChars);
-      inactiveBufferRef.current = [suffix];
-      inactiveBufferSizeRef.current = suffix.length;
-      return;
-    }
-
-    inactiveBufferRef.current.push(text);
-    inactiveBufferSizeRef.current += text.length;
-    while (inactiveBufferSizeRef.current > maxBufferChars && inactiveBufferRef.current.length > 0) {
-      const overflow = inactiveBufferSizeRef.current - maxBufferChars;
-      const head = inactiveBufferRef.current[0];
-      if (!head || head.length <= overflow) {
-        const removed = inactiveBufferRef.current.shift();
-        if (removed) inactiveBufferSizeRef.current -= removed.length;
-        continue;
-      }
-      inactiveBufferRef.current[0] = head.slice(overflow);
-      inactiveBufferSizeRef.current -= overflow;
-    }
-  };
-
-  const getOutputRestorePlanState = () => ({
-    inactiveBufferLength: inactiveBufferRef.current.length,
-    activeWriteQueueLength: activeWriteQueueRef.current.length,
-    activeWriteRafScheduled: activeWriteRafRef.current !== null,
-  });
-
-  const flushInactiveBufferForReplay = () => {
-    const terminal = terminalRef.current;
-    if (!terminal || inactiveBufferRef.current.length === 0) return;
-    const combined = inactiveBufferRef.current.join("");
-    inactiveBufferRef.current = [];
-    inactiveBufferSizeRef.current = 0;
-    inactiveReplayStickToBottomRef.current = true;
-    inactiveReplayPendingWritesRef.current = 0;
-    setInactiveReplayPendingVisible(true);
-    terminal.scrollToBottom();
-    enqueueActiveWrite(combined, true);
-  };
-
-  const resumeActiveWriteQueue = () => {
-    if (activeWriteRafRef.current !== null) return;
-    activeWriteRafRef.current = requestAnimationFrame(flushActiveWriteQueue);
-  };
-
-  const getPendingOutputSnapshot = () => [
-    ...activeWriteQueueRef.current.map((item) => item.text),
-    ...ptyPendingChunksRef.current,
-    ...inactiveBufferRef.current,
-  ].join("");
 
   const attachPtyOutput = (options: { waitForReplay?: boolean } = {}) => {
     const textDecoder = new TextDecoder("utf-8");
     let cancelled = false;
     let waitingForReplay = options.waitForReplay === true;
-    const bufferedLivePayloads: string[] = [];
-    const flushPendingWrites = () => {
-      ptyWriteRafIdRef.current = null;
-      if (cancelled || ptyPendingChunksRef.current.length === 0) return;
-      const combined = ptyPendingChunksRef.current.length === 1 ? ptyPendingChunksRef.current[0] : ptyPendingChunksRef.current.join("");
-      ptyPendingChunksRef.current = [];
-      if (isVisibleRef.current) {
-        enqueueActiveWrite(combined);
-      } else {
-        stashInactiveText(combined);
-      }
+    const bufferedLivePayloads: TerminalOutputDelivery[] = [];
+    const finishReplayBatch = () => {
+      forwardPtyResizeRef.current = true;
+      fitWhenStable(true);
     };
-    const queuePayload = (payload: string, markSnapshotDirty: boolean) => {
-      const binaryString = atob(payload);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i += 1) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const text = normalizeOutputRef.current(textDecoder.decode(bytes, { stream: true }));
-      if (!text) return;
-      if (markSnapshotDirty) markTerminalSnapshotDirty(sessionId);
-      if (isVisibleRef.current) {
-        ptyPendingChunksRef.current.push(text);
-        if (ptyWriteRafIdRef.current === null) {
-          ptyWriteRafIdRef.current = requestAnimationFrame(flushPendingWrites);
-        }
-      } else {
-        stashInactiveText(text);
-      }
-    };
-    const ready = listen<string>(`pty-output-${sessionId}`, (event) => {
-      if (cancelled) return;
-      if (waitingForReplay) {
-        bufferedLivePayloads.push(event.payload);
+    const schedulePendingWrite = () => {
+      if (
+        cancelled
+        || ptyWriteInProgressRef.current
+        || ptyWriteRafIdRef.current !== null
+        || ptyPendingChunksRef.current.length === 0
+      ) {
         return;
       }
-      queuePayload(event.payload, true);
+      ptyWriteRafIdRef.current = requestAnimationFrame(flushPendingWrites);
+    };
+    const flushPendingWrites = () => {
+      ptyWriteRafIdRef.current = null;
+      if (cancelled || ptyWriteInProgressRef.current) return;
+      const terminal = terminalRef.current;
+      if (!terminal) return;
+      const first = ptyPendingChunksRef.current.shift();
+      if (!first) return;
+      const pending = [first];
+      if (!first.replay) {
+        while (ptyPendingChunksRef.current[0] && !ptyPendingChunksRef.current[0].replay) {
+          pending.push(ptyPendingChunksRef.current.shift()!);
+        }
+      } else {
+        forwardPtyResizeRef.current = false;
+        if (
+          first.cols > 0
+          && first.rows > 0
+          && (terminal.cols !== first.cols || terminal.rows !== first.rows)
+        ) {
+          terminal.resize(first.cols, first.rows);
+        }
+      }
+      const combined = pending.map((chunk) => chunk.text).join("");
+      const commitPending = () => {
+        pending.forEach((chunk) => chunk.commit?.(chunk.charCount));
+        if (first.replay && first.replayBatchEnd) finishReplayBatch();
+      };
+      if (!combined) {
+        commitPending();
+        schedulePendingWrite();
+        return;
+      }
+      ptyWriteInProgressRef.current = true;
+      terminal.write(transformOutputRef.current(combined), () => {
+        ptyWriteInProgressRef.current = false;
+        if (cancelled || terminalRef.current !== terminal) return;
+        afterTerminalWriteRef.current?.(terminal);
+        commitPending();
+        schedulePendingWrite();
+      });
+    };
+    const queuePayload = (delivery: TerminalOutputDelivery, markSnapshotDirty: boolean) => {
+      const payload = delivery.frame;
+      const rawText = textDecoder.decode(payload.data, { stream: true });
+      const text = normalizeOutputRef.current(rawText);
+      if (!text && payload.kind !== "replay") {
+        delivery.commit(rawText.length);
+        return;
+      }
+      if (markSnapshotDirty) markTerminalSnapshotDirty(sessionId);
+      ptyPendingChunksRef.current.push({
+        text,
+        charCount: rawText.length,
+        commit: delivery.commit,
+        replay: payload.kind === "replay",
+        replayBatchEnd: payload.replayBatchEnd === true,
+        cols: payload.cols,
+        rows: payload.rows,
+      });
+      schedulePendingWrite();
+    };
+    const ready = terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
+      if (cancelled) return;
+      if (waitingForReplay) {
+        bufferedLivePayloads.push(delivery);
+        return;
+      }
+      queuePayload(delivery, true);
     }).then((fn) => {
       if (cancelled) {
         fn();
@@ -420,20 +281,50 @@ export function useTerminalDisplay({
     });
     void ready.catch(onPtyOutputListenError);
 
-    const completeReplay = (replayBase64: string) => {
-      if (cancelled || !waitingForReplay) return;
-      if (replayBase64) queuePayload(replayBase64, false);
+    const completeReplay = async (replay: TerminalBinaryFrame[]) => {
+      if (cancelled || !waitingForReplay) return false;
+      const terminal = terminalRef.current;
+      if (!terminal) return false;
+      forwardPtyResizeRef.current = false;
+      try {
+        for (const entry of replay) {
+          if (cancelled || terminalRef.current !== terminal) return false;
+          if (entry.cols > 0 && entry.rows > 0 && (terminal.cols !== entry.cols || terminal.rows !== entry.rows)) {
+            terminal.resize(entry.cols, entry.rows);
+          }
+          const text = normalizeOutputRef.current(textDecoder.decode(entry.data, { stream: true }));
+          if (!text) {
+            terminalProcessManager.acknowledgeOutput(sessionId, entry.sequence, 0);
+            continue;
+          }
+          await new Promise<void>((resolve) => {
+            terminal.write(transformOutputRef.current(text), () => {
+              if (terminalRef.current === terminal) {
+                afterTerminalWriteRef.current?.(terminal);
+                terminalProcessManager.acknowledgeOutput(sessionId, entry.sequence, 0);
+              }
+              resolve();
+            });
+          });
+        }
+      } finally {
+        forwardPtyResizeRef.current = true;
+      }
+      fitWhenStable(true);
       waitingForReplay = false;
-      bufferedLivePayloads.splice(0).forEach((payload) => queuePayload(payload, true));
+      bufferedLivePayloads.splice(0).forEach((delivery) => queuePayload(delivery, true));
+      return true;
     };
     const dispose = () => {
       cancelled = true;
       bufferedLivePayloads.length = 0;
+      forwardPtyResizeRef.current = true;
       if (ptyWriteRafIdRef.current !== null) {
         cancelAnimationFrame(ptyWriteRafIdRef.current);
         ptyWriteRafIdRef.current = null;
       }
       ptyPendingChunksRef.current = [];
+      ptyWriteInProgressRef.current = false;
       ptyUnlistenRef.current?.();
       ptyUnlistenRef.current = null;
     };
@@ -444,8 +335,9 @@ export function useTerminalDisplay({
     const container = containerRef.current;
     if (!container) return () => {};
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+      if (!forwardPtyResizeRef.current) return;
       if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
-      invoke("pty_resize", { sessionId, cols, rows }).catch((err) => {
+      terminalProcessManager.resize(sessionId, cols, rows).catch((err) => {
         logError("PTY resize failed in terminal display", { sessionId, cols, rows, err });
       });
     });
@@ -481,27 +373,47 @@ export function useTerminalDisplay({
       resizeDisposable.dispose();
       container.removeEventListener("wheel", onWheel, wheelListenerOptions);
       resizeObserver.disconnect();
+      resizeDebouncerRef.current?.dispose();
+      resizeDebouncerRef.current = null;
     };
   };
 
   const resetOutputState = () => {
-    if (activeWriteRafRef.current !== null) {
-      cancelAnimationFrame(activeWriteRafRef.current);
-      activeWriteRafRef.current = null;
-    }
     if (ptyWriteRafIdRef.current !== null) {
       cancelAnimationFrame(ptyWriteRafIdRef.current);
       ptyWriteRafIdRef.current = null;
     }
     ptyPendingChunksRef.current = [];
-    activeWriteQueueRef.current = [];
-    activeWriteQueueSizeRef.current = 0;
-    inactiveReplayStickToBottomRef.current = false;
-    inactiveReplayPendingWritesRef.current = 0;
-    inactiveReplayPendingRef.current = false;
-    inactiveBufferRef.current = [];
-    inactiveBufferSizeRef.current = 0;
-    onInactiveReplayPendingChange(false);
+    ptyWriteInProgressRef.current = false;
+    forwardPtyResizeRef.current = true;
+  };
+
+  const resizeTerminal = (terminal: Terminal, cols: number, rows: number) => {
+    if (terminal.cols === cols && terminal.rows === rows) return;
+    terminal.resize(cols, rows);
+  };
+
+  const getResizeDebouncer = () => {
+    let debouncer = resizeDebouncerRef.current;
+    if (debouncer) return debouncer;
+    debouncer = new TerminalResizeDebouncer(
+      () => isVisibleRef.current,
+      () => terminalRef.current,
+      (cols, rows) => {
+        const terminal = terminalRef.current;
+        if (terminal) resizeTerminal(terminal, cols, rows);
+      },
+      (cols) => {
+        const terminal = terminalRef.current;
+        if (terminal) resizeTerminal(terminal, cols, terminal.rows);
+      },
+      (rows) => {
+        const terminal = terminalRef.current;
+        if (terminal) resizeTerminal(terminal, terminal.cols, rows);
+      },
+    );
+    resizeDebouncerRef.current = debouncer;
+    return debouncer;
   };
 
   const fitWhenStable = (force = false) => {
@@ -514,29 +426,26 @@ export function useTerminalDisplay({
 
     const dims = fitAddon.proposeDimensions();
     if (!dims || dims.cols < MIN_TERMINAL_COLS || dims.rows < MIN_TERMINAL_ROWS) return;
-    const beforeCols = terminal.cols;
-    const beforeRows = terminal.rows;
-    fitAddon.fit();
-    const terminalSizeChanged = terminal.cols !== beforeCols || terminal.rows !== beforeRows;
-    if (force || terminalSizeChanged || needsViewportRefreshRef.current) {
+    getResizeDebouncer().resize(dims.cols, dims.rows, force);
+    if (force || needsViewportRefreshRef.current) {
       refreshTerminalViewport(terminal);
       needsViewportRefreshRef.current = false;
     }
   };
 
   const cancelScheduledFit = () => {
-    if (fitRafRef.current === null) return;
-    cancelAnimationFrame(fitRafRef.current);
-    fitRafRef.current = null;
+    if (fitRafRef.current !== null) {
+      cancelAnimationFrame(fitRafRef.current);
+      fitRafRef.current = null;
+    }
+    resizeDebouncerRef.current?.cancel();
   };
 
   const scheduleFit = (force = false) => {
     cancelScheduledFit();
     fitRafRef.current = requestAnimationFrame(() => {
-      fitRafRef.current = requestAnimationFrame(() => {
-        fitRafRef.current = null;
-        fitWhenStable(force);
-      });
+      fitRafRef.current = null;
+      fitWhenStable(force);
     });
   };
 
@@ -569,10 +478,6 @@ export function useTerminalDisplay({
     scheduleViewportRefresh,
     markViewportRefreshNeeded,
     enqueueActiveWrite,
-    getOutputRestorePlanState,
-    flushInactiveBufferForReplay,
-    resumeActiveWriteQueue,
-    getPendingOutputSnapshot,
     attachPtyOutput,
     attachViewport,
     resetOutputState,

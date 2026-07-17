@@ -56,6 +56,7 @@ import type { CommandHistoryEntry, CommandTemplate, TerminalSession } from "../l
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
 
@@ -352,7 +353,7 @@ export function useTerminalInput({
       markAttentionInputHandled();
       clearSuggestion();
       cancelAiSuggestionRefresh();
-      invoke("pty_write", { sessionId, data: killCurrentInput + nextInput + cursorRestore })
+      terminalProcessManager.write(sessionId, killCurrentInput + nextInput + cursorRestore)
         .catch((err) => reportPtyWriteError(stage, err));
     };
 
@@ -531,7 +532,7 @@ export function useTerminalInput({
       clearSuggestion();
       cancelAiSuggestionRefresh();
       markAttentionInputHandled();
-      invoke("pty_write", { sessionId, data: direction < 0 ? "\x1b[D" : "\x1b[C" })
+      terminalProcessManager.write(sessionId, direction < 0 ? "\x1b[D" : "\x1b[C")
         .catch((err) => reportPtyWriteError("keyboard_selection", err));
       terminal.focus();
     };
@@ -558,7 +559,7 @@ export function useTerminalInput({
       cancelAiSuggestionRefresh();
       markAttentionInputHandled();
       if (data) {
-        invoke("pty_write", { sessionId, data })
+        terminalProcessManager.write(sessionId, data)
           .catch((err) => reportPtyWriteError("keyboard_selection_collapse", err));
       }
       terminal.focus();
@@ -746,10 +747,10 @@ export function useTerminalInput({
       });
       const ptyData = manualDirectCodexOverride ?? data;
       lastForwardedTerminalInput = { data, source, at: now };
-      invoke("pty_write", {
+      terminalProcessManager.write(
         sessionId,
-        data: replacingSelectedInput ? replacingSelectedInput + ptyData : ptyData,
-      }).catch((err) => reportPtyWriteError(source, err));
+        replacingSelectedInput ? replacingSelectedInput + ptyData : ptyData,
+      ).catch((err) => reportPtyWriteError(source, err));
       onInputForwarded(data);
       updateInputBufferFromTerminalData(data, updateSessionCwdIfChanged);
     };

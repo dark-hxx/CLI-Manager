@@ -1,6 +1,5 @@
 import { useState, useEffect, type CSSProperties } from "react";
 import { useShallow } from "zustand/shallow";
-import { invoke } from "@tauri-apps/api/core";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { Clock, Search } from "./icons";
@@ -10,6 +9,7 @@ import { Skeleton } from "./ui/Skeleton";
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
 import { useI18n } from "../lib/i18n";
+import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 
 interface CommandHistoryPanelProps {
   compact?: boolean;
@@ -61,7 +61,7 @@ export function CommandHistoryPanel({
       return;
     }
     try {
-      await invoke("pty_write", { sessionId: activeSessionId, data: command + "\r" });
+      await terminalProcessManager.write(activeSessionId, command + "\r");
       setOpen(false);
     } catch (err) {
       toast.error(t("commandHistory.toast.replayFailed"), { description: String(err) });

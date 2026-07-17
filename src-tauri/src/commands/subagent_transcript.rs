@@ -538,6 +538,69 @@ fn resolve_codex_sessions_root(codex_config_dir: Option<String>) -> PathBuf {
     base.join("sessions")
 }
 
+fn resolve_wsl_codex_config_root(
+    codex_config_dir: Option<String>,
+    distro: &str,
+    linux_home: &str,
+) -> Result<String, String> {
+    let Some(config_dir) = trimmed(codex_config_dir) else {
+        return Ok(format!("{}/.codex", linux_home.trim_end_matches('/')));
+    };
+    if is_linux_absolute_path(&config_dir) {
+        return Ok(config_dir.trim_end_matches('/').to_string());
+    }
+    if let Some((_configured_distro, linux_path)) =
+        crate::wsl::parse_wsl_unc_path(&normalize_wsl_scope_unc(&config_dir))
+    {
+        return Ok(linux_path.trim_end_matches('/').to_string());
+    }
+    if let Some(linux_path) = crate::wsl::windows_path_to_wsl(&config_dir) {
+        return Ok(linux_path.trim_end_matches('/').to_string());
+    }
+    Err(format!(
+        "invalid_wsl_codex_config_dir: distro={distro} path={config_dir}"
+    ))
+}
+
+fn resolve_wsl_codex_sessions_root(
+    codex_config_dir: Option<String>,
+    parent_transcript_path: Option<String>,
+    distro: &str,
+) -> Result<PathBuf, String> {
+    if codex_config_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        if let Some(path) = trimmed(parent_transcript_path) {
+            let linux_path = if is_linux_absolute_path(&path) {
+                Some(path)
+            } else {
+                crate::wsl::parse_wsl_unc_path(&normalize_wsl_scope_unc(&path))
+                    .map(|(_path_distro, linux_path)| linux_path)
+            };
+            if let Some(linux_path) = linux_path {
+                let normalized = linux_path.replace('\\', "/");
+                if let Some(index) = normalized.find("/sessions/") {
+                    let sessions_root = &normalized[..index + "/sessions".len()];
+                    return Ok(PathBuf::from(crate::wsl::linux_to_unc_wsl_path(
+                        sessions_root,
+                        distro,
+                    )));
+                }
+            }
+        }
+    }
+    let linux_home = wsl_home_dir(distro)?;
+    let config_root = resolve_wsl_codex_config_root(codex_config_dir, distro, &linux_home)?;
+    let linux_sessions_root = format!("{}/sessions", config_root.trim_end_matches('/'));
+    Ok(PathBuf::from(crate::wsl::linux_to_unc_wsl_path(
+        &linux_sessions_root,
+        distro,
+    )))
+}
+
 fn list_native_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
     let expected_suffix = format!("-{agent_id}.jsonl");
     let mut out = Vec::new();
@@ -872,6 +935,8 @@ pub async fn codex_subagent_transcript_discover(
     parent_session_id: String,
     agent_id: String,
     codex_config_dir: Option<String>,
+    wsl_distro_name: Option<String>,
+    parent_transcript_path: Option<String>,
 ) -> Result<Option<String>, String> {
     let parent_session_id = parent_session_id.trim().to_string();
     let agent_id = agent_id.trim().to_string();
@@ -882,14 +947,20 @@ pub async fn codex_subagent_transcript_discover(
         return Err("missing_agent_id".to_string());
     }
 
-    let sessions_root = resolve_codex_sessions_root(codex_config_dir);
+    let resolved_wsl_distro = trimmed(wsl_distro_name);
+    let sessions_root = if let Some(distro) = resolved_wsl_distro.as_deref() {
+        resolve_wsl_codex_sessions_root(codex_config_dir, parent_transcript_path, distro)?
+    } else {
+        resolve_codex_sessions_root(codex_config_dir)
+    };
     info!(
-        "[subagent_transcript:codex] discover requested: root={} parentSessionId={} agentId={}",
+        "[subagent_transcript:codex] discover requested: root={} parentSessionId={} agentId={} wslDistro={:?}",
         sessions_root.to_string_lossy(),
         parent_session_id,
-        agent_id
+        agent_id,
+        resolved_wsl_distro
     );
-    if !sessions_root.exists() {
+    if resolved_wsl_distro.is_none() && !sessions_root.exists() {
         info!(
             "[subagent_transcript:codex] sessions root missing: {}",
             sessions_root.to_string_lossy()
@@ -1107,6 +1178,57 @@ mod tests {
     fn resolves_wsl_distro_from_unc_cwd_when_env_missing() {
         let got = resolve_wsl_distro_name(Some(r"\\wsl.localhost\Ubuntu\data\test\sys"), None);
         assert_eq!(got.as_deref(), Some("Ubuntu"));
+    }
+
+    #[test]
+    fn resolves_default_wsl_codex_config_root_from_linux_home() {
+        let got = resolve_wsl_codex_config_root(None, "Ubuntu", "/home/me").unwrap();
+        assert_eq!(got, "/home/me/.codex");
+    }
+
+    #[test]
+    fn resolves_wsl_codex_config_root_path_variants() {
+        assert_eq!(
+            resolve_wsl_codex_config_root(
+                Some("/home/me/custom-codex".to_string()),
+                "Ubuntu",
+                "/home/me",
+            )
+            .unwrap(),
+            "/home/me/custom-codex"
+        );
+        assert_eq!(
+            resolve_wsl_codex_config_root(
+                Some(r"\\wsl$\Ubuntu\home\me\.codex".to_string()),
+                "Ubuntu",
+                "/home/me",
+            )
+            .unwrap(),
+            "/home/me/.codex"
+        );
+        assert_eq!(
+            resolve_wsl_codex_config_root(
+                Some(r"C:\Users\me\.codex".to_string()),
+                "Ubuntu",
+                "/home/me",
+            )
+            .unwrap(),
+            "/mnt/c/Users/me/.codex"
+        );
+    }
+
+    #[test]
+    fn resolves_wsl_codex_sessions_root_from_parent_transcript() {
+        let got = resolve_wsl_codex_sessions_root(
+            None,
+            Some("/root/.codex/sessions/2026/07/17/rollout-parent.jsonl".to_string()),
+            "Ubuntu",
+        )
+        .unwrap();
+        assert_eq!(
+            got.to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\root\.codex\sessions"
+        );
     }
 
     #[test]

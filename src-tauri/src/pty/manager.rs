@@ -1,5 +1,4 @@
 use log::{debug, error, info, warn};
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
@@ -9,11 +8,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::pty::boundary::safe_emit_boundary;
+use crate::pty::platform::{self, PlatformPtyChild, PlatformPtyController, PtyLaunchOptions};
 use crate::shell_resolver::{resolve_git_bash_exe, GIT_BASH_NOT_FOUND_MESSAGE};
 
 /// PTY 输出/状态事件出口（Issue #123 Phase 2 解耦点）：
-/// 主进程实现为 Tauri 事件转发（`pty-output-{id}`/`pty-status-{id}`），
-/// daemon 实现为 ring buffer + TCP 推送。
+/// daemon 实现为尺寸化 replay + WebSocket 二进制推送。
 ///
 /// 契约：`data` 已经过 `safe_emit_boundary` 切帧（UTF-8 + ANSI 序列安全边界），
 /// 实现方只允许整帧透传/存储，禁止再分片。
@@ -101,8 +100,8 @@ fn scan_vt_scroll_sequences(data: &[u8], diag: &mut VtScrollDiag, session_id: &s
 
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
-    master: Box<dyn MasterPty + Send>,
-    child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
+    controller: Box<dyn PlatformPtyController>,
+    child: Arc<dyn PlatformPtyChild>,
     diagnostics: Arc<Mutex<PtySessionDiagnostics>>,
     reader_handle: Option<JoinHandle<()>>,
     created_at: Instant,
@@ -559,19 +558,6 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             "pty session create: id={}, shell={:?}, cwd={:?}, env_vars={}",
             session_id, shell, cwd, env_count
         );
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| {
-                error!("pty openpty failed: id={}, error={}", session_id, e);
-                e.to_string()
-            })?;
-
         let default_shell_key = Self::default_shell_key();
         let shell_key = shell.unwrap_or(default_shell_key);
         let mut env_vars = env_vars;
@@ -613,59 +599,39 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             launch_context.login_shell,
             launch_context.cwd
         );
-        let mut cmd = CommandBuilder::new(&exe);
-        for arg in args {
-            cmd.arg(arg);
-        }
-
-        if let Some(dir) = cwd {
-            cmd.cwd(dir);
-        }
-        if let Some(ref vars) = env_vars {
-            for (k, v) in vars {
-                cmd.env(k, v);
-            }
-        }
+        let mut launch_env = env_vars.unwrap_or_default();
         // 非 Windows：GUI 启动（Dock/Finder）时父进程没有 TERM，子进程继承空 TERM
         // 会导致 claude/codex/ls/git 等判定为非彩色终端而禁用 ANSI 颜色。
         // 显式注入 xterm-256color（xterm.js 完整支持）+ truecolor，让支持的工具走 24-bit。
         // 仅在调用方未自定义时补默认值，尊重用户偏好。
         if !cfg!(target_os = "windows") {
-            let has_term = env_vars
-                .as_ref()
-                .map(|v| v.contains_key("TERM"))
-                .unwrap_or(false);
-            if !has_term {
-                cmd.env("TERM", "xterm-256color");
-            }
-            let has_colorterm = env_vars
-                .as_ref()
-                .map(|v| v.contains_key("COLORTERM"))
-                .unwrap_or(false);
-            if !has_colorterm {
-                cmd.env("COLORTERM", "truecolor");
-            }
+            launch_env
+                .entry("TERM".to_string())
+                .or_insert_with(|| "xterm-256color".to_string());
+            launch_env
+                .entry("COLORTERM".to_string())
+                .or_insert_with(|| "truecolor".to_string());
         }
 
-        let child = pair.slave.spawn_command(cmd).map_err(|e| {
+        let spawned = platform::spawn(PtyLaunchOptions {
+            exe: exe.clone(),
+            args: args.clone(),
+            cwd: cwd.map(str::to_string),
+            env: launch_env,
+            cols: 80,
+            rows: 24,
+        })
+        .map_err(|e| {
             error!(
                 "pty spawn failed: id={}, exe={}, error={}",
                 session_id, exe, e
             );
-            e.to_string()
+            e
         })?;
-        drop(pair.slave);
-
-        let writer = pair.master.take_writer().map_err(|e| {
-            error!("pty take_writer failed: id={}, error={}", session_id, e);
-            e.to_string()
-        })?;
-        let mut reader = pair.master.try_clone_reader().map_err(|e| {
-            error!("pty clone_reader failed: id={}, error={}", session_id, e);
-            e.to_string()
-        })?;
-
-        let child = Arc::new(Mutex::new(child));
+        let writer = spawned.writer;
+        let mut reader = spawned.reader;
+        let controller = spawned.controller;
+        let child = spawned.child;
         let diagnostics = Arc::new(Mutex::new(PtySessionDiagnostics {
             session_id: session_id.to_string(),
             shell: shell.unwrap_or(default_shell_key).to_string(),
@@ -705,40 +671,33 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                     Ok(0) => break,
                     Ok(n) => {
                         pending.extend_from_slice(&buf[..n]);
-                        // 动态批量：buffer 被读满意味着可能还有更多数据，先累积；
-                        // 反之或累计已超阈值就立即 emit，避免延迟。
-                        let likely_more = n == buf.len();
-                        if !likely_more || pending.len() >= READER_FLUSH_THRESHOLD {
-                            // 关键：仅 emit 处于 UTF-8 + ANSI 序列边界的安全前缀，
-                            // 残尾保留到下一轮拼接，避免前端 xterm 把残字节解读为 SGR 参数。
-                            let safe = safe_emit_boundary(&pending);
-                            if safe > 0 {
-                                if vt_diag_enabled {
-                                    scan_vt_scroll_sequences(
-                                        &pending[..safe],
-                                        &mut vt_diag,
-                                        &session_id_owned,
-                                    );
-                                }
-                                sink.on_output(&session_id_owned, &pending[..safe]);
-                                pending.drain(..safe);
-                            } else if pending.len() > READER_FLUSH_THRESHOLD * 8 {
-                                // 极端兜底：未终结序列超 256KB（远大于任何正常 OSC/CSI），
-                                // 说明源端格式异常，强制 emit 避免内存无限增长。
-                                debug!(
-                                    "pty pending buffer overflowed boundary protection: id={}, len={}",
-                                    session_id_owned, pending.len()
+                        // 每次底层 read 后立即交付安全前缀。若恰好读满 16 KiB 后
+                        // 源端暂时停顿，下一次 read 可能长期阻塞，不能把这批输出
+                        // 留在本层等待；5ms 合并由 daemon event sink 统一负责。
+                        let safe = safe_emit_boundary(&pending);
+                        if safe > 0 {
+                            if vt_diag_enabled {
+                                scan_vt_scroll_sequences(
+                                    &pending[..safe],
+                                    &mut vt_diag,
+                                    &session_id_owned,
                                 );
-                                if vt_diag_enabled {
-                                    scan_vt_scroll_sequences(
-                                        &pending,
-                                        &mut vt_diag,
-                                        &session_id_owned,
-                                    );
-                                }
-                                sink.on_output(&session_id_owned, &pending);
-                                pending.clear();
                             }
+                            sink.on_output(&session_id_owned, &pending[..safe]);
+                            pending.drain(..safe);
+                        } else if pending.len() > READER_FLUSH_THRESHOLD * 8 {
+                            // 极端兜底：未终结序列超 256KB（远大于任何正常 OSC/CSI），
+                            // 说明源端格式异常，强制 emit 避免内存无限增长。
+                            debug!(
+                                "pty pending buffer overflowed boundary protection: id={}, len={}",
+                                session_id_owned,
+                                pending.len()
+                            );
+                            if vt_diag_enabled {
+                                scan_vt_scroll_sequences(&pending, &mut vt_diag, &session_id_owned);
+                            }
+                            sink.on_output(&session_id_owned, &pending);
+                            pending.clear();
                         }
                     }
                     Err(e) => {
@@ -758,19 +717,16 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 
             // Process exited — check exit status
             let (new_status, child_exit_status, child_exit_code_raw, child_wait_error) =
-                match child_for_thread.lock().unwrap().try_wait() {
-                    Ok(Some(exit)) => {
-                        let exit_code = exit.exit_code();
-                        (
-                            PtyProcessStatus {
-                                status: "exited".to_string(),
-                                exit_code: Some(exit_code as i32),
-                            },
-                            Some(format!("{exit:?}")),
-                            Some(exit_code),
-                            None,
-                        )
-                    }
+                match child_for_thread.try_wait() {
+                    Ok(Some(exit)) => (
+                        PtyProcessStatus {
+                            status: "exited".to_string(),
+                            exit_code: exit.code,
+                        },
+                        Some(exit.description),
+                        exit.code,
+                        None,
+                    ),
                     Ok(None) => (
                         PtyProcessStatus {
                             status: "exited".to_string(),
@@ -787,7 +743,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                         },
                         None,
                         None,
-                        Some(e.to_string()),
+                        Some(e),
                     ),
                 };
             let diagnostics = diagnostics_for_thread.lock().unwrap().clone();
@@ -830,7 +786,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 
         let session = Arc::new(Mutex::new(PtySession {
             writer,
-            master: pair.master,
+            controller,
             child,
             diagnostics,
             reader_handle: Some(reader_handle),
@@ -888,18 +844,10 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             diagnostics.last_resize_cols = Some(cols);
             diagnostics.last_resize_rows = Some(rows);
         }
-        session
-            .master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| {
-                error!("pty resize failed: session_id={}, error={}", session_id, e);
-                e.to_string()
-            })
+        session.controller.resize(cols, rows).map_err(|e| {
+            error!("pty resize failed: session_id={}, error={}", session_id, e);
+            e
+        })
     }
 
     fn close_session_arc(session_id: &str, session_arc: Arc<Mutex<PtySession>>, reason: &str) {
@@ -909,31 +857,28 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         let (reader_handle, diagnostics) = {
             let mut session = session_arc.lock().unwrap();
             let diagnostics = session.diagnostics.lock().unwrap().clone();
-            let mut child = session.child.lock().unwrap();
+            let child = Arc::clone(&session.child);
             #[cfg(target_os = "windows")]
             {
-                if let Some(pid) = child.process_id() {
-                    if let Err(err) = Self::kill_process_tree(pid) {
-                        warn!(
-                            "pty process tree kill failed, fallback to child kill: id={}, pid={}, reason={}, error={}",
-                            session_id, pid, reason, err
-                        );
-                    }
+                let pid = child.process_id();
+                if let Err(err) = Self::kill_process_tree(pid) {
+                    warn!(
+                        "pty process tree kill failed, fallback to child kill: id={}, pid={}, reason={}, error={}",
+                        session_id, pid, reason, err
+                    );
                 }
             }
             #[cfg(not(target_os = "windows"))]
             {
-                if let Some(pid) = child.process_id() {
-                    if let Err(err) = Self::kill_process_group(pid) {
-                        warn!(
-                            "pty process group kill failed, fallback to child kill: id={}, pid={}, reason={}, error={}",
-                            session_id, pid, reason, err
-                        );
-                    }
+                let pid = child.process_id();
+                if let Err(err) = Self::kill_process_group(pid) {
+                    warn!(
+                        "pty process group kill failed, fallback to child kill: id={}, pid={}, reason={}, error={}",
+                        session_id, pid, reason, err
+                    );
                 }
             }
             let _ = child.kill();
-            drop(child);
             (session.reader_handle.take(), diagnostics)
         };
         drop(session_arc);
@@ -1098,10 +1043,9 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 
         let pids: Vec<u32> = sessions
             .iter()
-            .filter_map(|(_, session_arc)| {
+            .map(|(_, session_arc)| {
                 let session = session_arc.lock().unwrap();
-                let child = session.child.lock().unwrap();
-                child.process_id()
+                session.child.process_id()
             })
             .collect();
         if let Err(err) = Self::kill_process_trees(&pids) {
@@ -1117,10 +1061,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         for (session_id, session_arc) in sessions {
             let reader_handle = {
                 let mut session = session_arc.lock().unwrap();
-                {
-                    let mut child = session.child.lock().unwrap();
-                    let _ = child.kill();
-                }
+                let _ = session.child.kill();
                 session.reader_handle.take()
             };
             drop(session_arc);
@@ -1163,6 +1104,55 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    struct TestPtySink {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl PtyEventSink for TestPtySink {
+        fn on_output(&self, _session_id: &str, data: &[u8]) {
+            self.output.lock().unwrap().extend_from_slice(data);
+        }
+
+        fn on_status(&self, _session_id: &str, _status: PtyProcessStatus) {}
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn direct_conpty_can_spawn_write_and_read_cmd() {
+        let manager = PtyManager::new();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        manager
+            .create(
+                "conpty-test",
+                None,
+                None,
+                Some("cmd"),
+                Arc::new(TestPtySink {
+                    output: Arc::clone(&output),
+                }),
+            )
+            .unwrap();
+        manager.resize("conpty-test", 120, 30).unwrap();
+        manager
+            .write("conpty-test", "echo CLI_MANAGER_CONPTY_OK\r\n")
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let text = String::from_utf8_lossy(&output.lock().unwrap()).to_string();
+            if text.contains("CLI_MANAGER_CONPTY_OK") {
+                manager.close("conpty-test").unwrap();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let captured = String::from_utf8_lossy(&output.lock().unwrap()).to_string();
+        manager.close("conpty-test").unwrap();
+        panic!("ConPTY output marker not received: {captured:?}");
+    }
 
     #[test]
     fn reconcile_active_sessions_skips_empty_active_list() {

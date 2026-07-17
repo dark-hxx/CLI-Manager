@@ -53,35 +53,3 @@ test("didRenderFullTerminalViewport rejects partial or empty viewport renders", 
     false,
   );
 });
-
-test("planTerminalVisibilityRestore resumes queued active writes when a hidden terminal becomes visible again", () => {
-  const plan = terminalVisibility.planTerminalVisibilityRestore({
-    wasVisible: false,
-    isVisible: true,
-    inactiveBufferLength: 0,
-    activeWriteQueueLength: 128,
-    activeWriteRafScheduled: false,
-  });
-
-  assert.deepEqual(plan, {
-    shouldFlushInactiveBuffer: false,
-    shouldRefreshViewport: true,
-    shouldResumeActiveWriteQueue: true,
-  });
-});
-
-test("planTerminalVisibilityRestore does not reschedule writes when the terminal never became visible", () => {
-  const plan = terminalVisibility.planTerminalVisibilityRestore({
-    wasVisible: true,
-    isVisible: true,
-    inactiveBufferLength: 64,
-    activeWriteQueueLength: 128,
-    activeWriteRafScheduled: false,
-  });
-
-  assert.deepEqual(plan, {
-    shouldFlushInactiveBuffer: false,
-    shouldRefreshViewport: false,
-    shouldResumeActiveWriteQueue: false,
-  });
-});
