@@ -1,6 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as terminalVisibility from "../src/lib/terminalVisibility.ts";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import ts from "typescript";
+
+const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-visibility-"));
+process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
+const source = readFileSync(new URL("../src/lib/terminalVisibility.ts", import.meta.url), "utf8");
+const output = ts.transpileModule(source, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: "terminalVisibility.ts",
+}).outputText;
+const outputPath = join(tempDir, "terminalVisibility.mjs");
+writeFileSync(outputPath, output, "utf8");
+const terminalVisibility = await import(pathToFileURL(outputPath).href);
 
 test("refreshTerminalViewport repaints the full visible terminal grid", () => {
   const calls = [];

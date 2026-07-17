@@ -9,8 +9,11 @@
 **Contracts**:
 
 - Output/replay frames carry `sessionId`, `sequence`, `cols`, `rows`, and raw bytes.
-- Replay applies recorded dimensions before its data and is not ACK-counted.
-- Live frames may be combined for one xterm write, but ACK uses the last live sequence and the summed raw UTF-16 length.
+- Initial and reconnect Replay apply recorded dimensions before each frame while PTY resize forwarding is suspended. The final Replay frame is an explicit client-side batch boundary; force-fit the current container before releasing queued live output or resuming normal resize forwarding.
+- `TerminalProcessManager` owns every received frame until xterm's write callback commits it. Component cleanup must only detach the consumer; it must not discard or persist-and-duplicate uncommitted frames.
+- Live frames may be combined for one xterm write, but completion commits and ACKs the constituent frames in sequence order using each frame's raw UTF-16 length.
+- A remounted Display receives all uncommitted frames again. Commit callbacks from an older attachment generation are ignored.
+- Closing the last attached session cancels any scheduled reconnect; a delayed reconnect callback must return without opening a socket when no non-tombstoned sessions remain.
 - No component or store may call `listen("pty-output-...")` or invoke `pty_write/pty_resize/pty_close` directly.
 - Large-buffer horizontal resize is delayed 100ms; vertical resize remains immediate; visibility restore forces a full resize/refresh.
 
@@ -23,14 +26,14 @@ listen(`pty-output-${sessionId}`, ({ payload }) => terminal.write(atob(payload))
 **Correct**:
 
 ```tsx
-terminalProcessManager.subscribeOutput(sessionId, (frame) => {
-  terminal.write(decode(frame.data), () => {
-    terminalProcessManager.acknowledgeOutput(sessionId, frame.sequence, rawLength);
+terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
+  terminal.write(decode(delivery.frame.data), () => {
+    delivery.commit(rawLength);
   });
 });
 ```
 
-**Tests**: Run `npx tsc --noEmit`; manually verify background output, reconnect replay, split/fullscreen resize, IME, WebGL fallback, and no duplicate output after daemon reconnect.
+**Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs`; manually verify background output, reconnect replay, split/fullscreen resize, IME, WebGL fallback, and no duplicate output after daemon reconnect.
 
 > How components are built in this project.
 

@@ -24,11 +24,15 @@
 - WebSocket 仅绑定 `127.0.0.1`，路径固定 `/pty`；Origin 仅允许 Tauri localhost 与本地 dev origin；首帧 token 鉴权。
 - Output/replay 必须使用 binary frame；Tauri command 仅用于 endpoint bootstrap 和 provider/hook 环境准备，真正的 create/write/resize/close 由同一 WebSocket 客户端执行。
 - daemon 输出最多合并 5ms；客户端未确认字符达到 `100000` 后暂停 PTY reader，直到降到 `5000` 以下；ACK 只能前进，重复/倒序 ACK 不得重复扣减。
-- Replay entry 为 `{ cols, rows, sequence, data }`；连续空 resize 合并。Attach 在同一锁序内取得 replay 并注册订阅，WebSocket 发送顺序为 replay binary → attached control → live binary。
+- daemon 每个客户端使用独立 writer queue；`clients` 全局锁内只更新订阅/ACK 状态和入队，禁止执行 TCP/WebSocket IO，慢客户端只能通过自身未确认字符触发该会话背压。
+- Replay entry 为 `{ cols, rows, sequence, data }`；output 与 resize 共用严格递增的事件 sequence，连续空 resize 合并。Attach 在同一锁序内取得 replay 并注册订阅，订阅注册后到 attached control 入队前产生的 live 帧进入 attach barrier，发送顺序严格为 replay binary → attached control → live binary。
+- 活跃会话的完整 Replay 不得在 2 MiB 后静默裁剪：内存保留最近 2 MiB 安全帧，更早的整帧写入 daemon 专属磁盘 spool；关闭会话时删除对应 spool，daemon 新实例启动时清理同环境旧 spool。磁盘写入失败时保留内存数据并告警，不得丢帧。
 - 隐藏终端仍订阅并解析输出；不得建立 inactive raw buffer 或切回时批量重放。可释放 WebGL，但不得释放 xterm、PTY 订阅或 scrollback。
 - Windows 使用直接 ConPTY API；兼容开关开启时通过受控绝对路径加载打包的 `conpty.dll`，否则使用 kernel32 API，禁止按裸 DLL 名搜索。ConPTY 子进程创建标志不得包含 `CREATE_NEW_PROCESS_GROUP`，并保留 `PSEUDOCONSOLE_RESIZE_QUIRK | PSEUDOCONSOLE_WIN32_INPUT_MODE`。Unix 使用 `openpty`、`setsid`、`TIOCSCTTY`、stdio dup 与进程组 kill；PTY fd 必须设置 `FD_CLOEXEC`，子进程 exec 前必须恢复默认信号处理并清空继承的信号掩码。生产依赖不得重新加入 `portable-pty`。
-- WebSocket 心跳 5 秒一次，15 秒无 Pong 判定失联；重连后重新 attach，并按 sequence 过滤已显示 replay。
-- `create` 请求的响应若因断线丢失，前端必须以同一 session id 重连并 attach 探测：会话存在则恢复 replay 并视为创建成功，不存在才向调用方返回原始创建错误。`close`/`close_all`/孤儿清理必须同步移除 daemon 客户端的 attach、ACK 与 sequence 状态。
+- WebSocket auth 与控制请求必须有有界超时；心跳 5 秒一次，15 秒无 Pong 判定失联。重连后重新 attach，并按 xterm 已提交 sequence 过滤 replay，而不是按网络已接收 sequence 过滤。
+- `create` 请求的响应若因断线丢失，前端必须以同一 session id 重连并 attach 探测：会话存在则恢复 replay 并视为创建成功，不存在才向调用方返回原始创建错误。create 的 session 检查、容量检查和预留插入必须原子。
+- `close`/`close_all` 在发送请求前建立本地 tombstone 并释放输出所有权；即使请求超时或断线，也不得在重连时重新 attach 已由 UI 关闭的会话。daemon 关闭路径必须同步移除 attach、ACK、sequence 与 attach-barrier 状态。
+- `pty_reconcile_active_sessions` 的 UI active list 只用于诊断，不得关闭 daemon 后台会话；后台会话只由显式 close/close_all、PTY 退出治理或确定的 daemon 孤儿清理终止。
 
 ### 4. Validation & Error Matrix
 
@@ -37,6 +41,8 @@
 - binary header 长度、kind、version 或 payload 长度非法 → 客户端断开并触发重连。
 - ACK sequence 重复、倒序或大于 last sent → 忽略，不改变未确认字符数。
 - WebSocket 中断 → daemon 保留会话和 Replay；前端心跳重连、attach、sequence 去重。
+- XTerm/Pane 卸载或移动 → `TerminalProcessManager` 保留已接收但尚未由 xterm write callback 提交的帧；新 Display 接管并重写，旧 Display 的迟到 callback 无权 ACK。
+- Replay 中的历史 resize → 仅恢复 xterm 回放尺寸，不向 live PTY 转发；回放结束后强制按当前容器重新 fit。
 - Unix 交叉检查缺少 GTK/sysroot → 报告环境阻塞，不得把它描述为 Unix 编译通过。
 
 ### 5. Good/Base/Bad Cases
@@ -48,8 +54,8 @@
 
 ### 6. Tests Required
 
-- Rust: binary header、协议未知字段/type、尺寸化 Replay/resize 合并、buffer cap、WebSocket binary writer、direct ConPTY spawn/write/read/resize；断言 ConPTY 子进程不使用 `CREATE_NEW_PROCESS_GROUP` 且保留 resize/Win32 input flags。
-- Frontend: `npx tsc --noEmit`；验证 binary decoder、ACK 在 xterm write callback 后发送、隐藏 Tab 持续更新。
+- Rust: binary header、协议未知字段/type、Attach barrier 顺序、尺寸化 Replay/resize 独立 sequence、spool 不丢帧、writer queue、后台 reconcile、direct ConPTY spawn/write/read/resize；断言 ConPTY 子进程不使用 `CREATE_NEW_PROCESS_GROUP` 且保留 resize/Win32 input flags。
+- Frontend: `npx tsc --noEmit`；Node 回归验证 auth/request timeout、close tombstone、未提交帧重挂接管、ACK 顺序、隐藏 Tab 持续更新。
 - Backend: `cargo check && cargo test`。Unix 必须在真实 macOS/Linux CI 或具备 GTK/sysroot 的构建机执行；Windows 交叉编译缺少 GTK sysroot 不算代码失败，也不算通过。
 - 手动矩阵：PowerShell/pwsh/CMD/Git Bash/WSL、Bash/Zsh/Fish；普通 Tab/分屏/Pane 全屏/应用全屏/Workspan；最小化/托盘/退出后 daemon 续跑；hook 装/未装。
 

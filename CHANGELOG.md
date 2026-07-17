@@ -3,6 +3,7 @@
 ## [TEMP]
 
 ### 修复
+- **VS Code 终端替换正确性加固**：补齐 Attach replay/attached/live 写入屏障，未提交输出由 `TerminalProcessManager` 持有并可在 Pane 卸载重挂后继续写入；初始与断线重连 Replay 均按历史尺寸串行写入，完成当前容器 fit 后才释放 live 输出，历史 resize 不再误发给 live PTY。关闭失败会以 tombstone 阻止重连复活，并取消最后会话关闭后的待执行重连，避免残留空闲 WebSocket/心跳。WebSocket 增加鉴权、请求和心跳超时；daemon 改为独立 writer queue、原子 create、递增 resize sequence 与磁盘 spool，慢客户端不再持全局锁阻塞其他会话，后台会话也不会被 UI active list 对账误杀。
 - **WSL Codex 子 Agent 分屏输出修复**：Codex rollout discovery 透传 WSL 发行版与父 transcript 路径，优先沿父会话定位真实 sessions 根，否则在 Linux `$HOME/.codex/sessions` 内通过 `wsl.exe` 查找子会话；兼容 Linux、`\\wsl.localhost`、`\\wsl$` 与 Windows 配置目录转换，修复不同 WSL 用户及并行子任务分屏长期停留在 PENDING 的问题。
 - **Claude 状态栏 Powerline 符号修复**：WebView 直接加载应用内置符号字体，不再依赖 Windows 用户字体缓存，修复实时预览、Powerline 选项和应用内终端中的分隔符与端帽显示为方框的问题。
 - **后台终端恢复输出与图标修复**：daemon attach 将回放快照与实时订阅注册收口为同一临界区，前端在 PTY 输出监听就绪后再恢复并按顺序写入回放与实时帧；恢复后的 Claude/Codex Tab 保留 CLI 启动元数据用于图标识别，但不会重跑启动命令。

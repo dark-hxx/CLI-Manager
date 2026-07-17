@@ -32,6 +32,7 @@
 - 环境隔离：Tauri `cfg(dev)` 必须选择 `sessions.dev.json`；安装包继续使用 `sessions.json`。开发版不得读取、迁移或清理安装版会话快照。
 - 开关关闭：启动时必须清理当前环境快照，不得显示恢复弹窗或调用 `terminalStore.restoreSessions`。重新开启后只恢复此后新保存的快照。
 - daemon 会话优先：启动恢复先调用 `pty_daemon_sessions`。daemon 中仍存在的 session 保留原 session id/startup metadata，标记为待 attach；`XTermTerminal` 必须先订阅输出，再通过 `TerminalProcessManager.attach` 应用尺寸化 replay，禁止重跑 `startupCmd`。
+- 待 attach 标记只能在完整 replay 已写入当前 XTerm 后清除；若 Pane 移动/卸载中断回放，标记必须保留，重挂后重新 attach。初始与断线重连 replay 都必须按历史尺寸串行写入，历史 resize 不得写回 live PTY；完成当前容器强制 fit 后才能释放已缓冲的 live 输出。
 - 快照/resume 是最终兜底：只有 daemon 会话不存在或 daemon 不可恢复时，CLI 会话才靠 resume 续**对话上下文**，普通 shell 才贴回静态 scrollback。
 
 ### 4. Validation & Error Matrix

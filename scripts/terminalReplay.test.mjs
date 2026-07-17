@@ -250,3 +250,26 @@ test("reconnect replay restores historical sizes serially and fits before live o
   output.dispose();
   detachViewport();
 });
+
+test("resize-only reconnect replay is applied locally before current-size fit", async () => {
+  managerStub.resetManager();
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const commits = [];
+  const output = display.attachPtyOutput();
+  await output.ready;
+
+  managerStub.emitOutput(delivery(frame(2, "", 100, 25, true), commits));
+  managerStub.emitOutput(delivery(frame(3, "live", 100, 25), commits));
+  flushAnimationFrames();
+
+  assert.deepEqual(events, ["resize:100x25", "resize:120x30", "write:live"]);
+  assert.deepEqual(managerStub.resizeCalls, [{ sessionId: "session-1", cols: 120, rows: 30 }]);
+  assert.deepEqual(commits, [{ sequence: 2, charCount: 0 }]);
+  terminal.finishNextWrite();
+  assert.deepEqual(commits, [
+    { sequence: 2, charCount: 0 },
+    { sequence: 3, charCount: 4 },
+  ]);
+  output.dispose();
+  detachViewport();
+});

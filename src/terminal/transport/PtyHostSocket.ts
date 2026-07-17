@@ -6,6 +6,8 @@ const BINARY_KIND_REPLAY = 2;
 const BINARY_HEADER_BYTES = 20;
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_TIMEOUT_MS = 15_000;
+const AUTH_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 interface PtyHostEndpoint {
   url: string;
@@ -17,6 +19,7 @@ interface PtyHostEndpoint {
 interface PendingRequest {
   resolve: (frame: Record<string, unknown>) => void;
   reject: (error: Error) => void;
+  timeoutId: number;
 }
 
 export interface TerminalBinaryFrame {
@@ -58,8 +61,10 @@ export class PtyHostSocket {
   private readonly pendingOutput = new Map<string, TerminalBinaryFrame[]>();
   private readonly pendingStatus = new Map<string, PtyHostStatusEvent>();
   private readonly replayFrames = new Map<string, TerminalBinaryFrame[]>();
-  private readonly latestSequence = new Map<string, number>();
+  private readonly latestReceivedSequence = new Map<string, number>();
+  private readonly latestCommittedSequence = new Map<string, number>();
   private readonly attachedSessions = new Set<string>();
+  private readonly closedSessions = new Set<string>();
   private heartbeatTimer: number | null = null;
   private reconnectTimer: number | null = null;
   private lastPongAt = 0;
@@ -83,8 +88,10 @@ export class PtyHostSocket {
     envVars: Record<string, string>,
     shell: string | null,
   ): Promise<void> {
+    this.closedSessions.delete(sessionId);
     this.attachedSessions.add(sessionId);
-    this.latestSequence.set(sessionId, 0);
+    this.latestReceivedSequence.set(sessionId, 0);
+    this.latestCommittedSequence.set(sessionId, 0);
     try {
       await this.request({
         type: "create",
@@ -114,27 +121,34 @@ export class PtyHostSocket {
   }
 
   async close(sessionId: string): Promise<void> {
-    await this.request({ type: "close", session_id: sessionId });
+    this.closedSessions.add(sessionId);
     this.clearSession(sessionId);
+    await this.request({ type: "close", session_id: sessionId });
   }
 
   async closeAll(): Promise<void> {
-    await this.request({ type: "close_all" });
+    this.attachedSessions.forEach((sessionId) => this.closedSessions.add(sessionId));
     this.pendingOutput.clear();
     this.pendingStatus.clear();
     this.replayFrames.clear();
-    this.latestSequence.clear();
+    this.latestReceivedSequence.clear();
+    this.latestCommittedSequence.clear();
     this.attachedSessions.clear();
+    this.cancelReconnectWhenIdle();
+    await this.request({ type: "close_all" });
   }
 
   async attach(sessionId: string): Promise<PtyHostAttachResult> {
+    if (this.closedSessions.has(sessionId)) {
+      return { attached: false, alive: false, replay: [] };
+    }
     this.replayFrames.set(sessionId, []);
     this.attachedSessions.add(sessionId);
     try {
       const frame = await this.request({ type: "attach", session_id: sessionId });
       const meta = (frame.meta ?? {}) as Record<string, unknown>;
       const latestSequence = Number(frame.latest_sequence ?? 0);
-      this.latestSequence.set(sessionId, latestSequence);
+      this.latestReceivedSequence.set(sessionId, latestSequence);
       return {
         attached: true,
         alive: meta.alive === true,
@@ -214,6 +228,9 @@ export class PtyHostSocket {
   }
 
   acknowledge(sessionId: string, sequence: number, charCount: number): void {
+    if (sequence <= 0 || this.closedSessions.has(sessionId)) return;
+    const previous = this.latestCommittedSequence.get(sessionId) ?? 0;
+    if (sequence > previous) this.latestCommittedSequence.set(sessionId, sequence);
     if (charCount <= 0 || this.socket?.readyState !== WebSocket.OPEN) return;
     this.send({
       type: "ack",
@@ -232,14 +249,27 @@ export class PtyHostSocket {
 
     await new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(endpoint.url);
+      this.socket = socket;
       socket.binaryType = "arraybuffer";
       let authenticated = false;
+      let authSettled = false;
+      const authTimeoutId = window.setTimeout(() => {
+        if (authSettled) return;
+        authSettled = true;
+        reject(new Error("PtyHost authentication timed out"));
+        socket.close();
+      }, AUTH_TIMEOUT_MS);
+      const rejectAuth = (error: Error) => {
+        if (authSettled) return;
+        authSettled = true;
+        window.clearTimeout(authTimeoutId);
+        reject(error);
+      };
       const fail = (error: Error) => {
-        if (!authenticated) reject(error);
-        this.handleDisconnect(error);
+        if (!authenticated) rejectAuth(error);
+        this.handleDisconnect(error, socket);
       };
       socket.onopen = () => {
-        this.socket = socket;
         this.send({
           type: "auth",
           token: endpoint.token,
@@ -252,6 +282,8 @@ export class PtyHostSocket {
             const frame = JSON.parse(event.data) as Record<string, unknown>;
             if (frame.type === "auth_ok") {
               authenticated = true;
+              authSettled = true;
+              window.clearTimeout(authTimeoutId);
               this.startHeartbeat();
               resolve();
               return;
@@ -281,10 +313,19 @@ export class PtyHostSocket {
     await this.connect();
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
+      const timeoutId = window.setTimeout(() => {
+        const pending = this.pendingRequests.get(id);
+        if (!pending) return;
+        this.pendingRequests.delete(id);
+        pending.reject(new Error(`PtyHost request timed out: ${String(frame.type ?? "unknown")}`));
+        this.socket?.close();
+      }, REQUEST_TIMEOUT_MS);
+      this.pendingRequests.set(id, { resolve, reject, timeoutId });
       try {
         this.send({ ...frame, id });
       } catch (error) {
+        const pending = this.pendingRequests.get(id);
+        if (pending) window.clearTimeout(pending.timeoutId);
         this.pendingRequests.delete(id);
         reject(error);
       }
@@ -304,7 +345,7 @@ export class PtyHostSocket {
     }
     if (frame.type === "exit") {
       const sessionId = String(frame.session_id ?? "");
-      if (!sessionId) return;
+      if (!sessionId || this.closedSessions.has(sessionId)) return;
       const event: PtyHostStatusEvent = {
         status: "exited",
         exit_code: frame.exit_code == null ? null : Number(frame.exit_code),
@@ -320,6 +361,7 @@ export class PtyHostSocket {
     const pending = this.pendingRequests.get(id);
     if (!pending) return;
     this.pendingRequests.delete(id);
+    window.clearTimeout(pending.timeoutId);
     if (frame.type === "err") {
       pending.reject(new Error(String(frame.message ?? "PtyHost request failed")));
       return;
@@ -343,6 +385,7 @@ export class PtyHostSocket {
     if (expectedLength !== buffer.byteLength) throw new Error("Invalid PtyHost binary frame length");
     const bytes = new Uint8Array(buffer);
     const sessionId = new TextDecoder().decode(bytes.subarray(BINARY_HEADER_BYTES, BINARY_HEADER_BYTES + sessionLength));
+    if (this.closedSessions.has(sessionId)) return;
     const data = bytes.slice(BINARY_HEADER_BYTES + sessionLength);
     const frame: TerminalBinaryFrame = {
       kind: kindValue === BINARY_KIND_REPLAY ? "replay" : "output",
@@ -358,9 +401,9 @@ export class PtyHostSocket {
       return;
     }
     if (kindValue !== BINARY_KIND_OUTPUT) throw new Error("Unknown PtyHost binary frame kind");
-    const previous = this.latestSequence.get(sessionId) ?? 0;
+    const previous = this.latestReceivedSequence.get(sessionId) ?? 0;
     if (sequence <= previous) return;
-    this.latestSequence.set(sessionId, sequence);
+    this.latestReceivedSequence.set(sessionId, sequence);
     const listeners = this.outputListeners.get(sessionId);
     if (listeners?.size) listeners.forEach((listener) => listener(frame));
     else {
@@ -370,10 +413,14 @@ export class PtyHostSocket {
     }
   }
 
-  private handleDisconnect(error: Error): void {
+  private handleDisconnect(error: Error, socket?: WebSocket): void {
+    if (socket && this.socket !== socket) return;
     this.stopHeartbeat();
     this.socket = null;
-    this.pendingRequests.forEach(({ reject }) => reject(error));
+    this.pendingRequests.forEach(({ reject, timeoutId }) => {
+      window.clearTimeout(timeoutId);
+      reject(error);
+    });
     this.pendingRequests.clear();
     if (this.attachedSessions.size > 0 && this.reconnectTimer === null) {
       this.reconnectTimer = window.setTimeout(() => {
@@ -384,10 +431,16 @@ export class PtyHostSocket {
   }
 
   private async reconnectAttachedSessions(): Promise<void> {
+    const reconnectSessions = [...this.attachedSessions].filter(
+      (sessionId) => !this.closedSessions.has(sessionId),
+    );
+    if (reconnectSessions.length === 0) return;
     try {
       await this.connect();
-      for (const sessionId of this.attachedSessions) {
-        const previousSequence = this.latestSequence.get(sessionId) ?? 0;
+      for (const sessionId of reconnectSessions) {
+        if (this.closedSessions.has(sessionId)) continue;
+        const previousSequence = this.latestCommittedSequence.get(sessionId) ?? 0;
+        this.latestReceivedSequence.set(sessionId, previousSequence);
         const result = await this.attach(sessionId);
         if (result.attached) {
           this.queueReplay(
@@ -431,7 +484,15 @@ export class PtyHostSocket {
     this.pendingOutput.delete(sessionId);
     this.pendingStatus.delete(sessionId);
     this.replayFrames.delete(sessionId);
-    this.latestSequence.delete(sessionId);
+    this.latestReceivedSequence.delete(sessionId);
+    this.latestCommittedSequence.delete(sessionId);
+    this.cancelReconnectWhenIdle();
+  }
+
+  private cancelReconnectWhenIdle(): void {
+    if (this.attachedSessions.size > 0 || this.reconnectTimer === null) return;
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 }
 

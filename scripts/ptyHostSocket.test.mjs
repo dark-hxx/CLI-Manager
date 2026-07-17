@@ -24,8 +24,10 @@ class FakeWebSocket {
   static mode = "normal";
   static attachRequests = 0;
   static createRequests = 0;
+  static connectionCount = 0;
 
   constructor() {
+    FakeWebSocket.connectionCount += 1;
     this.readyState = FakeWebSocket.CONNECTING;
     queueMicrotask(() => {
       this.readyState = FakeWebSocket.OPEN;
@@ -128,6 +130,7 @@ test("lost create response recovers by attaching the reserved session", { concur
   assert.equal(FakeWebSocket.attachRequests, 1);
   FakeWebSocket.mode = "normal";
   await socket.close("session-create");
+  socket.socket?.close();
 });
 
 test("failed closeAll tombstones every session and prevents reconnect attach", { concurrency: false }, async () => {
@@ -151,6 +154,19 @@ test("queued replay marks exactly one batch boundary", { concurrency: false }, (
     { kind: "replay", sessionId: "session-replay", sequence: 2, cols: 120, rows: 30, data: new Uint8Array() },
   ]);
   assert.deepEqual(received.map((frame) => frame.replayBatchEnd), [false, true]);
+});
+
+test("closing the last session cancels a pending reconnect", { concurrency: false }, async () => {
+  FakeWebSocket.mode = "normal";
+  const socket = new PtyHostSocket();
+  await socket.attach("session-reconnect-close");
+  socket.socket?.close();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await socket.close("session-reconnect-close");
+  socket.socket?.close();
+  const connectionCountAfterClose = FakeWebSocket.connectionCount;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(FakeWebSocket.connectionCount, connectionCountAfterClose);
 });
 
 test("missing heartbeat pong forces disconnect and reconnect scheduling", { concurrency: false }, async () => {

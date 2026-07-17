@@ -57,7 +57,7 @@
 - [x] auth/request/heartbeat 超时和自动重连测试通过。
 - [x] daemon 慢客户端不会阻塞其他客户端；流控和 spool 测试证明活跃输出不静默裁剪。
 - [x] create 原子预留、reader 5ms flush、后台 reconcile 回归测试通过。
-- [x] `node --test scripts/ptyHostSocket.test.mjs scripts/terminalVisibility.test.mjs scripts/terminalWorkspan.test.mjs scripts/terminalProcessManager.test.mjs` 通过（23 项）。
+- [x] `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalVisibility.test.mjs scripts/terminalWorkspan.test.mjs` 通过（30 项）。
 - [x] `npx tsc --noEmit`、`cargo check`、`cargo test` 通过（Rust 全量 447 项）；Unix 平台构建仍需真实 macOS/Linux CI。
 - [x] GitNexus 索引已重建；最终 `detect_changes(scope=unstaged)` 显示本轮 12 个文件、77 个符号、5 条受影响流程，风险 MEDIUM，均属于预期终端/daemon/测试触点。共享工作树 staged 汇总仍为 CRITICAL（37 个文件、217 个符号），包含进入本任务前已有的终端替换与 WSL 子 Agent 改动，已明确保留并向用户报告。
 - [x] `[TEMP]` CHANGELOG、功能清单和相关 Trellis 契约同步更新。
