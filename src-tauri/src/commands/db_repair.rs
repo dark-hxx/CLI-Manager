@@ -25,6 +25,7 @@ const KNOWN_DRIFT_END_VERSION: i64 = 15;
 const REPLAY_SNAPSHOT_PATCH_DIR: &str = "replay-snapshots";
 const REPLAY_SNAPSHOT_PATCH_STORAGE: &str = "file";
 const REPLAY_SNAPSHOT_CLEANUP_MARKER_FILE: &str = "replay-snapshot-patch-cleanup.version";
+const LEGACY_MODEL_PRICES_MIGRATION_MARKER_FILE: &str = "legacy-model-prices-migration-v1.version";
 const DB_FILE_NAME: &str = "cli-manager.db";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const USER_DATA_TABLES: [&str; 3] = ["projects", "groups", "command_templates"];
@@ -97,10 +98,14 @@ pub async fn db_repair_known_migration_drift(
     app: AppHandle,
 ) -> Result<DbMigrationRepairResult, String> {
     let db_path = app_paths::db_path()?;
-    let legacy_db_recovered = match app.path().app_config_dir() {
-        Ok(old_db_dir) => {
-            let legacy_db_path = old_db_dir.join(DB_FILE_NAME);
-            match recover_legacy_db_file_if_current_empty(&legacy_db_path, &db_path).await {
+    let legacy_db_path = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .map(|old_db_dir| old_db_dir.join(DB_FILE_NAME));
+    let legacy_db_recovered = match legacy_db_path.as_ref() {
+        Some(legacy_db_path) => {
+            match recover_legacy_db_file_if_current_empty(legacy_db_path, &db_path).await {
                 Ok(recovered) => recovered,
                 Err(err) => {
                     log::warn!("Legacy CLI-Manager DB recovery skipped: {err}");
@@ -108,7 +113,7 @@ pub async fn db_repair_known_migration_drift(
                 }
             }
         }
-        Err(_) => false,
+        None => false,
     };
 
     if !db_path.is_file() {
@@ -120,6 +125,9 @@ pub async fn db_repair_known_migration_drift(
 
     let mut conn = open_cli_manager_db(&db_path).await?;
     let mut result = repair_known_migration_drift(&mut conn).await?;
+    conn.close()
+        .await
+        .map_err(|err| format!("db_close_failed: {err}"))?;
     if legacy_db_recovered {
         result.repaired = true;
         result.status = if result.status == "already_consistent" {
@@ -128,6 +136,27 @@ pub async fn db_repair_known_migration_drift(
             format!("legacy_db_recovered;{}", result.status)
         };
     }
+    if let Some(legacy_db_path) = legacy_db_path.as_ref() {
+        match merge_legacy_model_prices_once(
+            legacy_db_path,
+            &db_path,
+            &app_paths::cli_manager_data_dir()?,
+        )
+        .await
+        {
+            Ok(merged) if merged > 0 => {
+                result.repaired = true;
+                result.status = if result.status == "already_consistent" {
+                    format!("legacy_model_prices_merged_{merged}")
+                } else {
+                    format!("{};legacy_model_prices_merged_{merged}", result.status)
+                };
+            }
+            Ok(_) => {}
+            Err(err) => log::warn!("Legacy model price migration skipped: {err}"),
+        }
+    }
+    let mut conn = open_cli_manager_db(&db_path).await?;
     match cleanup_replay_snapshot_inline_patches_for_current_version(
         &mut conn,
         &app_paths::cli_manager_data_dir()?,
@@ -261,6 +290,140 @@ async fn recover_legacy_db_file_if_current_empty(
 
     copy_db_file_family(legacy_db_path, current_db_path)?;
     Ok(true)
+}
+
+fn legacy_model_prices_marker_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(LEGACY_MODEL_PRICES_MIGRATION_MARKER_FILE)
+}
+
+async fn merge_legacy_model_prices_once(
+    legacy_db_path: &Path,
+    current_db_path: &Path,
+    data_dir: &Path,
+) -> Result<u64, String> {
+    let marker_path = legacy_model_prices_marker_path(data_dir);
+    if marker_path.is_file() || !legacy_db_path.is_file() || !current_db_path.is_file() {
+        return Ok(0);
+    }
+
+    let mut legacy = open_cli_manager_db(legacy_db_path).await?;
+    if !table_exists(&mut legacy, "model_prices").await? {
+        fs::create_dir_all(data_dir)
+            .map_err(|err| format!("legacy_model_prices_marker_dir_failed: {err}"))?;
+        fs::write(&marker_path, APP_VERSION)
+            .map_err(|err| format!("legacy_model_prices_marker_write_failed: {err}"))?;
+        return Ok(0);
+    }
+    let rows = sqlx::query(
+        "SELECT model, input_per_1m, output_per_1m, cache_read_per_1m,
+                cache_creation_per_1m, source, source_model_id, raw_json,
+                updated_at_ms, synced_at_ms
+         FROM model_prices",
+    )
+    .fetch_all(&mut legacy)
+    .await
+    .map_err(|err| format!("legacy_model_prices_read_failed: {err}"))?;
+    legacy
+        .close()
+        .await
+        .map_err(|err| format!("legacy_model_prices_close_failed: {err}"))?;
+
+    if rows.is_empty() {
+        fs::create_dir_all(data_dir)
+            .map_err(|err| format!("legacy_model_prices_marker_dir_failed: {err}"))?;
+        fs::write(&marker_path, APP_VERSION)
+            .map_err(|err| format!("legacy_model_prices_marker_write_failed: {err}"))?;
+        return Ok(0);
+    }
+
+    backup_db_file_family(current_db_path)?;
+    let mut current = open_cli_manager_db(current_db_path).await?;
+    if !table_exists(&mut current, "model_prices").await? {
+        return Err("current_model_prices_table_missing".to_string());
+    }
+    let mut transaction = current
+        .begin()
+        .await
+        .map_err(|err| format!("legacy_model_prices_transaction_failed: {err}"))?;
+    let mut merged = 0_u64;
+    for row in rows {
+        let result = sqlx::query(
+            "INSERT INTO model_prices (
+                model, input_per_1m, output_per_1m, cache_read_per_1m,
+                cache_creation_per_1m, source, source_model_id, raw_json,
+                updated_at_ms, synced_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(model) DO UPDATE SET
+                input_per_1m = excluded.input_per_1m,
+                output_per_1m = excluded.output_per_1m,
+                cache_read_per_1m = excluded.cache_read_per_1m,
+                cache_creation_per_1m = excluded.cache_creation_per_1m,
+                source = excluded.source,
+                source_model_id = excluded.source_model_id,
+                raw_json = excluded.raw_json,
+                updated_at_ms = excluded.updated_at_ms,
+                synced_at_ms = excluded.synced_at_ms
+             WHERE model_prices.source = 'builtin' AND excluded.source <> 'builtin'",
+        )
+        .bind(
+            row.try_get::<String, _>("model")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("input_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("output_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("cache_read_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("cache_creation_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<String, _>("source")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<Option<String>, _>("source_model_id")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<Option<String>, _>("raw_json")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<i64, _>("updated_at_ms")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<Option<i64>, _>("synced_at_ms")
+                .map_err(|err| err.to_string())?,
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(|err| format!("legacy_model_prices_merge_failed: {err}"))?;
+        merged += result.rows_affected();
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|err| format!("legacy_model_prices_commit_failed: {err}"))?;
+    current
+        .close()
+        .await
+        .map_err(|err| format!("legacy_model_prices_current_close_failed: {err}"))?;
+
+    fs::create_dir_all(data_dir)
+        .map_err(|err| format!("legacy_model_prices_marker_dir_failed: {err}"))?;
+    fs::write(&marker_path, APP_VERSION)
+        .map_err(|err| format!("legacy_model_prices_marker_write_failed: {err}"))?;
+    Ok(merged)
 }
 
 async fn repair_known_migration_drift(
@@ -1021,6 +1184,65 @@ mod tests {
         assert_eq!(legacy_rows.0, 0);
     }
 
+    #[tokio::test]
+    async fn merges_legacy_custom_model_prices_without_overwriting_current_custom_prices() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = temp.path().join("legacy.db");
+        let current = temp.path().join("current.db");
+        let data_dir = temp.path().join("data");
+        create_user_data_db(&legacy, &[]).await;
+        create_user_data_db(&current, &[("project-current", "Current Project")]).await;
+        create_model_prices_table(&legacy).await;
+        create_model_prices_table(&current).await;
+
+        insert_model_price(&legacy, "gpt-5", 123.0, "manual").await;
+        insert_model_price(&legacy, "legacy-only", 7.0, "manual").await;
+        insert_model_price(&legacy, "current-custom", 999.0, "manual").await;
+        insert_model_price(&current, "gpt-5", 1.25, "builtin").await;
+        insert_model_price(&current, "current-custom", 42.0, "manual").await;
+
+        let merged = merge_legacy_model_prices_once(&legacy, &current, &data_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(merged, 2);
+        assert_eq!(
+            read_model_price(&current, "gpt-5").await,
+            (123.0, "manual".to_string())
+        );
+        assert_eq!(
+            read_model_price(&current, "legacy-only").await,
+            (7.0, "manual".to_string())
+        );
+        assert_eq!(
+            read_model_price(&current, "current-custom").await,
+            (42.0, "manual".to_string())
+        );
+
+        let mut conn = open_cli_manager_db(&current).await.unwrap();
+        sqlx::query("DELETE FROM model_prices WHERE model = 'legacy-only'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        conn.close().await.unwrap();
+
+        assert_eq!(
+            merge_legacy_model_prices_once(&legacy, &current, &data_dir)
+                .await
+                .unwrap(),
+            0
+        );
+        let mut conn = open_cli_manager_db(&current).await.unwrap();
+        let count: i64 =
+            sqlx::query("SELECT COUNT(*) AS count FROM model_prices WHERE model = 'legacy-only'")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap()
+                .try_get("count")
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+
     async fn create_migration_table(conn: &mut SqliteConnection) {
         conn.execute(
             "CREATE TABLE _sqlx_migrations (
@@ -1074,6 +1296,57 @@ mod tests {
                 .unwrap();
         }
         conn.close().await.unwrap();
+    }
+
+    async fn create_model_prices_table(path: &Path) {
+        let mut conn = open_cli_manager_db(path).await.unwrap();
+        conn.execute(
+            "CREATE TABLE model_prices (
+                model TEXT PRIMARY KEY,
+                input_per_1m REAL NOT NULL DEFAULT 0,
+                output_per_1m REAL NOT NULL DEFAULT 0,
+                cache_read_per_1m REAL NOT NULL DEFAULT 0,
+                cache_creation_per_1m REAL NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'manual',
+                source_model_id TEXT,
+                raw_json TEXT,
+                updated_at_ms INTEGER NOT NULL DEFAULT 0,
+                synced_at_ms INTEGER
+            )",
+        )
+        .await
+        .unwrap();
+        conn.close().await.unwrap();
+    }
+
+    async fn insert_model_price(path: &Path, model: &str, input: f64, source: &str) {
+        let mut conn = open_cli_manager_db(path).await.unwrap();
+        sqlx::query(
+            "INSERT INTO model_prices (
+                model, input_per_1m, output_per_1m, cache_read_per_1m,
+                cache_creation_per_1m, source, updated_at_ms
+             ) VALUES (?1, ?2, 10, 0, 0, ?3, 1)",
+        )
+        .bind(model)
+        .bind(input)
+        .bind(source)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        conn.close().await.unwrap();
+    }
+
+    async fn read_model_price(path: &Path, model: &str) -> (f64, String) {
+        let mut conn = open_cli_manager_db(path).await.unwrap();
+        let row = sqlx::query("SELECT input_per_1m, source FROM model_prices WHERE model = ?1")
+            .bind(model)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        (
+            row.try_get("input_per_1m").unwrap(),
+            row.try_get("source").unwrap(),
+        )
     }
 
     async fn create_complete_feature_schema(conn: &mut SqliteConnection) {

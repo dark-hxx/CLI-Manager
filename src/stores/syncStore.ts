@@ -4,16 +4,28 @@ import { invoke } from "@tauri-apps/api/core";
 import { getDb, batchInsert } from "../lib/db";
 import { getCliManagerDataPaths } from "../lib/appPaths";
 import { useProjectStore } from "./projectStore";
-import { useSettingsStore } from "./settingsStore";
+import { useSettingsStore, type Settings } from "./settingsStore";
+import { useModelPricingStore } from "./modelPricingStore";
 import { useWorktreeStore } from "./worktreeStore";
 import { logInfo } from "../lib/logger";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../lib/shell";
 import { sanitizeThirdPartyHookTargets } from "../lib/thirdPartyNotifications";
+import {
+  pickSyncableSettings,
+  SYNCABLE_SETTING_KEYS,
+  type SyncableSettingKey,
+} from "../lib/syncSettings";
 
 export type SyncStatus = "idle" | "syncing" | "success" | "error" | "conflict";
 export type SyncMode = "cloud" | "local";
 export type AutoSyncAction = "off" | "upload" | "download";
-export type SyncDataDomain = "projects" | "groups" | "command_templates" | "third_party_hook_notifications";
+export type SyncDataDomain =
+  | "projects"
+  | "groups"
+  | "command_templates"
+  | "application_settings"
+  | "model_prices"
+  | "third_party_hook_notifications";
 
 interface SyncMeta {
   device_id: string;
@@ -36,6 +48,7 @@ interface SyncPayload {
   groups: Record<string, unknown>[];
   command_templates: Record<string, unknown>[];
   worktrees: Record<string, unknown>[];
+  model_prices?: Record<string, unknown>[];
   settings: Record<string, unknown>;
 }
 
@@ -53,6 +66,8 @@ export interface SyncSnapshotSummary {
   projects: number;
   groups: number;
   commandTemplates: number;
+  applicationSettings: number;
+  modelPrices: number;
   thirdPartyHookTargets: number;
   projectNames: string[];
   groupNames: string[];
@@ -123,12 +138,14 @@ async function getStore() {
   return store;
 }
 
-const SYNC_DATA_VERSION = 1;
+const SYNC_DATA_VERSION = 2;
 const AUTO_SYNC_ACTIONS: readonly AutoSyncAction[] = ["off", "upload", "download"];
 const SYNC_DATA_DOMAINS: readonly SyncDataDomain[] = [
   "projects",
   "groups",
   "command_templates",
+  "application_settings",
+  "model_prices",
   "third_party_hook_notifications",
 ];
 const HTTP_NOT_FOUND_PATTERN = /HTTP error:\s*(404|409)\b/i;
@@ -139,6 +156,19 @@ const GROUP_SYNC_SELECT = "SELECT id, name, parent_id, sort_order FROM groups OR
 const TEMPLATE_SYNC_SELECT = "SELECT id, project_id, name, command, description, sort_order FROM command_templates ORDER BY sort_order";
 const WORKTREE_SYNC_SELECT =
   "SELECT id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at FROM worktrees WHERE status = 'active' ORDER BY created_at DESC";
+const MODEL_PRICE_SYNC_COLUMNS = [
+  "model",
+  "input_per_1m",
+  "output_per_1m",
+  "cache_read_per_1m",
+  "cache_creation_per_1m",
+  "source",
+  "source_model_id",
+  "raw_json",
+  "updated_at_ms",
+  "synced_at_ms",
+] as const;
+const MODEL_PRICE_SYNC_SELECT = `SELECT ${MODEL_PRICE_SYNC_COLUMNS.join(", ")} FROM model_prices ORDER BY model COLLATE NOCASE`;
 
 interface SyncDownloadCommandResult {
   success: boolean;
@@ -218,6 +248,60 @@ function asSyncSettings(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function finiteNonNegative(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function nullableText(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function normalizeSyncedModelPrices(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  const result: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
+    const row = raw as Record<string, unknown>;
+    const model = typeof row.model === "string" ? row.model.trim() : "";
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    result.push({
+      model,
+      input_per_1m: finiteNonNegative(row.input_per_1m),
+      output_per_1m: finiteNonNegative(row.output_per_1m),
+      cache_read_per_1m: finiteNonNegative(row.cache_read_per_1m),
+      cache_creation_per_1m: finiteNonNegative(row.cache_creation_per_1m),
+      source: typeof row.source === "string" && row.source.trim() ? row.source.trim() : "manual",
+      source_model_id: nullableText(row.source_model_id),
+      raw_json: nullableText(row.raw_json),
+      updated_at_ms: toInteger(row.updated_at_ms, 0),
+      synced_at_ms: row.synced_at_ms === null || row.synced_at_ms === undefined
+        ? null
+        : toInteger(row.synced_at_ms, 0),
+    });
+  }
+  return result;
+}
+
+async function updateSyncedSetting<K extends SyncableSettingKey>(key: K, value: Settings[K]) {
+  await useSettingsStore.getState().update(key, value);
+}
+
+async function applySyncedApplicationSettings(value: unknown): Promise<SyncableSettingKey[]> {
+  const settings = pickSyncableSettings(asSyncSettings(value));
+  const applied: SyncableSettingKey[] = [];
+  for (const key of SYNCABLE_SETTING_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(settings, key)) continue;
+    await updateSyncedSetting(key, settings[key] as Settings[typeof key]);
+    applied.push(key);
+  }
+  if (applied.length > 0) {
+    await useSettingsStore.getState().load();
+  }
+  return applied;
 }
 
 async function refreshSyncedStores() {
@@ -622,7 +706,9 @@ async function collectLocalSyncData(
   const groups = await db.select<Record<string, unknown>[]>(GROUP_SYNC_SELECT);
   const commandTemplates = await db.select<Record<string, unknown>[]>(TEMPLATE_SYNC_SELECT);
   const worktrees = await db.select<Record<string, unknown>[]>(WORKTREE_SYNC_SELECT);
+  const modelPrices = await db.select<Record<string, unknown>[]>(MODEL_PRICE_SYNC_SELECT);
   const settings = useSettingsStore.getState();
+  const portableSettings = pickSyncableSettings(settings as unknown as Record<string, unknown>);
   return {
     version: SYNC_DATA_VERSION,
     device_id: deviceId,
@@ -633,7 +719,9 @@ async function collectLocalSyncData(
       groups,
       command_templates: commandTemplates,
       worktrees,
+      model_prices: modelPrices,
       settings: {
+        ...portableSettings,
         thirdPartyHookNotificationsEnabled: settings.thirdPartyHookNotificationsEnabled,
         thirdPartyHookTargets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets),
       },
@@ -643,12 +731,15 @@ async function collectLocalSyncData(
 
 function summarizeSyncData(data: SyncData, fallbackDeviceName: string): SyncSnapshotSummary {
   const settings = asSyncSettings(data.data.settings);
+  const supportsExtendedData = data.version >= 2;
   return {
     deviceName: data.device_name?.trim() || fallbackDeviceName,
     lastModified: data.last_modified,
     projects: data.data.projects.length,
     groups: data.data.groups.length,
     commandTemplates: data.data.command_templates.length,
+    applicationSettings: supportsExtendedData ? Object.keys(pickSyncableSettings(settings)).length : 0,
+    modelPrices: supportsExtendedData ? normalizeSyncedModelPrices(data.data.model_prices).length : 0,
     thirdPartyHookTargets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets).length,
     projectNames: data.data.projects.slice(0, 5).map((item) => String(item.name ?? "未命名项目")),
     groupNames: data.data.groups.slice(0, 5).map((item) => String(item.name ?? "未命名分组")),
@@ -663,6 +754,8 @@ function createMissingRemoteSummary(deviceName: string): SyncSnapshotSummary {
     projects: 0,
     groups: 0,
     commandTemplates: 0,
+    applicationSettings: 0,
+    modelPrices: 0,
     thirdPartyHookTargets: 0,
     projectNames: [],
     groupNames: [],
@@ -681,12 +774,25 @@ async function applySyncData(
   const shouldApplyGroups = selectedDomains.includes("groups");
   const shouldApplyProjects = selectedDomains.includes("projects");
   const shouldApplyTemplates = selectedDomains.includes("command_templates");
+  const supportsExtendedData = data.version >= 2;
+  const shouldApplyApplicationSettings =
+    supportsExtendedData && selectedDomains.includes("application_settings");
+  const shouldApplyModelPrices =
+    supportsExtendedData &&
+    selectedDomains.includes("model_prices") &&
+    Array.isArray(data.data.model_prices);
   const shouldApplyThirdPartyHookNotifications = selectedDomains.includes("third_party_hook_notifications");
   const backupProjects = await db.select<Record<string, unknown>[]>("SELECT * FROM projects");
   const backupGroups = await db.select<Record<string, unknown>[]>("SELECT * FROM groups");
   const backupTemplates = await db.select<Record<string, unknown>[]>("SELECT * FROM command_templates");
   const backupWorktrees = await db.select<Record<string, unknown>[]>("SELECT * FROM worktrees");
+  const backupModelPrices = shouldApplyModelPrices
+    ? await db.select<Record<string, unknown>[]>(MODEL_PRICE_SYNC_SELECT)
+    : [];
   const currentSettings = useSettingsStore.getState();
+  const backupApplicationSettings = pickSyncableSettings(
+    currentSettings as unknown as Record<string, unknown>,
+  );
   const backupThirdPartyHookNotificationsEnabled = currentSettings.thirdPartyHookNotificationsEnabled;
   const backupThirdPartyHookTargets = currentSettings.thirdPartyHookTargets;
   const remoteSettings = asSyncSettings(data.data.settings);
@@ -706,8 +812,10 @@ async function applySyncData(
   const appliedSettingsKeys: Array<
     "thirdPartyHookNotificationsEnabled" | "thirdPartyHookTargets"
   > = [];
+  let appliedApplicationSettingKeys: SyncableSettingKey[] = [];
   const shouldApplyDatabaseData = shouldApplyTemplates || shouldApplyProjects || shouldApplyGroups;
   let databaseMutated = false;
+  let modelPricesMutated = false;
 
   const nowStr = Date.now().toString();
   const os = await getOsPlatform();
@@ -843,6 +951,17 @@ async function applySyncData(
     );
   };
 
+  const insertModelPrices = async (prices: Record<string, unknown>[]) => {
+    const normalized = normalizeSyncedModelPrices(prices);
+    await batchInsert(
+      db,
+      "model_prices",
+      MODEL_PRICE_SYNC_COLUMNS,
+      normalized,
+      (price) => MODEL_PRICE_SYNC_COLUMNS.map((column) => price[column]),
+    );
+  };
+
   try {
     if (shouldApplyDatabaseData) {
       databaseMutated = true;
@@ -874,6 +993,16 @@ async function applySyncData(
       await insertTemplates(finalTemplates, finalProjectIds);
     }
 
+    if (shouldApplyModelPrices) {
+      modelPricesMutated = true;
+      await db.execute("DELETE FROM model_prices");
+      await insertModelPrices(data.data.model_prices ?? []);
+    }
+
+    if (shouldApplyApplicationSettings) {
+      appliedApplicationSettingKeys = await applySyncedApplicationSettings(remoteSettings);
+    }
+
     if (
       shouldApplyThirdPartyHookNotifications &&
       hasRemoteThirdPartyHookNotificationsEnabled &&
@@ -895,6 +1024,10 @@ async function applySyncData(
       [deviceId, data.last_modified, data.last_modified]
     );
 
+    if (modelPricesMutated) {
+      await useModelPricingStore.getState().load();
+    }
+
     logInfo("Sync data applied successfully");
   } catch (error) {
     console.error("Failed to apply sync data, restoring backup:", error);
@@ -914,6 +1047,27 @@ async function applySyncData(
         await useSettingsStore.getState().update("thirdPartyHookTargets", backupThirdPartyHookTargets);
       } catch (restoreSettingsError) {
         console.error("Failed to restore synced notification targets:", restoreSettingsError);
+      }
+    }
+    if (appliedApplicationSettingKeys.length > 0) {
+      try {
+        const rollbackSettings: Record<string, unknown> = {};
+        for (const key of appliedApplicationSettingKeys) {
+          rollbackSettings[key] = backupApplicationSettings[key];
+        }
+        await applySyncedApplicationSettings(rollbackSettings);
+      } catch (restoreSettingsError) {
+        console.error("Failed to restore synced application settings:", restoreSettingsError);
+      }
+    }
+
+    if (modelPricesMutated) {
+      try {
+        await db.execute("DELETE FROM model_prices");
+        await insertModelPrices(backupModelPrices);
+        await useModelPricingStore.getState().load();
+      } catch (restoreError) {
+        console.error("Failed to restore synced model prices:", restoreError);
       }
     }
 

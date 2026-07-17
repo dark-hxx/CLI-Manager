@@ -49,6 +49,8 @@ const DOMAIN_OPTIONS: { value: SyncDataDomain; label: string; labelEn: string }[
   { value: "projects", label: "项目", labelEn: "Projects" },
   { value: "groups", label: "分组", labelEn: "Groups" },
   { value: "command_templates", label: "命令模板", labelEn: "Command Templates" },
+  { value: "application_settings", label: "应用设置", labelEn: "Application Settings" },
+  { value: "model_prices", label: "模型价格", labelEn: "Model Prices" },
   { value: "third_party_hook_notifications", label: "", labelEn: "" },
 ];
 
@@ -104,6 +106,8 @@ export function SyncSettingsPage() {
     "projects",
     "groups",
     "command_templates",
+    "application_settings",
+    "model_prices",
     "third_party_hook_notifications",
   ]);
   const [showImportConfirm, setShowImportConfirm] = useState<string | null>(null);
@@ -218,6 +222,8 @@ export function SyncSettingsPage() {
         "projects",
         "groups",
         "command_templates",
+        "application_settings",
+        "model_prices",
         "third_party_hook_notifications",
       ]);
     } catch (error) {
@@ -769,6 +775,8 @@ export function SyncSettingsPage() {
                       projects: item.projects,
                       groups: item.groups,
                       templates: item.commandTemplates,
+                      settings: item.applicationSettings,
+                      prices: item.modelPrices,
                       targets: item.thirdPartyHookTargets,
                     })}
                   </Text>

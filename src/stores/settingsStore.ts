@@ -265,7 +265,7 @@ const TERMINAL_BACKGROUND_POSITIONS: readonly TerminalBackgroundPosition[] = [
   "bottom-right",
 ] as const;
 
-interface Settings {
+export interface Settings {
   language: LanguagePreference;
   theme: ThemeMode;
   lightThemePalette: LightThemePalette;

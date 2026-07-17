@@ -34,6 +34,8 @@ pub struct SyncPayload {
     pub command_templates: Vec<serde_json::Value>,
     #[serde(default)]
     pub worktrees: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub model_prices: Vec<serde_json::Value>,
     pub settings: serde_json::Value,
 }
 
@@ -361,5 +363,6 @@ mod tests {
         let data: SyncData = serde_json::from_str(json).unwrap();
 
         assert!(data.data.worktrees.is_empty());
+        assert!(data.data.model_prices.is_empty());
     }
 }
