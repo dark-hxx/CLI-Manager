@@ -5,8 +5,11 @@ import {
   Badge,
   Button,
   Card,
+  Center,
   Checkbox,
   Group,
+  Loader,
+  Modal,
   PasswordInput,
   Select,
   SimpleGrid,
@@ -21,6 +24,7 @@ import {
   ExternalLink,
   FolderSearch,
   Play,
+  QrCode,
   RefreshCw,
   RotateCw,
   Save,
@@ -145,6 +149,17 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+type WeixinAuthorizationPhase = "preparing" | "starting" | "waiting" | "completed" | "failed" | "cancelled";
+
+interface CcConnectWeixinAuthorizationStatus {
+  phase: WeixinAuthorizationPhase;
+  qrDataUrl: string | null;
+  error: string | null;
+  allowFrom: string | null;
+  profile: CcConnectProfile | null;
+  startedAtMs: number | null;
+}
+
 function normalizeWindowsExtendedPath(value: string) {
   return value
     .replace(/^\\\\\?\\UNC\\/i, "\\\\")
@@ -190,6 +205,8 @@ export function CcConnectSettingsPage() {
   const [executableInspection, setExecutableInspection] = useState<CcConnectExecutableStatus | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [yoloConfirmOpen, setYoloConfirmOpen] = useState(false);
+  const [weixinAuthorizationOpen, setWeixinAuthorizationOpen] = useState(false);
+  const [weixinAuthorization, setWeixinAuthorization] = useState<CcConnectWeixinAuthorizationStatus | null>(null);
   const logCursorRef = useRef(0);
   const statusRequestRef = useRef(0);
   const executableInspectionRequestRef = useRef(0);
@@ -198,6 +215,7 @@ export function CcConnectSettingsPage() {
   const logInFlightRef = useRef(false);
   const formTouchedRef = useRef(false);
   const workingRef = useRef<string | null>(null);
+  const weixinAuthorizationActiveRef = useRef(false);
 
   const hydrateProfile = useCallback((next: CcConnectStatus) => {
     if (next.profile) setProfile(next.profile);
@@ -476,6 +494,157 @@ export function CcConnectSettingsPage() {
     }
   };
 
+  const startWeixinAuthorization = async () => {
+    if (workingRef.current || status?.starting || status?.running) return;
+    const currentProject = projects.find((project) => project.id === profile.projectId);
+    if (!currentProject) {
+      toast.error(t("settings.ccConnect.weixinAuthStartFailed"), {
+        description: t("settings.ccConnect.blocker.projectMissing"),
+      });
+      return;
+    }
+    setWorkingState("weixin-authorize");
+    weixinAuthorizationActiveRef.current = true;
+    setWeixinAuthorizationOpen(true);
+    setWeixinAuthorization({
+      phase: "preparing",
+      qrDataUrl: null,
+      error: null,
+      allowFrom: null,
+      profile: null,
+      startedAtMs: null,
+    });
+    try {
+      const next = await invoke<CcConnectWeixinAuthorizationStatus>(
+        "cc_connect_weixin_authorization_start",
+        {
+          request: {
+            profile: {
+              ...profile,
+              projectName: currentProject.name,
+              projectPath: currentProject.path,
+              ccSwitchDbPath,
+              codexConfigDir,
+            },
+          },
+        },
+      );
+      if (!weixinAuthorizationActiveRef.current) return;
+      setWeixinAuthorization(next);
+    } catch (error) {
+      if (!weixinAuthorizationActiveRef.current) return;
+      await invoke("cc_connect_weixin_authorization_cancel").catch(() => undefined);
+      weixinAuthorizationActiveRef.current = false;
+      setWorkingState(null);
+      const message = errorMessage(error);
+      setWeixinAuthorization((current) => ({
+        phase: "failed",
+        qrDataUrl: current?.qrDataUrl ?? null,
+        error: message,
+        allowFrom: null,
+        profile: null,
+        startedAtMs: current?.startedAtMs ?? null,
+      }));
+      toast.error(t("settings.ccConnect.weixinAuthStartFailed"), { description: message });
+    }
+  };
+
+  const cancelWeixinAuthorization = async () => {
+    const active = weixinAuthorization?.phase === "preparing"
+      || weixinAuthorization?.phase === "starting"
+      || weixinAuthorization?.phase === "waiting";
+    try {
+      if (active) await invoke("cc_connect_weixin_authorization_cancel");
+    } catch (error) {
+      toast.error(t("settings.ccConnect.weixinAuthCancelFailed"), { description: errorMessage(error) });
+    } finally {
+      weixinAuthorizationActiveRef.current = false;
+      setWorkingState(null);
+      setWeixinAuthorizationOpen(false);
+      setWeixinAuthorization(null);
+    }
+  };
+
+  useEffect(() => {
+    const active = weixinAuthorization?.phase === "starting" || weixinAuthorization?.phase === "waiting";
+    if (!weixinAuthorizationOpen || !active) return;
+    let disposed = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      try {
+        const next = await invoke<CcConnectWeixinAuthorizationStatus>(
+          "cc_connect_weixin_authorization_status",
+        );
+        if (disposed) return;
+        if (next.phase === "completed") {
+          weixinAuthorizationActiveRef.current = false;
+          setWorkingState(null);
+          if (next.profile) {
+            setProfile(next.profile);
+            formTouchedRef.current = false;
+            setDirty(false);
+          }
+          setWeixinToken("");
+          try {
+            const nextStatus = await invoke<CcConnectStatus>("cc_connect_get_status", {
+              refreshDetection: false,
+            });
+            if (disposed) return;
+            setStatus(nextStatus);
+            hydrateProfile(nextStatus);
+          } catch {
+            // The authorization result already contains the persisted profile.
+          }
+          if (disposed) return;
+          setWeixinAuthorization(next);
+          toast.success(t("settings.ccConnect.weixinAuthSuccess"));
+        } else if (next.phase === "failed") {
+          setWeixinAuthorization(next);
+          weixinAuthorizationActiveRef.current = false;
+          setWorkingState(null);
+          toast.error(t("settings.ccConnect.weixinAuthFailed"), {
+            description: next.error ?? undefined,
+          });
+        } else {
+          setWeixinAuthorization(next);
+        }
+      } catch (error) {
+        if (!disposed) {
+          await invoke("cc_connect_weixin_authorization_cancel").catch(() => undefined);
+          if (disposed) return;
+          weixinAuthorizationActiveRef.current = false;
+          setWorkingState(null);
+          const message = errorMessage(error);
+          setWeixinAuthorization((current) => ({
+            phase: "failed",
+            qrDataUrl: current?.qrDataUrl ?? null,
+            error: message,
+            allowFrom: null,
+            profile: null,
+            startedAtMs: current?.startedAtMs ?? null,
+          }));
+          toast.error(t("settings.ccConnect.weixinAuthFailed"), { description: message });
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 800);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [hydrateProfile, t, weixinAuthorization?.phase, weixinAuthorizationOpen]);
+
+  useEffect(() => () => {
+    if (weixinAuthorizationActiveRef.current) {
+      void invoke("cc_connect_weixin_authorization_cancel").catch(() => undefined);
+    }
+  }, []);
+
   const copyLogs = async () => {
     try {
       await navigator.clipboard.writeText(logs.map((line) => `[${line.source}] ${line.message}`).join("\n"));
@@ -524,6 +693,9 @@ export function CcConnectSettingsPage() {
   const displayedDetectionError = executableInspection?.detectionError
     ?? (!executableDirty ? status?.detectionError : null);
   const busy = working !== null || executableChecking || Boolean(status?.starting);
+  const weixinAuthorizationActive = weixinAuthorization?.phase === "preparing"
+    || weixinAuthorization?.phase === "starting"
+    || weixinAuthorization?.phase === "waiting";
   const processLabel = status?.starting
     ? t("settings.ccConnect.starting")
     : status?.running
@@ -684,17 +856,30 @@ export function CcConnectSettingsPage() {
             }} />
           </SimpleGrid>
         ) : profile.platform === "weixin" ? (
-          <PasswordInput
-            mt="md"
-            label={t("settings.ccConnect.weixinToken")}
-            description={t("settings.ccConnect.weixinTokenHelp")}
-            value={weixinToken}
-            onChange={(event) => {
-              setWeixinToken(event.currentTarget.value);
-              formTouchedRef.current = true;
-              setDirty(true);
-            }}
-          />
+          <Stack mt="md" gap="xs">
+            <PasswordInput
+              label={t("settings.ccConnect.weixinToken")}
+              description={t("settings.ccConnect.weixinTokenHelp")}
+              value={weixinToken}
+              onChange={(event) => {
+                setWeixinToken(event.currentTarget.value);
+                formTouchedRef.current = true;
+                setDirty(true);
+              }}
+            />
+            <Group justify="flex-start">
+              <Button
+                size="xs"
+                variant="default"
+                leftSection={<QrCode size={15} />}
+                loading={working === "weixin-authorize"}
+                disabled={busy || !!status?.running || !currentProject || executableDirty || !displayedExecutable?.compatible}
+                onClick={() => void startWeixinAuthorization()}
+              >
+                {t("settings.ccConnect.weixinAuthorize")}
+              </Button>
+            </Group>
+          </Stack>
         ) : (
           <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
             <TextInput label={t("settings.ccConnect.wecomBotId")} value={wecomBotId} onChange={(event) => {
@@ -769,6 +954,79 @@ export function CcConnectSettingsPage() {
             : logs.map((line) => `[${formatTimestamp(line.timestampMs, language)}] [${line.source}] ${line.message}`).join("\n")}
         </pre>
       </Card>}
+      <Modal
+        opened={weixinAuthorizationOpen}
+        onClose={() => void cancelWeixinAuthorization()}
+        title={t("settings.ccConnect.weixinAuthTitle")}
+        centered
+        size="sm"
+        zIndex={90}
+        closeOnClickOutside={!weixinAuthorizationActive}
+        closeOnEscape={!weixinAuthorizationActive}
+        withCloseButton={!weixinAuthorizationActive}
+      >
+        <Stack gap="md" align="stretch">
+          <Center
+            w={264}
+            h={264}
+            mx="auto"
+            style={{
+              background: weixinAuthorization?.qrDataUrl ? "#ffffff" : "var(--surface-container-low)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+            }}
+          >
+            {weixinAuthorization?.qrDataUrl ? (
+              <img
+                src={weixinAuthorization.qrDataUrl}
+                alt={t("settings.ccConnect.weixinAuthQrAlt")}
+                width={240}
+                height={240}
+                style={{ display: "block", objectFit: "contain" }}
+              />
+            ) : weixinAuthorization?.phase === "completed" ? (
+              <Stack gap="xs" align="center" px="md">
+                <QrCode size={36} color="var(--primary)" />
+                <Text fw={700} ta="center">{t("settings.ccConnect.weixinAuthSuccess")}</Text>
+              </Stack>
+            ) : weixinAuthorization?.phase === "failed" ? (
+              <Stack gap="xs" align="center" px="md">
+                <AlertTriangle size={36} color="var(--danger)" />
+                <Text fw={700} ta="center">{t("settings.ccConnect.weixinAuthFailed")}</Text>
+              </Stack>
+            ) : (
+              <Stack gap="sm" align="center" px="md">
+                <Loader size="sm" />
+                <Text size="sm" ta="center">{t("settings.ccConnect.weixinAuthPreparing")}</Text>
+              </Stack>
+            )}
+          </Center>
+          {weixinAuthorization?.qrDataUrl && (
+            <Text size="sm" ta="center">{t("settings.ccConnect.weixinAuthScanHint")}</Text>
+          )}
+          {weixinAuthorization?.phase === "completed" && (
+            <Text size="sm" ta="center" c="var(--text-muted)">
+              {t("settings.ccConnect.weixinAuthSuccessDescription")}
+            </Text>
+          )}
+          {weixinAuthorization?.phase === "failed" && weixinAuthorization.error && (
+            <Text size="xs" c="red" style={{ overflowWrap: "anywhere" }}>
+              {weixinAuthorization.error}
+            </Text>
+          )}
+          <Group justify="flex-end">
+            {weixinAuthorizationActive ? (
+              <Button variant="light" color="red" onClick={() => void cancelWeixinAuthorization()}>
+                {t("settings.ccConnect.weixinAuthCancel")}
+              </Button>
+            ) : (
+              <Button variant="default" onClick={() => void cancelWeixinAuthorization()}>
+                {t("common.close")}
+              </Button>
+            )}
+          </Group>
+        </Stack>
+      </Modal>
       <ConfirmDialog
         open={yoloConfirmOpen}
         title={t("settings.ccConnect.yoloConfirmTitle")}

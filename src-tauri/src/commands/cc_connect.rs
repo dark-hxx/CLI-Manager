@@ -20,6 +20,13 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 const PROJECT_LIST_FILE_NAME: &str = "cli-manager-projects.txt";
 const PROJECT_SWITCH_SCRIPT_FILE_NAME: &str = "cli-manager-switch.ps1";
 const LOG_FILE_NAME: &str = "cc-connect.log";
+const WEIXIN_AUTH_DIR_NAME: &str = "weixin-authorization";
+const WEIXIN_AUTH_CONFIG_FILE_NAME: &str = "setup.toml";
+const WEIXIN_AUTH_QR_FILE_NAME: &str = "qr.png";
+const WEIXIN_AUTH_STDOUT_FILE_NAME: &str = "stdout.log";
+const WEIXIN_AUTH_STDERR_FILE_NAME: &str = "stderr.log";
+const WEIXIN_AUTH_TIMEOUT_SECS: u64 = 480;
+const MAX_WEIXIN_AUTH_QR_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_LOG_LINES: usize = 1_000;
 const DEFAULT_LOG_PAGE_SIZE: usize = 200;
 const MAX_LOG_PAGE_SIZE: usize = 500;
@@ -215,6 +222,33 @@ pub struct CcConnectLogPage {
     pub log_path: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CcConnectWeixinAuthorizationPhase {
+    Starting,
+    Waiting,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectWeixinAuthorizationStatus {
+    pub phase: CcConnectWeixinAuthorizationPhase,
+    pub qr_data_url: Option<String>,
+    pub error: Option<String>,
+    pub allow_from: Option<String>,
+    pub profile: Option<CcConnectProfile>,
+    pub started_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectWeixinAuthorizeRequest {
+    pub profile: CcConnectProfile,
+}
+
 #[derive(Debug, Clone)]
 struct DetectedBinary {
     path: PathBuf,
@@ -234,6 +268,23 @@ struct ManagedProcess {
     #[cfg(target_os = "windows")]
     job: ChildJob,
     started_at_ms: i64,
+}
+
+struct WeixinAuthorizationProcess {
+    child: Child,
+    profile: CcConnectProfile,
+    config_path: PathBuf,
+    qr_path: PathBuf,
+    stdout_path: PathBuf,
+    stderr_path: PathBuf,
+    #[cfg(target_os = "windows")]
+    job: ChildJob,
+    started_at_ms: i64,
+}
+
+enum WeixinAuthorizationState {
+    Running(WeixinAuthorizationProcess),
+    Finished(CcConnectWeixinAuthorizationStatus),
 }
 
 #[derive(Default)]
@@ -292,10 +343,15 @@ pub struct CcConnectManager {
     log_writer: SharedLogWriter,
     detection: Arc<Mutex<Option<DetectionCache>>>,
     codex_app_server_check: Arc<Mutex<Option<Result<(), String>>>>,
+    weixin_authorization: Arc<Mutex<Option<WeixinAuthorizationState>>>,
 }
 
 impl Default for CcConnectManager {
     fn default() -> Self {
+        #[cfg(not(test))]
+        if let Ok((config, qr, stdout, stderr)) = weixin_authorization_paths() {
+            cleanup_weixin_authorization_files([&config, &qr, &stdout, &stderr]);
+        }
         Self {
             operation: Arc::new(Mutex::new(())),
             process: Arc::new(Mutex::new(ProcessState::default())),
@@ -303,6 +359,7 @@ impl Default for CcConnectManager {
             log_writer: Arc::new(Mutex::new(None)),
             detection: Arc::new(Mutex::new(None)),
             codex_app_server_check: Arc::new(Mutex::new(None)),
+            weixin_authorization: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -494,6 +551,73 @@ fn data_dir() -> Result<PathBuf, String> {
 fn log_path() -> Result<PathBuf, String> {
     Ok(crate::app_paths::logs_dir()?.join(LOG_FILE_NAME))
 }
+
+fn weixin_authorization_dir() -> Result<PathBuf, String> {
+    Ok(remote_manager_dir()?.join(WEIXIN_AUTH_DIR_NAME))
+}
+
+fn weixin_authorization_paths() -> Result<(PathBuf, PathBuf, PathBuf, PathBuf), String> {
+    let dir = weixin_authorization_dir()?;
+    Ok((
+        dir.join(WEIXIN_AUTH_CONFIG_FILE_NAME),
+        dir.join(WEIXIN_AUTH_QR_FILE_NAME),
+        dir.join(WEIXIN_AUTH_STDOUT_FILE_NAME),
+        dir.join(WEIXIN_AUTH_STDERR_FILE_NAME),
+    ))
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("remove {} failed: {err}", path.display())),
+    }
+}
+
+fn cleanup_weixin_authorization_files(paths: [&Path; 4]) {
+    for path in paths {
+        let _ = remove_file_if_exists(path);
+    }
+}
+
+fn weixin_authorization_qr_data_url(path: &Path) -> Result<Option<String>, String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("inspect Weixin authorization QR failed: {err}")),
+    };
+    if metadata.len() == 0 || metadata.len() > MAX_WEIXIN_AUTH_QR_BYTES {
+        return Ok(None);
+    }
+    let bytes =
+        fs::read(path).map_err(|err| format!("read Weixin authorization QR failed: {err}"))?;
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "data:image/png;base64,{}",
+        BASE64_STANDARD.encode(bytes)
+    )))
+}
+
+fn weixin_authorization_error_detail(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let lines = raw
+        .lines()
+        .rev()
+        .filter_map(|line| {
+            let line = redact_log_line(line.trim(), &[]);
+            (!line.is_empty()).then_some(line)
+        })
+        .take(4)
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.into_iter().rev().collect::<Vec<_>>().join(" | "))
+    }
+}
+
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
@@ -1024,6 +1148,109 @@ fn build_managed_config(
             }],
         }],
     })
+}
+
+fn build_weixin_authorization_config(profile: &CcConnectProfile) -> Result<String, String> {
+    let dir = weixin_authorization_dir()?;
+    let mut config = build_managed_config(
+        profile,
+        &dir.join(PROJECT_LIST_FILE_NAME),
+        &dir.join(PROJECT_SWITCH_SCRIPT_FILE_NAME),
+    )?;
+    let platform = config
+        .projects
+        .first_mut()
+        .and_then(|project| project.platforms.first_mut())
+        .ok_or_else(|| "Weixin authorization platform is missing".to_string())?;
+    platform
+        .options
+        .insert("token".to_string(), toml::Value::String(String::new()));
+    platform
+        .options
+        .insert("allow_from".to_string(), toml::Value::String(String::new()));
+    toml::to_string_pretty(&config)
+        .map_err(|err| format!("serialize Weixin authorization config failed: {err}"))
+}
+
+#[derive(Debug)]
+struct WeixinAuthorizationResult {
+    token: String,
+    allow_from: String,
+}
+
+fn parse_weixin_authorization_result(
+    path: &Path,
+    project_name: &str,
+) -> Result<WeixinAuthorizationResult, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|err| format!("read Weixin authorization result failed: {err}"))?;
+    let root: toml::Value = toml::from_str(&raw)
+        .map_err(|err| format!("parse Weixin authorization result failed: {err}"))?;
+    let projects = root
+        .get("projects")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "Weixin authorization result has no projects".to_string())?;
+    let project = projects
+        .iter()
+        .find(|project| {
+            project
+                .get("name")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|name| name == project_name)
+        })
+        .ok_or_else(|| "Weixin authorization project is missing".to_string())?;
+    let platform = project
+        .get("platforms")
+        .and_then(toml::Value::as_array)
+        .and_then(|platforms| {
+            platforms.iter().find(|platform| {
+                platform
+                    .get("type")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("weixin"))
+            })
+        })
+        .ok_or_else(|| "Weixin authorization platform is missing".to_string())?;
+    let options = platform
+        .get("options")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "Weixin authorization options are missing".to_string())?;
+    let token = options
+        .get("token")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Weixin authorization token is missing".to_string())?
+        .to_string();
+    let allow_from = options
+        .get("allow_from")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default();
+    let allow_from = normalize_allow_from(CcConnectPlatform::Weixin, allow_from)
+        .map_err(|_| "Weixin authorization user ID is missing".to_string())?;
+    Ok(WeixinAuthorizationResult { token, allow_from })
+}
+
+fn merge_weixin_allow_from(existing: &str, scanned: &str) -> Result<String, String> {
+    let mut seen = HashSet::new();
+    let mut values = Vec::new();
+    for source in [existing, scanned] {
+        let normalized = if source.trim().is_empty() {
+            continue;
+        } else {
+            normalize_allow_from(CcConnectPlatform::Weixin, source)?
+        };
+        for value in normalized.split(',') {
+            if seen.insert(value.to_string()) {
+                values.push(value.to_string());
+            }
+        }
+    }
+    if values.is_empty() {
+        Err("Weixin authorization user ID is missing".to_string())
+    } else {
+        Ok(values.join(","))
+    }
 }
 
 fn build_remote_project_commands(
@@ -2634,6 +2861,10 @@ impl CcConnectManager {
             .operation
             .lock()
             .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        self.save_profile_locked(request)
+    }
+
+    fn save_profile_locked(&self, request: CcConnectSaveProfileRequest) -> Result<(), String> {
         self.refresh_process_state();
         {
             let state = self
@@ -2693,6 +2924,336 @@ impl CcConnectManager {
             profile.project_name, profile.platform
         ));
         Ok(())
+    }
+
+    fn start_weixin_authorization(
+        &self,
+        request: CcConnectWeixinAuthorizeRequest,
+    ) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        self.refresh_process_state();
+        {
+            let state = self
+                .process
+                .lock()
+                .map_err(|_| "cc-connect process lock poisoned".to_string())?;
+            if state.process.is_some() || state.starting {
+                return Err("stop cc-connect before authorizing Weixin".to_string());
+            }
+        }
+        {
+            let authorization = self
+                .weixin_authorization
+                .lock()
+                .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+            if matches!(
+                authorization.as_ref(),
+                Some(WeixinAuthorizationState::Running(_))
+            ) {
+                return Err("Weixin authorization is already running".to_string());
+            }
+        }
+
+        let mut profile = request.profile;
+        if profile.platform != CcConnectPlatform::Weixin {
+            return Err("select the Weixin platform before authorization".to_string());
+        }
+        let existing_allow_from = if profile.allow_from.trim().is_empty() {
+            String::new()
+        } else {
+            normalize_allow_from(CcConnectPlatform::Weixin, &profile.allow_from)?
+        };
+        profile.allow_from = if existing_allow_from.is_empty() {
+            "authorization-pending@im.wechat".to_string()
+        } else {
+            existing_allow_from.clone()
+        };
+        let mut profile = normalize_profile(self, profile)?;
+        profile.allow_from = existing_allow_from;
+
+        let binary = self.detect(profile.executable_path.as_deref(), true)?;
+        if !binary.compatible {
+            return Err(format!(
+                "cc-connect {} is not the verified v1.4.1 build",
+                binary.version.as_deref().unwrap_or("binary")
+            ));
+        }
+        let (config_path, qr_path, stdout_path, stderr_path) = weixin_authorization_paths()?;
+        let auth_dir = config_path
+            .parent()
+            .ok_or_else(|| "Weixin authorization directory is missing".to_string())?;
+        fs::create_dir_all(auth_dir)
+            .map_err(|err| format!("create Weixin authorization directory failed: {err}"))?;
+        cleanup_weixin_authorization_files([&config_path, &qr_path, &stdout_path, &stderr_path]);
+
+        let mut setup_profile = profile.clone();
+        setup_profile.allow_from = "authorization-pending@im.wechat".to_string();
+        let config = build_weixin_authorization_config(&setup_profile)?;
+        write_file_atomically(
+            &config_path,
+            config.as_bytes(),
+            "Weixin authorization config",
+        )?;
+        let stdout = File::create(&stdout_path)
+            .map_err(|err| format!("create Weixin authorization output failed: {err}"))?;
+        let stderr = File::create(&stderr_path)
+            .map_err(|err| format!("create Weixin authorization error output failed: {err}"))?;
+        let proxy = resolve_proxy_url_if_enabled(
+            profile.proxy_enabled,
+            profile.proxy_url.as_deref(),
+            &LOCAL_PROXY_PORTS,
+        )?;
+        let mut command = silent_command(&path_string(&binary.path));
+        command
+            .arg("weixin")
+            .arg("setup")
+            .arg("--config")
+            .arg(&config_path)
+            .arg("--project")
+            .arg(&profile.project_name)
+            .arg("--platform-index")
+            .arg("1")
+            .arg("--timeout")
+            .arg(WEIXIN_AUTH_TIMEOUT_SECS.to_string())
+            .arg("--qr-image")
+            .arg(&qr_path)
+            .arg("--set-allow-from-empty")
+            .current_dir(&profile.project_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        apply_proxy_environment(&mut command, profile.proxy_enabled, proxy.as_ref());
+        let mut child = command
+            .spawn()
+            .map_err(|err| format!("start Weixin authorization failed: {err}"))?;
+        #[cfg(target_os = "windows")]
+        let job = match ChildJob::assign(&child) {
+            Ok(job) => job,
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                cleanup_weixin_authorization_files([
+                    &config_path,
+                    &qr_path,
+                    &stdout_path,
+                    &stderr_path,
+                ]);
+                return Err(err);
+            }
+        };
+        let started_at_ms = now_millis();
+        let process = WeixinAuthorizationProcess {
+            child,
+            profile,
+            config_path,
+            qr_path,
+            stdout_path,
+            stderr_path,
+            #[cfg(target_os = "windows")]
+            job,
+            started_at_ms,
+        };
+        let status = CcConnectWeixinAuthorizationStatus {
+            phase: CcConnectWeixinAuthorizationPhase::Starting,
+            qr_data_url: None,
+            error: None,
+            allow_from: None,
+            profile: None,
+            started_at_ms: Some(started_at_ms),
+        };
+        let mut authorization = self
+            .weixin_authorization
+            .lock()
+            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+        *authorization = Some(WeixinAuthorizationState::Running(process));
+        Ok(status)
+    }
+
+    fn finish_weixin_authorization(
+        &self,
+        process: WeixinAuthorizationProcess,
+    ) -> CcConnectWeixinAuthorizationStatus {
+        let result = (|| {
+            let authorization = parse_weixin_authorization_result(
+                &process.config_path,
+                &process.profile.project_name,
+            )?;
+            let allow_from =
+                merge_weixin_allow_from(&process.profile.allow_from, &authorization.allow_from)?;
+            let mut profile = process.profile.clone();
+            profile.allow_from = allow_from.clone();
+            self.save_profile_locked(CcConnectSaveProfileRequest {
+                profile: profile.clone(),
+                telegram_token: None,
+                feishu_app_id: None,
+                feishu_app_secret: None,
+                weixin_token: Some(authorization.token),
+                wecom_bot_id: None,
+                wecom_bot_secret: None,
+            })?;
+            Ok::<_, String>((profile, allow_from))
+        })();
+        cleanup_weixin_authorization_files([
+            &process.config_path,
+            &process.qr_path,
+            &process.stdout_path,
+            &process.stderr_path,
+        ]);
+        match result {
+            Ok((profile, allow_from)) => CcConnectWeixinAuthorizationStatus {
+                phase: CcConnectWeixinAuthorizationPhase::Completed,
+                qr_data_url: None,
+                error: None,
+                allow_from: Some(allow_from),
+                profile: Some(profile),
+                started_at_ms: Some(process.started_at_ms),
+            },
+            Err(error) => CcConnectWeixinAuthorizationStatus {
+                phase: CcConnectWeixinAuthorizationPhase::Failed,
+                qr_data_url: None,
+                error: Some(error),
+                allow_from: None,
+                profile: None,
+                started_at_ms: Some(process.started_at_ms),
+            },
+        }
+    }
+
+    fn failed_weixin_authorization(
+        &self,
+        process: WeixinAuthorizationProcess,
+        error: String,
+    ) -> CcConnectWeixinAuthorizationStatus {
+        let detail = weixin_authorization_error_detail(&process.stderr_path);
+        cleanup_weixin_authorization_files([
+            &process.config_path,
+            &process.qr_path,
+            &process.stdout_path,
+            &process.stderr_path,
+        ]);
+        CcConnectWeixinAuthorizationStatus {
+            phase: CcConnectWeixinAuthorizationPhase::Failed,
+            qr_data_url: None,
+            error: Some(match detail {
+                Some(detail) => format!("{error}: {detail}"),
+                None => error,
+            }),
+            allow_from: None,
+            profile: None,
+            started_at_ms: Some(process.started_at_ms),
+        }
+    }
+
+    fn weixin_authorization_status(&self) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        let mut authorization = self
+            .weixin_authorization
+            .lock()
+            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+        let state = authorization
+            .as_mut()
+            .ok_or_else(|| "Weixin authorization has not been started".to_string())?;
+        match state {
+            WeixinAuthorizationState::Finished(status) => Ok(status.clone()),
+            WeixinAuthorizationState::Running(process) => {
+                let qr_data_url =
+                    weixin_authorization_qr_data_url(&process.qr_path).unwrap_or(None);
+                match process.child.try_wait() {
+                    Ok(None) => Ok(CcConnectWeixinAuthorizationStatus {
+                        phase: if qr_data_url.is_some() {
+                            CcConnectWeixinAuthorizationPhase::Waiting
+                        } else {
+                            CcConnectWeixinAuthorizationPhase::Starting
+                        },
+                        qr_data_url,
+                        error: None,
+                        allow_from: None,
+                        profile: None,
+                        started_at_ms: Some(process.started_at_ms),
+                    }),
+                    exit_result => {
+                        let state = authorization
+                            .take()
+                            .ok_or_else(|| "Weixin authorization state is missing".to_string())?;
+                        let WeixinAuthorizationState::Running(mut process) = state else {
+                            return Err("Weixin authorization state is invalid".to_string());
+                        };
+                        drop(authorization);
+                        let status = match exit_result {
+                            Ok(Some(exit)) if exit.success() => {
+                                self.finish_weixin_authorization(process)
+                            }
+                            Ok(Some(exit)) => self.failed_weixin_authorization(
+                                process,
+                                format!("Weixin authorization exited with code {:?}", exit.code()),
+                            ),
+                            Ok(None) => unreachable!(),
+                            Err(err) => {
+                                #[cfg(target_os = "windows")]
+                                process.job.terminate();
+                                let _ = process.child.kill();
+                                let _ = process.child.wait();
+                                self.failed_weixin_authorization(
+                                    process,
+                                    format!("inspect Weixin authorization failed: {err}"),
+                                )
+                            }
+                        };
+                        let mut authorization = self
+                            .weixin_authorization
+                            .lock()
+                            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+                        *authorization = Some(WeixinAuthorizationState::Finished(status.clone()));
+                        Ok(status)
+                    }
+                }
+            }
+        }
+    }
+
+    fn cancel_weixin_authorization(&self) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        let mut authorization = self
+            .weixin_authorization
+            .lock()
+            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+        let state = authorization.take();
+        let started_at_ms = match state {
+            Some(WeixinAuthorizationState::Running(mut process)) => {
+                #[cfg(target_os = "windows")]
+                process.job.terminate();
+                let _ = process.child.kill();
+                let _ = process.child.wait();
+                cleanup_weixin_authorization_files([
+                    &process.config_path,
+                    &process.qr_path,
+                    &process.stdout_path,
+                    &process.stderr_path,
+                ]);
+                Some(process.started_at_ms)
+            }
+            Some(WeixinAuthorizationState::Finished(status)) => status.started_at_ms,
+            None => None,
+        };
+        let status = CcConnectWeixinAuthorizationStatus {
+            phase: CcConnectWeixinAuthorizationPhase::Cancelled,
+            qr_data_url: None,
+            error: None,
+            allow_from: None,
+            profile: None,
+            started_at_ms,
+        };
+        *authorization = Some(WeixinAuthorizationState::Finished(status.clone()));
+        Ok(status)
     }
 
     fn switch_project_from_remote(&self, token: &str) -> Result<RemoteSwitchOutcome, String> {
@@ -3205,6 +3766,9 @@ impl CcConnectManager {
     }
 
     pub fn shutdown(&self) {
+        if let Err(err) = self.cancel_weixin_authorization() {
+            log::warn!("Weixin authorization shutdown cleanup failed: {err}");
+        }
         if let Err(err) = self.stop() {
             log::warn!("cc-connect shutdown cleanup failed: {err}");
         }
@@ -3509,6 +4073,38 @@ pub async fn cc_connect_clear_credentials(
     .await
     .map_err(|err| format!("cc-connect credential task failed: {err}"))?
 }
+
+#[tauri::command]
+pub async fn cc_connect_weixin_authorization_start(
+    manager: State<'_, CcConnectManager>,
+    request: CcConnectWeixinAuthorizeRequest,
+) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.start_weixin_authorization(request))
+        .await
+        .map_err(|err| format!("Weixin authorization start task failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn cc_connect_weixin_authorization_status(
+    manager: State<'_, CcConnectManager>,
+) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.weixin_authorization_status())
+        .await
+        .map_err(|err| format!("Weixin authorization status task failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn cc_connect_weixin_authorization_cancel(
+    manager: State<'_, CcConnectManager>,
+) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.cancel_weixin_authorization())
+        .await
+        .map_err(|err| format!("Weixin authorization cancel task failed: {err}"))?
+}
+
 #[tauri::command]
 pub async fn cc_connect_start(
     manager: State<'_, CcConnectManager>,
@@ -3998,6 +4594,71 @@ mod tests {
     }
 
     #[test]
+    fn weixin_authorization_config_is_native_and_contains_no_credential() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.allow_from = "authorization-pending@im.wechat".to_string();
+
+        let raw = build_weixin_authorization_config(&profile).unwrap();
+        let config: toml::Value = toml::from_str(&raw).unwrap();
+        let options = &config["projects"][0]["platforms"][0]["options"];
+        assert_eq!(
+            config["projects"][0]["platforms"][0]["type"].as_str(),
+            Some("weixin")
+        );
+        assert_eq!(options["token"].as_str(), Some(""));
+        assert_eq!(options["allow_from"].as_str(), Some(""));
+        assert!(!raw.contains(&format!("${{{WEIXIN_TOKEN_ENV}}}")));
+    }
+
+    #[test]
+    fn weixin_authorization_result_is_parsed_and_allowlist_is_merged() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("setup.toml");
+        fs::write(
+            &config_path,
+            r#"
+[[projects]]
+name = "amazon"
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "test-ilink-token"
+allow_from = "owner@im.wechat"
+"#,
+        )
+        .unwrap();
+
+        let result = parse_weixin_authorization_result(&config_path, "amazon").unwrap();
+        assert_eq!(result.token, "test-ilink-token");
+        assert_eq!(result.allow_from, "owner@im.wechat");
+        assert_eq!(
+            merge_weixin_allow_from("teammate@im.wechat", &result.allow_from).unwrap(),
+            "teammate@im.wechat,owner@im.wechat"
+        );
+
+        fs::write(
+            &config_path,
+            r#"
+[[projects]]
+name = "amazon"
+[[projects.platforms]]
+type = "weixin"
+[projects.platforms.options]
+token = "must-not-leak"
+allow_from = ""
+"#,
+        )
+        .unwrap();
+        let error = parse_weixin_authorization_result(&config_path, "amazon").unwrap_err();
+        assert_eq!(error, "Weixin authorization user ID is missing");
+        assert!(!error.contains("must-not-leak"));
+    }
+
+    #[test]
     fn codex_wrapper_forces_the_registered_profile_without_embedding_secrets() {
         let payload = codex_profile_wrapper_payload();
         assert!(payload.contains("--profile"));
@@ -4388,6 +5049,14 @@ mod tests {
             fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
             format_and_check_config_syntax(Path::new(&binary), &config_path).unwrap();
         }
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.allow_from = "authorization-pending@im.wechat".to_string();
+        fs::write(
+            &config_path,
+            build_weixin_authorization_config(&profile).unwrap(),
+        )
+        .unwrap();
+        format_and_check_config_syntax(Path::new(&binary), &config_path).unwrap();
     }
     #[cfg(target_os = "windows")]
     #[test]

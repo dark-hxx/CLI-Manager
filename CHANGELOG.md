@@ -4,6 +4,7 @@
 
 ### 新增
 - **cc-connect 微信平台**：远程连接新增微信个人号（原生 `weixin` ilink Token）与企业微信（原生 `wecom` WebSocket 智能机器人）配置；凭据继续存入 Windows 凭据管理器，托管 TOML 仅写环境变量占位符。
+- **cc-connect 微信扫码授权**：远程连接的微信配置新增应用内扫码授权按钮，直接运行已校验的 cc-connect 原生 `weixin setup` 流程；二维码在应用内显示并自动刷新，手机确认后自动导入 ilink Token 与允许用户，取消、关闭设置或退出应用时会终止授权进程并清理临时敏感文件。
 
 ### 修复
 - **cc-connect 远程任务排队与 Provider 修复**：启动受管 cc-connect 时通过进程级 Git 配置仅信任当前已登记项目，避免 Codex 的 MCP 服务因项目目录所有权检查卡在 `git rev-parse`；远程 Codex 启动前直接按项目 `provider_overrides` 刷新 cc-switch profile，并由 CLI-Manager 托管包装命令强制传入 `--profile`、`CODEX_HOME` 和仅存在于子进程环境中的 Provider 密钥，不再依赖本地终端是否已打开，也不再误用全局 Provider。
