@@ -7,7 +7,7 @@ use crate::daemon::protocol::{
     ClientFrame, SessionMeta, FEATURE_WS_BINARY_OUTPUT,
 };
 use crate::pty::manager::{PtyOrphanCleanupSummary, PtyProcessStatus};
-use log::{debug, info};
+use log::debug;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -239,7 +239,7 @@ pub async fn pty_daemon_sessions(
         Some(client) => {
             let sessions = client.list()?;
             let alive_count = sessions.iter().filter(|session| session.alive).count();
-            info!(
+            debug!(
                 "pty_daemon_sessions requested: count={}, alive_count={}",
                 sessions.len(),
                 alive_count
@@ -247,7 +247,7 @@ pub async fn pty_daemon_sessions(
             Ok(sessions)
         }
         None => {
-            info!("pty_daemon_sessions requested: daemon unavailable");
+            debug!("pty_daemon_sessions requested: daemon unavailable");
             Ok(Vec::new())
         }
     }

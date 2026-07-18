@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify component changes preserve existing terminal/file-tree conventions."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Run required frontend typecheck and list manual terminal UI checks."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check no duplicated path/drag helper logic was introduced."}

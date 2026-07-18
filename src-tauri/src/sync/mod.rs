@@ -1,12 +1,14 @@
 use crate::webdav::{WebDavClient, WebDavConfig};
-use chrono::Local;
+use chrono::{Local, Utc};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_REMOTE_DIR: &str = "cli-manager";
 const LOCAL_SYNC_JSON_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const BACKUP_RETENTION_PER_DEVICE: usize = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncData {
@@ -282,9 +284,481 @@ pub fn local_import(zip_path: &str) -> Result<SyncData, String> {
     Ok(data)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupManifest {
+    pub snapshot_id: String,
+    pub created_at: String,
+    pub app_version: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub platform: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupSnapshotV3 {
+    pub version: u32,
+    pub manifest: BackupManifest,
+    pub data: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupSnapshotInfo {
+    pub remote_path: String,
+    pub manifest: BackupManifest,
+}
+
+fn validate_snapshot(snapshot: &BackupSnapshotV3) -> Result<(), String> {
+    if snapshot.version != 3 {
+        return Err("backup_snapshot_unsupported_version".to_string());
+    }
+    uuid::Uuid::parse_str(&snapshot.manifest.snapshot_id)
+        .map_err(|_| "backup_snapshot_invalid_id".to_string())?;
+    uuid::Uuid::parse_str(&snapshot.manifest.device_id)
+        .map_err(|_| "backup_snapshot_invalid_device_id".to_string())?;
+    if snapshot
+        .manifest
+        .created_at
+        .parse::<chrono::DateTime<Utc>>()
+        .is_err()
+    {
+        return Err("backup_snapshot_invalid_created_at".to_string());
+    }
+    if snapshot.manifest.content_hash.len() != 64
+        || !snapshot
+            .manifest
+            .content_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("backup_snapshot_invalid_hash".to_string());
+    }
+    if !snapshot.data.is_object() {
+        return Err("backup_snapshot_invalid_data".to_string());
+    }
+    Ok(())
+}
+
+fn backup_file_name(snapshot: &BackupSnapshotV3) -> Result<String, String> {
+    validate_snapshot(snapshot)?;
+    let timestamp = snapshot
+        .manifest
+        .created_at
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .take(17)
+        .collect::<String>();
+    if timestamp.len() != 17 {
+        return Err("backup_snapshot_invalid_created_at".to_string());
+    }
+    let device_name = sanitize_device_name(&snapshot.manifest.device_name).replace("--", "-");
+    let device_name = if device_name.is_empty() {
+        "device".to_string()
+    } else {
+        device_name
+    };
+    Ok(format!(
+        "{}--{}--{}--{}.json",
+        timestamp, device_name, snapshot.manifest.device_id, snapshot.manifest.snapshot_id
+    ))
+}
+
+fn href_file_name(href: &str) -> Option<String> {
+    let path = href.split(['?', '#']).next()?;
+    let name = path.trim_end_matches('/').rsplit('/').next()?;
+    percent_decode(name).filter(|name| name.ends_with(".json"))
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = bytes.get(index + 1..index + 3)?;
+            let hex = std::str::from_utf8(hex).ok()?;
+            result.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            result.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(result).ok()
+}
+
+fn is_backup_file_name(name: &str) -> bool {
+    let stem = match name.strip_suffix(".json") {
+        Some(stem) => stem,
+        None => return false,
+    };
+    let parts = stem.split("--").collect::<Vec<_>>();
+    parts.len() == 4
+        && parts[0].len() == 17
+        && parts[0].bytes().all(|byte| byte.is_ascii_digit())
+        && uuid::Uuid::parse_str(parts[2]).is_ok()
+        && uuid::Uuid::parse_str(parts[3]).is_ok()
+}
+
+pub async fn upload_backup(
+    config: WebDavConfig,
+    snapshot: BackupSnapshotV3,
+    remote_dir: Option<String>,
+) -> Result<String, String> {
+    let client = WebDavClient::new(config);
+    let base_dir = sanitize_remote_dir(remote_dir.as_deref());
+    let backups_dir = format!("{}/backups", base_dir);
+    client
+        .ensure_directory(&backups_dir)
+        .await
+        .map_err(|error| error.message)?;
+    let remote_path = format!("{}/{}", backups_dir, backup_file_name(&snapshot)?);
+    let bytes = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|error| format!("backup_snapshot_serialize_failed: {error}"))?;
+    client
+        .upload(&remote_path, bytes)
+        .await
+        .map_err(|error| error.message)?;
+    if let Err(error) = prune_backups(
+        &client,
+        &backups_dir,
+        &snapshot.manifest.device_id,
+        BACKUP_RETENTION_PER_DEVICE,
+    )
+    .await
+    {
+        log::warn!("Failed to prune old WebDAV backups: {}", error);
+    }
+    Ok(remote_path)
+}
+
+async fn backup_paths(client: &WebDavClient, backups_dir: &str) -> Result<Vec<String>, String> {
+    let hrefs = match client.list(backups_dir).await {
+        Ok(hrefs) => hrefs,
+        Err(error) if error.status_code == Some(404) || error.status_code == Some(409) => {
+            return Ok(Vec::new())
+        }
+        Err(error) => return Err(error.message),
+    };
+    let mut paths = hrefs
+        .into_iter()
+        .filter_map(|href| href_file_name(&href))
+        .filter(|name| is_backup_file_name(name))
+        .map(|name| format!("{}/{}", backups_dir, name))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+pub async fn list_backups(
+    config: WebDavConfig,
+    remote_dir: Option<String>,
+) -> Result<Vec<BackupSnapshotInfo>, String> {
+    let client = WebDavClient::new(config);
+    let backups_dir = format!("{}/backups", sanitize_remote_dir(remote_dir.as_deref()));
+    let mut snapshots = Vec::new();
+    for remote_path in backup_paths(&client, &backups_dir).await? {
+        let bytes = client
+            .download(&remote_path)
+            .await
+            .map_err(|error| error.message)?;
+        let snapshot: BackupSnapshotV3 = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?;
+        validate_snapshot(&snapshot)?;
+        snapshots.push(BackupSnapshotInfo {
+            remote_path,
+            manifest: snapshot.manifest,
+        });
+    }
+    snapshots.sort_by(|left, right| right.manifest.created_at.cmp(&left.manifest.created_at));
+    Ok(snapshots)
+}
+
+pub async fn download_backup(
+    config: WebDavConfig,
+    remote_path: String,
+    remote_dir: Option<String>,
+) -> Result<BackupSnapshotV3, String> {
+    let base_dir = sanitize_remote_dir(remote_dir.as_deref());
+    let backups_dir = format!("{}/backups/", base_dir);
+    if !valid_backup_remote_path(&remote_path, &backups_dir) {
+        return Err("backup_snapshot_invalid_remote_path".to_string());
+    }
+    let client = WebDavClient::new(config);
+    let bytes = client
+        .download(&remote_path)
+        .await
+        .map_err(|error| error.message)?;
+    let snapshot: BackupSnapshotV3 = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?;
+    validate_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+pub async fn delete_backup(
+    config: WebDavConfig,
+    remote_path: String,
+    remote_dir: Option<String>,
+) -> Result<(), String> {
+    let base_dir = sanitize_remote_dir(remote_dir.as_deref());
+    let backups_dir = format!("{}/backups/", base_dir);
+    if !valid_backup_remote_path(&remote_path, &backups_dir) {
+        return Err("backup_snapshot_invalid_remote_path".to_string());
+    }
+    WebDavClient::new(config)
+        .delete(&remote_path)
+        .await
+        .map_err(|error| error.message)
+}
+
+fn valid_backup_remote_path(remote_path: &str, backups_dir: &str) -> bool {
+    let Some(file_name) = remote_path.strip_prefix(backups_dir) else {
+        return false;
+    };
+    !file_name.contains('/') && !file_name.contains('\\') && is_backup_file_name(file_name)
+}
+
+async fn prune_backups(
+    client: &WebDavClient,
+    backups_dir: &str,
+    device_id: &str,
+    keep: usize,
+) -> Result<(), String> {
+    let marker = format!("--{}--", device_id);
+    let mut paths = backup_paths(client, backups_dir)
+        .await?
+        .into_iter()
+        .filter(|path| path.contains(&marker))
+        .collect::<Vec<_>>();
+    paths.sort_by(|left, right| right.cmp(left));
+    for path in paths.into_iter().skip(keep) {
+        client.delete(&path).await.map_err(|error| error.message)?;
+    }
+    Ok(())
+}
+
+fn write_snapshot_zip(path: &Path, snapshot: &serde_json::Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败: {error}"))?;
+    }
+    let file = File::create(path).map_err(|error| format!("创建 zip 文件失败: {error}"))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+    writer
+        .start_file("snapshot.json", options)
+        .map_err(|error| format!("写入 zip 失败: {error}"))?;
+    serde_json::to_writer_pretty(&mut writer, snapshot)
+        .map_err(|error| format!("序列化失败: {error}"))?;
+    writer
+        .finish()
+        .map_err(|error| format!("完成 zip 失败: {error}"))?;
+    Ok(())
+}
+
+pub fn backup_local_export(dir: &str, snapshot: serde_json::Value) -> Result<String, String> {
+    let typed: BackupSnapshotV3 = serde_json::from_value(snapshot.clone())
+        .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?;
+    validate_snapshot(&typed)?;
+    let snapshot_id = snapshot
+        .pointer("/manifest/snapshotId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "backup_snapshot_invalid_id".to_string())?;
+    uuid::Uuid::parse_str(snapshot_id).map_err(|_| "backup_snapshot_invalid_id".to_string())?;
+    let timestamp = Local::now().format("%Y%m%d-%H%M%S");
+    let path = Path::new(dir).join(format!(
+        "cli-manager-backup-{}-{}.zip",
+        timestamp, snapshot_id
+    ));
+    write_snapshot_zip(&path, &snapshot)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+pub fn backup_local_import(zip_path: &str) -> Result<serde_json::Value, String> {
+    let file = File::open(zip_path).map_err(|error| format!("打开 zip 失败: {error}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|error| format!("读取 zip 失败: {error}"))?;
+    let entry_name = if archive.by_name("snapshot.json").is_ok() {
+        "snapshot.json"
+    } else {
+        "sync.json"
+    };
+    let mut entry = archive
+        .by_name(entry_name)
+        .map_err(|error| format!("无效的备份文件: {error}"))?;
+    if entry.size() > LOCAL_SYNC_JSON_MAX_BYTES {
+        return Err("备份文件过大".to_string());
+    }
+    serde_json::from_reader(&mut entry).map_err(|error| format!("解析数据失败: {error}"))
+}
+
+fn backup_data_dir() -> Result<PathBuf, String> {
+    Ok(crate::app_paths::cli_manager_data_dir()?.join("backups"))
+}
+
+pub fn save_outbox(target_hash: &str, snapshot: &serde_json::Value) -> Result<String, String> {
+    validate_target_hash(target_hash)?;
+    let typed: BackupSnapshotV3 = serde_json::from_value(snapshot.clone())
+        .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?;
+    validate_snapshot(&typed)?;
+    let snapshot_id = snapshot
+        .pointer("/manifest/snapshotId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "backup_snapshot_invalid_id".to_string())?;
+    uuid::Uuid::parse_str(snapshot_id).map_err(|_| "backup_snapshot_invalid_id".to_string())?;
+    let path = backup_data_dir()?
+        .join("outbox")
+        .join(target_hash)
+        .join(format!("{}.json", snapshot_id));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("backup_outbox_create_failed: {error}"))?;
+    }
+    let bytes = serde_json::to_vec_pretty(snapshot)
+        .map_err(|error| format!("backup_snapshot_serialize_failed: {error}"))?;
+    fs::write(&path, bytes).map_err(|error| format!("backup_outbox_write_failed: {error}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+pub fn list_outbox(target_hash: &str) -> Result<Vec<serde_json::Value>, String> {
+    validate_target_hash(target_hash)?;
+    let dir = backup_data_dir()?.join("outbox").join(target_hash);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(dir).map_err(|error| format!("backup_outbox_read_failed: {error}"))? {
+        let path = entry
+            .map_err(|error| format!("backup_outbox_read_failed: {error}"))?
+            .path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let file =
+            File::open(&path).map_err(|error| format!("backup_outbox_read_failed: {error}"))?;
+        let mut bytes = Vec::new();
+        file.take(LOCAL_SYNC_JSON_MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("backup_outbox_read_failed: {error}"))?;
+        if bytes.len() > LOCAL_SYNC_JSON_MAX_BYTES as usize {
+            return Err("备份文件过大".to_string());
+        }
+        snapshots.push(
+            serde_json::from_slice(&bytes)
+                .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?,
+        );
+    }
+    Ok(snapshots)
+}
+
+pub fn remove_outbox(target_hash: &str, snapshot_id: &str) -> Result<(), String> {
+    validate_target_hash(target_hash)?;
+    uuid::Uuid::parse_str(snapshot_id).map_err(|_| "backup_snapshot_invalid_id".to_string())?;
+    let path = backup_data_dir()?
+        .join("outbox")
+        .join(target_hash)
+        .join(format!("{}.json", snapshot_id));
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| format!("backup_outbox_remove_failed: {error}"))?;
+    }
+    Ok(())
+}
+
+pub fn save_restore_safety(snapshot: &serde_json::Value) -> Result<String, String> {
+    let typed: BackupSnapshotV3 = serde_json::from_value(snapshot.clone())
+        .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?;
+    validate_snapshot(&typed)?;
+    let path = backup_data_dir()?.join("restore-safety").join("latest.zip");
+    write_snapshot_zip(&path, snapshot)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+pub fn load_restore_safety() -> Result<Option<serde_json::Value>, String> {
+    let path = backup_data_dir()?.join("restore-safety").join("latest.zip");
+    if !path.exists() {
+        return Ok(None);
+    }
+    backup_local_import(path.to_string_lossy().as_ref()).map(Some)
+}
+
+pub fn clear_restore_safety() -> Result<(), String> {
+    let path = backup_data_dir()?.join("restore-safety").join("latest.zip");
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| format!("backup_safety_remove_failed: {error}"))?;
+    }
+    Ok(())
+}
+
+fn validate_target_hash(target_hash: &str) -> Result<(), String> {
+    if target_hash.len() == 64 && target_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("backup_outbox_invalid_target".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_backup() -> BackupSnapshotV3 {
+        BackupSnapshotV3 {
+            version: 3,
+            manifest: BackupManifest {
+                snapshot_id: "11111111-1111-4111-8111-111111111111".to_string(),
+                created_at: "2026-07-18T12:34:56.123Z".to_string(),
+                app_version: "1.2.9".to_string(),
+                device_id: "22222222-2222-4222-8222-222222222222".to_string(),
+                device_name: "work--laptop".to_string(),
+                platform: "windows".to_string(),
+                content_hash: "a".repeat(64),
+            },
+            data: serde_json::json!({
+                "workspace": {},
+                "preferences": {},
+                "modelPrices": [],
+                "notifications": {},
+                "statusline": {}
+            }),
+        }
+    }
+
+    #[test]
+    fn backup_file_name_is_strict_and_removes_separator_from_device_name() {
+        let name = backup_file_name(&sample_backup()).unwrap();
+        assert_eq!(
+            name,
+            "20260718123456123--work-laptop--22222222-2222-4222-8222-222222222222--11111111-1111-4111-8111-111111111111.json"
+        );
+        assert!(is_backup_file_name(&name));
+        assert!(!is_backup_file_name("../snapshot.json"));
+    }
+
+    #[test]
+    fn backup_remote_path_must_be_direct_child() {
+        let name = backup_file_name(&sample_backup()).unwrap();
+        assert!(valid_backup_remote_path(
+            &format!("cli-manager/backups/{name}"),
+            "cli-manager/backups/"
+        ));
+        assert!(!valid_backup_remote_path(
+            &format!("cli-manager/backups/nested/{name}"),
+            "cli-manager/backups/"
+        ));
+    }
+
+    #[test]
+    fn percent_decode_handles_webdav_href_file_names() {
+        assert_eq!(
+            percent_decode("work%20laptop.json").as_deref(),
+            Some("work laptop.json")
+        );
+        assert!(percent_decode("bad%2").is_none());
+    }
 
     #[test]
     fn sanitize_remote_dir_defaults_when_empty() {

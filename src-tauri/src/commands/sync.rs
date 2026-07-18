@@ -1,6 +1,10 @@
 use crate::sync::{
-    default_device_name, detect_conflict, download, list_device_snapshots, local_export,
-    local_import, test_connection, upload, ConflictInfo, DeviceSnapshotInfo, SyncData,
+    backup_local_export as export_backup_zip, backup_local_import as import_backup_zip,
+    clear_restore_safety, default_device_name, delete_backup, detect_conflict, download,
+    download_backup, list_backups, list_device_snapshots, list_outbox, load_restore_safety,
+    local_export, local_import, remove_outbox, save_outbox, save_restore_safety, test_connection,
+    upload, upload_backup, BackupSnapshotInfo, BackupSnapshotV3, ConflictInfo, DeviceSnapshotInfo,
+    SyncData,
 };
 use crate::webdav::WebDavConfig;
 use chrono::{DateTime, Utc};
@@ -193,6 +197,120 @@ pub async fn sync_local_import(zip_path: String) -> Result<SyncData, String> {
         .await
         .map_err(|e| format!("内部错误: {}", e))??;
     Ok(data)
+}
+
+fn webdav_config(config: SyncConfigInput) -> WebDavConfig {
+    WebDavConfig {
+        url: config.url,
+        username: config.username,
+        password: config.password,
+    }
+}
+
+#[tauri::command]
+pub async fn backup_upload(
+    config: SyncConfigInput,
+    snapshot: BackupSnapshotV3,
+    remote_dir: Option<String>,
+) -> Result<String, String> {
+    upload_backup(webdav_config(config), snapshot, remote_dir).await
+}
+
+#[tauri::command]
+pub async fn backup_list(
+    config: SyncConfigInput,
+    remote_dir: Option<String>,
+) -> Result<Vec<BackupSnapshotInfo>, String> {
+    list_backups(webdav_config(config), remote_dir).await
+}
+
+#[tauri::command]
+pub async fn backup_download(
+    config: SyncConfigInput,
+    remote_path: String,
+    remote_dir: Option<String>,
+) -> Result<BackupSnapshotV3, String> {
+    download_backup(webdav_config(config), remote_path, remote_dir).await
+}
+
+#[tauri::command]
+pub async fn backup_delete(
+    config: SyncConfigInput,
+    remote_path: String,
+    remote_dir: Option<String>,
+) -> Result<(), String> {
+    delete_backup(webdav_config(config), remote_path, remote_dir).await
+}
+
+#[tauri::command]
+pub async fn backup_import_legacy_cloud(
+    config: SyncConfigInput,
+    device_name: Option<String>,
+    remote_dir: Option<String>,
+) -> Result<SyncData, String> {
+    download(webdav_config(config), device_name, true, remote_dir).await
+}
+
+#[tauri::command]
+pub async fn backup_local_export(
+    dir: String,
+    snapshot: serde_json::Value,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || export_backup_zip(&dir, snapshot))
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_local_import(zip_path: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || import_backup_zip(&zip_path))
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_outbox_save(
+    target_hash: String,
+    snapshot: serde_json::Value,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || save_outbox(&target_hash, &snapshot))
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_outbox_list(target_hash: String) -> Result<Vec<serde_json::Value>, String> {
+    tokio::task::spawn_blocking(move || list_outbox(&target_hash))
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_outbox_remove(target_hash: String, snapshot_id: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || remove_outbox(&target_hash, &snapshot_id))
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_restore_safety_save(snapshot: serde_json::Value) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || save_restore_safety(&snapshot))
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_restore_safety_load() -> Result<Option<serde_json::Value>, String> {
+    tokio::task::spawn_blocking(load_restore_safety)
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_restore_safety_clear() -> Result<(), String> {
+    tokio::task::spawn_blocking(clear_restore_safety)
+        .await
+        .map_err(|error| format!("内部错误: {error}"))?
 }
 
 // WebDAV 密码存系统原生凭据存储，固定条目（service=CLI-Manager, user=webdav），不落明文配置文件

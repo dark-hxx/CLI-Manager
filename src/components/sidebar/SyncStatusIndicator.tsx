@@ -12,42 +12,50 @@ interface SyncStatusIndicatorProps {
 export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusIndicatorProps) {
   const { language, t } = useI18n();
   // 常驻侧边栏组件：只订阅展示所需字段，避免 syncStore 其他变化触发重渲染。
-  const { status, lastSyncAt, hasPassword } = useSyncStore(
-    useShallow((s) => ({ status: s.status, lastSyncAt: s.lastSyncAt, hasPassword: s.hasPassword }))
+  const { status, lastBackupAt, hasPassword, backupMode, localBackupDir } = useSyncStore(
+    useShallow((s) => ({
+      status: s.status,
+      lastBackupAt: s.lastBackupAt,
+      hasPassword: s.hasPassword,
+      backupMode: s.backupMode,
+      localBackupDir: s.localBackupDir,
+    }))
   );
+  const configured = backupMode === "local" ? Boolean(localBackupDir) : hasPassword;
 
   const openSyncSettings = () => onOpenSettings?.("sync");
 
   const getStatusColor = () => {
-    if (!hasPassword) return "text-on-surface-variant opacity-60";
+    if (!configured) return "text-on-surface-variant opacity-60";
     switch (status) {
-      case "syncing":
+      case "backing_up":
+      case "restoring":
+      case "queued":
         return "text-yellow-500";
       case "success":
         return "text-success";
       case "error":
         return "text-error";
-      case "conflict":
-        return "text-yellow-500";
       default:
         return "text-on-surface-variant";
     }
   };
 
   const getStatusText = () => {
-    if (!hasPassword) return t("sidebar.sync.notConfigured");
+    if (!configured) return t("sidebar.sync.notConfigured");
     switch (status) {
-      case "syncing":
+      case "backing_up":
+      case "restoring":
         return t("sidebar.sync.syncing");
+      case "queued":
+        return t("sidebar.sync.queued");
       case "success":
         return t("sidebar.sync.success");
       case "error":
         return t("sidebar.sync.error");
-      case "conflict":
-        return t("sidebar.sync.conflict");
       default:
-        return lastSyncAt
-          ? new Date(lastSyncAt).toLocaleTimeString(language, {
+        return lastBackupAt
+          ? new Date(lastBackupAt).toLocaleTimeString(language, {
               hour: "2-digit",
               minute: "2-digit",
               hour12: false,
@@ -61,8 +69,8 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
       <button
         onClick={openSyncSettings}
         className={`ui-focus-ring ui-icon-action ${getStatusColor()}`}
-        title={hasPassword ? t("sidebar.sync.configuredTitle", { status: getStatusText() }) : t("sidebar.sync.unconfiguredTitle")}
-        aria-label={hasPassword ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
+        title={configured ? t("sidebar.sync.configuredTitle", { status: getStatusText() }) : t("sidebar.sync.unconfiguredTitle")}
+        aria-label={configured ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
       >
         <Cloud size={14} strokeWidth={1.5} />
       </button>
@@ -74,8 +82,8 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
       <button
         onClick={openSyncSettings}
         className={`ui-sidebar-sync-link ${getStatusColor()}`}
-        title={hasPassword ? t("sidebar.sync.openTitle") : t("sidebar.sync.configureTitle")}
-        aria-label={hasPassword ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
+        title={configured ? t("sidebar.sync.openTitle") : t("sidebar.sync.configureTitle")}
+        aria-label={configured ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
       >
         <Cloud size={12} strokeWidth={1.5} />
         <span className="text-xs">{getStatusText()}</span>

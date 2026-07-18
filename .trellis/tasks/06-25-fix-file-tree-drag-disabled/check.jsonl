@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验证要求：运行 tsc，桌面 UI 行为人工验收"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查配置变更对前端 HTML5 拖拽和 Tauri 原生拖拽边界的影响"}

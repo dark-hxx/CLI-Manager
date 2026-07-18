@@ -1,6 +1,0 @@
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Delivery verification"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend type and lifecycle review"}
-{"file":".trellis/spec/frontend/workspace-session-restore-contracts.md","reason":"Restore regression review"}
-{"file":".trellis/spec/frontend/background-task-continuation-contracts.md","reason":"Background regression review"}
-{"file":".trellis/spec/backend/pty-daemon-contracts.md","reason":"Daemon protocol and lifecycle review"}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Shell/runtime status review"}

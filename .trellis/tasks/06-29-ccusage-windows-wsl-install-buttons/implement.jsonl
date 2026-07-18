@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"本次会修改 ccusage 看板 UI 和用户可见文案，需要遵守 i18n 和组件交互规约。"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"本次会修改 Zustand 的 ccusage store，需要保持现有状态管理约定。"}
-{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"本次要在 Rust 后端新增 WSL 安装路径，必须复用现有 WSL UNC 与 wsl.exe 合约。"}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"ccusage 目标环境依赖 Claude/Codex 配置目录来源，需避免与现有 hook/WSL 目录约定冲突。"}
-{"file":".trellis/tasks/06-29-ccusage-windows-wsl-install-buttons/prd.md","reason":"实现阶段以本任务确认后的需求和验收标准为准。"}

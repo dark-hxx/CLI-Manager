@@ -727,6 +727,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "notify-rust",
+ "quick-xml 0.39.4",
  "reqwest 0.12.28",
  "semver",
  "serde",

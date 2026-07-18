@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"WSL UNC、wsl.exe 与跨文件系统边界约束"}
-{"file":".trellis/spec/backend/history-index-contracts.md","reason":"历史索引、项目键与缓存刷新契约"}
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"变更记录、工作区保护与交付检查"}

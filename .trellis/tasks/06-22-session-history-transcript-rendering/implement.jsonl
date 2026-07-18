@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-22-session-history-transcript-rendering/prd.md","reason":"Task requirements, accepted scope, technical approach, and out-of-scope boundaries."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component and Markdown rendering conventions, especially shared MarkdownContent safety policy."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend verification expectations and manual UI verification constraint."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript type-safety expectations for new frontend code."}
