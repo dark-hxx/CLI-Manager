@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Mint Slime">
+  <defs><linearGradient id="slime" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a7f3d0"/><stop offset="1" stop-color="#34d399"/></linearGradient></defs>
+  <path d="M80 22c9 24 44 25 50 68 4 29-17 50-50 50S26 119 30 90c6-43 41-44 50-68Z" fill="url(#slime)" stroke="#047857" stroke-width="6" stroke-linejoin="round"/><ellipse cx="58" cy="88" rx="10" ry="12" fill="#064e3b"/><ellipse cx="102" cy="88" rx="10" ry="12" fill="#064e3b"/><circle cx="55" cy="84" r="3" fill="#ecfeff"/><circle cx="99" cy="84" r="3" fill="#ecfeff"/><path d="M62 109c11 9 25 9 36 0" fill="none" stroke="#064e3b" stroke-width="6" stroke-linecap="round"/><ellipse cx="80" cy="135" rx="40" ry="8" fill="#047857" opacity=".24"/><path d="M58 48c7-8 17-12 28-12" fill="none" stroke="#ecfdf5" stroke-width="7" stroke-linecap="round" opacity=".75"/>
+</svg>

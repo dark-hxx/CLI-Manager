@@ -23,14 +23,37 @@
         "backgroundColor": "#1a1b26",
         "visible": true,
         "dragDropEnabled": true
+      },
+      {
+        "label": "desktop-pet",
+        "title": "CLI-Manager Pet",
+        "url": "index.html",
+        "width": 190,
+        "height": 210,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "focus": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*; frame-src 'none'; object-src 'none'; base-uri 'self'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost https://raw.githubusercontent.com; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*; frame-src 'none'; object-src 'none'; base-uri 'self'",
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["$APPLOCALDATA/backgrounds/**"],
+          "allow": [
+            "$APPLOCALDATA/backgrounds/**",
+            "$HOME/.cli-manager/pets/**",
+            "$HOME/.codex/pets/**"
+          ],
           "deny": []
         }
       }

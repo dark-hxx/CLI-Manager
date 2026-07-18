@@ -96,3 +96,74 @@
 - `git diff --check` 通过，仅有工作区既有的 LF/CRLF 转换提示。
 - 全量 `tsc --noEmit` 仍被上游缺失的 `src/lib/syncSettings.ts` 和 `syncStore.ts` 既有 TS2538 阻断；本次新增设置页未产生新的 TypeScript 诊断。
 - 尚未使用真实微信 ilink Token 或企业微信 BotID/Secret 做账号链路验证；本次未打包、未 push。
+
+## 桌面宠物首版验证（2026-07-16）
+
+- 已从最新主分支创建并在 feat/Desktop-pets 开发，功能提交为 feat: add downloadable desktop pets。
+- 新增独立透明桌宠窗口、设置入口、双击会话跳转、后台 daemon 状态聚合、位置恢复、置顶、尺寸、状态气泡、全屏隐藏和位置锁定。
+- 新增公开宠物中心、远端/缓存/随包三级目录降级、下载与 SHA-256 校验、更新、切换、卸载和本地 .clipet 导入。
+- 三只首版宠物包及预览已随应用提供；Rust 测试校验目录哈希与实际内嵌包完全一致。
+- 宠物包限制为 manifest.json、PNG、WebP 和安全 SVG；路径穿越、符号链接、HTML、JavaScript、可执行文件、危险 SVG、超大压缩包和解压膨胀均会被拒绝。
+- 已安装宠物固定保存到 ~/.cli-manager/pets，不使用版本化 Tauri 数据目录，覆盖安装或重新安装应用不会主动清理。
+- npx tsc --noEmit：通过。
+- npm run build：通过，Vite 完成 6617 个模块转换；仅保留既有的大 chunk 警告。
+- cargo check：通过。
+- cargo test desktop_pet --lib：5 项通过、0 项失败。
+- rustfmt --check src/commands/desktop_pet.rs --edition 2021：通过。
+- 全量 cargo fmt --check 被本次拉取的上游文件 git_worktree.rs、daemon/server.rs、lib.rs 既有格式差异阻断；未为了本功能改写这些无关上游文件。
+- 已拉取并合并 origin/master 的 2402c72，同时保留上游 cc-connect 设置与本次桌宠设置入口。
+- 尚未启动 Tauri 窗口手动检查透明背景、拖动位置和中英文切换；本次未打包安装包。
+
+## 桌面宠物启动修复验证（2026-07-17）
+
+### 根因与修复范围
+
+- 主程序启动失败位于 React StrictMode 生命周期与 Tauri Store 插件边界：不可取消的初始化会在 StrictMode 探测阶段重复启动，多个 Store 又并发读取，导致真实用户数据下启动 I/O 竞争并卡在初始化页。
+- 设置、会话和同步 Store 的 load() 已增加 single-flight 合并；基础启动改为设置、会话、同步、项目串行完成后再开放首屏、请求日志同步、桌宠协调器和延迟任务。
+- 桌宠透明空窗位于运行时 WebView 创建与前端入口路由边界，不是宠物 CSS 或素材问题；改为由 Tauri 配置预创建隐藏的 desktop-pet WebView，并使用原生窗口 label 选择桌宠入口。
+- 桌宠位置只在用户开始拖拽后持久化；程序自动放置到右下角不会把默认位置误写成固定坐标。
+
+### 验证结果
+
+- npm run build：通过，Vite 完成 6618 个模块转换；仅有既有的大 chunk 警告。
+- cargo check：通过。
+- cargo test desktop_pet：5 项通过、0 项失败。
+- npm run tauri build -- --no-bundle：通过，生成 src-tauri/target/release/cli-manager.exe。
+- 使用真实数据目录冷启动最终 release：设置阶段 18.3 ms、Store 阶段 371.4 ms、项目阶段 18.8 ms，均未超时；首屏约 495.4 ms。
+- 最终 release 同时存在可响应的主窗口和 190x210 透明桌宠窗口；使用 Windows PrintWindow 抓取窗口本体，确认状态气泡与宠物像素均已绘制。
+- 旧动态窗口对照测试在 PrintWindow 中为全透明，静态窗口方案在相同方式下正常渲染。
+- 自动放置后 desktopPet.position 保持 null；测试结束后用户设置已恢复到测试前 SHA-256 F18933890B0FA134857E70637D5538F5F219C817DA29F157765276B0FF047112。
+- git diff --check：通过，仅输出工作区既有的 LF/CRLF 转换提示。
+- 已刷新 codebase-memory 索引并执行变更影响检测；变更限定在启动编排、三个 Store 加载、桌宠协调/入口/窗口配置和本验证记录。
+
+## Codex Pets 兼容验证（2026-07-17）
+
+- 保留 `.clipet` 导入、在线目录、更新和卸载链路，同时新增 `pet.json + spritesheet.webp` 的 Codex Pets ZIP 解析。
+- V1：支持省略 `spriteVersionNumber` 的 1536×1872、9 行精灵图。
+- V2：支持 `spriteVersionNumber: 2` 的 1536×2288、11 行精灵图；已核对用户提供的 `shinobu-q.codex-pet.zip` 为 VP8L V2 文件头。
+- 启动设置页与“重新扫描”都会读取宿主机 `~/.codex/pets`；外部宠物标为只读，不允许 CLI-Manager 删除。
+- 手动导入的 `.codex-pet.zip` 安装到 `~/.cli-manager/pets/installed`，同 ID 同时存在时自管副本优先，卸载后可回退到外部副本。
+- ZIP 安全边界继续覆盖路径穿越、符号链接、未知文件、条目/压缩包/解压体积上限；Codex WebP 另外校验 20 MiB 上限和 V1/V2 精确尺寸。
+- `cargo test desktop_pet --lib`：9 项通过、0 项失败。
+- `.\\node_modules\\.bin\\tsc.cmd --noEmit`：通过。
+- `npm run build`：通过，Vite 完成 6620 个模块转换；仅有既有的大 chunk 警告。
+- `npm run lint`：项目未定义 lint script，无法执行。
+- 本次未生成安装包；等待用户明确要求打包后再执行。
+
+## 桌宠状态与多任务菜单修复验证（2026-07-17）
+
+### 根因与触点
+
+- 根因位于桌宠状态聚合边界：daemon 已保存打开会话的最新 Hook 任务状态，但 deriveDesktopPetSnapshot 对所有已打开会话直接跳过 daemon 数据，只读取前端瞬时状态；前端状态缺失时因此错误显示“空闲”。
+- 右键菜单的数据契约只携带单个优先目标，且菜单固定在 190×210 窗口底部，无法表达多个会话，扩展后也会被透明窗口边界裁切。
+- 已修改：src/lib/desktopPet.ts（状态合并、完整目标列表）、src/hooks/useDesktopPetCoordinator.ts（中英文菜单标签）、src/desktop-pet/DesktopPetApp.tsx（目标选择与事件发送）、src/desktop-pet/desktopPet.css（全窗口菜单、滚动与省略）、src/lib/i18n.ts（中英文文案）。
+- 已确认复用且未修改：App.tsx 的 handleActivateHookNotificationTarget，继续负责关闭历史视图、切换项目/Worktree scope、激活对应 Workspan/分屏会话并恢复/聚焦主窗口。
+- 已确认无须修改：terminalStore Hook/Shell 状态机、Rust daemon Hook 状态生产、PTY 生命周期和桌宠原生窗口尺寸；本次只修复桌宠消费与展示层的丢失契约。
+
+### 验证结果
+
+- 纯逻辑场景验证通过：打开会话的前端状态缺失时采用较新的 daemon running；较新的前端 done 不被旧 daemon 状态覆盖；daemon-only 会话仍进入目标列表；多目标按既有优先级选择主状态。
+- .\node_modules\.bin\tsc.cmd --noEmit：通过。
+- npm run build：通过，Vite 完成 6620 个模块转换；仅有既有的大 chunk 警告。
+- 190×210 固定窗口样式验证：8 个任务时菜单完整落在窗口内，任务区出现纵向滚动，项目名、会话名、状态和“当前”标记可见，底部三个操作按钮不被裁切。
+- 本次未打包；尚需在真实 Tauri 窗口手动覆盖同 Workspan、跨 Workspan、分屏深层会话、主窗口最小化/托盘及中英文切换。

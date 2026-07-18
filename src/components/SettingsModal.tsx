@@ -6,6 +6,7 @@ import {
   Info,
   Keyboard,
   PanelLeft,
+  PawPrint,
   RadioTower,
   RefreshCw,
   ServerCog,
@@ -33,6 +34,7 @@ import { CommandSuggestionSettingsPage } from "./settings/pages/CommandSuggestio
 import { ProviderSettingsPage } from "./settings/pages/ProviderSettingsPage";
 import { ModelPricingSettingsPage } from "./settings/pages/ModelPricingSettingsPage";
 import { AboutSettingsPage } from "./settings/pages/AboutSettingsPage";
+import { DesktopPetSettingsPage } from "./settings/pages/DesktopPetSettingsPage";
 import { CcConnectSettingsPage } from "./settings/pages/CcConnectSettingsPage";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
@@ -40,6 +42,7 @@ import { normalizeFontFamilyStack } from "../lib/systemFonts";
 
 export type SettingsTab =
   | "general"
+  | "desktop-pet"
   | "developer"
   | "sidebar"
   | "terminal-theme"
@@ -64,6 +67,7 @@ interface SettingsTabConfig {
 
 const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "general",
+  "desktop-pet",
   "terminal-theme",
   "shortcuts",
   "templates",
@@ -85,6 +89,12 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     title: "settings.tabs.general.title",
     description: "settings.tabs.general.description",
     icon: Settings2,
+  },
+  "desktop-pet": {
+    label: "settings.tabs.desktopPet.label",
+    title: "settings.tabs.desktopPet.title",
+    description: "settings.tabs.desktopPet.description",
+    icon: PawPrint,
   },
   developer: {
     label: "settings.tabs.developer.label",
@@ -247,6 +257,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   const activeConfig = SETTINGS_TAB_CONFIG[activeTab];
   const activeContent = (() => {
     if (activeTab === "general") return <GeneralSettingsPage />;
+    if (activeTab === "desktop-pet") return <DesktopPetSettingsPage />;
     if (activeTab === "developer") return <DeveloperSettingsPage />;
     if (activeTab === "sidebar") return <SidebarSettingsPage />;
     if (activeTab === "terminal-theme") return <ThemeSettingsPage />;

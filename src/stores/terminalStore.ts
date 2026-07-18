@@ -110,6 +110,7 @@ export interface ShellRuntimePayload {
 }
 
 const SHELL_RUNTIME_MONITORING_ENV = "CLI_MANAGER_SHELL_RUNTIME_MONITORING";
+const PTY_OUTPUT_ACTIVITY_UPDATE_INTERVAL_MS = 1000;
 const TAB_STATUS_PRIORITY: Record<TabNotificationState, number> = {
   none: 0,
   done: 1,
@@ -207,6 +208,7 @@ interface TerminalStore {
   tabNotifications: Record<string, TabNotificationState>;
   tabStatuses: Record<string, TabStatusSources>;
   tabStatusDetails: Record<string, TabStatusDetails>;
+  ptyOutputActivityAt: Record<string, number>;
   splits: Record<string, SplitState>;
   hiddenBackgroundSessionIds: Set<string>;
   /** 仅运行态：XTerm 输出监听就绪后才可执行 daemon attach。 */
@@ -222,6 +224,7 @@ interface TerminalStore {
   mergeWorkspanAtPaneEdge: (sourceId: string, targetId: string, targetPaneId: string, edge: TerminalPaneDropEdge) => void;
   updateSessionCwd: (sessionId: string, cwd: string) => void;
   updateSessionTerminalSnapshot: (sessionId: string, initialTerminalOutput: string) => void;
+  recordPtyOutputActivity: (sessionId: string) => void;
   markAttentionInputHandled: (sessionId: string) => void;
   handleCliHookEvent: (payload: CliHookPayload) => string | null;
   handleShellRuntimeEvent: (payload: ShellRuntimePayload) => string | null;
@@ -1084,6 +1087,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   tabNotifications: {},
   tabStatuses: {},
   tabStatusDetails: {},
+  ptyOutputActivityAt: {},
   splits: {},
   hiddenBackgroundSessionIds: new Set<string>(),
   daemonAttachPendingSessionIds: new Set<string>(),
@@ -1102,6 +1106,18 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         : session
     )),
   })),
+
+  recordPtyOutputActivity: (sessionId) => {
+    const now = Date.now();
+    const previous = get().ptyOutputActivityAt[sessionId] ?? 0;
+    if (now - previous < PTY_OUTPUT_ACTIVITY_UPDATE_INTERVAL_MS) return;
+    set((state) => ({
+      ptyOutputActivityAt: {
+        ...state.ptyOutputActivityAt,
+        [sessionId]: now,
+      },
+    }));
+  },
 
   createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId) => {
     const os = await getOsPlatform();
@@ -1226,6 +1242,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const newNotifications = { ...state.tabNotifications };
     const newTabStatuses = { ...state.tabStatuses };
     const newTabStatusDetails = { ...state.tabStatusDetails };
+    const newPtyOutputActivityAt = { ...state.ptyOutputActivityAt };
     const newSubagentTranscripts = { ...state.subagentTranscripts };
     delete newSubagentTranscripts[id];
     const owner = findWorkspanBySession(state.workspans, id);
@@ -1243,6 +1260,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     delete newNotifications[id];
     delete newTabStatuses[id];
     delete newTabStatusDetails[id];
+    delete newPtyOutputActivityAt[id];
 
     // Drop in-memory background overrides for closed sessions (R8).
     const prevHidden = state.hiddenBackgroundSessionIds;
@@ -1264,6 +1282,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       tabNotifications: newNotifications,
       tabStatuses: newTabStatuses,
       tabStatusDetails: newTabStatusDetails,
+      ptyOutputActivityAt: newPtyOutputActivityAt,
       subagentTranscripts: newSubagentTranscripts,
       splits: {},
       daemonAttachPendingSessionIds: newDaemonAttachPending,
@@ -1797,6 +1816,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const newNotifications = { ...state.tabNotifications };
     const newTabStatuses = { ...state.tabStatuses };
     const newTabStatusDetails = { ...state.tabStatusDetails };
+    const newPtyOutputActivityAt = { ...state.ptyOutputActivityAt };
     const newSubagentTranscripts = { ...state.subagentTranscripts };
     const newHidden = new Set(state.hiddenBackgroundSessionIds);
     const newDaemonAttachPending = new Set(state.daemonAttachPendingSessionIds);
@@ -1806,6 +1826,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       delete newNotifications[closedSessionId];
       delete newTabStatuses[closedSessionId];
       delete newTabStatusDetails[closedSessionId];
+      delete newPtyOutputActivityAt[closedSessionId];
       delete newSubagentTranscripts[closedSessionId];
       newHidden.delete(closedSessionId);
       newDaemonAttachPending.delete(closedSessionId);
@@ -1825,6 +1846,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       tabNotifications: newNotifications,
       tabStatuses: newTabStatuses,
       tabStatusDetails: newTabStatusDetails,
+      ptyOutputActivityAt: newPtyOutputActivityAt,
       splits: {},
       hiddenBackgroundSessionIds: newHidden,
       daemonAttachPendingSessionIds: newDaemonAttachPending,

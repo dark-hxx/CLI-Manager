@@ -38,6 +38,7 @@ import { SplitTerminalView } from "./SplitTerminalView";
 import { XTermTerminal } from "./XTermTerminal";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { BackgroundTasksPanel, type BackgroundTaskMeta } from "./BackgroundTasksPanel";
+import { CliCat } from "./desktop-pet/CliCat";
 import { TerminalStatsPanel } from "./terminal/TerminalStatsPanel";
 import { SystemResourcesPanel } from "./terminal/SystemResourcesPanel";
 import {
@@ -2059,17 +2060,7 @@ function CpuCatIndicator({
       aria-label={label}
       style={{ "--cpu-cat-speed": speed, "--cpu-cat-color": color } as CSSProperties}
     >
-      <svg viewBox="0 0 48 34" aria-hidden="true">
-        <g className="ui-cpu-cat-run">
-          <path className="ui-cpu-cat-tail" d="M37 18c6-1 7-8 2-10" />
-          <path className="ui-cpu-cat-body" d="M13 14h19c4 0 7 3 7 7v1c0 3-3 5-6 5H14c-4 0-7-3-7-7s3-6 6-6Z" />
-          <path className="ui-cpu-cat-head" d="M10 9 14 3l4 6h7l4-6 4 6v11H10V9Z" />
-          <circle className="ui-cpu-cat-eye" cx="17" cy="13" r="1.3" />
-          <circle className="ui-cpu-cat-eye" cx="26" cy="13" r="1.3" />
-          <path className="ui-cpu-cat-leg ui-cpu-cat-leg-a" d="M16 27v5" />
-          <path className="ui-cpu-cat-leg ui-cpu-cat-leg-b" d="M29 27v5" />
-        </g>
-      </svg>
+      <CliCat />
     </button>
   );
 }

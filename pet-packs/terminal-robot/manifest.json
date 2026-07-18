@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "official.terminal-robot",
+  "version": "1.0.0",
+  "name": { "zh-CN": "终端机器人", "en-US": "Terminal Robot" },
+  "description": {
+    "zh-CN": "守在桌面上的迷你终端机器人。",
+    "en-US": "A tiny terminal robot that watches over your desktop."
+  },
+  "author": "CLI-Manager Contributors",
+  "license": "CC0-1.0",
+  "engine": "image-v1",
+  "canvas": { "width": 160, "height": 160 },
+  "states": {
+    "idle": { "file": "pet.svg" },
+    "working": { "file": "pet.svg" },
+    "waiting": { "file": "pet.svg" },
+    "success": { "file": "pet.svg" },
+    "error": { "file": "pet.svg" },
+    "sleeping": { "file": "pet.svg" }
+  }
+}

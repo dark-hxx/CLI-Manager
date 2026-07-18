@@ -63,6 +63,19 @@ pub fn providers_dir() -> Result<PathBuf, String> {
     Ok(cli_manager_data_dir()?.join("providers"))
 }
 
+/// Downloaded desktop pet packages are durable user data. Keep them beside
+/// settings, sessions and the SQLite database so repair installs and app
+/// reinstalls do not remove them.
+pub fn pets_dir() -> Result<PathBuf, String> {
+    Ok(cli_manager_data_dir()?.join("pets"))
+}
+
+/// Codex-compatible pets installed by commands such as
+/// `npx codex-pets add <id>` live in the user's Codex data directory.
+pub fn codex_pets_dir() -> Result<PathBuf, String> {
+    Ok(home_dir_from_env()?.join(".codex").join("pets"))
+}
+
 pub fn codex_providers_dir() -> Result<PathBuf, String> {
     Ok(providers_dir()?.join("codex"))
 }

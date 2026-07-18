@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import type { TerminalSession, PersistedSplit } from "../lib/types";
 import { getCliManagerDataPaths } from "../lib/appPaths";
+import { singleFlight } from "../lib/singleFlight";
 import {
   migrateTerminalWorkspans,
   sanitizeTerminalWorkspans,
@@ -45,7 +46,7 @@ export const useSessionStore = create<SessionStore>(() => ({
   activeWorkspanId: null,
   loaded: false,
 
-  load: async () => {
+  load: singleFlight(async () => {
     const s = await getStore();
     const sessions = (await s.get<TerminalSession[]>("sessions")) ?? [];
     const splits = (await s.get<PersistedSplit[]>("splits")) ?? [];
@@ -65,7 +66,7 @@ export const useSessionStore = create<SessionStore>(() => ({
       activeWorkspanId,
       loaded: true,
     });
-  },
+  }),
 
   saveSessions: async (sessions) => {
     const s = await getStore();

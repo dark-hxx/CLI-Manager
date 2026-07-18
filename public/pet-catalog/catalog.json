@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-16T00:00:00Z",
+  "items": [
+    {
+      "id": "official.terminal-robot",
+      "version": "1.0.0",
+      "name": { "zh-CN": "终端机器人", "en-US": "Terminal Robot" },
+      "description": { "zh-CN": "守在桌面上的迷你终端机器人。", "en-US": "A tiny terminal robot that watches over your desktop." },
+      "author": "CLI-Manager Contributors",
+      "license": "CC0-1.0",
+      "minAppVersion": "1.2.8",
+      "previewUrl": "https://raw.githubusercontent.com/GAMPA228/CLI-Manager/master/public/pet-catalog/previews/terminal-robot.svg",
+      "downloadUrl": "https://raw.githubusercontent.com/GAMPA228/CLI-Manager/master/public/pet-catalog/packages/terminal-robot-1.0.0.clipet",
+      "sha256": "1cdb58c31d55a1184cf17e2cc579e62a9ff42efe9f5fed7644ecdd8a2f196dd4",
+      "sizeBytes": 1081
+    },
+    {
+      "id": "official.pixel-fox",
+      "version": "1.0.0",
+      "name": { "zh-CN": "像素狐狸", "en-US": "Pixel Fox" },
+      "description": { "zh-CN": "会陪你等待任务完成的橙色小狐狸。", "en-US": "An orange fox that waits with you while tasks finish." },
+      "author": "CLI-Manager Contributors",
+      "license": "CC0-1.0",
+      "minAppVersion": "1.2.8",
+      "previewUrl": "https://raw.githubusercontent.com/GAMPA228/CLI-Manager/master/public/pet-catalog/previews/pixel-fox.svg",
+      "downloadUrl": "https://raw.githubusercontent.com/GAMPA228/CLI-Manager/master/public/pet-catalog/packages/pixel-fox-1.0.0.clipet",
+      "sha256": "f0116da43c972dfbc50722bcd0903db022b160648c916815139b88a65aceeafc",
+      "sizeBytes": 1086
+    },
+    {
+      "id": "official.mint-slime",
+      "version": "1.0.0",
+      "name": { "zh-CN": "薄荷史莱姆", "en-US": "Mint Slime" },
+      "description": { "zh-CN": "轻量、安静又软乎乎的薄荷色伙伴。", "en-US": "A lightweight, quiet and squishy mint companion." },
+      "author": "CLI-Manager Contributors",
+      "license": "CC0-1.0",
+      "minAppVersion": "1.2.8",
+      "previewUrl": "https://raw.githubusercontent.com/GAMPA228/CLI-Manager/master/public/pet-catalog/previews/mint-slime.svg",
+      "downloadUrl": "https://raw.githubusercontent.com/GAMPA228/CLI-Manager/master/public/pet-catalog/packages/mint-slime-1.0.0.clipet",
+      "sha256": "8972fc10c7684ee4ef8d9c8abc4042e162264bf2b682de7ddffbfbf88e412ba1",
+      "sizeBytes": 1030
+    }
+  ]
+}

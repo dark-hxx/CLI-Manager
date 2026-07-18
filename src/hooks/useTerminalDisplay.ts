@@ -14,6 +14,7 @@ import {
   TERMINAL_FONT_SIZE_MIN,
   useSettingsStore,
 } from "../stores/settingsStore";
+import { useTerminalStore } from "../stores/terminalStore";
 
 const MIN_TERMINAL_COLS = 40;
 const MIN_TERMINAL_ROWS = 8;
@@ -394,7 +395,10 @@ export function useTerminalDisplay({
       }
       const text = normalizeOutputRef.current(textDecoder.decode(bytes, { stream: true }));
       if (!text) return;
-      if (markSnapshotDirty) markTerminalSnapshotDirty(sessionId);
+      if (markSnapshotDirty) {
+        markTerminalSnapshotDirty(sessionId);
+        useTerminalStore.getState().recordPtyOutputActivity(sessionId);
+      }
       if (isVisibleRef.current) {
         ptyPendingChunksRef.current.push(text);
         if (ptyWriteRafIdRef.current === null) {

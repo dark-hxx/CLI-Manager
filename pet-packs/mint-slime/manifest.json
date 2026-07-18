@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "official.mint-slime",
+  "version": "1.0.0",
+  "name": { "zh-CN": "薄荷史莱姆", "en-US": "Mint Slime" },
+  "description": { "zh-CN": "轻量、安静又软乎乎的薄荷色伙伴。", "en-US": "A lightweight, quiet and squishy mint companion." },
+  "author": "CLI-Manager Contributors",
+  "license": "CC0-1.0",
+  "engine": "image-v1",
+  "canvas": { "width": 160, "height": 160 },
+  "states": {
+    "idle": { "file": "pet.svg" }, "working": { "file": "pet.svg" }, "waiting": { "file": "pet.svg" },
+    "success": { "file": "pet.svg" }, "error": { "file": "pet.svg" }, "sleeping": { "file": "pet.svg" }
+  }
+}

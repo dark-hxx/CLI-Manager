@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "official.pixel-fox",
+  "version": "1.0.0",
+  "name": { "zh-CN": "像素狐狸", "en-US": "Pixel Fox" },
+  "description": { "zh-CN": "会陪你等待任务完成的橙色小狐狸。", "en-US": "An orange fox that waits with you while tasks finish." },
+  "author": "CLI-Manager Contributors",
+  "license": "CC0-1.0",
+  "engine": "image-v1",
+  "canvas": { "width": 160, "height": 160 },
+  "states": {
+    "idle": { "file": "pet.svg" }, "working": { "file": "pet.svg" }, "waiting": { "file": "pet.svg" },
+    "success": { "file": "pet.svg" }, "error": { "file": "pet.svg" }, "sleeping": { "file": "pet.svg" }
+  }
+}

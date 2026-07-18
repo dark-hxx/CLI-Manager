@@ -1,0 +1,53 @@
+.pet-artwork {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.pet-artwork-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.pet-artwork-sprite-viewport {
+  position: relative;
+}
+
+.pet-artwork-sprite-probe {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pet-artwork-sprite {
+  position: absolute;
+  display: block;
+  width: 192px;
+  height: 208px;
+  flex: none;
+  background-position-x: 0;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.pet-artwork-sprite.is-animated {
+  animation: pet-artwork-sprite-cycle var(--pet-sprite-duration) steps(var(--pet-sprite-frames)) infinite;
+}
+
+@keyframes pet-artwork-sprite-cycle {
+  from { background-position-x: 0; }
+  to { background-position-x: var(--pet-sprite-end-x); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-artwork-sprite.is-animated { animation: none; }
+}
