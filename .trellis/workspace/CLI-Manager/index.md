@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-07-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~827 | Active |
+| `journal-1.md` | ~860 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-07-18 | 版本化备份恢复 | `13f6d3d` | `master` |
 | 24 | 2026-07-18 | Reduce default info log noise | `538a051` | `master` |
 | 23 | 2026-07-18 | 精简项目多选右键菜单 | `41885d7` | `master` |
 | 22 | 2026-07-18 | 修复终端 OSC 颜色响应泄漏 | `5c5d55f` | `master` |
