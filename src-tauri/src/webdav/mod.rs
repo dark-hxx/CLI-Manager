@@ -1,4 +1,6 @@
 use log::{debug, error};
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use reqwest::{header, Client, Method, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -181,6 +183,74 @@ impl WebDavClient {
         let status = response.status();
         debug!("Upload response status: {}", status);
 
+        Self::handle_response(response).await?;
+        Ok(())
+    }
+
+    pub async fn list(&self, remote_path: &str) -> Result<Vec<String>, WebDavError> {
+        let url = format!(
+            "{}/{}",
+            self.config.url.trim_end_matches('/'),
+            remote_path.trim_start_matches('/')
+        );
+        let response = self
+            .client
+            .request(Method::from_bytes(b"PROPFIND").expect("valid WebDAV method"), &url)
+            .header(header::AUTHORIZATION, self.auth_header())
+            .header("Depth", "1")
+            .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+            .body(r#"<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>"#)
+            .send()
+            .await
+            .map_err(|e| WebDavError {
+                message: format!("PROPFIND request failed: {}", e),
+                status_code: None,
+            })?;
+        let bytes = Self::handle_response(response).await?;
+        let mut reader = Reader::from_reader(bytes.as_slice());
+        reader.config_mut().trim_text(true);
+        let mut paths = Vec::new();
+        let mut in_href = false;
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(event)) if event.local_name().as_ref() == b"href" => in_href = true,
+                Ok(Event::Text(text)) if in_href => {
+                    let value = text.decode().map_err(|e| WebDavError {
+                        message: format!("Failed to parse PROPFIND response: {}", e),
+                        status_code: None,
+                    })?;
+                    paths.push(value.into_owned());
+                }
+                Ok(Event::End(event)) if event.local_name().as_ref() == b"href" => in_href = false,
+                Ok(Event::Eof) => break,
+                Err(e) => {
+                    return Err(WebDavError {
+                        message: format!("Failed to parse PROPFIND response: {}", e),
+                        status_code: None,
+                    })
+                }
+                _ => {}
+            }
+        }
+        Ok(paths)
+    }
+
+    pub async fn delete(&self, remote_path: &str) -> Result<(), WebDavError> {
+        let url = format!(
+            "{}/{}",
+            self.config.url.trim_end_matches('/'),
+            remote_path.trim_start_matches('/')
+        );
+        let response = self
+            .client
+            .delete(&url)
+            .header(header::AUTHORIZATION, self.auth_header())
+            .send()
+            .await
+            .map_err(|e| WebDavError {
+                message: format!("DELETE request failed: {}", e),
+                status_code: None,
+            })?;
         Self::handle_response(response).await?;
         Ok(())
     }

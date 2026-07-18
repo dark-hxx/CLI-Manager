@@ -1,1106 +1,558 @@
-import { create } from "zustand";
-import { Store } from "@tauri-apps/plugin-store";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { getDb, batchInsert } from "../lib/db";
+import { Store } from "@tauri-apps/plugin-store";
+import { create } from "zustand";
 import { getCliManagerDataPaths } from "../lib/appPaths";
-import { singleFlight } from "../lib/singleFlight";
-import { useProjectStore } from "./projectStore";
-import { useSettingsStore, type Settings } from "./settingsStore";
-import { useModelPricingStore } from "./modelPricingStore";
-import { useWorktreeStore } from "./worktreeStore";
-import { logInfo } from "../lib/logger";
+import { batchInsert, getDb } from "../lib/db";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../lib/shell";
+import { singleFlight } from "../lib/singleFlight";
+import { pickSyncableSettings, SYNCABLE_SETTING_KEYS, type SyncableSettingKey } from "../lib/syncSettings";
 import { sanitizeThirdPartyHookTargets } from "../lib/thirdPartyNotifications";
-import {
-  pickSyncableSettings,
-  SYNCABLE_SETTING_KEYS,
-  type SyncableSettingKey,
-} from "../lib/syncSettings";
+import { useModelPricingStore } from "./modelPricingStore";
+import { useProjectStore } from "./projectStore";
+import { useSettingsStore } from "./settingsStore";
+import { useWorktreeStore } from "./worktreeStore";
 
-export type SyncStatus = "idle" | "syncing" | "success" | "error" | "conflict";
-export type SyncMode = "cloud" | "local";
-export type AutoSyncAction = "off" | "upload" | "download";
-export type SyncDataDomain =
-  | "projects"
-  | "groups"
-  | "command_templates"
-  | "application_settings"
-  | "model_prices"
-  | "third_party_hook_notifications";
+export type BackupStatus = "idle" | "backing_up" | "restoring" | "queued" | "success" | "error";
+export type BackupMode = "cloud" | "local";
+export type BackupDomain = "workspace" | "preferences" | "model_prices" | "notifications" | "statusline";
+
+export interface BackupManifest {
+  snapshotId: string;
+  createdAt: string;
+  appVersion: string;
+  deviceId: string;
+  deviceName: string;
+  platform: string;
+  contentHash: string;
+}
+
+interface WorkspaceBackup {
+  groups: Record<string, unknown>[];
+  projects: Record<string, unknown>[];
+  worktrees: Record<string, unknown>[];
+  commandTemplates: Record<string, unknown>[];
+}
+
+export interface BackupSnapshotV3 {
+  version: 3;
+  manifest: BackupManifest;
+  data: {
+    workspace: WorkspaceBackup;
+    preferences: Record<string, unknown>;
+    modelPrices: Record<string, unknown>[];
+    notifications: {
+      enabled: boolean;
+      targets: unknown[];
+    };
+    statusline: unknown;
+  };
+}
+
+export interface BackupSnapshotInfo {
+  remotePath: string;
+  manifest: BackupManifest;
+}
 
 interface SyncMeta {
   device_id: string;
   last_sync_at: string | null;
 }
 
-interface ConflictInfo {
-  local_modified: string;
-  remote_modified: string;
-  local_projects: number;
-  remote_projects: number;
-  local_groups: number;
-  remote_groups: number;
-  local_templates: number;
-  remote_templates: number;
-}
-
-interface SyncPayload {
-  projects: Record<string, unknown>[];
-  groups: Record<string, unknown>[];
-  command_templates: Record<string, unknown>[];
-  worktrees: Record<string, unknown>[];
-  model_prices?: Record<string, unknown>[];
-  settings: Record<string, unknown>;
-}
-
-interface SyncData {
+interface LegacySyncData {
   version: number;
-  device_id: string;
-  device_name: string;
-  last_modified: string;
-  data: SyncPayload;
+  device_id?: string;
+  device_name?: string;
+  last_modified?: string;
+  data?: {
+    projects?: Record<string, unknown>[];
+    groups?: Record<string, unknown>[];
+    command_templates?: Record<string, unknown>[];
+    worktrees?: Record<string, unknown>[];
+    model_prices?: Record<string, unknown>[];
+    settings?: Record<string, unknown>;
+  };
 }
 
-export interface SyncSnapshotSummary {
-  deviceName: string;
-  lastModified: string;
-  projects: number;
-  groups: number;
-  commandTemplates: number;
-  applicationSettings: number;
-  modelPrices: number;
-  thirdPartyHookTargets: number;
-  projectNames: string[];
-  groupNames: string[];
-  templateNames: string[];
-  missing?: boolean;
-}
-
-export interface SyncPreview {
-  local: SyncSnapshotSummary;
-  remote: SyncSnapshotSummary;
-}
-
-export interface DeviceSnapshotInfo {
-  device_name: string;
-  last_modified: string;
-  projects: number;
-  groups: number;
-  command_templates: number;
-}
-
-interface SyncStore {
+interface BackupStore {
   webdavUrl: string;
   webdavUsername: string;
   hasPassword: boolean;
-  status: SyncStatus;
-  lastSyncAt: string | null;
+  status: BackupStatus;
+  lastBackupAt: string | null;
   deviceId: string;
   deviceName: string;
-  knownDeviceNames: string[];
-  autoSyncOnStartup: AutoSyncAction;
-  autoSyncOnClose: AutoSyncAction;
-  conflictInfo: ConflictInfo | null;
-  pendingRemoteData: SyncData | null;
   loaded: boolean;
-  syncMode: SyncMode;
-  localSyncDir: string;
+  backupMode: BackupMode;
+  localBackupDir: string;
   remoteDir: string;
-
+  autoBackupOnClose: boolean;
+  snapshots: BackupSnapshotInfo[];
   load: () => Promise<void>;
   setConfig: (url: string, username: string, password?: string) => Promise<void>;
   clearPassword: () => Promise<void>;
   getSessionPassword: () => string;
   testConnection: (url: string, username: string, password: string) => Promise<{ success: boolean; message: string }>;
   setDeviceName: (name: string) => Promise<void>;
-  setAutoSyncOnStartup: (action: AutoSyncAction) => Promise<void>;
-  setAutoSyncOnClose: (action: AutoSyncAction) => Promise<void>;
-  upload: () => Promise<void>;
-  download: (force?: boolean, options?: { deviceName?: string; domains?: SyncDataDomain[] }) => Promise<void>;
-  getPreview: (deviceName?: string) => Promise<SyncPreview>;
-  listDeviceSnapshots: () => Promise<DeviceSnapshotInfo[]>;
-  runAutoSync: (phase: "startup" | "close") => Promise<"skipped" | "success" | "conflict" | "error">;
-  resolveConflict: (keepLocal: boolean) => Promise<void>;
-  clearConflict: () => void;
-  setSyncMode: (mode: SyncMode) => Promise<void>;
-  setLocalSyncDir: (dir: string) => Promise<void>;
+  setBackupMode: (mode: BackupMode) => Promise<void>;
+  setLocalBackupDir: (dir: string) => Promise<void>;
   setRemoteDir: (dir: string) => Promise<void>;
-  localExport: () => Promise<string>;
-  localImport: (zipPath: string) => Promise<void>;
+  setAutoBackupOnClose: (enabled: boolean) => Promise<void>;
+  createBackup: (manual?: boolean) => Promise<string | null>;
+  listBackups: () => Promise<BackupSnapshotInfo[]>;
+  previewBackup: (remotePath: string) => Promise<BackupSnapshotV3>;
+  restoreBackup: (remotePath: string, domains: BackupDomain[]) => Promise<void>;
+  importLegacyCloud: (domains: BackupDomain[]) => Promise<void>;
+  deleteBackup: (remotePath: string) => Promise<void>;
+  localImport: (zipPath: string, domains: BackupDomain[]) => Promise<void>;
+  previewLocalImport: (zipPath: string) => Promise<BackupSnapshotV3>;
+  undoLastRestore: () => Promise<void>;
+  retryOutbox: () => Promise<void>;
+  runCloseAutoBackup: () => Promise<"skipped" | "success" | "queued" | "error">;
 }
 
-let store: Store | null = null;
+const ALL_DOMAINS: BackupDomain[] = ["workspace", "preferences", "model_prices", "notifications", "statusline"];
+const PROJECT_SELECT = "SELECT id, name, path, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, remote_path, created_at, updated_at FROM projects ORDER BY sort_order";
+const GROUP_SELECT = "SELECT id, name, parent_id, sort_order, created_at FROM groups ORDER BY sort_order";
+const TEMPLATE_SELECT = "SELECT id, project_id, name, command, description, sort_order FROM command_templates ORDER BY sort_order";
+const WORKTREE_SELECT = "SELECT id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at FROM worktrees WHERE status = 'active' ORDER BY created_at DESC";
+const MODEL_PRICE_COLUMNS = ["model", "input_per_1m", "output_per_1m", "cache_read_per_1m", "cache_creation_per_1m", "source", "source_model_id", "raw_json", "updated_at_ms", "synced_at_ms"] as const;
+const MODEL_PRICE_SELECT = `SELECT ${MODEL_PRICE_COLUMNS.join(", ")} FROM model_prices ORDER BY model COLLATE NOCASE`;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+
+let configStore: Store | null = null;
 let sessionWebdavPassword = "";
-async function getStore() {
-  if (!store) {
+
+async function getConfigStore() {
+  if (!configStore) {
     const paths = await getCliManagerDataPaths();
-    store = await Store.load(paths.syncStorePath, { autoSave: 0, defaults: {} });
+    configStore = await Store.load(paths.syncStorePath, { autoSave: 0, defaults: {} });
   }
-  return store;
-}
-
-const SYNC_DATA_VERSION = 2;
-const AUTO_SYNC_ACTIONS: readonly AutoSyncAction[] = ["off", "upload", "download"];
-const SYNC_DATA_DOMAINS: readonly SyncDataDomain[] = [
-  "projects",
-  "groups",
-  "command_templates",
-  "application_settings",
-  "model_prices",
-  "third_party_hook_notifications",
-];
-const HTTP_NOT_FOUND_PATTERN = /HTTP error:\s*(404|409)\b/i;
-const REMOTE_SYNC_UNAVAILABLE_MESSAGE = "无法从云端同步";
-const PROJECT_SYNC_SELECT =
-  "SELECT id, name, path, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, remote_path FROM projects ORDER BY sort_order";
-const GROUP_SYNC_SELECT = "SELECT id, name, parent_id, sort_order FROM groups ORDER BY sort_order";
-const TEMPLATE_SYNC_SELECT = "SELECT id, project_id, name, command, description, sort_order FROM command_templates ORDER BY sort_order";
-const WORKTREE_SYNC_SELECT =
-  "SELECT id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at FROM worktrees WHERE status = 'active' ORDER BY created_at DESC";
-const MODEL_PRICE_SYNC_COLUMNS = [
-  "model",
-  "input_per_1m",
-  "output_per_1m",
-  "cache_read_per_1m",
-  "cache_creation_per_1m",
-  "source",
-  "source_model_id",
-  "raw_json",
-  "updated_at_ms",
-  "synced_at_ms",
-] as const;
-const MODEL_PRICE_SYNC_SELECT = `SELECT ${MODEL_PRICE_SYNC_COLUMNS.join(", ")} FROM model_prices ORDER BY model COLLATE NOCASE`;
-
-interface SyncDownloadCommandResult {
-  success: boolean;
-  has_conflict: boolean;
-  conflict_info: ConflictInfo | null;
-  data: SyncData | null;
-}
-
-function migrateAutoSyncAction(value: unknown): AutoSyncAction {
-  return AUTO_SYNC_ACTIONS.includes(value as AutoSyncAction) ? (value as AutoSyncAction) : "off";
+  return configStore;
 }
 
 function sanitizeDeviceName(value: string): string {
-  return value
-    .trim()
-    .replace(/[ .]+/g, "-")
-    .replace(/[^\p{Script=Han}A-Za-z0-9_-]/gu, "")
-    .slice(0, 64);
+  return value.trim().replace(/[ .]+/g, "-").replace(/[^\p{Script=Han}A-Za-z0-9_-]/gu, "").slice(0, 64);
 }
 
-function uniqueDeviceNames(names: string[]): string[] {
-  const result: string[] = [];
-  for (const name of names) {
-    const trimmed = sanitizeDeviceName(name);
-    if (trimmed && !result.includes(trimmed)) {
-      result.push(trimmed);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+}
+
+async function sha256(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(canonicalize(value)));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function webdavConfig(state: Pick<BackupStore, "webdavUrl" | "webdavUsername">) {
+  return { url: state.webdavUrl, username: state.webdavUsername, password: sessionWebdavPassword };
+}
+
+async function collectBackupData(db: Awaited<ReturnType<typeof getDb>>): Promise<BackupSnapshotV3["data"]> {
+  const [projects, groups, commandTemplates, worktrees, modelPrices, statusline] = await Promise.all([
+    db.select<Record<string, unknown>[]>(PROJECT_SELECT),
+    db.select<Record<string, unknown>[]>(GROUP_SELECT),
+    db.select<Record<string, unknown>[]>(TEMPLATE_SELECT),
+    db.select<Record<string, unknown>[]>(WORKTREE_SELECT),
+    db.select<Record<string, unknown>[]>(MODEL_PRICE_SELECT),
+    invoke<unknown>("statusline_backup_export"),
+  ]);
+  const settings = useSettingsStore.getState();
+  return {
+    workspace: { groups, projects, worktrees, commandTemplates },
+    preferences: pickSyncableSettings(settings as unknown as Record<string, unknown>) as Record<string, unknown>,
+    modelPrices,
+    notifications: {
+      enabled: settings.thirdPartyHookNotificationsEnabled,
+      targets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets),
+    },
+    statusline,
+  };
+}
+
+async function createSnapshot(deviceId: string, deviceName: string): Promise<BackupSnapshotV3> {
+  const db = await getDb();
+  const data = await collectBackupData(db);
+  return {
+    version: 3,
+    manifest: {
+      snapshotId: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      appVersion: await getVersion(),
+      deviceId,
+      deviceName,
+      platform: await getOsPlatform(),
+      contentHash: await sha256(data),
+    },
+    data,
+  };
+}
+
+async function normalizeImportedSnapshot(value: unknown, deviceId: string, deviceName: string): Promise<BackupSnapshotV3> {
+  if (isRecord(value) && value.version === 3 && isRecord(value.manifest) && isRecord(value.data)) {
+    const snapshot = value as unknown as BackupSnapshotV3;
+    const manifest = snapshot.manifest;
+    if (
+      typeof manifest.snapshotId !== "string" ||
+      typeof manifest.deviceId !== "string" ||
+      typeof manifest.deviceName !== "string" ||
+      typeof manifest.createdAt !== "string" ||
+      typeof manifest.appVersion !== "string" ||
+      typeof manifest.platform !== "string" ||
+      typeof manifest.contentHash !== "string" ||
+      !UUID_PATTERN.test(manifest.snapshotId) ||
+      !UUID_PATTERN.test(manifest.deviceId) ||
+      Number.isNaN(Date.parse(manifest.createdAt)) ||
+      !SHA256_PATTERN.test(manifest.contentHash) ||
+      !isRecord(snapshot.data.workspace) ||
+      !isRecord(snapshot.data.preferences) ||
+      !Array.isArray(snapshot.data.modelPrices) ||
+      !isRecord(snapshot.data.notifications) ||
+      !Object.prototype.hasOwnProperty.call(snapshot.data, "statusline") ||
+      await sha256(snapshot.data) !== manifest.contentHash.toLowerCase()
+    ) {
+      throw new Error("backup_validation_failed");
     }
+    return snapshot;
   }
-  return result;
+  const legacy = value as LegacySyncData;
+  if (!legacy || !isRecord(legacy.data)) throw new Error("backup_unsupported_format");
+  const settings = isRecord(legacy.data.settings) ? legacy.data.settings : {};
+  const data: BackupSnapshotV3["data"] = {
+    workspace: {
+      projects: Array.isArray(legacy.data.projects) ? legacy.data.projects : [],
+      groups: Array.isArray(legacy.data.groups) ? legacy.data.groups : [],
+      commandTemplates: Array.isArray(legacy.data.command_templates) ? legacy.data.command_templates : [],
+      worktrees: Array.isArray(legacy.data.worktrees) ? legacy.data.worktrees : [],
+    },
+    preferences: pickSyncableSettings(settings) as Record<string, unknown>,
+    modelPrices: Array.isArray(legacy.data.model_prices) ? legacy.data.model_prices : [],
+    notifications: {
+      enabled: settings.thirdPartyHookNotificationsEnabled === true,
+      targets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets),
+    },
+    statusline: await invoke("statusline_backup_export"),
+  };
+  return {
+    version: 3,
+    manifest: {
+      snapshotId: crypto.randomUUID(),
+      createdAt: typeof legacy.last_modified === "string" ? legacy.last_modified : new Date().toISOString(),
+      appVersion: await getVersion(),
+      deviceId: typeof legacy.device_id === "string" ? legacy.device_id : deviceId,
+      deviceName: typeof legacy.device_name === "string" ? legacy.device_name : deviceName,
+      platform: await getOsPlatform(),
+      contentHash: await sha256(data),
+    },
+    data,
+  };
 }
 
-function normalizeDomains(domains?: SyncDataDomain[]): SyncDataDomain[] {
-  if (!domains || domains.length === 0) return [...SYNC_DATA_DOMAINS];
-  return SYNC_DATA_DOMAINS.filter((domain) => domains.includes(domain));
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-function isHttpNotFoundError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return HTTP_NOT_FOUND_PATTERN.test(message);
-}
-
-function downloadRemoteSnapshot(
-  webdavUrl: string,
-  webdavUsername: string,
-  password: string,
-  localData: SyncData,
-  force: boolean,
-  deviceName: string,
-  remoteDir: string,
-): Promise<SyncDownloadCommandResult> {
-  return invoke<SyncDownloadCommandResult>("sync_download", {
-    config: { url: webdavUrl, username: webdavUsername, password },
-    localData,
-    force,
-    deviceName,
-    remoteDir,
-  });
-}
-
-function isConfigured(state: Pick<SyncStore, "syncMode" | "webdavUrl" | "hasPassword">): boolean {
-  return state.syncMode === "cloud" && Boolean(state.webdavUrl.trim()) && state.hasPassword;
+function integerOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
 }
 
 function normalizeWorktreeStrategy(value: unknown): string {
   return value === "prompt" || value === "autoParallel" || value === "always" ? value : "disabled";
 }
 
-function normalizeWorktreeStatus(value: unknown): string {
-  return value === "missing" ? "missing" : "active";
-}
-
-function toInteger(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
-}
-
-function asSyncSettings(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function finiteNonNegative(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
-}
-
-function nullableText(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function normalizeSyncedModelPrices(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) return [];
-  const result: Record<string, unknown>[] = [];
-  const seen = new Set<string>();
-  for (const raw of value) {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
-    const row = raw as Record<string, unknown>;
-    const model = typeof row.model === "string" ? row.model.trim() : "";
-    if (!model || seen.has(model)) continue;
-    seen.add(model);
-    result.push({
-      model,
-      input_per_1m: finiteNonNegative(row.input_per_1m),
-      output_per_1m: finiteNonNegative(row.output_per_1m),
-      cache_read_per_1m: finiteNonNegative(row.cache_read_per_1m),
-      cache_creation_per_1m: finiteNonNegative(row.cache_creation_per_1m),
-      source: typeof row.source === "string" && row.source.trim() ? row.source.trim() : "manual",
-      source_model_id: nullableText(row.source_model_id),
-      raw_json: nullableText(row.raw_json),
-      updated_at_ms: toInteger(row.updated_at_ms, 0),
-      synced_at_ms: row.synced_at_ms === null || row.synced_at_ms === undefined
-        ? null
-        : toInteger(row.synced_at_ms, 0),
-    });
-  }
-  return result;
-}
-
-async function updateSyncedSetting<K extends SyncableSettingKey>(key: K, value: Settings[K]) {
-  await useSettingsStore.getState().update(key, value);
-}
-
-async function applySyncedApplicationSettings(value: unknown): Promise<SyncableSettingKey[]> {
-  const settings = pickSyncableSettings(asSyncSettings(value));
-  const applied: SyncableSettingKey[] = [];
+async function applyPreferences(preferences: Record<string, unknown>) {
   for (const key of SYNCABLE_SETTING_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(settings, key)) continue;
-    await updateSyncedSetting(key, settings[key] as Settings[typeof key]);
-    applied.push(key);
+    if (!Object.prototype.hasOwnProperty.call(preferences, key)) continue;
+    await useSettingsStore.getState().update(key as SyncableSettingKey, preferences[key] as never);
   }
-  if (applied.length > 0) {
-    await useSettingsStore.getState().load();
-  }
-  return applied;
+  await useSettingsStore.getState().load();
 }
 
-async function refreshSyncedStores() {
-  await useWorktreeStore.getState().loadWorktrees();
-  await useWorktreeStore.getState().markMissingWorktrees();
-  await useProjectStore.getState().fetchAll();
+async function replaceWorkspace(db: Awaited<ReturnType<typeof getDb>>, workspace: WorkspaceBackup) {
+  const now = Date.now().toString();
+  const os = await getOsPlatform();
+  const platformDefaultShell = defaultShellForOs(os);
+  const groups = Array.isArray(workspace.groups) ? workspace.groups : [];
+  const projects = Array.isArray(workspace.projects) ? workspace.projects : [];
+  const worktrees = Array.isArray(workspace.worktrees) ? workspace.worktrees : [];
+  const templates = Array.isArray(workspace.commandTemplates) ? workspace.commandTemplates : [];
+  const groupIds = new Set(groups.map((item) => String(item.id)));
+  const projectIds = new Set(projects.map((item) => String(item.id)));
+  await db.execute("DELETE FROM command_templates");
+  await db.execute("DELETE FROM worktrees");
+  await db.execute("DELETE FROM projects");
+  await db.execute("DELETE FROM groups");
+  await batchInsert(db, "groups", ["id", "name", "parent_id", "sort_order", "created_at"], groups, (item) => [
+    item.id, item.name, typeof item.parent_id === "string" && groupIds.has(item.parent_id) ? item.parent_id : null,
+    integerOr(item.sort_order, 0), item.created_at ?? now,
+  ]);
+  await batchInsert(
+    db,
+    "projects",
+    ["id", "name", "path", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "created_at", "updated_at"],
+    projects,
+    (item) => {
+      const environmentType = item.environment_type === "ssh" ? "ssh" : item.environment_type === "wsl" ? "wsl" : "local";
+      const isSshProject = environmentType === "ssh";
+      const rawShell = typeof item.shell === "string" ? item.shell.trim() : "";
+      const shell = isSshProject
+        ? ""
+        : normalizeShellForOs(rawShell, os)
+          ?? (rawShell && !(os !== "windows" && isWindowsOnlyShellKey(rawShell)) ? rawShell : platformDefaultShell);
+      return [
+        item.id, item.name, isSshProject ? "" : item.path,
+        typeof item.group_id === "string" && groupIds.has(item.group_id) ? item.group_id : null,
+        integerOr(item.sort_order, 0), item.cli_tool ?? "", item.cli_args ?? "", item.startup_cmd ?? "",
+        item.env_vars ?? "{}", shell, isSshProject ? "{}" : item.provider_overrides ?? "{}",
+        isSshProject ? "disabled" : normalizeWorktreeStrategy(item.worktree_strategy),
+        isSshProject ? "" : item.worktree_root ?? "", isSshProject ? 0 : integerOr(item.worktree_deps_prompt_enabled, 0),
+        environmentType, null, isSshProject && typeof item.remote_path === "string" ? item.remote_path : "",
+        item.created_at ?? now, item.updated_at ?? now,
+      ];
+    },
+  );
+  await batchInsert(db, "worktrees", ["id", "project_id", "name", "branch", "path", "base_branch", "deps_prompt_dismissed", "provider_overrides", "status", "created_at", "updated_at"], worktrees.filter((item) => typeof item.project_id === "string" && projectIds.has(item.project_id)), (item) => [
+    item.id, item.project_id, item.name, item.branch, item.path, item.base_branch ?? "", integerOr(item.deps_prompt_dismissed, 0),
+    item.provider_overrides ?? "{}", item.status === "missing" ? "missing" : "active", item.created_at ?? now, item.updated_at ?? now,
+  ]);
+  await batchInsert(db, "command_templates", ["id", "project_id", "name", "command", "description", "sort_order"], templates, (item) => [
+    item.id, typeof item.project_id === "string" && projectIds.has(item.project_id) ? item.project_id : null,
+    item.name, item.command, item.description ?? "", integerOr(item.sort_order, 0),
+  ]);
 }
 
-export const useSyncStore = create<SyncStore>((set, get) => ({
-  webdavUrl: "",
-  webdavUsername: "",
-  hasPassword: false,
-  status: "idle",
-  lastSyncAt: null,
-  deviceId: "",
-  deviceName: "",
-  knownDeviceNames: [],
-  autoSyncOnStartup: "off",
-  autoSyncOnClose: "off",
-  conflictInfo: null,
-  pendingRemoteData: null,
-  loaded: false,
-  syncMode: "cloud",
-  localSyncDir: "",
-  remoteDir: "",
+async function replaceModelPrices(db: Awaited<ReturnType<typeof getDb>>, prices: Record<string, unknown>[]) {
+  const normalized = prices.filter(isRecord).map((item) => ({
+    model: typeof item.model === "string" ? item.model : "",
+    input_per_1m: numberOrZero(item.input_per_1m), output_per_1m: numberOrZero(item.output_per_1m),
+    cache_read_per_1m: numberOrZero(item.cache_read_per_1m), cache_creation_per_1m: numberOrZero(item.cache_creation_per_1m),
+    source: typeof item.source === "string" ? item.source : "manual", source_model_id: item.source_model_id ?? null,
+    raw_json: item.raw_json ?? null, updated_at_ms: integerOr(item.updated_at_ms, 0),
+    synced_at_ms: item.synced_at_ms == null ? null : integerOr(item.synced_at_ms, 0),
+  })).filter((item) => item.model);
+  await db.execute("DELETE FROM model_prices");
+  await batchInsert(db, "model_prices", MODEL_PRICE_COLUMNS, normalized, (item) => MODEL_PRICE_COLUMNS.map((column) => item[column]));
+}
+
+async function applySnapshot(snapshot: BackupSnapshotV3, domains: BackupDomain[]) {
+  if (snapshot.version !== 3 || !isRecord(snapshot.data)) throw new Error("backup_invalid_v3");
+  const selected = new Set(domains);
+  const db = await getDb();
+  const changesDatabase = selected.has("workspace") || selected.has("model_prices");
+  if (changesDatabase) await db.execute("BEGIN IMMEDIATE");
+  try {
+    if (selected.has("workspace")) await replaceWorkspace(db, snapshot.data.workspace);
+    if (selected.has("model_prices")) await replaceModelPrices(db, snapshot.data.modelPrices);
+    if (changesDatabase) await db.execute("COMMIT");
+  } catch (error) {
+    if (changesDatabase) await db.execute("ROLLBACK").catch(() => undefined);
+    throw error;
+  }
+  if (selected.has("preferences")) await applyPreferences(snapshot.data.preferences);
+  if (selected.has("notifications")) {
+    await useSettingsStore.getState().update("thirdPartyHookNotificationsEnabled", snapshot.data.notifications.enabled);
+    await useSettingsStore.getState().update("thirdPartyHookTargets", sanitizeThirdPartyHookTargets(snapshot.data.notifications.targets));
+  }
+  if (selected.has("statusline")) await invoke("statusline_backup_restore", { bundle: snapshot.data.statusline });
+  if (selected.has("model_prices")) await useModelPricingStore.getState().load();
+  if (selected.has("workspace")) {
+    await useProjectStore.getState().fetchAll();
+    await useWorktreeStore.getState().loadWorktrees();
+    await useProjectStore.getState().refreshProjectDiagnostics();
+    await useWorktreeStore.getState().markMissingWorktrees();
+  }
+}
+
+export const useSyncStore = create<BackupStore>((set, get) => ({
+  webdavUrl: "", webdavUsername: "", hasPassword: false, status: "idle", lastBackupAt: null,
+  deviceId: "", deviceName: "", loaded: false, backupMode: "cloud", localBackupDir: "", remoteDir: "",
+  autoBackupOnClose: false, snapshots: [],
 
   load: singleFlight(async () => {
-    const s = await getStore();
-    const url = (await s.get<string>("webdavUrl")) ?? "";
-    const username = (await s.get<string>("webdavUsername")) ?? "";
-    await s.delete("webdavPassword").catch(() => false);
-    await s.delete("hasPassword").catch(() => false);
-    let password = "";
-    try {
-      password = (await invoke<string | null>("sync_load_password")) ?? "";
-    } catch (error) {
-      console.error("[sync] 读取 WebDAV 密码失败:", error);
-    }
-    sessionWebdavPassword = password;
-    const hasPassword = password.length > 0;
-    const syncMode = ((await s.get<string>("syncMode")) as SyncMode | undefined) ?? "cloud";
-    const localSyncDir = (await s.get<string>("localSyncDir")) ?? "";
-    const remoteDir = (await s.get<string>("remoteDir")) ?? "";
-    const autoSyncOnStartup = migrateAutoSyncAction(await s.get("autoSyncOnStartup"));
-    const autoSyncOnClose = migrateAutoSyncAction(await s.get("autoSyncOnClose"));
-    const storedKnownDeviceNames = (await s.get<string[]>("knownDeviceNames")) ?? [];
-    let deviceName = (await s.get<string>("deviceName"))?.trim() ?? "";
+    const store = await getConfigStore();
+    const webdavUrl = (await store.get<string>("webdavUrl")) ?? "";
+    const webdavUsername = (await store.get<string>("webdavUsername")) ?? "";
+    sessionWebdavPassword = (await invoke<string | null>("sync_load_password").catch(() => null)) ?? "";
+    let deviceName = sanitizeDeviceName((await store.get<string>("deviceName")) ?? "");
     if (!deviceName) {
-      try {
-        const result = await invoke<{ device_name: string }>("sync_get_default_device_name");
-        deviceName = sanitizeDeviceName(result.device_name);
-      } catch {
-        deviceName = "当前设备";
-      }
-      await s.set("deviceName", deviceName);
+      const result = await invoke<{ device_name: string }>("sync_get_default_device_name").catch(() => ({ device_name: "当前设备" }));
+      deviceName = sanitizeDeviceName(result.device_name) || "当前设备";
+      await store.set("deviceName", deviceName);
     }
-    const knownDeviceNames = uniqueDeviceNames([deviceName, ...storedKnownDeviceNames]);
-    await s.set("knownDeviceNames", knownDeviceNames);
-    await s.set("autoSyncOnStartup", autoSyncOnStartup);
-    await s.set("autoSyncOnClose", autoSyncOnClose);
-
+    const oldCloseAction = await store.get<string>("autoSyncOnClose");
+    const autoBackupOnClose = (await store.get<boolean>("autoBackupOnClose")) ?? oldCloseAction === "upload";
+    await store.set("autoBackupOnClose", autoBackupOnClose);
+    await store.set("autoSyncOnStartup", "off");
+    await store.set("autoSyncOnClose", "off");
     const db = await getDb();
-    const meta = await db.select<SyncMeta[]>(
-      "SELECT device_id, last_sync_at FROM sync_meta WHERE id = 'singleton'"
-    );
-
-    const deviceId = meta[0]?.device_id ?? crypto.randomUUID();
-    const lastSyncAt = meta[0]?.last_sync_at ?? null;
-
+    const meta = await db.select<SyncMeta[]>("SELECT device_id, last_sync_at FROM sync_meta WHERE id = 'singleton'");
     set({
-      webdavUrl: url,
-      webdavUsername: username,
-      hasPassword,
-      deviceId,
-      deviceName,
-      knownDeviceNames,
-      lastSyncAt,
-      syncMode,
-      localSyncDir,
-      remoteDir,
-      autoSyncOnStartup,
-      autoSyncOnClose,
-      loaded: true,
+      webdavUrl, webdavUsername, hasPassword: Boolean(sessionWebdavPassword), deviceName,
+      deviceId: meta[0]?.device_id ?? crypto.randomUUID(), lastBackupAt: meta[0]?.last_sync_at ?? null,
+      backupMode: ((await store.get<string>("syncMode")) === "local" ? "local" : "cloud"),
+      localBackupDir: (await store.get<string>("localSyncDir")) ?? "", remoteDir: (await store.get<string>("remoteDir")) ?? "",
+      autoBackupOnClose, loaded: true,
     });
   }),
 
   setConfig: async (url, username, password) => {
-    const s = await getStore();
-    await s.set("webdavUrl", url);
-    await s.set("webdavUsername", username);
+    const store = await getConfigStore();
+    await store.set("webdavUrl", url); await store.set("webdavUsername", username);
     if (password !== undefined) {
-      const hasPassword = password.length > 0;
-      if (hasPassword) {
-        await invoke("sync_save_password", { password });
-      } else {
-        await invoke("sync_delete_password");
-      }
+      await invoke(password ? "sync_save_password" : "sync_delete_password", password ? { password } : undefined);
       sessionWebdavPassword = password;
-      await s.delete("webdavPassword").catch(() => false);
-      set({ webdavUrl: url, webdavUsername: username, hasPassword });
-    } else {
-      // Preserve existing hasPassword state when not providing new password
-      set({ webdavUrl: url, webdavUsername: username });
     }
+    set({ webdavUrl: url, webdavUsername: username, hasPassword: Boolean(sessionWebdavPassword) });
   },
-
-  clearPassword: async () => {
-    const s = await getStore();
-    await invoke("sync_delete_password");
-    await s.delete("webdavPassword").catch(() => false);
-    sessionWebdavPassword = "";
-    set({ hasPassword: false });
-  },
-
+  clearPassword: async () => { await invoke("sync_delete_password"); sessionWebdavPassword = ""; set({ hasPassword: false }); },
   getSessionPassword: () => sessionWebdavPassword,
-
-  testConnection: async (url, username, password) => {
-    const result = await invoke<{ success: boolean; message: string }>("sync_test_connection", {
-      config: { url, username, password },
-    });
-    return result;
-  },
-
+  testConnection: (url, username, password) => invoke("sync_test_connection", { config: { url, username, password } }),
   setDeviceName: async (name) => {
-    const deviceName = sanitizeDeviceName(name);
-    if (!deviceName) {
-      throw new Error("设备名称不能为空");
-    }
-    const s = await getStore();
-    const knownDeviceNames = uniqueDeviceNames([deviceName, ...get().knownDeviceNames]);
-    await s.set("deviceName", deviceName);
-    await s.set("knownDeviceNames", knownDeviceNames);
-    set({ deviceName, knownDeviceNames });
+    const value = sanitizeDeviceName(name); if (!value) throw new Error("backup_device_name_required");
+    await (await getConfigStore()).set("deviceName", value); set({ deviceName: value });
   },
+  setBackupMode: async (mode) => { await (await getConfigStore()).set("syncMode", mode); set({ backupMode: mode }); },
+  setLocalBackupDir: async (dir) => { await (await getConfigStore()).set("localSyncDir", dir); set({ localBackupDir: dir }); },
+  setRemoteDir: async (dir) => { await (await getConfigStore()).set("remoteDir", dir); set({ remoteDir: dir }); },
+  setAutoBackupOnClose: async (enabled) => { await (await getConfigStore()).set("autoBackupOnClose", enabled); set({ autoBackupOnClose: enabled }); },
 
-  setAutoSyncOnStartup: async (action) => {
-    const next = migrateAutoSyncAction(action);
-    const s = await getStore();
-    await s.set("autoSyncOnStartup", next);
-    set({ autoSyncOnStartup: next });
-  },
-
-  setAutoSyncOnClose: async (action) => {
-    const next = migrateAutoSyncAction(action);
-    const s = await getStore();
-    await s.set("autoSyncOnClose", next);
-    set({ autoSyncOnClose: next });
-  },
-
-  upload: async () => {
-    const { webdavUrl, webdavUsername, deviceId, deviceName, remoteDir } = get();
-    const password = sessionWebdavPassword;
-
-    if (!webdavUrl || !password) {
-      set({ status: "error" });
-      return;
-    }
-
-    set({ status: "syncing" });
-
-    try {
-      const db = await getDb();
-      const syncData = await collectLocalSyncData(db, deviceId, deviceName, new Date().toISOString());
-
-      await invoke("sync_upload", {
-        config: { url: webdavUrl, username: webdavUsername, password },
-        data: syncData,
-        remoteDir: remoteDir || undefined,
-      });
-
-      await db.execute(
-        "INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)",
-        [deviceId, syncData.last_modified, syncData.last_modified]
-      );
-
-      set({
-        status: "success",
-        lastSyncAt: syncData.last_modified,
-        conflictInfo: null,
-        pendingRemoteData: null,
-      });
-    } catch (error) {
-      console.error("Upload failed:", error);
-      set({ status: "error" });
-      throw error; // Re-throw to let UI show the error
-    }
-  },
-
-  download: async (force = false, options) => {
-    const { webdavUrl, webdavUsername, deviceId, deviceName, remoteDir } = get();
-    const password = sessionWebdavPassword;
-
-    if (!webdavUrl || !password) {
-      set({ status: "error" });
-      return;
-    }
-
-    set({ status: "syncing" });
-
-    try {
-      const db = await getDb();
-      const localData = await collectLocalSyncData(db, deviceId, deviceName, get().lastSyncAt ?? new Date(0).toISOString());
-
-      const result = await downloadRemoteSnapshot(
-        webdavUrl,
-        webdavUsername,
-        password,
-        localData,
-        force,
-        options?.deviceName ?? deviceName,
-        remoteDir,
-      );
-
-      if (!result.data) {
-        set({ status: "error" });
-        throw new Error(REMOTE_SYNC_UNAVAILABLE_MESSAGE);
-      }
-
-      if (result.has_conflict && result.conflict_info) {
-        set({
-          status: "conflict",
-          conflictInfo: result.conflict_info,
-          pendingRemoteData: result.data,
-        });
-        return;
-      }
-
-      await applySyncData(db, result.data, deviceId, options?.domains);
-      await refreshSyncedStores();
-      set({
-        status: "success",
-        lastSyncAt: result.data.last_modified,
-        conflictInfo: null,
-        pendingRemoteData: null,
-      });
-    } catch (error) {
-      console.error("Download failed:", error);
-      set({ status: "error" });
-      throw error;
-    }
-  },
-
-  getPreview: async (targetDeviceName) => {
-    const { webdavUrl, webdavUsername, deviceId, deviceName, remoteDir } = get();
-    const password = sessionWebdavPassword;
-    if (!webdavUrl || !password) {
-      throw new Error("请先配置并测试 WebDAV 连接");
-    }
-    const db = await getDb();
-    const localData = await collectLocalSyncData(db, deviceId, deviceName, get().lastSyncAt ?? new Date(0).toISOString());
-    let remoteSummary: SyncSnapshotSummary;
-    try {
-      const previewResult = await downloadRemoteSnapshot(
-        webdavUrl,
-        webdavUsername,
-        password,
-        localData,
-        true,
-        targetDeviceName ?? deviceName,
-        remoteDir,
-      );
-      if (previewResult.data) {
-        const remoteData = previewResult.data;
-        remoteSummary = summarizeSyncData(remoteData, targetDeviceName ?? remoteData.device_name ?? deviceName);
-      } else {
-        remoteSummary = createMissingRemoteSummary(targetDeviceName ?? deviceName);
-      }
-    } catch (error) {
-      if (!isHttpNotFoundError(error)) {
-        throw error;
-      }
-      remoteSummary = createMissingRemoteSummary(targetDeviceName ?? deviceName);
-    }
-    return {
-      local: summarizeSyncData(localData, deviceName),
-      remote: remoteSummary,
-    };
-  },
-
-  listDeviceSnapshots: async () => {
-    const { webdavUrl, webdavUsername, knownDeviceNames, remoteDir } = get();
-    const password = sessionWebdavPassword;
-    if (!webdavUrl || !password) return [];
-    return invoke<DeviceSnapshotInfo[]>("sync_list_device_snapshots", {
-      config: { url: webdavUrl, username: webdavUsername, password },
-      deviceNames: knownDeviceNames,
-      remoteDir: remoteDir || undefined,
-    });
-  },
-
-  runAutoSync: async (phase) => {
+  createBackup: async (manual = true) => {
     const state = get();
-    const action = phase === "startup" ? state.autoSyncOnStartup : state.autoSyncOnClose;
-    if (action === "off" || !isConfigured(state)) return "skipped";
+    set({ status: "backing_up" });
     try {
-      if (action === "upload") {
-        await get().upload();
+      const snapshot = await createSnapshot(state.deviceId, state.deviceName);
+      const store = await getConfigStore();
+      const lastHash = (await store.get<string>("lastBackupContentHash")) ?? "";
+      if (!manual && lastHash === snapshot.manifest.contentHash) { set({ status: "idle" }); return null; }
+      let result: string;
+      if (state.backupMode === "local") {
+        if (!state.localBackupDir) throw new Error("backup_local_directory_required");
+        result = await invoke("backup_local_export", { dir: state.localBackupDir, snapshot });
       } else {
-        await get().download(false, { deviceName: state.deviceName });
+        if (!state.webdavUrl || !sessionWebdavPassword) throw new Error("backup_webdav_required");
+        const targetHash = await sha256([state.webdavUrl, state.webdavUsername, state.remoteDir]);
+        await invoke("backup_outbox_save", { targetHash, snapshot });
+        try {
+          result = await invoke("backup_upload", { config: webdavConfig(state), snapshot, remoteDir: state.remoteDir || undefined });
+          await invoke("backup_outbox_remove", { targetHash, snapshotId: snapshot.manifest.snapshotId });
+        } catch {
+          await store.set("lastBackupContentHash", snapshot.manifest.contentHash);
+          const db = await getDb();
+          await db.execute("INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)", [state.deviceId, snapshot.manifest.createdAt, snapshot.manifest.contentHash]);
+          set({ status: "queued", lastBackupAt: snapshot.manifest.createdAt });
+          throw new Error("backup_queued");
+        }
       }
-      return get().status === "conflict" ? "conflict" : "success";
-    } catch {
-      return "error";
-    }
-  },
-
-  resolveConflict: async (keepLocal) => {
-    const { pendingRemoteData, deviceId } = get();
-
-    if (keepLocal) {
-      await get().upload();
-    } else if (pendingRemoteData) {
+      await store.set("lastBackupContentHash", snapshot.manifest.contentHash);
       const db = await getDb();
-      await applySyncData(db, pendingRemoteData, deviceId);
-      await refreshSyncedStores();
-      await get().upload();
-    }
-  },
-
-  clearConflict: () => {
-    set({ status: "idle", conflictInfo: null, pendingRemoteData: null });
-  },
-
-  setSyncMode: async (mode) => {
-    const s = await getStore();
-    await s.set("syncMode", mode);
-    set({ syncMode: mode });
-  },
-
-  setLocalSyncDir: async (dir) => {
-    const s = await getStore();
-    await s.set("localSyncDir", dir);
-    set({ localSyncDir: dir });
-  },
-
-  setRemoteDir: async (dir) => {
-    const s = await getStore();
-    await s.set("remoteDir", dir);
-    set({ remoteDir: dir });
-  },
-
-  localExport: async () => {
-    const { localSyncDir, deviceId, deviceName } = get();
-    if (!localSyncDir) {
-      throw new Error("请先选择本地同步目录");
-    }
-    set({ status: "syncing" });
-    try {
-      const db = await getDb();
-
-      const now = new Date().toISOString();
-      const syncData = await collectLocalSyncData(db, deviceId, deviceName, now);
-
-      const result = await invoke<{ success: boolean; path: string; message: string }>(
-        "sync_local_export",
-        { dir: localSyncDir, data: syncData }
-      );
-
-      await db.execute(
-        "INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)",
-        [deviceId, now, now]
-      );
-
-      set({ status: "success", lastSyncAt: now });
-      return result.path;
+      await db.execute("INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)", [state.deviceId, snapshot.manifest.createdAt, snapshot.manifest.contentHash]);
+      set({ status: "success", lastBackupAt: snapshot.manifest.createdAt });
+      return result;
     } catch (error) {
-      console.error("Local export failed:", error);
-      set({ status: "error" });
+      if (!(error instanceof Error && error.message === "backup_queued")) set({ status: "error" });
       throw error;
     }
   },
 
-  localImport: async (zipPath) => {
-    const { deviceId } = get();
-    set({ status: "syncing" });
+  listBackups: async () => {
+    const state = get();
+    if (!state.webdavUrl || !sessionWebdavPassword) return [];
+    const snapshots = await invoke<BackupSnapshotInfo[]>("backup_list", { config: webdavConfig(state), remoteDir: state.remoteDir || undefined });
+    set({ snapshots }); return snapshots;
+  },
+  previewBackup: async (remotePath) => {
+    const state = get();
+    const raw = await invoke<unknown>("backup_download", { config: webdavConfig(state), remotePath, remoteDir: state.remoteDir || undefined });
+    return normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+  },
+  restoreBackup: async (remotePath, domains) => {
+    const state = get(); set({ status: "restoring" });
+    const safety = await createSnapshot(state.deviceId, state.deviceName);
+    await invoke("backup_restore_safety_save", { snapshot: safety });
     try {
-      const data = await invoke<SyncData>("sync_local_import", { zipPath });
-      const db = await getDb();
-      await applySyncData(db, data, deviceId);
-      await refreshSyncedStores();
-      set({
-        status: "success",
-        lastSyncAt: data.last_modified,
-        conflictInfo: null,
-        pendingRemoteData: null,
+      const raw = await invoke<unknown>("backup_download", { config: webdavConfig(state), remotePath, remoteDir: state.remoteDir || undefined });
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+      await applySnapshot(snapshot, domains); set({ status: "success", lastBackupAt: snapshot.manifest.createdAt });
+    } catch (error) {
+      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Restore rollback failed", rollbackError));
+      set({ status: "error" }); throw error;
+    }
+  },
+  importLegacyCloud: async (domains) => {
+    const state = get(); set({ status: "restoring" });
+    const safety = await createSnapshot(state.deviceId, state.deviceName);
+    await invoke("backup_restore_safety_save", { snapshot: safety });
+    try {
+      const raw = await invoke<unknown>("backup_import_legacy_cloud", {
+        config: webdavConfig(state), deviceName: state.deviceName, remoteDir: state.remoteDir || undefined,
       });
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+      await applySnapshot(snapshot, domains); set({ status: "success" });
     } catch (error) {
-      console.error("Local import failed:", error);
-      set({ status: "error" });
-      throw error;
+      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Legacy restore rollback failed", rollbackError));
+      set({ status: "error" }); throw error;
     }
+  },
+  deleteBackup: async (remotePath) => {
+    const state = get();
+    await invoke("backup_delete", { config: webdavConfig(state), remotePath, remoteDir: state.remoteDir || undefined });
+    await get().listBackups();
+  },
+  localImport: async (zipPath, domains) => {
+    const state = get(); set({ status: "restoring" });
+    const safety = await createSnapshot(state.deviceId, state.deviceName);
+    await invoke("backup_restore_safety_save", { snapshot: safety });
+    try {
+      const raw = await invoke<unknown>("backup_local_import", { zipPath });
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+      await applySnapshot(snapshot, domains); set({ status: "success" });
+    } catch (error) {
+      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Import rollback failed", rollbackError));
+      set({ status: "error" }); throw error;
+    }
+  },
+  previewLocalImport: async (zipPath) => {
+    const state = get();
+    const raw = await invoke<unknown>("backup_local_import", { zipPath });
+    return normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+  },
+  undoLastRestore: async () => {
+    const raw = await invoke<unknown | null>("backup_restore_safety_load");
+    if (!raw) throw new Error("backup_no_restore_to_undo");
+    const state = get();
+    const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+    set({ status: "restoring" });
+    try {
+      await applySnapshot(snapshot, ALL_DOMAINS);
+      await invoke("backup_restore_safety_clear");
+      set({ status: "success" });
+    }
+    catch (error) { set({ status: "error" }); throw error; }
+  },
+  retryOutbox: async () => {
+    const state = get();
+    if (!state.webdavUrl || !sessionWebdavPassword) return;
+    const targetHash = await sha256([state.webdavUrl, state.webdavUsername, state.remoteDir]);
+    const snapshots = await invoke<BackupSnapshotV3[]>("backup_outbox_list", { targetHash });
+    for (const snapshot of snapshots) {
+      try {
+        await invoke("backup_upload", { config: webdavConfig(state), snapshot, remoteDir: state.remoteDir || undefined });
+        await invoke("backup_outbox_remove", { targetHash, snapshotId: snapshot.manifest.snapshotId });
+      } catch (error) { console.warn("Backup outbox retry failed", error); break; }
+    }
+  },
+  runCloseAutoBackup: async () => {
+    const state = get();
+    if (!state.autoBackupOnClose) return "skipped";
+    try { const result = await get().createBackup(false); return result === null ? "skipped" : "success"; }
+    catch { return state.backupMode === "cloud" ? "queued" : "error"; }
   },
 }));
-
-async function collectLocalSyncData(
-  db: Awaited<ReturnType<typeof getDb>>,
-  deviceId: string,
-  deviceName: string,
-  lastModified: string,
-): Promise<SyncData> {
-  const projects = await db.select<Record<string, unknown>[]>(PROJECT_SYNC_SELECT);
-  const groups = await db.select<Record<string, unknown>[]>(GROUP_SYNC_SELECT);
-  const commandTemplates = await db.select<Record<string, unknown>[]>(TEMPLATE_SYNC_SELECT);
-  const worktrees = await db.select<Record<string, unknown>[]>(WORKTREE_SYNC_SELECT);
-  const modelPrices = await db.select<Record<string, unknown>[]>(MODEL_PRICE_SYNC_SELECT);
-  const settings = useSettingsStore.getState();
-  const portableSettings = pickSyncableSettings(settings as unknown as Record<string, unknown>);
-  return {
-    version: SYNC_DATA_VERSION,
-    device_id: deviceId,
-    device_name: deviceName,
-    last_modified: lastModified,
-    data: {
-      projects,
-      groups,
-      command_templates: commandTemplates,
-      worktrees,
-      model_prices: modelPrices,
-      settings: {
-        ...portableSettings,
-        thirdPartyHookNotificationsEnabled: settings.thirdPartyHookNotificationsEnabled,
-        thirdPartyHookTargets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets),
-      },
-    },
-  };
-}
-
-function summarizeSyncData(data: SyncData, fallbackDeviceName: string): SyncSnapshotSummary {
-  const settings = asSyncSettings(data.data.settings);
-  const supportsExtendedData = data.version >= 2;
-  return {
-    deviceName: data.device_name?.trim() || fallbackDeviceName,
-    lastModified: data.last_modified,
-    projects: data.data.projects.length,
-    groups: data.data.groups.length,
-    commandTemplates: data.data.command_templates.length,
-    applicationSettings: supportsExtendedData ? Object.keys(pickSyncableSettings(settings)).length : 0,
-    modelPrices: supportsExtendedData ? normalizeSyncedModelPrices(data.data.model_prices).length : 0,
-    thirdPartyHookTargets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets).length,
-    projectNames: data.data.projects.slice(0, 5).map((item) => String(item.name ?? "未命名项目")),
-    groupNames: data.data.groups.slice(0, 5).map((item) => String(item.name ?? "未命名分组")),
-    templateNames: data.data.command_templates.slice(0, 5).map((item) => String(item.name ?? "未命名模板")),
-  };
-}
-
-function createMissingRemoteSummary(deviceName: string): SyncSnapshotSummary {
-  return {
-    deviceName,
-    lastModified: "",
-    projects: 0,
-    groups: 0,
-    commandTemplates: 0,
-    applicationSettings: 0,
-    modelPrices: 0,
-    thirdPartyHookTargets: 0,
-    projectNames: [],
-    groupNames: [],
-    templateNames: [],
-    missing: true,
-  };
-}
-
-async function applySyncData(
-  db: Awaited<ReturnType<typeof getDb>>,
-  data: SyncData,
-  deviceId: string,
-  domains?: SyncDataDomain[],
-) {
-  const selectedDomains = normalizeDomains(domains);
-  const shouldApplyGroups = selectedDomains.includes("groups");
-  const shouldApplyProjects = selectedDomains.includes("projects");
-  const shouldApplyTemplates = selectedDomains.includes("command_templates");
-  const supportsExtendedData = data.version >= 2;
-  const shouldApplyApplicationSettings =
-    supportsExtendedData && selectedDomains.includes("application_settings");
-  const shouldApplyModelPrices =
-    supportsExtendedData &&
-    selectedDomains.includes("model_prices") &&
-    Array.isArray(data.data.model_prices);
-  const shouldApplyThirdPartyHookNotifications = selectedDomains.includes("third_party_hook_notifications");
-  const backupProjects = await db.select<Record<string, unknown>[]>("SELECT * FROM projects");
-  const backupGroups = await db.select<Record<string, unknown>[]>("SELECT * FROM groups");
-  const backupTemplates = await db.select<Record<string, unknown>[]>("SELECT * FROM command_templates");
-  const backupWorktrees = await db.select<Record<string, unknown>[]>("SELECT * FROM worktrees");
-  const backupModelPrices = shouldApplyModelPrices
-    ? await db.select<Record<string, unknown>[]>(MODEL_PRICE_SYNC_SELECT)
-    : [];
-  const currentSettings = useSettingsStore.getState();
-  const backupApplicationSettings = pickSyncableSettings(
-    currentSettings as unknown as Record<string, unknown>,
-  );
-  const backupThirdPartyHookNotificationsEnabled = currentSettings.thirdPartyHookNotificationsEnabled;
-  const backupThirdPartyHookTargets = currentSettings.thirdPartyHookTargets;
-  const remoteSettings = asSyncSettings(data.data.settings);
-  const hasRemoteThirdPartyHookNotificationsEnabled = Object.prototype.hasOwnProperty.call(
-    remoteSettings,
-    "thirdPartyHookNotificationsEnabled",
-  );
-  const hasRemoteThirdPartyHookTargets = Object.prototype.hasOwnProperty.call(
-    remoteSettings,
-    "thirdPartyHookTargets",
-  );
-  const shouldApplyThirdPartyHookTargets =
-    shouldApplyThirdPartyHookNotifications && hasRemoteThirdPartyHookTargets;
-  const remoteThirdPartyHookTargets = shouldApplyThirdPartyHookTargets
-    ? sanitizeThirdPartyHookTargets(remoteSettings.thirdPartyHookTargets)
-    : backupThirdPartyHookTargets;
-  const appliedSettingsKeys: Array<
-    "thirdPartyHookNotificationsEnabled" | "thirdPartyHookTargets"
-  > = [];
-  let appliedApplicationSettingKeys: SyncableSettingKey[] = [];
-  const shouldApplyDatabaseData = shouldApplyTemplates || shouldApplyProjects || shouldApplyGroups;
-  let databaseMutated = false;
-  let modelPricesMutated = false;
-
-  const nowStr = Date.now().toString();
-  const os = await getOsPlatform();
-  const platformDefaultShell = defaultShellForOs(os);
-
-  const insertGroups = async (groups: Record<string, unknown>[]) => {
-    await batchInsert(
-      db,
-      "groups",
-      ["id", "name", "parent_id", "sort_order", "created_at"],
-      groups,
-      (group) => [
-        group.id as string,
-        group.name as string,
-        (group.parent_id as string | null) ?? null,
-        group.sort_order as number,
-        (group.created_at as string) ?? nowStr,
-      ],
-    );
-  };
-
-  const insertProjects = async (projects: Record<string, unknown>[], validGroupIds: Set<string>) => {
-    await batchInsert(
-      db,
-      "projects",
-      [
-        "id",
-        "name",
-        "path",
-        "group_id",
-        "sort_order",
-        "cli_tool",
-        "cli_args",
-        "startup_cmd",
-        "env_vars",
-        "shell",
-        "provider_overrides",
-        "worktree_strategy",
-        "worktree_root",
-        "worktree_deps_prompt_enabled",
-        "environment_type",
-        "ssh_host_id",
-        "remote_path",
-        "created_at",
-        "updated_at",
-      ],
-      projects,
-      (project) => {
-        const groupId = typeof project.group_id === "string" && validGroupIds.has(project.group_id) ? project.group_id : null;
-        const rawShell = typeof project.shell === "string" ? project.shell.trim() : "";
-        const environmentType = project.environment_type === "ssh" ? "ssh" : project.environment_type === "wsl" ? "wsl" : "local";
-        const isSshProject = environmentType === "ssh";
-        const shell = isSshProject
-          ? ""
-          : normalizeShellForOs(rawShell, os) ??
-            (rawShell && !(os !== "windows" && isWindowsOnlyShellKey(rawShell)) ? rawShell : platformDefaultShell);
-        return [
-          project.id as string,
-          project.name as string,
-          isSshProject ? "" : project.path as string,
-          groupId,
-          project.sort_order as number,
-          (project.cli_tool as string) ?? "",
-          (project.cli_args as string) ?? "",
-          (project.startup_cmd as string) ?? "",
-          (project.env_vars as string) ?? "{}",
-          shell,
-          isSshProject ? "{}" : (project.provider_overrides as string) ?? "{}",
-          isSshProject ? "disabled" : normalizeWorktreeStrategy(project.worktree_strategy),
-          isSshProject ? "" : (project.worktree_root as string) ?? "",
-          isSshProject ? 0 : toInteger(project.worktree_deps_prompt_enabled, 0),
-          environmentType,
-          null,
-          isSshProject && typeof project.remote_path === "string" ? project.remote_path : "",
-          (project.created_at as string) ?? nowStr,
-          (project.updated_at as string) ?? nowStr,
-        ];
-      },
-    );
-  };
-
-  const insertWorktrees = async (worktrees: Record<string, unknown>[], validProjectIds: Set<string>) => {
-    const validWorktrees = worktrees.filter((worktree) => {
-      return (
-        typeof worktree.project_id === "string" &&
-        validProjectIds.has(worktree.project_id) &&
-        normalizeWorktreeStatus(worktree.status) === "active"
-      );
-    });
-    await batchInsert(
-      db,
-      "worktrees",
-      [
-        "id",
-        "project_id",
-        "name",
-        "branch",
-        "path",
-        "base_branch",
-        "deps_prompt_dismissed",
-        "provider_overrides",
-        "status",
-        "created_at",
-        "updated_at",
-      ],
-      validWorktrees,
-      (worktree) => [
-        worktree.id as string,
-        worktree.project_id as string,
-        worktree.name as string,
-        worktree.branch as string,
-        worktree.path as string,
-        (worktree.base_branch as string) ?? "",
-        toInteger(worktree.deps_prompt_dismissed, 0),
-        (worktree.provider_overrides as string) ?? "{}",
-        normalizeWorktreeStatus(worktree.status),
-        (worktree.created_at as string) ?? nowStr,
-        (worktree.updated_at as string) ?? nowStr,
-      ],
-    );
-  };
-
-  const insertTemplates = async (templates: Record<string, unknown>[], validProjectIds: Set<string>) => {
-    await batchInsert(
-      db,
-      "command_templates",
-      ["id", "project_id", "name", "command", "description", "sort_order"],
-      templates,
-      (template) => {
-        const projectId = typeof template.project_id === "string" && validProjectIds.has(template.project_id)
-          ? template.project_id
-          : null;
-        return [
-          template.id as string,
-          projectId,
-          template.name as string,
-          template.command as string,
-          (template.description as string) ?? "",
-          template.sort_order as number,
-        ];
-      },
-    );
-  };
-
-  const insertModelPrices = async (prices: Record<string, unknown>[]) => {
-    const normalized = normalizeSyncedModelPrices(prices);
-    await batchInsert(
-      db,
-      "model_prices",
-      MODEL_PRICE_SYNC_COLUMNS,
-      normalized,
-      (price) => MODEL_PRICE_SYNC_COLUMNS.map((column) => price[column]),
-    );
-  };
-
-  try {
-    if (shouldApplyDatabaseData) {
-      databaseMutated = true;
-      await db.execute("DELETE FROM command_templates");
-    }
-    if (shouldApplyProjects || shouldApplyGroups) {
-      await db.execute("DELETE FROM worktrees");
-      await db.execute("DELETE FROM projects");
-    }
-    if (shouldApplyGroups) {
-      await db.execute("DELETE FROM groups");
-    }
-
-    const finalGroups = shouldApplyGroups ? data.data.groups : backupGroups;
-    const finalProjects = shouldApplyProjects ? data.data.projects : backupProjects;
-    const finalTemplates = shouldApplyTemplates ? data.data.command_templates : backupTemplates;
-    const finalWorktrees = shouldApplyProjects ? (data.data.worktrees ?? []) : backupWorktrees;
-    const finalGroupIds = new Set(finalGroups.map((group) => String(group.id)));
-    const finalProjectIds = new Set(finalProjects.map((project) => String(project.id)));
-
-    if (shouldApplyGroups) {
-      await insertGroups(finalGroups);
-    }
-    if (shouldApplyProjects || shouldApplyGroups) {
-      await insertProjects(finalProjects, finalGroupIds);
-      await insertWorktrees(finalWorktrees, finalProjectIds);
-    }
-    if (shouldApplyTemplates || shouldApplyProjects || shouldApplyGroups) {
-      await insertTemplates(finalTemplates, finalProjectIds);
-    }
-
-    if (shouldApplyModelPrices) {
-      modelPricesMutated = true;
-      await db.execute("DELETE FROM model_prices");
-      await insertModelPrices(data.data.model_prices ?? []);
-    }
-
-    if (shouldApplyApplicationSettings) {
-      appliedApplicationSettingKeys = await applySyncedApplicationSettings(remoteSettings);
-    }
-
-    if (
-      shouldApplyThirdPartyHookNotifications &&
-      hasRemoteThirdPartyHookNotificationsEnabled &&
-      typeof remoteSettings.thirdPartyHookNotificationsEnabled === "boolean"
-    ) {
-      await useSettingsStore.getState().update(
-        "thirdPartyHookNotificationsEnabled",
-        remoteSettings.thirdPartyHookNotificationsEnabled,
-      );
-      appliedSettingsKeys.push("thirdPartyHookNotificationsEnabled");
-    }
-    if (shouldApplyThirdPartyHookTargets) {
-      await useSettingsStore.getState().update("thirdPartyHookTargets", remoteThirdPartyHookTargets);
-      appliedSettingsKeys.push("thirdPartyHookTargets");
-    }
-
-    await db.execute(
-      "INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)",
-      [deviceId, data.last_modified, data.last_modified]
-    );
-
-    if (modelPricesMutated) {
-      await useModelPricingStore.getState().load();
-    }
-
-    logInfo("Sync data applied successfully");
-  } catch (error) {
-    console.error("Failed to apply sync data, restoring backup:", error);
-
-    if (appliedSettingsKeys.includes("thirdPartyHookNotificationsEnabled")) {
-      try {
-        await useSettingsStore.getState().update(
-          "thirdPartyHookNotificationsEnabled",
-          backupThirdPartyHookNotificationsEnabled,
-        );
-      } catch (restoreSettingsError) {
-        console.error("Failed to restore synced notification enable setting:", restoreSettingsError);
-      }
-    }
-    if (appliedSettingsKeys.includes("thirdPartyHookTargets")) {
-      try {
-        await useSettingsStore.getState().update("thirdPartyHookTargets", backupThirdPartyHookTargets);
-      } catch (restoreSettingsError) {
-        console.error("Failed to restore synced notification targets:", restoreSettingsError);
-      }
-    }
-    if (appliedApplicationSettingKeys.length > 0) {
-      try {
-        const rollbackSettings: Record<string, unknown> = {};
-        for (const key of appliedApplicationSettingKeys) {
-          rollbackSettings[key] = backupApplicationSettings[key];
-        }
-        await applySyncedApplicationSettings(rollbackSettings);
-      } catch (restoreSettingsError) {
-        console.error("Failed to restore synced application settings:", restoreSettingsError);
-      }
-    }
-
-    if (modelPricesMutated) {
-      try {
-        await db.execute("DELETE FROM model_prices");
-        await insertModelPrices(backupModelPrices);
-        await useModelPricingStore.getState().load();
-      } catch (restoreError) {
-        console.error("Failed to restore synced model prices:", restoreError);
-      }
-    }
-
-    if (databaseMutated) {
-      try {
-        await db.execute("DELETE FROM command_templates");
-        await db.execute("DELETE FROM worktrees");
-        await db.execute("DELETE FROM projects");
-        await db.execute("DELETE FROM groups");
-
-        const backupGroupIds = new Set(backupGroups.map((group) => String(group.id)));
-        const backupProjectIds = new Set(backupProjects.map((project) => String(project.id)));
-        await insertGroups(backupGroups);
-        await insertProjects(backupProjects, backupGroupIds);
-        await insertWorktrees(backupWorktrees, backupProjectIds);
-        await insertTemplates(backupTemplates, backupProjectIds);
-
-        logInfo("Backup restored successfully");
-      } catch (restoreError) {
-        console.error("Failed to restore backup:", restoreError);
-      }
-    }
-
-    throw error;
-  }
-}

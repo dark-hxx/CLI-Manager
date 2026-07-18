@@ -1,8 +1,0 @@
-{"file":"src/lib/terminalInputSuggestions.ts","reason":"Add local path completion parsing, path suggestion merging, submitted cd resolution, and previous-command history boost."}
-{"file":"src/components/XTermTerminal.tsx","reason":"Wire path suggestions into the ghost suffix refresh flow and keep session cwd in sync from cd submissions and shell integration OSC."}
-{"file":"src-tauri/src/commands/command_suggestion.rs","reason":"Add bounded read-only directory listing and directory resolution commands for path suggestions."}
-{"file":"src/stores/terminalStore.ts","reason":"Add a minimal cwd update action without changing existing store action signatures."}
-{"file":"src-tauri/src/lib.rs","reason":"Register path suggestion Tauri commands."}
-{"file":"CHANGELOG.md","reason":"Document user-visible terminal path completion behavior under [TEMP]."}
-{"file":"docs/功能清单.md","reason":"Update feature list to include path suggestions."}
-{"file":".trellis/spec/backend/command-suggestion-contracts.md","reason":"Record the cross-layer path suggestion contract."}

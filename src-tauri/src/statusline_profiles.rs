@@ -306,6 +306,38 @@ fn state(
     })
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatuslineBackupBundle {
+    settings: statusline::StatuslineSettings,
+    profiles: ProfileLibrary,
+}
+
+#[tauri::command]
+pub fn statusline_backup_export() -> Result<StatuslineBackupBundle, String> {
+    let settings = if statusline::settings_path()?.exists() {
+        statusline::load_settings()?
+    } else {
+        statusline::StatuslineSettings::default()
+    };
+    statusline::validate_settings(&settings)?;
+    let profiles = load_library(None)?;
+    validate_library(&profiles)?;
+    Ok(StatuslineBackupBundle { settings, profiles })
+}
+
+#[tauri::command]
+pub fn statusline_backup_restore(bundle: StatuslineBackupBundle) -> Result<(), String> {
+    statusline::validate_settings(&bundle.settings)?;
+    validate_library(&bundle.profiles)?;
+    let settings_bytes = serde_json::to_vec_pretty(&bundle.settings)
+        .map_err(|error| format!("statusline_profiles_serialize_failed: {error}"))?;
+    let profiles_bytes = serde_json::to_vec_pretty(&bundle.profiles)
+        .map_err(|error| format!("statusline_profiles_serialize_failed: {error}"))?;
+    atomic_write(&statusline::settings_path()?, &settings_bytes)?;
+    atomic_write(&library_path()?, &profiles_bytes)
+}
+
 #[tauri::command]
 pub fn statusline_profiles_load(
     tool: StatuslineProfileTool,

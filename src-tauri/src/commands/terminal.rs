@@ -8,7 +8,7 @@ use crate::daemon::protocol::{
 };
 use crate::pty::manager::{PtyOrphanCleanupSummary, PtyProcessStatus};
 use crate::ssh_launch::SshLaunchPlan;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,8 +50,7 @@ pub async fn pty_prepare_create(
         .await?;
     env_vars.insert("CLI_MANAGER_TAB_ID".to_string(), session_id.clone());
 
-    // daemon 模式：hook 上报指向 daemon 的稳定端口（app 重启不失效，契约★）；
-    // 进程内模式：沿用 app 自身 hook bridge。
+    // Hook 上报指向 daemon 的稳定端口，确保 app 重启后仍然有效。
     let daemon_client = wait_for_daemon(&daemon_bridge)
         .await
         .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
@@ -87,7 +86,6 @@ pub async fn pty_prepare_create(
         shell,
         ssh_launch,
     })
-
 }
 
 #[derive(Serialize)]
@@ -254,7 +252,7 @@ pub async fn pty_daemon_sessions(
         Some(client) => {
             let sessions = client.list()?;
             let alive_count = sessions.iter().filter(|session| session.alive).count();
-            info!(
+            debug!(
                 "pty_daemon_sessions requested: count={}, alive_count={}",
                 sessions.len(),
                 alive_count
@@ -262,7 +260,7 @@ pub async fn pty_daemon_sessions(
             Ok(sessions)
         }
         None => {
-            info!("pty_daemon_sessions requested: daemon unavailable");
+            debug!("pty_daemon_sessions requested: daemon unavailable");
             Ok(Vec::new())
         }
     }

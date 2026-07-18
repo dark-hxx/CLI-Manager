@@ -825,3 +825,69 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: 版本化备份恢复
+
+**Date**: 2026-07-18
+**Task**: 版本化备份恢复
+**Branch**: `master`
+
+### Summary
+
+将覆盖式同步重构为 V3 WebDAV 版本快照与本地 ZIP 备份，支持五域恢复、Outbox 重试、安全快照回滚和旧格式导入，并提交当前工作区全部改动。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `13f6d3d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 26: 合并远程代码并解决冲突
+
+**Date**: 2026-07-18
+**Task**: 合并远程代码并解决冲突
+**Branch**: `master`
+
+### Summary
+
+合并 origin/master 的 6 个远端提交，解决 Cargo.lock 与同步设置分类冲突，保留版本化备份并纳入远端崩溃报告和侧栏增强。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `41c1275` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

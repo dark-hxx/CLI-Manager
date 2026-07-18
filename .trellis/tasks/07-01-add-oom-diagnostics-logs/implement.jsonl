@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend console diagnostics must follow project frontend conventions and avoid user-facing i18n changes."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Replay diagnostics touch Zustand store behavior."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"OOM task must avoid unbounded allocations and hot-path overhead."}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Transcript diagnostics touch CLI hook sub-agent transcript flow."}
-{"file":".trellis/spec/backend/history-stats-contracts.md","reason":"History diagnostics touch history detail/stats commands."}
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Required delivery and changelog rules."}

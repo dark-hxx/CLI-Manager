@@ -25,6 +25,8 @@ pub fn statusline_profiles_switch(tool: StatuslineProfileTool, profile_id: Strin
 pub fn statusline_profiles_delete(tool: StatuslineProfileTool, profile_id: String, config_dir: Option<String>) -> Result<StatuslineProfileState, String>
 pub fn statusline_profiles_analyze_import(path: String, config_dir: Option<String>) -> Result<ImportAnalysis, String>
 pub fn statusline_profiles_commit_import(path: String, revision: u64, decisions: Vec<ImportDecision>, config_dir: Option<String>) -> Result<(), String>
+pub fn statusline_backup_export() -> Result<StatuslineBackupBundle, String>
+pub fn statusline_backup_restore(bundle: StatuslineBackupBundle) -> Result<(), String>
 pub fn statusline_powerline_font_status() -> Result<PowerlineFontStatus, String>
 pub fn statusline_powerline_install_fonts() -> Result<PowerlineFontInstallResult, String>
 ```
@@ -62,6 +64,7 @@ Claude invokes the runtime as:
 - The active profile cannot be deleted or overwritten by library import.
 - Profile library import is two-phase: analyze and validate the whole versioned JSON, collect per-profile conflict decisions, then commit only when the library revision still matches.
 - Exported profile libraries contain statusline payloads and profile metadata only; they must not contain CLI config paths, environment values, provider secrets, or unrelated Claude/Codex settings.
+- Versioned application backups include only CLI-Manager's validated `statusline/settings.json` and `statusline/profiles.json`. Restore atomically replaces those internal files and must not apply external Claude/Codex configuration, cc-switch state, or fonts.
 
 ## 4. Validation & Error Matrix
 

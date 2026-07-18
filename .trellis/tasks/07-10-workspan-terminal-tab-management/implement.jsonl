@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"终端拖拽、稳定挂载、分屏布局与 i18n 约束"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Workspan 活动镜像、持久化和 scoped filtering 契约"}
-{"file":".trellis/spec/frontend/workspace-session-restore-contracts.md","reason":"保持启动恢复的 CLI resume 与 shell snapshot 分流"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"终端 UI 静态与人工验证要求"}
