@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-07-18 | Repair PR 155 Worktree stats rollup | `a922f2b` | `fix-pr-155` |
 | 33 | 2026-07-18 | Repair PR 154 finished exit-task detection | `5b0689a` | `fix-pr-154` |
 | 32 | 2026-07-16 | 同步三方 Hook 通知配置 | `2fc9bcd` | `master` |
 | 31 | 2026-07-16 | 跨平台 WebDAV 密码安全存储 | `66286a3` | `master` |

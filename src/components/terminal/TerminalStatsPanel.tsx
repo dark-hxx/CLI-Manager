@@ -7,7 +7,7 @@ import { createPatch } from "diff";
 import type { HistoryFileChangeSummary, HistorySessionDetail, HistorySource, WorktreeRecord } from "../../lib/types";
 import {
   fetchLatestProjectSessionDetail,
-  fetchTodayProjectStats,
+  fetchTodayProjectStatsMerged,
   type TodayProjectStats,
 } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
@@ -41,6 +41,10 @@ import { useI18n } from "../../lib/i18n";
 import { DiffViewerModal } from "../git/DiffViewerModal";
 import { parseDiffBlocksFromMessages } from "../../lib/diffParser";
 import { resolveTerminalProjectPath } from "../../lib/terminalOscPath";
+import {
+  resolveTodayProjectStatsScope,
+  resolveTodayUsageProjectPaths,
+} from "../../lib/historyProjectPaths";
 import { TerminalSquare } from "../icons";
 
 interface TerminalStatsPanelProps {
@@ -418,6 +422,18 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   );
   const lookupProjectPath = activeWorktree?.path || terminalProjectPath;
   const displayProjectPath = activeWorktree?.path || terminalProjectPath;
+  // Issue #137：今日项目用量按「主项目路径 + 该项目下全部 worktree」聚合，避免 worktree 被当成独立目录。
+  const todayUsageProjectPaths = useMemo(() => {
+    const worktreePaths: string[] = [];
+    if (project?.id) {
+      for (const worktree of worktrees) {
+        if (worktree.project_id !== project.id) continue;
+        if (worktree.status === "missing") continue;
+        if (worktree.path?.trim()) worktreePaths.push(worktree.path.trim());
+      }
+    }
+    return resolveTodayUsageProjectPaths(project?.path, lookupProjectPath, worktreePaths);
+  }, [lookupProjectPath, project?.id, project?.path, worktrees]);
 
   // 终端运行的 CLI 工具（claude/codex），来自项目设置；推断不出则不过滤
   const sourceFilter = useMemo(
@@ -426,6 +442,13 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         `${terminalSession?.startupCmd ?? ""} ${terminalSession?.title ?? ""} ${project?.cli_tool ?? ""}`
       ),
     [terminalSession?.startupCmd, terminalSession?.title, project?.cli_tool]
+  );
+  const todayUsageScope = useMemo(
+    () => resolveTodayProjectStatsScope(
+      todayUsageProjectPaths,
+      [latestSession?.project_key]
+    ),
+    [latestSession?.project_key, todayUsageProjectPaths]
   );
 
   // 4 张「会话级」卡片（Token 用量/趋势/模型上下文/工具）只认 hook 绑定的 CLI 会话：
@@ -501,14 +524,19 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   }, [activeSessionId, displayProjectPath, lookupProjectPath, panelActive, pollTrigger, project?.path, refreshSeq, sourceFilter, terminalSession?.cliSessionId, terminalSession?.cwd, terminalSession?.projectId]);
 
   // 今日项目用量：会话数据变化时同步刷新（与终端 CLI 来源保持一致）
+  // Issue #137：聚合主项目 + worktree 路径，主仓库 Tab 与 worktree Tab 看到同一套「今日项目」合计。
   useEffect(() => {
-    if (!panelActive || !latestSession) {
+    if (!panelActive || !todayUsageScope) {
       setTodayStats(null);
       return;
     }
     let cancelled = false;
     setLoadingToday(true);
-    void fetchTodayProjectStats(latestSession.project_key, sourceFilter, lookupProjectPath).then((result) => {
+    void fetchTodayProjectStatsMerged(
+      todayUsageScope.projectKey,
+      sourceFilter,
+      todayUsageScope.projectPaths
+    ).then((result) => {
       if (cancelled) return;
       setTodayStats(result);
       setLoadingToday(false);
@@ -516,7 +544,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     return () => {
       cancelled = true;
     };
-  }, [lookupProjectPath, panelActive, latestSession, sourceFilter]);
+  }, [panelActive, sourceFilter, todayUsageScope]);
 
   // 空闲时数据轮询返回 unchanged 不会触发重渲染，需独立 tick 让头部相对时间文案随时间走字
   useEffect(() => {

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getDb } from "../lib/db";
 import { createPerfMarker, logInfo, logWarn } from "../lib/logger";
+import { normalizeHistoryProjectPaths } from "../lib/historyProjectPaths";
 import { useSettingsStore } from "./settingsStore";
 import type {
   HistoryBackupStatus,
@@ -819,16 +820,21 @@ export async function fetchDiscoveredModels(): Promise<string[]> {
 export async function fetchTodayProjectStats(
   projectKey: string,
   source?: HistorySource | null,
-  projectPath?: string | null
+  projectPath?: string | null,
+  projectPaths?: string[]
 ): Promise<TodayProjectStats | null> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
+  const normalizedProjectPath = normalizeHistoryProjectPaths(projectPath ? [projectPath] : [])[0] ?? null;
+  const normalizedProjectPaths = normalizeHistoryProjectPaths(projectPaths ?? []);
+  const hasProjectPaths = normalizedProjectPaths.length > 0;
   try {
     const raw = await invoke<unknown>("history_get_stats", {
       source: source ?? null,
       ...getHistoryPathArgs(),
-      projectKey: projectPath ? null : projectKey,
-      projectPath: projectPath ?? null,
+      projectKey: normalizedProjectPath || hasProjectPaths ? null : projectKey,
+      projectPath: hasProjectPaths ? null : normalizedProjectPath,
+      projectPaths: hasProjectPaths ? normalizedProjectPaths : null,
       rangeDays: null,
       startAt: todayStart.getTime(),
       endAt: Date.now(),
@@ -852,6 +858,21 @@ export async function fetchTodayProjectStats(
   } catch {
     return null;
   }
+}
+
+/**
+ * 今日项目用量：由后端按多个项目/Worktree 路径一次过滤并按唯一会话聚合。
+ */
+export async function fetchTodayProjectStatsMerged(
+  projectKey: string,
+  source: HistorySource | null | undefined,
+  projectPaths: string[]
+): Promise<TodayProjectStats | null> {
+  const uniquePaths = normalizeHistoryProjectPaths(projectPaths);
+  if (uniquePaths.length === 0) {
+    return fetchTodayProjectStats(projectKey, source, null);
+  }
+  return fetchTodayProjectStats(projectKey, source, null, uniquePaths);
 }
 
 function getHistoryPathCacheKey(): string {

@@ -1561,6 +1561,7 @@ pub async fn history_get_stats(
     codex_config_dir: Option<String>,
     project_key: Option<String>,
     project_path: Option<String>,
+    project_paths: Option<Vec<String>>,
     range_days: Option<usize>,
     start_at: Option<i64>,
     end_at: Option<i64>,
@@ -1572,9 +1573,7 @@ pub async fn history_get_stats(
     let target_project = project_key
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    let target_project_path = project_path
-        .map(|v| normalize_history_path(&v))
-        .filter(|v| !v.is_empty());
+    let target_project_paths = normalize_history_stats_project_paths(project_path, project_paths);
     let bounds = resolve_stats_time_bounds(range_days, start_at, end_at)?;
     let force = force.unwrap_or(false);
     let index = refresh_history_index_snapshot(&roots, force);
@@ -1582,7 +1581,7 @@ pub async fn history_get_stats(
         &roots,
         source_filter.as_deref(),
         target_project.as_deref(),
-        target_project_path.as_deref(),
+        &target_project_paths,
         bounds,
         index.generation,
     );
@@ -1602,7 +1601,7 @@ pub async fn history_get_stats(
         &roots,
         source_filter.as_deref(),
         target_project.as_deref(),
-        target_project_path.as_deref(),
+        &target_project_paths,
         bounds,
         index.generation,
     );
@@ -1612,7 +1611,7 @@ pub async fn history_get_stats(
                 index.entries,
                 source_filter.as_deref(),
                 target_project.as_deref(),
-                target_project_path.as_deref(),
+                &target_project_paths,
                 bounds,
             );
             stats_daily_index_cache_set(daily_index_key, daily_index.clone());
@@ -1623,7 +1622,7 @@ pub async fn history_get_stats(
             index.entries,
             source_filter.as_deref(),
             target_project.as_deref(),
-            target_project_path.as_deref(),
+            &target_project_paths,
             bounds,
         );
         stats_daily_index_cache_set(daily_index_key, daily_index.clone());
@@ -1640,11 +1639,36 @@ pub async fn history_get_stats(
     Ok(response)
 }
 
+fn normalize_history_stats_project_paths(
+    project_path: Option<String>,
+    project_paths: Option<Vec<String>>,
+) -> Vec<String> {
+    let mut normalized = project_paths.unwrap_or_default();
+    if let Some(project_path) = project_path {
+        normalized.push(project_path);
+    }
+    let mut normalized = normalized
+        .into_iter()
+        .map(|path| normalize_history_path(&path))
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort_unstable();
+    normalized.dedup();
+    normalized
+}
+
+fn history_stats_project_paths_cache_key(project_paths: &[String]) -> String {
+    if project_paths.is_empty() {
+        return "__all__".to_string();
+    }
+    serde_json::to_string(project_paths).unwrap_or_else(|_| project_paths.join("\u{1f}"))
+}
+
 fn build_history_stats_daily_index(
     entries: Vec<HistoryIndexEntry>,
     source_filter: Option<&str>,
     target_project: Option<&str>,
-    target_project_path: Option<&str>,
+    target_project_paths: &[String],
     bounds: StatsTimeBounds,
 ) -> CachedHistoryStatsDailyIndex {
     let mut days: BTreeMap<i64, Vec<HistoryStatsSessionFact>> = BTreeMap::new();
@@ -1661,10 +1685,12 @@ fn build_history_stats_daily_index(
                 continue;
             }
         }
-        if let Some(project_path) = target_project_path {
-            if !session_matches_project_path(&entry.file_ref, project_path) {
-                continue;
-            }
+        if !target_project_paths.is_empty()
+            && !target_project_paths
+                .iter()
+                .any(|project_path| session_matches_project_path(&entry.file_ref, project_path))
+        {
+            continue;
         }
 
         let computed = entry.computed;
@@ -2180,16 +2206,16 @@ fn make_history_stats_daily_index_cache_key(
     roots: &HistoryRoots,
     source_filter: Option<&str>,
     target_project: Option<&str>,
-    target_project_path: Option<&str>,
+    target_project_paths: &[String],
     bounds: StatsTimeBounds,
     index_generation: u64,
 ) -> String {
     format!(
-        "{}|source={}|project={}|project_path={}|day_offset={}|gen={}",
+        "{}|source={}|project={}|project_paths={}|day_offset={}|gen={}",
         roots.cache_key(),
         source_filter.unwrap_or("__all__"),
         target_project.unwrap_or("__all__"),
-        target_project_path.unwrap_or("__all__"),
+        history_stats_project_paths_cache_key(target_project_paths),
         stats_day_start_offset(bounds),
         index_generation
     )
@@ -2199,16 +2225,16 @@ fn make_history_stats_aggregation_cache_key(
     roots: &HistoryRoots,
     source_filter: Option<&str>,
     target_project: Option<&str>,
-    target_project_path: Option<&str>,
+    target_project_paths: &[String],
     bounds: StatsTimeBounds,
     index_generation: u64,
 ) -> String {
     format!(
-        "{}|source={}|project={}|project_path={}|start={}|end={}|gen={}",
+        "{}|source={}|project={}|project_paths={}|start={}|end={}|gen={}",
         roots.cache_key(),
         source_filter.unwrap_or("__all__"),
         target_project.unwrap_or("__all__"),
-        target_project_path.unwrap_or("__all__"),
+        history_stats_project_paths_cache_key(target_project_paths),
         bounds.start_at,
         bounds.end_at,
         index_generation
@@ -7832,6 +7858,32 @@ mod tests {
     }
 
     #[test]
+    fn history_stats_project_paths_are_normalized_for_stable_cache_keys() {
+        let paths = normalize_history_stats_project_paths(
+            None,
+            Some(vec![
+                "/repo/worktree/".to_string(),
+                "/repo/main".to_string(),
+                "/repo/main/".to_string(),
+            ]),
+        );
+        let reordered = normalize_history_stats_project_paths(
+            Some("/repo/main".to_string()),
+            Some(vec!["/repo/worktree".to_string()]),
+        );
+
+        assert_eq!(
+            paths,
+            vec!["/repo/main".to_string(), "/repo/worktree".to_string()]
+        );
+        assert_eq!(paths, reordered);
+        assert_eq!(
+            history_stats_project_paths_cache_key(&paths),
+            history_stats_project_paths_cache_key(&reordered)
+        );
+    }
+
+    #[test]
     fn history_stats_buckets_usage_by_event_timestamp() {
         let temp_dir = TempDir::new().unwrap();
         let file = temp_dir.path().join("session.jsonl");
@@ -7861,7 +7913,7 @@ mod tests {
             explicit: true,
         };
 
-        let daily_index = build_history_stats_daily_index(vec![entry], None, None, None, bounds);
+        let daily_index = build_history_stats_daily_index(vec![entry], None, None, &[], bounds);
         let response = build_history_stats_response(&daily_index.days, bounds);
 
         assert_eq!(response.total_sessions, 1);
@@ -7874,6 +7926,49 @@ mod tests {
         assert_eq!(response.project_ranking[0].sessions, 1);
         assert_eq!(response.source_distribution[0].sessions, 1);
         assert_eq!(response.model_distribution[0].sessions, 1);
+    }
+
+    #[test]
+    fn history_stats_multi_path_filter_counts_overlapping_session_once() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("nested-worktree-session.jsonl");
+        let line = r#"{"type":"assistant","cwd":"/repo/main/worktrees/task","timestamp":"1970-01-02T01:00:00Z","requestId":"req_1","message":{"id":"msg_1","role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":100,"output_tokens":10}}}"#;
+        write_text(&file, &format!("{line}\n"));
+
+        let computed = scan_session_computation(&file, DAY_MS, 2 * DAY_MS);
+        let entry = HistoryIndexEntry {
+            file_ref: SessionFileRef {
+                source: "claude".to_string(),
+                project_key: "nested-worktree".to_string(),
+                path: file,
+            },
+            fingerprint: SessionFileFingerprint {
+                created_at: DAY_MS,
+                updated_at: 2 * DAY_MS,
+                size: 1,
+            },
+            computed,
+        };
+        let bounds = StatsTimeBounds {
+            start_at: DAY_MS,
+            end_at: 2 * DAY_MS - 1,
+            start_day: DAY_MS,
+            range_days: 1,
+            explicit: true,
+        };
+        let project_paths = normalize_history_stats_project_paths(
+            Some("/repo/main".to_string()),
+            Some(vec!["/repo/main/worktrees/task".to_string()]),
+        );
+
+        let daily_index =
+            build_history_stats_daily_index(vec![entry], None, None, &project_paths, bounds);
+        let response = build_history_stats_response(&daily_index.days, bounds);
+
+        assert_eq!(response.total_sessions, 1);
+        assert_eq!(response.total_messages, 1);
+        assert_eq!(response.total_input_tokens, 100);
+        assert_eq!(response.total_output_tokens, 10);
     }
 
     #[test]
@@ -7911,7 +8006,7 @@ mod tests {
             explicit: true,
         };
 
-        let daily_index = build_history_stats_daily_index(vec![entry], None, None, None, bounds);
+        let daily_index = build_history_stats_daily_index(vec![entry], None, None, &[], bounds);
         let response = build_history_stats_response(&daily_index.days, bounds);
 
         assert_eq!(response.model_distribution.len(), 1);
@@ -8011,7 +8106,7 @@ mod tests {
             explicit: true,
         };
 
-        let daily_index = build_history_stats_daily_index(vec![entry], None, None, None, bounds);
+        let daily_index = build_history_stats_daily_index(vec![entry], None, None, &[], bounds);
         let response = build_history_stats_response(&daily_index.days, bounds);
 
         assert_eq!(response.total_input_tokens, 1_000_000);

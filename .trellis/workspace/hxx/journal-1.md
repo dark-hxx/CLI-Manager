@@ -1114,3 +1114,36 @@ Restricted finished-task exit handling to Claude/Codex hook done/failed states, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: Repair PR 155 Worktree stats rollup
+
+**Date**: 2026-07-18
+**Task**: Repair PR 155 Worktree stats rollup
+**Branch**: `fix-pr-155`
+
+### Summary
+
+Moved Worktree today-usage aggregation to one backend multi-path query, deduplicated overlapping paths by session, removed the latest-session gate, added frontend/Rust tests, and updated V1.2.9 docs/contracts.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a922f2b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
