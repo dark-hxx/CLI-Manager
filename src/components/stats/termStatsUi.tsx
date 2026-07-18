@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import type { HistorySessionDetail } from "../../lib/types";
 import { calculateCost, inferDominantModel } from "../../lib/modelPricing";
-import { VendorIcon, inferVendor } from "../VendorIcon";
+import { resolveHistorySourceIconKey } from "../../lib/cliTools";
+import { CliToolIcon } from "../CliToolIcon";
 import { translateCurrent } from "../../lib/i18n";
 import type { TerminalSidePanelSkin } from "../../stores/settingsStore";
 
@@ -305,11 +306,11 @@ export function HeaderPill({ children, color = TERM.green }: { children: React.R
 
 // 来源徽章（claude / codex）：在原配色胶囊内前置品牌图标
 export function SourcePill({ source }: { source: string }) {
-  const vendor = inferVendor(source);
+  const icon = resolveHistorySourceIconKey(source);
   return (
     <HeaderPill color={SOURCE_COLORS[source] ?? TERM.cyan}>
       <span className="inline-flex items-center gap-1">
-        {vendor && <VendorIcon vendor={vendor} size={11} />}
+        {icon && <CliToolIcon icon={icon} size={11} />}
         {source}
       </span>
     </HeaderPill>

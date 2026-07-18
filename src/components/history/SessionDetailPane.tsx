@@ -26,6 +26,8 @@ import aiAvatarUrl from "../../assets/history-ai-avatar.svg";
 import userAvatarUrl from "../../assets/history-user-avatar.svg";
 import type { HistoryFileChangeSummary, HistoryMessage, HistorySessionDetail, HistorySessionView } from "../../lib/types";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
+import { resolveHistorySourceIconKey } from "../../lib/cliTools";
+import { CliToolIcon } from "../CliToolIcon";
 import { EmptyState } from "../ui/EmptyState";
 import { SessionTranscriptContent } from "./SessionTranscriptContent";
 import { MetaEditor } from "./MetaEditor";
@@ -645,6 +647,8 @@ export function SessionDetailPane({
     );
   }
 
+  const sourceIcon = resolveHistorySourceIconKey(activeView.source);
+
   const copyText = (text: string, label: string) => {
     void navigator.clipboard
       .writeText(text)
@@ -757,8 +761,15 @@ export function SessionDetailPane({
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-text-primary">{activeView.displayTitle}</h3>
-            <div className="ui-dev-label mt-1 text-[11px] text-text-muted">
-              {activeView.source} · {makeSessionLabel(activeView)} · {t("history.detail.updatedAt", { time: formatTime(activeView.updated_at, language) })}
+            <div className="ui-dev-label mt-1 flex items-center gap-1.5 text-[11px] text-text-muted">
+              {sourceIcon && (
+                <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-primary">
+                  <CliToolIcon icon={sourceIcon} size={12} />
+                </span>
+              )}
+              <span className="truncate">
+                {activeView.source} · {makeSessionLabel(activeView)} · {t("history.detail.updatedAt", { time: formatTime(activeView.updated_at, language) })}
+              </span>
             </div>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-text-muted">
               <span className="ui-dev-label max-w-full truncate rounded border border-border bg-bg-secondary px-1.5 py-0.5">

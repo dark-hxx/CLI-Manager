@@ -1,12 +1,15 @@
 import type { ComponentType } from "react";
 import AmpColor from "@lobehub/icons/es/Amp/components/Color";
+import AntigravityColor from "@lobehub/icons/es/Antigravity/components/Color";
 import ClaudeCodeColor from "@lobehub/icons/es/ClaudeCode/components/Color";
 import ClineMono from "@lobehub/icons/es/Cline/components/Mono";
 import CodexColor from "@lobehub/icons/es/Codex/components/Color";
 import CopilotColor from "@lobehub/icons/es/Copilot/components/Color";
+import CursorMono from "@lobehub/icons/es/Cursor/components/Mono";
 import GeminiCliColor from "@lobehub/icons/es/GeminiCLI/components/Color";
 import GooseMono from "@lobehub/icons/es/Goose/components/Mono";
 import GrokMono from "@lobehub/icons/es/Grok/components/Mono";
+import KiroColor from "@lobehub/icons/es/Kiro/components/Color";
 import OpenCodeMono from "@lobehub/icons/es/OpenCode/components/Mono";
 import QwenColor from "@lobehub/icons/es/Qwen/components/Color";
 import { Bot, Heart, Pi } from "lucide-react";
@@ -25,6 +28,9 @@ const CLI_TOOL_ICONS: Record<CliToolIconKey, IconComponent> = {
   qwen: QwenColor,
   "gemini-cli": GeminiCliColor,
   copilot: CopilotColor,
+  antigravity: AntigravityColor,
+  cursor: CursorMono,
+  kiro: KiroColor,
   cline: ClineMono,
   goose: GooseMono,
   amp: AmpColor,

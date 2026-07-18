@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import type { Group, HistoryIndexStatus, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
+import { resolveCliToolIconKey, resolveHistorySourceIconKey } from "../../lib/cliTools";
 import { findWorktreeByPath } from "../../lib/terminalProject";
 import { useWorktreeStore } from "../../stores/worktreeStore";
-import { VendorIcon, inferVendor, type VendorKey } from "../VendorIcon";
+import { CliToolIcon } from "../CliToolIcon";
 import { Portal } from "../ui/Portal";
 import { Select } from "../ui/select";
 import { buildHistorySessionChildMap, formatTime } from "./historyViewUtils";
@@ -215,15 +216,13 @@ function countProjects(node: HistoryProjectTreeNode): number {
 }
 
 function ProjectFilterIcon({ project, size = 13 }: { project: Project; size?: number }) {
-  const vendor = project.cli_tool ? inferVendor(project.cli_tool) : null;
-  return vendor ? <VendorIcon vendor={vendor} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+  const icon = resolveCliToolIconKey(project.cli_tool);
+  return icon ? <CliToolIcon icon={icon} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
 }
 
 function SessionSourceIcon({ source, size = 14 }: { source: string; size?: number }) {
-  const normalized = source.trim().toLowerCase();
-  const vendor: VendorKey | null =
-    normalized === "claude" ? "claude" : normalized === "codex" ? "openai" : inferVendor(source);
-  return vendor ? <VendorIcon vendor={vendor} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+  const icon = resolveHistorySourceIconKey(source);
+  return icon ? <CliToolIcon icon={icon} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
 }
 
 function collectGroupIds(nodes: HistoryProjectTreeNode[], out: string[] = []): string[] {
@@ -352,6 +351,7 @@ export function HistoryListPane({
   const globalQueryLength = [...globalQuery.trim()].length;
   const globalQueryTooShort = globalQueryLength > 0 && globalQueryLength < 3;
   const indexBusy = ["seeding", "scanning", "indexing"].includes(indexStatus.phase);
+  const selectedSourceIcon = sourceFilter === "all" ? null : resolveHistorySourceIconKey(sourceFilter);
 
   const projectTree = useMemo(() => buildHistoryProjectTree(groups, projects), [groups, projects]);
   const selectedProject = useMemo(
@@ -607,12 +607,17 @@ export function HistoryListPane({
     >
       <div className="ui-history-sidebar-top p-3">
         <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1 rounded-xl border border-border/60 bg-surface-container-lowest p-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-border/60 bg-surface-container-lowest p-1">
+            {selectedSourceIcon && (
+              <span className="ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-primary">
+                <CliToolIcon icon={selectedSourceIcon} size={13} />
+              </span>
+            )}
             <Select
               value={sourceFilter}
               onChange={(event) => onSourceFilterChange(event.target.value as HistorySourceFilter)}
               aria-label={t("history.filter.source")}
-              className="h-8 min-w-0 border-0 bg-transparent px-2 text-[11px] font-semibold shadow-none"
+              className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-[11px] font-semibold shadow-none"
             >
               <option value="all">{t("history.filter.all")}</option>
               {HISTORY_SOURCE_DESCRIPTORS.map((descriptor) => (
@@ -842,8 +847,13 @@ export function HistoryListPane({
                   >
                     <div className="truncate text-xs font-semibold text-text-primary">{row.hit.title}</div>
                     <div className="mt-0.5 truncate text-[11px] text-text-secondary">{row.hit.snippet}</div>
-                    <div className="ui-dev-label mt-1 text-[10px] text-text-muted">
-                      {row.hit.source} · {row.hit.project_key} · {row.hit.role}
+                    <div className="ui-dev-label mt-1 flex items-center gap-1.5 text-[10px] text-text-muted">
+                      <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-primary">
+                        <SessionSourceIcon source={row.hit.source} size={11} />
+                      </span>
+                      <span className="truncate">
+                        {row.hit.source} · {row.hit.project_key} · {row.hit.role}
+                      </span>
                     </div>
                   </button>
                 )}
