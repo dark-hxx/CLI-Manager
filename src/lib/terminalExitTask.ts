@@ -12,6 +12,11 @@ export interface TerminalExitTaskCandidate {
   hookStatus?: TerminalExitNotificationState | null;
 }
 
+export interface DaemonExitTaskCandidate {
+  alive: boolean;
+  taskStatus?: string | null;
+}
+
 export function shouldIncludeTerminalExitTask(
   candidate: TerminalExitTaskCandidate,
   includeFinished = false
@@ -25,4 +30,14 @@ export function shouldIncludeTerminalExitTask(
   if (!includeFinished) return false;
 
   return candidate.hookStatus === "done" || candidate.hookStatus === "failed";
+}
+
+export function shouldIncludeDaemonExitTask(
+  candidate: DaemonExitTaskCandidate,
+  includeFinished = false
+): boolean {
+  const taskStatus = candidate.taskStatus?.trim().toLowerCase();
+  const finished = taskStatus === "done" || taskStatus === "failed" || taskStatus === "completed";
+  if (finished) return includeFinished;
+  return candidate.alive;
 }

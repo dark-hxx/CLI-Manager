@@ -49,6 +49,7 @@ import { translateCurrent, useI18n } from "./lib/i18n";
 import { getOsPlatform } from "./lib/shell";
 import { normalizeFontFamilyStack } from "./lib/systemFonts";
 import { ALL_TERMINALS_SCOPE } from "./lib/terminalScope";
+import { shouldIncludeDaemonExitTask } from "./lib/terminalExitTask";
 import { getTerminalTheme, isLightTerminalTheme } from "./lib/terminalThemes";
 import { resolveProjectForSession } from "./lib/terminalProject";
 import type { TerminalScope } from "./lib/types";
@@ -1130,7 +1131,11 @@ function App() {
     try {
       const daemonSessions = await invoke<DaemonSessionMeta[]>("pty_daemon_sessions");
       daemonAliveIds = daemonSessions
-        .filter((session) => session.alive && !foregroundSessionIds.has(session.sessionId))
+        .filter((session) => (
+          session.alive
+          && !foregroundSessionIds.has(session.sessionId)
+          && shouldIncludeDaemonExitTask(session, includeFinished)
+        ))
         .map((session) => session.sessionId);
       // 后台已完成但仍可回放的 daemon 会话：仅在开关开启时纳入（避免默认退出被已完成任务打扰）
       if (includeFinished) {
@@ -1138,8 +1143,7 @@ function App() {
           .filter((session) => {
             if (foregroundSessionIds.has(session.sessionId)) return false;
             if (session.alive) return false;
-            const status = (session.taskStatus ?? "").toLowerCase();
-            return status === "done" || status === "failed" || status === "completed";
+            return shouldIncludeDaemonExitTask(session, true);
           })
           .map((session) => session.sessionId);
       }
