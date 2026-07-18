@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Group, Project } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 import { VendorIcon, inferVendor } from "../VendorIcon";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 
 interface HistoryResumeProjectDialogProps {
   open: boolean;
@@ -28,11 +28,28 @@ function ProjectIcon({ project }: { project: Project }) {
 export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWindow, onSelect, onClose }: HistoryResumeProjectDialogProps) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
   const normalizedQuery = query.trim().toLowerCase();
 
   useEffect(() => {
-    if (!open) setQuery("");
+    if (!open) {
+      setQuery("");
+      setCollapsedGroupIds(new Set());
+    }
   }, [open]);
+
+  useEffect(() => {
+    if (normalizedQuery) setCollapsedGroupIds(new Set());
+  }, [normalizedQuery]);
+
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
 
   const groupedProjects = useMemo<ProjectGroup[]>(() => {
     const groupById = new Map(groups.map((group) => [group.id, group]));
@@ -65,10 +82,7 @@ export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWin
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) {
-          setQuery("");
-          onClose();
-        }
+        if (!nextOpen) onClose();
       }}
     >
       <DialogContent className="w-[360px] max-w-[calc(100vw-32px)] p-2" showCloseButton={false}>
@@ -76,15 +90,16 @@ export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWin
           <div className="flex items-center gap-2">
             <Folder size={15} className="text-text-muted" />
             <DialogTitle className="min-w-0 flex-1 text-sm">{t("history.resumeProject.title")}</DialogTitle>
-            <button
-              type="button"
-              onClick={onClose}
-              className="ui-flat-action inline-flex h-6 w-6 items-center justify-center rounded-md px-0 text-text-muted"
-              aria-label={t("common.close")}
-              title={t("common.close")}
-            >
-              <X size={13} />
-            </button>
+            <DialogClose asChild>
+              <button
+                type="button"
+                className="ui-focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-text-primary"
+                aria-label={t("common.close")}
+                title={t("common.close")}
+              >
+                <X size={14} />
+              </button>
+            </DialogClose>
           </div>
           <DialogDescription className="text-xs">
             {t(onUseNewWindow ? "history.resumeProject.noMatchDescription" : "history.resumeProject.description")}
@@ -131,16 +146,27 @@ export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWin
               </span>
             </button>
           )}
-          {groupedProjects.length > 0 ? groupedProjects.map((group) => (
-            <div key={group.id}>
-              <div className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary">
-                <ChevronRight size={12} style={{ transform: "rotate(90deg)" }} />
-                <Folder size={13} />
-                <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{group.projects.length}</span>
-              </div>
-              <div className="space-y-0.5">
-                {group.projects.map((project) => (
+          {groupedProjects.length > 0 ? groupedProjects.map((group) => {
+            const collapsed = collapsedGroupIds.has(group.id);
+            return (
+              <div key={group.id}>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.id)}
+                  className="ui-tree-node ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg px-2 text-left text-xs font-medium text-text-secondary"
+                  aria-expanded={!collapsed}
+                >
+                  <ChevronRight
+                    size={12}
+                    className="shrink-0 transition-transform duration-150"
+                    style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+                  />
+                  <Folder size={13} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                  <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{group.projects.length}</span>
+                </button>
+                {!collapsed && <div className="space-y-0.5">
+                  {group.projects.map((project) => (
                   <button
                     key={project.id}
                     type="button"
@@ -156,10 +182,11 @@ export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWin
                       <span className="block truncate text-[10px] text-text-muted">{project.cli_tool} {project.cli_args}</span>
                     </span>
                   </button>
-                ))}
+                  ))}
+                </div>}
               </div>
-            </div>
-          )) : (
+            );
+          }) : (
             <div className="px-2 py-5 text-center text-xs text-text-muted">{t("history.projectFilter.noMatches")}</div>
           )}
         </div>
