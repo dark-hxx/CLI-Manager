@@ -87,3 +87,13 @@ const handleBackground = async () => {
   setBackgroundMode(true);         // 仅内存标记，用于通知策略切换
 };
 ```
+
+## Extension: Finished CLI Tasks on Exit (Issue #142)
+
+- `settingsStore.backgroundIncludeFinishedTasks` is a persisted, syncable boolean and defaults to `false`.
+- With the setting disabled, exit-task selection must remain identical to `getRunningTaskSessionIds()`: a real PTY whose process status and merged tab status are both `running`.
+- With the setting enabled, foreground selection may additionally include only sessions whose **hook source** status is `done` or `failed`.
+- The merged tab notification is not sufficient for finished-task detection because ordinary shell `command_finished` events also produce `done` or `failed`.
+- `attention` is not a finished-task state and must not change the default exit decision.
+- Finished daemon records may be included only while the same setting is enabled.
+- Regression coverage must include running PTY, non-PTY, attention, hook done/failed, and shell-only done/failed cases.

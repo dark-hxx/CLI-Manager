@@ -17,6 +17,10 @@ import { appendSyncedHistoryContextArg } from "../lib/syncedHistoryContext";
 import { translateCurrent } from "../lib/i18n";
 import { findProjectByPath, findWorktreeByPath, resolveProjectForProviderLaunch } from "../lib/terminalProject";
 import {
+  shouldIncludeTerminalExitTask,
+  type TerminalExitNotificationState,
+} from "../lib/terminalExitTask";
+import {
   addSessionToPaneTree,
   findPaneLeaf,
   findPaneLeafBySession,
@@ -65,7 +69,7 @@ export type CliHookEventName =
   | "AgentToolStop"
   | "ToolStart"
   | "ToolStop";
-export type TabNotificationState = "none" | "running" | "attention" | "done" | "failed";
+export type TabNotificationState = TerminalExitNotificationState;
 export type ShellRuntimeEventName = "command_started" | "command_finished" | "prompt_shown";
 
 interface DaemonSessionState {
@@ -247,6 +251,12 @@ interface TerminalStore {
   discardDaemonSession: (sessionId: string) => Promise<void>;
   /** 合并态（hook+shell）为 running 的真实 PTY 会话 id，供退出拦截判定任务是否在跑（Issue #123 Phase 1）。 */
   getRunningTaskSessionIds: () => string[];
+  /**
+   * 退出拦截用的任务会话 id。
+   * 默认与 getRunningTaskSessionIds 一致；includeFinished=true 时额外纳入
+   * hook 状态为 done/failed 的 Claude/Codex 会话（Issue #142）。
+   */
+  getExitTaskSessionIds: (includeFinished?: boolean) => string[];
   hideBackgroundForSession: (sessionId: string) => void;
   showBackgroundForSession: (sessionId: string) => void;
   /** 收到 CLI SubagentStart：在发起 Tab 所在 pane 分屏出只读转录面板并开始 tail。 */
@@ -2285,12 +2295,24 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   getRunningTaskSessionIds: () => {
     const state = get();
     return state.sessions
-      .filter(
-        (session) =>
-          (!session.kind || session.kind === "pty") &&
-          state.sessionStatuses[session.id] === "running" &&
-          state.tabNotifications[session.id] === "running"
-      )
+      .filter((session) => shouldIncludeTerminalExitTask({
+        kind: session.kind,
+        processStatus: state.sessionStatuses[session.id],
+        mergedStatus: state.tabNotifications[session.id],
+        hookStatus: state.tabStatuses[session.id]?.hook,
+      }))
+      .map((session) => session.id);
+  },
+
+  getExitTaskSessionIds: (includeFinished = false) => {
+    const state = get();
+    return state.sessions
+      .filter((session) => shouldIncludeTerminalExitTask({
+        kind: session.kind,
+        processStatus: state.sessionStatuses[session.id],
+        mergedStatus: state.tabNotifications[session.id],
+        hookStatus: state.tabStatuses[session.id]?.hook,
+      }, includeFinished))
       .map((session) => session.id);
   },
 

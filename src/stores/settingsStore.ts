@@ -317,6 +317,8 @@ export interface Settings {
   viewMode: ViewMode;
   closeBehavior: CloseBehavior;
   exitWithRunningTasksBehavior: ExitWithRunningTasksBehavior;
+  /** 退出检测是否把「已完成/失败」的 Claude/Codex 会话也算作可转入后台的任务（默认仅检测运行中）。 */
+  backgroundIncludeFinishedTasks: boolean;
   keyboardShortcuts: KeyboardShortcutMap;
   terminalNewlineShortcut: TerminalNewlineShortcut;
   unsplitBehavior: UnsplitBehavior;
@@ -432,6 +434,7 @@ const DEFAULTS: Settings = {
   viewMode: "standard",
   closeBehavior: "ask",
   exitWithRunningTasksBehavior: "ask",
+  backgroundIncludeFinishedTasks: false,
   keyboardShortcuts: DEFAULT_KEYBOARD_SHORTCUTS,
   terminalNewlineShortcut: "Shift+Enter",
   unsplitBehavior: "merge",
@@ -1198,6 +1201,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       entries.exitWithRunningTasksBehavior === "discard"
         ? entries.exitWithRunningTasksBehavior
         : DEFAULTS.exitWithRunningTasksBehavior;
+    entries.backgroundIncludeFinishedTasks =
+      typeof entries.backgroundIncludeFinishedTasks === "boolean"
+        ? entries.backgroundIncludeFinishedTasks
+        : DEFAULTS.backgroundIncludeFinishedTasks;
     entries.ccusageAnalyticsEnabled =
       typeof entries.ccusageAnalyticsEnabled === "boolean"
         ? entries.ccusageAnalyticsEnabled

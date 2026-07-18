@@ -24,6 +24,7 @@ export const SYNCABLE_SETTING_KEYS = [
   "viewMode",
   "closeBehavior",
   "exitWithRunningTasksBehavior",
+  "backgroundIncludeFinishedTasks",
   "keyboardShortcuts",
   "terminalNewlineShortcut",
   "unsplitBehavior",

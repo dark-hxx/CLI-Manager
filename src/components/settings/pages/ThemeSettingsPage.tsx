@@ -199,6 +199,7 @@ export function ThemeSettingsPage() {
   const unsplitBehavior = useSettingsStore((s) => s.unsplitBehavior);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const exitWithRunningTasksBehavior = useSettingsStore((s) => s.exitWithRunningTasksBehavior);
+  const backgroundIncludeFinishedTasks = useSettingsStore((s) => s.backgroundIncludeFinishedTasks);
   const confirmBeforeClosingTerminalTab = useSettingsStore((s) => s.confirmBeforeClosingTerminalTab);
   const terminalTabHoverInfoEnabled = useSettingsStore((s) => s.terminalTabHoverInfoEnabled);
   const shellRuntimeMonitoringEnabled = useSettingsStore((s) => s.shellRuntimeMonitoringEnabled);
@@ -830,6 +831,25 @@ export function ThemeSettingsPage() {
               aria-label={t("settings.general.exitWithRunningTasks")}
               description={t("settings.general.exitWithRunningTasksDescription")}
             />
+
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    {t("settings.general.backgroundIncludeFinished")}
+                  </Text>
+                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                    {t("settings.general.backgroundIncludeFinishedDescription")}
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={backgroundIncludeFinishedTasks}
+                  onChange={(event) => void update("backgroundIncludeFinishedTasks", event.currentTarget.checked)}
+                  aria-label={t("settings.general.backgroundIncludeFinished")}
+                />
+              </Group>
+            </Card>
 
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">

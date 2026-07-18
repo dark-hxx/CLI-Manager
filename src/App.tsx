@@ -49,6 +49,7 @@ import { translateCurrent, useI18n } from "./lib/i18n";
 import { getOsPlatform } from "./lib/shell";
 import { normalizeFontFamilyStack } from "./lib/systemFonts";
 import { ALL_TERMINALS_SCOPE } from "./lib/terminalScope";
+import { shouldIncludeDaemonExitTask } from "./lib/terminalExitTask";
 import { getTerminalTheme, isLightTerminalTheme } from "./lib/terminalThemes";
 import { resolveProjectForSession } from "./lib/terminalProject";
 import type { TerminalScope } from "./lib/types";
@@ -70,6 +71,7 @@ const WINDOW_MIN_HEIGHT = 600;
 interface DaemonSessionMeta {
   sessionId: string;
   alive: boolean;
+  taskStatus?: string | null;
 }
 
 const TERMINAL_PANEL_SEMANTIC_COLORS = {
@@ -1120,24 +1122,43 @@ function App() {
 
   const getExitRunningTaskIds = useCallback(async (source: string) => {
     const terminalState = useTerminalStore.getState();
-    const foregroundRunningIds = terminalState.getRunningTaskSessionIds();
+    const includeFinished = useSettingsStore.getState().backgroundIncludeFinishedTasks;
+    // Issue #142：开关开启时，运行完毕/失败的 CLI 会话也参与退出拦截与转入后台。
+    const foregroundRunningIds = terminalState.getExitTaskSessionIds(includeFinished);
     const foregroundSessionIds = new Set(terminalState.sessions.map((session) => session.id));
     let daemonAliveIds: string[] = [];
+    let daemonFinishedIds: string[] = [];
     try {
       const daemonSessions = await invoke<DaemonSessionMeta[]>("pty_daemon_sessions");
       daemonAliveIds = daemonSessions
-        .filter((session) => session.alive && !foregroundSessionIds.has(session.sessionId))
+        .filter((session) => (
+          session.alive
+          && !foregroundSessionIds.has(session.sessionId)
+          && shouldIncludeDaemonExitTask(session, includeFinished)
+        ))
         .map((session) => session.sessionId);
+      // 后台已完成但仍可回放的 daemon 会话：仅在开关开启时纳入（避免默认退出被已完成任务打扰）
+      if (includeFinished) {
+        daemonFinishedIds = daemonSessions
+          .filter((session) => {
+            if (foregroundSessionIds.has(session.sessionId)) return false;
+            if (session.alive) return false;
+            return shouldIncludeDaemonExitTask(session, true);
+          })
+          .map((session) => session.sessionId);
+      }
       logInfo("exit: daemon sessions checked", {
         source,
+        includeFinished,
         foregroundRunningCount: foregroundRunningIds.length,
         backgroundDaemonAliveCount: daemonAliveIds.length,
+        backgroundDaemonFinishedCount: daemonFinishedIds.length,
         daemonSessionCount: daemonSessions.length,
       });
     } catch (err) {
       logWarn("exit: failed to query daemon sessions", { source, err });
     }
-    return Array.from(new Set([...foregroundRunningIds, ...daemonAliveIds]));
+    return Array.from(new Set([...foregroundRunningIds, ...daemonAliveIds, ...daemonFinishedIds]));
   }, []);
 
   const runExitCleanup = useCallback(async (
