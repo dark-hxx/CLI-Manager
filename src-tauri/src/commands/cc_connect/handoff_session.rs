@@ -8,10 +8,22 @@ pub(super) const HANDOFF_SCHEMA_VERSION: u32 = 1;
 pub struct CcConnectHandoffStartRequest {
     pub local_session_id: String,
     pub cli_session_id: String,
+    pub platform: CcConnectPlatform,
     pub project_id: String,
     pub worktree_id: Option<String>,
     pub work_dir: String,
     pub session_title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectHandoffPlatformTarget {
+    pub platform: CcConnectPlatform,
+    pub enabled: bool,
+    pub credentials_ready: bool,
+    pub session_ready: bool,
+    pub ready: bool,
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -31,10 +31,20 @@ export interface CcConnectHandoffStatus {
 export interface CcConnectHandoffStartRequest {
   localSessionId: string;
   cliSessionId: string;
+  platform: CcConnectPlatform;
   projectId: string;
   worktreeId: string | null;
   workDir: string;
   sessionTitle: string | null;
+}
+
+export interface CcConnectHandoffPlatformTarget {
+  platform: CcConnectPlatform;
+  enabled: boolean;
+  credentialsReady: boolean;
+  sessionReady: boolean;
+  ready: boolean;
+  unavailableReason: string | null;
 }
 
 export type RemoteHandoffEligibilityReason =
@@ -98,6 +108,10 @@ export function getRemoteHandoffEligibility(input: {
 
 export async function fetchRemoteHandoffStatus(): Promise<CcConnectHandoffStatus> {
   return invoke<CcConnectHandoffStatus>("cc_connect_handoff_status");
+}
+
+export async function fetchRemoteHandoffPlatforms(): Promise<CcConnectHandoffPlatformTarget[]> {
+  return invoke<CcConnectHandoffPlatformTarget[]>("cc_connect_handoff_platforms");
 }
 
 export async function startRemoteHandoff(

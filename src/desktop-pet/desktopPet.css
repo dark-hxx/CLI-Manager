@@ -206,10 +206,10 @@
 
 .desktop-pet-target-list {
   position: absolute;
-  right: calc(var(--pet-anchor-width) + 164px);
+  right: calc(var(--pet-anchor-width) + 144px);
   bottom: 12px;
   display: flex;
-  width: min(286px, max(132px, calc(var(--pet-menu-panel-width) - 186px)));
+  width: min(260px, max(132px, calc(var(--pet-menu-panel-width) - 166px)));
   height: var(--pet-target-list-height);
   box-sizing: border-box;
   flex-direction: column;
@@ -230,6 +230,106 @@
   background: rgb(109 226 169 / 34%);
 }
 .desktop-pet-target-list::-webkit-scrollbar-track { background: transparent; }
+
+.desktop-pet-secondary-header {
+  display: flex;
+  width: calc(100% - 8px);
+  min-height: 30px;
+  box-sizing: border-box;
+  flex: 0 0 30px;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+  padding: 0 7px;
+  color: rgb(229 249 239 / 82%);
+}
+
+.desktop-pet-secondary-header button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: rgb(255 255 255 / 6%);
+  padding: 0;
+  cursor: pointer;
+}
+
+.desktop-pet-secondary-header button:hover,
+.desktop-pet-secondary-header button:focus-visible {
+  outline: none;
+  color: #fff;
+  background: color-mix(in srgb, var(--pet-accent) 24%, transparent);
+}
+
+.desktop-pet-secondary-header strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.desktop-pet-platform {
+  position: relative;
+  display: flex;
+  width: calc(100% - 8px);
+  min-height: 50px;
+  box-sizing: border-box;
+  flex: 0 0 50px;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  border: 1px solid rgb(212 255 235 / 18%);
+  border-radius: 8px;
+  color: #e5f9ef;
+  background: linear-gradient(118deg, rgb(31 60 62 / 76%), rgb(7 20 27 / 66%));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 6px 14px rgb(0 0 0 / 22%);
+  margin-top: -3px;
+  padding: 8px 10px;
+  transform: translateX(calc(-1 * var(--fan-shift))) rotate(var(--fan-angle));
+  transform-origin: 100% 50%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  animation: desktop-pet-fan-card-in .28s cubic-bezier(.2, .84, .24, 1) both;
+  animation-delay: var(--fan-delay);
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+
+.desktop-pet-platform:disabled {
+  cursor: default;
+  opacity: .62;
+}
+
+.desktop-pet-platform[data-ready="true"]:hover,
+.desktop-pet-platform[data-ready="true"]:focus-visible {
+  z-index: 100 !important;
+  outline: none;
+  border-color: color-mix(in srgb, var(--pet-accent) 55%, white 8%);
+  background: linear-gradient(118deg, rgb(37 82 75 / 88%), rgb(8 27 34 / 74%));
+  transform: translateX(-20px) rotate(0deg);
+}
+
+.desktop-pet-platform-state {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 999px;
+  background: #64748b;
+  box-shadow: 0 0 0 3px rgb(100 116 139 / 14%);
+}
+
+.desktop-pet-platform[data-ready="true"] .desktop-pet-platform-state {
+  background: #3dd68c;
+  box-shadow: 0 0 0 3px rgb(61 214 140 / 16%), 0 0 12px rgb(61 214 140 / 32%);
+}
 
 .desktop-pet-target {
   position: relative;
@@ -397,7 +497,7 @@
   right: calc(var(--pet-anchor-width) - 20px);
   bottom: 12px;
   display: grid;
-  width: min(176px, calc(var(--pet-menu-panel-width) - 22px));
+  width: min(156px, calc(var(--pet-menu-panel-width) - 22px));
   max-height: calc(100% - 24px);
   box-sizing: border-box;
   grid-template-columns: minmax(0, 1fr);
@@ -418,15 +518,16 @@
   min-width: 0;
   min-height: 31px;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   overflow: hidden;
   border: 0;
   border-radius: 6px;
   color: rgb(229 249 239 / 84%);
   background: transparent;
-  padding: 0 9px;
+  padding: 6px 8px;
   text-align: left;
-  white-space: nowrap;
+  line-height: 1.2;
+  white-space: normal;
   font: inherit;
   font-size: 10px;
   cursor: pointer;
@@ -435,8 +536,7 @@
 
 .desktop-pet-menu-actions button span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .desktop-pet-menu-actions button:disabled {
@@ -510,6 +610,7 @@
   .desktop-pet-stage,
   .desktop-pet-badge,
   .desktop-pet-target,
+  .desktop-pet-platform,
   .desktop-pet-cat .ui-cpu-cat-run,
   .desktop-pet-cat .ui-cpu-cat-tail {
     animation: none !important;

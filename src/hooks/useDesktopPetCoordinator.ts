@@ -48,6 +48,7 @@ export function useDesktopPetCoordinator({
   const projects = useProjectStore((state) => state.projects);
   const worktrees = useWorktreeStore((state) => state.worktrees);
   const remoteHandoffStatus = useRemoteHandoffStore((state) => state.status);
+  const remoteHandoffPlatforms = useRemoteHandoffStore((state) => state.platforms);
   const remoteHandoffBusy = useRemoteHandoffStore((state) => state.busy);
   const persistedSessions = useSessionStore((state) => state.sessions);
   const {
@@ -120,7 +121,19 @@ export function useDesktopPetCoordinator({
       openCurrent: t("desktopPet.actions.openCurrent"),
       remoteHandoff: t("desktopPet.actions.remoteHandoff"),
       cancelHandoff: t("desktopPet.actions.cancelHandoff"),
+      handoffPlatforms: t("desktopPet.actions.handoffPlatforms"),
       handoffSessions: t("desktopPet.actions.handoffSessions"),
+      handoffBack: t("desktopPet.actions.handoffBack"),
+      platformReady: t("desktopPet.actions.platformReady"),
+      platformNotRunning: t("desktopPet.actions.platformNotRunning"),
+      platformCredentialsMissing: t("desktopPet.actions.platformCredentialsMissing"),
+      platformUserMissing: t("desktopPet.actions.platformUserMissing"),
+      platformSessionMissing: t("desktopPet.actions.platformSessionMissing"),
+      platformUnavailable: t("desktopPet.actions.platformUnavailable"),
+      platformTelegram: t("settings.ccConnect.platformTelegram"),
+      platformFeishu: t("settings.ccConnect.platformFeishu"),
+      platformWeixin: t("settings.ccConnect.platformWeixin"),
+      platformWecom: t("settings.ccConnect.platformWecom"),
       handoffPending: t("remoteHandoff.overlay.pending"),
       handoffCancelling: t("remoteHandoff.overlay.cancelling"),
       handedOff: t("desktopPet.actions.handedOff"),
@@ -131,9 +144,10 @@ export function useDesktopPetCoordinator({
 
   const publicSnapshot = useMemo<DesktopPetSnapshot>(() => ({
     ...snapshot,
+    handoffPlatforms: remoteHandoffPlatforms,
     sessionTitle: desktopPet.showSessionName ? snapshot.sessionTitle : null,
     projectName: desktopPet.showSessionName ? snapshot.projectName : null,
-  }), [desktopPet.showSessionName, snapshot]);
+  }), [desktopPet.showSessionName, remoteHandoffPlatforms, snapshot]);
 
   const sendState = useCallback(async () => {
     await Promise.all([

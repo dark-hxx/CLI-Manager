@@ -821,6 +821,7 @@ pub fn run() {
             commands::cc_connect::cc_connect_restart,
             commands::cc_connect::cc_connect_get_logs,
             commands::cc_connect::handoff::cc_connect_handoff_status,
+            commands::cc_connect::handoff::cc_connect_handoff_platforms,
             commands::cc_connect::handoff::cc_connect_handoff_start,
             commands::cc_connect::handoff::cc_connect_handoff_cancel,
             take_pending_background_session,

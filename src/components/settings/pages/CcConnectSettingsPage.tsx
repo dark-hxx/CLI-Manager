@@ -43,6 +43,12 @@ type AgentKind = "claude" | "codex";
 type PlatformKind = "telegram" | "feishu" | "weixin" | "wecom";
 type ReplyLanguage = "zh" | "en";
 
+interface CcConnectPlatformProfile {
+  platform: PlatformKind;
+  enabled: boolean;
+  allowFrom: string;
+}
+
 interface CcConnectProfile {
   autoStart: boolean;
   executablePath: string | null;
@@ -52,6 +58,7 @@ interface CcConnectProfile {
   agent: AgentKind;
   platform: PlatformKind;
   allowFrom: string;
+  platforms: CcConnectPlatformProfile[];
   yoloEnabled: boolean;
   proxyEnabled: boolean;
   proxyUrl: string | null;
@@ -59,6 +66,12 @@ interface CcConnectProfile {
   language: ReplyLanguage;
   ccSwitchDbPath: string | null;
   codexConfigDir: string | null;
+}
+
+interface CcConnectPlatformStatus {
+  platform: PlatformKind;
+  enabled: boolean;
+  credentialsReady: boolean;
 }
 
 interface CcConnectStatus {
@@ -74,6 +87,7 @@ interface CcConnectStatus {
   profile: CcConnectProfile | null;
   configExists: boolean;
   credentialsReady: boolean;
+  platformStatuses: CcConnectPlatformStatus[];
   ready: boolean;
   blockers: string[];
   warnings: string[];
@@ -83,6 +97,30 @@ interface CcConnectStatus {
   startedAtMs: number | null;
   lastExitCode: number | null;
   lastExitAtMs: number | null;
+}
+
+const PLATFORM_KINDS: PlatformKind[] = ["telegram", "feishu", "weixin", "wecom"];
+
+function withPlatformProfiles(profile: CcConnectProfile): CcConnectProfile {
+  const rawPlatforms = profile.platforms ?? [];
+  const configured = new Map(rawPlatforms.map((item) => [item.platform, item]));
+  if (rawPlatforms.length === 0) {
+    configured.set(profile.platform, {
+      platform: profile.platform,
+      enabled: true,
+      allowFrom: profile.allowFrom,
+    });
+  }
+  const platforms = PLATFORM_KINDS.map((platform) => configured.get(platform) ?? {
+    platform,
+    enabled: false,
+    allowFrom: "",
+  });
+  return {
+    ...profile,
+    platforms,
+    allowFrom: platforms.find((item) => item.platform === profile.platform)?.allowFrom ?? "",
+  };
 }
 
 interface CcConnectExecutableStatus {
@@ -116,6 +154,11 @@ const EMPTY_PROFILE: CcConnectProfile = {
   agent: "claude",
   platform: "telegram",
   allowFrom: "",
+  platforms: PLATFORM_KINDS.map((platform) => ({
+    platform,
+    enabled: platform === "telegram",
+    allowFrom: "",
+  })),
   yoloEnabled: false,
   proxyEnabled: true,
   proxyUrl: null,
@@ -129,6 +172,7 @@ const BLOCKER_KEYS: Record<string, TranslationKey> = {
   profile_missing: "settings.ccConnect.blocker.profileMissing",
   project_missing: "settings.ccConnect.blocker.projectMissing",
   project_path_missing: "settings.ccConnect.blocker.projectPathMissing",
+  platform_missing: "settings.ccConnect.blocker.platformMissing",
   allowlist_invalid: "settings.ccConnect.blocker.allowlistInvalid",
   proxy_invalid: "settings.ccConnect.blocker.proxyInvalid",
   credentials_missing: "settings.ccConnect.blocker.credentialsMissing",
@@ -223,7 +267,7 @@ export function CcConnectSettingsPage() {
   const weixinAuthorizationActiveRef = useRef(false);
 
   const hydrateProfile = useCallback((next: CcConnectStatus) => {
-    if (next.profile) setProfile(next.profile);
+    if (next.profile) setProfile(withPlatformProfiles(next.profile));
     executableInspectionRequestRef.current += 1;
     executableCheckingRef.current = false;
     setExecutableInspection(null);
@@ -317,6 +361,48 @@ export function CcConnectSettingsPage() {
 
   const updateProfile = <K extends keyof CcConnectProfile>(key: K, value: CcConnectProfile[K]) => {
     setProfile((current) => ({ ...current, [key]: value }));
+    formTouchedRef.current = true;
+    setDirty(true);
+  };
+
+  const selectedPlatformProfile = profile.platforms.find(
+    (item) => item.platform === profile.platform
+  ) ?? {
+    platform: profile.platform,
+    enabled: false,
+    allowFrom: "",
+  };
+
+  const selectPlatform = (platform: PlatformKind) => {
+    setProfile((current) => {
+      const normalized = withPlatformProfiles(current);
+      const selected = normalized.platforms.find((item) => item.platform === platform);
+      return {
+        ...normalized,
+        platform,
+        allowFrom: selected?.allowFrom ?? "",
+      };
+    });
+    formTouchedRef.current = true;
+    setDirty(true);
+  };
+
+  const updateSelectedPlatform = (
+    patch: Partial<Pick<CcConnectPlatformProfile, "enabled" | "allowFrom">>
+  ) => {
+    setProfile((current) => {
+      const normalized = withPlatformProfiles(current);
+      const platforms = normalized.platforms.map((item) => (
+        item.platform === normalized.platform ? { ...item, ...patch } : item
+      ));
+      return {
+        ...normalized,
+        platforms,
+        allowFrom: platforms.find(
+          (item) => item.platform === normalized.platform
+        )?.allowFrom ?? "",
+      };
+    });
     formTouchedRef.current = true;
     setDirty(true);
   };
@@ -587,7 +673,7 @@ export function CcConnectSettingsPage() {
           weixinAuthorizationActiveRef.current = false;
           setWorkingState(null);
           if (next.profile) {
-            setProfile(next.profile);
+            setProfile(withPlatformProfiles(next.profile));
             formTouchedRef.current = false;
             setDirty(false);
           }
@@ -679,9 +765,11 @@ export function CcConnectSettingsPage() {
     weixin: weixinToken.trim().length > 0,
     wecom: wecomBotId.trim().length > 0 || wecomBotSecret.trim().length > 0,
   }[profile.platform];
+  const currentPlatformStatus = (status?.platformStatuses ?? []).find(
+    (item) => item.platform === profile.platform
+  );
   const credentialStored = !credentialInputPending
-    && status?.profile?.platform === profile.platform
-    && status.credentialsReady;
+    && Boolean(currentPlatformStatus?.credentialsReady);
   const currentProject = projects.find((project) => project.id === profile.projectId);
   const normalizeProjectPath = (value: string) => value
     .replace(/^\\\\\?\\UNC\\/i, "\\\\")
@@ -780,15 +868,32 @@ export function CcConnectSettingsPage() {
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
           <Select label={t("settings.ccConnect.project")} placeholder={t("settings.ccConnect.projectPlaceholder")} nothingFoundMessage={t("settings.ccConnect.projectEmpty")} data={projectOptions} value={profile.projectId || null} onChange={selectProject} searchable />
           <Select label={t("settings.ccConnect.agent")} data={[{ value: "claude", label: "Claude Code" }, { value: "codex", label: "Codex" }]} value={profile.agent} onChange={(value) => value && updateProfile("agent", value as AgentKind)} />
-          <Select label={t("settings.ccConnect.platform")} data={platformOptions} value={profile.platform} onChange={(value) => value && updateProfile("platform", value as PlatformKind)} />
+          <Select
+            label={t("settings.ccConnect.platform")}
+            data={platformOptions}
+            value={profile.platform}
+            onChange={(value) => value && selectPlatform(value as PlatformKind)}
+          />
           <Select label={t("settings.ccConnect.language")} data={[{ value: "zh", label: t("settings.ccConnect.languageZh") }, { value: "en", label: t("settings.ccConnect.languageEn") }]} value={profile.language} onChange={(value) => value && updateProfile("language", value as ReplyLanguage)} />
         </SimpleGrid>
+        <Switch
+          mt="sm"
+          checked={selectedPlatformProfile.enabled}
+          onChange={(event) => updateSelectedPlatform({
+            enabled: event.currentTarget.checked,
+          })}
+          label={t("settings.ccConnect.platformEnabled")}
+          description={t("settings.ccConnect.platformEnabledDescription")}
+          aria-label={t("settings.ccConnect.platformEnabled")}
+        />
         <TextInput
           mt="sm"
           label={t("settings.ccConnect.allowFrom")}
           description={t(allowFromHelpKey)}
-          value={profile.allowFrom}
-          onChange={(event) => updateProfile("allowFrom", event.currentTarget.value)}
+          value={selectedPlatformProfile.allowFrom}
+          onChange={(event) => updateSelectedPlatform({
+            allowFrom: event.currentTarget.value,
+          })}
         />
         <Switch
           mt="md"
@@ -903,7 +1008,7 @@ export function CcConnectSettingsPage() {
           <Button size="xs" variant="light" color="red" leftSection={<Trash2 size={14} />} disabled={!!status?.running || busy} loading={working === "clear"} onClick={() => setClearConfirmOpen(true)}>
             {t("settings.ccConnect.clearCredentials")}
           </Button>
-          <Button size="xs" color="cliPrimary" leftSection={<Save size={14} />} disabled={!!status?.running || busy} loading={working === "save"} onClick={() => void saveProfile()}>
+          <Button size="xs" color="cliPrimary" leftSection={<Save size={14} />} disabled={busy} loading={working === "save"} onClick={() => void saveProfile()}>
             {t("settings.ccConnect.save")}
           </Button>
         </Group>

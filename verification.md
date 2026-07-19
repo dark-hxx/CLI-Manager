@@ -248,3 +248,23 @@
 
 - 未通过真实 Telegram、飞书、微信或企业微信账号发送托管/取消通知；该操作会重启当前受管 cc-connect 并影响真实外部账号，需要单独的账号级冒烟确认。
 - 本次未生成安装包，也未 push。
+
+## 多平台托管与紧凑宠物菜单验证（2026-07-19）
+
+### 自动验证
+
+- cargo test commands::cc_connect：40 项通过、0 项失败，新增旧 profile 迁移和多平台 TOML 测试。
+- 设置 CLI_MANAGER_TEST_CC_CONNECT 指向本机官方 cc-connect v1.4.1 后，真实 config fmt 检查通过四平台同时启用的托管配置。
+- cargo check、TypeScript noEmit 与 npm run build 均通过；Vite 完成 6642 个模块转换，仅保留既有的大 chunk 警告。
+- git diff --check 通过，仅输出仓库既有的 LF/CRLF 转换提示。
+
+### 界面与边界
+
+- 临时静态渲染截图验证 156 px 纵向操作区、四个平台毛玻璃列表和 440 px 完整面板预算；平台卡片、状态、副标题和宠物锚点没有重叠，截图保留在 src-tauri/target/pet-menu-preview.png。
+- 平台不可用状态覆盖远程连接停止、凭据缺失、允许用户缺失、飞书无历史聊天和微信无上下文令牌；托管开始时后端再次校验，避免菜单快照过期导致错误接管。
+- 旧 profile.json 只自动启用原 current platform，其他平台凭据继续保留在 Windows Credential Manager；用户首次启用其他平台时需要补充该平台 allowFrom。
+
+### 未执行
+
+- 未启动或停止用户当前安装目录中的 CLI-Manager/cc-connect，也未向真实机器人发送消息。
+- 本次尚未生成 NSIS 安装包，也未 push。

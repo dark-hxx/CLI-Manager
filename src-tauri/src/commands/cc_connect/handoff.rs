@@ -247,8 +247,10 @@ fn resolve_handoff_target(
 fn source_profile_matches(profile: &CcConnectProfile, record: &PersistedHandoffRecord) -> bool {
     if profile.project_id != record.source_project_id
         || profile.project_name != record.source_project_name
-        || profile.platform != record.platform
     {
+        return false;
+    }
+    if !platform_profile(profile, record.platform).is_some_and(|item| item.enabled) {
         return false;
     }
     let left = PathBuf::from(&profile.project_path);
@@ -269,6 +271,7 @@ fn resolve_record_target(
     let request = CcConnectHandoffStartRequest {
         local_session_id: record.local_session_id.clone(),
         cli_session_id: record.cli_session_id.clone(),
+        platform: record.platform,
         project_id: record.project_id.clone(),
         worktree_id: record.worktree_id.clone(),
         work_dir: record.work_dir.clone(),
@@ -342,14 +345,10 @@ fn weixin_context_token_path(project_name: &str, project_id: &str) -> Result<Pat
         .join("context_tokens.json"))
 }
 
-fn prepare_weixin_token_transfer(
+fn load_weixin_context_token(
     base_profile: &CcConnectProfile,
-    target: &ResolvedHandoffTarget,
     platform_session_key: &str,
-) -> Result<Option<WeixinTokenTransfer>, String> {
-    if base_profile.platform != CcConnectPlatform::Weixin {
-        return Ok(None);
-    }
+) -> Result<(String, String), String> {
     let user_id = platform_session_key
         .strip_prefix("weixin:dm:")
         .filter(|value| !value.is_empty())
@@ -362,6 +361,19 @@ fn prepare_weixin_token_transfer(
         .map_err(|err| format!("parse source Weixin context tokens failed: {err}"))?;
     let token = context_token(&source, user_id)
         .ok_or_else(|| "handoff_weixin_context_token_missing".to_string())?;
+    Ok((user_id.to_string(), token))
+}
+
+fn prepare_weixin_token_transfer(
+    platform: CcConnectPlatform,
+    base_profile: &CcConnectProfile,
+    target: &ResolvedHandoffTarget,
+    platform_session_key: &str,
+) -> Result<Option<WeixinTokenTransfer>, String> {
+    if platform != CcConnectPlatform::Weixin {
+        return Ok(None);
+    }
+    let (user_id, token) = load_weixin_context_token(base_profile, platform_session_key)?;
     let target_path =
         weixin_context_token_path(&target.profile.project_name, &target.profile.project_id)?;
     Ok(Some(WeixinTokenTransfer {
@@ -370,7 +382,7 @@ fn prepare_weixin_token_transfer(
             "Weixin handoff context tokens",
         )?,
         target_path,
-        user_id: user_id.to_string(),
+        user_id,
         token,
     }))
 }
@@ -462,6 +474,66 @@ fn validate_record_session_path(record: &PersistedHandoffRecord) -> Result<PathB
 }
 
 impl CcConnectManager {
+    fn handoff_platform_targets(&self) -> Result<Vec<CcConnectHandoffPlatformTarget>, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        self.refresh_process_state();
+        let running = manager_process_running(self)?;
+        let profile = match load_profile()? {
+            Some(profile) => profile,
+            None => return Ok(Vec::new()),
+        };
+        let source_session_path =
+            cc_session_store_path(&data_dir()?, &profile.project_name, &profile.project_path)?;
+        let source_document = read_session_document(&source_session_path)?;
+        let handoff_active = load_handoff_record()?.is_some();
+        enabled_platforms(&profile)
+            .into_iter()
+            .map(|item| {
+                let credentials_ready = credentials_ready(item.platform).unwrap_or(false);
+                let allow_from = normalize_allow_from(item.platform, &item.allow_from)
+                    .map_err(|_| "handoff_platform_user_missing".to_string());
+                let mut session_result = match &allow_from {
+                    Ok(allow_from) => {
+                        resolve_platform_session_key(&source_document, item.platform, allow_from)
+                    }
+                    Err(error) => Err(error.clone()),
+                };
+                if item.platform == CcConnectPlatform::Weixin {
+                    if let Ok(session_key) = &session_result {
+                        if load_weixin_context_token(&profile, session_key).is_err() {
+                            session_result = Err("handoff_platform_session_missing".to_string());
+                        }
+                    }
+                }
+                let session_ready = session_result.is_ok();
+                let unavailable_reason = if handoff_active {
+                    Some("handoff_active".to_string())
+                } else if !running {
+                    Some("cc_connect_not_running".to_string())
+                } else if !credentials_ready {
+                    Some("handoff_credentials_missing".to_string())
+                } else if let Err(error) = &allow_from {
+                    Some(error.clone())
+                } else if let Err(error) = &session_result {
+                    Some(error.clone())
+                } else {
+                    None
+                };
+                Ok(CcConnectHandoffPlatformTarget {
+                    platform: item.platform,
+                    enabled: true,
+                    credentials_ready,
+                    session_ready,
+                    ready: unavailable_reason.is_none(),
+                    unavailable_reason,
+                })
+            })
+            .collect()
+    }
+
     fn handoff_status_with_warning(
         &self,
         warning: Option<String>,
@@ -500,6 +572,15 @@ impl CcConnectManager {
             validate_handoff_identifier(&request.cli_session_id, "cli_session_id")?;
         let base_profile =
             load_profile()?.ok_or_else(|| "cc-connect profile is not configured".to_string())?;
+        let selected_platform = platform_profile(&base_profile, request.platform)
+            .filter(|item| item.enabled)
+            .ok_or_else(|| "handoff_platform_disabled".to_string())?;
+        let selected_allow_from =
+            normalize_allow_from(selected_platform.platform, &selected_platform.allow_from)
+                .map_err(|_| "handoff_platform_user_missing".to_string())?;
+        if !credentials_ready(request.platform)? {
+            return Err("handoff_credentials_missing".to_string());
+        }
         let target = resolve_handoff_target(&base_profile, &request)?;
         let binary = self.detect(base_profile.executable_path.as_deref(), true)?;
         if !binary.compatible {
@@ -517,8 +598,8 @@ impl CcConnectManager {
             let source_document = read_session_document(&source_session_path)?;
             let platform_session_key = resolve_platform_session_key(
                 &source_document,
-                base_profile.platform,
-                &base_profile.allow_from,
+                request.platform,
+                &selected_allow_from,
             )?;
             let target_session_path = cc_session_store_path(
                 &sessions_root,
@@ -535,8 +616,12 @@ impl CcConnectManager {
                 &cli_session_id,
                 request.session_title.as_deref(),
             )?;
-            let token_transfer =
-                prepare_weixin_token_transfer(&base_profile, &target, &platform_session_key)?;
+            let token_transfer = prepare_weixin_token_transfer(
+                request.platform,
+                &base_profile,
+                &target,
+                &platform_session_key,
+            )?;
             let record = PersistedHandoffRecord {
                 schema_version: HANDOFF_SCHEMA_VERSION,
                 local_session_id,
@@ -549,7 +634,7 @@ impl CcConnectManager {
                 provider_id: target.project.codex_provider_id.clone(),
                 provider_name: provider_display_name(base_profile.language, &target.project),
                 provider_is_global: target.project.provider_is_global,
-                platform: base_profile.platform,
+                platform: request.platform,
                 platform_session_key,
                 cc_session_id,
                 session_file_path: user_path_string(&target_session_path),
@@ -746,6 +831,16 @@ pub async fn cc_connect_handoff_status(
     tauri::async_runtime::spawn_blocking(move || manager.handoff_status_with_warning(None))
         .await
         .map_err(|err| format!("cc-connect handoff status task failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn cc_connect_handoff_platforms(
+    manager: State<'_, CcConnectManager>,
+) -> Result<Vec<CcConnectHandoffPlatformTarget>, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.handoff_platform_targets())
+        .await
+        .map_err(|err| format!("cc-connect handoff platform task failed: {err}"))?
 }
 
 #[tauri::command]

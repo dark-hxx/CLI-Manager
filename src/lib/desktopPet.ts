@@ -7,6 +7,7 @@ import type {
 import {
   getRemoteHandoffEligibility,
   type CcConnectHandoffInfo,
+  type CcConnectHandoffPlatformTarget,
 } from "./remoteHandoff";
 import type {
   SessionStatus,
@@ -115,6 +116,7 @@ export interface DesktopPetSnapshot {
   updatedAt: number;
   targets: DesktopPetTarget[];
   handoff: CcConnectHandoffInfo | null;
+  handoffPlatforms: CcConnectHandoffPlatformTarget[];
   handoffBusy: boolean;
 }
 
@@ -138,7 +140,19 @@ export interface DesktopPetConfigPayload {
     openCurrent: string;
     remoteHandoff: string;
     cancelHandoff: string;
+    handoffPlatforms: string;
     handoffSessions: string;
+    handoffBack: string;
+    platformReady: string;
+    platformNotRunning: string;
+    platformCredentialsMissing: string;
+    platformUserMissing: string;
+    platformSessionMissing: string;
+    platformUnavailable: string;
+    platformTelegram: string;
+    platformFeishu: string;
+    platformWeixin: string;
+    platformWecom: string;
     handoffPending: string;
     handoffCancelling: string;
     handedOff: string;
@@ -175,8 +189,8 @@ export interface DesktopPetMenuWindowGeometry {
   targetListHeight: number;
 }
 
-const DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH = 492;
-const DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH = 214;
+const DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH = 440;
+const DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH = 190;
 const DESKTOP_PET_MENU_CARD_HEIGHT = 58;
 const DESKTOP_PET_MENU_CARD_STEP = 54;
 const DESKTOP_PET_MENU_CARD_BREATHING_ROOM = 12;
@@ -193,7 +207,8 @@ export function calculateDesktopPetMenuWindowGeometry(
   collapsed: DesktopPetWindowRect,
   scaleFactor: number,
   targetCount: number,
-  workArea?: DesktopPetWindowRect | null
+  workArea?: DesktopPetWindowRect | null,
+  secondaryHeaderHeight = 0
 ): DesktopPetMenuWindowGeometry {
   const safeScaleFactor = Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1;
   const anchorWidth = collapsed.width / safeScaleFactor;
@@ -206,6 +221,7 @@ export function calculateDesktopPetMenuWindowGeometry(
     ? DESKTOP_PET_MENU_CARD_HEIGHT
       + (visibleTargets - 1) * DESKTOP_PET_MENU_CARD_STEP
       + DESKTOP_PET_MENU_CARD_BREATHING_ROOM
+      + Math.max(0, secondaryHeaderHeight)
     : 0;
   const requestedPanelWidth = visibleTargets > 0
     ? DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH
@@ -380,6 +396,7 @@ function snapshotFromTargets(
       updatedAt: now,
       targets: [],
       handoff,
+      handoffPlatforms: [],
       handoffBusy,
     };
   }
@@ -397,6 +414,7 @@ function snapshotFromTargets(
     updatedAt: selected.updatedAt || now,
     targets: candidates,
     handoff,
+    handoffPlatforms: [],
     handoffBusy,
   };
 }

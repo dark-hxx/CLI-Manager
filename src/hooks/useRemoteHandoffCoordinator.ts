@@ -7,6 +7,7 @@ import {
   REMOTE_HANDOFF_CANCEL_REQUEST_EVENT,
   REMOTE_HANDOFF_START_REQUEST_EVENT,
   type CcConnectHandoffInfo,
+  type CcConnectPlatform,
   type CcConnectHandoffStatus,
 } from "../lib/remoteHandoff";
 import { findWorktreeForSession } from "../lib/terminalProject";
@@ -30,6 +31,9 @@ const ERROR_TRANSLATIONS: Array<[string, TranslationKey]> = [
   ["handoff_work_dir_outside_project", "remoteHandoff.error.pathInvalid"],
   ["handoff_work_dir_unsupported", "remoteHandoff.error.pathUnsupported"],
   ["handoff_platform_session_missing", "remoteHandoff.error.platformSessionMissing"],
+  ["handoff_platform_user_missing", "remoteHandoff.error.platformUserMissing"],
+  ["handoff_platform_disabled", "remoteHandoff.error.platformDisabled"],
+  ["handoff_credentials_missing", "remoteHandoff.error.platformCredentialsMissing"],
   ["handoff_weixin_context_token_missing", "remoteHandoff.error.platformSessionMissing"],
   ["cc_connect_version_unsupported", "remoteHandoff.error.versionUnsupported"],
   ["remote_handoff_project_missing", "remoteHandoff.error.projectMissing"],
@@ -92,7 +96,10 @@ export function useRemoteHandoffCoordinator(appReady: boolean) {
   const busy = useRemoteHandoffStore((state) => state.busy);
   const operationRef = useRef<"start" | "cancel" | "reconcile" | null>(null);
 
-  const startHandoff = useCallback(async (sessionId: string) => {
+  const startHandoff = useCallback(async (
+    sessionId: string,
+    platform: CcConnectPlatform
+  ) => {
     const remoteStore = useRemoteHandoffStore.getState();
     if (remoteStore.busy || operationRef.current) return;
     operationRef.current = "start";
@@ -151,6 +158,7 @@ export function useRemoteHandoffCoordinator(appReady: boolean) {
         const nextStatus = await useRemoteHandoffStore.getState().start({
           localSessionId: session.id,
           cliSessionId: session.cliSessionId,
+          platform,
           projectId: project.id,
           worktreeId: worktree?.id ?? null,
           workDir: session.cwd,
@@ -371,9 +379,9 @@ export function useRemoteHandoffCoordinator(appReady: boolean) {
   }, [loaded, status, t]);
 
   useEffect(() => {
-    const unlistenStart = listen<{ sessionId: string }>(
+    const unlistenStart = listen<{ sessionId: string; platform: CcConnectPlatform }>(
       REMOTE_HANDOFF_START_REQUEST_EVENT,
-      (event) => void startHandoff(event.payload.sessionId)
+      (event) => void startHandoff(event.payload.sessionId, event.payload.platform)
     );
     const unlistenCancel = listen(
       REMOTE_HANDOFF_CANCEL_REQUEST_EVENT,
