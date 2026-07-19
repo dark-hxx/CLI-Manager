@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <linearGradient id="primary" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#54e39e"/><stop offset="1" stop-color="#2ac984"/>
+    </linearGradient>
+    <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3dd68c" stop-opacity="0.34"/><stop offset="1" stop-color="#3dd68c" stop-opacity="0.02"/>
+    </linearGradient>
+    <style>
+      .ui { font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+      .h1 { fill:#f3f5f4; font-size:24px; font-weight:700; }
+      .h2 { fill:#e7ebe9; font-size:16px; font-weight:650; }
+      .body { fill:#c8cfcb; font-size:13px; }
+      .muted { fill:#89938e; font-size:11px; }
+      .tiny { fill:#89938e; font-size:9px; }
+      .card { fill:#151817; stroke:#292e2b; }
+      .chip { fill:#1a1e1c; stroke:#303633; }
+    </style>
+  </defs>
+  <rect width="1600" height="1000" fill="#090a0a"/>
+  <rect width="1600" height="58" fill="#111313"/><line x1="0" y1="58" x2="1600" y2="58" stroke="#252927"/>
+  <g class="ui">
+    <rect x="20" y="14" width="30" height="30" rx="8" fill="url(#primary)"/>
+    <path d="M29 24l6 5-6 6M38 35h7" fill="none" stroke="#062117" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="64" y="36" class="h2">CLI-Manager Web</text>
+    <rect x="256" y="12" width="220" height="34" rx="10" class="chip"/><circle cx="276" cy="29" r="5" fill="#3dd68c"/>
+    <text x="290" y="34" class="body">DESKTOP-01 · 在线</text>
+    <text x="1408" y="34" class="muted">最后刷新 21:24:25</text><circle cx="1558" cy="29" r="15" fill="#25302b"/><text x="1550" y="34" class="tiny">hxx</text>
+
+    <rect x="0" y="58" width="68" height="942" fill="#0e1010"/>
+    <g fill="#151817"><circle cx="34" cy="104" r="21"/><circle cx="34" cy="176" r="21"/><circle cx="34" cy="248" r="21"/><circle cx="34" cy="320" r="21"/></g>
+    <rect x="12" y="370" width="44" height="44" rx="12" fill="#153526" stroke="#2f8f64"/>
+    <path d="M22 400l7-8 6 5 10-14" fill="none" stroke="#52dfa0" stroke-width="2"/>
+    <g class="tiny" text-anchor="middle"><text x="34" y="136">工作台</text><text x="34" y="208">项目</text><text x="34" y="280">历史</text><text x="34" y="352">设备</text><text x="34" y="432" style="fill:#3dd68c">分析</text></g>
+
+    <rect x="68" y="58" width="1532" height="942" fill="#0c0e0d"/>
+    <text x="104" y="106" class="h1">用量分析</text>
+    <text x="104" y="132" class="muted">桌面端上报的会话、Token、缓存、费用与执行效率</text>
+
+    <rect x="104" y="158" width="180" height="38" rx="10" class="chip"/><text x="124" y="183" class="body">全部设备</text><path d="M258 173l5 5 5-5" fill="none" stroke="#89938e"/>
+    <rect x="294" y="158" width="180" height="38" rx="10" class="chip"/><text x="314" y="183" class="body">全部项目</text><path d="M448 173l5 5 5-5" fill="none" stroke="#89938e"/>
+    <rect x="484" y="158" width="140" height="38" rx="10" class="chip"/><text x="504" y="183" class="body">全部来源</text><path d="M598 173l5 5 5-5" fill="none" stroke="#89938e"/>
+    <rect x="634" y="158" width="150" height="38" rx="10" fill="#173025" stroke="#2a6a4b"/><text x="654" y="183" class="body" style="fill:#7be6b0">最近 30 天</text>
+    <rect x="1380" y="158" width="116" height="38" rx="10" fill="url(#primary)"/><text x="1417" y="183" style="fill:#062117;font-size:12px;font-weight:700">刷新</text>
+
+    <!-- KPI -->
+    <g>
+      <rect x="104" y="224" width="270" height="112" rx="14" class="card"/><text x="126" y="254" class="muted">会话</text><text x="126" y="301" style="fill:#f3f5f4;font-size:30px;font-weight:700">268</text><text x="282" y="301" class="muted" style="fill:#3dd68c">+18.4%</text>
+      <rect x="386" y="224" width="270" height="112" rx="14" class="card"/><text x="408" y="254" class="muted">消息</text><text x="408" y="301" style="fill:#f3f5f4;font-size:30px;font-weight:700">4,236</text><text x="574" y="301" class="muted" style="fill:#3dd68c">+9.7%</text>
+      <rect x="668" y="224" width="270" height="112" rx="14" class="card"/><text x="690" y="254" class="muted">总 Token</text><text x="690" y="301" style="fill:#f3f5f4;font-size:30px;font-weight:700">28.6M</text><text x="855" y="301" class="muted">缓存 72%</text>
+      <rect x="950" y="224" width="270" height="112" rx="14" class="card"/><text x="972" y="254" class="muted">估算费用</text><text x="972" y="301" style="fill:#3dd68c;font-size:30px;font-weight:700">$136.42</text><text x="1132" y="301" class="muted">未定价 0</text>
+      <rect x="1232" y="224" width="264" height="112" rx="14" class="card"/><text x="1254" y="254" class="muted">在线设备</text><text x="1254" y="301" style="fill:#f3f5f4;font-size:30px;font-weight:700">2 / 3</text><circle cx="1438" cy="291" r="6" fill="#3dd68c"/>
+    </g>
+
+    <!-- 主趋势 -->
+    <rect x="104" y="354" width="940" height="354" rx="16" class="card"/>
+    <text x="130" y="390" class="h2">Token / 费用趋势</text><text x="130" y="413" class="muted">按天展示输入、输出、缓存与费用</text>
+    <g class="tiny"><circle cx="784" cy="390" r="4" fill="#3dd68c"/><text x="794" y="394">总 Token</text><circle cx="862" cy="390" r="4" fill="#7aa2f7"/><text x="872" y="394">输入</text><circle cx="924" cy="390" r="4" fill="#f7768e"/><text x="934" y="394">输出</text><circle cx="988" cy="390" r="4" fill="#e5c453"/><text x="998" y="394">费用</text></g>
+    <g stroke="#252a27"><line x1="160" y1="458" x2="1008" y2="458"/><line x1="160" y1="514" x2="1008" y2="514"/><line x1="160" y1="570" x2="1008" y2="570"/><line x1="160" y1="626" x2="1008" y2="626"/></g>
+    <path d="M160 648 C240 636 280 620 340 626 S470 604 540 612 S650 570 720 578 S820 450 886 470 S950 530 1008 490 L1008 672 L160 672 Z" fill="url(#area)"/>
+    <path d="M160 648 C240 636 280 620 340 626 S470 604 540 612 S650 570 720 578 S820 450 886 470 S950 530 1008 490" fill="none" stroke="#3dd68c" stroke-width="3"/>
+    <path d="M160 656 C260 648 320 638 400 644 S560 625 650 630 S800 544 886 556 S950 574 1008 550" fill="none" stroke="#7aa2f7" stroke-width="2"/>
+    <path d="M160 666 C320 662 480 660 650 658 S840 620 886 626 S960 638 1008 630" fill="none" stroke="#f7768e" stroke-width="2"/>
+    <g class="tiny"><text x="152" y="692">06/19</text><text x="292" y="692">06/24</text><text x="432" y="692">06/29</text><text x="572" y="692">07/04</text><text x="712" y="692">07/09</text><text x="852" y="692">07/14</text><text x="978" y="692">07/18</text></g>
+    <rect x="770" y="430" width="190" height="118" rx="12" fill="#111313" stroke="#343a37"/>
+    <text x="788" y="454" class="body" style="font-weight:650">07/14 周二</text><text x="788" y="478" class="muted">总 Token</text><text x="900" y="478" class="body">3,428,920</text><text x="788" y="500" class="muted">输入 / 输出</text><text x="900" y="500" class="body">412K / 86K</text><text x="788" y="522" class="muted">费用</text><text x="900" y="522" class="body" style="fill:#3dd68c">$18.72</text>
+
+    <!-- Token 构成 -->
+    <rect x="1060" y="354" width="436" height="354" rx="16" class="card"/>
+    <text x="1086" y="390" class="h2">Token 构成</text><text x="1086" y="413" class="muted">输入、输出与缓存使用占比</text>
+    <circle cx="1240" cy="532" r="96" fill="none" stroke="#202422" stroke-width="26"/>
+    <circle cx="1240" cy="532" r="96" fill="none" stroke="#3dd68c" stroke-width="26" stroke-dasharray="388 215" transform="rotate(-90 1240 532)"/>
+    <circle cx="1240" cy="532" r="96" fill="none" stroke="#7aa2f7" stroke-width="26" stroke-dasharray="92 511" stroke-dashoffset="-388" transform="rotate(-90 1240 532)"/>
+    <circle cx="1240" cy="532" r="96" fill="none" stroke="#f7768e" stroke-width="26" stroke-dasharray="48 555" stroke-dashoffset="-480" transform="rotate(-90 1240 532)"/>
+    <text x="1205" y="526" style="fill:#f3f5f4;font-size:24px;font-weight:700">28.6M</text><text x="1212" y="548" class="muted">总 Token</text>
+    <g class="body"><circle cx="1378" cy="472" r="5" fill="#3dd68c"/><text x="1392" y="477">缓存读取 64%</text><circle cx="1378" cy="506" r="5" fill="#7aa2f7"/><text x="1392" y="511">输入 15%</text><circle cx="1378" cy="540" r="5" fill="#f7768e"/><text x="1392" y="545">输出 8%</text><circle cx="1378" cy="574" r="5" fill="#e5c453"/><text x="1392" y="579">缓存写入 13%</text></g>
+
+    <!-- 下方卡片 -->
+    <rect x="104" y="726" width="452" height="244" rx="16" class="card"/>
+    <text x="130" y="762" class="h2">项目排行</text><text x="454" y="762" class="muted">按 Token</text>
+    <g class="body">
+      <text x="132" y="806">1</text><text x="160" y="806">CLI-Manager</text><text x="468" y="806">12.4M</text><rect x="160" y="818" width="340" height="8" rx="4" fill="#202422"/><rect x="160" y="818" width="310" height="8" rx="4" fill="#3dd68c"/>
+      <text x="132" y="858">2</text><text x="160" y="858">zhsq</text><text x="468" y="858">8.1M</text><rect x="160" y="870" width="340" height="8" rx="4" fill="#202422"/><rect x="160" y="870" width="220" height="8" rx="4" fill="#7aa2f7"/>
+      <text x="132" y="910">3</text><text x="160" y="910">Parking</text><text x="468" y="910">4.6M</text><rect x="160" y="922" width="340" height="8" rx="4" fill="#202422"/><rect x="160" y="922" width="132" height="8" rx="4" fill="#d980c8"/>
+    </g>
+
+    <rect x="572" y="726" width="452" height="244" rx="16" class="card"/>
+    <text x="598" y="762" class="h2">模型与来源</text>
+    <g class="body"><text x="600" y="806">gpt-5.4</text><text x="928" y="806">42%</text><rect x="600" y="818" width="370" height="8" rx="4" fill="#202422"/><rect x="600" y="818" width="286" height="8" rx="4" fill="#3dd68c"/>
+      <text x="600" y="858">claude-opus-4-8</text><text x="928" y="858">31%</text><rect x="600" y="870" width="370" height="8" rx="4" fill="#202422"/><rect x="600" y="870" width="210" height="8" rx="4" fill="#d980c8"/>
+      <text x="600" y="910">其他模型</text><text x="928" y="910">27%</text><rect x="600" y="922" width="370" height="8" rx="4" fill="#202422"/><rect x="600" y="922" width="176" height="8" rx="4" fill="#7aa2f7"/></g>
+
+    <rect x="1040" y="726" width="456" height="244" rx="16" class="card"/>
+    <text x="1066" y="762" class="h2">活跃热力图</text><text x="1372" y="762" class="muted">最近 12 周</text>
+    <g>
+      <rect x="1070" y="802" width="20" height="20" rx="4" fill="#153025"/><rect x="1096" y="802" width="20" height="20" rx="4" fill="#214b38"/><rect x="1122" y="802" width="20" height="20" rx="4" fill="#2c7652"/><rect x="1148" y="802" width="20" height="20" rx="4" fill="#3dd68c"/>
+      <rect x="1070" y="828" width="20" height="20" rx="4" fill="#202422"/><rect x="1096" y="828" width="20" height="20" rx="4" fill="#153025"/><rect x="1122" y="828" width="20" height="20" rx="4" fill="#214b38"/><rect x="1148" y="828" width="20" height="20" rx="4" fill="#2c7652"/>
+      <rect x="1070" y="854" width="20" height="20" rx="4" fill="#214b38"/><rect x="1096" y="854" width="20" height="20" rx="4" fill="#3dd68c"/><rect x="1122" y="854" width="20" height="20" rx="4" fill="#153025"/><rect x="1148" y="854" width="20" height="20" rx="4" fill="#214b38"/>
+      <rect x="1174" y="802" width="20" height="20" rx="4" fill="#153025"/><rect x="1200" y="802" width="20" height="20" rx="4" fill="#202422"/><rect x="1226" y="802" width="20" height="20" rx="4" fill="#2c7652"/><rect x="1252" y="802" width="20" height="20" rx="4" fill="#3dd68c"/>
+      <rect x="1174" y="828" width="20" height="20" rx="4" fill="#214b38"/><rect x="1200" y="828" width="20" height="20" rx="4" fill="#153025"/><rect x="1226" y="828" width="20" height="20" rx="4" fill="#214b38"/><rect x="1252" y="828" width="20" height="20" rx="4" fill="#2c7652"/>
+      <rect x="1174" y="854" width="20" height="20" rx="4" fill="#202422"/><rect x="1200" y="854" width="20" height="20" rx="4" fill="#214b38"/><rect x="1226" y="854" width="20" height="20" rx="4" fill="#3dd68c"/><rect x="1252" y="854" width="20" height="20" rx="4" fill="#153025"/>
+      <rect x="1278" y="802" width="20" height="20" rx="4" fill="#214b38"/><rect x="1304" y="802" width="20" height="20" rx="4" fill="#3dd68c"/><rect x="1330" y="802" width="20" height="20" rx="4" fill="#214b38"/><rect x="1356" y="802" width="20" height="20" rx="4" fill="#153025"/>
+      <rect x="1278" y="828" width="20" height="20" rx="4" fill="#153025"/><rect x="1304" y="828" width="20" height="20" rx="4" fill="#2c7652"/><rect x="1330" y="828" width="20" height="20" rx="4" fill="#3dd68c"/><rect x="1356" y="828" width="20" height="20" rx="4" fill="#214b38"/>
+      <rect x="1278" y="854" width="20" height="20" rx="4" fill="#202422"/><rect x="1304" y="854" width="20" height="20" rx="4" fill="#214b38"/><rect x="1330" y="854" width="20" height="20" rx="4" fill="#2c7652"/><rect x="1356" y="854" width="20" height="20" rx="4" fill="#3dd68c"/>
+    </g>
+    <rect x="1208" y="892" width="250" height="50" rx="10" fill="#111313" stroke="#343a37"/><text x="1224" y="913" class="body" style="font-weight:650">07/14 周二</text><text x="1224" y="932" class="muted">12 会话 · 186 消息 · 3.4M Token</text>
+  </g>
+</svg>

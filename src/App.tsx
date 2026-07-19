@@ -35,6 +35,7 @@ import { useHistoryStore } from "./stores/historyStore";
 import { useExternalSessionSyncStore } from "./stores/externalSessionSyncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useDesktopPetCoordinator } from "./hooks/useDesktopPetCoordinator";
+import { handleWebDeviceCliHook, useWebDeviceBridge } from "./hooks/useWebDeviceBridge";
 import { useUpdateStore } from "./stores/updateStore";
 import { useReplayStore } from "./stores/replayStore";
 import { useTerminalStore, type CliHookPayload } from "./stores/terminalStore";
@@ -723,6 +724,8 @@ function App() {
     onActivateSession: handleActivateHookNotificationTarget,
   });
 
+  useWebDeviceBridge(settingsLoaded && startupReady);
+
   useKeyboardShortcuts({
     onToggleSidebar: handleToggleSidebarShortcut,
     onToggleTerminalFullscreen: handleToggleTerminalFullscreen,
@@ -759,6 +762,7 @@ function App() {
         return;
       }
       const tabId = useTerminalStore.getState().handleCliHookEvent(event.payload);
+      handleWebDeviceCliHook(event.payload, tabId);
       const terminalStore = useTerminalStore.getState();
       const tabTitle = tabId ? terminalStore.sessions.find((session) => session.id === tabId)?.title ?? null : null;
       // SessionStart/UserPromptSubmit 只更新状态；普通工具生命周期事件不打扰用户。

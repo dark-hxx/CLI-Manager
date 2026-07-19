@@ -18,8 +18,8 @@ mod linux_graphics;
 mod log_rotation;
 pub mod pty;
 mod shell_resolver;
-pub mod ssh_launch;
 pub mod ssh_askpass;
+pub mod ssh_launch;
 pub mod ssh_proxy;
 pub mod statusline;
 pub mod statusline_profiles;
@@ -730,6 +730,9 @@ pub fn run() {
                     if let Err(err) = commands::cc_connect::auto_start(&handle) {
                         log::warn!("cc-connect auto-start skipped: {err}");
                     }
+                    if let Err(err) = commands::web_device::auto_start(&handle) {
+                        log::warn!("web device auto-start skipped: {err}");
+                    }
                 });
             }
             if let Ok(dir) = app_paths::history_cache_dir() {
@@ -798,6 +801,7 @@ pub fn run() {
         .manage(git_watcher::GitWatcherBridge::new())
         .manage(commands::subagent_transcript::SubagentTranscriptBridge::new())
         .manage(commands::cc_connect::CcConnectManager::new())
+        .manage(commands::web_device::WebDeviceManager::new())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             SqlBuilder::default()
@@ -920,6 +924,19 @@ pub fn run() {
             commands::sync::sync_save_password,
             commands::sync::sync_load_password,
             commands::sync::sync_delete_password,
+            commands::web_device::web_device_get_status,
+            commands::web_device::web_device_save_profile,
+            commands::web_device::web_device_start,
+            commands::web_device::web_device_stop,
+            commands::web_device::web_device_restart,
+            commands::web_device::web_device_create_pairing,
+            commands::web_device::web_device_clear_pairing,
+            commands::web_device::web_device_take_operations,
+            commands::web_device::web_device_publish_history,
+            commands::web_device::web_device_validate_context,
+            commands::web_device::web_device_operation_accepted,
+            commands::web_device::web_device_operation_running,
+            commands::web_device::web_device_operation_completed,
             commands::system_resources::system_resources_get_snapshot,
             commands::version::get_app_version,
             commands::version::get_os_platform,
@@ -1035,6 +1052,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = &event {
                 app.state::<commands::cc_connect::CcConnectManager>()
                     .shutdown();
+                commands::web_device::shutdown(app);
                 crash_reporter::mark_graceful_exit();
             }
 
@@ -1056,7 +1074,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod ssh_migration_tests {
-    use super::{MIGRATION_CREATE_SSH_HOST_GROUPS_SQL, MIGRATION_CREATE_SSH_HOSTS_SQL};
+    use super::{MIGRATION_CREATE_SSH_HOSTS_SQL, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL};
     use sqlx::{Connection, Row, SqliteConnection};
 
     #[tokio::test]
@@ -1125,19 +1143,38 @@ mod ssh_migration_tests {
     #[tokio::test]
     async fn ssh_group_migration_preserves_flat_groups_as_roots() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
-        sqlx::query("PRAGMA foreign_keys = ON").execute(&mut conn).await.unwrap();
-        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)")
-            .execute(&mut conn).await.unwrap();
-        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL).execute(&mut conn).await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO ssh_hosts (id, name, group_name, host, created_at, updated_at) VALUES ('host-1', 'Server', 'Production', 'example.com', '1', '1')")
             .execute(&mut conn).await.unwrap();
 
-        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL).execute(&mut conn).await.unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
 
-        let host = sqlx::query("SELECT group_id FROM ssh_hosts WHERE id = 'host-1'").fetch_one(&mut conn).await.unwrap();
+        let host = sqlx::query("SELECT group_id FROM ssh_hosts WHERE id = 'host-1'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         let group_id = host.get::<Option<String>, _>("group_id").unwrap();
         let group = sqlx::query("SELECT name, parent_id FROM ssh_host_groups WHERE id = ?")
-            .bind(group_id).fetch_one(&mut conn).await.unwrap();
+            .bind(group_id)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         assert_eq!(group.get::<String, _>("name"), "Production");
         assert_eq!(group.get::<Option<String>, _>("parent_id"), None);
     }

@@ -338,9 +338,7 @@ fn throttle_native_conpty(uses_conpty_dll: bool) {
     if let Some(previous) = *last {
         let elapsed = previous.elapsed();
         if elapsed < CONPTY_KILL_SPAWN_THROTTLE {
-            std::thread::sleep(
-                CONPTY_KILL_SPAWN_THROTTLE - elapsed + CONPTY_KILL_SPAWN_SPACING,
-            );
+            std::thread::sleep(CONPTY_KILL_SPAWN_THROTTLE - elapsed + CONPTY_KILL_SPAWN_SPACING);
         }
     }
     *last = Some(Instant::now());

@@ -26,3 +26,4 @@ pub mod terminal;
 pub mod terminal_shell;
 pub mod third_party_notification;
 pub mod version;
+pub mod web_device;

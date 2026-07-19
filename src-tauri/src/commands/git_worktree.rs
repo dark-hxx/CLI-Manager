@@ -881,8 +881,8 @@ mod tests {
         parse_worktree_list_entries, path_to_git_arg, remove_registered_stale_worktree_dir,
         remove_worktree_path_with_retry, resolve_worktree_target_path,
         seed_trellis_developer_identity, should_cleanup_worktree_branch_after_failed_add,
-        validate_plain_branch_name,
-        validate_task_name, validate_worktree_branch, WorktreeRegistration,
+        validate_plain_branch_name, validate_task_name, validate_worktree_branch,
+        WorktreeRegistration,
     };
     use std::fs;
     use std::io;
@@ -1121,7 +1121,11 @@ mod tests {
         fs::create_dir_all(main_repo.join(".trellis")).unwrap();
         fs::write(main_repo.join(".trellis").join(".developer"), "name=main").unwrap();
         fs::create_dir_all(worktree.join(".trellis")).unwrap();
-        fs::write(worktree.join(".trellis").join(".developer"), "name=existing").unwrap();
+        fs::write(
+            worktree.join(".trellis").join(".developer"),
+            "name=existing",
+        )
+        .unwrap();
 
         // worktree 已有身份：保持不动
         seed_trellis_developer_identity(&main_repo, &worktree);

@@ -659,7 +659,11 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         let spawned = platform::spawn(PtyLaunchOptions {
             exe: exe.clone(),
             args: args.clone(),
-            cwd: if ssh_launch.is_some() { None } else { cwd.map(str::to_string) },
+            cwd: if ssh_launch.is_some() {
+                None
+            } else {
+                cwd.map(str::to_string)
+            },
             env: launch_env,
             cols: 80,
             rows: 24,
@@ -905,9 +909,9 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             .controller
             .resize(cols, rows, pixel_width, pixel_height)
             .map_err(|e| {
-            error!("pty resize failed: session_id={}, error={}", session_id, e);
-            e
-        })
+                error!("pty resize failed: session_id={}, error={}", session_id, e);
+                e
+            })
     }
 
     fn close_session_arc(session_id: &str, session_arc: Arc<Mutex<PtySession>>, reason: &str) {

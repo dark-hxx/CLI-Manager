@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../../lib/i18n";
 import { useProjectStore } from "../../../stores/projectStore";
 import { ConfirmDialog } from "../../ConfirmDialog";
+import { WebDeviceSettingsSection } from "../WebDeviceSettingsSection";
 
 type AgentKind = "claude" | "codex";
 type PlatformKind = "telegram" | "feishu";
@@ -436,6 +437,7 @@ export function CcConnectSettingsPage() {
 
   return (
     <Stack gap="md" maw={1040}>
+      <WebDeviceSettingsSection />
       <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
         <Group justify="space-between" align="flex-start">
           <div>

@@ -1,0 +1,25 @@
+[package]
+name = "cli-manager-web-server"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+argon2 = "0.5"
+axum = { version = "0.8.9", features = ["ws"] }
+base64 = "0.22"
+chrono = "0.4"
+cli-manager-web-protocol = { path = "../../crates/web-protocol" }
+futures-util = "0.3"
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "net", "signal", "sync", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7.0", features = ["cors", "fs", "limit", "timeout", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4"] }

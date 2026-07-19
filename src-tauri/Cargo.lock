@@ -715,6 +715,7 @@ dependencies = [
  "base64 0.22.1",
  "chardetng",
  "chrono",
+ "cli-manager-web-protocol",
  "encoding_rs",
  "fontdb",
  "git2",
@@ -758,6 +759,14 @@ dependencies = [
  "windows-sys 0.61.2",
  "zbus-secret-service-keyring-store",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "cli-manager-web-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6639,6 +6648,9 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.10.2",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "sha1 0.11.0",
  "thiserror 2.0.18",
 ]

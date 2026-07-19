@@ -10,7 +10,10 @@ const ASKPASS_TOKEN_ENV: &str = "CLI_MANAGER_SSH_ASKPASS_TOKEN";
 
 /// Invoked by the main executable when OpenSSH launches it as SSH_ASKPASS.
 pub fn run_helper_and_exit() -> ! {
-    let prompt = std::env::args().nth(1).unwrap_or_default().to_ascii_lowercase();
+    let prompt = std::env::args()
+        .nth(1)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let is_secret_prompt = prompt.contains("password") || prompt.contains("passphrase");
     if !is_secret_prompt {
         std::process::exit(1);
@@ -87,7 +90,10 @@ fn prepare_with_password(password: String) -> Result<HashMap<String, String>, St
     env.insert(ASKPASS_ENV.to_string(), "1".to_string());
     env.insert(ASKPASS_ADDR_ENV.to_string(), address.to_string());
     env.insert(ASKPASS_TOKEN_ENV.to_string(), token);
-    env.insert("SSH_ASKPASS".to_string(), executable.to_string_lossy().into_owned());
+    env.insert(
+        "SSH_ASKPASS".to_string(),
+        executable.to_string_lossy().into_owned(),
+    );
     env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
     env.insert("DISPLAY".to_string(), "cli-manager-askpass".to_string());
     Ok(env)

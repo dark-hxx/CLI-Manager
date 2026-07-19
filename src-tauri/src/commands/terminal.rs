@@ -3,9 +3,7 @@ use crate::commands::ccswitch::{
     ClaudeProviderLaunchConfig, CodexProviderLaunchConfig,
 };
 use crate::daemon::client::{DaemonBridge, DaemonClient};
-use crate::daemon::protocol::{
-    ClientFrame, SessionMeta, FEATURE_WS_BINARY_OUTPUT,
-};
+use crate::daemon::protocol::{ClientFrame, SessionMeta, FEATURE_WS_BINARY_OUTPUT};
 use crate::pty::manager::{PtyOrphanCleanupSummary, PtyProcessStatus};
 use crate::ssh_launch::SshLaunchPlan;
 use log::{debug, warn};
@@ -245,11 +243,8 @@ pub async fn pty_daemon_upgrade_if_idle(
     client.shutdown_if_idle()?;
     tokio::time::sleep(Duration::from_millis(500)).await;
     let data_dir = crate::app_paths::cli_manager_data_dir()?;
-    let client = crate::daemon::client::connect_or_spawn(
-        app_handle,
-        &data_dir,
-        cfg!(debug_assertions),
-    )?;
+    let client =
+        crate::daemon::client::connect_or_spawn(app_handle, &data_dir, cfg!(debug_assertions))?;
     daemon_bridge.set(client);
     Ok(true)
 }

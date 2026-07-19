@@ -479,16 +479,15 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             .await
             .map_err(|err| err.to_string())?;
     }
-    sqlx::query(&format!("PRAGMA user_version = {HISTORY_INDEX_SCHEMA_VERSION}"))
-        .execute(&mut *conn)
-        .await
-        .map_err(|err| err.to_string())?;
+    sqlx::query(&format!(
+        "PRAGMA user_version = {HISTORY_INDEX_SCHEMA_VERSION}"
+    ))
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
     let now = now_millis();
     for (key, value) in [
-        (
-            "schema_version",
-            HISTORY_INDEX_SCHEMA_VERSION.to_string(),
-        ),
+        ("schema_version", HISTORY_INDEX_SCHEMA_VERSION.to_string()),
         ("model_version", HISTORY_INDEX_MODEL_VERSION.to_string()),
     ] {
         sqlx::query(
@@ -667,7 +666,9 @@ pub(super) async fn deactivate_v2_source_instance(
     if source_id.is_empty() {
         return Err("history_source_id_required".to_string());
     }
-    let instance_id = instance_id.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+    let instance_id = instance_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let path = catalog_db_path()?;
     let mut conn = open_catalog_once(&path).await?;
     let now = now_millis();
@@ -1104,8 +1105,7 @@ async fn list_sessions_from_v2(
         .fetch_all(&mut *conn)
         .await
         .map_err(|err| err.to_string())?;
-    rows
-        .into_iter()
+    rows.into_iter()
         .map(session_summary_from_row)
         .collect::<Result<Vec<_>, String>>()
 }
@@ -1743,8 +1743,9 @@ async fn get_session_detail_from_v2_with_conn(
         .try_get::<i64, _>("cache_creation_tokens")
         .map_err(|err| err.to_string())?
         .max(0) as u64;
-    let dominant_model: Option<String> =
-        row.try_get("dominant_model").map_err(|err| err.to_string())?;
+    let dominant_model: Option<String> = row
+        .try_get("dominant_model")
+        .map_err(|err| err.to_string())?;
     let mut token_trend = Vec::new();
     let usage_rows = sqlx::query(
         "SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
@@ -1826,7 +1827,9 @@ async fn get_session_detail_from_v2_with_conn(
                     .try_get("display_content")
                     .map_err(|err| err.to_string())?,
                 timestamp: timestamp_ms.and_then(timestamp_millis_to_rfc3339),
-                model: message_row.try_get("model").map_err(|err| err.to_string())?,
+                model: message_row
+                    .try_get("model")
+                    .map_err(|err| err.to_string())?,
                 input_tokens: message_row
                     .try_get::<Option<i64>, _>("input_tokens")
                     .map_err(|err| err.to_string())?
@@ -1875,7 +1878,9 @@ async fn get_session_detail_from_v2_with_conn(
     let mut tool_events = Vec::new();
     for tool_row in tool_rows {
         let name: String = tool_row.try_get("name").map_err(|err| err.to_string())?;
-        let category: String = tool_row.try_get("category").map_err(|err| err.to_string())?;
+        let category: String = tool_row
+            .try_get("category")
+            .map_err(|err| err.to_string())?;
         match category.as_str() {
             "mcp" => *mcp_calls.entry(name.clone()).or_insert(0) += 1,
             "skill" => *skill_calls.entry(name.clone()).or_insert(0) += 1,
@@ -1927,10 +1932,18 @@ async fn get_session_detail_from_v2_with_conn(
             source: change_row
                 .try_get("source_kind")
                 .map_err(|err| err.to_string())?,
-            tool_name: change_row.try_get("tool_name").map_err(|err| err.to_string())?,
-            file_path: change_row.try_get("file_path").map_err(|err| err.to_string())?,
-            old_text: change_row.try_get("old_text").map_err(|err| err.to_string())?,
-            new_text: change_row.try_get("new_text").map_err(|err| err.to_string())?,
+            tool_name: change_row
+                .try_get("tool_name")
+                .map_err(|err| err.to_string())?,
+            file_path: change_row
+                .try_get("file_path")
+                .map_err(|err| err.to_string())?,
+            old_text: change_row
+                .try_get("old_text")
+                .map_err(|err| err.to_string())?,
+            new_text: change_row
+                .try_get("new_text")
+                .map_err(|err| err.to_string())?,
             patch: change_row.try_get("patch").map_err(|err| err.to_string())?,
             additions: change_row
                 .try_get::<i64, _>("additions")
@@ -1970,7 +1983,9 @@ async fn get_session_detail_from_v2_with_conn(
                 .try_get("total_cost_usd")
                 .map_err(|err| err.to_string())?,
             dominant_model,
-            current_model: row.try_get("current_model").map_err(|err| err.to_string())?,
+            current_model: row
+                .try_get("current_model")
+                .map_err(|err| err.to_string())?,
             context_window: row
                 .try_get::<Option<i64>, _>("context_window")
                 .map_err(|err| err.to_string())?
@@ -2297,7 +2312,8 @@ async fn replace_v2_session(
     row: &V2LegacySessionRow,
 ) -> Result<(), String> {
     let parts = scan_session_detail_parts(&row.file_ref);
-    let adapted = build_v2_adapter_session_from_parts(&row.file_ref, roots, row.fingerprint, &parts);
+    let adapted =
+        build_v2_adapter_session_from_parts(&row.file_ref, roots, row.fingerprint, &parts);
     let session_ref = adapted.session_ref;
     let stats = &parts.computed.stats;
     let raw_pointers_json =
@@ -2352,15 +2368,17 @@ async fn replace_v2_session(
     .bind(stats.cache_read_tokens as i64)
     .bind(stats.cache_creation_tokens as i64)
     .bind(stats.total_cost_usd)
-    .bind(if stats.input_tokens > 0
-        || stats.output_tokens > 0
-        || stats.cache_read_tokens > 0
-        || stats.cache_creation_tokens > 0
-    {
-        "parsed"
-    } else {
-        "unknown"
-    })
+    .bind(
+        if stats.input_tokens > 0
+            || stats.output_tokens > 0
+            || stats.cache_read_tokens > 0
+            || stats.cache_creation_tokens > 0
+        {
+            "parsed"
+        } else {
+            "unknown"
+        },
+    )
     .bind(if stats.total_cost_usd > 0.0 {
         "reported"
     } else {
@@ -2459,7 +2477,12 @@ async fn replace_v2_session(
         .bind(&event.name)
         .bind(&event.category)
         .bind(&event.status)
-        .bind(event.timestamp.as_deref().and_then(parse_timestamp_millis_str))
+        .bind(
+            event
+                .timestamp
+                .as_deref()
+                .and_then(parse_timestamp_millis_str),
+        )
         .bind(event.duration_ms.map(|value| value as i64))
         .bind(&event.input_summary)
         .bind(&event.output_summary)
@@ -2486,7 +2509,12 @@ async fn replace_v2_session(
             .bind(&operation.patch)
             .bind(operation.additions as i64)
             .bind(operation.deletions as i64)
-            .bind(operation.timestamp.as_deref().and_then(parse_timestamp_millis_str))
+            .bind(
+                operation
+                    .timestamp
+                    .as_deref()
+                    .and_then(parse_timestamp_millis_str),
+            )
             .execute(&mut *tx)
             .await
             .map_err(|err| err.to_string())?;
@@ -2586,13 +2614,12 @@ async fn v2_count_sessions_messages(
     conn: &mut SqliteConnection,
     source_instance_id: &str,
 ) -> Result<(i64, i64), String> {
-    let sessions: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM history_sessions WHERE source_instance_id = ?1",
-    )
-    .bind(source_instance_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(|err| err.to_string())?;
+    let sessions: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM history_sessions WHERE source_instance_id = ?1")
+            .bind(source_instance_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|err| err.to_string())?;
     let messages: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)
          FROM history_messages m
@@ -2656,7 +2683,8 @@ async fn shadow_build_v2_for_instance(
         .iter()
         .map(|session| session.session_id.clone())
         .collect();
-    let stale_count = delete_stale_v2_sessions(conn, &instance.id, &existing_ids, &current_ids).await?;
+    let stale_count =
+        delete_stale_v2_sessions(conn, &instance.id, &existing_ids, &current_ids).await?;
     let mut changed_sessions = stale_count;
     let mut indexed_sessions = 0usize;
     let mut failed_sessions = 0usize;
@@ -2873,8 +2901,7 @@ async fn refresh_catalog(
     for stale in existing
         .iter()
         .filter(|(path, (source, _, _, _, _))| {
-            !current_paths.contains(*path)
-                && !(preserve_opencode_rows && source == "opencode")
+            !current_paths.contains(*path) && !(preserve_opencode_rows && source == "opencode")
         })
         .map(|(path, _)| path.clone())
         .collect::<Vec<_>>()
@@ -3204,12 +3231,11 @@ mod tests {
 
         ensure_schema(&mut conn).await.unwrap();
 
-        let updated_at: i64 = sqlx::query_scalar(
-            "SELECT updated_at FROM history_meta WHERE key = 'schema_version'",
-        )
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
+        let updated_at: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM history_meta WHERE key = 'schema_version'")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
         assert_eq!(updated_at, 7);
     }
 
@@ -3224,7 +3250,10 @@ mod tests {
             codex_config_dir: None,
         };
         let roots_key = roots.cache_key();
-        let v2_file = claude_root.join("projects").join("proj").join("session-v2.jsonl");
+        let v2_file = claude_root
+            .join("projects")
+            .join("proj")
+            .join("session-v2.jsonl");
         let legacy_file = claude_root
             .join("projects")
             .join("proj")
@@ -3313,7 +3342,10 @@ mod tests {
             codex_config_dir: None,
         };
         let roots_key = roots.cache_key();
-        let v2_file = claude_root.join("projects").join("proj").join("search-v2.jsonl");
+        let v2_file = claude_root
+            .join("projects")
+            .join("proj")
+            .join("search-v2.jsonl");
         let legacy_file = claude_root
             .join("projects")
             .join("proj")
@@ -3406,7 +3438,10 @@ mod tests {
             claude_config_dir: Some(claude_root.clone()),
             codex_config_dir: None,
         };
-        let file = claude_root.join("projects").join("proj").join("stats-v2.jsonl");
+        let file = claude_root
+            .join("projects")
+            .join("proj")
+            .join("stats-v2.jsonl");
 
         sqlx::query(
             "INSERT INTO history_source_instances(
@@ -3518,7 +3553,10 @@ mod tests {
             claude_config_dir: Some(claude_root.clone()),
             codex_config_dir: None,
         };
-        let file = claude_root.join("projects").join("proj").join("detail-v2.jsonl");
+        let file = claude_root
+            .join("projects")
+            .join("proj")
+            .join("detail-v2.jsonl");
         let file_path = file.to_string_lossy().to_string();
 
         sqlx::query(
@@ -3602,16 +3640,11 @@ mod tests {
         .await
         .unwrap();
 
-        let detail = get_session_detail_from_v2_with_conn(
-            &mut conn,
-            &roots,
-            &file_path,
-            "claude",
-            "proj",
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let detail =
+            get_session_detail_from_v2_with_conn(&mut conn, &roots, &file_path, "claude", "proj")
+                .await
+                .unwrap()
+                .unwrap();
 
         assert_eq!(detail.session_id, "detail-v2");
         assert_eq!(detail.messages.len(), 1);
@@ -3707,7 +3740,18 @@ mod tests {
         .fetch_one(&mut conn)
         .await
         .unwrap();
-        assert_eq!(tokens, (10, 20, 3, 2, "claude-sonnet-4-5".to_string(), "parsed".to_string(), 1));
+        assert_eq!(
+            tokens,
+            (
+                10,
+                20,
+                3,
+                2,
+                "claude-sonnet-4-5".to_string(),
+                "parsed".to_string(),
+                1
+            )
+        );
         let message_model: Option<String> = sqlx::query_scalar(
             "SELECT model FROM history_messages WHERE role = 'assistant' LIMIT 1",
         )
@@ -3860,7 +3904,11 @@ mod tests {
         assert_eq!(session.1.as_deref(), Some("codex-session"));
         assert_eq!(
             session.2.as_deref(),
-            Some(resolve_codex_state_db_path(&roots).to_string_lossy().as_ref())
+            Some(
+                resolve_codex_state_db_path(&roots)
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
         assert_eq!((session.3, session.4, session.5), (70, 30, 20));
         let assistant_usage: (Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(

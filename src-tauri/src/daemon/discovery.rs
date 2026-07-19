@@ -143,10 +143,8 @@ mod tests {
 
     #[test]
     fn legacy_info_defaults_protocol_capabilities() {
-        let info: DaemonInfo = serde_json::from_str(
-            r#"{"port":1,"token":"tok","pid":2,"version":"old"}"#,
-        )
-        .unwrap();
+        let info: DaemonInfo =
+            serde_json::from_str(r#"{"port":1,"token":"tok","pid":2,"version":"old"}"#).unwrap();
         assert_eq!(info.protocol_version, 0);
         assert_eq!(info.binary_protocol_version, 0);
         assert!(info.features.is_empty());

@@ -4,10 +4,19 @@
   "version": "1.2.9",
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "workspaces": [
+    "apps/web"
+  ],
   "scripts": {
     "dev": "node ./scripts/dev-server.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "web:dev": "npm run dev --workspace @cli-manager/web",
+    "web:build": "npm run build --workspace @cli-manager/web",
+    "web:typecheck": "npm run typecheck --workspace @cli-manager/web",
+    "web:server:check": "cargo check --manifest-path apps/server/Cargo.toml",
+    "web:server:test": "cargo test --manifest-path apps/server/Cargo.toml",
+    "web:server:run": "cargo run --manifest-path apps/server/Cargo.toml",
     "tauri": "node ./scripts/tauri-cli.mjs",
     "tauri:build:local": "node ./scripts/tauri-cli.mjs build --config src-tauri/tauri.local.conf.json"
   },

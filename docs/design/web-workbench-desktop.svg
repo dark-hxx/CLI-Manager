@@ -1,0 +1,236 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <linearGradient id="primary" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#54e39e"/>
+      <stop offset="1" stop-color="#2ac984"/>
+    </linearGradient>
+    <linearGradient id="progress" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#153326"/>
+      <stop offset="1" stop-color="#121716"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <style>
+      .ui { font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+      .mono { font-family: "Cascadia Mono", "JetBrains Mono", monospace; }
+      .h1 { fill: #f3f5f4; font-size: 24px; font-weight: 700; }
+      .h2 { fill: #e7ebe9; font-size: 17px; font-weight: 650; }
+      .body { fill: #c8cfcb; font-size: 14px; }
+      .muted { fill: #89938e; font-size: 12px; }
+      .tiny { fill: #89938e; font-size: 10px; }
+      .accent { fill: #3dd68c; }
+      .card { fill: #151817; stroke: #292e2b; }
+      .chip { fill: #1a1e1c; stroke: #303633; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#090a0a"/>
+  <rect width="1600" height="58" fill="#111313"/>
+  <line x1="0" y1="58" x2="1600" y2="58" stroke="#252927"/>
+
+  <g class="ui">
+    <rect x="20" y="14" width="30" height="30" rx="8" fill="url(#primary)"/>
+    <path d="M29 24l6 5-6 6M38 35h7" fill="none" stroke="#062117" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="64" y="36" class="h2">CLI-Manager Web</text>
+
+    <rect x="256" y="12" width="220" height="34" rx="10" class="chip"/>
+    <circle cx="276" cy="29" r="5" fill="#3dd68c"/>
+    <text x="290" y="34" class="body">DESKTOP-01 · 在线</text>
+    <path d="M453 26l5 5 5-5" fill="none" stroke="#89938e" stroke-width="1.5"/>
+
+    <rect x="1188" y="12" width="190" height="34" rx="10" fill="#151817" stroke="#292e2b"/>
+    <circle cx="1208" cy="29" r="6" fill="none" stroke="#89938e" stroke-width="1.5"/>
+    <line x1="1212" y1="33" x2="1217" y2="38" stroke="#89938e" stroke-width="1.5"/>
+    <text x="1226" y="34" class="muted">全局搜索</text>
+    <text x="1400" y="34" class="muted">刚刚同步 · 24 ms</text>
+    <circle cx="1558" cy="29" r="15" fill="#25302b"/>
+    <text x="1550" y="34" class="tiny">hxx</text>
+
+    <!-- 一级导航 -->
+    <rect x="0" y="58" width="68" height="942" fill="#0e1010"/>
+    <rect x="12" y="82" width="44" height="44" rx="12" fill="#153526" stroke="#2f8f64"/>
+    <path d="M24 98h20v16H24zM27 94h7l3 4" fill="none" stroke="#52dfa0" stroke-width="1.8" stroke-linejoin="round"/>
+    <text x="22" y="144" class="tiny accent">工作台</text>
+
+    <g fill="#151817">
+      <circle cx="34" cy="190" r="21"/><circle cx="34" cy="262" r="21"/>
+      <circle cx="34" cy="334" r="21"/><circle cx="34" cy="406" r="21"/>
+      <circle cx="34" cy="478" r="21"/><circle cx="34" cy="550" r="21"/>
+    </g>
+    <g fill="none" stroke="#8b9690" stroke-width="1.8" stroke-linecap="round">
+      <path d="M24 190h20M34 180v20"/>
+      <path d="M25 254h18v17H25zM29 250h7l3 4"/>
+      <path d="M26 324v20M42 324v20M26 330h16M26 339h16"/>
+      <path d="M27 398h14M27 406h14M27 414h14"/>
+      <path d="M24 482l7-7 6 5 8-10"/>
+      <circle cx="34" cy="550" r="7"/><path d="M34 536v4M34 560v4M20 550h4M44 550h4"/>
+    </g>
+    <g class="tiny" text-anchor="middle">
+      <text x="34" y="222">项目</text><text x="34" y="294">文件</text>
+      <text x="34" y="366">Git</text><text x="34" y="438">历史</text>
+      <text x="34" y="510">分析</text><text x="34" y="582">设置</text>
+    </g>
+
+    <!-- 上下文侧栏 -->
+    <rect x="68" y="58" width="270" height="942" fill="#121414"/>
+    <line x1="338" y1="58" x2="338" y2="1000" stroke="#252927"/>
+    <text x="92" y="98" class="h2">工作区</text>
+    <rect x="262" y="78" width="56" height="34" rx="10" fill="url(#primary)"/>
+    <text x="279" y="100" style="fill:#062117;font-size:12px;font-weight:700">新建</text>
+
+    <rect x="88" y="132" width="230" height="38" rx="10" class="chip"/>
+    <circle cx="108" cy="151" r="6" fill="none" stroke="#89938e" stroke-width="1.5"/>
+    <line x1="112" y1="155" x2="118" y2="161" stroke="#89938e" stroke-width="1.5"/>
+    <text x="130" y="156" class="muted">搜索项目或会话</text>
+
+    <text x="92" y="204" class="muted">项目</text>
+    <rect x="84" y="220" width="238" height="56" rx="12" fill="#173025" stroke="#2a6a4b"/>
+    <path d="M104 239h19v17h-19zM107 235h7l3 4" fill="none" stroke="#3dd68c" stroke-width="1.8"/>
+    <text x="138" y="246" class="body" style="font-weight:650">CLI-Manager</text>
+    <text x="138" y="265" class="tiny">master · D:\work\pythonProject</text>
+
+    <rect x="84" y="286" width="238" height="44" rx="10" fill="#151817"/>
+    <circle cx="106" cy="308" r="6" fill="#f09b54"/>
+    <text x="124" y="313" class="body">Claude · CLI-Manager</text>
+    <rect x="84" y="338" width="238" height="44" rx="10" fill="#151817"/>
+    <circle cx="106" cy="360" r="6" fill="#3dd68c"/>
+    <text x="124" y="365" class="body">Codex · CLI-Manager</text>
+
+    <text x="92" y="422" class="muted">最近对话</text>
+    <rect x="84" y="438" width="238" height="82" rx="12" fill="#181b1a" stroke="#303633"/>
+    <circle cx="104" cy="458" r="4" fill="#3dd68c"/>
+    <text x="118" y="463" class="body" style="font-weight:650">实现 Web 端远程对话</text>
+    <text x="100" y="488" class="muted">正在分析桌面上报协议...</text>
+    <text x="100" y="507" class="tiny">Codex · 2 分钟前</text>
+
+    <rect x="84" y="530" width="238" height="76" rx="12" fill="#151817" stroke="#202422"/>
+    <text x="100" y="555" class="body" style="font-weight:650">修复历史统计筛选</text>
+    <text x="100" y="580" class="muted">已完成 · 6 个文件</text>
+    <text x="100" y="598" class="tiny">Claude · 昨天</text>
+
+    <rect x="84" y="616" width="238" height="76" rx="12" fill="#151817" stroke="#202422"/>
+    <text x="100" y="641" class="body" style="font-weight:650">升级供应商配置</text>
+    <text x="100" y="666" class="muted">等待设备上线</text>
+    <text x="100" y="684" class="tiny">Codex · 07/16</text>
+
+    <rect x="88" y="940" width="230" height="38" rx="10" fill="#151817" stroke="#282d2a"/>
+    <circle cx="106" cy="959" r="5" fill="#3dd68c"/>
+    <text x="120" y="964" class="muted">设备在线 · 数据已加密</text>
+
+    <!-- 主内容 -->
+    <rect x="338" y="58" width="890" height="942" fill="#0c0e0d"/>
+    <line x1="1228" y1="58" x2="1228" y2="1000" stroke="#252927"/>
+    <text x="370" y="99" class="h1">实现 Web 端远程对话</text>
+    <text x="370" y="124" class="muted">CLI-Manager · master · Codex · gpt-5.4 · 高推理</text>
+
+    <rect x="1058" y="82" width="78" height="32" rx="9" fill="#142f22" stroke="#2f815b"/>
+    <circle cx="1075" cy="98" r="4" fill="#3dd68c"/>
+    <text x="1086" y="103" class="muted accent">执行中</text>
+    <rect x="1144" y="82" width="58" height="32" rx="9" class="chip"/>
+    <text x="1161" y="103" class="muted">详情</text>
+    <line x1="362" y1="146" x2="1204" y2="146" stroke="#242826"/>
+
+    <rect x="630" y="174" width="574" height="78" rx="16" fill="#1a2721" stroke="#315c47"/>
+    <text x="656" y="199" class="tiny accent">你 · 15:28</text>
+    <text x="656" y="229" class="body" style="fill:#edf3f0">基于现有桌面端，实现 Web 端远程对话、项目管理和完整数据看板。</text>
+
+    <circle cx="386" cy="300" r="20" fill="#153426" stroke="#2f815b"/>
+    <path d="M379 300h14M386 293v14" stroke="#4de099" stroke-width="2"/>
+    <text x="420" y="293" class="h2">Codex</text>
+    <text x="420" y="316" class="muted">正在执行 · 已用时 02:14</text>
+
+    <rect x="370" y="338" width="834" height="110" rx="14" fill="url(#progress)" stroke="#2e4539"/>
+    <text x="394" y="370" class="body" style="font-weight:650">当前进展</text>
+    <text x="394" y="399" class="body">已完成桌面端架构扫描，正在定义设备上报与远程命令协议。</text>
+    <g class="tiny">
+      <rect x="394" y="416" width="76" height="22" rx="7" fill="#183226"/><text x="410" y="431" class="accent">读取 12</text>
+      <rect x="478" y="416" width="76" height="22" rx="7" fill="#18283b"/><text x="494" y="431" style="fill:#7aa2f7">搜索 5</text>
+      <rect x="562" y="416" width="76" height="22" rx="7" fill="#302718"/><text x="578" y="431" style="fill:#e5c453">工具 8</text>
+      <rect x="646" y="416" width="84" height="22" rx="7" fill="#2e1e2c"/><text x="660" y="431" style="fill:#d980c8">子任务 0</text>
+    </g>
+
+    <rect x="370" y="466" width="404" height="122" rx="14" class="card"/>
+    <circle cx="398" cy="496" r="14" fill="#18283b"/>
+    <path d="M391 496h14M398 489v14" stroke="#7aa2f7" stroke-width="1.8"/>
+    <text x="424" y="492" class="body" style="font-weight:650">代码检索</text>
+    <text x="424" y="515" class="muted">定位历史、Replay、PTY 与设置模块</text>
+    <text x="394" y="552" class="mono tiny" style="fill:#7aa2f7">src/stores/replayStore.ts</text>
+    <text x="394" y="572" class="mono tiny">src-tauri/src/commands/history.rs</text>
+
+    <rect x="792" y="466" width="412" height="122" rx="14" class="card"/>
+    <circle cx="820" cy="496" r="14" fill="#302718"/>
+    <path d="M813 491h14M813 496h9M813 501h12" stroke="#e5c453" stroke-width="1.8"/>
+    <text x="846" y="492" class="body" style="font-weight:650">架构分析</text>
+    <text x="846" y="515" class="muted">桌面代理 → Web 服务 → 浏览器</text>
+    <rect x="816" y="542" width="360" height="30" rx="8" fill="#101211"/>
+    <text x="830" y="562" class="mono tiny">WSS · command / event / snapshot / ack</text>
+
+    <rect x="370" y="606" width="834" height="160" rx="14" class="card"/>
+    <text x="394" y="638" class="body" style="font-weight:650">变更预览</text>
+    <rect x="1035" y="624" width="142" height="26" rx="8" fill="#183226"/>
+    <text x="1050" y="642" class="tiny accent">3 文件 · +214 -18</text>
+    <rect x="394" y="664" width="784" height="78" rx="10" fill="#0f1211"/>
+    <text x="412" y="688" class="mono tiny" style="fill:#7aa2f7">server/protocol.rs</text>
+    <text x="412" y="710" class="mono tiny" style="fill:#3dd68c">+ DeviceHello / CommandJob / SessionEvent</text>
+    <text x="412" y="732" class="mono tiny" style="fill:#f7768e">- direct Tauri-only data access</text>
+
+    <rect x="360" y="824" width="854" height="142" rx="18" fill="#151817" stroke="#343a37" filter="url(#shadow)"/>
+    <text x="386" y="860" class="muted">继续输入任务，支持 @文件、图片和 Prompt 模板...</text>
+    <line x1="382" y1="884" x2="1192" y2="884" stroke="#262b28"/>
+    <rect x="386" y="904" width="76" height="34" rx="9" class="chip"/>
+    <text x="402" y="926" class="muted">＋ 附件</text>
+    <rect x="470" y="904" width="108" height="34" rx="9" class="chip"/>
+    <text x="486" y="926" class="muted">gpt-5.4 ▾</text>
+    <rect x="586" y="904" width="92" height="34" rx="9" class="chip"/>
+    <text x="602" y="926" class="muted">高推理 ▾</text>
+    <rect x="1112" y="902" width="70" height="38" rx="11" fill="url(#primary)"/>
+    <path d="M1132 921h28M1152 913l8 8-8 8" fill="none" stroke="#062117" stroke-width="2"/>
+
+    <!-- 实时过程 -->
+    <rect x="1228" y="58" width="372" height="942" fill="#111313"/>
+    <text x="1254" y="99" class="h2">实时过程</text>
+    <rect x="1472" y="82" width="98" height="32" rx="9" class="chip"/>
+    <text x="1493" y="103" class="muted">详细日志</text>
+
+    <rect x="1250" y="136" width="326" height="88" rx="14" class="card"/>
+    <text x="1272" y="166" class="muted">本轮摘要</text>
+    <text x="1272" y="201" class="h2">8 工具 · 3 文件 · 206K Token</text>
+
+    <text x="1254" y="264" class="body" style="font-weight:650">执行时间线</text>
+    <line x1="1282" y1="296" x2="1282" y2="624" stroke="#365246" stroke-width="2"/>
+
+    <g>
+      <circle cx="1282" cy="310" r="7" fill="#3dd68c"/>
+      <text x="1310" y="307" class="body" style="font-weight:650">用户提交任务</text><text x="1310" y="329" class="muted">15:28:04 · 已记录</text>
+      <circle cx="1282" cy="372" r="7" fill="#7aa2f7"/>
+      <text x="1310" y="369" class="body" style="font-weight:650">扫描项目架构</text><text x="1310" y="391" class="muted">读取入口、Store、Rust commands</text>
+      <circle cx="1282" cy="434" r="7" fill="#e5c453"/>
+      <text x="1310" y="431" class="body" style="font-weight:650">定义远程协议</text><text x="1310" y="453" class="muted">device hello / job / event / ack</text>
+      <circle cx="1282" cy="496" r="7" fill="#d980c8"/>
+      <text x="1310" y="493" class="body" style="font-weight:650">生成变更预览</text><text x="1310" y="515" class="muted">3 个文件，尚未写入</text>
+      <circle cx="1282" cy="558" r="7" fill="#3dd68c"/>
+      <text x="1310" y="555" class="body" style="font-weight:650">运行验证</text><text x="1310" y="577" class="muted">等待方案确认后执行</text>
+      <circle cx="1282" cy="620" r="7" fill="#5c6661"/>
+      <text x="1310" y="617" class="body" style="font-weight:650">完成</text><text x="1310" y="639" class="muted">待处理</text>
+    </g>
+
+    <rect x="1250" y="674" width="326" height="166" rx="14" fill="#211d14" stroke="#665627"/>
+    <text x="1272" y="706" class="body" style="fill:#f0d36c;font-weight:700">需要批准</text>
+    <text x="1272" y="735" class="body">即将在 DESKTOP-01 执行：</text>
+    <rect x="1272" y="752" width="280" height="34" rx="8" fill="#121310"/>
+    <text x="1286" y="774" class="mono tiny">npm run test -- --runInBand</text>
+    <rect x="1272" y="800" width="94" height="30" rx="9" fill="url(#primary)"/>
+    <text x="1291" y="820" style="fill:#062117;font-size:11px;font-weight:700">允许一次</text>
+    <rect x="1374" y="800" width="104" height="30" rx="9" fill="#1b1d19" stroke="#49442d"/>
+    <text x="1390" y="820" class="tiny">本会话允许</text>
+    <rect x="1486" y="800" width="66" height="30" rx="9" fill="#25191a" stroke="#5b2e32"/>
+    <text x="1507" y="820" class="tiny" style="fill:#f28b91">拒绝</text>
+
+    <rect x="1250" y="860" width="326" height="106" rx="14" class="card"/>
+    <text x="1272" y="892" class="body" style="font-weight:650">设备状态</text>
+    <circle cx="1278" cy="922" r="5" fill="#3dd68c"/>
+    <text x="1292" y="927" class="muted">DESKTOP-01 在线 · Windows 11</text>
+    <text x="1272" y="950" class="tiny">Codex Hook 已安装 · Claude Hook 已安装 · 队列 0</text>
+  </g>
+</svg>

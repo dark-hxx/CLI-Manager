@@ -8,9 +8,9 @@ use super::discovery::{remove_daemon_info, write_daemon_info_exclusive, DaemonIn
 use super::protocol::{
     decode_binary_terminal_frame, decode_client_frame, encode_binary_terminal_frame, encode_frame,
     supported_features, ClientFrame, DaemonFrame, ProcessTraits, ProtocolError, ReplayEntry,
-    SessionMeta, SessionStatusInfo, BINARY_KIND_CHECKPOINT, BINARY_KIND_INPUT,
-    BINARY_KIND_OUTPUT, BINARY_KIND_REPLAY, BINARY_KIND_REPLAY_RESET,
-    BINARY_PROTOCOL_VERSION, CONTROL_PROTOCOL_VERSION, MAX_FRAME_BYTES,
+    SessionMeta, SessionStatusInfo, BINARY_KIND_CHECKPOINT, BINARY_KIND_INPUT, BINARY_KIND_OUTPUT,
+    BINARY_KIND_REPLAY, BINARY_KIND_REPLAY_RESET, BINARY_PROTOCOL_VERSION,
+    CONTROL_PROTOCOL_VERSION, MAX_FRAME_BYTES,
 };
 use crate::claude_hook::{spawn_hook_listener, HookPayloadSink};
 use crate::pty::manager::{PtyEventSink, PtyManager, PtyProcessStatus};
@@ -164,8 +164,8 @@ impl SessionBuffer {
             .map(|frame| frame.sequence)
             .or_else(|| {
                 self.read_spooled_frames()
-            .first()
-            .map(|frame| frame.sequence)
+                    .first()
+                    .map(|frame| frame.sequence)
             })
             .or_else(|| self.frames.front().map(|frame| frame.sequence))
     }
@@ -476,7 +476,9 @@ impl ClientWriterState {
             return Some(frame);
         }
         let frame = self.output.pop_front()?;
-        self.output_bytes = self.output_bytes.saturating_sub(frame_payload_bytes(&frame));
+        self.output_bytes = self
+            .output_bytes
+            .saturating_sub(frame_payload_bytes(&frame));
         Some(frame)
     }
 }
@@ -558,7 +560,8 @@ impl ClientWriter {
         let mut state = lock
             .lock()
             .map_err(|_| "client writer unavailable".to_string())?;
-        if state.closed || state.output_bytes.saturating_add(bytes) > CLIENT_OUTPUT_QUEUE_MAX_BYTES {
+        if state.closed || state.output_bytes.saturating_add(bytes) > CLIENT_OUTPUT_QUEUE_MAX_BYTES
+        {
             state.closed = true;
             changed.notify_all();
             return Err("client output queue full".to_string());
@@ -773,7 +776,12 @@ impl DaemonHost {
             .unwrap_or_default();
         sessions
             .into_iter()
-            .filter(|session| session.lock().map(|entry| entry.meta.alive).unwrap_or(false))
+            .filter(|session| {
+                session
+                    .lock()
+                    .map(|entry| entry.meta.alive)
+                    .unwrap_or(false)
+            })
             .count()
     }
 
@@ -798,7 +806,11 @@ impl DaemonHost {
             .filter_map(|(id, session)| {
                 let entry = session.lock().ok()?;
                 (!entry.meta.alive).then(|| {
-                    (id.clone(), entry.meta.created_at_ms, entry.buffer.total_bytes)
+                    (
+                        id.clone(),
+                        entry.meta.created_at_ms,
+                        entry.buffer.total_bytes,
+                    )
                 })
             })
             .collect();
@@ -1477,12 +1489,7 @@ impl DaemonServer {
         log::debug!("daemon websocket client disconnected ({peer}, id={client_id})");
     }
 
-    fn handle_binary_frame(
-        &self,
-        client_id: u64,
-        data: &[u8],
-        writer: &Arc<ClientWriter>,
-    ) -> bool {
+    fn handle_binary_frame(&self, client_id: u64, data: &[u8], writer: &Arc<ClientWriter>) -> bool {
         let frame = match decode_binary_terminal_frame(data) {
             Ok(frame) => frame,
             Err(message) => {
@@ -1495,9 +1502,11 @@ impl DaemonServer {
             .clients
             .lock()
             .ok()
-            .and_then(|clients| clients.get(&client_id).map(|client| {
-                client.attached.contains(&frame.session_id)
-            }))
+            .and_then(|clients| {
+                clients
+                    .get(&client_id)
+                    .map(|client| client.attached.contains(&frame.session_id))
+            })
             .unwrap_or(false);
         if !attached || !is_valid_session_id(&frame.session_id) {
             let _ = writer.send_frame(&DaemonFrame::Err {
@@ -1638,13 +1647,11 @@ impl DaemonServer {
                 if !is_valid_session_id(&session_id) {
                     return err_frame(id, "invalid session id");
                 }
-                match self.host.pty.resize(
-                    &session_id,
-                    cols,
-                    rows,
-                    pixel_width,
-                    pixel_height,
-                ) {
+                match self
+                    .host
+                    .pty
+                    .resize(&session_id, cols, rows, pixel_width, pixel_height)
+                {
                     Ok(()) => {
                         if let Some(session) = self.host.get_session(&session_id) {
                             if let Ok(mut entry) = session.lock() {
@@ -1843,15 +1850,12 @@ impl DaemonServer {
             session_id.clone(),
         ));
         // 检查、预留与插入保持在同一临界区；并发 create 不得同时通过。
-        if let Err(message) = self
-            .host
-            .reserve_session_with_launch(
-                &session_id,
-                cwd.clone(),
-                shell.clone(),
-                ssh_launch.as_ref(),
-            )
-        {
+        if let Err(message) = self.host.reserve_session_with_launch(
+            &session_id,
+            cwd.clone(),
+            shell.clone(),
+            ssh_launch.as_ref(),
+        ) {
             return err_frame(id, message);
         }
         let attached = self.host.clients.lock().ok().and_then(|mut clients| {
@@ -2061,10 +2065,10 @@ mod tests {
         let client_id = 7;
         let mut buffer = SessionBuffer::new();
         buffer.push_output(80, 24, 1, b"replay-before-attach");
-        host.sessions.lock().expect("lock sessions").insert(
-            session_id.to_string(),
-            test_session(session_id, buffer, 2),
-        );
+        host.sessions
+            .lock()
+            .expect("lock sessions")
+            .insert(session_id.to_string(), test_session(session_id, buffer, 2));
         host.clients.lock().expect("lock clients").insert(
             client_id,
             ClientHandle {
@@ -2126,10 +2130,10 @@ mod tests {
         let client_id = 9;
         let mut buffer = SessionBuffer::new();
         buffer.push_output(80, 24, 1, b"replay");
-        host.sessions.lock().unwrap().insert(
-            session_id.to_string(),
-            test_session(session_id, buffer, 2),
-        );
+        host.sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), test_session(session_id, buffer, 2));
         let writer = ClientWriter::new(ClientTransport::Ndjson(Mutex::new(server_stream)));
         host.clients.lock().unwrap().insert(
             client_id,

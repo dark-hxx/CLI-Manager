@@ -1,5 +1,27 @@
 # Changelog
 
+## [TEMP]
+
+### 新增
+- 新增独立 `apps/web` React/Vite 工程，与 Tauri 桌面入口隔离；首批实现响应式工作台、浅色/深色/跟随系统主题、中英文切换、浏览器草稿和明确标识的演示数据，并提供根级 Web 开发、类型检查和构建脚本。
+- Web P0-S2 新增独立 Rust 模块化单体服务与共享协议包：支持 Argon2 本地单用户登录、HttpOnly 严格同站会话、短期单次设备配对、设备/浏览器双 WebSocket、事件游标补传、服务端历史快照、幂等对话操作和桌面最终回执状态机；离线设备禁止新建操作，服务重启后设备状态统一回落为离线。
+- Web 工作台接入真实认证、设备、历史和操作 API，支持会话过期、设备配对 Drawer、按用户隔离的 WebSocket 游标、断线重连、结构化 Prompt/Operation 时间线及按设备/项目/会话保存草稿；新增 `web:server:check`、`web:server:test`、`web:server:run` 根级脚本。
+- Tauri 桌面端新增 Rust 托管的 `/ws/device` 设备适配器：支持稳定设备身份、系统凭据存储、配对、心跳、自动重连、历史快照和有界 operation 队列；远程地址强制 `wss://`。Web 新建/继续对话显式携带项目上下文，桌面校验历史会话、项目/Worktree、CLI 来源、Hook、会话 ID 与原生/WSL 路径边界后启动 Claude/Codex，并以 `SessionStart`、`Stop`、`StopFailure` Hook 驱动 Prompt 提交和最终回执；SSH 继续排除。
+
+### 设计
+- 新增 CLI-Manager Web UI/UX 首版设计文档，明确结构化对话工作台、项目/文件/Git、历史 Replay、分析、设备与设置的信息架构、视觉规范、响应式规则、状态设计和验收标准。
+- 新增 Web 桌面主工作台、桌面分析看板和移动端对话三张 SVG 设计稿；本阶段仅交付设计资源，不修改产品代码或运行行为。
+- 使用 `gpt-image-2` 补充桌面主工作台、桌面分析看板和移动端对话三张高保真 PNG 原型图，并在设计文档中关联 SVG 与高保真版本。
+- 完成 CLI-Manager Web 全功能 UI 设计基线：新增 13 份专题文档，覆盖桌面数据上报、登录配对、结构化对话、项目/Worktree、文件/Git、历史/Replay、分析、设备、供应商/Hook、备份、设置、安全、响应式和状态验收。
+- 使用 `gpt-image-2` 新增 29 张完整高保真原型，覆盖全局框架、桌面/平板/移动端、登录授权、对话关键状态及所有主要管理页面；不修改产品代码和运行行为。
+- Web 后端架构确定为 Rust 模块化单体 + SQLite3：API、WebSocket 网关、业务、缓存和任务在同一进程分模块实现；SQLite3 使用 WAL、外键、busy timeout 和统一短事务写入，首版不依赖 Redis。
+- 调研 LiveAgent Gateway WebUI 与 Orca Mobile：移动端采用响应式 Web/PWA，吸收对话优先、覆盖式侧栏、按需工具 Dock、缓存快照、深链接、Bottom Sheet、安全区和版本阻断等设计，不引入独立原生 App。
+- 双主题设计补充两张已确认的浅色主页面原型（桌面和移动端），并固化其布局、颜色、卡片和输入区规范；其余浅色页面的 `gpt-image-2` 生成提示词已归档。
+- 使用 `gpt-image-2` 完成深色 29 张与浅色 29 张 Web 高保真原型，并新增四张联系表总览，覆盖设计文档中的全部页面和关键状态。
+
+### 修复
+- 内置终端文件地址识别兼容 `/D:/path/to/file` 格式，点击时会按 Windows 绝对路径 `D:/path/to/file` 打开。
+
 ## [V1.2.9] - 2026-07-18
 
 ### 新增
