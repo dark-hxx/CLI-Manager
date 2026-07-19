@@ -87,6 +87,7 @@ export function App() {
       onSend={() => void model.sendPrompt()}
       onClaimPairing={model.claimPairing}
       onResetPairing={() => model.setPairing({ status: "idle" })}
+      onSubmitManagement={model.submitManagementOperation}
     />
   );
 }

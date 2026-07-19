@@ -16,6 +16,79 @@ use cli_manager_web_protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+const MAX_OPERATION_PAYLOAD_BYTES: usize = 256 * 1024;
+const ENABLED_OPERATION_KINDS: &[&str] = &[
+    "conversation.start",
+    "conversation.prompt",
+    "ssh.hosts.list",
+    "ssh.client_status",
+    "ssh.test_connection",
+    "ssh.check_path",
+    "ssh.list_directories",
+    "ssh.host.create",
+    "ssh.host.update",
+    "ssh.host.delete",
+    "file.list",
+    "file.search",
+    "file.search_content",
+    "file.create",
+    "file.create_directory",
+    "file.rename",
+    "file.copy",
+    "file.move",
+    "file.delete",
+    "git.status",
+    "git.branches",
+    "git.fetch",
+    "git.checkout",
+    "git.create_branch",
+    "git.stage",
+    "git.unstage",
+    "git.commit",
+    "git.pull",
+    "git.push",
+    "git.discard",
+    "git.delete_untracked",
+    "worktree.list",
+    "worktree.create",
+    "worktree.check_deps",
+    "worktree.merge",
+    "worktree.remove",
+    "hook.status",
+    "hook.install",
+    "hook.repair",
+    "hook.test",
+    "hook.uninstall",
+];
+
+const CONFIRMED_OPERATION_KINDS: &[&str] = &[
+    "ssh.host.create",
+    "ssh.host.update",
+    "ssh.host.delete",
+    "file.create",
+    "file.create_directory",
+    "file.rename",
+    "file.copy",
+    "file.move",
+    "file.delete",
+    "git.fetch",
+    "git.checkout",
+    "git.create_branch",
+    "git.stage",
+    "git.unstage",
+    "git.commit",
+    "git.pull",
+    "git.push",
+    "git.discard",
+    "git.delete_untracked",
+    "worktree.create",
+    "worktree.merge",
+    "worktree.remove",
+    "hook.install",
+    "hook.repair",
+    "hook.uninstall",
+];
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
@@ -286,7 +359,7 @@ pub async fn create_operation(
 ) -> Result<(StatusCode, Json<OperationResponse>), AppError> {
     let user = require_user(&state, &headers).await?;
     validate_operation_request(&request)?;
-    state
+    let device = state
         .storage
         .device_for_user(&user.id, &request.device_id)
         .await?
@@ -303,6 +376,17 @@ pub async fn create_operation(
             ));
         }
         return Ok((StatusCode::OK, Json(OperationResponse { operation })));
+    }
+    let required_capability = operation_capability(&request.kind);
+    if !device
+        .capabilities
+        .iter()
+        .any(|capability| capability == required_capability)
+    {
+        return Err(AppError::conflict(
+            "device_capability_unavailable",
+            "the selected device does not support this operation",
+        ));
     }
     if !state.registry.is_device_online(&request.device_id).await {
         return Err(AppError::conflict("device_offline", "device is offline"));
@@ -389,10 +473,7 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "invalid operation kind",
         ));
     }
-    if !matches!(
-        request.kind.as_str(),
-        "conversation.start" | "conversation.prompt"
-    ) {
+    if !ENABLED_OPERATION_KINDS.contains(&request.kind.as_str()) {
         return Err(AppError::bad_request(
             "unsupported_operation_kind",
             "operation kind is not enabled for this Web release",
@@ -404,8 +485,22 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "invalid idempotencyKey",
         ));
     }
-    if request
-        .payload
+    let Some(payload) = request.payload.as_object() else {
+        return Err(AppError::bad_request(
+            "invalid_operation_payload",
+            "operation payload must be an object",
+        ));
+    };
+    if serde_json::to_vec(&request.payload)?.len() > MAX_OPERATION_PAYLOAD_BYTES {
+        return Err(AppError::bad_request(
+            "operation_payload_too_large",
+            "operation payload is too large",
+        ));
+    }
+    if matches!(
+        request.kind.as_str(),
+        "conversation.start" | "conversation.prompt"
+    ) && payload
         .get("prompt")
         .and_then(Value::as_str)
         .is_none_or(|prompt| prompt.trim().is_empty())
@@ -415,7 +510,40 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "payload.prompt must be a non-empty string",
         ));
     }
+    if operation_requires_confirmation(&request.kind)
+        && payload.get("confirmed").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(AppError::bad_request(
+            "operation_confirmation_required",
+            "this operation requires explicit confirmation",
+        ));
+    }
+    if request.kind == "ssh.test_connection"
+        && payload.get("acceptNewHostKey").and_then(Value::as_bool) == Some(true)
+        && payload.get("confirmed").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(AppError::bad_request(
+            "operation_confirmation_required",
+            "accepting a new SSH host key requires explicit confirmation",
+        ));
+    }
     Ok(())
+}
+
+fn operation_capability(kind: &str) -> &'static str {
+    match kind.split_once('.').map(|(prefix, _)| prefix) {
+        Some("conversation") => "conversation",
+        Some("ssh") => "ssh.management",
+        Some("file") => "file.management",
+        Some("git") => "git.management",
+        Some("worktree") => "worktree.management",
+        Some("hook") => "hook.management",
+        _ => "unsupported",
+    }
+}
+
+fn operation_requires_confirmation(kind: &str) -> bool {
+    CONFIRMED_OPERATION_KINDS.contains(&kind)
 }
 
 fn operation_matches_request(operation: &OperationView, request: &CreateOperationRequest) -> bool {
@@ -440,7 +568,7 @@ mod tests {
     #[test]
     fn operation_validation_rejects_unsupported_kinds() {
         let error = validate_operation_request(&request(
-            "file.write",
+            "shell.execute",
             serde_json::json!({ "prompt": "hello" }),
         ));
         assert!(error.is_err());
@@ -453,5 +581,43 @@ mod tests {
             serde_json::json!({ "prompt": "  " }),
         ));
         assert!(error.is_err());
+    }
+
+    #[test]
+    fn management_operation_requires_explicit_confirmation() {
+        assert!(validate_operation_request(&request(
+            "file.delete",
+            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo", "path": "a.txt" }),
+        ))
+        .is_err());
+        assert!(validate_operation_request(&request(
+            "file.delete",
+            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo", "path": "a.txt", "confirmed": true }),
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn management_read_operation_does_not_require_confirmation() {
+        assert!(validate_operation_request(&request(
+            "git.status",
+            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo" }),
+        ))
+        .is_ok());
+        assert_eq!(operation_capability("hook.status"), "hook.management");
+    }
+
+    #[test]
+    fn git_fetch_requires_explicit_confirmation() {
+        assert!(validate_operation_request(&request(
+            "git.fetch",
+            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo" }),
+        ))
+        .is_err());
+        assert!(validate_operation_request(&request(
+            "git.fetch",
+            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo", "confirmed": true }),
+        ))
+        .is_ok());
     }
 }

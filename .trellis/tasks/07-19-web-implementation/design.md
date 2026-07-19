@@ -35,6 +35,17 @@
 - 新会话复用项目启动命令；继续会话复用现有 Claude/Codex resume 命令与 provider override。
 - 设备连接可在窗口不可见时持续；operation 在 Rust 内排队，WebView 恢复后再领取，避免事件丢失。
 
+## P0-S4 Management Boundary
+
+- 继续复用 `/api/operations`、设备 WebSocket 和现有状态机，不增加第二套 RPC。
+- `apps/server` 只校验 kind、payload 大小、确认标记、设备在线状态与 capability；业务路径和本机资源由桌面解析。
+- 桌面 bridge 将 operation 分派到现有 SSH、文件、Git、Worktree 与 Hook command/store，结果保持结构化。
+- Web 使用统一管理面板提交 operation 并展示 operationId、状态、结果和错误；不拼接 shell 命令。
+- SSH Host 返回脱敏摘要；密码、私钥路径、凭据引用与原始 ProxyCommand 不离开桌面。
+- 危险管理操作在 Web 确认后仍必须由桌面原生 Dialog 批准；远端 payload 布尔值不是授权边界。
+- 桌面 operation 保留到服务端 `OperationAck`，队列溢出时先消费 ACK，容量恢复后重连补取延迟操作。
+- Web result 使用专用脱敏 DTO，不返回本机 Worktree/Hook 路径或 OpenSSH 原始诊断输出。
+
 ## Deferred Architecture
 
 - 细粒度用户/设备/项目授权与撤销页面。
@@ -43,4 +54,4 @@
 
 ## Excluded
 
-- SSH 全部能力。
+- SSH 密码/私钥管理与 Web PTY。

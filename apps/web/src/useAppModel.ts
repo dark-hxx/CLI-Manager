@@ -17,6 +17,18 @@ const DRAFT_PREFIX = "cli-manager.web.draft";
 
 type AuthPhase = "checking" | "login" | "authenticated" | "expired" | "error";
 
+const OPERATION_STATUS_RANK: Record<Operation["status"], number> = {
+  submitted: 0,
+  waiting_device: 1,
+  accepted: 2,
+  running: 3,
+  succeeded: 4,
+  failed: 4,
+  rejected: 4,
+  timed_out: 4,
+  canceled: 4,
+};
+
 function serverTime(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const parsed = typeof value === "number" ? value : Date.parse(value);
@@ -44,6 +56,16 @@ function upsertOperation(items: TimelineItem[], operation: Operation): TimelineI
   const index = items.findIndex((item) => item.type === "operation" && item.operation.id === operation.id);
   const next: TimelineItem = { id: operation.id, type: "operation", operation };
   if (index < 0) return [...items, next];
+  const currentItem = items[index]!;
+  if (currentItem.type !== "operation") return items;
+  const currentUpdatedAt = serverTime(currentItem.operation.updatedAt);
+  const nextUpdatedAt = serverTime(operation.updatedAt);
+  if (currentUpdatedAt !== null && nextUpdatedAt === null) return items;
+  if (currentUpdatedAt !== null && nextUpdatedAt !== null) {
+    if (nextUpdatedAt < currentUpdatedAt) return items;
+    if (nextUpdatedAt > currentUpdatedAt) return items.map((item, itemIndex) => itemIndex === index ? next : item);
+  }
+  if (OPERATION_STATUS_RANK[operation.status] < OPERATION_STATUS_RANK[currentItem.operation.status]) return items;
   return items.map((item, itemIndex) => itemIndex === index ? next : item);
 }
 
@@ -314,12 +336,35 @@ export function useAppModel() {
     }
   };
 
+  const submitManagementOperation = async (kind: string, payload: JsonObject): Promise<Operation> => {
+    if (!selectedDevice || selectedDevice.status !== "online") {
+      throw new ApiError("device_offline", "device is offline", 409);
+    }
+    const idempotencyKey = crypto.randomUUID();
+    const contextualPayload: JsonObject = { ...payload };
+    if (!kind.startsWith("ssh.") && !kind.startsWith("hook.")) {
+      if (!selectedProjectContext) {
+        throw new ApiError("project_context_required", "project context is required", 400);
+      }
+      contextualPayload.projectKey = selectedProjectContext.projectKey;
+      contextualPayload.cwd = selectedProjectContext.cwd;
+    }
+    const result = await webClient.createOperation({
+      deviceId: selectedDevice.id,
+      kind,
+      idempotencyKey,
+      payload: contextualPayload,
+    });
+    setTimeline((current) => upsertOperation(current, result.operation));
+    return result.operation;
+  };
+
   return {
     authPhase, user, loadState, error, devices, selectedDevice, history, selectedSession,
     projectContexts, selectedProjectContext,
     timeline, pairing, socketState, draft, composerMessage,
     latestSyncAt: serverTime(selectedDevice?.lastSeenAt),
     checkAuth, login, logout, loadWorkspace, claimPairing, setPairing,
-    selectDevice, selectSession, selectProjectContext, setDraft, sendPrompt,
+    selectDevice, selectSession, selectProjectContext, setDraft, sendPrompt, submitManagementOperation,
   };
 }

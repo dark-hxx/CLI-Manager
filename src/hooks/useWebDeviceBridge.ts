@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { confirm as confirmNative } from "@tauri-apps/plugin-dialog";
 import { useHistoryStore } from "../stores/historyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -11,7 +12,14 @@ import { findProjectByPath, findWorktreeByPath, normalizeProjectPath, projectWit
 import { appendResumeCliArgs, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { getProviderSwitchAppType } from "../lib/providerSwitching";
 import { logWarn } from "../lib/logger";
+import { translateCurrent } from "../lib/i18n";
 import { webDeviceApi, type WebDeviceOperation, type WebHistorySessionSummary } from "../lib/webDevice";
+import {
+  executeWebManagementOperation,
+  isWebManagementOperation,
+  validateWebManagementOperation,
+  webManagementOperationNeedsConfirmation,
+} from "../lib/webManagement";
 
 const OPERATION_EVENT = "web-device-operation-ready";
 const OPERATION_POLL_MS = 1_000;
@@ -19,6 +27,7 @@ const HISTORY_PUBLISH_MS = 60_000;
 const CLI_START_TIMEOUT_MS = 60_000;
 const OPERATION_TIMEOUT_MS = 30 * 60_000;
 const MAX_PROMPT_LENGTH = 64 * 1024;
+const OPERATION_FRAME_RETRY_MS = 1_000;
 
 type CliSource = "claude" | "codex";
 
@@ -46,6 +55,19 @@ let drainingOperations = false;
 
 function operationError(code: string, message: string) {
   return { code, message };
+}
+
+function operationApprovalTarget(operation: WebDeviceOperation): string {
+  if (!operation.payload || typeof operation.payload !== "object" || Array.isArray(operation.payload)) return "-";
+  const payload = operation.payload as Record<string, unknown>;
+  const keys = ["projectKey", "cwd", "hostId", "path", "sourcePath", "targetParentPath", "branch", "worktreeId", "target", "name"];
+  const details = keys.flatMap((key) => {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) return [`${key}: ${value.trim()}`];
+    if (Array.isArray(value) && value.length > 0) return [`${key}: ${value.map(String).join(", ")}`];
+    return [];
+  });
+  return details.join("\n") || "-";
 }
 
 function parsePayload(operation: WebDeviceOperation): OperationPayload {
@@ -96,29 +118,92 @@ async function finishOperation(
 ) {
   clearTimeout(active.startupTimer);
   clearTimeout(active.completionTimer);
+  await reportCompletion(active.operationId, status, result, error);
   activeByTab.delete(active.tabId);
   activeOperationIds.delete(active.operationId);
-  await webDeviceApi.completed(active.operationId, status, result, error).catch((caught) => {
-    logWarn("Failed to complete Web device operation", { operationId: active.operationId, caught });
-  });
 }
 
 async function rejectBeforeExecution(operationId: string, code: string, message: string) {
+  await reportCompletion(operationId, "rejected", null, operationError(code, message));
   activeOperationIds.delete(operationId);
-  await webDeviceApi.accepted(operationId).catch(() => undefined);
-  await webDeviceApi.running(operationId).catch(() => undefined);
-  await webDeviceApi.completed(operationId, "rejected", null, operationError(code, message)).catch((caught) => {
-    logWarn("Failed to reject Web device operation", { operationId, caught });
-  });
+}
+
+function waitForOperationFrameRetry() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, OPERATION_FRAME_RETRY_MS));
+}
+
+async function reportCompletion(
+  operationId: string,
+  status: "succeeded" | "failed" | "rejected" | "timed_out",
+  result: unknown,
+  error: { code: string; message: string } | null,
+) {
+  for (;;) {
+    try {
+      await webDeviceApi.completed(operationId, status, result, error);
+      return;
+    } catch (caught) {
+      logWarn("Failed to complete Web device operation; retrying", { operationId, caught });
+      await waitForOperationFrameRetry();
+    }
+  }
+}
+
+function isManagementRejection(code: string) {
+  return code.startsWith("invalid_")
+    || code.endsWith("_required")
+    || code.endsWith("_forbidden")
+    || code.endsWith("_not_found")
+    || code.endsWith("_unsupported")
+    || code === "path_outside_root"
+    || code === "target_exists"
+    || code === "worktree_missing"
+    || code === "history_context_not_found";
 }
 
 async function executeOperation(operation: WebDeviceOperation) {
   if (activeOperationIds.has(operation.id)) return;
+  if (["succeeded", "failed", "rejected", "timed_out", "canceled"].includes(operation.status)) return;
   activeOperationIds.add(operation.id);
 
   let payload: OperationPayload;
   let executionStarted = false;
+  const managementOperation = isWebManagementOperation(operation.kind);
   try {
+    if (operation.status === "accepted" || operation.status === "running") {
+      if (operation.status === "accepted") await webDeviceApi.running(operation.id);
+      await reportCompletion(
+        operation.id,
+        "failed",
+        null,
+        operationError("operation_interrupted", "desktop execution was interrupted before completion"),
+      );
+      activeOperationIds.delete(operation.id);
+      return;
+    }
+    if (managementOperation) {
+      await validateWebManagementOperation(operation);
+      if (webManagementOperationNeedsConfirmation(operation)) {
+        const confirmed = await confirmNative(
+          translateCurrent("settings.webDevice.operationApproval.message", {
+            kind: operation.kind,
+            target: operationApprovalTarget(operation),
+          }),
+          {
+            title: translateCurrent("settings.webDevice.operationApproval.title"),
+            kind: "warning",
+          },
+        );
+        if (!confirmed) throw operationError("operation_rejected_by_user", "desktop user rejected the operation");
+      }
+      await webDeviceApi.accepted(operation.id);
+      await webDeviceApi.running(operation.id);
+      executionStarted = true;
+      const result = await executeWebManagementOperation(operation, true);
+      await reportCompletion(operation.id, "succeeded", result, null);
+      activeOperationIds.delete(operation.id);
+      return;
+    }
     if (operation.kind !== "conversation.start" && operation.kind !== "conversation.prompt") {
       throw operationError("unsupported_operation_kind", `unsupported operation kind: ${operation.kind}`);
     }
@@ -193,10 +278,9 @@ async function executeOperation(operation: WebDeviceOperation) {
       ? caught as { code: string; message: string }
       : operationError("operation_failed", String(caught));
     if (executionStarted) {
+      const status = managementOperation && isManagementRejection(error.code) ? "rejected" : "failed";
+      await reportCompletion(operation.id, status, null, error);
       activeOperationIds.delete(operation.id);
-      await webDeviceApi.completed(operation.id, "failed", null, error).catch((completionError) => {
-        logWarn("Failed to report Web device execution failure", { operationId: operation.id, completionError });
-      });
     } else {
       await rejectBeforeExecution(operation.id, error.code, error.message);
     }
@@ -208,7 +292,7 @@ async function drainOperations() {
   drainingOperations = true;
   try {
     const operations = await webDeviceApi.takeOperations();
-    for (const operation of operations) void executeOperation(operation);
+    for (const operation of operations) await executeOperation(operation);
   } catch (caught) {
     logWarn("Failed to drain Web device operations", caught);
   } finally {

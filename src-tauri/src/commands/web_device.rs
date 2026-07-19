@@ -119,12 +119,24 @@ struct OperationQueue {
     pending: VecDeque<OperationView>,
     seen: HashSet<String>,
     seen_order: VecDeque<String>,
+    overflowed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperationPushResult {
+    Inserted,
+    Duplicate,
+    Full,
 }
 
 impl OperationQueue {
-    fn push(&mut self, operation: OperationView) -> bool {
-        if self.seen.contains(&operation.id) || self.pending.len() >= MAX_OPERATIONS {
-            return false;
+    fn push(&mut self, operation: OperationView) -> OperationPushResult {
+        if self.seen.contains(&operation.id) {
+            return OperationPushResult::Duplicate;
+        }
+        if self.pending.len() >= MAX_OPERATIONS {
+            self.overflowed = true;
+            return OperationPushResult::Full;
         }
         self.seen.insert(operation.id.clone());
         self.seen_order.push_back(operation.id.clone());
@@ -134,16 +146,31 @@ impl OperationQueue {
             }
         }
         self.pending.push_back(operation);
-        true
+        OperationPushResult::Inserted
     }
 
     fn snapshot(&self) -> Vec<OperationView> {
         self.pending.iter().cloned().collect()
     }
 
-    fn acknowledge(&mut self, operation_id: &str) {
+    fn acknowledge(&mut self, operation_id: &str) -> bool {
         self.pending
             .retain(|operation| operation.id != operation_id);
+        if self.overflowed && self.pending.len() < MAX_OPERATIONS {
+            self.overflowed = false;
+            return true;
+        }
+        false
+    }
+
+    fn mark_status(&mut self, operation_id: &str, status: OperationStatus) {
+        if let Some(operation) = self
+            .pending
+            .iter_mut()
+            .find(|operation| operation.id == operation_id)
+        {
+            operation.status = status;
+        }
     }
 }
 
@@ -297,7 +324,7 @@ impl WebDeviceManager {
                 name: profile.name.clone(),
                 platform: env::consts::OS.to_string(),
                 app_version: env!("CARGO_PKG_VERSION").to_string(),
-                capabilities: profile.capabilities.clone(),
+                capabilities: default_capabilities(),
             },
         )?;
         if let Ok(mut runtime) = self.runtime.lock() {
@@ -393,14 +420,41 @@ impl WebDeviceManager {
                 if operation.device_id != profile.device_id {
                     return Err("operation device id does not match profile".to_string());
                 }
-                let inserted = self
+                let push_result = self
                     .operations
                     .lock()
                     .map_err(|_| "web device operation lock poisoned")?
                     .push(operation);
-                if inserted {
-                    let _ = app.emit(OPERATION_EVENT, ());
-                    self.emit_status(app);
+                match push_result {
+                    OperationPushResult::Inserted => {
+                        let _ = app.emit(OPERATION_EVENT, ());
+                        self.emit_status(app);
+                    }
+                    OperationPushResult::Duplicate => {}
+                    OperationPushResult::Full => {}
+                }
+            }
+            ServerToDeviceFrame::OperationAck {
+                operation_id,
+                status,
+            } => {
+                let mut operations = self
+                    .operations
+                    .lock()
+                    .map_err(|_| "web device operation lock poisoned")?;
+                let reconnect_for_deferred = if status.is_terminal() {
+                    operations.acknowledge(&operation_id)
+                } else {
+                    operations.mark_status(&operation_id, status);
+                    false
+                };
+                drop(operations);
+                self.emit_status(app);
+                if reconnect_for_deferred {
+                    return Err(
+                        "web device operation capacity recovered; reconnecting for deferred operations"
+                            .to_string(),
+                    );
                 }
             }
             ServerToDeviceFrame::Ack { .. } => {}
@@ -436,8 +490,14 @@ fn set_read_timeout(socket: &mut DeviceSocket) -> Result<(), String> {
 fn default_capabilities() -> Vec<String> {
     vec![
         "history.snapshot".to_string(),
+        "conversation".to_string(),
         "conversation.start".to_string(),
         "conversation.prompt".to_string(),
+        "ssh.management".to_string(),
+        "file.management".to_string(),
+        "git.management".to_string(),
+        "worktree.management".to_string(),
+        "hook.management".to_string(),
     ]
 }
 
@@ -802,23 +862,32 @@ pub fn web_device_operation_accepted(
         .operations
         .lock()
         .map_err(|_| "web device operation lock poisoned")?
-        .acknowledge(&request.operation_id);
+        .mark_status(&request.operation_id, OperationStatus::Accepted);
     manager.emit_status(&app);
     Ok(())
 }
 
 #[tauri::command]
 pub fn web_device_operation_running(
+    app: AppHandle,
     manager: State<'_, WebDeviceManager>,
     request: OperationIdRequest,
 ) -> Result<(), String> {
     manager.queue(DeviceToServerFrame::OperationRunning {
-        operation_id: request.operation_id,
-    })
+        operation_id: request.operation_id.clone(),
+    })?;
+    manager
+        .operations
+        .lock()
+        .map_err(|_| "web device operation lock poisoned")?
+        .mark_status(&request.operation_id, OperationStatus::Running);
+    manager.emit_status(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn web_device_operation_completed(
+    app: AppHandle,
     manager: State<'_, WebDeviceManager>,
     request: OperationCompletedRequest,
 ) -> Result<(), String> {
@@ -826,11 +895,18 @@ pub fn web_device_operation_completed(
         return Err("operation completed status must be terminal".to_string());
     }
     manager.queue(DeviceToServerFrame::OperationCompleted {
-        operation_id: request.operation_id,
-        status: request.status,
+        operation_id: request.operation_id.clone(),
+        status: request.status.clone(),
         result: request.result,
         error: request.error,
-    })
+    })?;
+    manager
+        .operations
+        .lock()
+        .map_err(|_| "web device operation lock poisoned")?
+        .mark_status(&request.operation_id, request.status);
+    manager.emit_status(&app);
+    Ok(())
 }
 
 pub fn auto_start(app: &AppHandle) -> Result<(), String> {
@@ -932,15 +1008,27 @@ mod tests {
             updated_at: 1,
         };
         let mut queue = OperationQueue::default();
-        assert!(queue.push(operation("same".to_string())));
-        assert!(!queue.push(operation("same".to_string())));
+        assert_eq!(
+            queue.push(operation("same".to_string())),
+            OperationPushResult::Inserted
+        );
+        assert_eq!(
+            queue.push(operation("same".to_string())),
+            OperationPushResult::Duplicate
+        );
         for index in 1..MAX_OPERATIONS {
-            assert!(queue.push(operation(format!("operation-{index}"))));
+            assert_eq!(
+                queue.push(operation(format!("operation-{index}"))),
+                OperationPushResult::Inserted
+            );
         }
-        assert!(!queue.push(operation("overflow".to_string())));
+        assert_eq!(
+            queue.push(operation("overflow".to_string())),
+            OperationPushResult::Full
+        );
         assert_eq!(queue.snapshot().len(), MAX_OPERATIONS);
         assert_eq!(queue.snapshot().len(), MAX_OPERATIONS);
-        queue.acknowledge("same");
+        assert!(queue.acknowledge("same"));
         assert_eq!(queue.snapshot().len(), MAX_OPERATIONS - 1);
     }
 

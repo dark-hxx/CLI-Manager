@@ -14,3 +14,8 @@
 12. Web 工作台新增显式项目上下文并补齐 operation payload。
 13. 在现有“远程连接”设置页增加 Web 设备配置与配对状态，保持中英文兼容。
 14. 运行 Rust/TypeScript 定向检查、协议测试与 GitNexus 变更检测。
+15. 扩展 operation kind、设备 capability 和服务端确认校验，覆盖 SSH/文件/Git/Worktree/Hook。
+16. 桌面 bridge 复用现有 command/store 执行五类管理 operation，并对路径、项目和敏感字段做二次校验。
+17. Web 增加统一管理面板、中英文文案、危险操作确认和结构化结果展示。
+18. 更新 Web service contract、功能清单与 `[TEMP]` Changelog，完成定向验证后提交。
+19. 补齐桌面原生危险操作确认、operation ACK/中断恢复、队列溢出恢复和 Web 结果脱敏。

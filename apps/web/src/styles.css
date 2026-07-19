@@ -66,6 +66,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid color-mix(in s
 .mobile-header strong { font-size: 18px; }
 .mobile-header span:not(.status-dot) { color: var(--muted); font-size: 13px; }
 .mobile-header > .status-dot { justify-self: end; }
+.mobile-device-line { display: inline-flex; align-items: center; gap: 7px; }
 
 .workspace-content { width: min(860px, 100%); margin: 0 auto; padding: 18px 18px 16px; }
 .source-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; color: var(--muted); background: var(--surface-raised); font-size: 12px; }
@@ -221,6 +222,21 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid color-mix(in s
 .pairing-result { display: grid; justify-items: center; gap: 8px; padding: 30px 0; text-align: center; }
 .pairing-result svg { color: var(--success); }
 
+.drawer:has(.management-panel) { width: min(780px, 100%); }
+.management-panel { display: grid; gap: 18px; }
+.management-tabs, .management-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.management-tabs button { min-height: 44px; padding: 0 13px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: var(--surface-raised); cursor: pointer; }
+.management-tabs button.active { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+.management-tabs button:disabled { cursor: wait; opacity: .65; }
+.management-form { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
+.management-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.management-grid label, .management-form > label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.management-grid input, .management-form select { min-width: 0; min-height: 42px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 9px; color: var(--text); background: var(--surface); }
+.management-grid .checkbox-row { display: flex; align-items: center; color: var(--text); }
+.management-result { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px; }
+.management-result h3 { margin: 0 0 12px; }
+.management-result pre { max-height: 320px; overflow: auto; margin: 12px 0 0; padding: 12px; border-radius: 9px; background: var(--surface-raised); color: var(--text); font: 12px/1.55 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 @media (min-width: 768px) {
   .app-shell { display: grid; grid-template-columns: 84px minmax(0, 1fr); }
   .sidebar { display: flex; min-height: 100dvh; flex-direction: column; }
@@ -276,6 +292,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid color-mix(in s
   .source-banner time { margin-left: 0; }
   .tool-button.text-tool span { display: none; }
   .approval-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .management-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,4 +1,4 @@
-# Web 端工程实施（暂不含 SSH）
+# Web 端工程实施
 
 ## Goal
 
@@ -16,7 +16,7 @@
 - 用户可见文案同时支持 `zh-CN` 与 `en-US`，时间保持 24 小时制。
 - 数据使用显式 Mock/缓存快照，不伪装为真实桌面回执或业务事实。
 - 后续 Rust Web 服务保持模块化单体、SQLite3 单实例，不提前引入 Redis。
-- 所有 SSH 主机、远程路径、连接、密钥和 SSH Dock 功能均排除在当前实施范围外。
+- SSH、文件、Git、Worktree 与 Hook 能力统一通过桌面 operation 执行，Web 服务不直接访问本机资源。
 
 ## Acceptance Criteria
 
@@ -27,7 +27,8 @@
 - [ ] 离线/缓存/同步状态有文字标识，Mock 数据不会显示为桌面确认成功。
 - [ ] 新增文案在中英文下均可显示，图标按钮具备可访问名称。
 - [ ] TypeScript 类型检查和 Web 生产构建通过。
-- [ ] Web 工程中不存在 SSH 页面、路由、状态、协议字段或操作入口。
+- [x] SSH、文件、Git、Worktree 与 Hook 管理入口仅在设备在线且声明对应 capability 时可执行。
+- [x] 高风险写操作必须经过 Web 目标确认和桌面原生确认，桌面再次校验项目、路径、Worktree、Git 与 Hook 边界。
 
 ## Definition of Done
 
@@ -46,10 +47,10 @@
 
 ## Out of Scope
 
-- SSH 主机管理、SSH 项目、SSH 连接状态、SSH Dock 和私钥处理。
+- SSH 私钥、密码、凭据写入和浏览器终端流。
 - 浏览器 PTY/xterm。
 - 多用户、组织身份、细粒度授权管理、设备撤销和浏览器会话管理页面。
-- 文件、Git、Worktree、Hook、供应商、备份等高风险 Web 写操作。
+- 供应商、备份与状态栏设计器等本轮未授权能力。
 - 为共享而重构现有桌面前端。
 - Redis、多实例和微服务拆分。
 
@@ -80,6 +81,23 @@
 - [ ] Hook 缺失、项目/Worktree 不存在、CLI 不匹配或 SSH 项目会返回结构化失败，不执行任意命令。
 - [ ] 窗口隐藏或最小化时 Rust 连接保持；前端恢复后可继续消费待处理 operation。
 - [ ] Rust/TypeScript 检查和相关测试通过。
+
+## P0-S4 Management Operations
+
+- 统一扩展 operation kind，覆盖 SSH 主机查询/检测、项目文件管理、Git、Worktree 与 Hook 安装/修复/测试/卸载。
+- 浏览器只提交结构化参数；桌面根据本地项目、Worktree、SSH Host 和 Hook 配置解析可信路径与凭据引用。
+- 文件、Git、Worktree、SSH 主机和 Hook 等写操作要求浏览器先确认，并在桌面端再次弹出不可由远端伪造的原生确认；`confirmed=true` 只表示浏览器意图。
+- SSH 密码、私钥、credentialRef、identityFile、proxyCommand 和完整环境变量不得进入 Web payload、result、日志或缓存。
+- 设备 capability 决定可用入口；离线、缓存过期或版本不兼容时仅保留只读展示。
+
+### P0-S4 Acceptance
+
+- [x] Web 可查询 SSH 主机摘要、检测客户端/连接/远程路径，不回传本机密钥与凭据字段。
+- [x] Web 可列目录、搜索、创建、重命名、复制、移动和删除项目内文件，所有路径由桌面 canonicalize。
+- [x] Web 可读取 Git 状态/分支并执行 Fetch、Checkout、建分支、暂存、提交、Pull、Push、丢弃和未跟踪文件删除。
+- [x] Web 可列出、创建、检查依赖、合并和删除 Worktree，危险生命周期操作必须确认。
+- [x] Web 可检测、安装、修复、测试和卸载 Claude/Codex Hook，配置目录只由桌面设置解析。
+- [x] Rust/TypeScript 定向检查与 operation 契约测试通过。
 
 ## Technical Notes
 

@@ -196,6 +196,10 @@ pub enum ServerToDeviceFrame {
     OperationRequest {
         operation: OperationView,
     },
+    OperationAck {
+        operation_id: String,
+        status: OperationStatus,
+    },
     Ack {
         sequence: u64,
     },
@@ -264,6 +268,19 @@ mod tests {
         assert_eq!(
             value,
             serde_json::json!({ "type": "heartbeat", "sequence": 7 })
+        );
+        let ack = serde_json::to_value(ServerToDeviceFrame::OperationAck {
+            operation_id: "operation-1".to_string(),
+            status: OperationStatus::Succeeded,
+        })
+        .unwrap();
+        assert_eq!(
+            ack,
+            serde_json::json!({
+                "type": "operation_ack",
+                "operationId": "operation-1",
+                "status": "succeeded"
+            })
         );
     }
 

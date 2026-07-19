@@ -27,8 +27,9 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
-import type { Device, HistorySessionSummary, OperationStatus, PairingState, ProjectContext, TimelineItem } from "./domain";
+import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TimelineItem } from "./domain";
 import type { TranslationKey } from "./i18n";
+import { isManagementOperation, ManagementPanel } from "./ManagementPanel";
 
 type T = (key: TranslationKey) => string;
 
@@ -105,12 +106,14 @@ type WorkbenchProps = {
   onSend: () => void;
   onClaimPairing: (code: string) => Promise<void>;
   onResetPairing: () => void;
+  onSubmitManagement: (kind: string, payload: JsonObject) => Promise<Operation>;
 };
 
 export function Workbench(props: WorkbenchProps) {
   const { t, selectedDevice, selectedSession, selectedProjectContext } = props;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
+  const [managementOpen, setManagementOpen] = useState(false);
   const canSend = Boolean(props.draft.trim() && selectedDevice?.status === "online" && selectedProjectContext);
   const selectedFreshness = selectedSession?.freshness ?? selectedProjectContext?.freshness ?? "stale";
   const syncText = props.latestSyncAt === null ? t("unknown") : formatServerTime(props.latestSyncAt);
@@ -148,6 +151,7 @@ export function Workbench(props: WorkbenchProps) {
             <div className="context-meta"><span>{t("worktree")}: {selectedProjectContext?.cwd ?? t("unknown")}</span><span>CLI: {selectedProjectContext?.source ?? capabilityValue(selectedDevice, "cli:")}</span><span>{t("model")}: {capabilityValue(selectedDevice, "model:")}</span><span>{t("reasoning")}: {capabilityValue(selectedDevice, "reasoning:")}</span><span>{t("permission")}: {capabilityValue(selectedDevice, "permission:")}</span></div>
           </div>
           <div className="header-actions">
+            <button className="icon-button" type="button" onClick={() => setManagementOpen(true)} aria-label={t("management")}><Settings size={20} /></button>
             <button className="icon-button" type="button" onClick={props.onRefresh} aria-label={t("refresh")}><RefreshCw size={20} /></button>
             <button className="icon-button" type="button" onClick={props.onLanguage} aria-label={t("language")}><Languages size={20} /></button>
             <button className="icon-button" type="button" onClick={props.onTheme} aria-label={t("theme")}>{props.resolvedTheme === "dark" ? <Moon size={20} /> : <Sun size={20} />}</button>
@@ -155,8 +159,8 @@ export function Workbench(props: WorkbenchProps) {
         </header>
         <header className="mobile-header">
           <button className="icon-button" type="button" onClick={() => setHistoryOpen(true)} aria-label={t("openHistory")}><Menu size={24} /></button>
-          <div><strong>{selectedSession?.title ?? "CLI-Manager"}</strong><span>{selectedDevice?.name ?? t("noDevice")}</span></div>
-          <span className={`status-dot ${selectedDevice?.status === "online" ? "" : "warning"}`} role="img" aria-label={selectedDevice?.status === "online" ? t("online") : t("offline")} />
+          <div><strong>{selectedSession?.title ?? "CLI-Manager"}</strong><span className="mobile-device-line"><span className={`status-dot ${selectedDevice?.status === "online" ? "" : "warning"}`} role="img" aria-label={selectedDevice?.status === "online" ? t("online") : t("offline")} />{selectedDevice?.name ?? t("noDevice")}</span></div>
+          <button className="icon-button" type="button" onClick={() => setManagementOpen(true)} aria-label={t("management")}><Settings size={22} /></button>
         </header>
 
         <section className="workspace-content conversation-workspace">
@@ -181,6 +185,7 @@ export function Workbench(props: WorkbenchProps) {
         <h2>{t("deviceDetails")}</h2>
         {selectedDevice ? <DeviceCard device={selectedDevice} t={t} syncText={syncText} /> : <p className="muted">{t("noDeviceHint")}</p>}
         <button className="secondary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{t("pairDevice")}</button>
+        <button className="secondary-button" type="button" onClick={() => setManagementOpen(true)}><Settings size={18} />{t("management")}</button>
         <h2>{t("capabilities")}</h2>
         <div className="capability-list">{selectedDevice?.capabilities.length ? selectedDevice.capabilities.map((item) => <span key={item}>{item}</span>) : <span>{t("unknown")}</span>}</div>
       </aside>
@@ -195,6 +200,7 @@ export function Workbench(props: WorkbenchProps) {
 
       {historyOpen && <OverlayPanel title={t("history")} closeLabel={t("close")} onClose={() => setHistoryOpen(false)}><HistoryList t={t} items={props.history} selectedId={selectedSession?.sessionId} onSelect={(id) => { props.onSelectSession(id); setHistoryOpen(false); }} /></OverlayPanel>}
       {pairingOpen && <OverlayPanel title={t("pairDevice")} closeLabel={t("close")} onClose={() => { setPairingOpen(false); props.onResetPairing(); }}><PairingForm t={t} state={props.pairing} onClaim={props.onClaimPairing} /></OverlayPanel>}
+      {managementOpen && <OverlayPanel title={t("management")} closeLabel={t("close")} onClose={() => setManagementOpen(false)}><ManagementPanel t={t} capabilities={selectedDevice?.capabilities ?? []} projectContext={selectedProjectContext} operations={props.timeline.filter((item): item is Extract<TimelineItem, { type: "operation" }> => item.type === "operation" && isManagementOperation(item.operation)).map((item) => item.operation)} onSubmit={props.onSubmitManagement} /></OverlayPanel>}
     </div>
   );
 }

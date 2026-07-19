@@ -654,7 +654,7 @@ impl Storage {
             "SELECT id, device_id, kind, status, idempotency_key, payload_json, result_json,
                     error_code, error_message, created_at, updated_at
              FROM operations
-             WHERE device_id = ?1 AND status IN ('submitted', 'waiting_device')
+             WHERE device_id = ?1 AND status IN ('submitted', 'waiting_device', 'accepted', 'running')
              ORDER BY created_at, id",
         )
         .bind(device_id)
@@ -831,7 +831,9 @@ fn valid_operation_transition(current: &OperationStatus, next: &OperationStatus)
         (current, next),
         (OperationStatus::Submitted, OperationStatus::WaitingDevice)
             | (OperationStatus::Submitted, OperationStatus::Accepted)
+            | (OperationStatus::Submitted, OperationStatus::Rejected)
             | (OperationStatus::WaitingDevice, OperationStatus::Accepted)
+            | (OperationStatus::WaitingDevice, OperationStatus::Rejected)
             | (OperationStatus::Accepted, OperationStatus::Running)
             | (OperationStatus::Running, OperationStatus::Succeeded)
             | (OperationStatus::Running, OperationStatus::Failed)
@@ -881,6 +883,22 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_ne!(fetched.status, OperationStatus::Succeeded);
+    }
+
+    #[test]
+    fn pre_execution_rejection_is_allowed_without_running() {
+        assert!(valid_operation_transition(
+            &OperationStatus::Submitted,
+            &OperationStatus::Rejected
+        ));
+        assert!(valid_operation_transition(
+            &OperationStatus::WaitingDevice,
+            &OperationStatus::Rejected
+        ));
+        assert!(!valid_operation_transition(
+            &OperationStatus::Submitted,
+            &OperationStatus::Succeeded
+        ));
     }
 
     #[tokio::test]

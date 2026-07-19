@@ -7,6 +7,7 @@
 - Web P0-S2 新增独立 Rust 模块化单体服务与共享协议包：支持 Argon2 本地单用户登录、HttpOnly 严格同站会话、短期单次设备配对、设备/浏览器双 WebSocket、事件游标补传、服务端历史快照、幂等对话操作和桌面最终回执状态机；离线设备禁止新建操作，服务重启后设备状态统一回落为离线。
 - Web 工作台接入真实认证、设备、历史和操作 API，支持会话过期、设备配对 Drawer、按用户隔离的 WebSocket 游标、断线重连、结构化 Prompt/Operation 时间线及按设备/项目/会话保存草稿；新增 `web:server:check`、`web:server:test`、`web:server:run` 根级脚本。
 - Tauri 桌面端新增 Rust 托管的 `/ws/device` 设备适配器：支持稳定设备身份、系统凭据存储、配对、心跳、自动重连、历史快照和有界 operation 队列；远程地址强制 `wss://`。Web 新建/继续对话显式携带项目上下文，桌面校验历史会话、项目/Worktree、CLI 来源、Hook、会话 ID 与原生/WSL 路径边界后启动 Claude/Codex，并以 `SessionStart`、`Stop`、`StopFailure` Hook 驱动 Prompt 提交和最终回执；SSH 继续排除。
+- Web 管理能力新增 SSH、文件、Git、Worktree 与 Hook 五类统一入口，复用 `/api/operations` 和桌面现有 command/store；写操作、Git Fetch 与 SSH 新主机密钥需 Web 目标确认和桌面原生确认，路径由桌面历史与本地项目解析，结果会移除凭据、本机绝对路径和 OpenSSH 原始诊断。operation 通过服务端 ACK 保留到可靠回执，队列溢出和桌面执行中断会安全恢复或失败，不重复执行危险操作。
 
 ### 设计
 - 新增 CLI-Manager Web UI/UX 首版设计文档，明确结构化对话工作台、项目/文件/Git、历史 Replay、分析、设备与设置的信息架构、视觉规范、响应式规则、状态设计和验收标准。

@@ -609,6 +609,7 @@ where
         .await
     {
         Ok(Some((user_id, operation))) => {
+            let acknowledged_status = operation.status.clone();
             if let Err(publish_error) = state
                 .publish_event(
                     &user_id,
@@ -618,7 +619,14 @@ where
             {
                 tracing::warn!(error = %publish_error, "operation event publish failed");
             }
-            true
+            send_json(
+                sender,
+                &ServerToDeviceFrame::OperationAck {
+                    operation_id: operation_id.to_string(),
+                    status: acknowledged_status,
+                },
+            )
+            .await
         }
         Ok(None) => send_device_error(sender, "operation_not_found", "operation not found").await,
         Err(update_error) => {
