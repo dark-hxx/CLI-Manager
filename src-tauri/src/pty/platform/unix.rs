@@ -118,7 +118,7 @@ pub fn spawn(options: PtyLaunchOptions) -> Result<SpawnedPty, String> {
             if nix::libc::setsid() == -1 {
                 return Err(std::io::Error::last_os_error());
             }
-            if nix::libc::ioctl(slave_fd, nix::libc::TIOCSCTTY, 0) == -1 {
+            if nix::libc::ioctl(slave_fd, nix::libc::TIOCSCTTY.into(), 0) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             for target in [

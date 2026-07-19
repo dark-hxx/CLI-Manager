@@ -134,6 +134,7 @@ export function ResizableTerminalPanelFrame({
 
     const commitPendingWidth = () => {
       if (pendingWidthRef.current === null) return;
+      widthRef.current = pendingWidthRef.current;
       if (panelRef.current) {
         panelRef.current.style.width = `${pendingWidthRef.current}px`;
       }
@@ -141,7 +142,16 @@ export function ResizableTerminalPanelFrame({
     };
 
     const handleMouseMove = (event: MouseEvent) => {
-      pendingWidthRef.current = clampWidth(dragStartWidthRef.current + dragStartXRef.current - event.clientX, minWidth, maxWidth);
+      const rawWidth = dragStartWidthRef.current + dragStartXRef.current - event.clientX;
+      const nextWidth = clampWidth(rawWidth, minWidth, maxWidth);
+      pendingWidthRef.current = nextWidth;
+      // Rebase at an edge so pointer overshoot never accumulates into a dead
+      // zone. Reversing by one pixel must immediately move the panel away from
+      // min/max instead of appearing stuck and then snapping back.
+      if (rawWidth !== nextWidth) {
+        dragStartWidthRef.current = nextWidth;
+        dragStartXRef.current = event.clientX;
+      }
       if (frameRef.current === null) {
         frameRef.current = window.requestAnimationFrame(commitPendingWidth);
       }
@@ -154,6 +164,7 @@ export function ResizableTerminalPanelFrame({
       }
       const finalWidth = clampWidth(pendingWidthRef.current ?? widthRef.current, minWidth, maxWidth);
       pendingWidthRef.current = null;
+      widthRef.current = finalWidth;
       if (panelRef.current) {
         panelRef.current.style.width = `${finalWidth}px`;
       }
@@ -182,10 +193,13 @@ export function ResizableTerminalPanelFrame({
     event.preventDefault();
     event.stopPropagation();
     dragStartXRef.current = event.clientX;
-    dragStartWidthRef.current = widthRef.current;
-    pendingWidthRef.current = widthRef.current;
+    const renderedWidth = panelRef.current?.getBoundingClientRect().width ?? widthRef.current;
+    const initialWidth = clampWidth(renderedWidth, minWidth, maxWidth);
+    dragStartWidthRef.current = initialWidth;
+    pendingWidthRef.current = initialWidth;
+    widthRef.current = initialWidth;
     setDragging(true);
-  }, []);
+  }, [maxWidth, minWidth]);
 
   return (
     <aside
@@ -193,7 +207,10 @@ export function ResizableTerminalPanelFrame({
       className="ui-terminal-side-panel-frame relative flex shrink-0 flex-col overflow-hidden border-l border-border font-mono"
       data-dragging={dragging ? "true" : undefined}
       style={{
-        width,
+        // Parent/content updates can re-render several times per second while
+        // dragging. Always feed React the live imperative width so it never
+        // writes the stale persisted width back and makes the panel bounce.
+        width: dragging ? (pendingWidthRef.current ?? widthRef.current) : width,
         minWidth,
         maxWidth,
         ...getTerminalSidePanelSkinStyle(terminalSidePanelSkin),

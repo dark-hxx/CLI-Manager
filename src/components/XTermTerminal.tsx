@@ -46,6 +46,7 @@ import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../lib/shell"
 import { Portal } from "./ui/Portal";
 import { useProjectStore } from "../stores/projectStore";
 import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
+import { shouldReflowTerminalCursorLine } from "../terminal/browser/TerminalReflowPolicy";
 import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 import type { TerminalProcessTraits } from "../terminal/transport/PtyHostSocket";
 import {
@@ -852,14 +853,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       if (traits.os === "windows" || traits.os === "macos" || traits.os === "linux") {
         osPlatformRef.current = traits.os;
       }
+      // Unix PTYs redraw the cursor line asynchronously after SIGWINCH. Reflow
+      // it locally as well so rapid live shrinking never exposes the stale,
+      // old-width cursor row while waiting for the shell/TUI repaint.
+      terminal.options.reflowCursorLine = shouldReflowTerminalCursorLine(traits);
       const windowsPty = traits.windowsPty;
       if (!windowsPty) return;
       terminal.options.windowsPty = {
         backend: windowsPty.backend,
         buildNumber: windowsPty.buildNumber ?? undefined,
       };
-      terminal.options.reflowCursorLine = windowsPty.backend === "conpty"
-        && windowsPty.usesConptyDll === true;
       if (windowsPty.backend === "conpty") {
         baseDisposables.push(terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
@@ -1499,7 +1502,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           </button>
         </div>
       )}
-      <div ref={containerRef} className="h-full w-full overflow-hidden pl-2" style={terminalContainerStyle} />
+      <div ref={containerRef} className="relative h-full w-full overflow-hidden pl-2" style={terminalContainerStyle} />
       {terminalInputSuggestionsEnabled && isActive && isVisible && !searchOpen && suggestionGhost && (
         <div
           aria-hidden="true"

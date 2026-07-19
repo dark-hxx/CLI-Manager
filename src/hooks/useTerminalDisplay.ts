@@ -9,6 +9,7 @@ import { logError, logWarn } from "../lib/logger";
 import { markTerminalSnapshotDirty } from "../lib/sessionSnapshotPersistence";
 import type { TerminalOutputNormalizationOptions } from "./useTerminalOsc";
 import { TerminalResizeDebouncer } from "../terminal/browser/TerminalResizeDebouncer";
+import { TerminalResizeRenderBarrier } from "../terminal/browser/TerminalResizeRenderBarrier";
 import {
   terminalProcessManager,
   type TerminalOutputDelivery,
@@ -115,6 +116,7 @@ export function useTerminalDisplay({
   const ptyUnlistenRef = useRef<UnlistenFn | null>(null);
   const lastObservedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const resizeDebouncerRef = useRef<TerminalResizeDebouncer | null>(null);
+  const resizeRenderBarrierRef = useRef<TerminalResizeRenderBarrier | null>(null);
   const viewportRestoreRafRef = useRef<number | null>(null);
   const pendingViewportRestoreRef = useRef<PendingViewportRestore | null>(null);
   const forwardPtyResizeRef = useRef(true);
@@ -171,7 +173,10 @@ export function useTerminalDisplay({
   );
 
   const createWebglAddon = () => {
-    const addon = new WebglAddon();
+    // The live-resize barrier copies the last committed renderer frame before
+    // xterm reallocates its canvas. WebKit clears non-preserved WebGL drawing
+    // buffers after compositing, which otherwise produces an empty snapshot.
+    const addon = new WebglAddon({ preserveDrawingBuffer: true });
     addon.onContextLoss(() => {
       webglContextLostRef.current = true;
       addon.dispose();
@@ -216,13 +221,18 @@ export function useTerminalDisplay({
     webglAddonRef.current?.clearTextureAtlas();
   };
 
+  const handleTerminalWriteCommitted = (terminal: Terminal) => {
+    afterTerminalWriteRef.current?.(terminal);
+    resizeRenderBarrierRef.current?.handleWriteCommitted(terminal);
+  };
+
   const enqueueActiveWrite = (text: string, onCommitted?: () => void) => {
     if (!text) return;
     const terminal = terminalRef.current;
     if (!terminal) return;
     terminal.write(transformOutputRef.current(text), () => {
       if (terminalRef.current !== terminal) return;
-      afterTerminalWriteRef.current?.(terminal);
+      handleTerminalWriteCommitted(terminal);
       onCommitted?.();
     });
   };
@@ -293,7 +303,7 @@ export function useTerminalDisplay({
       terminal.write(transformOutputRef.current(combined), () => {
         ptyWriteInProgressRef.current = false;
         if (cancelled || terminalRef.current !== terminal) return;
-        afterTerminalWriteRef.current?.(terminal);
+        handleTerminalWriteCommitted(terminal);
         commitPending();
         schedulePendingWrite();
       });
@@ -362,7 +372,7 @@ export function useTerminalDisplay({
           await new Promise<void>((resolve) => {
             terminal.write(transformOutputRef.current(text), () => {
               if (terminalRef.current === terminal) {
-                afterTerminalWriteRef.current?.(terminal);
+                handleTerminalWriteCommitted(terminal);
                 terminalProcessManager.acknowledgeOutput(sessionId, entry.sequence, 0);
               }
               resolve();
@@ -435,6 +445,7 @@ export function useTerminalDisplay({
         return;
       }
       lastObservedSizeRef.current = { width, height };
+      resizeRenderBarrierRef.current?.noteContainerResize();
       scheduleFit();
     });
     container.addEventListener("wheel", onWheel, wheelListenerOptions);
@@ -445,6 +456,8 @@ export function useTerminalDisplay({
       resizeObserver.disconnect();
       resizeDebouncerRef.current?.dispose();
       resizeDebouncerRef.current = null;
+      resizeRenderBarrierRef.current?.dispose();
+      resizeRenderBarrierRef.current = null;
       cancelPendingViewportRestore();
     };
   };
@@ -462,6 +475,20 @@ export function useTerminalDisplay({
   const resizeTerminal = (terminal: Terminal, cols: number, rows: number) => {
     if (terminal.cols === cols && terminal.rows === rows) return;
     cancelPendingViewportRestore();
+    const container = containerRef.current;
+    const shouldGuardHorizontalShrink = (
+      cols < terminal.cols
+      && isVisibleRef.current
+      && container !== null
+    );
+    if (shouldGuardHorizontalShrink && container) {
+      let barrier = resizeRenderBarrierRef.current;
+      if (!barrier) {
+        barrier = new TerminalResizeRenderBarrier();
+        resizeRenderBarrierRef.current = barrier;
+      }
+      barrier.begin(terminal, container);
+    }
     const buffer = terminal.buffer.active;
     // Horizontal reflow changes physical row indexes; a marker follows the logical viewport line.
     const viewportMarker = (
@@ -472,6 +499,7 @@ export function useTerminalDisplay({
       ? terminal.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY)
       : undefined;
     terminal.resize(cols, rows);
+    resizeRenderBarrierRef.current?.noteContainerResize();
     if (viewportMarker) scheduleViewportRestore(terminal, viewportMarker);
   };
 
@@ -515,21 +543,28 @@ export function useTerminalDisplay({
     }
   };
 
-  const cancelFitRequest = () => {
+  const cancelFitFrame = () => {
     if (fitRafRef.current !== null) {
       cancelAnimationFrame(fitRafRef.current);
       fitRafRef.current = null;
     }
+  };
+
+  const cancelFitRequest = () => {
+    cancelFitFrame();
     resizeDebouncerRef.current?.cancel();
   };
 
   const cancelScheduledFit = () => {
     cancelFitRequest();
     cancelPendingViewportRestore();
+    resizeRenderBarrierRef.current?.cancel();
   };
 
   const scheduleFit = (immediateResize = false, forceViewportRefresh = immediateResize) => {
-    cancelFitRequest();
+    // Keep the debouncer's leading/trailing horizontal cadence alive across
+    // consecutive ResizeObserver frames; only replace the pending fit frame.
+    cancelFitFrame();
     fitRafRef.current = requestAnimationFrame(() => {
       fitRafRef.current = null;
       fitWhenStable(immediateResize, forceViewportRefresh);
