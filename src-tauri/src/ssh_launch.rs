@@ -182,6 +182,11 @@ impl SshLaunchPlan {
         {
             return Err("ssh_environment_key_invalid".to_string());
         }
+        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
+            if let Some(value) = self.environment_overrides.get(key) {
+                validate_tool_config_root(value)?;
+            }
+        }
         if self
             .environment_overrides
             .values()
@@ -221,11 +226,14 @@ impl SshLaunchPlan {
         ];
         let mut environment: Vec<_> = self.environment_overrides.iter().collect();
         environment.sort_by(|left, right| left.0.cmp(right.0));
-        setup.extend(
-            environment
-                .into_iter()
-                .map(|(key, value)| format!("export {key}={}", posix_quote(value))),
-        );
+        setup.extend(environment.into_iter().map(|(key, value)| {
+            let formatted_value = if matches!(key.as_str(), "CLAUDE_CONFIG_DIR" | "CODEX_HOME") {
+                format_tool_config_root(value)
+            } else {
+                posix_quote(value)
+            };
+            format!("export {key}={formatted_value}")
+        }));
         let setup = setup.join(" && ");
         let mut shell_commands = Vec::new();
         if let Some(command) = self
@@ -273,6 +281,28 @@ fn validate_remote_path(path: &str) -> Result<(), String> {
         return Err("ssh_remote_path_parent_forbidden".to_string());
     }
     Ok(())
+}
+
+fn validate_tool_config_root(path: &str) -> Result<(), String> {
+    if path.contains(['\0', '\r', '\n', '\\', '$', '`'])
+        || !(path.starts_with('/') || path == "~" || path.starts_with("~/"))
+    {
+        return Err("ssh_tool_config_root_invalid".to_string());
+    }
+    if path.split('/').any(|part| part == "..") {
+        return Err("ssh_tool_config_root_parent_forbidden".to_string());
+    }
+    Ok(())
+}
+
+fn format_tool_config_root(path: &str) -> String {
+    if path == "~" {
+        return "\"${HOME}\"".to_string();
+    }
+    if let Some(suffix) = path.strip_prefix("~/") {
+        return format!("\"${{HOME}}\"/{}", posix_quote(suffix));
+    }
+    posix_quote(path)
 }
 
 fn posix_quote(value: &str) -> String {
@@ -367,6 +397,52 @@ mod tests {
         let mut value = plan();
         value.startup_command = None;
         assert_eq!(value.build_process_launch().unwrap().args.last().unwrap(), "cd -- '/srv/project name/开发' && printf '\\033]777;cli-manager-ssh=connected\\007' && export APP_MODE='remote dev' && exec \"${SHELL:-/bin/sh}\" -l");
+    }
+
+    #[test]
+    fn tool_config_roots_are_exported_with_safe_home_expansion() {
+        let mut value = plan();
+        value.environment_overrides = [
+            (
+                "CLAUDE_CONFIG_DIR".to_string(),
+                "~/claude state".to_string(),
+            ),
+            ("CODEX_HOME".to_string(), "/srv/codex state".to_string()),
+        ]
+        .into();
+        let command = value.build_process_launch().unwrap().args.pop().unwrap();
+        assert!(command.contains("export CLAUDE_CONFIG_DIR=\"${HOME}\"/'claude state'"));
+        assert!(command.contains("export CODEX_HOME='/srv/codex state'"));
+    }
+
+    #[test]
+    fn tool_config_root_accepts_home_itself() {
+        let mut value = plan();
+        value.environment_overrides = [("CODEX_HOME".to_string(), "~".to_string())].into();
+        let command = value.build_process_launch().unwrap().args.pop().unwrap();
+        assert!(command.contains("export CODEX_HOME=\"${HOME}\""));
+    }
+
+    #[test]
+    fn tool_config_root_rejects_traversal_and_shell_expansion() {
+        for invalid in [
+            "~/../secret",
+            "$HOME/.claude",
+            "~/bad`command",
+            "relative/path",
+            "~/bad\\path",
+            "~/bad\npath",
+            "~/bad\rpath",
+            "~/bad\0path",
+        ] {
+            let mut value = plan();
+            value.environment_overrides =
+                [("CLAUDE_CONFIG_DIR".to_string(), invalid.to_string())].into();
+            assert!(matches!(
+                value.build_process_launch().unwrap_err().as_str(),
+                "ssh_tool_config_root_invalid" | "ssh_tool_config_root_parent_forbidden"
+            ));
+        }
     }
 
     #[test]

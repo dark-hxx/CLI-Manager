@@ -18,8 +18,8 @@ mod linux_graphics;
 mod log_rotation;
 pub mod pty;
 mod shell_resolver;
-pub mod ssh_launch;
 pub mod ssh_askpass;
+pub mod ssh_launch;
 pub mod ssh_proxy;
 pub mod statusline;
 pub mod statusline_profiles;
@@ -346,6 +346,60 @@ const MIGRATION_CREATE_SSH_HOST_GROUPS_SQL: &str = "
                     ON ssh_hosts(group_id, sort_order, name);
               ";
 
+const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_VERSION: i64 = 22;
+const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_DESCRIPTION: &str =
+    "create_ssh_agent_integrations_and_project_cli_config_root";
+const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL: &str = "
+                ALTER TABLE projects ADD COLUMN cli_config_root TEXT NOT NULL DEFAULT '';
+
+                CREATE TABLE IF NOT EXISTS ssh_agent_installations (
+                    host_id             TEXT PRIMARY KEY REFERENCES ssh_hosts(id) ON DELETE CASCADE,
+                    installation_id     TEXT NOT NULL DEFAULT '',
+                    remote_machine_id   TEXT NOT NULL DEFAULT '',
+                    agent_version       TEXT NOT NULL DEFAULT '',
+                    protocol_version    TEXT NOT NULL DEFAULT '',
+                    target              TEXT NOT NULL DEFAULT '',
+                    install_path        TEXT NOT NULL DEFAULT '',
+                    status              TEXT NOT NULL DEFAULT 'unknown',
+                    checked_at          TEXT NOT NULL DEFAULT ''
+                );
+
+                CREATE TABLE IF NOT EXISTS ssh_host_tool_preferences (
+                    host_id          TEXT NOT NULL REFERENCES ssh_hosts(id) ON DELETE CASCADE,
+                    source           TEXT NOT NULL,
+                    configured_root  TEXT NOT NULL DEFAULT '',
+                    updated_at       TEXT NOT NULL,
+                    PRIMARY KEY (host_id, source)
+                );
+
+                CREATE TABLE IF NOT EXISTS ssh_agent_tool_integrations (
+                    integration_id              TEXT PRIMARY KEY,
+                    host_id                     TEXT REFERENCES ssh_hosts(id) ON DELETE SET NULL,
+                    installation_id             TEXT NOT NULL DEFAULT '',
+                    remote_machine_id           TEXT NOT NULL DEFAULT '',
+                    ssh_user                    TEXT NOT NULL DEFAULT '',
+                    source                      TEXT NOT NULL,
+                    scope_kind                  TEXT NOT NULL DEFAULT 'hostPrimary',
+                    configured_root             TEXT NOT NULL DEFAULT '',
+                    canonical_root              TEXT NOT NULL DEFAULT '',
+                    config_root_hash            TEXT NOT NULL DEFAULT '',
+                    hook_record_json            TEXT NOT NULL DEFAULT '{}',
+                    history_source_instance_id  TEXT NOT NULL DEFAULT '',
+                    validation_state            TEXT NOT NULL DEFAULT 'unvalidated',
+                    cleanup_state               TEXT NOT NULL DEFAULT 'active',
+                    checked_at                  TEXT NOT NULL DEFAULT ''
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ssh_agent_tool_host_primary
+                    ON ssh_agent_tool_integrations(host_id, source)
+                    WHERE host_id IS NOT NULL AND scope_kind = 'hostPrimary';
+                CREATE INDEX IF NOT EXISTS idx_ssh_agent_tool_identity
+                    ON ssh_agent_tool_integrations(
+                        installation_id, remote_machine_id, ssh_user, source, config_root_hash
+                    );
+                CREATE INDEX IF NOT EXISTS idx_ssh_agent_tool_history_source
+                    ON ssh_agent_tool_integrations(history_source_instance_id);
+              ";
+
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -576,6 +630,12 @@ fn migrations() -> Vec<Migration> {
             version: MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
             description: MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION,
             sql: MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_VERSION,
+            description: MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_DESCRIPTION,
+            sql: MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL,
             kind: MigrationKind::Up,
         },
     ]
@@ -1056,7 +1116,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod ssh_migration_tests {
-    use super::{MIGRATION_CREATE_SSH_HOST_GROUPS_SQL, MIGRATION_CREATE_SSH_HOSTS_SQL};
+    use super::{
+        MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL, MIGRATION_CREATE_SSH_HOSTS_SQL,
+        MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+    };
     use sqlx::{Connection, Row, SqliteConnection};
 
     #[tokio::test]
@@ -1125,20 +1188,126 @@ mod ssh_migration_tests {
     #[tokio::test]
     async fn ssh_group_migration_preserves_flat_groups_as_roots() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
-        sqlx::query("PRAGMA foreign_keys = ON").execute(&mut conn).await.unwrap();
-        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)")
-            .execute(&mut conn).await.unwrap();
-        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL).execute(&mut conn).await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO ssh_hosts (id, name, group_name, host, created_at, updated_at) VALUES ('host-1', 'Server', 'Production', 'example.com', '1', '1')")
             .execute(&mut conn).await.unwrap();
 
-        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL).execute(&mut conn).await.unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
 
-        let host = sqlx::query("SELECT group_id FROM ssh_hosts WHERE id = 'host-1'").fetch_one(&mut conn).await.unwrap();
+        let host = sqlx::query("SELECT group_id FROM ssh_hosts WHERE id = 'host-1'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         let group_id = host.get::<Option<String>, _>("group_id").unwrap();
         let group = sqlx::query("SELECT name, parent_id FROM ssh_host_groups WHERE id = ?")
-            .bind(group_id).fetch_one(&mut conn).await.unwrap();
+            .bind(group_id)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
         assert_eq!(group.get::<String, _>("name"), "Production");
         assert_eq!(group.get::<Option<String>, _>("parent_id"), None);
+    }
+
+    #[tokio::test]
+    async fn ssh_agent_integration_migration_preserves_rebind_metadata() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO projects (id, name, path) VALUES ('local', 'Local', 'D:/repo')")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let local = sqlx::query("SELECT cli_config_root FROM projects WHERE id = 'local'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(local.get::<String, _>("cli_config_root"), "");
+
+        sqlx::query(
+            "INSERT INTO ssh_hosts (id, name, host, created_at, updated_at)
+             VALUES ('host-1', 'Server', 'example.com', '1', '1')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO ssh_agent_tool_integrations (
+                integration_id, host_id, installation_id, remote_machine_id,
+                ssh_user, source, scope_kind, configured_root, config_root_hash
+             ) VALUES (
+                'integration-1', 'host-1', 'install-1', 'machine-1',
+                'dev', 'claude', 'hostPrimary', '/home/dev/.claude', 'root-hash'
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO ssh_host_tool_preferences (host_id, source, configured_root, updated_at)
+             VALUES ('host-1', 'claude', '/home/dev/.claude', '1')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        sqlx::query("DELETE FROM ssh_hosts WHERE id = 'host-1'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let integration = sqlx::query(
+            "SELECT host_id, installation_id, remote_machine_id, configured_root
+             FROM ssh_agent_tool_integrations WHERE integration_id = 'integration-1'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(integration.get::<Option<String>, _>("host_id"), None);
+        assert_eq!(integration.get::<String, _>("installation_id"), "install-1");
+        assert_eq!(
+            integration.get::<String, _>("remote_machine_id"),
+            "machine-1"
+        );
+        assert_eq!(
+            integration.get::<String, _>("configured_root"),
+            "/home/dev/.claude"
+        );
+        let preference_count = sqlx::query("SELECT COUNT(*) AS count FROM ssh_host_tool_preferences")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(preference_count.get::<i64, _>("count"), 0);
     }
 }

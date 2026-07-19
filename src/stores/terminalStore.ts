@@ -14,7 +14,9 @@ import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKe
 import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject, parseProjectEnvVars } from "../lib/providerSwitching";
 import { useProjectStore } from "./projectStore";
 import { useSshHostStore } from "./sshHostStore";
+import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "../lib/ssh";
+import { resolveSshToolSource } from "../lib/sshToolIntegration";
 import { appendSyncedHistoryContextArg } from "../lib/syncedHistoryContext";
 import { translateCurrent } from "../lib/i18n";
 import { findProjectByPath, findWorktreeByPath, resolveProjectForProviderLaunch } from "../lib/terminalProject";
@@ -1196,6 +1198,21 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
     const resolvedEnvironmentOverrides = options.envVars === undefined && project?.environment_type === "ssh"
       ? parseProjectEnvVars(project) ?? {}
       : options.envVars ?? {};
+    const toolSource = project?.environment_type === "ssh"
+      ? resolveSshToolSource(project.cli_tool)
+      : null;
+    if (toolSource) {
+      const integrationStore = useSshAgentIntegrationStore.getState();
+      if (!integrationStore.loaded) await integrationStore.fetchAll();
+      const hostConfiguredRoot = useSshAgentIntegrationStore.getState().preferences.find(
+        (preference) => preference.host_id === host.id && preference.source === toolSource,
+      )?.configured_root.trim();
+      const effectiveConfigRoot = project?.cli_config_root.trim() || hostConfiguredRoot;
+      if (effectiveConfigRoot) {
+        const environmentKey = toolSource === "claude" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+        resolvedEnvironmentOverrides[environmentKey] = effectiveConfigRoot;
+      }
+    }
 
     return {
       shell: null,

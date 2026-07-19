@@ -23,6 +23,13 @@ ssh_host_groups(id, name, parent_id, sort_order, created_at)
 projects.environment_type TEXT NOT NULL DEFAULT 'local'
 projects.ssh_host_id TEXT REFERENCES ssh_hosts(id) ON DELETE SET NULL
 projects.remote_path TEXT NOT NULL DEFAULT ''
+projects.cli_config_root TEXT NOT NULL DEFAULT ''
+
+ssh_host_tool_preferences(host_id, source, configured_root, updated_at)
+ssh_agent_tool_integrations(integration_id, host_id nullable, installation_id,
+  remote_machine_id, ssh_user, source, scope_kind, configured_root,
+  canonical_root, config_root_hash, hook_record_json,
+  history_source_instance_id, validation_state, cleanup_state, checked_at)
 ```
 
 ### Tauri commands
@@ -106,6 +113,10 @@ pub struct SshLaunchPlan {
 - `credential_ref` directory browsing/check commands use `BatchMode=no` plus AskPass. Any AskPass/credential error must be returned; do not silently retry without the password.
 - `password_prompt` and `interactive` modes require a real PTY and must return `ssh_interactive_auth_required` for directory browsing/check commands.
 - A successful launch enters `remote_path`, emits OSC 777 `cli-manager-ssh=connected`, applies environment overrides, runs initialization/startup commands, and finally returns to the user's remote login shell.
+- Claude/Codex tool config roots use this priority: SSH project `cli_config_root`, matching `ssh_host_tool_preferences`, then the CLI native default. Native default means no environment variable is injected.
+- Resolve the source only from the SSH project's configured `cli_tool`. Inject `CLAUDE_CONFIG_DIR` for Claude or `CODEX_HOME` for Codex; do not scan or switch remote providers.
+- Absolute POSIX roots use normal POSIX quoting. `~` and `~/...` roots must be rendered with an explicit quoted `${HOME}` prefix so shell expansion occurs without evaluating arbitrary variables or command substitution.
+- Active PTYs capture the root in their launch plan. Editing a Host or project root affects only subsequent launches and never rewrites a running session.
 - When an SSH project creates a terminal without an explicit session command, resolve its project command as `startup_cmd` first, otherwise `cli_tool + cli_args`; project environment variables follow the same fallback rule. Explicit resume/template commands take precedence, and machine-local provider overrides are not injected into the remote command.
 - SSH startup commands are embedded in `SshLaunchPlan` and executed exactly once by the remote launch command. The frontend may retain the resolved command as session metadata but must not write it again through `pty_write`.
 - A configured initialization/startup command runs inside one login shell, then hands control to a non-login interactive shell that inherits the initialized environment. Do not start a second login shell after the command; repeated MOTD/profile output can bury command output and rerun login side effects.
@@ -128,9 +139,9 @@ pub struct SshLaunchPlan {
 
 ### Sync
 
-- Sync/export may carry project `environment_type` and `remote_path`.
+- Sync/export may carry project `environment_type`, `remote_path`, and `cli_config_root`.
 - It must exclude `ssh_hosts`, `ssh_host_id`, `identity_file`, `credential_ref`, passwords, and machine-specific proxy credentials.
-- Imported SSH projects have `ssh_host_id = null` and clear machine-specific provider/worktree configuration before requesting host rebinding.
+- Imported SSH projects have `ssh_host_id = null`, preserve only a valid explicit POSIX/`~/...` project config root, and clear machine-specific provider/worktree configuration before requesting host rebinding.
 
 ## 4. Validation & Error Matrix
 
@@ -151,6 +162,8 @@ pub struct SshLaunchPlan {
 | Remote path is relative or contains NUL/CR/LF | `ssh_remote_path_invalid`. |
 | Remote path contains a `..` segment | `ssh_remote_path_parent_forbidden`. |
 | Invalid environment key/value | `ssh_environment_key_invalid` or `ssh_environment_value_invalid`. |
+| Tool config root is relative, contains NUL/CR/LF/backslash, `$`, or backticks | `ssh_tool_config_root_invalid`. |
+| Tool config root contains a `..` segment | `ssh_tool_config_root_parent_forbidden`. |
 | Password/MFA directory query | `ssh_interactive_auth_required`; keep manual path input available. |
 | Referenced host missing | Block launch with `ssh_host_not_found`; never fall back to localhost. |
 | Host key changed | OpenSSH blocks the connection; do not auto-ignore the warning. |
@@ -163,11 +176,14 @@ pub struct SshLaunchPlan {
 - Good: a path such as `/srv/project name/开发` is quoted once, opens correctly, and cannot inject shell syntax.
 - Good: application restart attaches a daemon-owned SSH PTY without repeating initialization commands.
 - Good: Username / Password host can test connection and browse/check a remote path through AskPass without exposing the password.
+- Good: project `~/state/claude` overrides the Host Claude root and launches with `CLAUDE_CONFIG_DIR="${HOME}"/'state/claude'`.
+- Base: no project or Host root exists, so Claude/Codex uses its native default without an injected variable.
 - Base: password-prompt/MFA users manually enter a remote path, then authenticate in the real PTY.
 - Base: an imported SSH project remains visible with a rebinding warning.
 - Bad: treating `path = ""` as a local project key; on POSIX this can match every local path.
 - Bad: passing a remote POSIX path into local filesystem, Git, Worktree, history, or provider APIs.
 - Bad: synchronizing host IDs or private-key paths across machines.
+- Bad: quoting `~/.claude` as one literal shell token; this disables tilde expansion and points the CLI at a directory named `~`.
 
 ## 6. Tests Required
 
@@ -179,6 +195,9 @@ pub struct SshLaunchPlan {
 - Assert password/interactive/agent modes do not include stale identity-file arguments after auth-mode switches.
 - Assert AskPass serves a saved password only for the matching one-shot token and rejects reused or unknown prompts.
 - Assert remote path checking accepts spaces/Unicode/single quotes and rejects traversal, relative paths, NUL, CR, and LF.
+- Assert project root overrides Host root, Host root overrides native default, and unrelated/local/WSL launches receive no SSH tool-root injection.
+- Assert absolute, `~`, and `~/...` config roots render safely; reject traversal, relative paths, expansion syntax, backslashes, NUL, CR, and LF at the Rust boundary.
+- Assert deleting a Host cascades Host preferences while retaining validated integration identity with `host_id = NULL` and `unbound/retained` state.
 - Assert session restore attaches live daemon PTYs and never reruns an exited SSH command.
 - Assert SSH projects are rejected by file and Worktree stores and excluded from local path matching.
 - Assert export/import omits all host and credential fields and requires rebinding.
@@ -226,3 +245,17 @@ if (!projectSupportsCapability(project, "git")) return null;
 ```
 
 The corresponding store/backend path must also reject SSH projects before any local path operation.
+
+### Wrong: quote a tilde root literally
+
+```rust
+format!("export CLAUDE_CONFIG_DIR={}", posix_quote("~/.claude"))
+```
+
+### Correct: expand only the supported HOME shorthand
+
+```rust
+format!("export CLAUDE_CONFIG_DIR=\"${{HOME}}\"/{}", posix_quote(".claude"))
+```
+
+The dedicated validator rejects all other shell expansion syntax before command construction.

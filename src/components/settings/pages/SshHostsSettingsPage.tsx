@@ -7,6 +7,7 @@ import {
   Folder,
   FolderPlus,
   Pencil,
+  Plug,
   Plus,
   Server,
   Terminal,
@@ -24,6 +25,7 @@ import { useTerminalStore } from "../../../stores/terminalStore";
 import { useAppConfirm } from "../../ui/useAppConfirm";
 import { useAppPrompt } from "../../ui/useAppPrompt";
 import { SshHostEditor } from "./SshHostEditor";
+import { SshCliIntegrationDialog } from "./SshCliIntegrationDialog";
 
 interface Props { searchValue: string; onTerminalOpened?: () => void }
 interface SshClientStatus { available: boolean; version: string | null; error: string | null }
@@ -41,6 +43,8 @@ const ERROR_LABELS: Record<string, TranslationKey> = {
   ssh_host_address_required: "settings.sshHosts.error.addressRequired",
   ssh_host_not_found: "settings.sshHosts.error.notFound",
   ssh_host_in_use: "settings.sshHosts.error.inUse",
+  ssh_host_active: "settings.sshHosts.error.active",
+  ssh_host_jump_in_use: "settings.sshHosts.error.jumpInUse",
   ssh_host_jump_self_reference: "settings.sshHosts.error.jumpSelf",
   ssh_proxy_credentials_forbidden: "settings.sshHosts.error.proxyCredentials",
   ssh_proxy_address_invalid: "settings.sshHosts.error.proxyAddressInvalid",
@@ -87,7 +91,10 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
   const createGroup = useSshHostStore((state) => state.createGroup);
   const deleteGroup = useSshHostStore((state) => state.deleteGroup);
   const createSession = useTerminalStore((state) => state.createSession);
+  const terminalSessions = useTerminalStore((state) => state.sessions);
+  const sessionStatuses = useTerminalStore((state) => state.sessionStatuses);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [integrationHost, setIntegrationHost] = useState<SshHost | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<CreateSshHostInput>(EMPTY_FORM);
   const [source, setSource] = useState<"address" | "config">("address");
@@ -218,6 +225,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
           }
         } catch (credentialError) {
           await deleteHost(created.id).catch(() => undefined);
+          await invoke("ssh_delete_password", { hostId: created.id }).catch(() => undefined);
           throw credentialError;
         }
       }
@@ -256,6 +264,13 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
   };
 
   const remove = async (host: SshHost) => {
+    const hasActiveSession = terminalSessions.some(
+      (session) => session.sshHostId === host.id && sessionStatuses[session.id] !== "exited",
+    );
+    if (hasActiveSession) {
+      setError(formatError("ssh_host_active"));
+      return;
+    }
     if (!await confirm({ title: t("settings.sshHosts.deleteTitle"), message: t("settings.sshHosts.deleteDescription", { name: host.name }), danger: true })) return;
     try {
       await deleteHost(host.id);
@@ -305,7 +320,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
       <div className="overflow-hidden rounded-2xl border border-border bg-surface-lowest">
         {!loaded ? <div className="p-8 text-center text-sm text-text-muted">{t("common.loading")}</div> : filteredHosts.length === 0 && groups.length === 0 ? (
           <div className="p-10 text-center"><Server className="mx-auto mb-3 h-8 w-8 text-text-muted" /><div className="font-bold text-text-primary">{t("settings.sshHosts.empty")}</div><div className="mt-1 text-xs text-text-muted">{t("settings.sshHosts.emptyDescription")}</div></div>
-        ) : <SshHostTree groups={groups} hosts={filteredHosts} collapsed={collapsedGroups} onToggle={(id) => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onAddHost={openCreate} onAddGroup={(group) => void addGroup(group)} onDeleteGroup={(group) => void removeGroup(group)} onOpenTerminal={(host) => void openTerminal(host)} onEditHost={openEdit} onDeleteHost={(host) => void remove(host)} />}
+        ) : <SshHostTree groups={groups} hosts={filteredHosts} collapsed={collapsedGroups} onToggle={(id) => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onAddHost={openCreate} onAddGroup={(group) => void addGroup(group)} onDeleteGroup={(group) => void removeGroup(group)} onOpenTerminal={(host) => void openTerminal(host)} onOpenIntegration={setIntegrationHost} onEditHost={openEdit} onDeleteHost={(host) => void remove(host)} />}
       </div>
       {visibleLoadError && <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">{visibleLoadError}</div>}
       {visibleError && !editorOpen && <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{visibleError}</div>}
@@ -332,12 +347,18 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
         onSave={() => void save()}
         onPasswordChange={setPassword}
       />
+      <SshCliIntegrationDialog
+        open={integrationHost !== null}
+        host={integrationHost}
+        hosts={hosts}
+        onOpenChange={(nextOpen) => { if (!nextOpen) setIntegrationHost(null); }}
+      />
       {confirmDialog}{promptDialog}
     </div>
   );
 }
 
-function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup, onDeleteGroup, onOpenTerminal, onEditHost, onDeleteHost }: {
+function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup, onDeleteGroup, onOpenTerminal, onOpenIntegration, onEditHost, onDeleteHost }: {
   groups: SshHostGroup[];
   hosts: SshHost[];
   collapsed: Set<string>;
@@ -346,6 +367,7 @@ function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup
   onAddGroup: (group: SshHostGroup) => void;
   onDeleteGroup: (group: SshHostGroup) => void;
   onOpenTerminal: (host: SshHost) => void;
+  onOpenIntegration: (host: SshHost) => void;
   onEditHost: (host: SshHost) => void;
   onDeleteHost: (host: SshHost) => void;
 }) {
@@ -364,14 +386,14 @@ function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup
     const children = (childGroups.get(group.id) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
     const groupHosts = (hostsByGroup.get(group.id) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
     const isCollapsed = collapsed.has(group.id);
-    return <div key={group.id} className="border-b border-border last:border-b-0"><div className="flex h-11 items-center gap-2 bg-surface-low px-3" style={{ paddingLeft: 12 + depth * 18 }}><button type="button" className="ui-icon-button h-7 w-7" aria-label={isCollapsed ? t("settings.sshHosts.groupExpand") : t("settings.sshHosts.groupCollapse")} onClick={() => onToggle(group.id)}><ChevronRight className={`h-4 w-4 transition-transform ${isCollapsed ? "" : "rotate-90"}`} /></button><Folder className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">{group.name}</span><span className="text-xs text-text-muted">{groupHosts.length}</span><button type="button" className="ui-icon-button text-primary" title={t("settings.sshHosts.groupAddHost")} aria-label={t("settings.sshHosts.groupAddHost")} onClick={() => onAddHost(group)}><Plus className="h-4 w-4" /></button><button type="button" className="ui-icon-button" title={t("settings.sshHosts.groupAddChild")} aria-label={t("settings.sshHosts.groupAddChild")} onClick={() => onAddGroup(group)}><FolderPlus className="h-4 w-4" /></button><button type="button" className="ui-icon-button text-danger" title={t("settings.sshHosts.groupDelete")} aria-label={t("settings.sshHosts.groupDelete")} onClick={() => onDeleteGroup(group)}><Trash2 className="h-4 w-4" /></button></div>{!isCollapsed && <>{children.map((child) => renderGroup(child, depth + 1, childSet))}{groupHosts.map((host) => <SshHostRow key={host.id} host={host} depth={depth + 1} onOpenTerminal={onOpenTerminal} onEdit={onEditHost} onDelete={onDeleteHost} />)}</>}</div>;
+    return <div key={group.id} className="border-b border-border last:border-b-0"><div className="flex h-11 items-center gap-2 bg-surface-low px-3" style={{ paddingLeft: 12 + depth * 18 }}><button type="button" className="ui-icon-button h-7 w-7" aria-label={isCollapsed ? t("settings.sshHosts.groupExpand") : t("settings.sshHosts.groupCollapse")} onClick={() => onToggle(group.id)}><ChevronRight className={`h-4 w-4 transition-transform ${isCollapsed ? "" : "rotate-90"}`} /></button><Folder className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">{group.name}</span><span className="text-xs text-text-muted">{groupHosts.length}</span><button type="button" className="ui-icon-button text-primary" title={t("settings.sshHosts.groupAddHost")} aria-label={t("settings.sshHosts.groupAddHost")} onClick={() => onAddHost(group)}><Plus className="h-4 w-4" /></button><button type="button" className="ui-icon-button" title={t("settings.sshHosts.groupAddChild")} aria-label={t("settings.sshHosts.groupAddChild")} onClick={() => onAddGroup(group)}><FolderPlus className="h-4 w-4" /></button><button type="button" className="ui-icon-button text-danger" title={t("settings.sshHosts.groupDelete")} aria-label={t("settings.sshHosts.groupDelete")} onClick={() => onDeleteGroup(group)}><Trash2 className="h-4 w-4" /></button></div>{!isCollapsed && <>{children.map((child) => renderGroup(child, depth + 1, childSet))}{groupHosts.map((host) => <SshHostRow key={host.id} host={host} depth={depth + 1} onOpenTerminal={onOpenTerminal} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</>}</div>;
   };
   const roots = (childGroups.get(null) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
   const ungrouped = (hostsByGroup.get(null) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-  return <>{roots.map((group) => renderGroup(group, 0, new Set()))}{ungrouped.length > 0 && <div><div className="flex h-10 items-center gap-2 border-b border-border bg-surface-low px-4"><Folder className="h-4 w-4 text-text-muted" /><span className="text-xs font-bold text-text-muted">{t("settings.sshHosts.groupNone")}</span></div>{ungrouped.map((host) => <SshHostRow key={host.id} host={host} depth={1} onOpenTerminal={onOpenTerminal} onEdit={onEditHost} onDelete={onDeleteHost} />)}</div>}</>;
+  return <>{roots.map((group) => renderGroup(group, 0, new Set()))}{ungrouped.length > 0 && <div><div className="flex h-10 items-center gap-2 border-b border-border bg-surface-low px-4"><Folder className="h-4 w-4 text-text-muted" /><span className="text-xs font-bold text-text-muted">{t("settings.sshHosts.groupNone")}</span></div>{ungrouped.map((host) => <SshHostRow key={host.id} host={host} depth={1} onOpenTerminal={onOpenTerminal} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</div>}</>;
 }
 
-function SshHostRow({ host, depth, onOpenTerminal, onEdit, onDelete }: { host: SshHost; depth: number; onOpenTerminal: (host: SshHost) => void; onEdit: (host: SshHost) => void; onDelete: (host: SshHost) => void }) {
+function SshHostRow({ host, depth, onOpenTerminal, onOpenIntegration, onEdit, onDelete }: { host: SshHost; depth: number; onOpenTerminal: (host: SshHost) => void; onOpenIntegration: (host: SshHost) => void; onEdit: (host: SshHost) => void; onDelete: (host: SshHost) => void }) {
   const { t } = useI18n();
-  return <div className="flex items-center gap-3 border-t border-border px-4 py-2.5" style={{ paddingLeft: 16 + depth * 18 }}><Server className="h-4 w-4 shrink-0 text-primary" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-text-primary">{host.name}</div><div className="truncate text-xs text-text-muted">{host.config_alias || `${host.username ? `${host.username}@` : ""}${host.host}:${host.port}`}</div></div><span className="ui-badge-neutral">{t(`settings.sshHosts.auth.${host.auth_mode}` as const)}</span><button className="ui-icon-button" aria-label={t("settings.sshHosts.openTerminal")} title={t("settings.sshHosts.openTerminal")} onClick={() => onOpenTerminal(host)}><Terminal className="h-4 w-4" /></button><button className="ui-icon-button" aria-label={t("common.edit")} onClick={() => onEdit(host)}><Pencil className="h-4 w-4" /></button><button className="ui-icon-button text-danger" aria-label={t("common.delete")} onClick={() => onDelete(host)}><Trash2 className="h-4 w-4" /></button></div>;
+  return <div className="flex items-center gap-3 border-t border-border px-4 py-2.5" style={{ paddingLeft: 16 + depth * 18 }}><Server className="h-4 w-4 shrink-0 text-primary" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-text-primary">{host.name}</div><div className="truncate text-xs text-text-muted">{host.config_alias || `${host.username ? `${host.username}@` : ""}${host.host}:${host.port}`}</div></div><span className="ui-badge-neutral">{t(`settings.sshHosts.auth.${host.auth_mode}` as const)}</span><button className="ui-icon-button" aria-label={t("settings.sshHosts.openTerminal")} title={t("settings.sshHosts.openTerminal")} onClick={() => onOpenTerminal(host)}><Terminal className="h-4 w-4" /></button><button className="ui-icon-button" aria-label={t("settings.sshHosts.cliIntegration.open")} title={t("settings.sshHosts.cliIntegration.open")} onClick={() => onOpenIntegration(host)}><Plug className="h-4 w-4" /></button><button className="ui-icon-button" aria-label={t("common.edit")} onClick={() => onEdit(host)}><Pencil className="h-4 w-4" /></button><button className="ui-icon-button text-danger" aria-label={t("common.delete")} onClick={() => onDelete(host)}><Trash2 className="h-4 w-4" /></button></div>;
 }

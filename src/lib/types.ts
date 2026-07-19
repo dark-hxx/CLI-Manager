@@ -25,6 +25,15 @@ export type SshAuthMode =
 export type SshJumpMode = "none" | "host" | "proxy_jump";
 
 export type SshProxyType = "none" | "http" | "socks5" | "proxy_command";
+export type SshToolSource = "claude" | "codex";
+export type SshToolIntegrationScopeKind = "hostPrimary" | "projectOverride";
+export type SshToolIntegrationValidationState =
+  | "unvalidated"
+  | "validating"
+  | "valid"
+  | "invalid"
+  | "unbound";
+export type SshToolIntegrationCleanupState = "active" | "orphaned" | "cleanupAvailable" | "retained";
 
 export interface SshHostGroup {
   id: string;
@@ -90,6 +99,43 @@ export interface CreateSshHostInput {
 
 export type UpdateSshHostInput = Partial<CreateSshHostInput> & { sort_order?: number };
 
+export interface SshAgentInstallation {
+  host_id: string;
+  installation_id: string;
+  remote_machine_id: string;
+  agent_version: string;
+  protocol_version: string;
+  target: string;
+  install_path: string;
+  status: string;
+  checked_at: string;
+}
+
+export interface SshHostToolPreference {
+  host_id: string;
+  source: SshToolSource;
+  configured_root: string;
+  updated_at: string;
+}
+
+export interface SshAgentToolIntegration {
+  integration_id: string;
+  host_id: string | null;
+  installation_id: string;
+  remote_machine_id: string;
+  ssh_user: string;
+  source: SshToolSource;
+  scope_kind: SshToolIntegrationScopeKind;
+  configured_root: string;
+  canonical_root: string;
+  config_root_hash: string;
+  hook_record_json: string;
+  history_source_instance_id: string;
+  validation_state: SshToolIntegrationValidationState;
+  cleanup_state: SshToolIntegrationCleanupState;
+  checked_at: string;
+}
+
 export type WorktreeStatus = "active" | "missing";
 
 export interface WorktreeRecord {
@@ -126,6 +172,7 @@ export interface Project {
   environment_type: ProjectEnvironmentType;
   ssh_host_id: string | null;
   remote_path: string;
+  cli_config_root: string;
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +194,7 @@ export interface CreateProjectInput {
   environment_type?: ProjectEnvironmentType;
   ssh_host_id?: string | null;
   remote_path?: string;
+  cli_config_root?: string;
 }
 
 export interface UpdateProjectInput {
@@ -167,6 +215,7 @@ export interface UpdateProjectInput {
   environment_type?: ProjectEnvironmentType;
   ssh_host_id?: string | null;
   remote_path?: string;
+  cli_config_root?: string;
 }
 
 export type TerminalScope =
