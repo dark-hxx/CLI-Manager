@@ -1,0 +1,58 @@
+{
+  "id": "history-v2-read-path",
+  "name": "history-v2-read-path",
+  "title": "历史读取链路切换到 v2 索引",
+  "description": "在已完成多来源 parser 的基础上，分片把 list/search/stats/detail 读链路切到 history_* v2 表，legacy catalog 仅保留兼容兜底。",
+  "status": "done",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-07-17",
+  "completedAt": "2026-07-17",
+  "branch": "wt/recall",
+  "base_branch": "master",
+  "worktree_path": "F:\\github\\CLI-Manager-worktrees\\recall",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "v2-list-search-read-path",
+    "v2-stats-read-path",
+    "v2-detail-read-path",
+    "legacy-read-path-cleanup"
+  ],
+  "children": [],
+  "parent": "history-sources-integration-plan",
+  "relatedFiles": [
+    "docs/历史索引库设计.md",
+    "docs/历史来源解析器分批接入计划.md"
+  ],
+  "notes": "按最小风险顺序推进：先 list/search，再 stats，再 detail；mutation 不在本任务扩大。",
+  "meta": {
+    "currentSlice": "completed",
+    "readPathSlices": [
+      {
+        "id": "v2-list-search-read-path",
+        "status": "done",
+        "scope": "会话列表和全文搜索合并 v2 sessions/messages 与 legacy catalog，v2 结果优先、legacy 缺口兜底。"
+      },
+      {
+        "id": "v2-stats-read-path",
+        "status": "done",
+        "scope": "统计 facts 从 v2 usage/session 聚合读取并覆盖同 session legacy facts；legacy 缺口兜底。"
+      },
+      {
+        "id": "v2-detail-read-path",
+        "status": "done",
+        "scope": "普通详情优先从 v2 message/usage/tool/file_change 组装；aggregate_subtasks 与缺口继续 legacy 兜底。"
+      },
+      {
+        "id": "legacy-read-path-cleanup",
+        "status": "done",
+        "scope": "legacy 读链路已降级为 v2 缺口/聚合子任务兜底；不删除兼容代码。"
+      }
+    ]
+  }
+}

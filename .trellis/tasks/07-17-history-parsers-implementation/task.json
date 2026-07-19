@@ -1,0 +1,109 @@
+{
+  "id": "history-parsers-implementation",
+  "name": "history-parsers-implementation",
+  "title": "实现全部已注册历史来源解析器",
+  "description": "将所有已注册来源接入 discover、parse、v2 index、list/detail/search/stats 完整链路。",
+  "status": "done",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-07-17",
+  "completedAt": "2026-07-17",
+  "branch": "wt/recall",
+  "base_branch": "master",
+  "worktree_path": "F:\\github\\CLI-Manager-worktrees\\recall",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "adapter-core-and-v2-read-path",
+    "gemini-parser",
+    "kiro-parser",
+    "opencode-parser",
+    "antigravity-parser",
+    "copilot-parser",
+    "grok-parser",
+    "pi-parser",
+    "cline-parser",
+    "cursor-parser",
+    "all-source-regression"
+  ],
+  "children": [],
+  "parent": "history-sources-integration-plan",
+  "relatedFiles": [
+    "docs/历史来源解析器分批接入计划.md"
+  ],
+  "notes": "descriptor、roadmap、schema 骨架不计作 parser 完成。",
+  "meta": {
+    "currentSlice": "completed",
+    "parserSlices": [
+      {
+        "id": "adapter-core-and-v2-read-path",
+        "status": "done",
+        "scope": "v2 shadow 写入改为复用 adapter 输出；legacy catalog 仍保留为兼容读链路和 discovery 候选。"
+      },
+      {
+        "id": "claude-parser-parity",
+        "status": "done",
+        "scope": "Claude adapter parity 覆盖 session/message/raw pointers/tokens/tool/file change 写入。"
+      },
+      {
+        "id": "codex-parser-parity",
+        "status": "done",
+        "scope": "Codex adapter parity 覆盖 mixed raw pointers、state DB locator、token diff 与 message usage 回填。"
+      },
+      {
+        "id": "gemini-parser",
+        "status": "done",
+        "scope": "JSON parser、fixture、list/detail/search/stats 只读链路。"
+      },
+      {
+        "id": "kiro-parser",
+        "status": "done",
+        "scope": "workspace-sessions JSON parser，覆盖 business-center 本地历史。"
+      },
+      {
+        "id": "opencode-parser",
+        "status": "done",
+        "scope": "SQLite session/message/part 只读 parser，虚拟 locator 接入旧 catalog。"
+      },
+      {
+        "id": "copilot-parser",
+        "status": "done",
+        "scope": "~/.copilot/session-state/*/events.jsonl parser，fixture 先行。"
+      },
+      {
+        "id": "antigravity-parser",
+        "status": "done",
+        "scope": "transcript/history JSONL parser，fixture 覆盖 discover/detail/search/stats。"
+      },
+      {
+        "id": "grok-parser",
+        "status": "done",
+        "scope": "Grok Build ~/.grok/sessions/*/*/updates.jsonl parser，fixture 覆盖 discover/detail/search/stats。"
+      },
+      {
+        "id": "pi-parser",
+        "status": "done",
+        "scope": "Pi ~/.pi/agent/sessions/**/*.jsonl parser，fixture 覆盖 discover/detail/search/stats。"
+      },
+      {
+        "id": "cline-parser",
+        "status": "done",
+        "scope": "Cline task api_conversation_history.json parser，fixture 覆盖 discover/detail/search/stats。"
+      },
+      {
+        "id": "cursor-parser",
+        "status": "done",
+        "scope": "Cursor ~/.cursor/projects/*/agent-transcripts/*/*.jsonl parser，轻量读取 globalStorage SQLite 元数据补 title/time/cwd，fixture 覆盖 discover/detail/search/stats。"
+      },
+      {
+        "id": "all-source-regression",
+        "status": "done",
+        "scope": "全部 supported 来源 list/detail/search/stats/类型检查回归通过。"
+      }
+    ]
+  }
+}

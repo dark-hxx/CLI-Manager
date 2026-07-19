@@ -3,6 +3,7 @@ import {
   ClipboardList,
   Coins,
   Code2,
+  History,
   Info,
   Keyboard,
   PanelLeft,
@@ -29,6 +30,7 @@ import { ThemeSettingsPage } from "./settings/pages/ThemeSettingsPage";
 import { ShortcutSettingsPage } from "./settings/pages/ShortcutSettingsPage";
 import { TemplateSettingsPage } from "./settings/pages/TemplateSettingsPage";
 import { SyncSettingsPage } from "./settings/pages/SyncSettingsPage";
+import { HistorySourceSettingsPage } from "./settings/pages/HistorySourceSettingsPage";
 import { HookSettingsPage } from "./settings/pages/HookSettingsPage";
 import { StatuslineSettingsPage } from "./settings/pages/StatuslineSettingsPage";
 import { CommandSuggestionSettingsPage } from "./settings/pages/CommandSuggestionSettingsPage";
@@ -55,6 +57,7 @@ export type SettingsTab =
   | "cc-connect"
   | "ssh-hosts"
   | "sync"
+  | "history-sources"
   | "hooks"
   | "statusline"
   | "command-suggestions"
@@ -79,6 +82,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "cc-connect",
   "ssh-hosts",
   "sync",
+  "history-sources",
   "hooks",
   "statusline",
   "command-suggestions",
@@ -164,6 +168,12 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     title: "settings.tabs.sync.title",
     description: "settings.tabs.sync.description",
     icon: RefreshCw,
+  },
+  "history-sources": {
+    label: "settings.tabs.historySources.label",
+    title: "settings.tabs.historySources.title",
+    description: "settings.tabs.historySources.description",
+    icon: History,
   },
   hooks: {
     label: "settings.tabs.hooks.label",
@@ -279,6 +289,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "cc-connect") return <CcConnectSettingsPage />;
     if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} onTerminalOpened={onClose} />;
     if (activeTab === "sync") return <SyncSettingsPage />;
+    if (activeTab === "history-sources") return <HistorySourceSettingsPage />;
     if (activeTab === "hooks") return <HookSettingsPage />;
     if (activeTab === "statusline") return <StatuslineSettingsPage searchValue={searchValue} />;
     if (activeTab === "command-suggestions") return <CommandSuggestionSettingsPage />;

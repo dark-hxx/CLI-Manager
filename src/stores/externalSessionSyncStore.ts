@@ -2,12 +2,14 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import { toast } from "sonner";
-import { useSettingsStore } from "./settingsStore";
 import { useProjectStore } from "./projectStore";
 import { getCliManagerDataPaths } from "../lib/appPaths";
+import { getHistoryPathArgs } from "../lib/historyPathArgs";
 import { logInfo, logWarn } from "../lib/logger";
 import { translateCurrent } from "../lib/i18n";
 import type { HistorySource, Project } from "../lib/types";
+
+export type ExternalSessionSource = Extract<HistorySource, "claude" | "codex">;
 
 interface HistorySessionSummaryLike {
   session_id?: unknown;
@@ -29,7 +31,7 @@ interface HistorySessionSummaryLike {
 
 export interface ExternalSessionCandidate {
   key: string;
-  source: HistorySource;
+  source: ExternalSessionSource;
   sessionId: string;
   projectKey: string;
   filePath: string;
@@ -46,7 +48,7 @@ export interface SyncedExternalSession extends ExternalSessionCandidate {
 
 export interface ExternalSessionProjectCandidate {
   key: string;
-  source: HistorySource;
+  source: ExternalSessionSource;
   name: string;
   cwd: string;
   updatedAt: number;
@@ -168,17 +170,9 @@ function normalizeSyncedSessions(value: unknown): SyncedExternalSession[] {
   return result.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-function normalizeSource(value: unknown): HistorySource | null {
+function normalizeSource(value: unknown): ExternalSessionSource | null {
   const source = asString(value).trim().toLowerCase();
   return source === "codex" || source === "claude" ? source : null;
-}
-
-function getHistoryPathArgs(): { claudeConfigDir: string | null; codexConfigDir: string | null } {
-  const settings = useSettingsStore.getState();
-  return {
-    claudeConfigDir: settings.claudeHookConfigDir?.trim() || null,
-    codexConfigDir: settings.codexHookConfigDir?.trim() || null,
-  };
 }
 
 function normalizePathForKey(path: string): string {
@@ -195,7 +189,7 @@ function isSameOrChildPath(path: string, root: string): boolean {
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
 }
 
-function matchesProjectSource(project: Project, source: HistorySource): boolean {
+function matchesProjectSource(project: Project, source: ExternalSessionSource): boolean {
   const cliTool = project.cli_tool.trim().toLowerCase();
   if (!cliTool) return true;
   return source === "codex" ? cliTool.includes("codex") : cliTool.includes("claude");
@@ -218,7 +212,7 @@ function findAncestorCandidate(candidates: ExternalSessionCandidate[], candidate
     .sort((a, b) => normalizePathForKey(b.cwd).length - normalizePathForKey(a.cwd).length)[0];
 }
 
-function makeSessionCandidateKey(source: HistorySource, sessionId: string, filePath: string): string {
+function makeSessionCandidateKey(source: ExternalSessionSource, sessionId: string, filePath: string): string {
   return `${source}:${sessionId}:${normalizePathForKey(filePath)}`;
 }
 
@@ -228,7 +222,7 @@ function basenameFromPath(path: string): string {
   return parts[parts.length - 1] ?? "";
 }
 
-function inferProjectKey(source: HistorySource | null, cwd: string, filePath: string): string {
+function inferProjectKey(source: ExternalSessionSource | null, cwd: string, filePath: string): string {
   if (cwd.trim()) return basenameFromPath(cwd);
   const normalized = filePath.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
   const parts = normalized.split("/").filter(Boolean);
@@ -276,13 +270,13 @@ function normalizeSummary(raw: unknown) {
   };
 }
 
-function resolveResumeCommand(source: HistorySource, sessionId: string): string | null {
+function resolveResumeCommand(source: ExternalSessionSource, sessionId: string): string | null {
   const trimmed = sessionId.trim();
   if (!trimmed || /\s/.test(trimmed) || /[\r\n]/.test(trimmed)) return null;
   return source === "claude" ? `claude --resume ${trimmed}` : `codex resume --no-alt-screen ${trimmed}`;
 }
 
-function normalizeStoredResumeCommand(source: HistorySource | null, sessionId: string, startupCmd: string): string {
+function normalizeStoredResumeCommand(source: ExternalSessionSource | null, sessionId: string, startupCmd: string): string {
   if (!source) return startupCmd;
   const fallback = resolveResumeCommand(source, sessionId);
   if (!startupCmd) return fallback ?? "";
@@ -318,7 +312,7 @@ function normalizeCandidate(summary: NonNullable<ReturnType<typeof normalizeSumm
   };
 }
 
-function sourceLabel(source: HistorySource): string {
+function sourceLabel(source: ExternalSessionSource): string {
   return source === "codex" ? "Codex" : "Claude";
 }
 
@@ -374,10 +368,10 @@ function groupProjectCandidates(
   projects: Project[],
   rootCandidates = candidates
 ): ExternalSessionProjectCandidate[] {
-  const sourcesByProject = new Map<string, Set<HistorySource>>();
+  const sourcesByProject = new Map<string, Set<ExternalSessionSource>>();
   for (const candidate of candidates) {
     const root = candidateProjectRoot(candidate, rootCandidates, projects);
-    const sources = sourcesByProject.get(root.key) ?? new Set<HistorySource>();
+    const sources = sourcesByProject.get(root.key) ?? new Set<ExternalSessionSource>();
     sources.add(candidate.source);
     sourcesByProject.set(root.key, sources);
   }
@@ -424,7 +418,7 @@ function upsertSyncedSession(sessions: SyncedExternalSession[], candidate: Exter
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-function sourceCliTool(source: HistorySource): string {
+function sourceCliTool(source: ExternalSessionSource): string {
   return source === "codex" ? "codex" : "claude";
 }
 
@@ -579,7 +573,7 @@ async function scanProjectCandidates(handledKeys: Set<string>, limit: number): P
     const projects = useProjectStore.getState().projects;
     const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
       source: null,
-      ...getHistoryPathArgs(),
+      ...(await getHistoryPathArgs()),
       projectPath: null,
       query: null,
       limit,

@@ -4,7 +4,6 @@ import { toast, Toaster } from "sonner";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
-import { exit } from "@tauri-apps/plugin-process";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
@@ -1113,18 +1112,11 @@ function App() {
   }, []);
 
   const exitApp = useCallback(async (source: string) => {
-    logInfo("exit: destroying app window", { source });
+    logInfo("exit: terminating app", { source });
     try {
-      await getCurrentWindow().destroy();
-      logInfo("exit: window destroyed", { source });
+      await invoke("app_exit");
     } catch (err) {
-      logWarn(`Failed to destroy window from ${source}`, err);
-      try {
-        logInfo("exit: falling back to process exit", { source });
-        await exit(0);
-      } catch (exitErr) {
-        logWarn(`Failed to exit process from ${source}`, exitErr);
-      }
+      logWarn(`Failed to exit application from ${source}`, err);
     }
   }, []);
 
@@ -1227,6 +1219,12 @@ function App() {
             requestedCount: ptySessionIds.length,
             closedCount,
           });
+        }
+        try {
+          const daemonStopped = await invoke<boolean>("pty_daemon_shutdown_if_idle");
+          logInfo("exit: idle PTY daemon shutdown requested", { source, daemonStopped });
+        } catch (err) {
+          logWarn("Failed to stop idle PTY daemon before exit", { source, err });
         }
       }
       if (discardSessions) {

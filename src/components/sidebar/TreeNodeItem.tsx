@@ -10,6 +10,8 @@ import { VendorIcon, inferVendor } from "../VendorIcon";
 import { WorktreeIcon } from "../WorktreeIcon";
 import { useI18n } from "../../lib/i18n";
 import { DND_SORTABLE_TRANSITION } from "../../lib/dragInteraction";
+import { CliToolIcon } from "../CliToolIcon";
+import { resolveCliToolIconKey } from "../../lib/cliTools";
 
 function preventSecondaryPointerFocus(event: ReactPointerEvent<HTMLElement>) {
   if (event.button !== 2) return;
@@ -210,7 +212,7 @@ function TreeNodeItemImpl({
     const status = actions.getProjectStatus(p.id);
     const terminalCount = actions.getProjectTerminalCount(p.id);
     const pathInvalid = actions.isPathInvalid(p.id);
-    const cliVendor = p.cli_tool ? inferVendor(p.cli_tool) : null;
+    const cliIcon = resolveCliToolIconKey(p.cli_tool);
     const projectWorktrees = node.worktrees ?? [];
     const hasWorktrees = projectWorktrees.length > 0;
     const providerBadge = actions.providerBadges[p.id];
@@ -241,8 +243,8 @@ function TreeNodeItemImpl({
             style={{ paddingLeft, paddingRight: compact ? 8 : 10 }}
           >
             <span className="ui-tree-leading-icon">
-              {cliVendor ? (
-                <VendorIcon vendor={cliVendor} size={14} />
+              {cliIcon ? (
+                <CliToolIcon icon={cliIcon} size={14} />
               ) : (
                 <Terminal size={14} strokeWidth={1.5} />
               )}
@@ -311,8 +313,8 @@ function TreeNodeItemImpl({
             </button>
           )}
           <span className="ui-tree-leading-icon">
-            {cliVendor ? (
-              <VendorIcon vendor={cliVendor} size={14} />
+            {cliIcon ? (
+              <CliToolIcon icon={cliIcon} size={14} />
             ) : (
               <Terminal size={14} strokeWidth={1.5} />
             )}

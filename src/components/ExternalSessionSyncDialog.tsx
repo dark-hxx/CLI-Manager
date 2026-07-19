@@ -9,16 +9,15 @@ import {
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
 import { Check, RefreshCw } from "./icons";
-import { useExternalSessionSyncStore, type ExternalSessionProjectCandidate } from "../stores/externalSessionSyncStore";
+import { useExternalSessionSyncStore, type ExternalSessionProjectCandidate, type ExternalSessionSource } from "../stores/externalSessionSyncStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { getOsPlatform, type OsPlatform } from "../lib/shell";
 import { getEnabledTerminalShellOptions, resolvePreferredShellOption } from "../lib/terminalShellProfiles";
-import type { HistorySource } from "../lib/types";
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
-function sourceLabel(source: HistorySource): string {
+function sourceLabel(source: ExternalSessionSource): string {
   return source === "codex" ? "Codex" : "Claude";
 }
 
@@ -196,7 +195,7 @@ export function ExternalSessionSyncDialog() {
             </div>
           ) : (
             <div className="space-y-4">
-              {(["codex", "claude"] as HistorySource[]).map((source) => {
+              {(["codex", "claude"] as ExternalSessionSource[]).map((source) => {
                 const items = groups[source];
                 if (items.length === 0) return null;
                 return (

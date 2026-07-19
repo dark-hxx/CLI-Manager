@@ -539,6 +539,14 @@ export function HookSettingsPage() {
     setAutoCloseSecondsDraft(String(hookPopupAutoCloseSeconds));
   }, [hookPopupAutoCloseSeconds]);
 
+  useEffect(() => {
+    setSelectedDir(claudeHookConfigDir);
+  }, [claudeHookConfigDir]);
+
+  useEffect(() => {
+    setCodexSelectedDir(codexHookConfigDir);
+  }, [codexHookConfigDir]);
+
   const selectedDirArg = useMemo(() => selectedDir ?? undefined, [selectedDir]);
   const codexSelectedDirArg = useMemo(() => codexSelectedDir ?? undefined, [codexSelectedDir]);
 
@@ -554,9 +562,15 @@ export function HookSettingsPage() {
       setStatus(nextStatus);
       if (nextStatus.claude.configDir) {
         setSelectedDir(nextStatus.claude.configDir);
+        if (useSettingsStore.getState().claudeHookConfigDir !== nextStatus.claude.configDir) {
+          await updateSetting("claudeHookConfigDir", nextStatus.claude.configDir);
+        }
       }
       if (nextStatus.codex.configDir) {
         setCodexSelectedDir(nextStatus.codex.configDir);
+        if (useSettingsStore.getState().codexHookConfigDir !== nextStatus.codex.configDir) {
+          await updateSetting("codexHookConfigDir", nextStatus.codex.configDir);
+        }
       }
       if (nextStatus.claudeAutoRepaired && !claudeHookAutoRepairNoticeShown) {
         toast.info(text("Claude Hook 已自动恢复", "Claude Hook Restored"), {

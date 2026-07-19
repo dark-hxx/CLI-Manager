@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCliManagerDataPaths } from "./appPaths";
 import { sourceLabel, type SyncedHistoryGroup } from "./externalSessionGrouping";
+import { getHistoryPathArgs } from "./historyPathArgs";
 import { getOsPlatform, normalizeShellKey } from "./shell";
 import type { HistoryMessage, HistorySessionDetail } from "./types";
-import { useSettingsStore } from "../stores/settingsStore";
 
 const CONTEXT_DIR_NAME = "synced-history-context";
 const MAX_CONTEXT_SESSIONS = 5;
@@ -13,14 +13,6 @@ const MAX_CONTEXT_CHARS = 18000;
 const MAX_CODEX_CONTEXT_CHARS = 6000;
 const CLAUDE_CONTEXT_ARG_PATTERN = /(^|\s)--(?:append-)?system-prompt(?:-file)?(?:\s|=|$)/i;
 const CODEX_CONTEXT_ARG_PATTERN = /(^|\s)(?:-c|--config)(?:\s+|=)(?:\(\s*)?["']?developer_instructions\s*=/i;
-
-function historyPathArgs() {
-  const settings = useSettingsStore.getState();
-  return {
-    claudeConfigDir: settings.claudeHookConfigDir?.trim() || null,
-    codexConfigDir: settings.codexHookConfigDir?.trim() || null,
-  };
-}
 
 function asNumber(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -174,7 +166,7 @@ async function readSessionDetail(session: SyncedHistoryGroup["sessions"][number]
   try {
     return await invoke<HistorySessionDetail>("history_get_session", {
       filePath: session.filePath,
-      ...historyPathArgs(),
+      ...(await getHistoryPathArgs()),
       source: session.source,
       projectKey: session.projectKey,
       aggregateSubtasks: false,

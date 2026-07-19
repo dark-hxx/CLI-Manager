@@ -66,6 +66,7 @@ type LastSettingsTab =
   | "cc-connect"
   | "ssh-hosts"
   | "sync"
+  | "history-sources"
   | "hooks"
   | "statusline"
   | "command-suggestions"
@@ -602,6 +603,7 @@ const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "cc-connect",
   "ssh-hosts",
   "sync",
+  "history-sources",
   "hooks",
   "statusline",
   "command-suggestions",

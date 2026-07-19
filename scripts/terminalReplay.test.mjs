@@ -54,9 +54,21 @@ writeFileSync(join(tempDir, "themes.mjs"), "export function isLightTerminalTheme
 writeFileSync(join(tempDir, "logger.mjs"), "export function logError() {} export function logWarn() {}\n");
 writeFileSync(join(tempDir, "snapshot.mjs"), "export function markTerminalSnapshotDirty() {}\n");
 writeFileSync(join(tempDir, "resize.mjs"), `
+export function shouldDebounceTerminalResize() { return false; }
+export const cancelCalls = [];
 export class TerminalResizeDebouncer {
   constructor(_visible, _terminal, resizeBoth) { this.resizeBoth = resizeBoth; }
   resize(cols, rows) { this.resizeBoth(cols, rows); }
+  cancel() { cancelCalls.push(true); }
+  dispose() {}
+}
+export function resetResizeStub() { cancelCalls.length = 0; }
+`);
+writeFileSync(join(tempDir, "resizeBarrier.mjs"), `
+export class TerminalResizeRenderBarrier {
+  begin() { return true; }
+  noteContainerResize() {}
+  handleWriteCommitted() {}
   cancel() {}
   dispose() {}
 }
@@ -108,6 +120,7 @@ const transpiled = ts.transpileModule(source, {
   .replace('from "../lib/logger"', 'from "./logger.mjs"')
   .replace('from "../lib/sessionSnapshotPersistence"', 'from "./snapshot.mjs"')
   .replace('from "../terminal/browser/TerminalResizeDebouncer"', 'from "./resize.mjs"')
+  .replace('from "../terminal/browser/TerminalResizeRenderBarrier"', 'from "./resizeBarrier.mjs"')
   .replace('from "../terminal/core/TerminalProcessManager"', 'from "./manager.mjs"')
   .replace('from "../stores/settingsStore"', 'from "./settings.mjs"')
   .replace('from "../stores/terminalStore"', 'from "./terminalStore.mjs"');
@@ -116,6 +129,7 @@ writeFileSync(modulePath, transpiled, "utf8");
 
 const { useTerminalDisplay } = await import(pathToFileURL(modulePath).href);
 const managerStub = await import(pathToFileURL(join(tempDir, "manager.mjs")).href);
+const resizeStub = await import(pathToFileURL(join(tempDir, "resize.mjs")).href);
 const visibilityStub = await import(pathToFileURL(join(tempDir, "visibility.mjs")).href);
 
 class FakeTerminal {
@@ -248,6 +262,20 @@ test("explicit viewport refresh repaints the full grid when dimensions are uncha
   flushAnimationFrames();
 
   assert.deepEqual(visibilityStub.refreshCalls, [[0, 29]]);
+  detachViewport();
+});
+
+test("consecutive fit frames keep the live horizontal resize cadence pending", () => {
+  resizeStub.resetResizeStub();
+  const { display, detachViewport } = createDisplay({ cols: 100, rows: 24 });
+
+  display.scheduleFit();
+  flushNextAnimationFrame();
+  display.scheduleFit();
+
+  assert.equal(resizeStub.cancelCalls.length, 0);
+  display.cancelScheduledFit();
+  assert.equal(resizeStub.cancelCalls.length, 1);
   detachViewport();
 });
 

@@ -1,0 +1,16 @@
+{"file": "docs/历史备份与恢复设计.md", "reason": "跨运行环境备份、manifest、清理、回滚、人工恢复与 UI 设计"}
+{"file": ".trellis/tasks/07-14-history-backup-restore/design.md", "reason": "独立 task 的 Backup Service 技术边界、状态机和实施阶段"}
+{"file": "src-tauri/src/app_paths.rs", "reason": "默认备份 root 使用当前运行环境 HOME 下的 .cli-manager/backups"}
+{"file": "src-tauri/src/commands/history_edit.rs", "reason": "现有消息级历史备份迁移到默认 backups root，并执行 7 天 / 1GiB 自动清理和单次超限阻止"}
+{"file": "src-tauri/src/commands/history_backup.rs", "reason": "独立 Backup Service：环境 root 状态、保留清理、manifest、恢复 plan、目标工具运行中阻止、manifest 导出"}
+{"file": "src-tauri/src/commands/mod.rs", "reason": "注册 history_backup command 模块"}
+{"file": "src-tauri/src/lib.rs", "reason": "注册 history_backup_get_root_status / cleanup / build_restore_plan / export_manifest IPC"}
+{"file": "src/components/settings/pages/HistorySourceSettingsPage.tsx", "reason": "设置页历史来源增加备份与恢复区域，支持查看 root、打开目录和清理"}
+{"file": "src/lib/i18n.ts", "reason": "备份与恢复设置文案同步 zh-CN/en-US"}
+{"file": "src-tauri/src/commands/history_backup.rs", "reason": "补齐目录式 mutation manifest、临时上限 preflight、restore execute、fingerprint 冲突检查和人工恢复锁基础能力"}
+{"file": "src-tauri/src/commands/history.rs", "reason": "主会话删除改用本次 mutation 独立快照，转换/删除接入目标运行中与 manualRecovery lock 闸门"}
+{"file": "src-tauri/src/commands/history_edit.rs", "reason": "消息级 edit/delete/restore 接入 Backup Service restore 与 manualRecovery lock 闸门，同时保留读取备份状态能力"}
+{"file": "src-tauri/src/lib.rs", "reason": "注册 history_backup_execute_restore / history_backup_preflight_file IPC"}
+{"file": "src/components/settings/pages/HistorySourceSettingsPage.tsx", "reason": "设置页增加人工恢复 plan、执行恢复、导出 manifest 最小入口"}
+{"file": "src/lib/i18n.ts", "reason": "人工恢复相关 zh-CN/en-US 文案"}
+{"file": ".trellis/tasks/07-14-history-backup-restore/progress.md", "reason": "按 18 个实际执行项逐项标记备份与恢复实现进度"}

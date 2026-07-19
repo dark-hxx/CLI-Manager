@@ -23,6 +23,7 @@ import { ProviderSwitchModal } from "../ProviderSwitchModal";
 import { WorktreeFinishDialog } from "../worktree/WorktreeFinishDialog";
 import { openWindowsTerminal } from "../../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../../lib/projectStartupCommand";
+import { resolveCliToolHistorySourceId } from "../../lib/cliTools";
 import { shouldSidebarBootstrapProjects } from "../../lib/projectLoadPolicy";
 import { getProviderSwitchAppType, parseProjectEnvVars } from "../../lib/providerSwitching";
 import { isSameProjectFileContext, projectWithWorktreePath, projectWithWorktreeProviderOverrides } from "../../lib/terminalProject";
@@ -122,11 +123,7 @@ function normalizePersistedSidebarWidth(width: number): number {
 }
 
 function resolveHistorySourceFilter(cliTool: string | null | undefined): HistorySourceFilter {
-  const normalized = cliTool?.trim().toLowerCase();
-  if (!normalized) return "all";
-  if (normalized.includes("claude")) return "claude";
-  if (normalized.includes("codex") || normalized === "code") return "codex";
-  return "all";
+  return resolveCliToolHistorySourceId(cliTool) ?? "all";
 }
 
 function buildProjectSplitOptions(project: Project): SplitTerminalOptions {

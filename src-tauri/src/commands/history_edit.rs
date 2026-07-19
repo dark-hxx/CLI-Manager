@@ -4,7 +4,7 @@
 //! - 路径复用 `validate_session_file_ref`（canonicalize + history scope 校验）。
 //! - 双守卫：文件指纹（`expected_updated_at`）拦截外部并发改动；目标行 role + 规范文本
 //!   复核拦截行号漂移。守卫失败返回稳定错误码，前端据此重载会话。
-//! - 首次写入某文件前整文件备份到 `.cli-manager/history-backups/`，支持一键还原。
+//! - 首次写入某文件前整文件备份到 `.cli-manager/backups/`，支持一键还原。
 //! - 写回 tmp + rename 原子替换；除目标行外其余行原始字节不动。
 //!
 //! 格式语义：
@@ -20,15 +20,18 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::history::{
     build_session_detail, extract_editable_text, history_roots, invalidate_history_caches,
-    now_rfc3339, parse_message, session_file_fingerprint, validate_session_file_ref,
-    HistorySessionDetail, SessionFileRef,
+    is_subagent_transcript_path, now_rfc3339, parse_message, session_file_fingerprint,
+    validate_session_file_ref, HistorySessionDetail, SessionFileRef,
 };
-use crate::app_paths;
+use super::history_backup::{
+    backup_status_for_file as service_backup_status_for_file, default_backup_root,
+    ensure_file_backup, ensure_source_mutation_unlocked, is_target_tool_running,
+    restore_file_backup, write_file_manifest, HistoryBackupStatus,
+};
 
 const TEXT_BLOCK_TYPES: [&str; 3] = ["text", "input_text", "output_text"];
 /// event_msg 配对查找的窗口：Codex 写入器把配对行放在 response_item 附近。
@@ -41,14 +44,6 @@ pub struct HistoryEditOutcome {
     pub before_text: Option<String>,
     pub after_text: Option<String>,
     pub backup_path: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HistoryBackupStatus {
-    pub has_backup: bool,
-    pub backup_path: Option<String>,
-    pub backup_at: Option<i64>,
 }
 
 /// 批量删除的单个目标定位 + 守卫（与单条删除同口径）。
@@ -387,29 +382,25 @@ fn build_codex_inserted_lines(anchor: &Value, role: &str, text: &str) -> (Value,
     (response, event)
 }
 
-fn backup_file_path(session_path: &Path, backups_dir: &Path) -> PathBuf {
-    let mut hasher = Sha256::new();
-    hasher.update(session_path.to_string_lossy().as_bytes());
-    let digest = format!("{:x}", hasher.finalize());
-    let stem = session_path
+/// 首改备份：该文件的备份已存在时保持不动（还原语义 = 回到最早一次编辑前）。
+fn ensure_backup(session_path: &Path, backups_dir: &Path) -> Result<PathBuf, String> {
+    let backup = ensure_file_backup(session_path, backups_dir)?;
+    let source_session_id = session_path
         .file_stem()
         .map(|value| value.to_string_lossy().to_string())
         .unwrap_or_else(|| "session".to_string());
-    backups_dir.join(format!("{}__{}.jsonl.bak", &digest[..16], stem))
-}
-
-/// 首改备份：该文件的备份已存在时保持不动（还原语义 = 回到最早一次编辑前）。
-fn ensure_backup(session_path: &Path, backups_dir: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(backups_dir).map_err(|err| err.to_string())?;
-    let backup = backup_file_path(session_path, backups_dir);
-    if !backup.exists() {
-        fs::copy(session_path, &backup).map_err(|err| err.to_string())?;
-    }
+    let _ = write_file_manifest(
+        &backup,
+        session_path,
+        "unknown",
+        &source_session_id,
+        "messageMutation",
+    );
     Ok(backup)
 }
 
 fn resolve_backups_dir() -> Result<PathBuf, String> {
-    app_paths::history_backups_dir()
+    default_backup_root()
 }
 
 fn ensure_non_empty_text(text: &str) -> Result<(), String> {
@@ -821,39 +812,15 @@ fn restore_backup_for_file(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
 ) -> Result<HistoryEditOutcome, String> {
-    let backup = backup_file_path(&file_ref.path, backups_dir);
-    if !backup.exists() {
-        return Err("backup_not_found".to_string());
+    if is_target_tool_running(&file_ref.source) {
+        return Err("history_target_tool_running".to_string());
     }
-    let content = fs::read(&backup).map_err(|err| err.to_string())?;
-    let tmp = file_ref.path.with_extension("jsonl.cli-manager-tmp");
-    fs::write(&tmp, &content).map_err(|err| err.to_string())?;
-    fs::rename(&tmp, &file_ref.path).map_err(|err| {
-        let _ = fs::remove_file(&tmp);
-        err.to_string()
-    })?;
+    let backup = restore_file_backup(&file_ref.path, backups_dir, Some(&file_ref.source))?;
     finish_edit(file_ref, None, None, backup)
 }
 
 fn backup_status_for_file(file_ref: &SessionFileRef, backups_dir: &Path) -> HistoryBackupStatus {
-    let backup = backup_file_path(&file_ref.path, backups_dir);
-    if !backup.exists() {
-        return HistoryBackupStatus {
-            has_backup: false,
-            backup_path: None,
-            backup_at: None,
-        };
-    }
-    let backup_at = fs::metadata(&backup)
-        .ok()
-        .and_then(|meta| meta.modified().ok())
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis() as i64);
-    HistoryBackupStatus {
-        has_backup: true,
-        backup_path: Some(backup.to_string_lossy().to_string()),
-        backup_at,
-    }
+    service_backup_status_for_file(&file_ref.path, backups_dir)
 }
 
 fn validated_file_ref(
@@ -864,7 +831,12 @@ fn validated_file_ref(
     project_key: &str,
 ) -> Result<SessionFileRef, String> {
     let roots = history_roots(claude_config_dir, codex_config_dir);
-    validate_session_file_ref(file_path, source, project_key, &roots)
+    let file_ref = validate_session_file_ref(file_path, source, project_key, &roots)?;
+    ensure_source_mutation_unlocked(source)?;
+    if is_subagent_transcript_path(&file_ref.path) {
+        return Err("history_subagent_mutation_not_allowed".to_string());
+    }
+    Ok(file_ref)
 }
 
 #[tauri::command]
@@ -1062,13 +1034,8 @@ pub async fn history_get_backup_status(
     project_key: String,
 ) -> Result<HistoryBackupStatus, String> {
     tokio::task::spawn_blocking(move || {
-        let file_ref = validated_file_ref(
-            &file_path,
-            claude_config_dir,
-            codex_config_dir,
-            &source,
-            &project_key,
-        )?;
+        let roots = history_roots(claude_config_dir, codex_config_dir);
+        let file_ref = validate_session_file_ref(&file_path, &source, &project_key, &roots)?;
         let backups_dir = resolve_backups_dir()?;
         Ok(backup_status_for_file(&file_ref, &backups_dir))
     })
@@ -1698,7 +1665,7 @@ mod tests {
         );
 
         // 还原回最初内容
-        restore_backup_for_file(&file_ref(&session, "claude"), &backups).unwrap();
+        restore_backup_for_file(&file_ref(&session, "test"), &backups).unwrap();
         assert_eq!(std::fs::read_to_string(&session).unwrap(), claude_fixture());
 
         let status = backup_status_for_file(&file_ref(&session, "claude"), &backups);

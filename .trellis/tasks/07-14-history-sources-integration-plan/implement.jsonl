@@ -1,0 +1,40 @@
+{"file": "docs/历史来源接入规划.md", "reason": "历史来源接入规划和 CLI 工具选项设计"}
+{"file": "docs/历史索引库设计.md", "reason": "History Index DB v2 schema、同步、迁移、查询和备份边界设计"}
+{"file": ".trellis/tasks/07-14-history-sources-integration-plan/design.md", "reason": "task 内设计记录，包含 Recall research、sessionRef/rawPointers、mutation 分阶段方案"}
+{"file": "src-tauri/src/commands/history_sources.rs", "reason": "H1 历史来源 descriptor、默认候选探测、读取位置校验 IPC"}
+{"file": "src-tauri/src/commands/mod.rs", "reason": "注册 history_sources command 模块"}
+{"file": "src-tauri/src/lib.rs", "reason": "注册 history_sources_list_descriptors / detect / validate IPC"}
+{"file": "src/components/settings/pages/HistorySourceSettingsPage.tsx", "reason": "设置页接入检测候选和保存前校验"}
+{"file": "src/lib/historyPathArgs.ts", "reason": "集中解析 Claude/Codex 历史读取目录，历史来源设置优先、旧 Hook 设置兜底"}
+{"file": "src/stores/historyStore.ts", "reason": "历史列表、详情、搜索、统计、编辑等 IPC 参数接入统一历史读取目录解析"}
+{"file": "src/lib/syncedHistoryContext.ts", "reason": "同步历史上下文读取详情时使用统一历史读取目录解析"}
+{"file": "src/stores/externalSessionSyncStore.ts", "reason": "外部会话同步扫描时使用统一历史读取目录解析"}
+{"file": "src/components/HistoryWorkspace.tsx", "reason": "历史转换 IPC 参数接入统一历史读取目录解析"}
+{"file": "src-tauri/src/commands/history/catalog.rs", "reason": "H2 v2 History Index DB schema migration 骨架，保留旧 catalog 查询链路不变"}
+{"file": "src-tauri/src/commands/history.rs", "reason": "新增 history_get_index_v2_status 只读 IPC"}
+{"file": "src-tauri/src/lib.rs", "reason": "注册 history_get_index_v2_status IPC"}
+{"file": ".trellis/tasks/07-14-history-sources-integration-plan/progress.md", "reason": "按阶段标记历史来源接入实现进度"}
+{"file": "src-tauri/src/commands/history/catalog.rs", "reason": "新增 v2 source instance upsert/deactivate 写入接口和校验"}
+{"file": "src-tauri/src/commands/history.rs", "reason": "新增 history_index_v2_upsert_source_instance / deactivate_source_instance IPC"}
+{"file": "src-tauri/src/lib.rs", "reason": "注册 v2 source instance 同步 IPC"}
+{"file": "src/stores/historySourceSettingsStore.ts", "reason": "保存、加载、清除历史来源设置时同步 v2 source instance 快照"}
+{"file": "src-tauri/src/commands/history.rs", "reason": "H2 adapter 输出统一 sessionRef/rawPointers/messages.rawPointers 模型，并提供只读 preview IPC 和单测"}
+{"file": "src-tauri/src/lib.rs", "reason": "注册 history_index_v2_preview_adapter_sessions 只读 IPC"}
+{"file": "src-tauri/src/commands/history/catalog.rs", "reason": "H2 shadow build：按 active source instance 增量写入 v2 history_sessions/history_messages，记录 sync_run/source_state 并与旧 catalog 计数对比"}
+{"file": "src-tauri/src/commands/history/catalog.rs", "reason": "H2 删除检测、parser/model version 失效重建、history_index_failures 失败记录与单测"}
+{"file": "docs/历史来源解析器分批接入计划.md", "reason": "H3 新 parser 分批接入顺序、research/planned 状态和正式晋级门槛"}
+{"file": "docs/历史来源接入规划.md", "reason": "H3 挂载解析器分批接入计划链接，明确第一阶段只登记 roadmap"}
+{"file": "src/lib/historySources.ts", "reason": "H3 为来源 descriptor 增加 parserPlan 元数据，不改变现有 planned/supported capability"}
+{"file": "src-tauri/src/commands/history.rs", "reason": "H4 部分：禁止 subagent 单独转换/删除，主会话物理删除级联 subagent transcript，并补单测"}
+{"file": "src-tauri/src/commands/history_edit.rs", "reason": "H4/backup 部分：禁止 subagent 消息级 mutation/restore，历史备份目录改用 .cli-manager/backups，并加入 7 天 / 1GiB 清理与单次超限阻止"}
+{"file": "src-tauri/src/app_paths.rs", "reason": "H4/backup 部分：默认历史备份目录统一为当前运行环境 HOME 下的 .cli-manager/backups"}
+{"file": "src-tauri/src/commands/history_backup.rs", "reason": "H4 独立 Backup Service：root 状态、7天/1GiB 清理、manifest、恢复 plan、运行中阻止、导出 manifest"}
+{"file": "src/components/settings/pages/HistorySourceSettingsPage.tsx", "reason": "H4 设置 -> 历史来源新增备份与恢复卡片，可查看 root、占用、受保护条目、打开目录和立即清理"}
+{"file": "src/lib/i18n.ts", "reason": "H4 备份与恢复设置页文案同步 zh-CN/en-US"}
+{"file": "src-tauri/src/commands/history.rs", "reason": "H5 任意来源转换矩阵 IPC，当前 Claude/Codex writer 为 supported，其余已解析路线为 planned，并补单测"}
+{"file": "src-tauri/src/lib.rs", "reason": "H5 注册 history_get_conversion_matrix IPC"}
+{"file": "src/components/HistoryWorkspace.tsx", "reason": "H5 转换入口按来源 capability 计算目标，有损转换必须确认"}
+{"file": "src/components/history/HistoryListPane.tsx", "reason": "H5 会话列表右键转换入口按 capability 隐藏"}
+{"file": "src/components/history/SessionDetailPane.tsx", "reason": "H5 会话详情转换按钮按 capability 隐藏"}
+{"file": "src/lib/i18n.ts", "reason": "H5 有损转换确认文案同步 zh-CN/en-US"}
+{"file": ".trellis/tasks/07-14-history-sources-integration-plan/verification.md", "reason": "统一记录 Recall/多来源历史会话两个 Trellis 任务的最终验收步骤"}

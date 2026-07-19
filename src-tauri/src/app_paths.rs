@@ -291,9 +291,12 @@ pub fn history_cache_dir() -> Result<PathBuf, String> {
     Ok(cli_manager_data_dir()?.join("history-cache"))
 }
 
-/// 会话历史消息编辑前的整文件备份目录（首改备份 + 一键还原）。
+/// 会话历史 mutation 备份目录。
+///
+/// Windows 使用 `%USERPROFILE%\.cli-manager\backups`；WSL/macOS/Linux 使用
+/// `$HOME/.cli-manager/backups`。每个运行环境按自己的 HOME 独立计算。
 pub fn history_backups_dir() -> Result<PathBuf, String> {
-    Ok(cli_manager_data_dir()?.join("history-backups"))
+    Ok(cli_manager_data_dir()?.join("backups"))
 }
 
 #[cfg(test)]

@@ -3,8 +3,6 @@ use log::{debug, error};
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Command;
-use tauri::AppHandle;
-use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "windows")]
 use crate::shell_resolver::{resolve_git_bash_exe, GIT_BASH_NOT_FOUND_MESSAGE};
@@ -317,7 +315,6 @@ pub async fn open_windows_terminal(tabs: Vec<ExternalTab>) -> Result<(), String>
 /// 在系统文件管理器中打开指定路径
 #[tauri::command]
 pub async fn open_folder_in_explorer(
-    app: AppHandle,
     path: String,
     open_file: Option<bool>,
 ) -> Result<(), String> {
@@ -328,19 +325,12 @@ pub async fn open_folder_in_explorer(
         return Err(format!("路径不存在: {}", path));
     }
 
-    if path_buf.is_file() && open_file.unwrap_or(false) {
-        app.opener().open_path(&path, None::<&str>).map_err(|e| {
-            error!("Failed to open file with default application: {}", e);
-            format!("无法打开文件: {}", e)
-        })?;
-        debug!("Opened file with default application: {}", path);
-        return Ok(());
-    }
-
     // Windows 上使用 explorer 打开
     #[cfg(target_os = "windows")]
     {
-        let result = if path_buf.is_file() {
+        let result = if path_buf.is_file() && open_file.unwrap_or(false) {
+            Command::new("explorer").arg(&path).spawn()
+        } else if path_buf.is_file() {
             // 如果是文件，使用 /select 参数在文件管理器中选中该文件
             Command::new("explorer").args(&["/select,", &path]).spawn()
         } else {

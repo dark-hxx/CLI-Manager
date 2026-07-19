@@ -1,0 +1,30 @@
+{
+  "id": "history-sources-integration-plan",
+  "name": "history-sources-integration-plan",
+  "title": "历史来源接入规划",
+  "description": "设计多平台历史来源配置、CLI 工具注册表与后续解析器接入顺序。",
+  "status": "done",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-07-14",
+  "completedAt": "2026-07-14",
+  "branch": null,
+  "base_branch": "wt/recall",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-14-history-backup-restore",
+    "07-17-history-parsers-implementation",
+    "07-17-history-v2-read-path"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

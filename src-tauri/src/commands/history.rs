@@ -5,7 +5,7 @@ use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{Connection, SqliteConnection};
+use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -20,6 +20,11 @@ use uuid::Uuid;
 mod catalog;
 pub(crate) mod request_logs;
 
+use super::history_backup::{
+    create_file_backup_snapshot, default_backup_root, ensure_source_mutation_unlocked,
+    is_target_tool_running, lock_source_mutations,
+};
+
 /// BufReader 容量；默认 8KB 对几 MB 的 jsonl 文件 syscall 次数偏多。
 const READ_BUF_CAPACITY: usize = 64 * 1024;
 /// collect_session_files 的 TTL：避免分析看板/搜索短时间内反复全树扫盘。
@@ -28,6 +33,9 @@ const OOM_HISTORY_DETAIL_WARN_BYTES: usize = 10 * 1024 * 1024;
 const OOM_HISTORY_STATS_WARN_BYTES: usize = 5 * 1024 * 1024;
 const OOM_HISTORY_MESSAGES_WARN_COUNT: usize = 2_000;
 const CODEX_HISTORY_INDEX_TEXT_MAX_CHARS: usize = 4_000;
+const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 1;
+const HISTORY_INDEX_V2_ADAPTER_MODEL_VERSION: i64 = 1;
+const OPENCODE_SESSION_LOCATOR_MARKER: &str = "#session=";
 
 fn estimate_history_detail_content_bytes(detail: &HistorySessionDetail) -> usize {
     let message_bytes: usize = detail
@@ -242,6 +250,14 @@ struct SessionProjectScan {
     cwd: Option<String>,
 }
 
+#[derive(Clone, Default)]
+struct CursorSessionMetadata {
+    title: Option<String>,
+    created_at: Option<i64>,
+    updated_at: Option<i64>,
+    cwd: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct CachedSessionComputation {
     created_at: i64,
@@ -341,6 +357,15 @@ struct HistoryStatsSessionFact {
     occurred_at: i64,
     stats: UsageStatsScan,
     model: Option<String>,
+}
+
+struct OpenCodeParsedSession {
+    file_ref: SessionFileRef,
+    fingerprint: SessionFileFingerprint,
+    computed: CachedSessionComputation,
+    cwd: Option<String>,
+    messages: Vec<HistoryMessage>,
+    tool_events: Vec<HistoryToolEvent>,
 }
 
 #[derive(Clone)]
@@ -558,6 +583,109 @@ pub struct HistoryIndexStatus {
     pub partial: bool,
     pub last_completed_at: Option<i64>,
     pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryIndexV2TableStatus {
+    pub table: String,
+    pub rows: i64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryIndexV2Status {
+    pub db_path: String,
+    pub initialized: bool,
+    pub user_version: i64,
+    pub schema_version: Option<String>,
+    pub model_version: Option<String>,
+    pub source_instances: i64,
+    pub sessions: i64,
+    pub messages: i64,
+    pub sync_runs: i64,
+    pub failures: i64,
+    pub tables: Vec<HistoryIndexV2TableStatus>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryIndexV2SourceInstanceInput {
+    pub source_id: String,
+    pub instance_id: String,
+    pub environment_kind: String,
+    pub environment_key: String,
+    pub storage_kind: String,
+    pub display_name: Option<String>,
+    pub locations_json: String,
+    pub settings_hash: String,
+    pub discovered: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryIndexV2RawPointer {
+    pub role: String,
+    pub kind: String,
+    pub path: Option<String>,
+    pub line_index: Option<usize>,
+    pub raw_key: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryIndexV2SessionRef {
+    pub source_id: String,
+    pub source_session_id: String,
+    pub storage_kind: String,
+    pub project_key: String,
+    pub cwd: Option<String>,
+    pub title: String,
+    pub branch: Option<String>,
+    pub primary_path: Option<String>,
+    pub database_path: Option<String>,
+    pub raw_key: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub fingerprint_kind: String,
+    pub fingerprint_value: String,
+    pub raw_pointers: Vec<HistoryIndexV2RawPointer>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryIndexV2MessageRef {
+    pub message_index: usize,
+    pub role: String,
+    pub display_content: String,
+    pub timestamp_ms: Option<i64>,
+    pub model: Option<String>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_creation_tokens: Option<u64>,
+    pub editable: bool,
+    pub raw_pointers: Vec<HistoryIndexV2RawPointer>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryIndexV2AdapterSession {
+    pub parser_version: i64,
+    pub model_version: i64,
+    pub session_ref: HistoryIndexV2SessionRef,
+    pub messages: Vec<HistoryIndexV2MessageRef>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryConversionMatrixItem {
+    pub source_id: String,
+    pub target_id: String,
+    pub state: String,
+    pub loss_kind: String,
+    pub writer_state: String,
+    pub note: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -1047,6 +1175,50 @@ pub async fn history_get_session(
     project_key: String,
     aggregate_subtasks: Option<bool>,
 ) -> Result<HistorySessionDetail, String> {
+    let source_normalized = source.trim().to_lowercase();
+    let aggregate_subtasks = aggregate_subtasks.unwrap_or(false);
+    if !aggregate_subtasks {
+        let started_at = Instant::now();
+        let roots = history_roots(claude_config_dir.clone(), codex_config_dir.clone());
+        match catalog::get_session_detail_from_v2(
+            &roots,
+            &file_path,
+            &source_normalized,
+            &project_key,
+        )
+        .await
+        {
+            Ok(Some(detail)) => {
+                log_history_detail_oom_diagnostic(
+                    "history_get_session_v2",
+                    &detail,
+                    started_at.elapsed().as_millis(),
+                );
+                return Ok(detail);
+            }
+            Ok(None) => {}
+            Err(err) => warn!("history v2 detail fallback: {err}"),
+        }
+    }
+    if source_normalized == "opencode" {
+        let started_at = Instant::now();
+        let roots = history_roots(claude_config_dir, codex_config_dir);
+        let summary = catalog::get_session_by_file_path(
+            &roots,
+            &file_path,
+            "opencode",
+            &project_key,
+        )
+        .await?
+        .ok_or_else(|| "session_file_not_indexed".to_string())?;
+        let detail = build_opencode_session_detail(&file_path, summary).await?;
+        log_history_detail_oom_diagnostic(
+            "history_get_session",
+            &detail,
+            started_at.elapsed().as_millis(),
+        );
+        return Ok(detail);
+    }
     tokio::task::spawn_blocking(move || {
         let started_at = Instant::now();
         let roots = history_roots(claude_config_dir, codex_config_dir);
@@ -1064,9 +1236,9 @@ pub async fn history_get_session(
             file_ref.source,
             file_ref.project_key,
             file_ref.path.to_string_lossy(),
-            aggregate_subtasks.unwrap_or(false)
+            aggregate_subtasks
         );
-        let detail = build_session_detail(&file_ref, aggregate_subtasks.unwrap_or(false))?;
+        let detail = build_session_detail(&file_ref, aggregate_subtasks)?;
         log_history_detail_oom_diagnostic(
             "history_get_session",
             &detail,
@@ -1076,6 +1248,61 @@ pub async fn history_get_session(
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+async fn build_opencode_session_detail(
+    file_path: &str,
+    summary: HistorySessionSummary,
+) -> Result<HistorySessionDetail, String> {
+    let (db_path, session_id) = parse_opencode_session_locator(file_path)
+        .ok_or_else(|| "invalid_session_file".to_string())?;
+    if !path_equals_lenient(&db_path, &resolve_opencode_database_path()) {
+        return Err("session_file_outside_history_scope".to_string());
+    }
+    let mut sessions = parse_opencode_database(&db_path, Some(&session_id)).await?;
+    let parsed = sessions
+        .pop()
+        .ok_or_else(|| "session_file_not_indexed".to_string())?;
+    Ok(finalize_opencode_detail(parsed, summary))
+}
+
+fn finalize_opencode_detail(
+    parsed: OpenCodeParsedSession,
+    summary: HistorySessionSummary,
+) -> HistorySessionDetail {
+    let usage = HistorySessionUsage {
+        input_tokens: parsed.computed.stats.input_tokens,
+        output_tokens: parsed.computed.stats.output_tokens,
+        cache_read_tokens: parsed.computed.stats.cache_read_tokens,
+        cache_creation_tokens: parsed.computed.stats.cache_creation_tokens,
+        total_cost_usd: parsed.computed.stats.total_cost_usd,
+        dominant_model: parsed.computed.stats.dominant_model.clone(),
+        current_model: parsed.computed.stats.current_model.clone(),
+        context_window: parsed.computed.stats.context_window,
+        last_context_tokens: parsed.computed.stats.last_context_tokens,
+        reasoning_effort: parsed.computed.stats.reasoning_effort.clone(),
+        token_trend: parsed.computed.stats.token_trend.clone(),
+        tool_call_count: parsed.computed.stats.tool_call_count,
+        mcp_calls: sorted_tool_counts(&parsed.computed.stats.mcp_calls),
+        skill_calls: sorted_tool_counts(&parsed.computed.stats.skill_calls),
+        builtin_calls: sorted_tool_counts(&parsed.computed.stats.builtin_calls),
+    };
+    HistorySessionDetail {
+        session_id: parsed.computed.session_id,
+        source: "opencode".to_string(),
+        project_key: summary.project_key,
+        title: parsed.computed.title,
+        file_path: summary.file_path,
+        cwd: parsed.cwd,
+        created_at: parsed.computed.created_at,
+        updated_at: parsed.computed.updated_at,
+        message_count: parsed.messages.len(),
+        branch: None,
+        usage,
+        tool_events: parsed.tool_events,
+        file_changes: Vec::new(),
+        messages: parsed.messages,
+    }
 }
 
 #[tauri::command]
@@ -1091,7 +1318,14 @@ pub async fn history_convert_session(
         let roots = history_roots(claude_config_dir, codex_config_dir);
         let file_ref =
             validate_session_file_ref_for_conversion(&file_path, &source, &project_key, &roots)?;
+        ensure_source_mutation_unlocked(&target_source)?;
+        if is_subagent_transcript_path(&file_ref.path) {
+            return Err("history_subagent_mutation_not_allowed".to_string());
+        }
         let target_source = target_source.trim().to_lowercase();
+        if is_target_tool_running(&target_source) {
+            return Err("history_target_tool_running".to_string());
+        }
         let detail = build_session_detail(&file_ref, false)?;
         let result = convert_history_session(&detail, &target_source, &roots)?;
         let codex_registration = if target_source == "codex" {
@@ -1168,8 +1402,22 @@ fn history_source_base(source: &str, roots: &HistoryRoots) -> Result<PathBuf, St
     match source {
         "claude" => Ok(resolve_claude_history_root(roots)),
         "codex" => Ok(resolve_codex_history_root(roots)),
+        "gemini" => Ok(resolve_gemini_history_root()),
+        "copilot" => Ok(resolve_copilot_history_root()),
+        "antigravity" => Ok(resolve_antigravity_history_root()),
+        "grok" => Ok(resolve_grok_history_root()),
+        "pi" => Ok(resolve_pi_history_root()),
+        "kiro" => Ok(resolve_kiro_history_root()),
+        "cursor" => Ok(resolve_cursor_history_root()),
         _ => Err("unsupported_history_source".to_string()),
     }
+}
+
+fn is_supported_session_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("jsonl") || value.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
 }
 
 fn resolve_session_file_ref(
@@ -1184,7 +1432,7 @@ fn resolve_session_file_ref(
     }
 
     let requested = PathBuf::from(file_path);
-    if !is_jsonl(&requested) {
+    if !is_supported_session_file(&requested) {
         return Err("invalid_session_file".to_string());
     }
 
@@ -1231,7 +1479,7 @@ fn resolve_session_file_ref(
         }
 
         let indexed_project_key = candidate.project_key;
-        let resolved_project_key = if source == "codex" {
+        let resolved_project_key = if source != "claude" {
             get_or_scan_session_project(&candidate_path)
                 .cwd
                 .as_deref()
@@ -1358,8 +1606,13 @@ pub async fn history_delete_session(
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir);
+        let source = source.trim().to_lowercase();
+        if !matches!(source.as_str(), "claude" | "codex") {
+            return Err("unsupported_history_mutation_source".to_string());
+        }
         let file_ref = validate_session_file_ref(&file_path, &source, &project_key, &roots)?;
-        fs::remove_file(&file_ref.path).map_err(|err| err.to_string())?;
+        ensure_source_mutation_unlocked(&source)?;
+        delete_session_tree(&file_ref)?;
         invalidate_history_caches();
         Ok(())
     })
@@ -1397,6 +1650,122 @@ pub async fn history_get_index_status(
 }
 
 #[tauri::command]
+pub async fn history_get_index_v2_status() -> Result<HistoryIndexV2Status, String> {
+    catalog::get_v2_status().await
+}
+
+#[tauri::command]
+pub async fn history_index_v2_preview_adapter_sessions(
+    claude_config_dir: Option<String>,
+    codex_config_dir: Option<String>,
+    source: Option<String>,
+    project_key: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<HistoryIndexV2AdapterSession>, String> {
+    tokio::task::spawn_blocking(move || {
+        let roots = history_roots(claude_config_dir, codex_config_dir);
+        let source_filter = source
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+        let project_filter = project_key
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let max_sessions = limit.unwrap_or(20).clamp(1, 100);
+        let mut entries = refresh_history_index(&roots);
+        entries.sort_by(|left, right| {
+            right
+                .computed
+                .updated_at
+                .cmp(&left.computed.updated_at)
+                .then_with(|| left.file_ref.path.cmp(&right.file_ref.path))
+        });
+
+        Ok(entries
+            .into_iter()
+            .filter(|entry| {
+                source_filter
+                    .as_deref()
+                    .map(|source| entry.file_ref.source == source)
+                    .unwrap_or(true)
+            })
+            .filter(|entry| {
+                project_filter
+                    .as_deref()
+                    .map(|project| entry.file_ref.project_key == project)
+                    .unwrap_or(true)
+            })
+            .take(max_sessions)
+            .map(|entry| build_v2_adapter_session(&entry.file_ref, &roots))
+            .collect())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn history_index_v2_upsert_source_instance(
+    input: HistoryIndexV2SourceInstanceInput,
+) -> Result<HistoryIndexV2Status, String> {
+    catalog::upsert_v2_source_instance(input).await
+}
+
+#[tauri::command]
+pub async fn history_index_v2_deactivate_source_instance(
+    source_id: String,
+    instance_id: Option<String>,
+) -> Result<HistoryIndexV2Status, String> {
+    catalog::deactivate_v2_source_instance(source_id, instance_id).await
+}
+
+#[tauri::command]
+pub async fn history_get_conversion_matrix() -> Result<Vec<HistoryConversionMatrixItem>, String> {
+    const SOURCES: [&str; 11] = [
+        "claude",
+        "codex",
+        "gemini",
+        "copilot",
+        "antigravity",
+        "grok",
+        "pi",
+        "opencode",
+        "kiro",
+        "cursor",
+        "cline",
+    ];
+    let mut items = Vec::new();
+    for source in SOURCES {
+        for target in SOURCES {
+            if source == target {
+                items.push(HistoryConversionMatrixItem {
+                    source_id: source.to_string(),
+                    target_id: target.to_string(),
+                    state: "unsupported".to_string(),
+                    loss_kind: "sameSource".to_string(),
+                    writer_state: "unsupported".to_string(),
+                    note: "same_source_conversion_is_not_a_mutation".to_string(),
+                });
+                continue;
+            }
+            let supported = matches!((source, target), ("claude", "codex") | ("codex", "claude"));
+            items.push(HistoryConversionMatrixItem {
+                source_id: source.to_string(),
+                target_id: target.to_string(),
+                state: if supported { "supported" } else { "planned" }.to_string(),
+                loss_kind: if supported { "lossyPotential" } else { "unknown" }.to_string(),
+                writer_state: if supported { "supported" } else { "planned" }.to_string(),
+                note: if supported {
+                    "current_native_writer"
+                } else {
+                    "requires_parser_promotion_and_native_writer"
+                }
+                .to_string(),
+            });
+        }
+    }
+    Ok(items)
+}
+
+#[tauri::command]
 pub async fn history_refresh_index(
     app: tauri::AppHandle,
     claude_config_dir: Option<String>,
@@ -1418,7 +1787,13 @@ pub async fn history_list_prompts(
     query: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<HistoryPromptItem>, String> {
-    tokio::task::spawn_blocking(move || {
+    let source_for_opencode = source.clone();
+    let scope_for_opencode = scope.clone();
+    let project_for_opencode = project_key.clone();
+    let file_for_opencode = file_path.clone();
+    let query_for_opencode = query.clone();
+    let max_items = limit.unwrap_or(200).clamp(1, 2000);
+    let mut prompts: Vec<HistoryPromptItem> = tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir);
         let scope = scope
             .as_deref()
@@ -1520,10 +1895,31 @@ pub async fn history_list_prompts(
                 .cmp(&a.updated_at)
                 .then(b.message_index.cmp(&a.message_index))
         });
-        Ok(prompts)
+        Ok::<Vec<HistoryPromptItem>, String>(prompts)
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+
+    if source_includes(&source_for_opencode, "opencode") && prompts.len() < max_items {
+        prompts.extend(
+            opencode_list_prompts(
+                scope_for_opencode,
+                project_for_opencode,
+                file_for_opencode,
+                query_for_opencode,
+                max_items.saturating_sub(prompts.len()),
+            )
+            .await?,
+        );
+        prompts.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then(b.message_index.cmp(&a.message_index))
+        });
+        prompts.truncate(max_items);
+    }
+
+    Ok(prompts)
 }
 
 #[tauri::command]
@@ -1532,7 +1928,8 @@ pub async fn history_list_stats_projects(
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
 ) -> Result<Vec<String>, String> {
-    tokio::task::spawn_blocking(move || {
+    let source_for_opencode = source.clone();
+    let mut projects: Vec<String> = tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir);
         let source_filter = source.map(|v| v.to_lowercase());
         let mut projects = BTreeSet::new();
@@ -1548,10 +1945,22 @@ pub async fn history_list_stats_projects(
             }
         }
 
-        Ok(projects.into_iter().collect())
+        Ok::<Vec<String>, String>(projects.into_iter().collect())
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+
+    if source_includes(&source_for_opencode, "opencode") {
+        let mut merged: BTreeSet<String> = projects.into_iter().collect();
+        for parsed in opencode_catalog_sessions().await?.unwrap_or_default() {
+            if !parsed.file_ref.project_key.trim().is_empty() {
+                merged.insert(parsed.file_ref.project_key);
+            }
+        }
+        projects = merged.into_iter().collect();
+    }
+
+    Ok(projects)
 }
 
 #[tauri::command]
@@ -1576,6 +1985,10 @@ pub async fn history_get_stats(
     let target_project_paths = normalize_history_stats_project_paths(project_path, project_paths);
     let bounds = resolve_stats_time_bounds(range_days, start_at, end_at)?;
     let force = force.unwrap_or(false);
+    let include_opencode = source_filter
+        .as_deref()
+        .map(|source| source == "opencode")
+        .unwrap_or(true);
     let index = refresh_history_index_snapshot(&roots, force);
     let cache_key = make_history_stats_aggregation_cache_key(
         &roots,
@@ -1586,7 +1999,7 @@ pub async fn history_get_stats(
         index.generation,
     );
 
-    if !force {
+    if !force && !include_opencode {
         if let Some(response) = stats_aggregation_cache_get(&cache_key) {
             log_history_stats_oom_diagnostic(
                 "history_get_stats_cache_hit",
@@ -1629,13 +2042,55 @@ pub async fn history_get_stats(
         daily_index
     };
 
-    let response = build_history_stats_response(&daily_index.days, bounds);
+    let mut days = daily_index.days;
+    if include_opencode {
+        for fact in opencode_stats_facts(
+            source_filter.as_deref(),
+            target_project.as_deref(),
+            &target_project_paths,
+            bounds,
+        )
+        .await?
+        {
+            let day_start = stats_day_start_with_offset(fact.occurred_at, stats_day_start_offset(bounds));
+            days.entry(day_start).or_default().push(fact);
+        }
+    }
+    match catalog::stats_session_facts(
+        &roots,
+        source_filter.as_deref(),
+        target_project.as_deref(),
+        &target_project_paths,
+    )
+    .await
+    {
+        Ok(v2_facts) if !v2_facts.is_empty() => {
+            let v2_session_keys: HashSet<String> = v2_facts
+                .iter()
+                .map(|fact| history_stats_session_key(&fact.summary))
+                .collect();
+            for facts in days.values_mut() {
+                facts.retain(|fact| !v2_session_keys.contains(&history_stats_session_key(&fact.summary)));
+            }
+            let day_offset = stats_day_start_offset(bounds);
+            for fact in v2_facts {
+                let day_start = stats_day_start_with_offset(fact.occurred_at, day_offset);
+                days.entry(day_start).or_default().push(fact);
+            }
+        }
+        Ok(_) => {}
+        Err(err) => warn!("history v2 stats fallback: {err}"),
+    }
+
+    let response = build_history_stats_response(&days, bounds);
     log_history_stats_oom_diagnostic(
         "history_get_stats",
         &response,
         started_at.elapsed().as_millis(),
     );
-    stats_aggregation_cache_set(cache_key, response.clone());
+    if !include_opencode {
+        stats_aggregation_cache_set(cache_key, response.clone());
+    }
     Ok(response)
 }
 
@@ -1662,6 +2117,158 @@ fn history_stats_project_paths_cache_key(project_paths: &[String]) -> String {
         return "__all__".to_string();
     }
     serde_json::to_string(project_paths).unwrap_or_else(|_| project_paths.join("\u{1f}"))
+}
+
+fn source_includes(source: &Option<String>, target: &str) -> bool {
+    source
+        .as_deref()
+        .map(|value| {
+            let value = value.trim();
+            value.is_empty() || value.eq_ignore_ascii_case("all") || value.eq_ignore_ascii_case(target)
+        })
+        .unwrap_or(true)
+}
+
+async fn opencode_list_prompts(
+    scope: Option<String>,
+    project_key: Option<String>,
+    file_path: Option<String>,
+    query: Option<String>,
+    limit: usize,
+) -> Result<Vec<HistoryPromptItem>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let scope = scope
+        .as_deref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "global".to_string());
+    let target_project = project_key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let target_file = file_path
+        .map(|value| normalize_history_path(&value))
+        .filter(|value| !value.is_empty());
+    let normalized_query = query
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty());
+    let mut prompts = Vec::new();
+
+    for parsed in opencode_catalog_sessions().await?.unwrap_or_default() {
+        if target_project
+            .as_deref()
+            .is_some_and(|project| parsed.file_ref.project_key != project)
+        {
+            continue;
+        }
+        if scope == "session" {
+            let Some(target) = target_file.as_ref() else {
+                continue;
+            };
+            if normalize_history_path(&parsed.file_ref.path.to_string_lossy()) != *target {
+                continue;
+            }
+        }
+        let title_lower = parsed.computed.title.to_lowercase();
+        for (message_index, message) in parsed.messages.into_iter().enumerate() {
+            if message.role != "user" {
+                continue;
+            }
+            let prompt = normalize_text(&message.content);
+            if prompt.is_empty() {
+                continue;
+            }
+            if let Some(query) = &normalized_query {
+                let prompt_lower = prompt.to_lowercase();
+                if !prompt_lower.contains(query) && !title_lower.contains(query) {
+                    continue;
+                }
+            }
+            prompts.push(HistoryPromptItem {
+                session_id: parsed.computed.session_id.clone(),
+                source: "opencode".to_string(),
+                project_key: parsed.file_ref.project_key.clone(),
+                file_path: parsed.file_ref.path.to_string_lossy().to_string(),
+                session_title: parsed.computed.title.clone(),
+                updated_at: parsed.computed.updated_at,
+                message_index,
+                prompt,
+                timestamp: message.timestamp,
+            });
+            if prompts.len() >= limit {
+                return Ok(prompts);
+            }
+        }
+    }
+    Ok(prompts)
+}
+
+async fn opencode_stats_facts(
+    source_filter: Option<&str>,
+    target_project: Option<&str>,
+    target_project_paths: &[String],
+    bounds: StatsTimeBounds,
+) -> Result<Vec<HistoryStatsSessionFact>, String> {
+    if source_filter.is_some_and(|source| source != "opencode") {
+        return Ok(Vec::new());
+    }
+    let mut facts = Vec::new();
+    for parsed in opencode_catalog_sessions().await?.unwrap_or_default() {
+        if target_project.is_some_and(|project| parsed.file_ref.project_key != project) {
+            continue;
+        }
+        if !target_project_paths.is_empty()
+            && !target_project_paths.iter().any(|project_path| {
+                parsed
+                    .cwd
+                    .as_deref()
+                    .is_some_and(|cwd| opencode_cwd_matches_project_path(cwd, project_path))
+            })
+        {
+            continue;
+        }
+        let summary = opencode_summary_from_parsed(&parsed);
+        for event in stats_usage_events_or_fallback(&summary, &parsed.computed.stats) {
+            let occurred_at = event.timestamp_ms.unwrap_or(summary.updated_at);
+            if occurred_at < bounds.start_at || occurred_at > bounds.end_at {
+                continue;
+            }
+            facts.push(HistoryStatsSessionFact {
+                summary: summary.clone(),
+                occurred_at,
+                stats: reprice_usage_stats(event.model.as_deref(), event.usage),
+                model: event.model,
+            });
+        }
+    }
+    Ok(facts)
+}
+
+fn opencode_summary_from_parsed(parsed: &OpenCodeParsedSession) -> HistorySessionSummary {
+    HistorySessionSummary {
+        session_id: parsed.computed.session_id.clone(),
+        source: "opencode".to_string(),
+        project_key: parsed.file_ref.project_key.clone(),
+        title: parsed.computed.title.clone(),
+        file_path: parsed.file_ref.path.to_string_lossy().to_string(),
+        cwd: parsed.cwd.clone(),
+        created_at: parsed.computed.created_at,
+        updated_at: parsed.computed.updated_at,
+        message_count: parsed.computed.message_count,
+        branch: None,
+    }
+}
+
+fn opencode_cwd_matches_project_path(cwd: &str, target_project_path: &str) -> bool {
+    let cwd = normalize_history_path(cwd);
+    cwd_matches_target(&cwd, target_project_path)
+        || crate::wsl::windows_path_to_wsl(target_project_path)
+            .as_deref()
+            .is_some_and(|target| cwd_matches_target(&cwd, target))
+        || crate::wsl::parse_wsl_unc_path(target_project_path)
+            .map(|(_, target)| cwd_matches_target(&cwd, &target))
+            .unwrap_or(false)
 }
 
 fn build_history_stats_daily_index(
@@ -2350,7 +2957,7 @@ pub(crate) fn invalidate_history_stats_caches() {
 // 内存索引（HISTORY_SESSION_INDEX）每次 App 启动后为空，首个 history_get_stats 必须
 // 全量解析所有 JSONL（可能上千个），冷启动耗时不可接受。这里把 per-file 解析结果落盘，
 // 重启后载入作为 build_history_index 的 previous，按 fingerprint 仅重解析变更文件。
-const HISTORY_INDEX_CACHE_VERSION: u32 = 7;
+const HISTORY_INDEX_CACHE_VERSION: u32 = 8;
 const HISTORY_INDEX_CACHE_FILE: &str = "history-index-cache.json";
 
 static HISTORY_INDEX_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -2535,8 +3142,14 @@ fn build_history_index(
             {
                 existing.file_ref = file_ref;
                 existing.fingerprint = fingerprint;
-                existing.computed.created_at = fingerprint.created_at;
-                existing.computed.updated_at = fingerprint.updated_at;
+                if existing.file_ref.source == "cursor" {
+                    if let Some(metadata) = cursor_metadata_from_path(&existing.file_ref.path) {
+                        apply_cursor_metadata_to_computation(&mut existing.computed, &metadata);
+                    }
+                } else {
+                    existing.computed.created_at = fingerprint.created_at;
+                    existing.computed.updated_at = fingerprint.updated_at;
+                }
                 entries.push(Some(existing));
                 continue;
             }
@@ -2734,11 +3347,24 @@ fn build_session_computation(
     summary_scan: SessionSummaryScan,
     stats: SessionStatsScan,
 ) -> CachedSessionComputation {
+    let is_cursor_transcript = looks_like_cursor_agent_transcript_file(path);
+    let cursor_metadata = if is_cursor_transcript {
+        cursor_metadata_from_path(path)
+    } else {
+        None
+    };
     let fallback_session_id = path
         .file_stem()
         .map(|v| v.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown-session".to_string());
-    let session_id = if is_codex_rollout_session_path(path) {
+    let session_id = if is_codex_rollout_session_path(path)
+        || looks_like_copilot_events_file(path)
+        || looks_like_antigravity_transcript_file(path)
+        || looks_like_grok_updates_file(path)
+        || looks_like_pi_session_file(path)
+        || is_cursor_transcript
+        || !is_jsonl(path)
+    {
         summary_scan
             .session_id
             .clone()
@@ -2753,7 +3379,7 @@ fn build_session_computation(
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| session_id.clone());
 
-    CachedSessionComputation {
+    let mut computed = CachedSessionComputation {
         created_at,
         updated_at,
         session_id,
@@ -2761,7 +3387,11 @@ fn build_session_computation(
         message_count: summary_scan.message_count,
         branch: summary_scan.branch,
         stats,
+    };
+    if let Some(metadata) = cursor_metadata {
+        apply_cursor_metadata_to_computation(&mut computed, &metadata);
     }
+    computed
 }
 
 fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDetailParts {
@@ -2787,6 +3417,20 @@ fn finalize_session_detail(
     file_ref: &SessionFileRef,
     parts: SessionDetailParts,
 ) -> HistorySessionDetail {
+    let is_subagent = is_subagent_transcript_path(&file_ref.path);
+    let messages = if is_subagent {
+        parts
+            .messages
+            .into_iter()
+            .map(|mut message| {
+                message.editable = false;
+                message.editable_text = None;
+                message
+            })
+            .collect()
+    } else {
+        parts.messages
+    };
     let usage = HistorySessionUsage {
         input_tokens: parts.computed.stats.input_tokens,
         output_tokens: parts.computed.stats.output_tokens,
@@ -2813,12 +3457,169 @@ fn finalize_session_detail(
         cwd: parts.cwd,
         created_at: parts.computed.created_at,
         updated_at: parts.computed.updated_at,
-        message_count: parts.messages.len(),
+        message_count: messages.len(),
         branch: parts.computed.branch,
         usage,
         tool_events: parts.tool_events,
         file_changes: parts.file_changes,
-        messages: parts.messages,
+        messages,
+    }
+}
+
+fn v2_fingerprint_value(fingerprint: SessionFileFingerprint) -> String {
+    format!(
+        "mtime_ms={};ctime_ms={};size={}",
+        fingerprint.updated_at, fingerprint.created_at, fingerprint.size
+    )
+}
+
+fn v2_path_pointer(role: &str, kind: &str, path: &Path) -> HistoryIndexV2RawPointer {
+    HistoryIndexV2RawPointer {
+        role: role.to_string(),
+        kind: kind.to_string(),
+        path: Some(path.to_string_lossy().to_string()),
+        line_index: None,
+        raw_key: None,
+    }
+}
+
+fn session_file_kind(source: &str, path: &Path) -> String {
+    if is_jsonl(path) {
+        format!("{source}-jsonl")
+    } else {
+        format!("{source}-json")
+    }
+}
+
+fn v2_message_raw_pointers(
+    file_ref: &SessionFileRef,
+    message: &HistoryMessage,
+) -> Vec<HistoryIndexV2RawPointer> {
+    message
+        .line_index
+        .map(|line_index| HistoryIndexV2RawPointer {
+            role: "message".to_string(),
+            kind: format!("{}-line", session_file_kind(&file_ref.source, &file_ref.path)),
+            path: Some(file_ref.path.to_string_lossy().to_string()),
+            line_index: Some(line_index),
+            raw_key: None,
+        })
+        .into_iter()
+        .collect()
+}
+
+fn v2_session_raw_pointers(
+    file_ref: &SessionFileRef,
+    roots: &HistoryRoots,
+    source_session_id: &str,
+) -> (Option<String>, Option<String>, Vec<HistoryIndexV2RawPointer>) {
+    let primary_path = file_ref.path.to_string_lossy().to_string();
+    let mut pointers = vec![v2_path_pointer(
+        "primary",
+        &session_file_kind(&file_ref.source, &file_ref.path),
+        &file_ref.path,
+    )];
+
+    let database_path = if file_ref.source == "codex" {
+        let history_index_path = resolve_codex_config_root(roots).join("history.jsonl");
+        let session_index_path = resolve_codex_config_root(roots).join("session_index.jsonl");
+        let state_db_path = resolve_codex_state_db_path(roots);
+        pointers.push(HistoryIndexV2RawPointer {
+            role: "registry".to_string(),
+            kind: "codex-history-jsonl".to_string(),
+            path: Some(history_index_path.to_string_lossy().to_string()),
+            line_index: None,
+            raw_key: Some(source_session_id.to_string()),
+        });
+        pointers.push(HistoryIndexV2RawPointer {
+            role: "registry".to_string(),
+            kind: "codex-session-index-jsonl".to_string(),
+            path: Some(session_index_path.to_string_lossy().to_string()),
+            line_index: None,
+            raw_key: Some(source_session_id.to_string()),
+        });
+        pointers.push(HistoryIndexV2RawPointer {
+            role: "database".to_string(),
+            kind: "codex-state-thread-row".to_string(),
+            path: Some(state_db_path.to_string_lossy().to_string()),
+            line_index: None,
+            raw_key: Some(source_session_id.to_string()),
+        });
+        Some(state_db_path.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    (Some(primary_path), database_path, pointers)
+}
+
+fn build_v2_adapter_session(
+    file_ref: &SessionFileRef,
+    roots: &HistoryRoots,
+) -> HistoryIndexV2AdapterSession {
+    let fingerprint = session_file_fingerprint(&file_ref.path);
+    let parts = scan_session_detail_parts(file_ref);
+    build_v2_adapter_session_from_parts(file_ref, roots, fingerprint, &parts)
+}
+
+fn build_v2_adapter_session_from_parts(
+    file_ref: &SessionFileRef,
+    roots: &HistoryRoots,
+    fingerprint: SessionFileFingerprint,
+    parts: &SessionDetailParts,
+) -> HistoryIndexV2AdapterSession {
+    let source_session_id = parts.computed.session_id.clone();
+    let raw_key = if file_ref.source == "codex" {
+        Some(source_session_id.clone())
+    } else {
+        None
+    };
+    let (primary_path, database_path, raw_pointers) =
+        v2_session_raw_pointers(file_ref, roots, &source_session_id);
+    let messages = parts
+        .messages
+        .iter()
+        .enumerate()
+        .map(|(message_index, message)| HistoryIndexV2MessageRef {
+            message_index,
+            role: message.role.clone(),
+            display_content: message.content.clone(),
+            timestamp_ms: message.timestamp.as_deref().and_then(parse_timestamp_millis_str),
+            model: message.model.clone(),
+            input_tokens: message.input_tokens,
+            output_tokens: message.output_tokens,
+            cache_read_tokens: message.cache_read_tokens,
+            cache_creation_tokens: message.cache_creation_tokens,
+            editable: message.editable,
+            raw_pointers: v2_message_raw_pointers(file_ref, message),
+        })
+        .collect();
+
+    HistoryIndexV2AdapterSession {
+        parser_version: HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION,
+        model_version: HISTORY_INDEX_V2_ADAPTER_MODEL_VERSION,
+        session_ref: HistoryIndexV2SessionRef {
+            source_id: file_ref.source.clone(),
+            source_session_id,
+            storage_kind: if file_ref.source == "codex" {
+                "mixed".to_string()
+            } else {
+                "file".to_string()
+            },
+            project_key: file_ref.project_key.clone(),
+            cwd: parts.cwd.clone(),
+            title: parts.computed.title.clone(),
+            branch: parts.computed.branch.clone(),
+            primary_path,
+            database_path,
+            raw_key,
+            created_at: parts.computed.created_at,
+            updated_at: parts.computed.updated_at,
+            fingerprint_kind: "file-stat".to_string(),
+            fingerprint_value: v2_fingerprint_value(fingerprint),
+            raw_pointers,
+        },
+        messages,
     }
 }
 
@@ -3220,6 +4021,77 @@ fn convert_history_session(
         },
         summary,
     })
+}
+
+fn delete_session_tree_with_backup_root(
+    file_ref: &SessionFileRef,
+    backups_dir: &Path,
+) -> Result<usize, String> {
+    if is_subagent_transcript_path(&file_ref.path) {
+        return Err("history_subagent_mutation_not_allowed".to_string());
+    }
+    if is_target_tool_running(&file_ref.source) {
+        return Err("history_target_tool_running".to_string());
+    }
+    let mut paths = collect_subtask_session_file_refs(file_ref)
+        .into_iter()
+        .map(|subtask| subtask.path)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.push(file_ref.path.clone());
+
+    let mut backups = Vec::with_capacity(paths.len());
+    for path in &paths {
+        if path.exists() {
+            let source_session_id = path
+                .file_stem()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "session".to_string());
+            let backup = create_file_backup_snapshot(
+                path,
+                backups_dir,
+                &file_ref.source,
+                &source_session_id,
+                "sessionDelete",
+            )?;
+            backups.push((path.clone(), backup));
+        }
+    }
+
+    let mut deleted = 0usize;
+    let mut deleted_paths = Vec::new();
+    for path in paths {
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                deleted = deleted.saturating_add(1);
+                deleted_paths.push(path);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                for deleted_path in deleted_paths.iter().rev() {
+                    if let Some((_, backup)) = backups
+                        .iter()
+                        .find(|(original, _)| original == deleted_path)
+                    {
+                        if let Err(restore_err) = fs::copy(backup, deleted_path) {
+                            let _ = lock_source_mutations(&file_ref.source);
+                            return Err(format!(
+                                "manualRecoveryRequired: delete={}; restore={}",
+                                err, restore_err
+                            ));
+                        }
+                    }
+                }
+                return Err(format!("failedRolledBack: {err}"));
+            }
+        }
+    }
+    Ok(deleted)
+}
+
+fn delete_session_tree(file_ref: &SessionFileRef) -> Result<usize, String> {
+    let backups_dir = default_backup_root()?;
+    delete_session_tree_with_backup_root(file_ref, &backups_dir)
 }
 
 fn converted_session_cwd(detail: &HistorySessionDetail) -> Option<String> {
@@ -3710,7 +4582,7 @@ fn list_subagent_transcript_files(subagents_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn is_subagent_transcript_path(path: &Path) -> bool {
+pub(crate) fn is_subagent_transcript_path(path: &Path) -> bool {
     let is_subagents_dir = path
         .parent()
         .and_then(|parent| parent.file_name())
@@ -3778,6 +4650,630 @@ fn resolve_codex_state_db_path(roots: &HistoryRoots) -> PathBuf {
         return nested_path;
     }
     default_path
+}
+
+fn resolve_gemini_history_root() -> PathBuf {
+    detect_home_dir()
+        .map(|home| home.join(".gemini").join("tmp"))
+        .unwrap_or_else(|| PathBuf::from(".gemini").join("tmp"))
+}
+
+fn resolve_copilot_history_root() -> PathBuf {
+    detect_home_dir()
+        .map(|home| home.join(".copilot").join("session-state"))
+        .unwrap_or_else(|| PathBuf::from(".copilot").join("session-state"))
+}
+
+fn resolve_antigravity_history_root() -> PathBuf {
+    let home = detect_home_dir().unwrap_or_default();
+    let primary = home.join(".gemini").join("antigravity-cli");
+    let legacy = home.join(".gemini").join("antigravity");
+    if primary.join("brain").exists() {
+        primary
+    } else if legacy.join("brain").exists() {
+        legacy
+    } else {
+        primary
+    }
+}
+
+fn resolve_grok_history_root() -> PathBuf {
+    detect_home_dir()
+        .map(|home| home.join(".grok"))
+        .unwrap_or_else(|| PathBuf::from(".grok"))
+}
+
+fn resolve_pi_history_root() -> PathBuf {
+    detect_home_dir()
+        .map(|home| home.join(".pi").join("agent"))
+        .unwrap_or_else(|| PathBuf::from(".pi").join("agent"))
+}
+
+fn resolve_cline_history_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    if let Some(app_data) = env::var_os("APPDATA").filter(|value| !value.is_empty()) {
+        for app in ["Code", "Cursor"] {
+            for extension in ["saoudrizwan.claude-dev", "cline.cline"] {
+                roots.push(
+                    PathBuf::from(&app_data)
+                        .join(app)
+                        .join("User")
+                        .join("globalStorage")
+                        .join(extension),
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(home) = detect_home_dir() {
+        for app in ["Code", "Cursor"] {
+            for extension in ["saoudrizwan.claude-dev", "cline.cline"] {
+                roots.push(
+                    home.join("Library")
+                        .join("Application Support")
+                        .join(app)
+                        .join("User")
+                        .join("globalStorage")
+                        .join(extension),
+                );
+            }
+        }
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    if let Some(home) = detect_home_dir() {
+        for app in ["Code", "Cursor"] {
+            for extension in ["saoudrizwan.claude-dev", "cline.cline"] {
+                roots.push(
+                    home.join(".config")
+                        .join(app)
+                        .join("User")
+                        .join("globalStorage")
+                        .join(extension),
+                );
+            }
+        }
+    }
+
+    roots.push(
+        detect_home_dir()
+            .map(|home| home.join(".cline"))
+            .unwrap_or_else(|| PathBuf::from(".cline")),
+    );
+    roots
+}
+
+fn resolve_cursor_history_root() -> PathBuf {
+    detect_home_dir()
+        .map(|home| home.join(".cursor").join("projects"))
+        .unwrap_or_else(|| PathBuf::from(".cursor").join("projects"))
+}
+
+fn resolve_cursor_global_storage_root() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(app_data) = env::var_os("APPDATA").filter(|value| !value.is_empty()) {
+            return PathBuf::from(app_data)
+                .join("Cursor")
+                .join("User")
+                .join("globalStorage");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = detect_home_dir() {
+        return home
+            .join("Library")
+            .join("Application Support")
+            .join("Cursor")
+            .join("User")
+            .join("globalStorage");
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    if let Some(home) = detect_home_dir() {
+        return home
+            .join(".config")
+            .join("Cursor")
+            .join("User")
+            .join("globalStorage");
+    }
+    PathBuf::from("Cursor").join("User").join("globalStorage")
+}
+
+fn resolve_kiro_history_root() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(app_data) = env::var_os("APPDATA").filter(|value| !value.is_empty()) {
+            return PathBuf::from(app_data)
+                .join("Kiro")
+                .join("User")
+                .join("globalStorage")
+                .join("kiro.kiroagent")
+                .join("workspace-sessions");
+        }
+    }
+    detect_home_dir()
+        .map(|home| home.join(".kiro").join("workspace-sessions"))
+        .unwrap_or_else(|| PathBuf::from(".kiro").join("workspace-sessions"))
+}
+
+fn resolve_opencode_database_path() -> PathBuf {
+    detect_home_dir()
+        .map(|home| home.join(".local").join("share").join("opencode").join("opencode.db"))
+        .unwrap_or_else(|| {
+            PathBuf::from(".local")
+                .join("share")
+                .join("opencode")
+                .join("opencode.db")
+        })
+}
+
+fn opencode_session_locator(db_path: &Path, session_id: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "{}{}{}",
+        db_path.to_string_lossy(),
+        OPENCODE_SESSION_LOCATOR_MARKER,
+        session_id
+    ))
+}
+
+fn parse_opencode_session_locator(file_path: &str) -> Option<(PathBuf, String)> {
+    let (db_path, session_id) = file_path.rsplit_once(OPENCODE_SESSION_LOCATOR_MARKER)?;
+    let session_id = session_id.trim();
+    if db_path.trim().is_empty() || session_id.is_empty() {
+        return None;
+    }
+    Some((PathBuf::from(db_path), session_id.to_string()))
+}
+
+fn path_equals_lenient(left: &Path, right: &Path) -> bool {
+    let left_canonical = left.canonicalize().unwrap_or_else(|_| left.to_path_buf());
+    let right_canonical = right.canonicalize().unwrap_or_else(|_| right.to_path_buf());
+    normalize_history_path(&left_canonical.to_string_lossy())
+        == normalize_history_path(&right_canonical.to_string_lossy())
+}
+
+fn opencode_locator_in_default_scope(file_path: &str) -> bool {
+    parse_opencode_session_locator(file_path)
+        .map(|(db_path, _)| path_equals_lenient(&db_path, &resolve_opencode_database_path()))
+        .unwrap_or(false)
+}
+
+fn opencode_sqlite_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .create_if_missing(false)
+        .busy_timeout(Duration::from_secs(5))
+}
+
+async fn open_opencode_database(path: &Path) -> Result<SqliteConnection, String> {
+    if !path.is_file() {
+        return Err("opencode_database_not_found".to_string());
+    }
+    let mut conn = SqliteConnection::connect_with(&opencode_sqlite_options(path))
+        .await
+        .map_err(|err| err.to_string())?;
+    validate_opencode_schema(&mut conn).await?;
+    Ok(conn)
+}
+
+async fn validate_opencode_schema(conn: &mut SqliteConnection) -> Result<(), String> {
+    let table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM sqlite_master
+         WHERE type = 'table' AND name IN ('session', 'message', 'part')",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    if table_count == 3 {
+        Ok(())
+    } else {
+        Err("opencode_schema_unsupported".to_string())
+    }
+}
+
+async fn opencode_catalog_sessions() -> Result<Option<Vec<OpenCodeParsedSession>>, String> {
+    let db_path = resolve_opencode_database_path();
+    if !db_path.is_file() {
+        return Ok(None);
+    }
+    parse_opencode_database(&db_path, None).await.map(Some)
+}
+
+async fn parse_opencode_database(
+    db_path: &Path,
+    only_session_id: Option<&str>,
+) -> Result<Vec<OpenCodeParsedSession>, String> {
+    let mut conn = open_opencode_database(db_path).await?;
+    let rows = if let Some(session_id) = only_session_id {
+        sqlx::query(
+            "SELECT id, directory, title, slug,
+                    CAST(time_created AS REAL) AS time_created,
+                    CAST(time_updated AS REAL) AS time_updated
+             FROM session
+             WHERE id = ?1
+             ORDER BY time_updated DESC, id ASC",
+        )
+        .bind(session_id)
+        .fetch_all(&mut conn)
+        .await
+        .map_err(|err| err.to_string())?
+    } else {
+        sqlx::query(
+            "SELECT id, directory, title, slug,
+                    CAST(time_created AS REAL) AS time_created,
+                    CAST(time_updated AS REAL) AS time_updated
+             FROM session
+             ORDER BY time_updated DESC, id ASC",
+        )
+        .fetch_all(&mut conn)
+        .await
+        .map_err(|err| err.to_string())?
+    };
+
+    let db_fingerprint = session_file_fingerprint(db_path);
+    let mut sessions = Vec::with_capacity(rows.len());
+    for row in rows {
+        let session_id: String = row.try_get("id").map_err(|err| err.to_string())?;
+        let cwd: Option<String> = row
+            .try_get::<Option<String>, _>("directory")
+            .map_err(|err| err.to_string())?
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let title = row
+            .try_get::<Option<String>, _>("title")
+            .map_err(|err| err.to_string())?
+            .or_else(|| row.try_get::<Option<String>, _>("slug").ok().flatten())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let created_at = opencode_time_millis(row.try_get("time_created").ok().flatten())
+            .unwrap_or(db_fingerprint.created_at);
+        let updated_at = opencode_time_millis(row.try_get("time_updated").ok().flatten())
+            .unwrap_or(db_fingerprint.updated_at.max(created_at));
+        sessions.push(parse_opencode_session_row(
+            &mut conn,
+            db_path,
+            db_fingerprint,
+            session_id,
+            cwd,
+            title,
+            created_at,
+            updated_at,
+        )
+        .await?);
+    }
+    Ok(sessions)
+}
+
+async fn parse_opencode_session_row(
+    conn: &mut SqliteConnection,
+    db_path: &Path,
+    db_fingerprint: SessionFileFingerprint,
+    session_id: String,
+    cwd: Option<String>,
+    title: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+) -> Result<OpenCodeParsedSession, String> {
+    let rows = sqlx::query(
+        "SELECT id,
+                CAST(time_created AS REAL) AS time_created,
+                CAST(time_updated AS REAL) AS time_updated,
+                data
+         FROM message
+         WHERE session_id = ?1
+         ORDER BY time_created ASC, id ASC",
+    )
+    .bind(&session_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    let mut messages = Vec::new();
+    let mut tool_events = Vec::new();
+    let mut stats = SessionStatsScan::default();
+    let mut first_message = None;
+    let mut first_user_message = None;
+    let mut model_hits: HashMap<String, usize> = HashMap::new();
+
+    for (message_index, row) in rows.into_iter().enumerate() {
+        let message_id: String = row.try_get("id").map_err(|err| err.to_string())?;
+        let data = row
+            .try_get::<String, _>("data")
+            .map_err(|err| err.to_string())
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).map_err(|err| err.to_string()))?;
+        let role = normalize_json_role(data.get("role"));
+        let timestamp_ms = opencode_time_millis(row.try_get("time_created").ok().flatten())
+            .or_else(|| opencode_time_millis(row.try_get("time_updated").ok().flatten()));
+        let timestamp = timestamp_ms.and_then(timestamp_millis_to_rfc3339);
+        let model = opencode_model(&data);
+        if let Some(model) = &model {
+            *model_hits.entry(model.clone()).or_insert(0) += 1;
+            stats.current_model = Some(model.clone());
+        }
+
+        let parts = opencode_message_parts(conn, &session_id, &message_id).await?;
+        let mut content_parts = Vec::new();
+        for part in &parts {
+            if let Some(text) = opencode_part_text(part) {
+                content_parts.push(text);
+            }
+            if let Some(event) = opencode_tool_event(part, message_index, timestamp.clone()) {
+                tool_events.push(event);
+                stats.tool_call_count = stats.tool_call_count.saturating_add(1);
+                *stats
+                    .builtin_calls
+                    .entry(tool_events.last().unwrap().name.clone())
+                    .or_insert(0) += 1;
+            }
+        }
+        let content = normalize_text(&content_parts.join("\n\n"));
+        if content.is_empty() {
+            continue;
+        }
+
+        if first_message.is_none() {
+            first_message = Some(excerpt(&content, 80));
+        }
+        if first_user_message.is_none() && role == "user" {
+            first_user_message = Some(excerpt(&content, 80));
+        }
+
+        let usage = opencode_usage_tokens(&data);
+        let cost = calculate_usage_cost(model.as_deref(), usage);
+        if usage_total_tokens(usage) > 0 {
+            stats.input_tokens = stats.input_tokens.saturating_add(usage.input_tokens);
+            stats.output_tokens = stats.output_tokens.saturating_add(usage.output_tokens);
+            stats.cache_read_tokens = stats.cache_read_tokens.saturating_add(usage.cache_read_tokens);
+            stats.cache_creation_tokens = stats
+                .cache_creation_tokens
+                .saturating_add(usage.cache_creation_tokens);
+            stats.total_cost_usd += cost.total_cost_usd;
+            stats.unpriced_tokens = stats.unpriced_tokens.saturating_add(cost.unpriced_tokens);
+            stats
+                .token_trend
+                .push(usage_trend_point(usage, model.clone()));
+            let event_index = stats.usage_events.len();
+            stats.usage_events.push(SessionUsageEventScan {
+                event_key: format!("opencode:{session_id}:{message_id}:{event_index}"),
+                event_index,
+                timestamp_ms,
+                model: model.clone(),
+                usage: cost,
+            });
+            if let Some(model) = &model {
+                let entry = stats.model_usage.entry(model.clone()).or_default();
+                entry.input_tokens = entry.input_tokens.saturating_add(usage.input_tokens);
+                entry.output_tokens = entry.output_tokens.saturating_add(usage.output_tokens);
+                entry.cache_read_tokens = entry.cache_read_tokens.saturating_add(usage.cache_read_tokens);
+                entry.cache_creation_tokens = entry
+                    .cache_creation_tokens
+                    .saturating_add(usage.cache_creation_tokens);
+                entry.total_cost_usd += cost.total_cost_usd;
+                entry.unpriced_tokens = entry.unpriced_tokens.saturating_add(cost.unpriced_tokens);
+            }
+        }
+
+        messages.push(HistoryMessage {
+            role,
+            content,
+            timestamp,
+            model,
+            input_tokens: positive_usage_token(usage.input_tokens),
+            output_tokens: positive_usage_token(usage.output_tokens),
+            cache_read_tokens: positive_usage_token(usage.cache_read_tokens),
+            cache_creation_tokens: positive_usage_token(usage.cache_creation_tokens),
+            line_index: None,
+            editable: false,
+            editable_text: None,
+        });
+    }
+
+    stats.dominant_model = model_hits
+        .into_iter()
+        .max_by(|(left_model, left_hits), (right_model, right_hits)| {
+            left_hits
+                .cmp(right_hits)
+                .then_with(|| right_model.cmp(left_model))
+        })
+        .map(|(model, _)| model);
+
+    let project_key = cwd
+        .as_deref()
+        .and_then(project_key_from_cwd)
+        .unwrap_or_else(|| "opencode".to_string());
+    let title = title
+        .or_else(|| first_user_message.clone())
+        .or_else(|| first_message.clone())
+        .unwrap_or_else(|| session_id.clone());
+    let file_ref = SessionFileRef {
+        source: "opencode".to_string(),
+        project_key,
+        path: opencode_session_locator(db_path, &session_id),
+    };
+    let computed = CachedSessionComputation {
+        created_at,
+        updated_at,
+        session_id,
+        title,
+        message_count: messages.len(),
+        branch: None,
+        stats,
+    };
+    Ok(OpenCodeParsedSession {
+        file_ref,
+        fingerprint: SessionFileFingerprint {
+            created_at: db_fingerprint.created_at,
+            updated_at: updated_at.max(db_fingerprint.updated_at),
+            size: db_fingerprint.size,
+        },
+        computed,
+        cwd,
+        messages,
+        tool_events,
+    })
+}
+
+async fn opencode_message_parts(
+    conn: &mut SqliteConnection,
+    session_id: &str,
+    message_id: &str,
+) -> Result<Vec<Value>, String> {
+    let rows = sqlx::query(
+        "SELECT data
+         FROM part
+         WHERE session_id = ?1 AND message_id = ?2
+         ORDER BY time_created ASC, id ASC",
+    )
+    .bind(session_id)
+    .bind(message_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    rows.into_iter()
+        .map(|row| {
+            let raw: String = row.try_get("data").map_err(|err| err.to_string())?;
+            serde_json::from_str::<Value>(&raw).map_err(|err| err.to_string())
+        })
+        .collect()
+}
+
+fn opencode_time_millis(value: Option<f64>) -> Option<i64> {
+    value.and_then(normalize_unix_timestamp_millis)
+}
+
+fn timestamp_millis_to_rfc3339(value: i64) -> Option<String> {
+    DateTime::<Utc>::from_timestamp_millis(value)
+        .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+fn opencode_model(data: &Value) -> Option<String> {
+    let model = data
+        .get("modelID")
+        .or_else(|| data.get("model_id"))
+        .or_else(|| data.get("model"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let provider = data
+        .get("providerID")
+        .or_else(|| data.get("provider_id"))
+        .or_else(|| data.get("provider"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some(match provider {
+        Some(provider) if !model.contains('/') => format!("{provider}/{model}"),
+        _ => model.to_string(),
+    })
+}
+
+fn opencode_usage_tokens(data: &Value) -> UsageTokenScan {
+    let Some(tokens) = data.get("tokens").and_then(Value::as_object) else {
+        return UsageTokenScan::default();
+    };
+    let cache = tokens.get("cache").and_then(Value::as_object);
+    UsageTokenScan {
+        input_tokens: extract_u64_by_keys(tokens, &["input"]).unwrap_or(0),
+        output_tokens: extract_u64_by_keys(tokens, &["output"])
+            .unwrap_or(0)
+            .saturating_add(extract_u64_by_keys(tokens, &["reasoning"]).unwrap_or(0)),
+        cache_read_tokens: cache
+            .and_then(|cache| extract_u64_by_keys(cache, &["read"]))
+            .unwrap_or(0),
+        cache_creation_tokens: cache
+            .and_then(|cache| extract_u64_by_keys(cache, &["write"]))
+            .unwrap_or(0),
+        explicit_cost_usd: None,
+    }
+}
+
+fn opencode_part_text(part: &Value) -> Option<String> {
+    let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
+    let text = match part_type {
+        "text" | "reasoning" | "patch" => part
+            .get("text")
+            .or_else(|| part.get("content"))
+            .or_else(|| part.get("patch"))
+            .and_then(extract_text_from_value),
+        "tool" | "tool-invocation" | "tool-result" => opencode_tool_summary(part),
+        "step-start" | "step-finish" => None,
+        _ => extract_text_from_value(part),
+    }?;
+    let text = normalize_text(&text);
+    (!text.is_empty()).then_some(text)
+}
+
+fn opencode_tool_name(part: &Value) -> Option<String> {
+    [
+        part.get("tool"),
+        part.get("name"),
+        part.get("call").and_then(|value| value.get("name")),
+        part.get("state").and_then(|value| value.get("title")),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(Value::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn opencode_tool_summary(part: &Value) -> Option<String> {
+    let name = opencode_tool_name(part).unwrap_or_else(|| "tool".to_string());
+    let payload = part
+        .get("input")
+        .or_else(|| part.get("arguments"))
+        .or_else(|| part.get("output"))
+        .or_else(|| part.get("result"))
+        .or_else(|| part.get("state"));
+    let summary = payload.and_then(summarize_json_value);
+    Some(match summary {
+        Some(summary) => format!("[Tool: {name}]\n{summary}"),
+        None => format!("[Tool: {name}]"),
+    })
+}
+
+fn opencode_tool_event(
+    part: &Value,
+    message_index: usize,
+    timestamp: Option<String>,
+) -> Option<HistoryToolEvent> {
+    let part_type = part.get("type").and_then(Value::as_str)?;
+    if !matches!(part_type, "tool" | "tool-invocation" | "tool-result") {
+        return None;
+    }
+    let name = opencode_tool_name(part).unwrap_or_else(|| "tool".to_string());
+    Some(HistoryToolEvent {
+        call_id: part
+            .get("id")
+            .or_else(|| part.get("callID"))
+            .or_else(|| part.get("call_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        name,
+        category: "builtin".to_string(),
+        message_index: Some(message_index),
+        timestamp,
+        status: part
+            .get("status")
+            .or_else(|| part.get("state").and_then(|value| value.get("status")))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        duration_ms: extract_tool_duration_ms(part),
+        input_summary: part
+            .get("input")
+            .or_else(|| part.get("arguments"))
+            .and_then(summarize_json_value),
+        output_summary: part
+            .get("output")
+            .or_else(|| part.get("result"))
+            .and_then(summarize_json_value),
+    })
 }
 
 fn codex_config_string(roots: &HistoryRoots, key: &str) -> Option<String> {
@@ -3887,6 +5383,7 @@ fn collect_session_files_with_force(
                     return entry.files.clone();
                 }
             }
+
         }
     }
 
@@ -3922,6 +5419,40 @@ fn scan_session_files(source_filter: Option<&str>, roots: &HistoryRoots) -> Vec<
         files.extend(collect_codex_session_files(&resolve_codex_history_root(
             roots,
         )));
+    }
+    if source_filter.as_ref().map(|v| v == "gemini").unwrap_or(true) {
+        files.extend(collect_gemini_session_files(&resolve_gemini_history_root()));
+    }
+    if source_filter.as_ref().map(|v| v == "copilot").unwrap_or(true) {
+        files.extend(collect_copilot_session_files(
+            &resolve_copilot_history_root(),
+        ));
+    }
+    if source_filter
+        .as_ref()
+        .map(|v| v == "antigravity")
+        .unwrap_or(true)
+    {
+        files.extend(collect_antigravity_session_files(
+            &resolve_antigravity_history_root(),
+        ));
+    }
+    if source_filter.as_ref().map(|v| v == "grok").unwrap_or(true) {
+        files.extend(collect_grok_session_files(&resolve_grok_history_root()));
+    }
+    if source_filter.as_ref().map(|v| v == "pi").unwrap_or(true) {
+        files.extend(collect_pi_session_files(&resolve_pi_history_root()));
+    }
+    if source_filter.as_ref().map(|v| v == "kiro").unwrap_or(true) {
+        files.extend(collect_kiro_session_files(&resolve_kiro_history_root()));
+    }
+    if source_filter.as_ref().map(|v| v == "cline").unwrap_or(true) {
+        for root in resolve_cline_history_roots() {
+            files.extend(collect_cline_session_files(&root));
+        }
+    }
+    if source_filter.as_ref().map(|v| v == "cursor").unwrap_or(true) {
+        files.extend(collect_cursor_session_files(&resolve_cursor_history_root()));
     }
 
     files
@@ -4311,12 +5842,922 @@ fn collect_codex_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+fn collect_gemini_session_files(root: &Path) -> Vec<SessionFileRef> {
+    if !root.exists() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    collect_files_recursive(root, &mut files, &|file_path| {
+        is_json(file_path)
+            && file_path.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with("session-") && name.ends_with(".json")
+            })
+            && looks_like_gemini_session_file(file_path)
+    });
+    files
+        .into_iter()
+        .map(|path| SessionFileRef {
+            source: "gemini".to_string(),
+            project_key: gemini_project_key_from_path(&path, root),
+            path,
+        })
+        .collect()
+}
+
+fn collect_copilot_session_files(root: &Path) -> Vec<SessionFileRef> {
+    if !root.exists() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    collect_files_recursive(root, &mut files, &looks_like_copilot_events_file);
+    files
+        .into_iter()
+        .map(|path| SessionFileRef {
+            source: "copilot".to_string(),
+            project_key: copilot_project_key_from_path(&path),
+            path,
+        })
+        .collect()
+}
+
+fn collect_antigravity_session_files(root: &Path) -> Vec<SessionFileRef> {
+    let brain = root.join("brain");
+    if !brain.exists() {
+        return Vec::new();
+    }
+    let workspace_by_id = load_antigravity_workspace_map(root);
+    let mut files = Vec::new();
+    collect_files_recursive(&brain, &mut files, &looks_like_antigravity_transcript_file);
+    files
+        .into_iter()
+        .filter_map(|path| {
+            let (_, conversation_id) = antigravity_path_parts(&path)?;
+            let project_key = workspace_by_id
+                .get(&conversation_id)
+                .and_then(|workspace| project_key_from_cwd(workspace))
+                .unwrap_or_else(|| conversation_id.clone());
+            Some(SessionFileRef {
+                source: "antigravity".to_string(),
+                project_key,
+                path,
+            })
+        })
+        .collect()
+}
+
+fn collect_grok_session_files(root: &Path) -> Vec<SessionFileRef> {
+    let sessions = root.join("sessions");
+    if !sessions.exists() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    collect_files_recursive(&sessions, &mut files, &looks_like_grok_updates_file);
+    files
+        .into_iter()
+        .map(|path| SessionFileRef {
+            source: "grok".to_string(),
+            project_key: grok_project_key_from_path(&path),
+            path,
+        })
+        .collect()
+}
+
+fn collect_pi_session_files(root: &Path) -> Vec<SessionFileRef> {
+    let sessions = root.join("sessions");
+    if !sessions.exists() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    collect_files_recursive(&sessions, &mut files, &looks_like_pi_session_file);
+    files
+        .into_iter()
+        .map(|path| SessionFileRef {
+            source: "pi".to_string(),
+            project_key: pi_project_key_from_path(&path),
+            path,
+        })
+        .collect()
+}
+
+fn collect_kiro_session_files(root: &Path) -> Vec<SessionFileRef> {
+    if !root.exists() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    collect_files_recursive(root, &mut files, &|file_path| {
+        is_json(file_path)
+            && !file_path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("sessions.json"))
+            && looks_like_kiro_session_file(file_path)
+    });
+    files
+        .into_iter()
+        .map(|path| SessionFileRef {
+            source: "kiro".to_string(),
+            project_key: kiro_project_key_from_path(&path),
+            path,
+        })
+        .collect()
+}
+
+fn collect_cline_session_files(root: &Path) -> Vec<SessionFileRef> {
+    if !root.exists() {
+        return Vec::new();
+    }
+
+    let mut scan_roots = Vec::new();
+    for candidate in [root.join("tasks"), root.join("data").join("tasks")] {
+        if candidate.is_dir() {
+            scan_roots.push(candidate);
+        }
+    }
+    if scan_roots.is_empty() {
+        scan_roots.push(root.to_path_buf());
+    }
+
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+    for scan_root in scan_roots {
+        collect_files_recursive(&scan_root, &mut files, &looks_like_cline_session_file);
+    }
+
+    files
+        .into_iter()
+        .filter(|path| seen.insert(normalize_history_path(&path.to_string_lossy())))
+        .map(|path| SessionFileRef {
+            source: "cline".to_string(),
+            project_key: cline_project_key_from_path(&path),
+            path,
+        })
+        .collect()
+}
+
+fn collect_cursor_session_files(root: &Path) -> Vec<SessionFileRef> {
+    if !root.exists() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    collect_files_recursive(root, &mut files, &looks_like_cursor_agent_transcript_file);
+    files
+        .into_iter()
+        .map(|path| SessionFileRef {
+            source: "cursor".to_string(),
+            project_key: cursor_project_key_from_path(&path),
+            path,
+        })
+        .collect()
+}
+
+fn looks_like_gemini_session_file(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .map(|raw| {
+            raw.contains("\"messages\"")
+                && (raw.contains("\"sessionId\"") || raw.contains("\"projectHash\""))
+        })
+        .unwrap_or(false)
+}
+
+fn looks_like_copilot_events_file(path: &Path) -> bool {
+    if !path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("events.jsonl"))
+    {
+        return false;
+    }
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .take(16)
+        .any(|line| {
+            line.contains("\"session.start\"")
+                || line.contains("\"user.message\"")
+                || line.contains("\"assistant.message\"")
+        })
+}
+
+fn looks_like_antigravity_transcript_file(path: &Path) -> bool {
+    antigravity_path_parts(path).is_some()
+}
+
+fn antigravity_path_parts(path: &Path) -> Option<(PathBuf, String)> {
+    if !path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("transcript.jsonl"))
+    {
+        return None;
+    }
+    let logs = path.parent()?;
+    let generated = logs.parent()?;
+    let conversation = generated.parent()?;
+    let brain = conversation.parent()?;
+    if !logs
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("logs"))
+        || !generated.file_name().is_some_and(|name| {
+            name.to_string_lossy()
+                .eq_ignore_ascii_case(".system_generated")
+        })
+        || !brain
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("brain"))
+    {
+        return None;
+    }
+    let conversation_id = conversation
+        .file_name()?
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    let root = brain.parent()?.to_path_buf();
+    (!conversation_id.is_empty()).then_some((root, conversation_id))
+}
+
+fn load_antigravity_workspace_map(root: &Path) -> HashMap<String, String> {
+    let Ok(file) = File::open(root.join("history.jsonl")) else {
+        return HashMap::new();
+    };
+    BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .filter_map(|value| {
+            let conversation_id = value
+                .get("conversationId")?
+                .as_str()?
+                .trim()
+                .to_string();
+            let workspace = value.get("workspace")?.as_str()?.trim().to_string();
+            (!conversation_id.is_empty() && !workspace.is_empty())
+                .then_some((conversation_id, workspace))
+        })
+        .collect()
+}
+
+fn antigravity_workspace_from_path(path: &Path) -> Option<String> {
+    let (root, conversation_id) = antigravity_path_parts(path)?;
+    load_antigravity_workspace_map(&root).remove(&conversation_id)
+}
+
+fn looks_like_grok_updates_file(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("updates.jsonl"))
+        && path
+            .parent()
+            .map(|parent| parent.join("summary.json").is_file())
+            .unwrap_or(false)
+}
+
+fn grok_summary_value(path: &Path) -> Option<Value> {
+    let summary_path = path.parent()?.join("summary.json");
+    fs::read_to_string(summary_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+}
+
+fn grok_value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn grok_string_by_paths(value: &Value, paths: &[&[&str]]) -> Option<String> {
+    paths
+        .iter()
+        .filter_map(|path| grok_value_at_path(value, path))
+        .find_map(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("id").and_then(Value::as_str))
+                .or_else(|| value.get("value").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+        })
+}
+
+fn grok_session_id_from_path(path: &Path) -> Option<String> {
+    grok_summary_value(path)
+        .as_ref()
+        .and_then(|summary| grok_string_by_paths(summary, &[&["info", "id"], &["session_id"]]))
+        .or_else(|| {
+            path.parent()
+                .and_then(Path::file_name)
+                .map(|name| name.to_string_lossy().trim().to_string())
+                .filter(|id| !id.is_empty())
+        })
+}
+
+fn grok_workspace_from_path(path: &Path) -> Option<String> {
+    grok_summary_value(path).as_ref().and_then(|summary| {
+        grok_string_by_paths(
+            summary,
+            &[
+                &["source_workspace_dir"],
+                &["prompt_display_cwd"],
+                &["info", "cwd"],
+                &["git_root_dir"],
+            ],
+        )
+    })
+}
+
+fn grok_project_key_from_path(path: &Path) -> String {
+    grok_workspace_from_path(path)
+        .as_deref()
+        .and_then(project_key_from_cwd)
+        .or_else(|| grok_session_id_from_path(path))
+        .unwrap_or_else(|| "grok".to_string())
+}
+
+fn looks_like_pi_session_file(path: &Path) -> bool {
+    if !is_jsonl(path) || !path_is_pi_session_tree(path) {
+        return false;
+    }
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .take(8)
+        .any(|line| {
+            let trimmed = line.trim();
+            trimmed.contains(r#""type":"session""#) || trimmed.contains(r#""type":"message""#)
+        })
+}
+
+fn path_is_pi_session_tree(path: &Path) -> bool {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("sessions"))
+        {
+            let agent = dir.parent();
+            let pi = agent.and_then(Path::parent);
+            return agent
+                .and_then(Path::file_name)
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("agent"))
+                && pi
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(".pi"));
+        }
+        current = dir.parent();
+    }
+    false
+}
+
+fn pi_session_meta(path: &Path) -> Option<Value> {
+    let file = File::open(path).ok()?;
+    for line in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .take(16)
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("session") {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn pi_string_by_keys(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key))
+        .find_map(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("id").and_then(Value::as_str))
+                .or_else(|| value.get("value").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+        })
+}
+
+fn pi_workspace_from_path(path: &Path) -> Option<String> {
+    pi_session_meta(path).as_ref().and_then(|meta| extract_cwd(meta))
+}
+
+fn pi_session_id_from_path(path: &Path) -> Option<String> {
+    pi_session_meta(path)
+        .as_ref()
+        .and_then(|meta| pi_string_by_keys(meta, &["sessionId", "session_id", "id"]))
+        .or_else(|| {
+            path.file_stem()
+                .map(|name| name.to_string_lossy().trim().to_string())
+                .filter(|id| !id.is_empty())
+        })
+}
+
+fn pi_project_key_from_path(path: &Path) -> String {
+    pi_workspace_from_path(path)
+        .as_deref()
+        .and_then(project_key_from_cwd)
+        .or_else(|| pi_session_id_from_path(path))
+        .unwrap_or_else(|| "pi".to_string())
+}
+
+fn looks_like_kiro_session_file(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .map(|raw| raw.contains("\"history\"") && raw.contains("\"sessionId\""))
+        .unwrap_or(false)
+}
+
+fn looks_like_cline_session_file(path: &Path) -> bool {
+    if !path.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .eq_ignore_ascii_case("api_conversation_history.json")
+    }) {
+        return false;
+    }
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| cline_api_message_count(&value))
+        .is_some_and(|count| count > 0)
+}
+
+fn looks_like_cursor_agent_transcript_file(path: &Path) -> bool {
+    if !is_jsonl(path) || cursor_path_parts(path).is_none() {
+        return false;
+    }
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .take(8)
+        .any(|line| {
+            let trimmed = line.trim();
+            trimmed.contains(r#""role""#) && trimmed.contains(r#""message""#)
+                || trimmed.contains(r#""type":"turn_ended""#)
+        })
+}
+
+fn cursor_path_parts(path: &Path) -> Option<(String, String)> {
+    let session_dir = path.parent()?;
+    let transcripts = session_dir.parent()?;
+    let project_dir = transcripts.parent()?;
+    if !transcripts
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("agent-transcripts"))
+    {
+        return None;
+    }
+    let session_id = path
+        .file_stem()
+        .or_else(|| session_dir.file_name())?
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    let project_key = project_dir
+        .file_name()?
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    (!session_id.is_empty() && !project_key.is_empty()).then_some((project_key, session_id))
+}
+
+fn cursor_session_id_from_path(path: &Path) -> Option<String> {
+    cursor_path_parts(path).map(|(_, session_id)| session_id)
+}
+
+fn cursor_project_key_from_path(path: &Path) -> String {
+    cursor_path_parts(path)
+        .map(|(project_key, _)| project_key)
+        .unwrap_or_else(|| "cursor".to_string())
+}
+
+fn cursor_project_slug_from_path(path: &str) -> String {
+    normalize_history_path(path)
+        .replace(':', "")
+        .replace(['\\', '/'], "-")
+        .trim_matches('-')
+        .to_string()
+}
+
+fn cursor_metadata_from_path(path: &Path) -> Option<CursorSessionMetadata> {
+    let session_id = cursor_session_id_from_path(path)?;
+    match cursor_metadata_from_databases(&resolve_cursor_global_storage_root(), &session_id) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            debug!(
+                "cursor metadata skipped: session_id={}, err={}",
+                session_id, err
+            );
+            None
+        }
+    }
+}
+
+fn cursor_metadata_from_databases(
+    global_storage: &Path,
+    session_id: &str,
+) -> Result<Option<CursorSessionMetadata>, String> {
+    if session_id.trim().is_empty() || !global_storage.exists() {
+        return Ok(None);
+    }
+    let global_storage = global_storage.to_path_buf();
+    let session_id = session_id.trim().to_string();
+    let read = move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| err.to_string())?;
+        runtime.block_on(cursor_metadata_from_databases_async(
+            &global_storage,
+            &session_id,
+        ))
+    };
+
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::spawn(read)
+            .join()
+            .map_err(|_| "cursor_metadata_thread_panicked".to_string())?
+    } else {
+        read()
+    }
+}
+
+async fn cursor_metadata_from_databases_async(
+    global_storage: &Path,
+    session_id: &str,
+) -> Result<Option<CursorSessionMetadata>, String> {
+    let mut metadata = CursorSessionMetadata::default();
+    if let Ok(state) = read_cursor_state_metadata(global_storage, session_id).await {
+        merge_cursor_metadata(&mut metadata, state);
+    }
+    if let Ok(conversation) = read_cursor_conversation_metadata(global_storage, session_id).await {
+        if conversation.title.is_some() {
+            metadata.title = conversation.title;
+        }
+        if metadata.updated_at.is_none() {
+            metadata.updated_at = conversation.updated_at;
+        }
+    }
+    if cursor_metadata_is_empty(&metadata) {
+        Ok(None)
+    } else {
+        Ok(Some(metadata))
+    }
+}
+
+fn cursor_sqlite_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .create_if_missing(false)
+        .busy_timeout(Duration::from_secs(1))
+}
+
+async fn read_cursor_conversation_metadata(
+    global_storage: &Path,
+    session_id: &str,
+) -> Result<CursorSessionMetadata, String> {
+    let db_path = global_storage.join("conversation-search.db");
+    if !db_path.is_file() {
+        return Ok(CursorSessionMetadata::default());
+    }
+    let mut conn = SqliteConnection::connect_with(&cursor_sqlite_options(&db_path))
+        .await
+        .map_err(|err| err.to_string())?;
+    if !cursor_table_exists(&mut conn, "conversations").await? {
+        return Ok(CursorSessionMetadata::default());
+    }
+    let Some(row) = sqlx::query(
+        "SELECT title, CAST(updated_at AS REAL) AS updated_at
+         FROM conversations
+         WHERE id = ?1
+         LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(&mut conn)
+    .await
+    .map_err(|err| err.to_string())?
+    else {
+        return Ok(CursorSessionMetadata::default());
+    };
+
+    Ok(CursorSessionMetadata {
+        title: trim_optional_string(row.try_get("title").ok().flatten()),
+        updated_at: row
+            .try_get::<Option<f64>, _>("updated_at")
+            .ok()
+            .flatten()
+            .and_then(normalize_unix_timestamp_millis),
+        ..CursorSessionMetadata::default()
+    })
+}
+
+async fn read_cursor_state_metadata(
+    global_storage: &Path,
+    session_id: &str,
+) -> Result<CursorSessionMetadata, String> {
+    let db_path = global_storage.join("state.vscdb");
+    if !db_path.is_file() {
+        return Ok(CursorSessionMetadata::default());
+    }
+    let mut conn = SqliteConnection::connect_with(&cursor_sqlite_options(&db_path))
+        .await
+        .map_err(|err| err.to_string())?;
+    if !cursor_table_exists(&mut conn, "composerHeaders").await? {
+        return Ok(CursorSessionMetadata::default());
+    }
+    let Some(row) = sqlx::query(
+        "SELECT CAST(createdAt AS REAL) AS created_at,
+                CAST(lastUpdatedAt AS REAL) AS updated_at,
+                value
+         FROM composerHeaders
+         WHERE composerId = ?1
+         LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(&mut conn)
+    .await
+    .map_err(|err| err.to_string())?
+    else {
+        return Ok(CursorSessionMetadata::default());
+    };
+    let value = row.try_get::<Option<String>, _>("value").ok().flatten();
+    let value_json = value
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+
+    Ok(CursorSessionMetadata {
+        title: value_json.as_ref().and_then(cursor_title_from_state_value),
+        created_at: row
+            .try_get::<Option<f64>, _>("created_at")
+            .ok()
+            .flatten()
+            .and_then(normalize_unix_timestamp_millis),
+        updated_at: row
+            .try_get::<Option<f64>, _>("updated_at")
+            .ok()
+            .flatten()
+            .and_then(normalize_unix_timestamp_millis),
+        cwd: value_json.as_ref().and_then(cursor_workspace_from_state_value),
+    })
+}
+
+async fn cursor_table_exists(conn: &mut SqliteConnection, table: &str) -> Result<bool, String> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM sqlite_master
+         WHERE type = 'table' AND name = ?1",
+    )
+    .bind(table)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    Ok(count > 0)
+}
+
+fn merge_cursor_metadata(target: &mut CursorSessionMetadata, source: CursorSessionMetadata) {
+    if target.title.is_none() {
+        target.title = source.title;
+    }
+    if target.created_at.is_none() {
+        target.created_at = source.created_at;
+    }
+    if target.updated_at.is_none() {
+        target.updated_at = source.updated_at;
+    }
+    if target.cwd.is_none() {
+        target.cwd = source.cwd;
+    }
+}
+
+fn cursor_metadata_is_empty(metadata: &CursorSessionMetadata) -> bool {
+    metadata.title.is_none()
+        && metadata.created_at.is_none()
+        && metadata.updated_at.is_none()
+        && metadata.cwd.is_none()
+}
+
+fn apply_cursor_metadata_to_computation(
+    computed: &mut CachedSessionComputation,
+    metadata: &CursorSessionMetadata,
+) {
+    if computed.title == computed.session_id {
+        if let Some(title) = metadata.title.as_ref().filter(|title| !title.is_empty()) {
+            computed.title = title.clone();
+        }
+    }
+    if let Some(created_at) = metadata.created_at {
+        computed.created_at = created_at;
+    }
+    if let Some(updated_at) = metadata.updated_at.or(metadata.created_at) {
+        computed.updated_at = updated_at.max(computed.created_at);
+    }
+}
+
+fn cursor_title_from_state_value(value: &Value) -> Option<String> {
+    ["name", "title", "conversationTitle"]
+        .into_iter()
+        .find_map(|key| value.get(key).and_then(Value::as_str))
+        .and_then(|title| trim_optional_string(Some(title.to_string())))
+}
+
+fn cursor_workspace_from_state_value(value: &Value) -> Option<String> {
+    [
+        "/workspaceIdentifier/uri/fsPath",
+        "/workspaceIdentifier/fsPath",
+        "/workspaceFolder/uri/fsPath",
+        "/workspaceFolder/fsPath",
+        "/workspace/uri/fsPath",
+        "/workspacePath",
+        "/cwd",
+    ]
+    .into_iter()
+    .find_map(|pointer| value.pointer(pointer).and_then(Value::as_str))
+    .and_then(|path| trim_optional_string(Some(path.to_string())))
+}
+
+fn trim_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn cline_task_dir(path: &Path) -> Option<&Path> {
+    path.parent()
+}
+
+fn cline_task_id_from_path(path: &Path) -> Option<String> {
+    cline_task_dir(path)?
+        .file_name()
+        .map(|name| name.to_string_lossy().trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
+fn cline_sibling_json(path: &Path, names: &[&str]) -> Option<Value> {
+    let task_dir = cline_task_dir(path)?;
+    names.iter().find_map(|name| {
+        fs::read_to_string(task_dir.join(name))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+    })
+}
+
+fn cline_metadata_value(path: &Path) -> Option<Value> {
+    cline_sibling_json(path, &["task_metadata.json", "metadata.json"])
+}
+
+fn cline_string_by_keys(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key))
+        .find_map(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("id").and_then(Value::as_str))
+                .or_else(|| value.get("value").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+        })
+}
+
+fn cline_workspace_from_path(path: &Path) -> Option<String> {
+    cline_metadata_value(path)
+        .as_ref()
+        .and_then(extract_cwd)
+        .or_else(|| cline_workspace_from_api_history(path))
+}
+
+fn cline_workspace_from_api_history(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&raw).ok()?;
+    cline_api_message_values(&value).into_iter().find_map(|message| {
+        let text = extract_content(message)?;
+        extract_simple_tag_block(&text, "current_working_directory")
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn cline_session_id_from_path(path: &Path) -> Option<String> {
+    cline_metadata_value(path)
+        .as_ref()
+        .and_then(|meta| cline_string_by_keys(meta, &["taskId", "task_id", "id"]))
+        .or_else(|| cline_task_id_from_path(path))
+}
+
+fn cline_title_from_path(path: &Path) -> Option<String> {
+    cline_metadata_value(path)
+        .as_ref()
+        .and_then(|meta| cline_string_by_keys(meta, &["task", "title", "summary", "name"]))
+}
+
+fn cline_model_from_path(path: &Path) -> Option<String> {
+    cline_metadata_value(path).as_ref().and_then(|meta| {
+        extract_model(meta).or_else(|| {
+            cline_string_by_keys(
+                meta,
+                &["modelId", "model_id", "apiModelId", "api_model_id", "model"],
+            )
+        })
+    })
+}
+
+fn cline_project_key_from_path(path: &Path) -> String {
+    cline_workspace_from_path(path)
+        .as_deref()
+        .and_then(project_key_from_cwd)
+        .or_else(|| cline_task_id_from_path(path))
+        .unwrap_or_else(|| "cline".to_string())
+}
+
+fn cline_api_message_values(value: &Value) -> Vec<&Value> {
+    value
+        .as_array()
+        .or_else(|| value.get("messages").and_then(Value::as_array))
+        .map(|messages| messages.iter().collect())
+        .unwrap_or_default()
+}
+
+fn cline_api_message_count(value: &Value) -> Option<usize> {
+    value
+        .as_array()
+        .or_else(|| value.get("messages").and_then(Value::as_array))
+        .map(Vec::len)
+}
+
+fn cline_ui_timestamps(path: &Path) -> Vec<Option<String>> {
+    cline_sibling_json(path, &["ui_messages.json"])
+        .and_then(|value| {
+            value.as_array().map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        extract_timestamp(item).or_else(|| {
+                            item.get("ts")
+                                .and_then(parse_timestamp_millis_value)
+                                .and_then(timestamp_millis_to_rfc3339)
+                        })
+                    })
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
 fn codex_project_key_from_session(path: &Path, root: &Path) -> String {
     get_or_scan_session_project(path)
         .cwd
         .as_deref()
         .and_then(project_key_from_cwd)
         .unwrap_or_else(|| codex_project_key_from_path(path, root))
+}
+
+fn gemini_project_key_from_path(path: &Path, root: &Path) -> String {
+    path.parent()
+        .and_then(Path::parent)
+        .and_then(|parent| parent.strip_prefix(root).ok())
+        .and_then(|relative| relative.components().next())
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "gemini".to_string())
+}
+
+fn copilot_project_key_from_path(path: &Path) -> String {
+    get_or_scan_session_project(path)
+        .cwd
+        .as_deref()
+        .and_then(project_key_from_cwd)
+        .or_else(|| {
+            path.parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "copilot".to_string())
+}
+
+fn kiro_project_key_from_path(path: &Path) -> String {
+    get_or_scan_session_project(path)
+        .cwd
+        .as_deref()
+        .and_then(project_key_from_cwd)
+        .or_else(|| {
+            path.parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "kiro".to_string())
 }
 
 fn project_key_from_cwd(cwd: &str) -> Option<String> {
@@ -4370,6 +6811,12 @@ fn read_dir_entries(dir: &Path) -> Vec<fs::DirEntry> {
 fn is_jsonl(path: &Path) -> bool {
     path.extension()
         .map(|v| v.to_string_lossy().eq_ignore_ascii_case("jsonl"))
+        .unwrap_or(false)
+}
+
+fn is_json(path: &Path) -> bool {
+    path.extension()
+        .map(|v| v.to_string_lossy().eq_ignore_ascii_case("json"))
         .unwrap_or(false)
 }
 
@@ -4476,6 +6923,22 @@ fn session_matches_project_path(file_ref: &SessionFileRef, target_project_path: 
             }
         }
     }
+    if file_ref.source == "cursor" {
+        let key = file_ref.project_key.to_lowercase();
+        if key == cursor_project_slug_from_path(target_project_path) {
+            return true;
+        }
+        if let Some(wsl_target) = wsl_target.as_deref() {
+            if key == cursor_project_slug_from_path(wsl_target) {
+                return true;
+            }
+        }
+        if let Some(ref linux_target) = wsl_unc_linux_target {
+            if key == cursor_project_slug_from_path(linux_target) {
+                return true;
+            }
+        }
+    }
 
     let scan = get_or_scan_session_project(&file_ref.path);
     let normalized_cwd = scan.cwd.as_deref().map(normalize_history_path);
@@ -4535,6 +6998,40 @@ fn get_or_scan_session_project(path: &Path) -> SessionProjectScan {
 }
 
 fn scan_session_project(path: &Path) -> SessionProjectScan {
+    if looks_like_antigravity_transcript_file(path) {
+        return SessionProjectScan {
+            cwd: antigravity_workspace_from_path(path),
+        };
+    }
+    if looks_like_grok_updates_file(path) {
+        return SessionProjectScan {
+            cwd: grok_workspace_from_path(path),
+        };
+    }
+    if looks_like_pi_session_file(path) {
+        return SessionProjectScan {
+            cwd: pi_workspace_from_path(path),
+        };
+    }
+    if looks_like_cline_session_file(path) {
+        return SessionProjectScan {
+            cwd: cline_workspace_from_path(path),
+        };
+    }
+    if looks_like_cursor_agent_transcript_file(path) {
+        if let Some(cwd) = cursor_metadata_from_path(path).and_then(|metadata| metadata.cwd) {
+            return SessionProjectScan { cwd: Some(cwd) };
+        }
+    }
+    if !is_jsonl(path) {
+        return fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|value| extract_cwd(&value))
+            .map(|cwd| SessionProjectScan { cwd: Some(cwd) })
+            .unwrap_or_default();
+    }
+
     let file = match File::open(path) {
         Ok(file) => file,
         Err(_) => return SessionProjectScan::default(),
@@ -4576,6 +7073,9 @@ fn extract_cwd(value: &Value) -> Option<String> {
         value.get("workdir"),
         value.get("working_dir"),
         value.get("workingDirectory"),
+        value.get("workspaceDirectory"),
+        value.get("workspacePath"),
+        value.get("projectPath"),
     ];
     for candidate in candidates.into_iter().flatten() {
         let Some(path) = candidate.as_str().map(str::trim).filter(|v| !v.is_empty()) else {
@@ -4584,7 +7084,7 @@ fn extract_cwd(value: &Value) -> Option<String> {
         return Some(path.to_string());
     }
 
-    for key in ["payload", "metadata", "environment_context"] {
+    for key in ["payload", "metadata", "environment_context", "data", "context"] {
         if let Some(cwd) = value.get(key).and_then(extract_cwd) {
             return Some(cwd);
         }
@@ -4620,6 +7120,25 @@ fn scan_session_inner(
     path: &Path,
     collect_messages: bool,
 ) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    if !is_jsonl(path) {
+        return scan_json_session(path, collect_messages);
+    }
+    if looks_like_copilot_events_file(path) {
+        return scan_copilot_jsonl_session(path, collect_messages);
+    }
+    if looks_like_antigravity_transcript_file(path) {
+        return scan_antigravity_jsonl_session(path, collect_messages);
+    }
+    if looks_like_grok_updates_file(path) {
+        return scan_grok_jsonl_session(path, collect_messages);
+    }
+    if looks_like_pi_session_file(path) {
+        return scan_pi_jsonl_session(path, collect_messages);
+    }
+    if looks_like_cursor_agent_transcript_file(path) {
+        return scan_cursor_jsonl_session(path, collect_messages);
+    }
+
     let file = match File::open(path) {
         Ok(file) => file,
         Err(_) => {
@@ -4885,6 +7404,1036 @@ fn scan_session_inner(
     )
 }
 
+fn scan_copilot_jsonl_session(
+    path: &Path,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let Ok(file) = File::open(path) else {
+        return empty_session_scan();
+    };
+    let mut session_id = None;
+    let mut messages = Vec::new();
+    let mut seen_tool_call_ids = HashSet::new();
+    let mut tool_call_count = 0u64;
+    let mut builtin_calls = HashMap::new();
+
+    for (line_index, line) in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .enumerate()
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
+        let data = value.get("data");
+
+        if event_type == "session.start" {
+            session_id = data
+                .and_then(|data| data.get("sessionId"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string);
+        }
+        if event_type == "assistant.message" {
+            for request in data
+                .and_then(|data| data.get("toolRequests"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                count_copilot_tool_call(
+                    request,
+                    &mut seen_tool_call_ids,
+                    &mut tool_call_count,
+                    &mut builtin_calls,
+                );
+            }
+        } else if event_type == "tool.execution_start" {
+            if let Some(data) = data {
+                count_copilot_tool_call(
+                    data,
+                    &mut seen_tool_call_ids,
+                    &mut tool_call_count,
+                    &mut builtin_calls,
+                );
+            }
+        }
+        if let Some(message) = copilot_message_from_event(&value, line_index) {
+            messages.push(message);
+        }
+    }
+
+    let fallback_id = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().to_string());
+    let (summary, mut stats, output_messages) = json_session_scan_result(
+        session_id.or(fallback_id).as_deref(),
+        None,
+        messages,
+        collect_messages,
+    );
+    stats.tool_call_count = tool_call_count;
+    stats.builtin_calls = builtin_calls;
+    (summary, stats, output_messages)
+}
+
+fn count_copilot_tool_call(
+    value: &Value,
+    seen_call_ids: &mut HashSet<String>,
+    tool_call_count: &mut u64,
+    builtin_calls: &mut HashMap<String, u64>,
+) {
+    let Some(name) = copilot_tool_name(value) else {
+        return;
+    };
+    if copilot_tool_id(value).is_some_and(|id| !seen_call_ids.insert(id.to_string())) {
+        return;
+    }
+    *tool_call_count += 1;
+    *builtin_calls.entry(name.to_string()).or_insert(0) += 1;
+}
+
+fn copilot_message_from_event(value: &Value, line_index: usize) -> Option<HistoryMessage> {
+    let data = value.get("data")?;
+    let (role, content, model) = match value.get("type").and_then(Value::as_str)? {
+        "user.message" => (
+            "user",
+            data.get("content").and_then(json_content_text)?,
+            None,
+        ),
+        "assistant.message" => (
+            "assistant",
+            copilot_assistant_content(data)?,
+            extract_model(data),
+        ),
+        "tool.execution_complete" => ("tool", copilot_tool_result_text(data)?, None),
+        _ => return None,
+    };
+    let mut message = json_history_message(
+        role.to_string(),
+        content,
+        extract_timestamp(value),
+        model,
+    );
+    message.line_index = Some(line_index);
+    Some(message)
+}
+
+fn copilot_assistant_content(data: &Value) -> Option<String> {
+    let mut parts = data
+        .get("content")
+        .and_then(json_content_text)
+        .into_iter()
+        .collect::<Vec<_>>();
+    for request in data
+        .get("toolRequests")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let name = copilot_tool_name(request).unwrap_or("tool");
+        let arguments = request
+            .get("arguments")
+            .or_else(|| request.get("input"))
+            .and_then(summarize_json_value);
+        parts.push(match arguments {
+            Some(arguments) => format!("[{name}] {arguments}"),
+            None => format!("[{name}]"),
+        });
+    }
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
+fn copilot_tool_result_text(data: &Value) -> Option<String> {
+    let result = data.get("result")?;
+    result
+        .get("detailedContent")
+        .and_then(json_content_text)
+        .or_else(|| result.get("content").and_then(json_content_text))
+        .or_else(|| summarize_json_value(result))
+}
+
+fn copilot_tool_id(value: &Value) -> Option<&str> {
+    value
+        .get("toolCallId")
+        .or_else(|| value.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+}
+
+fn copilot_tool_name(value: &Value) -> Option<&str> {
+    value
+        .get("toolName")
+        .or_else(|| value.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn scan_grok_jsonl_session(
+    path: &Path,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let Ok(file) = File::open(path) else {
+        return empty_session_scan();
+    };
+    let summary = grok_summary_value(path);
+    let session_id = summary
+        .as_ref()
+        .and_then(|value| grok_string_by_paths(value, &[&["info", "id"], &["session_id"]]))
+        .or_else(|| grok_session_id_from_path(path));
+    let title = summary.as_ref().and_then(|value| {
+        grok_string_by_paths(
+            value,
+            &[&["generated_title"], &["session_summary"], &["title"]],
+        )
+    });
+    let model = summary.as_ref().and_then(|value| {
+        grok_string_by_paths(value, &[&["current_model_id"], &["model"], &["selectedModel"]])
+    });
+
+    let mut messages = Vec::new();
+    let mut pending_role: Option<&'static str> = None;
+    let mut pending_content = String::new();
+    let mut pending_timestamp = None;
+    let mut pending_line_index = None;
+    let mut pending_model = None;
+    let mut seen_tool_call_ids = HashSet::new();
+    let mut tool_call_count = 0u64;
+    let mut builtin_calls = HashMap::new();
+
+    for (line_index, line) in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .enumerate()
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let Some(update) = grok_update_value(&value) else {
+            continue;
+        };
+        let tag = update
+            .get("sessionUpdate")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match tag {
+            "user_message_chunk" => {
+                if !grok_is_bash_command(update) {
+                    if let Some(text) = update.get("content").and_then(grok_content_text) {
+                        grok_append_pending_message_chunk(
+                            "user",
+                            text,
+                            grok_event_timestamp(&value, update),
+                            line_index,
+                            None,
+                            &mut pending_role,
+                            &mut pending_content,
+                            &mut pending_timestamp,
+                            &mut pending_line_index,
+                            &mut pending_model,
+                            &mut messages,
+                        );
+                    }
+                }
+            }
+            "agent_message_chunk" => {
+                if let Some(text) = update.get("content").and_then(grok_content_text) {
+                    grok_append_pending_message_chunk(
+                        "assistant",
+                        text,
+                        grok_event_timestamp(&value, update),
+                        line_index,
+                        model.clone(),
+                        &mut pending_role,
+                        &mut pending_content,
+                        &mut pending_timestamp,
+                        &mut pending_line_index,
+                        &mut pending_model,
+                        &mut messages,
+                    );
+                }
+            }
+            "agent_thought_chunk" => {}
+            "tool_call" => {
+                grok_flush_pending_message(
+                    &mut pending_role,
+                    &mut pending_content,
+                    &mut pending_timestamp,
+                    &mut pending_line_index,
+                    &mut pending_model,
+                    &mut messages,
+                );
+                if let Some(name) = grok_tool_name(update) {
+                    let call_id = grok_tool_call_id(update);
+                    if mark_tool_event_seen(call_id.as_deref(), &mut seen_tool_call_ids) {
+                        tool_call_count += 1;
+                        *builtin_calls.entry(name).or_insert(0) += 1;
+                    }
+                }
+            }
+            _ => grok_flush_pending_message(
+                &mut pending_role,
+                &mut pending_content,
+                &mut pending_timestamp,
+                &mut pending_line_index,
+                &mut pending_model,
+                &mut messages,
+            ),
+        }
+    }
+    grok_flush_pending_message(
+        &mut pending_role,
+        &mut pending_content,
+        &mut pending_timestamp,
+        &mut pending_line_index,
+        &mut pending_model,
+        &mut messages,
+    );
+
+    let (summary_scan, mut stats, output_messages) = json_session_scan_result(
+        session_id.as_deref(),
+        title.as_deref(),
+        messages,
+        collect_messages,
+    );
+    if stats.current_model.is_none() {
+        stats.current_model = model.clone();
+        stats.dominant_model = model;
+    }
+    stats.tool_call_count = tool_call_count;
+    stats.builtin_calls = builtin_calls;
+    (summary_scan, stats, output_messages)
+}
+
+fn grok_update_value(value: &Value) -> Option<&Value> {
+    let params = value.get("params").unwrap_or(value);
+    params.get("update").or_else(|| {
+        params
+            .get("sessionUpdate")
+            .is_some()
+            .then_some(params)
+    })
+}
+
+fn grok_event_timestamp(value: &Value, update: &Value) -> Option<String> {
+    extract_timestamp(update)
+        .or_else(|| extract_timestamp(value))
+        .or_else(|| {
+            extract_timestamp_millis(update)
+                .or_else(|| extract_timestamp_millis(value))
+                .and_then(timestamp_millis_to_rfc3339)
+        })
+}
+
+fn grok_is_bash_command(update: &Value) -> bool {
+    update
+        .get("content")
+        .and_then(|content| content.get("_meta"))
+        .and_then(|meta| meta.get("bash_command"))
+        .is_some()
+}
+
+fn grok_content_text(value: &Value) -> Option<String> {
+    let text = match value {
+        Value::String(text) => text.clone(),
+        Value::Object(map) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| extract_text_from_value(value))?,
+        Value::Array(items) => items
+            .iter()
+            .filter_map(grok_content_text)
+            .collect::<Vec<_>>()
+            .join(""),
+        other => extract_text_from_value(other)?,
+    };
+    let text = if text.contains('\u{0000}') {
+        text.replace('\u{0000}', "")
+    } else {
+        text
+    };
+    (!text.trim().is_empty()).then_some(text)
+}
+
+fn grok_append_pending_message_chunk(
+    role: &'static str,
+    text: String,
+    timestamp: Option<String>,
+    line_index: usize,
+    model: Option<String>,
+    pending_role: &mut Option<&'static str>,
+    pending_content: &mut String,
+    pending_timestamp: &mut Option<String>,
+    pending_line_index: &mut Option<usize>,
+    pending_model: &mut Option<String>,
+    messages: &mut Vec<HistoryMessage>,
+) {
+    if pending_role.is_some_and(|current| current != role) {
+        grok_flush_pending_message(
+            pending_role,
+            pending_content,
+            pending_timestamp,
+            pending_line_index,
+            pending_model,
+            messages,
+        );
+    }
+    if pending_role.is_none() {
+        *pending_role = Some(role);
+        *pending_timestamp = timestamp;
+        *pending_line_index = Some(line_index);
+        *pending_model = model;
+    }
+    pending_content.push_str(&text);
+}
+
+fn grok_flush_pending_message(
+    pending_role: &mut Option<&'static str>,
+    pending_content: &mut String,
+    pending_timestamp: &mut Option<String>,
+    pending_line_index: &mut Option<usize>,
+    pending_model: &mut Option<String>,
+    messages: &mut Vec<HistoryMessage>,
+) {
+    let Some(role) = pending_role.take() else {
+        return;
+    };
+    let content = normalize_text(pending_content);
+    pending_content.clear();
+    if content.is_empty() {
+        *pending_timestamp = None;
+        *pending_line_index = None;
+        *pending_model = None;
+        return;
+    }
+    let mut message = json_history_message(
+        role.to_string(),
+        content,
+        pending_timestamp.take(),
+        pending_model.take(),
+    );
+    message.line_index = pending_line_index.take();
+    messages.push(message);
+}
+
+fn grok_tool_call_id(update: &Value) -> Option<String> {
+    update
+        .get("toolCallId")
+        .or_else(|| update.get("tool_call_id"))
+        .or_else(|| update.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+fn grok_tool_name(update: &Value) -> Option<String> {
+    grok_string_by_paths(update, &[&["title"], &["name"], &["kind"]])
+}
+
+fn grok_tool_input(update: &Value) -> Option<String> {
+    update
+        .get("rawInput")
+        .or_else(|| update.get("raw_input"))
+        .or_else(|| update.get("input"))
+        .or_else(|| update.get("locations"))
+        .and_then(summarize_json_value)
+}
+
+fn grok_tool_output(update: &Value) -> Option<String> {
+    update
+        .get("content")
+        .and_then(json_content_text)
+        .or_else(|| update.get("output").and_then(summarize_json_value))
+        .or_else(|| update.get("result").and_then(summarize_json_value))
+}
+
+fn grok_tool_status(update: &Value) -> Option<String> {
+    let status = update.get("status").and_then(Value::as_str)?.to_lowercase();
+    if status.contains("fail") || status.contains("error") {
+        Some("failed".to_string())
+    } else if status.contains("complete") || status.contains("success") {
+        Some("completed".to_string())
+    } else if status.contains("progress") || status.contains("running") {
+        Some("started".to_string())
+    } else {
+        Some(status)
+    }
+}
+
+fn scan_pi_jsonl_session(
+    path: &Path,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let Ok(file) = File::open(path) else {
+        return empty_session_scan();
+    };
+    let mut session_id = None;
+    let mut title = None;
+    let mut model = None;
+    let mut messages = Vec::new();
+    let mut tool_call_count = 0u64;
+    let mut builtin_calls = HashMap::new();
+    let mut seen_call_ids = HashSet::new();
+
+    for (line_index, line) in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .enumerate()
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("session") => {
+                if session_id.is_none() {
+                    session_id = pi_string_by_keys(&value, &["sessionId", "session_id", "id"]);
+                }
+                if title.is_none() {
+                    title = pi_string_by_keys(&value, &["title", "summary", "name"]);
+                }
+                if model.is_none() {
+                    model = extract_model(&value);
+                }
+            }
+            Some("message") => {
+                collect_pi_tool_calls(
+                    &value,
+                    &mut seen_call_ids,
+                    &mut tool_call_count,
+                    &mut builtin_calls,
+                );
+                if let Some(mut message) = parse_message(&value) {
+                    if message.model.is_none() && message.role == "assistant" {
+                        message.model = model.clone();
+                    }
+                    message.line_index = Some(line_index);
+                    messages.push(message);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let fallback_id = pi_session_id_from_path(path);
+    let (summary, mut stats, output_messages) = json_session_scan_result(
+        session_id.as_deref().or(fallback_id.as_deref()),
+        title.as_deref(),
+        messages,
+        collect_messages,
+    );
+    if stats.current_model.is_none() {
+        stats.current_model = model.clone();
+        stats.dominant_model = model;
+    }
+    stats.tool_call_count = tool_call_count;
+    stats.builtin_calls = builtin_calls;
+    (summary, stats, output_messages)
+}
+
+fn collect_pi_tool_calls(
+    value: &Value,
+    seen_call_ids: &mut HashSet<String>,
+    tool_call_count: &mut u64,
+    builtin_calls: &mut HashMap<String, u64>,
+) {
+    let Some(blocks) = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("toolCall") {
+            continue;
+        }
+        let Some(name) = pi_tool_name(block) else {
+            continue;
+        };
+        if let Some(id) = pi_tool_call_id(block) {
+            if !seen_call_ids.insert(id) {
+                continue;
+            }
+        }
+        *tool_call_count += 1;
+        *builtin_calls.entry(name).or_insert(0) += 1;
+    }
+}
+
+fn pi_tool_call_id(value: &Value) -> Option<String> {
+    pi_string_by_keys(value, &["toolCallId", "tool_call_id", "id"])
+}
+
+fn pi_tool_name(value: &Value) -> Option<String> {
+    pi_string_by_keys(value, &["name", "toolName", "tool_name", "kind"])
+}
+
+fn scan_pi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let mut events = Vec::new();
+    let mut seen_call_ids = HashSet::new();
+    for (line_index, line) in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .enumerate()
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+        if let Some(blocks) = value
+            .get("message")
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_array)
+        {
+            for block in blocks {
+                if block.get("type").and_then(Value::as_str) != Some("toolCall") {
+                    continue;
+                }
+                let Some(name) = pi_tool_name(block) else {
+                    continue;
+                };
+                let call_id = pi_tool_call_id(block);
+                if mark_tool_event_seen(call_id.as_deref(), &mut seen_call_ids) {
+                    events.push(make_tool_event(
+                        call_id,
+                        &name,
+                        Some(line_index),
+                        extract_timestamp(&value),
+                        Some("started"),
+                        None,
+                        block
+                            .get("arguments")
+                            .or_else(|| block.get("input"))
+                            .and_then(summarize_json_value),
+                        None,
+                        None,
+                    ));
+                }
+            }
+        }
+        if value
+            .get("message")
+            .and_then(|message| message.get("role"))
+            .and_then(Value::as_str)
+            == Some("toolResult")
+        {
+            let call_id = value
+                .get("message")
+                .and_then(|message| pi_tool_call_id(message));
+            update_tool_event_output(
+                &mut events,
+                call_id.as_deref(),
+                extract_content(&value),
+                Some("completed".to_string()),
+            );
+        }
+    }
+    events
+}
+
+fn scan_cursor_jsonl_session(
+    path: &Path,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let Ok(file) = File::open(path) else {
+        return empty_session_scan();
+    };
+    let session_id = cursor_session_id_from_path(path);
+    let mut messages = Vec::new();
+    let mut seen_tool_call_ids = HashSet::new();
+    let mut tool_call_count = 0u64;
+    let mut mcp_calls = HashMap::new();
+    let mut skill_calls = HashMap::new();
+    let mut builtin_calls = HashMap::new();
+
+    for (line_index, line) in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .enumerate()
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        collect_tool_calls(
+            &value,
+            &mut seen_tool_call_ids,
+            &mut tool_call_count,
+            &mut mcp_calls,
+            &mut skill_calls,
+            &mut builtin_calls,
+        );
+        let Some(mut message) = parse_message(&value) else {
+            continue;
+        };
+        message.line_index = Some(line_index);
+        messages.push(message);
+    }
+
+    let (summary, mut stats, output_messages) =
+        json_session_scan_result(session_id.as_deref(), None, messages, collect_messages);
+    stats.tool_call_count = tool_call_count;
+    stats.mcp_calls = mcp_calls;
+    stats.skill_calls = skill_calls;
+    stats.builtin_calls = builtin_calls;
+    (summary, stats, output_messages)
+}
+
+fn scan_antigravity_jsonl_session(
+    path: &Path,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let Ok(file) = File::open(path) else {
+        return empty_session_scan();
+    };
+    let session_id = antigravity_path_parts(path).map(|(_, id)| id);
+    let mut messages = Vec::new();
+    let mut tool_call_count = 0u64;
+    let mut builtin_calls = HashMap::new();
+
+    for (line_index, line) in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+        .enumerate()
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("status").and_then(Value::as_str) != Some("DONE") {
+            continue;
+        }
+        for tool in value
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(name) = tool
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                tool_call_count += 1;
+                *builtin_calls.entry(name.to_string()).or_insert(0) += 1;
+            }
+        }
+
+        let source = value.get("source").and_then(Value::as_str).unwrap_or_default();
+        let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
+        let content = value
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        let message = match (source, event_type) {
+            (_, "USER_INPUT") => {
+                let content = extract_antigravity_user_request(content);
+                (!content.is_empty()).then(|| {
+                    json_history_message(
+                        "user".to_string(),
+                        content,
+                        extract_timestamp(&value),
+                        None,
+                    )
+                })
+            }
+            ("MODEL", "PLANNER_RESPONSE") if !content.is_empty() => Some(json_history_message(
+                "assistant".to_string(),
+                content.to_string(),
+                extract_timestamp(&value),
+                None,
+            )),
+            _ => None,
+        };
+        if let Some(mut message) = message {
+            message.line_index = Some(line_index);
+            messages.push(message);
+        }
+    }
+
+    let (summary, mut stats, output_messages) = json_session_scan_result(
+        session_id.as_deref(),
+        None,
+        messages,
+        collect_messages,
+    );
+    stats.tool_call_count = tool_call_count;
+    stats.builtin_calls = builtin_calls;
+    (summary, stats, output_messages)
+}
+
+fn extract_antigravity_user_request(content: &str) -> String {
+    let Some(start) = content.find("<USER_REQUEST>") else {
+        return content.trim().to_string();
+    };
+    let request_start = start + "<USER_REQUEST>".len();
+    let Some(end) = content[request_start..].find("</USER_REQUEST>") else {
+        return content.trim().to_string();
+    };
+    content[request_start..request_start + end]
+        .trim()
+        .to_string()
+}
+
+fn empty_session_scan() -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    (
+        SessionSummaryScan {
+            session_id: None,
+            message_count: 0,
+            first_user_message: None,
+            first_message: None,
+            branch: None,
+        },
+        SessionStatsScan::default(),
+        Vec::new(),
+    )
+}
+
+fn scan_json_session(
+    path: &Path,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return empty_session_scan();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return empty_session_scan();
+    };
+
+    if looks_like_cline_session_file(path) {
+        return scan_cline_json_session(path, &value, collect_messages);
+    }
+    if value.get("history").and_then(Value::as_array).is_some()
+        && value.get("sessionId").is_some()
+    {
+        return scan_kiro_json_session(&value, collect_messages);
+    }
+    if value.get("messages").and_then(Value::as_array).is_some()
+        && (value.get("sessionId").is_some() || value.get("projectHash").is_some())
+    {
+        return scan_gemini_json_session(&value, collect_messages);
+    }
+
+    empty_session_scan()
+}
+
+fn scan_gemini_json_session(
+    value: &Value,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let messages = value
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| {
+            let content = message.get("content").and_then(json_content_text)?;
+            Some(json_history_message(
+                normalize_json_role(message.get("type")),
+                content,
+                extract_timestamp(message),
+                extract_model(message),
+            ))
+        })
+        .collect::<Vec<_>>();
+    json_session_scan_result(
+        value.get("sessionId").and_then(Value::as_str),
+        None,
+        messages,
+        collect_messages,
+    )
+}
+
+fn scan_kiro_json_session(
+    value: &Value,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let selected_model = value
+        .get("selectedModel")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string);
+    let messages = value
+        .get("history")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let message = entry.get("message").unwrap_or(entry);
+            let content = message
+                .get("content")
+                .or_else(|| entry.get("content"))
+                .and_then(json_content_text)?;
+            Some(json_history_message(
+                normalize_json_role(message.get("role").or_else(|| entry.get("role"))),
+                content,
+                extract_timestamp(message).or_else(|| extract_timestamp(entry)),
+                extract_model(message).or_else(|| selected_model.clone()),
+            ))
+        })
+        .collect::<Vec<_>>();
+    json_session_scan_result(
+        value.get("sessionId").and_then(Value::as_str),
+        value.get("title").and_then(Value::as_str),
+        messages,
+        collect_messages,
+    )
+}
+
+fn scan_cline_json_session(
+    path: &Path,
+    value: &Value,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let session_id = cline_session_id_from_path(path);
+    let title = cline_title_from_path(path);
+    let model = cline_model_from_path(path);
+    let timestamps = cline_ui_timestamps(path);
+    let mut messages = Vec::new();
+    let mut seen_call_ids = HashSet::new();
+    let mut tool_call_count = 0u64;
+    let mut mcp_calls = HashMap::new();
+    let mut skill_calls = HashMap::new();
+    let mut builtin_calls = HashMap::new();
+
+    for (index, entry) in cline_api_message_values(value).into_iter().enumerate() {
+        let wrapped = json!({ "message": entry });
+        collect_tool_calls(
+            &wrapped,
+            &mut seen_call_ids,
+            &mut tool_call_count,
+            &mut mcp_calls,
+            &mut skill_calls,
+            &mut builtin_calls,
+        );
+        let Some(mut message) = parse_message(entry) else {
+            continue;
+        };
+        if message.timestamp.is_none() {
+            message.timestamp = timestamps.get(index).cloned().flatten();
+        }
+        if message.model.is_none() && message.role == "assistant" {
+            message.model = model.clone();
+        }
+        message.line_index = Some(index);
+        messages.push(message);
+    }
+
+    let (summary, mut stats, output_messages) = json_session_scan_result(
+        session_id.as_deref(),
+        title.as_deref(),
+        messages,
+        collect_messages,
+    );
+    if stats.current_model.is_none() {
+        stats.current_model = model.clone();
+        stats.dominant_model = model;
+    }
+    stats.tool_call_count = tool_call_count;
+    stats.mcp_calls = mcp_calls;
+    stats.skill_calls = skill_calls;
+    stats.builtin_calls = builtin_calls;
+    (summary, stats, output_messages)
+}
+
+fn json_session_scan_result(
+    session_id: Option<&str>,
+    fallback_title: Option<&str>,
+    messages: Vec<HistoryMessage>,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let first_message = messages.iter().find_map(message_title_candidate).or_else(|| {
+        fallback_title
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_string)
+    });
+    let first_user_message = messages
+        .iter()
+        .filter(|message| message.role == "user")
+        .find_map(message_title_candidate);
+    let model = messages
+        .iter()
+        .filter_map(|message| message.model.clone())
+        .find(|model| !is_synthetic_model(model));
+    (
+        SessionSummaryScan {
+            session_id: session_id
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string),
+            message_count: messages.len(),
+            first_user_message,
+            first_message,
+            branch: None,
+        },
+        json_session_stats(model),
+        if collect_messages { messages } else { Vec::new() },
+    )
+}
+
+fn json_session_stats(model: Option<String>) -> SessionStatsScan {
+    SessionStatsScan {
+        dominant_model: model.clone(),
+        current_model: model,
+        ..SessionStatsScan::default()
+    }
+}
+
+fn json_history_message(
+    role: String,
+    content: String,
+    timestamp: Option<String>,
+    model: Option<String>,
+) -> HistoryMessage {
+    HistoryMessage {
+        role,
+        content,
+        timestamp,
+        model: model.filter(|model| !is_synthetic_model(model)),
+        input_tokens: None,
+        output_tokens: None,
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+        line_index: None,
+        editable: false,
+        editable_text: None,
+    }
+}
+
+fn json_content_text(value: &Value) -> Option<String> {
+    extract_text_from_value(value)
+        .map(|text| normalize_text(&text))
+        .filter(|text| !text.is_empty())
+}
+
+fn normalize_json_role(value: Option<&Value>) -> String {
+    let role = value.and_then(Value::as_str).unwrap_or_default();
+    let lower = role.to_lowercase();
+    if lower.contains("user") || lower.contains("human") {
+        "user".to_string()
+    } else if lower.contains("system") {
+        "system".to_string()
+    } else if lower.contains("tool") {
+        "tool".to_string()
+    } else {
+        "assistant".to_string()
+    }
+}
+
 /// 仅需 summary + stats 的调用方（list / stats 聚合）使用，不收集消息体。
 fn scan_session_combined(path: &Path) -> (SessionSummaryScan, SessionStatsScan) {
     let (summary, stats, _) = scan_session_inner(path, false);
@@ -4897,12 +8446,22 @@ fn scan_session_detail(path: &Path) -> (SessionSummaryScan, SessionStatsScan, Ve
 }
 
 fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
+    if looks_like_grok_updates_file(path) {
+        return scan_grok_tool_events(path);
+    }
+    if looks_like_pi_session_file(path) {
+        return scan_pi_tool_events(path);
+    }
+    if looks_like_cline_session_file(path) {
+        return scan_cline_tool_events(path);
+    }
     let Ok(file) = File::open(path) else {
         return Vec::new();
     };
     let mut events = Vec::new();
     let mut message_index = 0usize;
     let mut seen_call_ids: HashSet<String> = HashSet::new();
+    let copilot_events = looks_like_copilot_events_file(path);
 
     for line in BufReader::with_capacity(READ_BUF_CAPACITY, file)
         .lines()
@@ -4916,7 +8475,10 @@ fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
             continue;
         };
 
-        let current_message_index = if parse_message(&value).is_some() {
+        let current_message_index = if (copilot_events
+            && copilot_message_from_event(&value, message_index).is_some())
+            || (!copilot_events && parse_message(&value).is_some())
+        {
             let index = Some(message_index);
             message_index += 1;
             index
@@ -4934,7 +8496,141 @@ fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     events
 }
 
+fn scan_grok_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let mut events = Vec::new();
+    let mut seen_call_ids = HashSet::new();
+    for line in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+    {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let Some(update) = grok_update_value(&value) else {
+            continue;
+        };
+        let tag = update
+            .get("sessionUpdate")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match tag {
+            "tool_call" => {
+                let Some(name) = grok_tool_name(update) else {
+                    continue;
+                };
+                let call_id = grok_tool_call_id(update);
+                if mark_tool_event_seen(call_id.as_deref(), &mut seen_call_ids) {
+                    events.push(make_tool_event(
+                        call_id,
+                        &name,
+                        None,
+                        grok_event_timestamp(&value, update),
+                        Some("started"),
+                        None,
+                        grok_tool_input(update),
+                        None,
+                        None,
+                    ));
+                }
+            }
+            "tool_call_update" => {
+                let call_id = grok_tool_call_id(update);
+                let output = grok_tool_output(update);
+                let status = grok_tool_status(update);
+                if let Some(name) = grok_tool_name(update) {
+                    if mark_tool_event_seen(call_id.as_deref(), &mut seen_call_ids) {
+                        events.push(make_tool_event(
+                            call_id,
+                            &name,
+                            None,
+                            grok_event_timestamp(&value, update),
+                            status.as_deref(),
+                            None,
+                            grok_tool_input(update),
+                            output,
+                            None,
+                        ));
+                    } else {
+                        update_tool_event_output(&mut events, call_id.as_deref(), output, status);
+                    }
+                } else {
+                    update_tool_event_output(&mut events, call_id.as_deref(), output, status);
+                }
+            }
+            _ => {}
+        }
+    }
+    events
+}
+
+fn scan_cline_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return Vec::new();
+    };
+
+    let timestamps = cline_ui_timestamps(path);
+    let mut events = Vec::new();
+    let mut seen_call_ids = HashSet::new();
+    let mut message_index = 0usize;
+
+    for (index, entry) in cline_api_message_values(&value).into_iter().enumerate() {
+        let current_message_index = if parse_message(entry).is_some() {
+            let current = Some(message_index);
+            message_index += 1;
+            current
+        } else {
+            None
+        };
+        let mut wrapped = json!({ "message": entry });
+        if wrapped.get("timestamp").is_none() {
+            if let Some(timestamp) = timestamps.get(index).cloned().flatten() {
+                wrapped["timestamp"] = Value::String(timestamp);
+            }
+        }
+        collect_tool_events_from_value(
+            &wrapped,
+            current_message_index,
+            &mut seen_call_ids,
+            &mut events,
+        );
+        update_cline_tool_results(entry, &mut events);
+    }
+
+    events
+}
+
+fn update_cline_tool_results(entry: &Value, events: &mut [HistoryToolEvent]) {
+    let Some(blocks) = entry.get("content").and_then(Value::as_array) else {
+        return;
+    };
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+            continue;
+        }
+        let call_id = block
+            .get("tool_use_id")
+            .or_else(|| block.get("toolUseId"))
+            .or_else(|| block.get("id"))
+            .and_then(Value::as_str);
+        update_tool_event_output(
+            events,
+            call_id,
+            block.get("content").and_then(json_content_text),
+            Some("completed".to_string()),
+        );
+    }
+}
+
 fn scan_file_changes(path: &Path) -> Vec<HistoryFileChangeSummary> {
+    if looks_like_cline_session_file(path) {
+        return scan_cline_file_changes(path);
+    }
     let Ok(file) = File::open(path) else {
         return Vec::new();
     };
@@ -4969,6 +8665,36 @@ fn scan_file_changes(path: &Path) -> Vec<HistoryFileChangeSummary> {
             current_message_index,
             Some(operation_group_index),
             timestamp,
+            &mut seen_call_ids,
+        );
+        if extracted.is_empty() {
+            continue;
+        }
+        operations.extend(extracted);
+        operation_group_index += 1;
+    }
+
+    summarize_file_change_operations(operations)
+}
+
+fn scan_cline_file_changes(path: &Path) -> Vec<HistoryFileChangeSummary> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return Vec::new();
+    };
+    let mut operations = Vec::new();
+    let mut seen_call_ids = HashSet::new();
+    let mut operation_group_index = 0usize;
+
+    for (message_index, entry) in cline_api_message_values(&value).into_iter().enumerate() {
+        let wrapped = json!({ "message": entry });
+        let extracted = collect_file_changes_from_value(
+            &wrapped,
+            Some(message_index),
+            Some(operation_group_index),
+            extract_timestamp(entry),
             &mut seen_call_ids,
         );
         if extracted.is_empty() {
@@ -5593,6 +9319,52 @@ fn iter_session_messages<F>(path: &Path, mut callback: F) -> Result<(), String>
 where
     F: FnMut(usize, HistoryMessage) -> bool,
 {
+    if !is_jsonl(path) {
+        let (_, _, messages) = scan_json_session(path, true);
+        for (index, message) in messages.into_iter().enumerate() {
+            if !callback(index, message) {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    if looks_like_copilot_events_file(path) {
+        let (_, _, messages) = scan_copilot_jsonl_session(path, true);
+        for (index, message) in messages.into_iter().enumerate() {
+            if !callback(index, message) {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    if looks_like_antigravity_transcript_file(path) {
+        let (_, _, messages) = scan_antigravity_jsonl_session(path, true);
+        for (index, message) in messages.into_iter().enumerate() {
+            if !callback(index, message) {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    if looks_like_grok_updates_file(path) {
+        let (_, _, messages) = scan_grok_jsonl_session(path, true);
+        for (index, message) in messages.into_iter().enumerate() {
+            if !callback(index, message) {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    if looks_like_pi_session_file(path) {
+        let (_, _, messages) = scan_pi_jsonl_session(path, true);
+        for (index, message) in messages.into_iter().enumerate() {
+            if !callback(index, message) {
+                break;
+            }
+        }
+        return Ok(());
+    }
+
     let file = File::open(path).map_err(|err| err.to_string())?;
     let mut index = 0usize;
     let mut seen_usage_keys: HashSet<String> = HashSet::new();
@@ -5850,6 +9622,94 @@ fn collect_tool_events_from_value(
     seen_call_ids: &mut HashSet<String>,
     events: &mut Vec<HistoryToolEvent>,
 ) {
+    if let Some(event_type) = value.get("type").and_then(Value::as_str) {
+        if let Some(data) = value.get("data") {
+            if event_type == "assistant.message" {
+                for request in data
+                    .get("toolRequests")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let Some(name) = copilot_tool_name(request) else {
+                        continue;
+                    };
+                    let call_id = copilot_tool_id(request).map(str::to_string);
+                    if mark_tool_event_seen(call_id.as_deref(), seen_call_ids) {
+                        events.push(make_tool_event(
+                            call_id,
+                            name,
+                            message_index,
+                            extract_timestamp(value),
+                            Some("started"),
+                            None,
+                            request
+                                .get("arguments")
+                                .or_else(|| request.get("input"))
+                                .and_then(summarize_json_value),
+                            None,
+                            None,
+                        ));
+                    }
+                }
+                return;
+            }
+            if event_type == "tool.execution_start" {
+                if let Some(name) = copilot_tool_name(data) {
+                    let call_id = copilot_tool_id(data).map(str::to_string);
+                    if mark_tool_event_seen(call_id.as_deref(), seen_call_ids) {
+                        events.push(make_tool_event(
+                            call_id,
+                            name,
+                            message_index,
+                            extract_timestamp(value),
+                            Some("started"),
+                            None,
+                            data.get("arguments")
+                                .or_else(|| data.get("input"))
+                                .and_then(summarize_json_value),
+                            None,
+                            None,
+                        ));
+                    }
+                }
+                return;
+            }
+            if event_type == "tool.execution_complete" {
+                let call_id = copilot_tool_id(data).map(str::to_string);
+                let status = if data.get("success").and_then(Value::as_bool) == Some(false) {
+                    "failed"
+                } else {
+                    "completed"
+                };
+                let output = copilot_tool_result_text(data);
+                if let Some(name) = copilot_tool_name(data) {
+                    if mark_tool_event_seen(call_id.as_deref(), seen_call_ids) {
+                        events.push(make_tool_event(
+                            call_id,
+                            name,
+                            message_index,
+                            extract_timestamp(value),
+                            Some(status),
+                            extract_tool_duration_ms(data),
+                            None,
+                            output,
+                            None,
+                        ));
+                    } else {
+                        update_tool_event_output(
+                            events,
+                            call_id.as_deref(),
+                            output,
+                            Some(status.to_string()),
+                        );
+                    }
+                }
+                return;
+            }
+        }
+    }
+
     if let Some(blocks) = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -6443,6 +10303,7 @@ fn extract_model(value: &Value) -> Option<String> {
         value.get("model_name").and_then(Value::as_str),
         value.get("modelName").and_then(Value::as_str),
         value.get("model_slug").and_then(Value::as_str),
+        value.get("selectedModel").and_then(Value::as_str),
     ];
     for model in direct_candidates.into_iter().flatten() {
         let normalized = model.trim();
@@ -7375,6 +11236,1046 @@ mod tests {
     }
 
     #[test]
+    fn scan_json_session_reads_gemini_messages() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir
+            .path()
+            .join("hash-a")
+            .join("chats")
+            .join("session-2026-01-01T00-00-00.json");
+        write_text(
+            &path,
+            &json!({
+                "sessionId": "gemini-session",
+                "projectHash": "hash-a",
+                "startTime": "2026-01-01T00:00:00Z",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "type": "user",
+                        "content": "hello gemini"
+                    },
+                    {
+                        "id": "m2",
+                        "timestamp": "2026-01-01T00:00:01Z",
+                        "type": "model",
+                        "content": "hi user"
+                    }
+                ]
+            })
+            .to_string(),
+        );
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+
+        assert_eq!(summary.session_id.as_deref(), Some("gemini-session"));
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.first_user_message.as_deref(), Some("hello gemini"));
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, "hi user");
+        assert!(messages.iter().all(|message| !message.editable));
+        assert_eq!(stats.input_tokens, 0);
+    }
+
+    #[test]
+    fn scan_json_session_reads_kiro_workspace_history() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("workspace-key").join("kiro-session.json");
+        write_text(
+            &path,
+            &json!({
+                "sessionId": "kiro-session",
+                "title": "Kiro title",
+                "workspaceDirectory": r"F:\idea-work\business-center",
+                "selectedModel": "claude-sonnet-4",
+                "history": [
+                    {
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                { "type": "text", "text": "hello kiro" },
+                                { "type": "file", "path": "src/main.rs" }
+                            ]
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "kiro answer"
+                        }
+                    }
+                ]
+            })
+            .to_string(),
+        );
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+        let project = scan_session_project(&path);
+
+        assert_eq!(summary.session_id.as_deref(), Some("kiro-session"));
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.first_user_message.as_deref(), Some("hello kiro"));
+        assert_eq!(messages[0].content, "hello kiro");
+        assert_eq!(messages[1].model.as_deref(), Some("claude-sonnet-4"));
+        assert_eq!(stats.dominant_model.as_deref(), Some("claude-sonnet-4"));
+        assert_eq!(
+            project.cwd.as_deref(),
+            Some(r"F:\idea-work\business-center")
+        );
+    }
+
+    #[test]
+    fn copilot_events_jsonl_parser_covers_history_pipeline() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("session-state");
+        let path = root.join("directory-fallback").join("events.jsonl");
+        let events = [
+            json!({
+                "type": "session.start",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "data": {
+                    "sessionId": "copilot-session",
+                    "startTime": "2026-01-01T00:00:00Z",
+                    "context": { "cwd": r"F:\idea-work\business-center" }
+                }
+            }),
+            json!({
+                "type": "user.message",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "data": { "content": "hello copilot" }
+            }),
+            json!({
+                "type": "assistant.message",
+                "timestamp": "2026-01-01T00:00:02Z",
+                "data": {
+                    "content": "I will read it.",
+                    "model": "gpt-4.1",
+                    "toolRequests": [{
+                        "toolCallId": "tool-1",
+                        "name": "read_file",
+                        "arguments": { "path": "README.md" }
+                    }]
+                }
+            }),
+            json!({
+                "type": "tool.execution_start",
+                "timestamp": "2026-01-01T00:00:03Z",
+                "data": {
+                    "toolCallId": "tool-1",
+                    "toolName": "read_file",
+                    "arguments": { "path": "README.md" }
+                }
+            }),
+            json!({
+                "type": "tool.execution_complete",
+                "timestamp": "2026-01-01T00:00:04Z",
+                "data": {
+                    "toolCallId": "tool-1",
+                    "toolName": "read_file",
+                    "success": true,
+                    "result": {
+                        "content": "short summary",
+                        "detailedContent": "# Project\nHello"
+                    }
+                }
+            }),
+        ]
+        .into_iter()
+        .map(|event| event.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        write_text(&path, &events);
+
+        let files = collect_copilot_session_files(&root);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "copilot");
+        assert_eq!(files[0].project_key, "business-center");
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+        assert_eq!(summary.session_id.as_deref(), Some("copilot-session"));
+        assert_eq!(summary.message_count, 3);
+        assert_eq!(summary.first_user_message.as_deref(), Some("hello copilot"));
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].model.as_deref(), Some("gpt-4.1"));
+        assert_eq!(messages[2].role, "tool");
+        assert_eq!(messages[2].content, "# Project\nHello");
+        assert_eq!(messages[2].line_index, Some(4));
+        assert!(messages.iter().all(|message| !message.editable));
+        assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(stats.builtin_calls.get("read_file"), Some(&1));
+
+        let project = scan_session_project(&path);
+        assert_eq!(
+            project.cwd.as_deref(),
+            Some(r"F:\idea-work\business-center")
+        );
+        let computed = build_session_computation(&path, 1, 2, summary, stats);
+        assert_eq!(computed.session_id, "copilot-session");
+
+        let tool_events = scan_tool_events(&path);
+        assert_eq!(tool_events.len(), 1);
+        assert_eq!(tool_events[0].name, "read_file");
+        assert_eq!(tool_events[0].status.as_deref(), Some("completed"));
+        assert_eq!(tool_events[0].output_summary.as_deref(), Some("# Project\nHello"));
+
+        let mut iterated = Vec::new();
+        iter_session_messages(&path, |_, message| {
+            iterated.push(message.content);
+            true
+        })
+        .unwrap();
+        assert_eq!(iterated.len(), 3);
+    }
+
+    #[test]
+    fn antigravity_transcript_parser_covers_history_pipeline() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("antigravity-cli");
+        let conversation_id = "52d82992-7695-4d38-8d02-9747eecba839";
+        let path = root
+            .join("brain")
+            .join(conversation_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        write_text(
+            &root.join("history.jsonl"),
+            &json!({
+                "display": "fixture",
+                "workspace": r"F:\idea-work\business-center",
+                "conversationId": conversation_id
+            })
+            .to_string(),
+        );
+        let transcript = [
+            json!({
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "created_at": "2026-05-20T06:03:19Z",
+                "content": "<USER_REQUEST>\nAnalyze this project\n</USER_REQUEST>\n<ADDITIONAL_METADATA>ignored</ADDITIONAL_METADATA>"
+            }),
+            json!({
+                "step_index": 2,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": "2026-05-20T06:03:20Z",
+                "tool_calls": [{ "name": "list_dir" }]
+            }),
+            json!({
+                "step_index": 3,
+                "source": "MODEL",
+                "type": "LIST_DIRECTORY",
+                "status": "DONE",
+                "created_at": "2026-05-20T06:03:21Z",
+                "content": "tool output should not be indexed"
+            }),
+            json!({
+                "step_index": 15,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": "2026-05-20T06:03:30Z",
+                "content": "This project is a local agent configuration hub."
+            }),
+            json!({
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "status": "RUNNING",
+                "content": "unfinished"
+            }),
+        ]
+        .into_iter()
+        .map(|event| event.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        write_text(&path, &transcript);
+
+        let files = collect_antigravity_session_files(&root);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "antigravity");
+        assert_eq!(files[0].project_key, "business-center");
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+        assert_eq!(summary.session_id.as_deref(), Some(conversation_id));
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.first_user_message.as_deref(), Some("Analyze this project"));
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "Analyze this project");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(
+            messages[1].content,
+            "This project is a local agent configuration hub."
+        );
+        assert_eq!(messages[1].line_index, Some(3));
+        assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(stats.builtin_calls.get("list_dir"), Some(&1));
+
+        let project = scan_session_project(&path);
+        assert_eq!(
+            project.cwd.as_deref(),
+            Some(r"F:\idea-work\business-center")
+        );
+        let computed = build_session_computation(&path, 1, 2, summary, stats);
+        assert_eq!(computed.session_id, conversation_id);
+
+        let mut iterated = Vec::new();
+        iter_session_messages(&path, |_, message| {
+            iterated.push(message.content);
+            true
+        })
+        .unwrap();
+        assert_eq!(iterated.len(), 2);
+    }
+
+    #[test]
+    fn grok_updates_parser_covers_history_pipeline() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join(".grok");
+        let path = root
+            .join("sessions")
+            .join("F%3A%5Cidea-work%5Cbusiness-center")
+            .join("grok-session")
+            .join("updates.jsonl");
+        write_text(
+            &path.with_file_name("summary.json"),
+            &json!({
+                "info": {
+                    "id": "grok-session",
+                    "cwd": r"F:\idea-work\business-center"
+                },
+                "session_summary": "Grok summary",
+                "created_at": "2026-06-01T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:03Z",
+                "num_messages": 2,
+                "current_model_id": "grok-4-code-fast-1"
+            })
+            .to_string(),
+        );
+        let updates = [
+            json!({
+                "timestamp": 1780272000u64,
+                "method": "session/update",
+                "params": {
+                    "sessionId": "grok-session",
+                    "update": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": { "type": "text", "text": "hello " }
+                    }
+                }
+            }),
+            json!({
+                "timestamp": 1780272001u64,
+                "method": "session/update",
+                "params": {
+                    "sessionId": "grok-session",
+                    "update": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": { "type": "text", "text": "grok" }
+                    }
+                }
+            }),
+            json!({
+                "timestamp": 1780272002u64,
+                "method": "session/update",
+                "params": {
+                    "sessionId": "grok-session",
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": "hi there" }
+                    }
+                }
+            }),
+            json!({
+                "timestamp": 1780272003u64,
+                "method": "session/update",
+                "params": {
+                    "sessionId": "grok-session",
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "tc1",
+                        "title": "Read file",
+                        "kind": "read",
+                        "locations": [{ "path": "README.md" }]
+                    }
+                }
+            }),
+            json!({
+                "timestamp": 1780272004u64,
+                "method": "session/update",
+                "params": {
+                    "sessionId": "grok-session",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "tc1",
+                        "status": "completed",
+                        "content": [{ "type": "text", "text": "done" }]
+                    }
+                }
+            }),
+        ]
+        .into_iter()
+        .map(|event| event.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        write_text(&path, &updates);
+
+        let files = collect_grok_session_files(&root);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "grok");
+        assert_eq!(files[0].project_key, "business-center");
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+        assert_eq!(summary.session_id.as_deref(), Some("grok-session"));
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.first_user_message.as_deref(), Some("hello grok"));
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "hello grok");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, "hi there");
+        assert_eq!(messages[1].model.as_deref(), Some("grok-4-code-fast-1"));
+        assert_eq!(stats.current_model.as_deref(), Some("grok-4-code-fast-1"));
+        assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(stats.builtin_calls.get("Read file"), Some(&1));
+
+        let project = scan_session_project(&path);
+        assert_eq!(
+            project.cwd.as_deref(),
+            Some(r"F:\idea-work\business-center")
+        );
+        let computed = build_session_computation(&path, 1, 2, summary, stats);
+        assert_eq!(computed.session_id, "grok-session");
+
+        let tool_events = scan_tool_events(&path);
+        assert_eq!(tool_events.len(), 1);
+        assert_eq!(tool_events[0].name, "Read file");
+        assert_eq!(tool_events[0].status.as_deref(), Some("completed"));
+        assert_eq!(tool_events[0].output_summary.as_deref(), Some("done"));
+
+        let mut iterated = Vec::new();
+        iter_session_messages(&path, |_, message| {
+            iterated.push(message.content);
+            true
+        })
+        .unwrap();
+        assert_eq!(iterated, vec!["hello grok", "hi there"]);
+    }
+
+    #[test]
+    fn pi_session_parser_covers_history_pipeline() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join(".pi").join("agent");
+        let path = root
+            .join("sessions")
+            .join("--F--idea-work-business-center--")
+            .join("20260717_pi-session.jsonl");
+        let lines = [
+            json!({
+                "type": "session",
+                "sessionId": "pi-session",
+                "cwd": r"F:\idea-work\business-center",
+                "title": "Pi summary",
+                "model": "pi-agent"
+            }),
+            json!({
+                "type": "message",
+                "timestamp": "2026-07-17T00:00:00Z",
+                "message": {
+                    "role": "user",
+                    "content": "hello pi"
+                }
+            }),
+            json!({
+                "type": "message",
+                "timestamp": "2026-07-17T00:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "hi user" },
+                        {
+                            "type": "toolCall",
+                            "toolCallId": "tc1",
+                            "name": "read_file",
+                            "arguments": { "path": "README.md" }
+                        }
+                    ]
+                }
+            }),
+            json!({
+                "type": "message",
+                "timestamp": "2026-07-17T00:00:02Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "tc1",
+                    "content": "README content"
+                }
+            }),
+        ]
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        write_text(&path, &lines);
+
+        let files = collect_pi_session_files(&root);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "pi");
+        assert_eq!(files[0].project_key, "business-center");
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+        assert_eq!(summary.session_id.as_deref(), Some("pi-session"));
+        assert_eq!(summary.message_count, 3);
+        assert_eq!(summary.first_user_message.as_deref(), Some("hello pi"));
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "hello pi");
+        assert_eq!(messages[1].role, "assistant");
+        assert!(messages[1].content.contains("hi user"));
+        assert_eq!(messages[1].model.as_deref(), Some("pi-agent"));
+        assert_eq!(messages[2].role, "tool");
+        assert_eq!(stats.current_model.as_deref(), Some("pi-agent"));
+        assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(stats.builtin_calls.get("read_file"), Some(&1));
+
+        let project = scan_session_project(&path);
+        assert_eq!(
+            project.cwd.as_deref(),
+            Some(r"F:\idea-work\business-center")
+        );
+        let computed = build_session_computation(&path, 1, 2, summary, stats);
+        assert_eq!(computed.session_id, "pi-session");
+
+        let tool_events = scan_tool_events(&path);
+        assert_eq!(tool_events.len(), 1);
+        assert_eq!(tool_events[0].name, "read_file");
+        assert_eq!(tool_events[0].status.as_deref(), Some("completed"));
+        assert_eq!(
+            tool_events[0].output_summary.as_deref(),
+            Some("README content")
+        );
+
+        let mut iterated = Vec::new();
+        iter_session_messages(&path, |_, message| {
+            iterated.push(message.role);
+            true
+        })
+        .unwrap();
+        assert_eq!(iterated, vec!["user", "assistant", "tool"]);
+    }
+
+    #[test]
+    fn cline_task_parser_covers_history_pipeline() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("saoudrizwan.claude-dev");
+        let path = root
+            .join("tasks")
+            .join("cline-task")
+            .join("api_conversation_history.json");
+        write_text(
+            &path.with_file_name("task_metadata.json"),
+            &json!({
+                "taskId": "cline-task",
+                "task": "Cline summary",
+                "cwd": r"F:\idea-work\business-center",
+                "modelId": "claude-3-5-sonnet-20241022"
+            })
+            .to_string(),
+        );
+        write_text(
+            &path.with_file_name("ui_messages.json"),
+            &json!([
+                { "ts": 1784246400000u64 },
+                { "ts": 1784246401000u64 },
+                { "ts": 1784246402000u64 },
+                { "ts": 1784246403000u64 }
+            ])
+            .to_string(),
+        );
+        write_text(
+            &path,
+            &json!([
+                {
+                    "role": "user",
+                    "content": [{ "type": "text", "text": "hello cline" }]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "I will edit it." },
+                        {
+                            "type": "tool_use",
+                            "id": "tool-1",
+                            "name": "replace_in_file",
+                            "input": {
+                                "path": "src/main.rs",
+                                "old_string": "old",
+                                "new_string": "new"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "tool-1",
+                        "content": "edited"
+                    }]
+                },
+                {
+                    "role": "assistant",
+                    "content": "done"
+                }
+            ])
+            .to_string(),
+        );
+
+        let files = collect_cline_session_files(&root);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "cline");
+        assert_eq!(files[0].project_key, "business-center");
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+        assert_eq!(summary.session_id.as_deref(), Some("cline-task"));
+        assert_eq!(summary.message_count, 4);
+        assert_eq!(summary.first_user_message.as_deref(), Some("hello cline"));
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(
+            messages[1].model.as_deref(),
+            Some("claude-3-5-sonnet-20241022")
+        );
+        assert_eq!(messages[2].role, "tool");
+        assert_eq!(
+            messages[0].timestamp.as_deref(),
+            Some("2026-07-17T00:00:00.000Z")
+        );
+        assert_eq!(stats.current_model.as_deref(), Some("claude-3-5-sonnet-20241022"));
+        assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(stats.builtin_calls.get("replace_in_file"), Some(&1));
+
+        let project = scan_session_project(&path);
+        assert_eq!(
+            project.cwd.as_deref(),
+            Some(r"F:\idea-work\business-center")
+        );
+        let computed = build_session_computation(&path, 1, 2, summary, stats);
+        assert_eq!(computed.session_id, "cline-task");
+
+        let tool_events = scan_tool_events(&path);
+        assert_eq!(tool_events.len(), 1);
+        assert_eq!(tool_events[0].name, "replace_in_file");
+        assert_eq!(tool_events[0].status.as_deref(), Some("completed"));
+        assert_eq!(tool_events[0].output_summary.as_deref(), Some("edited"));
+
+        let file_changes = scan_file_changes(&path);
+        assert_eq!(file_changes.len(), 1);
+        assert_eq!(file_changes[0].file_path, "src/main.rs");
+        assert_eq!(file_changes[0].additions, 1);
+        assert_eq!(file_changes[0].deletions, 1);
+
+        let mut iterated = Vec::new();
+        iter_session_messages(&path, |_, message| {
+            iterated.push(message.role);
+            true
+        })
+        .unwrap();
+        assert_eq!(iterated, vec!["user", "assistant", "tool", "assistant"]);
+    }
+
+    #[test]
+    fn cursor_agent_transcript_parser_covers_history_pipeline() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join(".cursor").join("projects");
+        let session_id = "94cf58c5-78c3-49c8-9bb0-4c2ba2f97aa0";
+        let path = root
+            .join("f-github-CLI-Manager")
+            .join("agent-transcripts")
+            .join(session_id)
+            .join(format!("{session_id}.jsonl"));
+        let lines = [
+            json!({
+                "role": "user",
+                "message": {
+                    "content": [{ "type": "text", "text": "hello cursor" }]
+                }
+            }),
+            json!({
+                "role": "assistant",
+                "message": {
+                    "content": [
+                        { "type": "text", "text": "I will update it." },
+                        {
+                            "type": "tool_use",
+                            "id": "tool-1",
+                            "name": "Edit",
+                            "input": {
+                                "path": "src/main.rs",
+                                "old_string": "old",
+                                "new_string": "new"
+                            }
+                        }
+                    ]
+                }
+            }),
+            json!({ "type": "turn_ended", "status": "completed" }),
+        ]
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+        write_text(&path, &lines);
+
+        let files = collect_cursor_session_files(&root);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "cursor");
+        assert_eq!(files[0].project_key, "f-github-CLI-Manager");
+        assert!(session_matches_project_path(
+            &files[0],
+            &normalize_history_path(r"F:\github\CLI-Manager")
+        ));
+
+        let (summary, stats, messages) = scan_session_detail(&path);
+        assert_eq!(summary.session_id.as_deref(), Some(session_id));
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.first_user_message.as_deref(), Some("hello cursor"));
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].line_index, Some(1));
+        assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(stats.builtin_calls.get("Edit"), Some(&1));
+
+        let computed = build_session_computation(&path, 1, 2, summary, stats);
+        assert_eq!(computed.session_id, session_id);
+
+        let tool_events = scan_tool_events(&path);
+        assert_eq!(tool_events.len(), 1);
+        assert_eq!(tool_events[0].name, "Edit");
+        assert_eq!(tool_events[0].status.as_deref(), Some("started"));
+
+        let file_changes = scan_file_changes(&path);
+        assert_eq!(file_changes.len(), 1);
+        assert_eq!(file_changes[0].file_path, "src/main.rs");
+        assert_eq!(file_changes[0].additions, 1);
+        assert_eq!(file_changes[0].deletions, 1);
+
+        let mut iterated = Vec::new();
+        iter_session_messages(&path, |_, message| {
+            iterated.push(message.role);
+            true
+        })
+        .unwrap();
+        assert_eq!(iterated, vec!["user", "assistant"]);
+    }
+
+    #[tokio::test]
+    async fn cursor_metadata_reads_sqlite_title_time_and_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_id = "94cf58c5-78c3-49c8-9bb0-4c2ba2f97aa0";
+        let conversation_db = temp_dir.path().join("conversation-search.db");
+        let state_db = temp_dir.path().join("state.vscdb");
+
+        let mut conversation = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&conversation_db)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE conversations(
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                updated_at INTEGER
+             )",
+        )
+        .execute(&mut conversation)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO conversations(id, title, updated_at)
+             VALUES (?1, 'Cursor DB title', 1700000090000)",
+        )
+        .bind(session_id)
+        .execute(&mut conversation)
+        .await
+        .unwrap();
+        conversation.close().await.unwrap();
+
+        let mut state = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&state_db)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE composerHeaders(
+                composerId TEXT PRIMARY KEY,
+                createdAt INTEGER,
+                lastUpdatedAt INTEGER,
+                value TEXT
+             )",
+        )
+        .execute(&mut state)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO composerHeaders(composerId, createdAt, lastUpdatedAt, value)
+             VALUES (?1, 1700000010000, 1700000020000, ?2)",
+        )
+        .bind(session_id)
+        .bind(
+            json!({
+                "name": "State title",
+                "workspaceIdentifier": {
+                    "uri": { "fsPath": "F:\\idea-work\\business-center" }
+                }
+            })
+            .to_string(),
+        )
+        .execute(&mut state)
+        .await
+        .unwrap();
+        state.close().await.unwrap();
+
+        let metadata = cursor_metadata_from_databases(temp_dir.path(), session_id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(metadata.title.as_deref(), Some("Cursor DB title"));
+        assert_eq!(metadata.created_at, Some(1_700_000_010_000));
+        assert_eq!(metadata.updated_at, Some(1_700_000_020_000));
+        assert_eq!(
+            metadata.cwd.as_deref(),
+            Some(r"F:\idea-work\business-center")
+        );
+    }
+
+    #[test]
+    fn cursor_metadata_updates_computation_without_overriding_real_title() {
+        let metadata = CursorSessionMetadata {
+            title: Some("Cursor DB title".to_string()),
+            created_at: Some(10),
+            updated_at: Some(20),
+            cwd: Some(r"F:\idea-work\business-center".to_string()),
+        };
+        let mut fallback_title = CachedSessionComputation {
+            created_at: 1,
+            updated_at: 2,
+            session_id: "session-a".to_string(),
+            title: "session-a".to_string(),
+            message_count: 0,
+            branch: None,
+            stats: SessionStatsScan::default(),
+        };
+        apply_cursor_metadata_to_computation(&mut fallback_title, &metadata);
+        assert_eq!(fallback_title.title, "Cursor DB title");
+        assert_eq!(fallback_title.created_at, 10);
+        assert_eq!(fallback_title.updated_at, 20);
+
+        let mut real_title = CachedSessionComputation {
+            title: "hello cursor".to_string(),
+            ..fallback_title
+        };
+        apply_cursor_metadata_to_computation(&mut real_title, &metadata);
+        assert_eq!(real_title.title, "hello cursor");
+    }
+
+    #[test]
+    fn collect_kiro_session_files_skips_registry() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        write_text(
+            &root.join("workspace").join("session-a.json"),
+            r#"{"sessionId":"session-a","history":[]}"#,
+        );
+        write_text(&root.join("workspace").join("sessions.json"), "{}");
+        write_text(&root.join("workspace").join("settings.json"), "{}");
+
+        let files = collect_kiro_session_files(root);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "kiro");
+        assert_eq!(files[0].project_key, "workspace");
+    }
+
+    #[test]
+    fn collect_gemini_session_files_reads_project_hash_folder() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        write_text(
+            &root
+                .join("hash-a")
+                .join("chats")
+                .join("session-2026-01-01T00-00-00.json"),
+            r#"{"sessionId":"gemini-session","projectHash":"hash-a","messages":[]}"#,
+        );
+        write_text(&root.join("hash-a").join("chats").join("notes.json"), "{}");
+
+        let files = collect_gemini_session_files(root);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].source, "gemini");
+        assert_eq!(files[0].project_key, "hash-a");
+    }
+
+    #[test]
+    fn iter_session_messages_reads_json_sessions() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("session.json");
+        write_text(
+            &path,
+            &json!({
+                "sessionId": "gemini-session",
+                "messages": [
+                    { "type": "user", "content": "first" },
+                    { "type": "model", "content": "second" }
+                ]
+            })
+            .to_string(),
+        );
+
+        let mut messages = Vec::new();
+        iter_session_messages(&path, |index, message| {
+            messages.push((index, message.role, message.content));
+            true
+        })
+        .unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0], (0, "user".to_string(), "first".to_string()));
+        assert_eq!(
+            messages[1],
+            (1, "assistant".to_string(), "second".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_opencode_database_reads_sqlite_sessions() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("opencode.db");
+        let mut conn = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE session(
+                id TEXT PRIMARY KEY,
+                directory TEXT,
+                title TEXT,
+                slug TEXT,
+                time_created REAL,
+                time_updated REAL
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE message(
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                time_created REAL,
+                time_updated REAL,
+                data TEXT NOT NULL
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE part(
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                time_created REAL,
+                time_updated REAL,
+                data TEXT NOT NULL
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO session(id, directory, title, slug, time_created, time_updated)
+             VALUES ('ses_1', 'F:\\idea-work\\business-center', 'OpenCode title', 'slug', 1700000000, 1700000010)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO message(id, session_id, time_created, time_updated, data)
+             VALUES
+                ('msg_1', 'ses_1', 1700000001, 1700000001, ?1),
+                ('msg_2', 'ses_1', 1700000002, 1700000002, ?2)",
+        )
+        .bind(json!({"role":"user"}).to_string())
+        .bind(
+            json!({
+                "role":"assistant",
+                "providerID":"anthropic",
+                "modelID":"claude-sonnet-4",
+                "tokens":{
+                    "input":10,
+                    "output":20,
+                    "reasoning":5,
+                    "cache":{"read":3,"write":2}
+                }
+            })
+            .to_string(),
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO part(id, message_id, session_id, time_created, time_updated, data)
+             VALUES
+                ('part_1', 'msg_1', 'ses_1', 1700000001, 1700000001, ?1),
+                ('part_2', 'msg_2', 'ses_1', 1700000002, 1700000002, ?2),
+                ('part_3', 'msg_2', 'ses_1', 1700000003, 1700000003, ?3)",
+        )
+        .bind(json!({"type":"text","text":"hello opencode"}).to_string())
+        .bind(json!({"type":"text","text":"hi user"}).to_string())
+        .bind(json!({"type":"tool","name":"Edit","input":{"filePath":"src/main.rs"}}).to_string())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        conn.close().await.unwrap();
+
+        let sessions = parse_opencode_database(&db_path, None).await.unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        let parsed = &sessions[0];
+        assert_eq!(parsed.computed.session_id, "ses_1");
+        assert_eq!(parsed.file_ref.source, "opencode");
+        assert_eq!(parsed.file_ref.project_key, "business-center");
+        assert!(parsed
+            .file_ref
+            .path
+            .to_string_lossy()
+            .contains("#session=ses_1"));
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[0].role, "user");
+        assert_eq!(parsed.messages[0].content, "hello opencode");
+        assert_eq!(parsed.messages[1].model.as_deref(), Some("anthropic/claude-sonnet-4"));
+        assert_eq!(parsed.computed.stats.input_tokens, 10);
+        assert_eq!(parsed.computed.stats.output_tokens, 25);
+        assert_eq!(parsed.computed.stats.cache_read_tokens, 3);
+        assert_eq!(parsed.computed.stats.cache_creation_tokens, 2);
+        assert_eq!(parsed.tool_events.len(), 1);
+        assert_eq!(parsed.tool_events[0].name, "Edit");
+    }
+
+    #[test]
     fn scan_file_changes_reads_claude_and_codex_jsonl_operations_in_time_order() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("session.jsonl");
@@ -7587,6 +12488,121 @@ mod tests {
         assert_eq!(detail.messages.len(), 2);
         assert_eq!(detail.messages[0].role, "user");
         assert_eq!(detail.messages[1].content, "world");
+    }
+
+    #[test]
+    fn v2_adapter_outputs_claude_session_ref_and_raw_pointers() {
+        let temp_dir = TempDir::new().unwrap();
+        let roots = HistoryRoots {
+            claude_config_dir: Some(temp_dir.path().join(".claude")),
+            codex_config_dir: Some(temp_dir.path().join(".codex")),
+        };
+        let file = resolve_claude_history_root(&roots)
+            .join("proj")
+            .join("claude-session.jsonl");
+        write_text(
+            &file,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"hello"}}"#,
+                "\n",
+            ),
+        );
+        let file_ref = SessionFileRef {
+            source: "claude".to_string(),
+            project_key: "proj".to_string(),
+            path: file.clone(),
+        };
+
+        let adapted = build_v2_adapter_session(&file_ref, &roots);
+
+        assert_eq!(adapted.session_ref.source_id, "claude");
+        assert_eq!(adapted.session_ref.source_session_id, "claude-session");
+        assert_eq!(adapted.session_ref.storage_kind, "file");
+        assert_eq!(
+            adapted.session_ref.primary_path.as_deref(),
+            Some(file.to_string_lossy().as_ref())
+        );
+        assert_eq!(adapted.session_ref.raw_pointers.len(), 1);
+        assert_eq!(adapted.session_ref.raw_pointers[0].role, "primary");
+        assert_eq!(adapted.messages.len(), 1);
+        assert_eq!(adapted.messages[0].role, "user");
+        assert_eq!(adapted.messages[0].display_content, "hello");
+        assert_eq!(adapted.messages[0].raw_pointers[0].line_index, Some(0));
+    }
+
+    #[test]
+    fn v2_adapter_outputs_codex_mixed_artifact_raw_pointers() {
+        let temp_dir = TempDir::new().unwrap();
+        let roots = HistoryRoots {
+            claude_config_dir: Some(temp_dir.path().join(".claude")),
+            codex_config_dir: Some(temp_dir.path().join(".codex")),
+        };
+        write_text(
+            &resolve_codex_config_root(&roots).join("config.toml"),
+            "model_provider = \"test-provider\"\nmodel = \"gpt-test\"\nsqlite_home = \"sqlite\"\n",
+        );
+        let result = convert_history_session(&sample_detail("claude"), "codex", &roots).unwrap();
+        let file_ref = collect_codex_session_files(&resolve_codex_history_root(&roots))
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let adapted = build_v2_adapter_session(&file_ref, &roots);
+
+        assert_eq!(adapted.session_ref.source_id, "codex");
+        assert_eq!(adapted.session_ref.source_session_id, result.session_id);
+        assert_eq!(adapted.session_ref.storage_kind, "mixed");
+        assert_eq!(
+            adapted.session_ref.primary_path.as_deref(),
+            Some(result.summary.file_path.as_str())
+        );
+        assert_eq!(
+            adapted.session_ref.database_path.as_deref(),
+            Some(
+                resolve_codex_state_db_path(&roots)
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        let pointer_kinds: HashSet<&str> = adapted
+            .session_ref
+            .raw_pointers
+            .iter()
+            .map(|pointer| pointer.kind.as_str())
+            .collect();
+        assert!(pointer_kinds.contains("codex-jsonl"));
+        assert!(pointer_kinds.contains("codex-history-jsonl"));
+        assert!(pointer_kinds.contains("codex-session-index-jsonl"));
+        assert!(pointer_kinds.contains("codex-state-thread-row"));
+        assert_eq!(adapted.messages.len(), 2);
+        assert!(adapted
+            .messages
+            .iter()
+            .all(|message| !message.raw_pointers.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn conversion_matrix_supports_current_writers_and_plans_other_pairs() {
+        let matrix = history_get_conversion_matrix().await.unwrap();
+        let claude_to_codex = matrix
+            .iter()
+            .find(|item| item.source_id == "claude" && item.target_id == "codex")
+            .unwrap();
+        assert_eq!(claude_to_codex.state, "supported");
+        assert_eq!(claude_to_codex.writer_state, "supported");
+
+        let gemini_to_codex = matrix
+            .iter()
+            .find(|item| item.source_id == "gemini" && item.target_id == "codex")
+            .unwrap();
+        assert_eq!(gemini_to_codex.state, "planned");
+        assert_eq!(gemini_to_codex.writer_state, "planned");
+
+        let same_source = matrix
+            .iter()
+            .find(|item| item.source_id == "claude" && item.target_id == "claude")
+            .unwrap();
+        assert_eq!(same_source.state, "unsupported");
     }
 
     #[test]
@@ -8224,6 +13240,62 @@ mod tests {
         assert_eq!(detail.usage.token_trend.len(), 2);
         assert_eq!(detail.usage.token_trend[0].total_tokens, 150);
         assert_eq!(detail.usage.token_trend[1].total_tokens, 70);
+    }
+
+    #[test]
+    fn delete_session_tree_rejects_subagent_and_cascades_from_parent() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent_file = temp_dir.path().join("rollout-session.jsonl");
+        let child_file = temp_dir.path().join("subagents").join("agent-child.jsonl");
+        write_text(&parent_file, "{}\n");
+        write_text(&child_file, "{}\n");
+        let child_ref = SessionFileRef {
+            source: "test".to_string(),
+            project_key: "CLI-Manager".to_string(),
+            path: child_file.clone(),
+        };
+        assert_eq!(
+            delete_session_tree(&child_ref).unwrap_err(),
+            "history_subagent_mutation_not_allowed"
+        );
+        assert!(child_file.exists());
+
+        let parent_ref = SessionFileRef {
+            source: "test".to_string(),
+            project_key: "CLI-Manager".to_string(),
+            path: parent_file.clone(),
+        };
+        let backups_dir = temp_dir.path().join("backups");
+        assert_eq!(
+            delete_session_tree_with_backup_root(&parent_ref, &backups_dir).unwrap(),
+            2
+        );
+        assert!(!parent_file.exists());
+        assert!(!child_file.exists());
+    }
+
+    #[test]
+    fn build_session_detail_marks_direct_subagent_messages_not_editable() {
+        let temp_dir = TempDir::new().unwrap();
+        let child_file = temp_dir.path().join("subagents").join("agent-child.jsonl");
+        write_text(
+            &child_file,
+            concat!(
+                r#"{"type":"user","timestamp":"2026-06-26T10:01:00Z","message":{"role":"user","content":"child question"}}"#,
+                "\n",
+            ),
+        );
+        let file_ref = SessionFileRef {
+            source: "claude".to_string(),
+            project_key: "CLI-Manager".to_string(),
+            path: child_file,
+        };
+
+        let detail = build_session_detail(&file_ref, false).unwrap();
+
+        assert_eq!(detail.messages.len(), 1);
+        assert!(!detail.messages[0].editable);
+        assert!(detail.messages[0].editable_text.is_none());
     }
 
     #[test]

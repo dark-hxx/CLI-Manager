@@ -15,7 +15,7 @@
 - A remounted Display receives all uncommitted frames again. Commit callbacks from an older attachment generation are ignored.
 - Closing the last attached session cancels any scheduled reconnect; a delayed reconnect callback must return without opening a socket when no non-tombstoned sessions remain.
 - No component or store may call `listen("pty-output-...")` or invoke `pty_write/pty_resize/pty_close` directly.
-- Large-buffer horizontal resize is delayed 100ms; vertical resize remains immediate. Before a normal-buffer column change, if the user is above the live bottom, register a temporary marker at `viewportY`; after `Terminal.resize()` wait two animation frames for xterm's queued render and DOM viewport synchronization, then scroll to the marker's updated line and dispose it. A synchronous `scrollToLine()` is forbidden because the old DOM scroll height clamps the target before xterm's queued viewport sync. Cancel and dispose a pending marker on a newer resize or terminal detach. Do not force bottom-following or alternate-buffer terminals. Visibility restore fits immediately and forces a full refresh only when natural rendering does not complete within two frames or the renderer was rebuilt.
+- Large-buffer horizontal resize uses a leading + trailing latest-wins cadence capped at 34ms; vertical resize remains immediate. Consecutive `ResizeObserver` frames replace only the pending fit RAF and must not cancel that horizontal cadence. macOS/Linux enable xterm cursor-line reflow so a rapid shrink does not expose the old-width cursor row while waiting for the PTY application's `SIGWINCH` redraw; Windows keeps the existing ConPTY compatibility policy. Every visible horizontal shrink must also keep a pixel copy of the last stable xterm canvas above the hidden live canvas, stretch that copy with every observed container size, refresh it after committed PTY writes, and reveal the live renderer only after 72ms of resize stability plus two animation frames. WebGL must preserve its drawing buffer for this copy, and the barrier must validate that a captured frame contains visible pixels before hiding the live canvas; a failed/empty capture leaves the live renderer visible. Refreshes render into a staging canvas first so an invalid later capture cannot erase the last good frame. This barrier starts immediately before `Terminal.resize()`, never during the throttle wait, so it hides only xterm/WebGL's corrupt intermediate reflow frame without freezing the whole drag. Before a normal-buffer column change, if the user is above the live bottom, register a temporary marker at `viewportY`; after `Terminal.resize()` wait two animation frames for xterm's queued render and DOM viewport synchronization, then scroll to the marker's updated line and dispose it. A synchronous `scrollToLine()` is forbidden because the old DOM scroll height clamps the target before xterm's queued viewport sync. Cancel and dispose a pending marker on a newer resize or terminal detach. Do not force bottom-following or alternate-buffer terminals. Visibility restore fits immediately and forces a full refresh only when natural rendering does not complete within two frames or the renderer was rebuilt.
 
 **Wrong**:
 
@@ -33,7 +33,7 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 });
 ```
 
-**Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs`; manually verify background output, reconnect replay, split/fullscreen resize, IME, WebGL fallback, and no duplicate output after daemon reconnect.
+**Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalResizeDebouncer.test.mjs scripts/terminalResizeRenderBarrier.test.mjs scripts/terminalReflowPolicy.test.mjs`; manually verify background output, reconnect replay, rapid split/fullscreen shrink, transparent terminal backgrounds, IME, WebGL fallback, and no duplicate output after daemon reconnect.
 
 ### Convention: Replay normalization has no PTY input side effects
 
@@ -1416,4 +1416,3 @@ Removing `scrollOnEraseInDisplay: true` is a worse regression: Codex repaints vi
 ```
 
 **Tests**: Run `npx tsc --noEmit`; manually verify at least one light palette and one dark theme. In the light theme, check project-tree selection, terminal tabs, toolbar buttons, and terminal side-panel buttons are distinguishable at a glance without changing layout density.
-

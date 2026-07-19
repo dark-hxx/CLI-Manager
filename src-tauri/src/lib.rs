@@ -84,6 +84,11 @@ fn app_show_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn app_exit(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 fn app_open_devtools(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
@@ -805,6 +810,7 @@ pub fn run() {
             commands::terminal::pty_reconcile_active_sessions,
             commands::terminal::pty_status,
             commands::terminal::pty_daemon_active,
+            commands::terminal::pty_daemon_shutdown_if_idle,
             commands::terminal::pty_host_get_endpoint,
             commands::terminal::pty_legacy_request,
             commands::terminal::pty_daemon_upgrade_if_idle,
@@ -877,14 +883,29 @@ pub fn run() {
             commands::history_edit::history_reinsert_message,
             commands::history_edit::history_restore_session_backup,
             commands::history_edit::history_get_backup_status,
+            commands::history_backup::history_backup_get_root_status,
+            commands::history_backup::history_backup_cleanup,
+            commands::history_backup::history_backup_list_restore_candidates,
+            commands::history_backup::history_backup_build_restore_plan,
+            commands::history_backup::history_backup_execute_restore,
+            commands::history_backup::history_backup_preflight_file,
+            commands::history_backup::history_backup_export_manifest,
             commands::history::history_search,
             commands::history::history_get_index_status,
+            commands::history::history_get_index_v2_status,
+            commands::history::history_index_v2_preview_adapter_sessions,
+            commands::history::history_index_v2_upsert_source_instance,
+            commands::history::history_index_v2_deactivate_source_instance,
+            commands::history::history_get_conversion_matrix,
             commands::history::history_refresh_index,
             commands::history::history_list_prompts,
             commands::history::history_list_stats_projects,
             commands::history::history_get_stats,
             commands::history::request_logs::history_sync_request_logs,
             commands::history::request_logs::history_list_request_logs,
+            commands::history_sources::history_sources_list_descriptors,
+            commands::history_sources::history_sources_detect,
+            commands::history_sources::history_sources_validate,
             commands::sync::sync_get_default_device_name,
             commands::sync::sync_list_device_snapshots,
             commands::sync::sync_test_connection,
@@ -1015,6 +1036,7 @@ pub fn run() {
             crash_reporter::crash_context_update,
             crash_reporter::frontend_crash_report,
             app_show_main_window,
+            app_exit,
         ])
         .build(context)
         .expect("error while building tauri application")

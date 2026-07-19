@@ -134,6 +134,17 @@ pub async fn pty_daemon_active(
     Ok(daemon_bridge.get().is_some())
 }
 
+#[tauri::command]
+pub async fn pty_daemon_shutdown_if_idle(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+) -> Result<bool, String> {
+    let Some(client) = daemon_bridge.get() else {
+        return Ok(false);
+    };
+    client.shutdown_if_idle()?;
+    Ok(true)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyHostEndpoint {

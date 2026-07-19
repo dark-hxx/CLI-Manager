@@ -24,6 +24,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import type {
   HistorySessionSummary,
+  HistorySourceFilter,
   HistoryStatsDailySeriesItem,
   HistoryStatsHeatmapDay,
   HistoryStatsHourlyActivityItem,
@@ -34,8 +35,9 @@ import type {
   Group,
   Project,
 } from "../../lib/types";
-import { fetchHistoryStatsPayload, useHistoryStore } from "../../stores/historyStore";
+import { fetchHistoryStatsPayload } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
+import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
 import { TimelineHeatmap } from "./TimelineHeatmap";
 import { StatsHourlyActivityChart } from "./StatsHourlyActivityChart";
 import { StatsDatePicker } from "./StatsDatePicker";
@@ -55,6 +57,8 @@ import {
 } from "./statsPalette";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../lib/i18n";
 import { VendorIcon, inferVendor } from "../VendorIcon";
+import { CliToolIcon } from "../CliToolIcon";
+import { resolveHistorySourceIconKey } from "../../lib/cliTools";
 import { RequestLogsView } from "./RequestLogsView";
 import { projectSupportsCapability } from "../../lib/projectCapabilities";
 
@@ -928,6 +932,8 @@ function SourceBreakdown({ items }: { items: HistoryStatsSourceItem[] }) {
       ];
       return {
         source: item.source,
+        descriptor: HISTORY_SOURCE_DESCRIPTORS.find((descriptor) => descriptor.id === item.source),
+        icon: resolveHistorySourceIconKey(item.source),
         total: parts.reduce((sum, part) => sum + part.value, 0),
         chartParts: parts.filter((part) => part.value > 0),
         parts,
@@ -937,20 +943,20 @@ function SourceBreakdown({ items }: { items: HistoryStatsSourceItem[] }) {
 
   return (
     <section className="flex h-[420px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
-      <SectionHeading icon={Database} title={t("stats.sourceBreakdown")} hint="Claude / Codex" />
+      <SectionHeading icon={Database} title={t("stats.sourceBreakdown")} />
       <div className="min-h-0 flex-1">
         {sourcePies.length === 0 ? (
           <EmptyBlock text={t("stats.sourceBreakdown.empty")} />
         ) : (
-          <div className={`grid h-full gap-3 ${sourcePies.length === 1 ? "grid-cols-1" : "grid-cols-2"}`} role="group" aria-label={t("stats.sourceBreakdown")}>
+          <div className={`ui-thin-scroll grid h-full auto-rows-[320px] gap-3 overflow-y-auto pr-1 ${sourcePies.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2"}`} role="group" aria-label={t("stats.sourceBreakdown")}>
             {sourcePies.map((source) => (
               <div key={source.source} className={`flex min-w-0 flex-col rounded-xl border border-border/50 bg-bg-tertiary/30 p-3 ${sourcePies.length === 1 ? "mx-auto w-full max-w-md" : ""}`}>
                 <div>
                   <div className="flex items-center gap-1.5 text-[12px] font-semibold text-text-primary">
-                    <span className="inline-flex shrink-0 text-[#10a37f]" aria-hidden="true">
-                      <VendorIcon vendor={source.source === "codex" ? "openai" : "claude"} size={15} />
+                    <span className="inline-flex shrink-0" aria-hidden="true">
+                      {source.icon ? <CliToolIcon icon={source.icon} size={15} /> : <Database size={15} />}
                     </span>
-                    <span>{source.source === "codex" ? "Codex" : "Claude"}</span>
+                    <span>{source.descriptor ? t(source.descriptor.labelKey) : source.source}</span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-text-muted">{formatCompactCount(source.total, language)} Token</div>
                 </div>
@@ -996,6 +1002,91 @@ function SourceBreakdown({ items }: { items: HistoryStatsSourceItem[] }) {
         )}
       </div>
     </section>
+  );
+}
+
+function StatsSourceFilterDropdown({
+  value,
+  onChange,
+  className,
+}: {
+  value: HistorySourceFilter;
+  onChange: (value: HistorySourceFilter) => void;
+  className?: string;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const selectedDescriptor = value === "all"
+    ? null
+    : HISTORY_SOURCE_DESCRIPTORS.find((descriptor) => descriptor.id === value) ?? null;
+  const label = selectedDescriptor ? t(selectedDescriptor.labelKey) : t("common.allSources");
+
+  useEffect(() => {
+    if (!open) return;
+    const handleMouseDown = (event: MouseEvent) => {
+      if (!dropdownRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  const renderIcon = (source: HistorySourceFilter, size = 13) => {
+    const icon = source === "all" ? null : resolveHistorySourceIconKey(source);
+    return icon ? <CliToolIcon icon={icon} size={size} /> : <Database size={size} className="text-text-muted" />;
+  };
+
+  return (
+    <div ref={dropdownRef} className="relative min-w-[132px] shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={`ui-focus-ring flex h-8 w-full items-center gap-2 rounded-md border border-border bg-bg-secondary px-2 text-left text-xs text-text-primary ${className ?? ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={t("common.allSources")}
+      >
+        <span className="shrink-0">{renderIcon(value)}</span>
+        <span className="min-w-0 flex-1 truncate font-semibold">{label}</span>
+        <ChevronDown size={13} className="shrink-0 text-text-muted transition-transform" style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-40 mt-1 max-h-72 w-[min(220px,calc(100vw-32px))] overflow-y-auto rounded-xl border border-border/70 bg-surface-container-lowest p-1 shadow-lg" role="listbox" aria-label={t("common.allSources")}>
+          <button
+            type="button"
+            role="option"
+            aria-selected={value === "all"}
+            onClick={() => { onChange("all"); setOpen(false); }}
+            className="ui-tree-node ui-focus-ring flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-xs"
+            data-selected={value === "all" ? "true" : "false"}
+          >
+            {renderIcon("all")}
+            <span className="min-w-0 flex-1 truncate">{t("common.allSources")}</span>
+          </button>
+          {HISTORY_SOURCE_DESCRIPTORS.map((descriptor) => (
+            <button
+              key={descriptor.id}
+              type="button"
+              role="option"
+              aria-selected={value === descriptor.id}
+              onClick={() => { onChange(descriptor.id); setOpen(false); }}
+              className="ui-tree-node ui-focus-ring flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-xs"
+              data-selected={value === descriptor.id ? "true" : "false"}
+            >
+              {renderIcon(descriptor.id)}
+              <span className="min-w-0 flex-1 truncate">{t(descriptor.labelKey)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1212,7 +1303,6 @@ function StatsProjectFilterDropdown({
 
 export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const { language, t } = useI18n();
-  const sourceFilter = useHistoryStore((s) => s.sourceFilter);
   const projects = useProjectStore((s) => s.projects);
   const statisticsProjects = useMemo(
     () => projects.filter((project) => projectSupportsCapability(project, "statistics")),
@@ -1224,6 +1314,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
   const [projectKey, setProjectKey] = useState("");
   const [projectPath, setProjectPath] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<HistorySourceFilter>("all");
   const [activeTab, setActiveTab] = useState<StatsPanelTab>("overview");
   const [timeWindow, setTimeWindow] = useState<StatsTimeWindowState>(() => getDefaultStatsTimeWindow());
   const [manualRefresh, setManualRefresh] = useState<{ key: string; nonce: number } | null>(null);
@@ -1278,6 +1369,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
     if (!open) return;
     setProjectKey("");
     setProjectPath("");
+    setSourceFilter("all");
     setActiveTab("overview");
     setTimeWindow(getDefaultStatsTimeWindow());
   }, [open]);
@@ -1311,7 +1403,9 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
     setDayVisibleCount(DAY_SESSION_PAGE_SIZE);
   }, [selectedDayStart]);
 
-  const sourceLabel = sourceFilter === "all" ? t("common.allSources") : sourceFilter;
+  const sourceLabel = sourceFilter === "all"
+    ? t("common.allSources")
+    : t(HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(sourceFilter)?.labelKey ?? "common.allSources");
   const projectLabel = selectedProject?.name || projectKey || t("common.allProjects");
   const waitingForStatsQuery = dateBounds.error === null && statsQuery.isPending;
   const statsGranularity: StatsBucketGranularity = resolvedTimeWindow.mode === "day" ? "hour" : "day";
@@ -1408,6 +1502,10 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
         {activeTab === "overview" && (
           <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
+            <StatsSourceFilterDropdown
+              value={sourceFilter}
+              onChange={setSourceFilter}
+            />
             <StatsProjectFilterDropdown
               projects={statisticsProjects}
               groups={groups}

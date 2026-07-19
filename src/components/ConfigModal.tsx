@@ -8,6 +8,7 @@ import { useSshHostStore } from "../stores/sshHostStore";
 import { buildSshConnectionSpec } from "../lib/ssh";
 import { getOsPlatform, normalizeShellKey } from "../lib/shell";
 import { getConfigModalShellPrefill } from "../lib/configModalShellPrefill";
+import { CLI_TOOL_DESCRIPTORS } from "../lib/cliTools";
 import type { OsPlatform } from "../lib/shell";
 import { getEnabledTerminalShellOptions } from "../lib/terminalShellProfiles";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -15,6 +16,7 @@ import { Check, ChevronDown } from "./icons";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import { VendorIcon, inferVendor } from "./VendorIcon";
+import { CliToolIcon } from "./CliToolIcon";
 import { Textarea } from "./ui/textarea";
 import {
   Dialog,
@@ -47,7 +49,7 @@ interface SshDirectoryEntry {
   path: string;
 }
 
-const CLI_TOOL_OPTIONS = ["claude", "codex"] as const;
+const CLI_TOOL_OPTIONS = CLI_TOOL_DESCRIPTORS.map((tool) => tool.command);
 const WORKTREE_STRATEGIES: WorktreeIsolationStrategy[] = ["disabled", "prompt", "autoParallel", "always"];
 const WORKTREE_STRATEGY_LABEL_KEYS: Record<WorktreeIsolationStrategy, TranslationKey> = {
   prompt: "worktree.strategy.prompt",
@@ -992,6 +994,9 @@ function CliToolCombobox({
   const { t } = useI18n();
   const vendor = inferVendor(value);
   const normalizedValue = value.trim().toLowerCase();
+  const selectedDescriptor = CLI_TOOL_DESCRIPTORS.find(
+    (tool) => tool.command === normalizedValue || tool.id === normalizedValue
+  );
   const resolveOptionIndex = useCallback((nextValue: string) => {
     const normalized = nextValue.trim().toLowerCase();
     const exactMatch = CLI_TOOL_OPTIONS.findIndex((tool) => tool === normalized);
@@ -1019,7 +1024,7 @@ function CliToolCombobox({
     setActiveIndex(resolveOptionIndex(value));
   }, [resolveOptionIndex, value]);
 
-  const selectTool = (tool: (typeof CLI_TOOL_OPTIONS)[number]) => {
+  const selectTool = (tool: string) => {
     onChange(tool);
     onOpenChange(false);
     setActiveIndex(CLI_TOOL_OPTIONS.indexOf(tool));
@@ -1037,9 +1042,11 @@ function CliToolCombobox({
 
   return (
     <div ref={rootRef} className="relative" onBlur={handleBlur}>
-      {vendor && (
+      {(selectedDescriptor || vendor) && (
         <span className="pointer-events-none absolute left-2.5 top-1/2 z-10 -translate-y-1/2">
-          <VendorIcon vendor={vendor} size={16} />
+          {selectedDescriptor
+            ? <CliToolIcon icon={selectedDescriptor.icon} size={16} />
+            : <VendorIcon vendor={vendor} size={16} />}
         </span>
       )}
       <Input
@@ -1108,7 +1115,7 @@ function CliToolCombobox({
         aria-expanded={open}
         aria-controls={listboxId}
         aria-activedescendant={activeOptionId}
-        className={`pr-8 text-sm ${vendor ? "pl-9" : ""}`}
+        className={`pr-8 text-sm ${selectedDescriptor || vendor ? "pl-9" : ""}`}
       />
       <button
         type="button"
@@ -1136,6 +1143,7 @@ function CliToolCombobox({
           className="ui-select-popover absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-border bg-surface-container-high py-1 text-xs shadow-lg"
         >
           {CLI_TOOL_OPTIONS.map((tool, index) => {
+            const descriptor = CLI_TOOL_DESCRIPTORS.find((item) => item.command === tool);
             const selected = normalizedValue === tool;
             return (
               <button
@@ -1152,9 +1160,14 @@ function CliToolCombobox({
                 className="flex w-[calc(100%-8px)] cursor-pointer items-center gap-2 outline-none hover:bg-surface-container-highest hover:text-text-primary data-[active=true]:bg-surface-container-highest data-[active=true]:text-text-primary"
               >
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                  <VendorIcon vendor={inferVendor(tool)} size={14} />
+                  {descriptor
+                    ? <CliToolIcon icon={descriptor.icon} size={14} />
+                    : <VendorIcon vendor={inferVendor(tool)} size={14} />}
                 </span>
-                <span className="flex-1 truncate text-left font-mono">{tool}</span>
+                <span className="flex-1 truncate text-left">
+                  <span className="font-mono">{tool}</span>
+                  {descriptor?.label ? <span className="ml-2 text-text-muted">{descriptor.label}</span> : null}
+                </span>
                 {selected && <Check size={12} className="shrink-0" />}
               </button>
             );

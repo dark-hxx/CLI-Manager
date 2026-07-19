@@ -65,6 +65,7 @@ import { FileExplorerSidebar } from "./files/FileExplorerSidebar";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { projectSupportsCapability, resolveProjectCapabilities, type ProjectCapability } from "../lib/projectCapabilities";
+import { resolveCliToolHistorySourceId } from "../lib/cliTools";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
 import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check, Cpu, Cloud } from "./icons";
 import { WorktreeIcon } from "./WorktreeIcon";
@@ -384,11 +385,7 @@ function resolveWorkspanDropEdge(
 }
 
 function resolveHistorySourceFilter(cliTool: string | null | undefined): HistorySourceFilter {
-  const normalized = cliTool?.trim().toLowerCase();
-  if (!normalized) return "all";
-  if (normalized.includes("claude")) return "claude";
-  if (normalized.includes("codex") || normalized === "code") return "codex";
-  return "all";
+  return resolveCliToolHistorySourceId(cliTool) ?? "all";
 }
 
 // 终端 Tab 厂商图标：从启动命令 + 标题推断（未配自定义启动命令时 startupCmd 即为 cli_tool）

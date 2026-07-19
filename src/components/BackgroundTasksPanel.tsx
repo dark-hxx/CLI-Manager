@@ -5,7 +5,7 @@ import { useProjectStore } from "../stores/projectStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTerminalStore, type TabNotificationState } from "../stores/terminalStore";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { Activity, AlertTriangle, Check, X } from "./icons";
+import { Activity, AlertTriangle, Check, Layers, X } from "./icons";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 export interface BackgroundTaskMeta {
@@ -108,7 +108,7 @@ export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverStyle 
           disabled={tasks.length === 0}
           aria-label={t("terminal.backgroundTasks.title")}
         >
-          <Activity size={14} strokeWidth={1.8} />
+          <Layers size={14} strokeWidth={1.8} />
           {showText && <span>{t("terminal.backgroundTasks.shortTitle")}</span>}
         </button>
       </PopoverTrigger>

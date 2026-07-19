@@ -1,0 +1,8 @@
+{"file":"src-tauri/src/commands/history.rs","reason":"拆出统一 adapter 调用入口，并将详情/统计读取切到 v2"}
+{"file":"src-tauri/src/commands/history/catalog.rs","reason":"v2 adapter 增量同步和 list/detail/search/stats 查询"}
+{"file":"src-tauri/src/commands/history_sources.rs","reason":"来源路径探测、格式校验和 capability 晋级"}
+{"file":"src-tauri/src/commands/history","reason":"按来源放置 adapter/parser 与 fixtures 测试"}
+{"file":"src/lib/historySources.ts","reason":"同步 parser 阶段、location 和 supported capability"}
+{"file":"src/stores/historyStore.ts","reason":"使用通用 source instance/v2 查询参数"}
+{"file":"src/components/history/HistoryListPane.tsx","reason":"验证全部来源筛选与错误/空状态"}
+{"file":"docs/历史来源解析器分批接入计划.md","reason":"记录实际顺序、格式事实和晋级门槛"}
