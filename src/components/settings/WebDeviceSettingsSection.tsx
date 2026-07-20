@@ -8,7 +8,11 @@ import { webDeviceApi, type WebDeviceStatus } from "../../lib/webDevice";
 
 const STATUS_EVENT = "web-device-status-changed";
 
-export function WebDeviceSettingsSection() {
+interface Props {
+  onStatusChange?: (status: WebDeviceStatus) => void;
+}
+
+export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<WebDeviceStatus | null>(null);
   const [serverUrl, setServerUrl] = useState("");
@@ -18,12 +22,13 @@ export function WebDeviceSettingsSection() {
 
   const applyStatus = useCallback((next: WebDeviceStatus) => {
     setStatus(next);
+    onStatusChange?.(next);
     if (next.profile) {
       setServerUrl(next.profile.serverUrl);
       setDeviceName(next.profile.name);
       setAutoStart(next.profile.autoStart);
     }
-  }, []);
+  }, [onStatusChange]);
 
   const refresh = useCallback(async () => {
     try {

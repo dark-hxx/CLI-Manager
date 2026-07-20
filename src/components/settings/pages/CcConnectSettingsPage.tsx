@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Drawer,
   Group,
   PasswordInput,
   Select,
@@ -15,12 +16,15 @@ import {
   Switch,
   Text,
   TextInput,
+  UnstyledButton,
 } from "@mantine/core";
 import {
   AlertTriangle,
+  ChevronRight,
   Copy,
   ExternalLink,
   FolderSearch,
+  MonitorSmartphone,
   Play,
   RefreshCw,
   RotateCw,
@@ -31,6 +35,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../../lib/i18n";
+import type { WebDeviceStatus } from "../../../lib/webDevice";
 import { useProjectStore } from "../../../stores/projectStore";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { WebDeviceSettingsSection } from "../WebDeviceSettingsSection";
@@ -169,6 +174,8 @@ export function CcConnectSettingsPage() {
   const [executableDirty, setExecutableDirty] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [yoloConfirmOpen, setYoloConfirmOpen] = useState(false);
+  const [activeConnection, setActiveConnection] = useState<"cc-connect" | "web-device" | null>(null);
+  const [webDeviceStatus, setWebDeviceStatus] = useState<WebDeviceStatus | null>(null);
   const logCursorRef = useRef(0);
   const statusRequestRef = useRef(0);
   const statusInFlightRef = useRef(false);
@@ -434,11 +441,85 @@ export function CcConnectSettingsPage() {
     : status?.running
       ? t("settings.ccConnect.running")
       : t("settings.ccConnect.stopped");
+  const ccConnectionStatus = status?.running
+    ? { label: t("settings.remoteConnections.status.running"), color: "green" }
+    : status?.profile && status.configExists
+      ? { label: t("settings.remoteConnections.status.configured"), color: "blue" }
+      : { label: t("settings.remoteConnections.status.unconfigured"), color: "gray" };
+  const webConnectionStatus = webDeviceStatus?.running
+    ? { label: t("settings.remoteConnections.status.running"), color: "green" }
+    : webDeviceStatus?.configured
+      ? { label: t("settings.remoteConnections.status.configured"), color: "blue" }
+      : { label: t("settings.remoteConnections.status.unconfigured"), color: "gray" };
 
   return (
-    <Stack gap="md" maw={1040}>
-      <WebDeviceSettingsSection />
-      <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
+    <>
+      <Stack gap="md" maw={1040}>
+        <UnstyledButton
+          className="ui-focus-ring block h-full w-full rounded-lg text-left"
+          onClick={() => setActiveConnection("cc-connect")}
+          aria-label={t("settings.remoteConnections.ccConnect.open")}
+        >
+          <Card className="h-full border border-border bg-surface-container-low transition-colors hover:border-primary/45 hover:bg-surface-container-high" p="lg" radius="lg">
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Group align="flex-start" wrap="nowrap">
+                <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Wifi size={22} /></div>
+                <div>
+                  <Text fw={700}>{t("settings.ccConnect.overview.title")}</Text>
+                  <Text mt={5} size="xs" c="var(--text-muted)">{t("settings.remoteConnections.ccConnect.description")}</Text>
+                </div>
+              </Group>
+              <Group gap="xs" wrap="nowrap">
+                <Badge color={ccConnectionStatus.color} variant="light">{ccConnectionStatus.label}</Badge>
+                <ChevronRight className="shrink-0 text-text-muted" size={18} />
+              </Group>
+            </Group>
+          </Card>
+        </UnstyledButton>
+        <UnstyledButton
+          className="ui-focus-ring block h-full w-full rounded-lg text-left"
+          onClick={() => setActiveConnection("web-device")}
+          aria-label={t("settings.remoteConnections.webDevice.open")}
+        >
+          <Card className="h-full border border-border bg-surface-container-low transition-colors hover:border-primary/45 hover:bg-surface-container-high" p="lg" radius="lg">
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Group align="flex-start" wrap="nowrap">
+                <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><MonitorSmartphone size={22} /></div>
+                <div>
+                  <Text fw={700}>{t("settings.webDevice.title")}</Text>
+                  <Text mt={5} size="xs" c="var(--text-muted)">{t("settings.remoteConnections.webDevice.description")}</Text>
+                </div>
+              </Group>
+              <Group gap="xs" wrap="nowrap">
+                <Badge color={webConnectionStatus.color} variant="light">{webConnectionStatus.label}</Badge>
+                <ChevronRight className="shrink-0 text-text-muted" size={18} />
+              </Group>
+            </Group>
+          </Card>
+        </UnstyledButton>
+      </Stack>
+
+      <Drawer
+        opened={activeConnection === "web-device"}
+        onClose={() => setActiveConnection(null)}
+        title={t("settings.webDevice.title")}
+        position="right"
+        size="xl"
+        keepMounted
+      >
+        <WebDeviceSettingsSection onStatusChange={setWebDeviceStatus} />
+      </Drawer>
+
+      <Drawer
+        opened={activeConnection === "cc-connect"}
+        onClose={() => setActiveConnection(null)}
+        title={t("settings.ccConnect.overview.title")}
+        position="right"
+        size="xl"
+        keepMounted
+      >
+        <Stack gap="md">
+        <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
         <Group justify="space-between" align="flex-start">
           <div>
             <Group gap="xs">
@@ -639,6 +720,8 @@ export function CcConnectSettingsPage() {
             : logs.map((line) => `[${formatTimestamp(line.timestampMs, language)}] [${line.source}] ${line.message}`).join("\n")}
         </pre>
       </Card>}
+        </Stack>
+      </Drawer>
       <ConfirmDialog
         open={yoloConfirmOpen}
         title={t("settings.ccConnect.yoloConfirmTitle")}
@@ -646,7 +729,7 @@ export function CcConnectSettingsPage() {
         confirmText={t("settings.ccConnect.yoloConfirmAction")}
         cancelText={t("common.cancel")}
         danger
-        zIndex={80}
+        zIndex={300}
         onClose={() => setYoloConfirmOpen(false)}
         onConfirm={() => {
           setYoloConfirmOpen(false);
@@ -660,13 +743,13 @@ export function CcConnectSettingsPage() {
         confirmText={t("common.delete")}
         cancelText={t("common.cancel")}
         danger
-        zIndex={80}
+        zIndex={300}
         onClose={() => setClearConfirmOpen(false)}
         onConfirm={() => {
           setClearConfirmOpen(false);
           void clearCredentials();
         }}
       />
-    </Stack>
+    </>
   );
 }
