@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
-- **Last Active**: 2026-07-18
+- **Total Sessions**: 27
+- **Last Active**: 2026-07-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~893 | Active |
+| `journal-1.md` | ~926 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-07-20 | 修复 WSL Codex 子任务转录延迟 | `33679da` | `master` |
 | 26 | 2026-07-18 | 合并远程代码并解决冲突 | `41c1275` | `master` |
 | 25 | 2026-07-18 | 版本化备份恢复 | `13f6d3d` | `master` |
 | 24 | 2026-07-18 | Reduce default info log noise | `538a051` | `master` |

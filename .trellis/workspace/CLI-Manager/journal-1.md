@@ -891,3 +891,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: 修复 WSL Codex 子任务转录延迟
+
+**Date**: 2026-07-20
+**Task**: 修复 WSL Codex 子任务转录延迟
+**Branch**: `master`
+
+### Summary
+
+修复 WSL Codex 子任务分屏仅在结束前显示文字的问题：发现重试绑定子任务生命周期并降频续扫，统一 WSL UNC 路径解析，避免 sessions 重复拼接；TypeScript、Rust 定向测试与 cargo check 通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `33679da` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

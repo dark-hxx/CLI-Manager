@@ -59,7 +59,7 @@ import {
   type SystemFontFamily,
 } from "../../../lib/systemFonts";
 import { FontFamilySelect } from "../FontFamilySelect";
-import { useI18n } from "../../../lib/i18n";
+import { pickByLanguage, useI18n } from "../../../lib/i18n";
 
 const SWATCH_KEYS = ["background", "foreground", "red", "green", "blue", "cyan"] as const;
 const TERMINAL_FONT_FALLBACK = "monospace";
@@ -183,7 +183,7 @@ function CollapsibleSettingsSection({
 
 export function ThemeSettingsPage() {
   const { language, t } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
   const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
@@ -367,7 +367,7 @@ export function ThemeSettingsPage() {
         normalizedFontFamily,
         FONT_FAMILY_OPTIONS.map((option) => ({
           value: normalizeTerminalFontFamily(option.value),
-          label: language === "zh-CN" ? option.label : option.labelEn ?? option.label,
+          label: pickByLanguage(language, option.label, option.labelEn ?? option.label),
         })),
         systemFonts,
         TERMINAL_FONT_FALLBACK
@@ -377,7 +377,7 @@ export function ThemeSettingsPage() {
   const unsplitOptions = useMemo(
     () => UNSPLIT_OPTIONS.map((option) => ({
       value: option.value,
-      label: language === "zh-CN" ? option.label : option.labelEn,
+      label: pickByLanguage(language, option.label, option.labelEn),
     })),
     [language]
   );

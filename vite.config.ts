@@ -18,14 +18,22 @@ export default defineConfig(async () => ({
     },
   },
   build: {
+    // Monaco is intentionally deferred until a file editor or malformed-diff fallback is opened.
+    // Its self-contained production chunk is ~3.8 MB; warn only when a single application chunk exceeds that boundary.
+    chunkSizeWarningLimit: 4000,
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("node_modules")) {
-            if (id.includes("react") || id.includes("react-dom")) {
+          const normalizedId = id.replace(/\\\\/g, "/");
+          if (normalizedId.includes("/node_modules/")) {
+            if (
+              normalizedId.includes("/node_modules/react/")
+              || normalizedId.includes("/node_modules/react-dom/")
+              || normalizedId.includes("/node_modules/scheduler/")
+            ) {
               return "vendor-react";
             }
-            if (id.includes("@xterm")) {
+            if (normalizedId.includes("/node_modules/@xterm/")) {
               return "vendor-xterm";
             }
           }

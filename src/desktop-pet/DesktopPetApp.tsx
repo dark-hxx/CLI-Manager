@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -27,14 +28,35 @@ import {
   type DesktopPetSnapshot,
   type DesktopPetTarget,
   type InstalledPet,
+  localizedPetText,
 } from "../lib/desktopPet";
-import { translate } from "../lib/i18n";
+import { convertChineseForLanguage, getCurrentLanguage, translate } from "../lib/i18n";
 import { logWarn } from "../lib/logger";
 import { BUILTIN_DESKTOP_PET_ID } from "../stores/settingsStore";
 import "./desktopPet.css";
 
+function buildDesktopPetLabels(language: DesktopPetConfigPayload["language"]): DesktopPetConfigPayload["labels"] {
+  return {
+    openMain: translate(language, "desktopPet.actions.openMain"),
+    openSettings: translate(language, "desktopPet.actions.openSettings"),
+    hide: translate(language, "desktopPet.actions.hide"),
+    idle: translate(language, "desktopPet.mood.idle"),
+    working: translate(language, "desktopPet.mood.working"),
+    waiting: translate(language, "desktopPet.mood.waiting"),
+    success: translate(language, "desktopPet.mood.success"),
+    error: translate(language, "desktopPet.mood.error"),
+    sleeping: translate(language, "desktopPet.mood.sleeping"),
+    runningCount: translate(language, "desktopPet.mood.runningCount"),
+    taskList: translate(language, "desktopPet.actions.taskList"),
+    currentTask: translate(language, "desktopPet.actions.currentTask"),
+    unnamedTask: translate(language, "desktopPet.actions.unnamedTask"),
+  };
+}
+
+const DEFAULT_LANGUAGE = getCurrentLanguage();
+
 const DEFAULT_CONFIG: DesktopPetConfigPayload = {
-  language: "zh-CN",
+  language: DEFAULT_LANGUAGE,
   settings: {
     enabled: true,
     petId: BUILTIN_DESKTOP_PET_ID,
@@ -48,21 +70,7 @@ const DEFAULT_CONFIG: DesktopPetConfigPayload = {
     lockPosition: false,
     position: null,
   },
-  labels: {
-    openMain: translate("zh-CN", "desktopPet.actions.openMain"),
-    openSettings: translate("zh-CN", "desktopPet.actions.openSettings"),
-    hide: translate("zh-CN", "desktopPet.actions.hide"),
-    idle: translate("zh-CN", "desktopPet.mood.idle"),
-    working: translate("zh-CN", "desktopPet.mood.working"),
-    waiting: translate("zh-CN", "desktopPet.mood.waiting"),
-    success: translate("zh-CN", "desktopPet.mood.success"),
-    error: translate("zh-CN", "desktopPet.mood.error"),
-    sleeping: translate("zh-CN", "desktopPet.mood.sleeping"),
-    runningCount: translate("zh-CN", "desktopPet.mood.runningCount"),
-    taskList: translate("zh-CN", "desktopPet.actions.taskList"),
-    currentTask: translate("zh-CN", "desktopPet.actions.currentTask"),
-    unnamedTask: translate("zh-CN", "desktopPet.actions.unnamedTask"),
-  },
+  labels: buildDesktopPetLabels(DEFAULT_LANGUAGE),
 };
 
 const DEFAULT_SNAPSHOT: DesktopPetSnapshot = {
@@ -77,15 +85,11 @@ const DEFAULT_SNAPSHOT: DesktopPetSnapshot = {
   targets: [],
 };
 
-function moodLabel(config: DesktopPetConfigPayload, mood: DesktopPetMood): string {
-  return config.labels[mood];
+function moodLabel(labels: DesktopPetConfigPayload["labels"], mood: DesktopPetMood): string {
+  return labels[mood];
 }
 
-function localPetName(pet: InstalledPet, language: DesktopPetConfigPayload["language"]): string {
-  return language === "en-US" ? pet.manifest.name["en-US"] : pet.manifest.name["zh-CN"];
-}
-
-function targetStatusLabel(config: DesktopPetConfigPayload, target: DesktopPetTarget): string {
+function targetStatusLabel(labels: DesktopPetConfigPayload["labels"], target: DesktopPetTarget): string {
   const mood: DesktopPetMood =
     target.status === "running"
       ? "working"
@@ -93,10 +97,10 @@ function targetStatusLabel(config: DesktopPetConfigPayload, target: DesktopPetTa
         ? "waiting"
         : target.status === "done"
           ? "success"
-          : target.status === "failed"
+        : target.status === "failed"
             ? "error"
             : "idle";
-  return moodLabel(config, mood);
+  return moodLabel(labels, mood);
 }
 
 interface CollapsedPetWindowGeometry {
@@ -286,11 +290,17 @@ export default function DesktopPetApp() {
     };
   }, [config.settings.petId]);
 
+  const labels = useMemo(() => buildDesktopPetLabels(config.language), [config.language]);
+  const localizeDisplayText = (text: string | null | undefined): string =>
+    text ? convertChineseForLanguage(config.language, text) : "";
   const detail = config.settings.showSessionName
-    ? [snapshot.projectName, snapshot.sessionTitle].filter(Boolean).join(" · ")
+    ? [snapshot.projectName, snapshot.sessionTitle]
+      .filter((value): value is string => Boolean(value))
+      .map(localizeDisplayText)
+      .join(" · ")
     : "";
   const runningDetail = snapshot.runningCount > 1
-    ? `${snapshot.runningCount} ${config.labels.runningCount}`
+    ? `${snapshot.runningCount} ${labels.runningCount}`
     : "";
   const petScale = desktopPetScale(config.settings.size);
   const stageSize = Math.round(144 * petScale);
@@ -363,32 +373,32 @@ export default function DesktopPetApp() {
         event.preventDefault();
         setMenuOpen((open) => !open);
       }}
-      aria-label={moodLabel(config, displayMood)}
+      aria-label={moodLabel(labels, displayMood)}
     >
       <div className="desktop-pet-anchor">
         {config.settings.showStatus ? (
           <section className="desktop-pet-status" aria-live="polite">
-            <strong>{moodLabel(config, displayMood)}</strong>
+            <strong>{moodLabel(labels, displayMood)}</strong>
             {detail ? <span title={detail}>{detail}</span> : null}
             {runningDetail ? <small>{runningDetail}</small> : null}
           </section>
         ) : null}
 
-        <div className="desktop-pet-stage" title={moodLabel(config, displayMood)}>
+        <div className="desktop-pet-stage" title={moodLabel(labels, displayMood)}>
           {installedPet ? (
             <PetArtwork
               pet={installedPet}
               mood={displayMood}
               width={stageSize}
               height={stageSize}
-              alt={localPetName(installedPet, config.language)}
+              alt={localizedPetText(installedPet.manifest.name, config.language)}
               onError={() => setInstalledPet(null)}
             />
           ) : (
-            <CliCat className="desktop-pet-cat" ariaLabel={moodLabel(config, displayMood)} />
+            <CliCat className="desktop-pet-cat" ariaLabel={moodLabel(labels, displayMood)} />
           )}
           {snapshot.attentionCount > 0 ? (
-            <span className="desktop-pet-badge" aria-label={moodLabel(config, "waiting")}>!</span>
+            <span className="desktop-pet-badge" aria-label={moodLabel(labels, "waiting")}>!</span>
           ) : null}
         </div>
       </div>
@@ -398,16 +408,18 @@ export default function DesktopPetApp() {
           className="desktop-pet-menu"
           data-has-targets={snapshot.targets.length > 0 || undefined}
           role="menu"
-          aria-label={config.labels.taskList}
+          aria-label={labels.taskList}
         >
           {snapshot.targets.length > 0 ? <div className="desktop-pet-target-list">
             {snapshot.targets.map((target, index) => {
               const primary =
-                target.projectName ||
-                target.sessionTitle ||
-                `${config.labels.unnamedTask} ${index + 1}`;
-              const secondary = target.projectName && target.sessionTitle ? target.sessionTitle : null;
-              const status = targetStatusLabel(config, target);
+                localizeDisplayText(target.projectName) ||
+                localizeDisplayText(target.sessionTitle) ||
+                `${labels.unnamedTask} ${index + 1}`;
+              const secondary = target.projectName && target.sessionTitle
+                ? localizeDisplayText(target.sessionTitle)
+                : null;
+              const status = targetStatusLabel(labels, target);
               return (
                 <button
                   key={target.sessionId}
@@ -419,7 +431,11 @@ export default function DesktopPetApp() {
                   aria-current={target.active ? "true" : undefined}
                   style={targetFanStyle(index, snapshot.targets.length)}
                   onClick={() => openTarget(target)}
-                  title={[target.projectName, target.sessionTitle, status].filter(Boolean).join(" · ")}
+                  title={[
+                    localizeDisplayText(target.projectName),
+                    localizeDisplayText(target.sessionTitle),
+                    status,
+                  ].filter(Boolean).join(" · ")}
                 >
                   <span className="desktop-pet-target-indicator" aria-hidden="true" />
                   <span className="desktop-pet-target-copy">
@@ -430,7 +446,7 @@ export default function DesktopPetApp() {
                     </small>
                   </span>
                   {target.active ? (
-                    <span className="desktop-pet-target-current">{config.labels.currentTask}</span>
+                    <span className="desktop-pet-target-current">{labels.currentTask}</span>
                   ) : null}
                 </button>
               );
@@ -438,7 +454,7 @@ export default function DesktopPetApp() {
           </div> : null}
           <div className="desktop-pet-menu-actions">
             <button type="button" role="menuitem" onClick={openMainWindow}>
-              {config.labels.openMain}
+              {labels.openMain}
             </button>
             <button
               type="button"
@@ -450,7 +466,7 @@ export default function DesktopPetApp() {
                 });
               }}
             >
-              {config.labels.openSettings}
+              {labels.openSettings}
             </button>
             <button
               type="button"
@@ -462,7 +478,7 @@ export default function DesktopPetApp() {
                 });
               }}
             >
-              {config.labels.hide}
+              {labels.hide}
             </button>
           </div>
         </div>

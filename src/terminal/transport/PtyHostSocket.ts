@@ -13,6 +13,7 @@ const CONTROL_PROTOCOL_VERSION = 2;
 const FEATURE_WS_BINARY_OUTPUT = "ws_binary_output_v1";
 const FEATURE_WS_BINARY_INPUT = "ws_binary_input_v1";
 const FEATURE_CHECKPOINT_REPLAY = "checkpoint_replay_v1";
+const FEATURE_TERMINAL_COLORS = "terminal_colors_v1";
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_TIMEOUT_MS = 15_000;
 const AUTH_TIMEOUT_MS = 10_000;
@@ -51,6 +52,11 @@ export interface TerminalProcessTraits {
     buildNumber?: number | null;
     usesConptyDll?: boolean;
   } | null;
+}
+
+export interface TerminalColors {
+  foreground: string;
+  background: string;
 }
 
 export interface PtyHostAttachResult {
@@ -165,6 +171,7 @@ export class PtyHostSocket {
     envVars: Record<string, string>,
     shell: string | null,
     sshLaunch: unknown | null,
+    terminalColors: TerminalColors,
   ): Promise<TerminalProcessTraits | null> {
     this.closedSessions.delete(sessionId);
     this.attachedSessions.add(sessionId);
@@ -189,6 +196,7 @@ export class PtyHostSocket {
         env_vars: envVars,
         shell,
         ssh_launch: sshLaunch,
+        terminal_colors: terminalColors,
       });
       const meta = (frame.meta ?? {}) as Record<string, unknown>;
       return normalizeProcessTraits(meta.processTraits);
@@ -205,6 +213,16 @@ export class PtyHostSocket {
       this.clearSession(sessionId);
       throw error;
     }
+  }
+
+  async setTerminalColors(sessionId: string, terminalColors: TerminalColors): Promise<void> {
+    await this.connect();
+    if (!this.connectedFeatures.has(FEATURE_TERMINAL_COLORS)) return;
+    await this.request({
+      type: "set_terminal_colors",
+      session_id: sessionId,
+      terminal_colors: terminalColors,
+    });
   }
 
   async resize(

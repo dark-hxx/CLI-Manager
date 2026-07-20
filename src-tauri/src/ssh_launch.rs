@@ -9,6 +9,8 @@ pub struct SshLaunchPlan {
     pub port: u16,
     pub username: String,
     pub config_alias: String,
+    #[serde(default)]
+    pub config_file: String,
     pub auth_mode: String,
     pub identity_file: String,
     #[serde(default)]
@@ -43,7 +45,11 @@ pub struct SshProcessLaunch {
 impl SshLaunchPlan {
     pub fn build_process_launch(&self) -> Result<SshProcessLaunch, String> {
         self.validate()?;
-        let mut args = vec![
+        let mut args = Vec::new();
+        if !self.config_file.trim().is_empty() {
+            args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
+        }
+        args.extend([
             "-tt".to_string(),
             "-o".to_string(),
             format!("ConnectTimeout={}", self.connect_timeout_sec),
@@ -51,7 +57,7 @@ impl SshLaunchPlan {
             format!("ServerAliveInterval={}", self.server_alive_interval_sec),
             "-o".to_string(),
             format!("ServerAliveCountMax={}", self.server_alive_count_max),
-        ];
+        ]);
         if self.config_alias.trim().is_empty() {
             args.extend(["-p".to_string(), self.port.to_string()]);
         }
@@ -129,6 +135,7 @@ impl SshLaunchPlan {
         if self.config_alias.trim().is_empty() && self.port == 0 {
             return Err("ssh_host_port_invalid".to_string());
         }
+        validate_config_file(&self.config_file)?;
         if self.connect_timeout_sec == 0 || self.connect_timeout_sec > 300 {
             return Err("ssh_connect_timeout_invalid".to_string());
         }
@@ -154,6 +161,7 @@ impl SshLaunchPlan {
         }
         for value in [
             &self.config_alias,
+            &self.config_file,
             &self.host,
             &self.username,
             &self.identity_file,
@@ -257,6 +265,21 @@ impl SshLaunchPlan {
     }
 }
 
+fn validate_config_file(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let path = std::path::Path::new(trimmed);
+    if !path.is_absolute() {
+        return Err("ssh_config_file_invalid".to_string());
+    }
+    if !path.is_file() {
+        return Err("ssh_config_file_not_found".to_string());
+    }
+    Ok(())
+}
+
 fn validate_single_line(value: &str) -> Result<(), String> {
     if value.contains(['\0', '\r', '\n']) {
         return Err("ssh_launch_argument_invalid".to_string());
@@ -308,6 +331,7 @@ mod tests {
             port: 2222,
             username: "dev".into(),
             config_alias: String::new(),
+            config_file: String::new(),
             auth_mode: "identity_file".into(),
             identity_file: "C:/Users/dev/.ssh/id key".into(),
             credential_ref: String::new(),
@@ -360,6 +384,33 @@ mod tests {
         assert!(!launch.args.iter().any(|arg| arg == "-p"));
         assert!(!launch.args.iter().any(|arg| arg == "-i"));
         assert_eq!(launch.args[launch.args.len() - 2], "prod");
+    }
+
+    #[test]
+    fn custom_config_file_is_forwarded_to_terminal_launch() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let mut value = plan();
+        value.config_alias = "prod".into();
+        value.config_file = temp.path().to_string_lossy().into_owned();
+        value.auth_mode = "ssh_config".into();
+
+        let launch = value.build_process_launch().unwrap();
+
+        assert!(launch
+            .args
+            .windows(2)
+            .any(|pair| pair == ["-F", value.config_file.as_str()]));
+    }
+
+    #[test]
+    fn config_file_defaults_for_legacy_serialized_plans() {
+        let value = plan();
+        let mut serialized = serde_json::to_value(&value).unwrap();
+        serialized.as_object_mut().unwrap().remove("configFile");
+
+        let decoded: SshLaunchPlan = serde_json::from_value(serialized).unwrap();
+
+        assert!(decoded.config_file.is_empty());
     }
 
     #[test]

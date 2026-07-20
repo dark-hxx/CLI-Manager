@@ -18,7 +18,7 @@ export async function invoke() {
     token: "token",
     protocolVersion: 2,
     binaryProtocolVersion: 1,
-    features: ["ws_binary_output_v1", "ws_binary_input_v1", "checkpoint_replay_v1"],
+    features: ["ws_binary_output_v1", "ws_binary_input_v1", "checkpoint_replay_v1", "terminal_colors_v1"],
     daemonVersion: "test",
   };
 }
@@ -36,6 +36,7 @@ class FakeWebSocket {
   static attachRequests = 0;
   static createRequests = 0;
   static connectionCount = 0;
+  static sentFrames = [];
 
   constructor() {
     FakeWebSocket.connectionCount += 1;
@@ -48,6 +49,7 @@ class FakeWebSocket {
 
   send(raw) {
     const frame = JSON.parse(raw);
+    FakeWebSocket.sentFrames.push(frame);
     if (frame.type === "auth") {
       if (FakeWebSocket.mode !== "auth-timeout") {
         queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ type: "auth_ok" }) }));
@@ -71,6 +73,10 @@ class FakeWebSocket {
       if (FakeWebSocket.mode !== "create-timeout") {
         queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ type: "ok", id: frame.id }) }));
       }
+      return;
+    }
+    if (frame.type === "set_terminal_colors") {
+      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ type: "ok", id: frame.id }) }));
       return;
     }
     if (frame.type === "close" && FakeWebSocket.mode !== "close-timeout") {
@@ -136,11 +142,24 @@ test("failed close tombstones the session and prevents reconnect attach", { conc
 test("lost create response recovers by attaching the reserved session", { concurrency: false }, async () => {
   FakeWebSocket.attachRequests = 0;
   FakeWebSocket.createRequests = 0;
+  FakeWebSocket.sentFrames.length = 0;
   FakeWebSocket.mode = "create-timeout";
   const socket = new PtyHostSocket();
-  await socket.create("session-create", null, {}, null);
+  await socket.create(
+    "session-create",
+    null,
+    {},
+    null,
+    null,
+    { foreground: "#D3D7CF", background: "#000000" },
+  );
   assert.equal(FakeWebSocket.createRequests, 1);
   assert.equal(FakeWebSocket.attachRequests, 1);
+  const createFrame = FakeWebSocket.sentFrames.find((frame) => frame.type === "create");
+  assert.deepEqual(createFrame.terminal_colors, {
+    foreground: "#D3D7CF",
+    background: "#000000",
+  });
   FakeWebSocket.mode = "normal";
   await socket.close("session-create");
   socket.socket?.close();
@@ -156,6 +175,28 @@ test("failed closeAll tombstones every session and prevents reconnect attach", {
   FakeWebSocket.mode = "normal";
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.equal(FakeWebSocket.attachRequests, 2);
+  socket.socket?.close();
+});
+
+test("terminal color updates use the negotiated control frame", { concurrency: false }, async () => {
+  FakeWebSocket.mode = "normal";
+  FakeWebSocket.sentFrames.length = 0;
+  const socket = new PtyHostSocket();
+  await socket.setTerminalColors("session-colors", {
+    foreground: "#FFFFFF",
+    background: "#101010",
+  });
+  const frame = FakeWebSocket.sentFrames.find((candidate) => candidate.type === "set_terminal_colors");
+  assert.ok(frame);
+  assert.deepEqual(frame, {
+    type: "set_terminal_colors",
+    id: frame.id,
+    session_id: "session-colors",
+    terminal_colors: {
+      foreground: "#FFFFFF",
+      background: "#101010",
+    },
+  });
   socket.socket?.close();
 });
 

@@ -8,6 +8,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::pty::boundary::safe_emit_boundary;
+use crate::pty::osc_color::{filter_color_queries, parse_hex_rgb, TerminalColors};
 use crate::pty::platform::{self, PlatformPtyChild, PlatformPtyController, PtyLaunchOptions};
 use crate::shell_resolver::{resolve_git_bash_exe, GIT_BASH_NOT_FOUND_MESSAGE};
 use crate::ssh_launch::SshLaunchPlan;
@@ -101,7 +102,8 @@ fn scan_vt_scroll_sequences(data: &[u8], diag: &mut VtScrollDiag, session_id: &s
 }
 
 pub struct PtySession {
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    terminal_colors: Arc<std::sync::RwLock<Option<TerminalColors>>>,
     controller: Box<dyn PlatformPtyController>,
     child: Arc<dyn PlatformPtyChild>,
     diagnostics: Arc<Mutex<PtySessionDiagnostics>>,
@@ -560,7 +562,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         shell: Option<&str>,
         sink: Arc<dyn PtyEventSink>,
     ) -> Result<PtyProcessTraits, String> {
-        self.create_with_launch(session_id, cwd, env_vars, shell, None, sink)
+        self.create_with_launch(session_id, cwd, env_vars, shell, None, None, sink)
     }
 
     pub fn create_with_launch(
@@ -570,6 +572,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         env_vars: Option<HashMap<String, String>>,
         shell: Option<&str>,
         ssh_launch: Option<&SshLaunchPlan>,
+        terminal_colors: Option<(&str, &str)>,
         sink: Arc<dyn PtyEventSink>,
     ) -> Result<PtyProcessTraits, String> {
         let env_count = env_vars.as_ref().map(|vars| vars.len()).unwrap_or(0);
@@ -675,7 +678,15 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             );
             e
         })?;
-        let writer = spawned.writer;
+        let writer = Arc::new(Mutex::new(spawned.writer));
+        let terminal_colors = Arc::new(std::sync::RwLock::new(terminal_colors.and_then(
+            |(foreground, background)| {
+                Some(TerminalColors {
+                    foreground: parse_hex_rgb(foreground)?,
+                    background: parse_hex_rgb(background)?,
+                })
+            },
+        )));
         let mut reader = spawned.reader;
         let controller = spawned.controller;
         let child = spawned.child;
@@ -694,6 +705,9 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         let child_for_thread = child.clone();
         let diagnostics_for_thread = diagnostics.clone();
         let session_id_owned = session_id.to_string();
+        let writer_for_reader = Arc::clone(&writer);
+        let colors_for_reader = Arc::clone(&terminal_colors);
+        let color_replies_enabled = ssh_launch.is_none();
         let defer_initial_output = cfg!(target_os = "windows") && launch_shell_key == "gitbash";
 
         self.statuses.lock().unwrap().insert(
@@ -733,7 +747,35 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                                     &session_id_owned,
                                 );
                             }
-                            sink.on_output(&session_id_owned, &pending[..safe]);
+                            let safe_output = &pending[..safe];
+                            if let Some(filtered) = filter_color_queries(
+                                safe_output,
+                                colors_for_reader.read().ok().and_then(|colors| *colors),
+                                color_replies_enabled,
+                            ) {
+                                if !filtered.reply.is_empty() {
+                                    let reply_result = writer_for_reader
+                                        .lock()
+                                        .map_err(|_| "pty writer poisoned".to_string())
+                                        .and_then(|mut writer| {
+                                            writer
+                                                .write_all(&filtered.reply)
+                                                .map_err(|error| error.to_string())?;
+                                            writer.flush().map_err(|error| error.to_string())
+                                        });
+                                    if let Err(error) = reply_result {
+                                        warn!(
+                                            "pty OSC color reply failed: id={}, error={}",
+                                            session_id_owned, error
+                                        );
+                                    }
+                                }
+                                if !filtered.output.is_empty() {
+                                    sink.on_output(&session_id_owned, &filtered.output);
+                                }
+                            } else {
+                                sink.on_output(&session_id_owned, safe_output);
+                            }
                             pending.drain(..safe);
                         } else if pending.len() > READER_FLUSH_THRESHOLD * 8 {
                             // 极端兜底：未终结序列超 256KB（远大于任何正常 OSC/CSI），
@@ -836,6 +878,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 
         let session = Arc::new(Mutex::new(PtySession {
             writer,
+            terminal_colors,
             controller,
             child,
             diagnostics,
@@ -865,15 +908,45 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             error!("pty write failed: {}", msg);
             msg
         })?;
-        let mut session = session_arc.lock().unwrap();
-        session.writer.write_all(data).map_err(|e| {
+        let writer = session_arc.lock().unwrap().writer.clone();
+        let mut writer = writer
+            .lock()
+            .map_err(|_| "pty writer poisoned".to_string())?;
+        writer.write_all(data).map_err(|e| {
             error!("pty write failed: session_id={}, error={}", session_id, e);
             e.to_string()
         })?;
-        session.writer.flush().map_err(|e| {
+        writer.flush().map_err(|e| {
             error!("pty flush failed: session_id={}, error={}", session_id, e);
             e.to_string()
         })?;
+        Ok(())
+    }
+
+    pub fn update_terminal_colors(
+        &self,
+        session_id: &str,
+        foreground: &str,
+        background: &str,
+    ) -> Result<(), String> {
+        let foreground = parse_hex_rgb(foreground)
+            .ok_or_else(|| "invalid terminal foreground color".to_string())?;
+        let background = parse_hex_rgb(background)
+            .ok_or_else(|| "invalid terminal background color".to_string())?;
+        let session = self
+            .sessions
+            .read()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("Session {session_id} not found"))?;
+        let colors = session.lock().unwrap().terminal_colors.clone();
+        *colors
+            .write()
+            .map_err(|_| "terminal colors poisoned".to_string())? = Some(TerminalColors {
+            foreground,
+            background,
+        });
         Ok(())
     }
 

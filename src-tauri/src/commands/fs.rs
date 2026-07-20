@@ -104,6 +104,25 @@ pub async fn check_paths_exist(paths: Vec<String>) -> Result<Vec<bool>, String> 
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn file_get_path_kind(path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || path_kind(&path))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn path_kind(path: &str) -> String {
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(path) {
+        return wsl_path_kind(&distro, &linux_path);
+    }
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => "directory",
+        Ok(metadata) if metadata.is_file() => "file",
+        _ => "missing",
+    }
+    .into()
+}
+
 fn path_exists(path: &str) -> bool {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(path) {
         return wsl_path_exists(&distro, &linux_path);
@@ -130,6 +149,38 @@ fn wsl_path_exists_args(distro: &str, linux_path: &str) -> Vec<String> {
         "-c".into(),
         "test -e \"$1\" || test -L \"$1\"".into(),
         "cli-manager-path-check".into(),
+        linux_path.into(),
+    ]
+}
+
+fn wsl_path_kind(distro: &str, linux_path: &str) -> String {
+    let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
+    let output = silent_command(&wsl_exe.to_string_lossy())
+        .args(wsl_path_kind_args(distro, linux_path))
+        .output();
+    let Ok(output) = output else {
+        return "missing".into();
+    };
+    if !output.status.success() {
+        return "missing".into();
+    }
+    match String::from_utf8_lossy(&output.stdout).trim() {
+        "directory" => "directory",
+        "file" => "file",
+        _ => "missing",
+    }
+    .into()
+}
+
+fn wsl_path_kind_args(distro: &str, linux_path: &str) -> Vec<String> {
+    vec![
+        "-d".into(),
+        distro.into(),
+        "--exec".into(),
+        "sh".into(),
+        "-c".into(),
+        "if test -d \"$1\"; then printf directory; elif test -f \"$1\"; then printf file; else printf missing; fi".into(),
+        "cli-manager-path-kind".into(),
         linux_path.into(),
     ]
 }
@@ -1290,6 +1341,22 @@ mod tests {
     }
 
     #[test]
+    fn path_kind_distinguishes_native_files_and_directories() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("exists.txt");
+        let directory = tmp.path().join("directory");
+        fs::write(&file, "ok").unwrap();
+        fs::create_dir(&directory).unwrap();
+
+        assert_eq!(path_kind(&file.to_string_lossy()), "file");
+        assert_eq!(path_kind(&directory.to_string_lossy()), "directory");
+        assert_eq!(
+            path_kind(&tmp.path().join("missing").to_string_lossy()),
+            "missing"
+        );
+    }
+
+    #[test]
     fn path_exists_rejects_invalid_wsl_unc_without_launching_wsl() {
         assert!(!path_exists(r"\\wsl.localhost\Ubuntu"));
     }
@@ -1308,6 +1375,23 @@ mod tests {
                 "test -e \"$1\" || test -L \"$1\"",
                 "cli-manager-path-check",
                 "/data/acGo",
+            ]
+        );
+    }
+
+    #[test]
+    fn wsl_path_kind_args_pass_path_as_positional_argument() {
+        assert_eq!(
+            wsl_path_kind_args("Ubuntu-22.04", "/data/project name"),
+            vec![
+                "-d",
+                "Ubuntu-22.04",
+                "--exec",
+                "sh",
+                "-c",
+                "if test -d \"$1\"; then printf directory; elif test -f \"$1\"; then printf file; else printf missing; fi",
+                "cli-manager-path-kind",
+                "/data/project name",
             ]
         );
     }

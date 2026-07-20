@@ -5,6 +5,7 @@ export interface SshConnectionSpecPayload {
   port: number;
   username: string;
   configAlias: string;
+  configFile: string;
   authMode: string;
   identityFile: string;
   credentialRef: string;
@@ -42,6 +43,7 @@ export function buildSshConnectionSpec(
     port: host.port,
     username: host.username,
     configAlias: host.config_alias,
+    configFile: host.config_file,
     authMode: host.auth_mode,
     identityFile: host.auth_mode === "identity_file" ? host.identity_file : "",
     credentialRef: host.auth_mode === "credential_ref" ? host.credential_ref : "",

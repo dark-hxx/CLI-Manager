@@ -16,7 +16,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { MarkdownContent } from "../ui/MarkdownContent";
-import { useI18n } from "../../lib/i18n";
+import { pickByLanguage, useI18n } from "../../lib/i18n";
 
 const REPOSITORY_URL = "https://github.com/dark-hxx/CLI-Manager";
 const MANUAL_URL = `${REPOSITORY_URL}/blob/master/docs/%E5%8A%9F%E8%83%BD%E6%B8%85%E5%8D%95.md`;
@@ -68,7 +68,7 @@ function ExternalLinkItem({ icon: Icon, title, description, url }: ExternalLinkI
 
 export function AboutSection() {
   const { language, t } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const {
     currentVersion,
     distribution,
@@ -187,7 +187,7 @@ export function AboutSection() {
                   key={item.zh}
                   className="rounded-full border border-border bg-surface-container-high px-2.5 py-1 text-xs text-on-surface-variant"
                 >
-                  {language === "zh-CN" ? item.zh : item.en}
+                  {pickByLanguage(language, item.zh, item.en)}
                 </span>
               ))}
             </div>

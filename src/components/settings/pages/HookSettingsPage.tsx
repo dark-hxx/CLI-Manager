@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { ActionIcon, Badge, Box, Button, Card, Divider, Group, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X, Activity, Bell, ShieldAlert, ToggleRight, AlertTriangle, BellOff, XCircle, Layers } from "lucide-react";
 import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "@/stores/settingsStore";
-import { useI18n, type AppLanguage } from "@/lib/i18n";
+import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 import { ThirdPartyNotificationSection } from "../ThirdPartyNotificationSection";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
@@ -84,7 +84,7 @@ const CCSWITCH_STATE_COLORS: Record<CcSwitchHookProtectionState, string> = {
 
 
 function pickText(language: AppLanguage, zh: string, en: string) {
-  return language === "zh-CN" ? zh : en;
+  return pickByLanguage(language, zh, en);
 }
 
 function formatPath(value: string | null, language: AppLanguage): string {

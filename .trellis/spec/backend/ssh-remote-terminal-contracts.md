@@ -11,7 +11,7 @@ The first SSH scope is a remote terminal MVP, not a remote IDE. Local and WSL pr
 ### SQLite
 
 ```sql
-ssh_hosts(id, name, group_name, host, port, username, config_alias,
+ssh_hosts(id, name, group_name, host, port, username, config_alias, config_file,
           auth_mode, identity_file, credential_ref, jump_mode, jump_host_id,
           proxy_type, proxy_host, proxy_port, proxy_command,
           connect_timeout_sec, server_alive_interval_sec,
@@ -39,6 +39,9 @@ pub async fn ssh_check_path(spec: SshConnectionSpec, path: String)
     -> Result<SshPathCheckResult, String>;
 pub async fn ssh_list_directories(spec: SshConnectionSpec, path: String)
     -> Result<Vec<SshDirectoryEntry>, String>;
+pub fn ssh_config_default_directory() -> Result<String, String>;
+pub async fn ssh_config_import_preview(config_dir: String)
+    -> Result<SshConfigImportPreview, String>;
 ```
 
 ### Terminal launch
@@ -50,6 +53,7 @@ pub struct SshLaunchPlan {
     pub port: u16,
     pub username: String,
     pub config_alias: String,
+    pub config_file: String,
     pub auth_mode: String,
     pub identity_file: String,
     pub jump_target: String,
@@ -76,6 +80,7 @@ pub struct SshLaunchPlan {
 - Host grouping is independent from the existing manual project grouping.
 - `ssh_host_groups` owns the editable multi-level SSH host tree. `ssh_hosts.group_name` is legacy display/migration data; new UI should bind by `group_id`.
 - Migration 21 must preserve old flat `group_name` values as root groups and backfill each host's `group_id`.
+- Migration 22 adds `ssh_hosts.config_file TEXT NOT NULL DEFAULT ''`; empty values keep the system OpenSSH default config behavior.
 
 ### Authentication and secrets
 
@@ -85,7 +90,18 @@ pub struct SshLaunchPlan {
 - OpenSSH receives saved passwords only through the one-shot loopback AskPass helper. The command line, ordinary logs, WebDAV payloads, exports, session snapshots, and normal environment data must not contain the password.
 - Passwords, private-key contents/passphrases, and proxy credentials must not enter SQLite, Tauri store, session snapshots, logs, WebDAV, or local exports.
 - `identity_file` is machine-local and must not be synchronized.
+- `config_file` is machine-local and must not be synchronized, exported, or written to ordinary logs.
 - Host key trust and changed-key blocking remain owned by system OpenSSH.
+
+### SSH Config import
+
+- Native Windows, Linux, and macOS use the current user's `~/.ssh` as the default import directory. WSL config discovery is intentionally unsupported.
+- The import UI may select another directory, but Rust must validate the absolute directory, canonicalize its `config` file, and return stable localized error codes for missing, unreadable, oversized, or invalid UTF-8 input.
+- Discovery imports concrete `Host` aliases only. It supports BOM, CRLF/LF, multiple aliases, recursive `Include`, `~`, environment variables, relative paths, glob expansion, deterministic ordering, depth/file limits, and cycle detection.
+- Wildcard or negated Host patterns are not candidates. Includes inside conditional `Host` or `Match` blocks are skipped with a warning; preview must not run `ssh -G` or establish a network connection.
+- Existing aliases are compared case-insensitively and never overwritten. Selected aliases are inserted in one SQLite transaction and any failure rolls the entire batch back.
+- Completion feedback reports successful, failed, and duplicate-skipped counts. A committed transaction reports zero failures; a rolled-back transaction reports zero successes and all attempted aliases as failed.
+- Imports from the default directory store an empty `config_file`. Imports from a custom directory store the canonical absolute `config` path.
 
 ### Remote paths and commands
 
@@ -95,6 +111,7 @@ pub struct SshLaunchPlan {
 - Quote every path and environment value with the dedicated POSIX quoting helper.
 - Environment keys must match shell variable syntax.
 - Directory browsing/check commands use non-interactive `BatchMode=yes` for SSH Config, Agent, and identity-file modes.
+- Every OpenSSH probe, directory query, and terminal launch must add `-F <config_file>` when `config_file` is non-empty. If that file later becomes invalid or unreadable, return an error and never fall back to the default config.
 - HTTP and SOCKS5 proxy URLs are stored as structured `proxy_type`, `proxy_host`, and `proxy_port` fields. The app binary provides the stdio proxy helper used by OpenSSH `ProxyCommand`; users must not need to author a raw command.
 - When a direct HTTP/SOCKS5 proxy is enabled, it takes precedence over `ProxyJump`; do not emit both routes for the same connection.
 - Connection testing must probe a configured HTTP/SOCKS5 proxy as a separate diagnostic stage before starting SSH, and return the sanitized proxy endpoint plus the raw connect/handshake error when that stage fails.
@@ -129,7 +146,7 @@ pub struct SshLaunchPlan {
 ### Sync
 
 - Sync/export may carry project `environment_type` and `remote_path`.
-- It must exclude `ssh_hosts`, `ssh_host_id`, `identity_file`, `credential_ref`, passwords, and machine-specific proxy credentials.
+- It must exclude `ssh_hosts`, `ssh_host_id`, `config_file`, `identity_file`, `credential_ref`, passwords, and machine-specific proxy credentials.
 - Imported SSH projects have `ssh_host_id = null` and clear machine-specific provider/worktree configuration before requesting host rebinding.
 
 ## 4. Validation & Error Matrix
@@ -146,6 +163,9 @@ pub struct SshLaunchPlan {
 | Empty password when saving a credential | `ssh_password_required`. |
 | Invalid host id for credential account scoping | `ssh_host_id_invalid`. |
 | Host argument contains NUL/CR/LF | `ssh_launch_argument_invalid`. |
+| Import directory is empty, relative, missing, or not a directory | Return the matching stable `ssh_config_directory_*` error and create no hosts. |
+| Import directory has no readable `config`, or an Include cannot be read/parsed safely | Return the matching stable `ssh_config_*` error and create no hosts. |
+| Custom `config_file` is relative, missing, or no longer a regular file | `ssh_config_file_invalid` or `ssh_config_file_not_found`; do not fall back. |
 | Proxy URL embeds `user:password@host` | `ssh_proxy_credentials_forbidden`. |
 | HTTP/SOCKS5 proxy host is empty or its port is outside 1–65535 | `ssh_proxy_address_invalid`. |
 | Remote path is relative or contains NUL/CR/LF | `ssh_remote_path_invalid`. |
@@ -163,10 +183,13 @@ pub struct SshLaunchPlan {
 - Good: a path such as `/srv/project name/开发` is quoted once, opens correctly, and cannot inject shell syntax.
 - Good: application restart attaches a daemon-owned SSH PTY without repeating initialization commands.
 - Good: Username / Password host can test connection and browse/check a remote path through AskPass without exposing the password.
+- Good: a host imported from a custom config directory uses the same canonical `config_file` for testing, browsing, and terminal launch.
 - Base: password-prompt/MFA users manually enter a remote path, then authenticate in the real PTY.
+- Base: a host imported from the default `~/.ssh/config` stores an empty `config_file` and lets OpenSSH resolve its normal user config.
 - Base: an imported SSH project remains visible with a rebinding warning.
 - Bad: treating `path = ""` as a local project key; on POSIX this can match every local path.
 - Bad: passing a remote POSIX path into local filesystem, Git, Worktree, history, or provider APIs.
+- Bad: falling back to default OpenSSH config after a custom `config_file` is moved or becomes unreadable.
 - Bad: synchronizing host IDs or private-key paths across machines.
 
 ## 6. Tests Required
@@ -175,6 +198,9 @@ pub struct SshLaunchPlan {
 - Run `cargo check` and `cargo test --lib` from `src-tauri`.
 - Assert migration defaults all existing projects to `local` and host deletion nulls remote bindings.
 - Assert SSH group migration preserves legacy flat groups as root `ssh_host_groups` and backfills `ssh_hosts.group_id`.
+- Assert migration 22 gives existing SSH hosts an empty `config_file`.
+- Assert SSH Config discovery handles BOM/CRLF, concrete and wildcard aliases, recursive/glob/conditional Includes, cycles, limits, and Windows path separators.
+- Assert custom `config_file` reaches connection probes and terminal launches through `-F`, missing files fail, and legacy daemon frames deserialize with an empty default.
 - Assert launch-plan validation, POSIX quoting, environment-key validation, proxy credential rejection, jump targets, and legacy daemon frame compatibility.
 - Assert password/interactive/agent modes do not include stale identity-file arguments after auth-mode switches.
 - Assert AskPass serves a saved password only for the matching one-shot token and rejects reused or unknown prompts.
@@ -226,3 +252,24 @@ if (!projectSupportsCapability(project, "git")) return null;
 ```
 
 The corresponding store/backend path must also reject SSH projects before any local path operation.
+
+### Wrong: copy expanded SSH options into app fields
+
+```ts
+createHost({ host: resolvedHostName, username: resolvedUser, identity_file: resolvedKey });
+```
+
+This freezes machine-specific OpenSSH resolution, risks persisting private configuration, and diverges from future config changes.
+
+### Correct: preserve the OpenSSH reference
+
+```ts
+createHost({
+  name: alias,
+  config_alias: alias,
+  config_file: isDefaultDirectory ? "" : canonicalConfigFile,
+  auth_mode: "ssh_config",
+});
+```
+
+Rust then validates the path and adds `-F <config_file>` consistently for every OpenSSH process.

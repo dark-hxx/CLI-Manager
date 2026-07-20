@@ -2,6 +2,9 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::AppHandle;
+
+use crate::commands::hook_settings::{sync_ccswitch_codex_statusline, CcSwitchHookProtectionStatus};
 
 const CONFIG_FILE: &str = "config.toml";
 const TUI_TABLE: &str = "tui";
@@ -235,6 +238,18 @@ pub fn codex_statusline_save(
     };
     atomic_write(&path, &set_status_line(&content, &items))?;
     codex_statusline_load(Some(dir.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub async fn codex_statusline_sync_ccswitch(
+    app: AppHandle,
+    config_dir: Option<String>,
+    items: Vec<String>,
+    cc_switch_db_path: Option<String>,
+) -> Result<CcSwitchHookProtectionStatus, String> {
+    validate_items(&items)?;
+    let dir = resolve_config_dir(config_dir)?;
+    Ok(sync_ccswitch_codex_statusline(&app, cc_switch_db_path, &dir, &items).await)
 }
 
 pub(crate) fn validate_items(items: &[String]) -> Result<(), String> {

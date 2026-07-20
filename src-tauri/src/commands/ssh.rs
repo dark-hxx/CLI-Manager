@@ -20,6 +20,8 @@ pub struct SshConnectionSpec {
     port: u16,
     username: String,
     config_alias: String,
+    #[serde(default)]
+    config_file: String,
     auth_mode: String,
     identity_file: String,
     #[serde(default)]
@@ -194,6 +196,7 @@ fn validate_spec(spec: &SshConnectionSpec) -> Result<(), String> {
     if spec.config_alias.trim().is_empty() && spec.port == 0 {
         return Err("ssh_host_port_invalid".to_string());
     }
+    validate_config_file(&spec.config_file)?;
     if spec.connect_timeout_sec == 0 || spec.connect_timeout_sec > 300 {
         return Err("ssh_connect_timeout_invalid".to_string());
     }
@@ -216,6 +219,24 @@ fn validate_spec(spec: &SshConnectionSpec) -> Result<(), String> {
     }
     if spec.auth_mode == "credential_ref" && spec.credential_ref.trim().is_empty() {
         return Err("ssh_credential_ref_required".to_string());
+    }
+    Ok(())
+}
+
+fn validate_config_file(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if trimmed.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n')) {
+        return Err("ssh_config_file_invalid".to_string());
+    }
+    let path = std::path::Path::new(trimmed);
+    if !path.is_absolute() {
+        return Err("ssh_config_file_invalid".to_string());
+    }
+    if !path.is_file() {
+        return Err("ssh_config_file_not_found".to_string());
     }
     Ok(())
 }
@@ -299,6 +320,9 @@ fn ssh_remote_command_with_options(
     accept_new_host_key: bool,
 ) -> Result<Command, String> {
     let mut command = silent_command("ssh");
+    if !spec.config_file.trim().is_empty() {
+        command.args(["-F", spec.config_file.trim()]);
+    }
     command.arg("-T");
     if verbose {
         command.arg("-v");
@@ -649,6 +673,7 @@ mod tests {
             port: 2222,
             username: "dev".to_string(),
             config_alias: String::new(),
+            config_file: String::new(),
             auth_mode: "identity_file".to_string(),
             identity_file: "/home/dev/.ssh/id_ed25519".to_string(),
             credential_ref: String::new(),
@@ -695,6 +720,35 @@ mod tests {
             .collect();
         assert!(!args.iter().any(|arg| arg == "-p"));
         assert!(!args.iter().any(|arg| arg == "-i"));
+    }
+
+    #[test]
+    fn custom_config_file_is_forwarded_to_probe() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let mut spec = spec();
+        spec.config_alias = "gpu-dev".to_string();
+        spec.config_file = temp.path().to_string_lossy().into_owned();
+        spec.auth_mode = "ssh_config".to_string();
+
+        validate_spec(&spec).unwrap();
+        let command = ssh_probe_command(&spec, false).unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.windows(2).any(|pair| pair == ["-F", spec.config_file.as_str()]));
+    }
+
+    #[test]
+    fn missing_custom_config_file_is_rejected() {
+        let mut spec = spec();
+        spec.config_file = std::env::temp_dir()
+            .join("cli-manager-missing-ssh-config")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(validate_spec(&spec).unwrap_err(), "ssh_config_file_not_found");
     }
 
     #[test]

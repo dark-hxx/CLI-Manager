@@ -31,7 +31,7 @@ import {
   Webhook,
   type LucideIcon,
 } from "lucide-react";
-import { useI18n, type AppLanguage } from "@/lib/i18n";
+import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 import {
   createThirdPartyHookTarget,
   PROVIDER_NAMES,
@@ -193,7 +193,7 @@ const PROVIDER_ICON_META: Record<ThirdPartyNotificationProvider, {
 };
 
 function pick(language: AppLanguage, zh: string, en: string) {
-  return language === "zh-CN" ? zh : en;
+  return pickByLanguage(language, zh, en);
 }
 
 function PlatformIcon({ provider, size = 20 }: { provider: ThirdPartyNotificationProvider; size?: number }) {

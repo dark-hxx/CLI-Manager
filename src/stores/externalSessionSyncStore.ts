@@ -63,6 +63,7 @@ interface ExternalSessionSyncStore {
   initialSyncPromptHandled: boolean;
   acceptedKeys: string[];
   ignoredKeys: string[];
+  ignoredProjectKeys: string[];
   pendingKeys: string[];
   syncedSessions: SyncedExternalSession[];
   projectCandidates: ExternalSessionProjectCandidate[];
@@ -78,6 +79,7 @@ interface ExternalSessionSyncStore {
   openManualDialog: () => Promise<void>;
   closeProjectDialog: () => Promise<void>;
   syncProjectCandidates: (keys: string[], shell?: string) => Promise<void>;
+  ignoreProjectCandidates: (keys: string[]) => Promise<void>;
   accept: (candidate: ExternalSessionCandidate) => Promise<void>;
   ignore: (candidate: ExternalSessionCandidate) => Promise<void>;
   removeSyncedSessions: (keys: string[]) => Promise<void>;
@@ -533,6 +535,7 @@ async function ensureProjectsForSyncedSessions(sessions: SyncedExternalSession[]
 async function persistState(
   acceptedKeys: string[],
   ignoredKeys: string[],
+  ignoredProjectKeys: string[],
   syncedSessions: SyncedExternalSession[],
   initialSyncPromptHandled: boolean
 ): Promise<void> {
@@ -542,6 +545,7 @@ async function persistState(
     s.set("initialSyncPromptHandled", initialSyncPromptHandled),
     s.set("acceptedKeys", acceptedKeys),
     s.set("ignoredKeys", ignoredKeys),
+    s.set("ignoredProjectKeys", ignoredProjectKeys),
     s.set("syncedSessions", syncedSessions),
   ]);
 }
@@ -550,6 +554,7 @@ async function persistCurrentState(state: ExternalSessionSyncStore): Promise<voi
   await persistState(
     state.acceptedKeys,
     state.ignoredKeys,
+    state.ignoredProjectKeys,
     state.syncedSessions,
     state.initialSyncPromptHandled
   );
@@ -565,7 +570,11 @@ function handledSessionKeys(state: ExternalSessionSyncStore): Set<string> {
   ]);
 }
 
-async function scanProjectCandidates(handledKeys: Set<string>, limit: number): Promise<ExternalSessionProjectCandidate[]> {
+async function scanProjectCandidates(
+  handledKeys: Set<string>,
+  ignoredProjectKeys: Set<string>,
+  limit: number
+): Promise<ExternalSessionProjectCandidate[]> {
   if (projectScanInFlight) return projectScanInFlight;
   projectScanInFlight = (async () => {
     const startedAt = Date.now();
@@ -591,7 +600,8 @@ async function scanProjectCandidates(handledKeys: Set<string>, limit: number): P
 
     const missingProjectCandidates = allCandidates.filter((candidate) => !findContainingProject(projects, candidate));
     const unsyncedCandidates = missingProjectCandidates.filter((candidate) => !handledKeys.has(candidate.key));
-    const projectCandidates = groupProjectCandidates(unsyncedCandidates, projects, missingProjectCandidates);
+    const projectCandidates = groupProjectCandidates(unsyncedCandidates, projects, missingProjectCandidates)
+      .filter((project) => !ignoredProjectKeys.has(project.key));
     logInfo("External session project scan finished", {
       durationMs: Date.now() - startedAt,
       summaries: summaries.length,
@@ -618,6 +628,7 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
   initialSyncPromptHandled: false,
   acceptedKeys: [],
   ignoredKeys: [],
+  ignoredProjectKeys: [],
   pendingKeys: [],
   syncedSessions: [],
   projectCandidates: [],
@@ -632,16 +643,18 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
     const acceptedKeys = normalizeStringList(await s.get("acceptedKeys"));
     const syncedSessions = normalizeSyncedSessions(await s.get("syncedSessions"));
     let ignoredKeys = normalizeStringList(await s.get("ignoredKeys"));
+    const ignoredProjectKeys = normalizeStringList(await s.get("ignoredProjectKeys"));
     const initialSyncPromptHandled = Boolean(await s.get("initialSyncPromptHandled"));
     if (schemaVersion < STORE_SCHEMA_VERSION) {
       ignoredKeys = [];
-      await persistState(acceptedKeys, ignoredKeys, syncedSessions, initialSyncPromptHandled);
+      await persistState(acceptedKeys, ignoredKeys, ignoredProjectKeys, syncedSessions, initialSyncPromptHandled);
     }
     set({
       loaded: true,
       initialSyncPromptHandled,
       acceptedKeys,
       ignoredKeys,
+      ignoredProjectKeys,
       syncedSessions,
     });
     void (async () => {
@@ -679,7 +692,11 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
         return;
       }
       set({ scanningProjects: true, dialogMode: "initial" });
-      const projectCandidates = await scanProjectCandidates(handledSessionKeys(get()), INITIAL_PROJECT_SCAN_LIMIT);
+      const projectCandidates = await scanProjectCandidates(
+        handledSessionKeys(get()),
+        new Set(get().ignoredProjectKeys),
+        INITIAL_PROJECT_SCAN_LIMIT
+      );
       if (projectCandidates.length === 0) {
         set({ initialSyncPromptHandled: true, scanningProjects: false, projectCandidates: [] });
         await persistCurrentState(get());
@@ -702,7 +719,11 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
     set({ scanningProjects: true, dialogMode: "manual", dialogOpen: false, projectCandidates: [] });
     try {
       await ensureProjectStoreLoaded("interactive");
-      const projectCandidates = await scanProjectCandidates(handledSessionKeys(get()), MANUAL_PROJECT_SCAN_LIMIT);
+      const projectCandidates = await scanProjectCandidates(
+        handledSessionKeys(get()),
+        new Set(get().ignoredProjectKeys),
+        MANUAL_PROJECT_SCAN_LIMIT
+      );
       set({
         projectCandidates,
         dialogMode: "manual",
@@ -780,6 +801,32 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
     }
   },
 
+  ignoreProjectCandidates: async (keys) => {
+    const keySet = new Set(keys.map((key) => key.trim()).filter(Boolean));
+    if (keySet.size === 0) return;
+
+    const ignoredProjects = get().projectCandidates.filter((project) => keySet.has(project.key));
+    if (ignoredProjects.length === 0) return;
+
+    const ignoredSessionKeys = ignoredProjects.flatMap((project) => project.sessions.map((session) => session.key));
+    const remainingProjects = get().projectCandidates.filter((project) => !keySet.has(project.key));
+    const nextIgnored = uniqueStrings([...get().ignoredKeys, ...ignoredSessionKeys]);
+    const nextIgnoredProjects = uniqueStrings([...get().ignoredProjectKeys, ...ignoredProjects.map((project) => project.key)]);
+    const nextInitialHandled = remainingProjects.length === 0 && get().dialogMode === "initial"
+      ? true
+      : get().initialSyncPromptHandled;
+
+    set({
+      ignoredKeys: nextIgnored,
+      ignoredProjectKeys: nextIgnoredProjects,
+      pendingKeys: get().pendingKeys.filter((key) => !ignoredSessionKeys.includes(key)),
+      projectCandidates: remainingProjects,
+      dialogOpen: remainingProjects.length > 0,
+      initialSyncPromptHandled: nextInitialHandled,
+    });
+    await persistCurrentState(get());
+  },
+
   accept: async (candidate) => {
     try {
       deletedKeysThisSession.delete(candidate.key);
@@ -787,7 +834,7 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
       const nextPending = get().pendingKeys.filter((key) => key !== candidate.key);
       const nextSessions = upsertSyncedSession(get().syncedSessions, candidate);
       set({ acceptedKeys: nextAccepted, pendingKeys: nextPending, syncedSessions: nextSessions });
-      await persistState(nextAccepted, get().ignoredKeys, nextSessions, get().initialSyncPromptHandled);
+      await persistState(nextAccepted, get().ignoredKeys, get().ignoredProjectKeys, nextSessions, get().initialSyncPromptHandled);
       toast.success(translateCurrent("notifications.externalSessionSync.success", {
         source: sourceLabel(candidate.source),
         name: candidate.title,
@@ -803,7 +850,7 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
     const nextIgnored = [...get().ignoredKeys.filter((key) => key !== candidate.key), candidate.key];
     const nextPending = get().pendingKeys.filter((key) => key !== candidate.key);
     set({ ignoredKeys: nextIgnored, pendingKeys: nextPending });
-    await persistState(get().acceptedKeys, nextIgnored, get().syncedSessions, get().initialSyncPromptHandled);
+    await persistState(get().acceptedKeys, nextIgnored, get().ignoredProjectKeys, get().syncedSessions, get().initialSyncPromptHandled);
   },
 
   removeSyncedSessions: async (keys) => {
@@ -822,6 +869,6 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
       pendingKeys: nextPending,
       syncedSessions: nextSessions,
     });
-    await persistState(nextAccepted, nextIgnored, nextSessions, get().initialSyncPromptHandled);
+    await persistState(nextAccepted, nextIgnored, get().ignoredProjectKeys, nextSessions, get().initialSyncPromptHandled);
   },
 }));

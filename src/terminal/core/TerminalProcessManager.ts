@@ -18,6 +18,11 @@ export interface TerminalCodexProviderLaunchConfig {
   codexConfigDir?: string;
 }
 
+export interface TerminalColors {
+  foreground: string;
+  background: string;
+}
+
 export interface TerminalCreateRequest extends Record<string, unknown> {
   cwd: string | null;
   envVars: Record<string, string> | null;
@@ -26,6 +31,7 @@ export interface TerminalCreateRequest extends Record<string, unknown> {
   claudeProvider: TerminalClaudeProviderLaunchConfig | null;
   codexProvider: TerminalCodexProviderLaunchConfig | null;
   sshLaunch: unknown | null;
+  terminalColors: TerminalColors;
 }
 
 interface PreparedTerminalCreate {
@@ -97,6 +103,7 @@ export class TerminalProcessManager {
           prepared.envVars,
           prepared.shell,
           prepared.sshLaunch,
+          request.terminalColors,
         );
         if (traits) this.processTraits.set(sessionId, traits);
       } catch (error) {
@@ -112,6 +119,10 @@ export class TerminalProcessManager {
 
   writeBinary(sessionId: string, data: string): Promise<void> {
     return ptyHostSocket.writeBinary(sessionId, data);
+  }
+
+  setTerminalColors(sessionId: string, colors: TerminalColors): Promise<void> {
+    return ptyHostSocket.setTerminalColors(sessionId, colors);
   }
 
   resize(

@@ -28,7 +28,7 @@ import {
 import { Button } from "./ui/button";
 import { toast } from "sonner";
 import { logError, logInfo, logWarn } from "../lib/logger";
-import { useI18n, type TranslationKey } from "../lib/i18n";
+import { pickByLanguage, useI18n, type TranslationKey } from "../lib/i18n";
 
 interface Props {
   project?: Project;
@@ -91,7 +91,7 @@ function initialWslPickerPath(currentPath: string): string {
 
 export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHosts, onClose }: Props) {
   const { language, t } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const { createProject, updateProject, groups } = useProjectStore();
   const sshHosts = useSshHostStore((state) => state.hosts);
   const fetchSshHosts = useSshHostStore((state) => state.fetchHosts);

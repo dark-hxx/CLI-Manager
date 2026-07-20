@@ -152,7 +152,7 @@ export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 export type TerminalNewlineShortcut = "Shift+Enter" | "Ctrl+Enter" | "Alt+Enter";
 export type UnsplitBehavior = "merge" | "close";
 export type FileExplorerIgnoredPaths = Record<string, string[]>;
-export type LanguagePreference = "auto" | "zh-CN" | "en-US";
+export type LanguagePreference = "auto" | "zh-CN" | "zh-TW" | "en-US";
 export type BatchLaunchPaneDirection = "vertical" | "horizontal";
 export type DesktopPetSize = "small" | "medium" | "large";
 export const DESKTOP_PET_WORK_BOUNCE_MIN_PX = 0;
@@ -437,7 +437,7 @@ const DEFAULTS: Settings = {
   terminalThemeMode: "independent",
   terminalThemeName: "forestNightDark",
   sidebarDensity: "comfortable",
-  sidebarProjectFilterVisible: true,
+  sidebarProjectFilterVisible: false,
   viewMode: "standard",
   closeBehavior: "ask",
   exitWithRunningTasksBehavior: "ask",
@@ -841,7 +841,7 @@ function migrateUnsplitBehavior(value: unknown): UnsplitBehavior {
 }
 
 function migrateLanguagePreference(value: unknown): LanguagePreference {
-  return value === "auto" || value === "zh-CN" || value === "en-US" ? value : DEFAULTS.language;
+  return value === "auto" || value === "zh-CN" || value === "zh-TW" || value === "en-US" ? value : DEFAULTS.language;
 }
 
 function migrateFileExplorerIgnoredPaths(value: unknown): FileExplorerIgnoredPaths {

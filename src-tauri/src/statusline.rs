@@ -2120,29 +2120,56 @@ pub async fn statusline_install(
     app: AppHandle,
     refresh_interval: Option<u8>,
     cc_switch_db_path: Option<String>,
+    sync_cc_switch_common_config: Option<bool>,
 ) -> Result<StatuslineStatus, String> {
     let status_line = managed_status_line(refresh_interval)?;
     let mut status = install(refresh_interval)?;
-    let claude_dir = Path::new(&status.claude_settings_path)
-        .parent()
-        .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
-    status.cc_switch = Some(
-        sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, Some(status_line))
-            .await,
-    );
+    if sync_cc_switch_common_config.unwrap_or(true) {
+        let claude_dir = Path::new(&status.claude_settings_path)
+            .parent()
+            .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
+        status.cc_switch = Some(
+            sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, Some(status_line))
+                .await,
+        );
+    }
     Ok(status)
 }
 #[tauri::command]
 pub async fn statusline_uninstall(
     app: AppHandle,
     cc_switch_db_path: Option<String>,
+    sync_cc_switch_common_config: Option<bool>,
 ) -> Result<StatuslineStatus, String> {
     let mut status = uninstall()?;
+    if sync_cc_switch_common_config.unwrap_or(true) {
+        let claude_dir = Path::new(&status.claude_settings_path)
+            .parent()
+            .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
+        status.cc_switch =
+            Some(sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, None).await);
+    }
+    Ok(status)
+}
+#[tauri::command]
+pub async fn statusline_sync_ccswitch(
+    app: AppHandle,
+    cc_switch_db_path: Option<String>,
+    refresh_interval: Option<u8>,
+) -> Result<StatuslineStatus, String> {
+    let mut status = get_status()?;
     let claude_dir = Path::new(&status.claude_settings_path)
         .parent()
         .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
-    status.cc_switch =
-        Some(sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, None).await);
+    status.cc_switch = Some(
+        sync_ccswitch_claude_statusline(
+            &app,
+            cc_switch_db_path,
+            claude_dir,
+            Some(managed_status_line(refresh_interval)?),
+        )
+        .await,
+    );
     Ok(status)
 }
 #[tauri::command]

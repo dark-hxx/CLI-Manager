@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Copy, FolderGit2, GitBranch, RefreshCw, FolderOpen } from "lucide-react";
+import { Copy, FolderGit2, GitBranch, RefreshCw, FolderOpen, Save } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { createPatch } from "diff";
@@ -38,6 +38,7 @@ import {
   type LatestChangesCardData,
 } from "../stats/termStatsCards";
 import { useI18n } from "../../lib/i18n";
+import { useSaveSessionToSidebar } from "../../hooks/useSaveSessionToSidebar";
 import { DiffViewerModal } from "../git/DiffViewerModal";
 import { parseDiffBlocksFromMessages } from "../../lib/diffParser";
 import { resolveTerminalProjectPath } from "../../lib/terminalOscPath";
@@ -260,7 +261,7 @@ function useCurrentGitBranch(
   return branch;
 }
 
-function SessionInfoCard({ session, statsSession, projectName, projectPath, currentBranch, shell, sessionId, worktree }: {
+function SessionInfoCard({ session, statsSession, projectName, projectPath, currentBranch, shell, sessionId, worktree, onSaveToSidebar, canSaveToSidebar }: {
   session: HistorySessionDetail;
   statsSession: HistorySessionDetail | null;
   projectName: string;
@@ -269,6 +270,8 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
   shell: string;
   sessionId: string;
   worktree: WorktreeRecord | null;
+  onSaveToSidebar?: () => void;
+  canSaveToSidebar?: boolean;
 }) {
   const { t } = useI18n();
   // 统计数据（消息/时长/角色分布）只认 hook 绑定的会话，未绑定时置空；
@@ -332,13 +335,35 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
         />
       )}
       <Row icon={<TerminalSquare size={10} strokeWidth={1.7} />} label={t("termStats.shell")} value={shell} color={TERM.cyan} title={shell} />
-      <Row
-        icon={<Copy size={10} />}
-        label={t("termStats.sessionId")}
-        value={sessionId}
-        title={sessionIdTitle}
-        onDoubleClick={handleCopySessionId}
-      />
+      <div className="flex items-baseline justify-between gap-2 text-[11px] leading-5">
+        <span className="flex shrink-0 items-center gap-1" style={{ color: TERM.dim }}>
+          <Copy size={10} />
+          {t("termStats.sessionId")}
+        </span>
+        <span className="flex min-w-0 items-center gap-1">
+          <span
+            className="truncate text-right cursor-pointer hover:underline"
+            style={{ color: TERM.fg }}
+            title={sessionIdTitle}
+            onDoubleClick={handleCopySessionId}
+          >
+            {sessionId}
+          </span>
+          {onSaveToSidebar && (
+            <button
+              type="button"
+              onClick={onSaveToSidebar}
+              disabled={!canSaveToSidebar}
+              className="ui-focus-ring shrink-0 rounded p-0.5 disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ color: TERM.cyan }}
+              title={t("terminal.tab.saveToSidebar")}
+              aria-label={t("terminal.tab.saveToSidebar")}
+            >
+              <Save size={11} />
+            </button>
+          )}
+        </span>
+      </div>
       <div className="flex items-baseline justify-between gap-2 text-[11px] leading-5">
         <span className="flex shrink-0 items-center gap-1" style={{ color: TERM.dim }}>
           <GitBranch size={10} />
@@ -383,6 +408,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
 
 export function TerminalStatsPanel({ activeSessionId, open, visible = true, embedded = false }: TerminalStatsPanelProps) {
   const { t } = useI18n();
+  const { canSave, saveSession, saveSessionDialog } = useSaveSessionToSidebar();
   const terminalStatsCardVisibility = useSettingsStore((state) => state.terminalStatsCardVisibility);
   const terminalStatsCardOrder = useSettingsStore((state) => state.terminalStatsCardOrder);
   const terminalSessions = useTerminalStore((state) => state.sessions);
@@ -400,6 +426,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const [diffFileChange, setDiffFileChange] = useState<HistoryFileChangeSummary | null>(null);
   const latestRef = useRef<HistorySessionDetail | null>(null);
   const lastPathRef = useRef<string | null>(null);
+  const wasPanelActiveRef = useRef(false);
 
   const terminalSession = useMemo(
     () => terminalSessions.find((session) => session.id === activeSessionId) ?? null,
@@ -458,6 +485,18 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     Boolean(terminalSession?.cliSessionId) &&
     latestSession?.session_id === terminalSession?.cliSessionId;
   const panelActive = open && visible;
+
+  // 首次打开侧栏时再触发一次刷新，避开面板激活与历史源初始化同帧完成导致的空态停留。
+  useEffect(() => {
+    if (!panelActive) {
+      wasPanelActiveRef.current = false;
+      return;
+    }
+    if (wasPanelActiveRef.current) return;
+    wasPanelActiveRef.current = true;
+    latestRef.current = null;
+    setRefreshSeq((prev) => prev + 1);
+  }, [panelActive]);
 
   // A6: 统一定时器调度 - 10s 主节拍同时触发会话数据轮询和 git 分支查询
   useEffect(() => {
@@ -562,6 +601,14 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     setRefreshSeq((prev) => prev + 1);
   }, []);
 
+  // 只有绑定了 cliSessionId 的 Tab 才显示保存按钮；kind 无法解析（非 claude/codex）时按钮 disabled
+  const hasBoundCliSessionId = Boolean(terminalSession?.cliSessionId);
+  const canSaveToSidebar = terminalSession ? canSave(terminalSession, project) : false;
+  const handleSaveToSidebar = useCallback(() => {
+    if (!terminalSession) return;
+    void saveSession(terminalSession, project);
+  }, [saveSession, terminalSession, project]);
+
   // A7: 实时查询当前项目的 git 分支，初始值为会话静态分支，避免首屏闪烁
   // A6: 通过 pollTrigger 与会话数据轮询共用 10s 节拍
   const currentBranch = useCurrentGitBranch(
@@ -625,6 +672,8 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             shell={shellLabel || "—"}
             sessionId={terminalSession?.cliSessionId ?? session.session_id}
             worktree={activeWorktree}
+            onSaveToSidebar={hasBoundCliSessionId ? handleSaveToSidebar : undefined}
+            canSaveToSidebar={canSaveToSidebar}
           />
         );
       case "tokenUsage":
@@ -717,6 +766,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
           onClose={() => setDiffFileChange(null)}
         />
       )}
+      {saveSessionDialog}
     </Container>
   );
 }

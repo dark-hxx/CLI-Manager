@@ -21,7 +21,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { HistorySessionDetail } from "../../lib/types";
-import { useI18n, type TranslationKey } from "../../lib/i18n";
+import { useI18n, type AppLanguage, type TranslationKey } from "../../lib/i18n";
 import { formatTime } from "./historyViewUtils";
 import type { SessionProcessModel } from "./sessionEvents";
 import {
@@ -77,7 +77,7 @@ function nodeIcon(kind: SessionCanvasNodeKind, size = 14) {
   return <Bot size={size} />;
 }
 
-function formatTimestamp(timestamp: string | null, language: "zh-CN" | "en-US"): string {
+function formatTimestamp(timestamp: string | null, language: AppLanguage): string {
   if (!timestamp) return "-";
   const parsed = Date.parse(timestamp);
   return Number.isFinite(parsed) ? formatTime(parsed, language) : timestamp;

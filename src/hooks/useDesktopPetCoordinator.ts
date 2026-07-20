@@ -80,7 +80,7 @@ export function useDesktopPetCoordinator({
   );
 
   const configPayload = useMemo<DesktopPetConfigPayload>(() => ({
-    language: language === "en-US" ? "en-US" : "zh-CN",
+    language,
     settings: desktopPet,
     labels: {
       openMain: t("desktopPet.actions.openMain"),

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { convertChineseForLanguage, getLanguageLocale, useI18n } from "../../lib/i18n";
 
 interface StatsTokenDonutProps {
   inputTokens: number;
@@ -7,9 +8,9 @@ interface StatsTokenDonutProps {
 
 type SegmentKey = "input" | "output";
 
-function formatCount(value: number): string {
+function formatCount(value: number, language: "zh-CN" | "zh-TW" | "en-US"): string {
   if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat(getLanguageLocale(language)).format(value);
 }
 
 function formatPercent(value: number): string {
@@ -18,21 +19,23 @@ function formatPercent(value: number): string {
 }
 
 export function StatsTokenDonut({ inputTokens, outputTokens }: StatsTokenDonutProps) {
+  const { language } = useI18n();
   const [activeKey, setActiveKey] = useState<SegmentKey | null>(null);
+  const zh = (text: string) => convertChineseForLanguage(language, text);
 
   const total = Math.max(0, inputTokens) + Math.max(0, outputTokens);
   const inputRatio = total > 0 ? Math.max(0, inputTokens) / total : 0;
   const outputRatio = total > 0 ? Math.max(0, outputTokens) / total : 0;
 
   const centerLabel = useMemo(() => {
-    if (!activeKey) return "Token 总量";
-    return activeKey === "input" ? "输入 Token" : "输出 Token";
-  }, [activeKey]);
+    if (!activeKey) return zh("Token 总量");
+    return activeKey === "input" ? zh("输入 Token") : zh("输出 Token");
+  }, [activeKey, language]);
 
   const centerValue = useMemo(() => {
-    if (!activeKey) return formatCount(total);
-    return activeKey === "input" ? formatCount(inputTokens) : formatCount(outputTokens);
-  }, [activeKey, inputTokens, outputTokens, total]);
+    if (!activeKey) return formatCount(total, language);
+    return activeKey === "input" ? formatCount(inputTokens, language) : formatCount(outputTokens, language);
+  }, [activeKey, inputTokens, language, outputTokens, total]);
 
   const radius = 62;
   const circumference = 2 * Math.PI * radius;
@@ -41,14 +44,14 @@ export function StatsTokenDonut({ inputTokens, outputTokens }: StatsTokenDonutPr
 
   return (
     <div className="rounded-md border border-border bg-bg-secondary p-3">
-      <div className="mb-2 text-xs font-semibold text-text-primary">Token 构成（C3）</div>
+      <div className="mb-2 text-xs font-semibold text-text-primary">{zh("Token 构成（C3）")}</div>
       <div className="flex flex-col items-center gap-2">
         <svg
           width={184}
           height={184}
           viewBox="0 0 184 184"
           role="img"
-          aria-label="输入与输出 Token 占比环形图"
+          aria-label={zh("输入与输出 Token 占比环形图")}
         >
           <g transform="translate(92,92) rotate(-90)">
             <circle
@@ -125,7 +128,7 @@ export function StatsTokenDonut({ inputTokens, outputTokens }: StatsTokenDonutPr
               输入 Token
             </span>
             <span className="text-text-primary">
-              {formatCount(inputTokens)} · {formatPercent(inputRatio)}
+              {formatCount(inputTokens, language)} · {formatPercent(inputRatio)}
             </span>
           </button>
           <button
@@ -141,7 +144,7 @@ export function StatsTokenDonut({ inputTokens, outputTokens }: StatsTokenDonutPr
               输出 Token
             </span>
             <span className="text-text-primary">
-              {formatCount(outputTokens)} · {formatPercent(outputRatio)}
+              {formatCount(outputTokens, language)} · {formatPercent(outputRatio)}
             </span>
           </button>
         </div>

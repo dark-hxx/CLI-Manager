@@ -6,7 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ActionIcon, Badge, Box, Button, Card, Group, SimpleGrid, Stack, Text } from "@mantine/core";
 import { ArrowDown, ArrowUp, Check, GripVertical, Plus, Save, X } from "lucide-react";
 import { toast } from "sonner";
-import { useI18n } from "@/lib/i18n";
+import { pickByLanguage, type AppLanguage, useI18n } from "@/lib/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { StatuslinePreview, type StatuslinePreviewState } from "./StatuslinePreview";
 import { StatuslineProfileBar } from "@/components/settings/StatuslineProfileBar";
@@ -16,6 +16,10 @@ interface CodexStatuslineConfig {
   configDir: string;
   configPath: string;
   items: string[];
+}
+
+interface CcSwitchHookProtectionStatus {
+  state: "notDetected" | "notSynced" | "synced" | "invalidDb" | "unavailable" | "syncFailed";
 }
 
 interface ItemDefinition {
@@ -70,11 +74,11 @@ function codexAnsiCode(id: string) {
   return 35;
 }
 
-function buildCodexPreview(items: string[], definitions: Map<string, ItemDefinition>, language: "zh-CN" | "en-US") {
+function buildCodexPreview(items: string[], definitions: Map<string, ItemDefinition>, language: AppLanguage) {
   return items.map((id) => {
     const definition = definitions.get(id);
     const value = definition?.preview ?? id;
-    const label = definition ? (language === "zh-CN" ? definition.zh : definition.en) : id;
+    const label = definition ? pickByLanguage(language, definition.zh, definition.en) : id;
     return `\x1b[${codexAnsiCode(id)}m${label}: ${value}\x1b[0m`;
   }).join("\x1b[90m · \x1b[0m");
 }
@@ -106,6 +110,7 @@ export function CodexStatuslineEditor({
 }) {
   const { language, t } = useI18n();
   const codexConfigDir = useSettingsStore((state) => state.codexHookConfigDir);
+  const ccSwitchDbPath = useSettingsStore((state) => state.ccSwitchDbPath);
   const [config, setConfig] = useState<CodexStatuslineConfig | null>(null);
   const [items, setItems] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -165,12 +170,30 @@ export function CodexStatuslineEditor({
     });
   };
 
+  const syncCodexCommonConfig = async (nextItems: string[]) => {
+    try {
+      const status = await invoke<CcSwitchHookProtectionStatus>("codex_statusline_sync_ccswitch", {
+        configDir: codexConfigDir ?? undefined,
+        items: nextItems,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      if (["invalidDb", "unavailable", "syncFailed"].includes(status.state)) {
+        toast.warning(t("settings.statusline.ccSwitchSyncWarning"), {
+          description: t("settings.statusline.ccSwitchSyncWarningDescription"),
+        });
+      }
+    } catch (error) {
+      toast.warning(t("settings.statusline.ccSwitchSyncWarning"), { description: errorMessage(error) });
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     try {
       if (!profiles.state) return;
       const next = await profiles.save(profiles.state.activeProfileId, items);
       applyProfileState(next);
+      await syncCodexCommonConfig(items);
       toast.success(t("settings.codexStatusline.saved"));
     } catch (error) {
       toast.error(t("settings.codexStatusline.saveFailed"), { description: errorMessage(error) });
@@ -187,12 +210,28 @@ export function CodexStatuslineEditor({
           dirty={dirty}
           busy={saving}
           onSave={save}
-          onCreate={async (name) => applyProfileState(await profiles.create(name, items))}
-          onSwitch={async (profileId) => applyProfileState(await profiles.switchProfile(profileId))}
+          onCreate={async (name) => {
+            applyProfileState(await profiles.create(name, items));
+            await syncCodexCommonConfig(items);
+          }}
+          onSwitch={async (profileId) => {
+            const next = await profiles.switchProfile(profileId);
+            applyProfileState(next);
+            const active = next.profiles.find((profile) => profile.id === next.activeProfileId);
+            await syncCodexCommonConfig(active?.payload ?? items);
+          }}
           onRename={async (profileId, name) => applyProfileState(await profiles.rename(profileId, name))}
-          onDuplicate={async (profileId, name) => applyProfileState(await profiles.duplicate(profileId, name))}
+          onDuplicate={async (profileId, name) => {
+            applyProfileState(await profiles.duplicate(profileId, name));
+            await syncCodexCommonConfig(items);
+          }}
           onDelete={async (profileId) => applyProfileState(await profiles.remove(profileId))}
-          onCaptureExternal={async (name) => applyProfileState(await profiles.captureExternal(name))}
+          onCaptureExternal={async (name) => {
+            const next = await profiles.captureExternal(name);
+            applyProfileState(next);
+            const active = next.profiles.find((profile) => profile.id === next.activeProfileId);
+            await syncCodexCommonConfig(active?.payload ?? items);
+          }}
         />
       </Card>
       <Card className="border border-border bg-surface-container-low" radius="lg" p="md">
@@ -228,7 +267,7 @@ export function CodexStatuslineEditor({
                   const definition = definitions.get(id);
                   return (
                     <SortableCodexItem key={id} id={id}>{(dragHandle) => <>
-                      <Group gap="xs" wrap="nowrap">{dragHandle}<Box><Text size="sm">{definition ? (language === "zh-CN" ? definition.zh : definition.en) : id}</Text><Text size="xs" c="var(--on-surface-variant)">{id}</Text></Box></Group>
+                      <Group gap="xs" wrap="nowrap">{dragHandle}<Box><Text size="sm">{definition ? pickByLanguage(language, definition.zh, definition.en) : id}</Text><Text size="xs" c="var(--on-surface-variant)">{id}</Text></Box></Group>
                       <Group gap={4}>
                         <ActionIcon variant="subtle" disabled={index === 0} onClick={() => move(index, -1)} aria-label={t("settings.codexStatusline.moveUp")}><ArrowUp size={15} /></ActionIcon>
                         <ActionIcon variant="subtle" disabled={index === items.length - 1} onClick={() => move(index, 1)} aria-label={t("settings.codexStatusline.moveDown")}><ArrowDown size={15} /></ActionIcon>
@@ -248,7 +287,7 @@ export function CodexStatuslineEditor({
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mah={500} className="overflow-y-auto pr-1">
             {filteredItems.map((item) => {
               const selected = items.includes(item.id);
-              return <Button key={item.id} variant={selected ? "light" : "subtle"} color={selected ? "green" : "gray"} justify="space-between" rightSection={selected ? <Check size={14} /> : <Plus size={14} />} onClick={() => toggle(item.id)}>{language === "zh-CN" ? item.zh : item.en}</Button>;
+              return <Button key={item.id} variant={selected ? "light" : "subtle"} color={selected ? "green" : "gray"} justify="space-between" rightSection={selected ? <Check size={14} /> : <Plus size={14} />} onClick={() => toggle(item.id)}>{pickByLanguage(language, item.zh, item.en)}</Button>;
             })}
           </SimpleGrid>
         </section>

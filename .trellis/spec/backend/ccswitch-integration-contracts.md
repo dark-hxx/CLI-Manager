@@ -42,6 +42,16 @@ pub async fn ccswitch_list_providers(
   expected old value and replacement value; `BEGIN IMMEDIATE` plus the old-value check
   prevents overwriting a concurrent cc-switch update. Never expose arbitrary SQL through
   the Tauri boundary and never fall back to UNC writes.
+- **Common config write behavior**: User-triggered Hook/statusline operations write
+  local CLI config first, then best-effort write cc-switch common config automatically.
+  cc-switch common config is a shared snippet merged into all providers with "Apply
+  Common Config" enabled. If cc-switch is missing or unavailable, the local config
+  write remains the fallback and must still succeed.
+- **Allowed common config content**: write only CLI-Manager-owned shared Hook/statusline
+  state: Claude `hooks` commands and `statusLine`, Codex `[features].hooks`,
+  CLI-Manager-owned `[hooks.state.*]`, and Codex `[tui].status_line`. Do not write
+  secrets, base URLs, model-provider routing, generated project provider profiles, or
+  project-local state into cc-switch common config.
 - **Path resolution**: `None`/blank → default under `app.path().home_dir()`; custom path
   must pass extension allowlist (`.db`) and `is_file()` before any I/O.
 - **WSL path validation**: on Windows, validate WSL UNC database existence with

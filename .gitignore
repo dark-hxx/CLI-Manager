@@ -37,6 +37,7 @@ server/target/
 apps/server/target/
 crates/web-protocol/target/
 crates/web-protocol/Cargo.lock
+apps/web/dist
 
 prototype/
 .cursor

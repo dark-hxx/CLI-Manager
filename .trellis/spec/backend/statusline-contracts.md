@@ -53,11 +53,14 @@ Claude invokes the runtime as:
 - Claude config path uses `CLAUDE_CONFIG_DIR` when non-empty, otherwise `<home>/.claude/settings.json`.
 - Install preserves every unrelated Claude field and writes `type=command`, the managed `__statusline` command, `padding=0`, and optional `refreshInterval` clamped to `1..=60`.
 - Uninstall removes `statusLine` only when its command contains the CLI-Manager `__statusline` marker.
-- Install/uninstall must pass the selected `ccSwitchDbPath` through the Tauri boundary and best-effort merge/remove the same managed `statusLine` in cc-switch `settings.common_config_claude`.
+- cc-switch common config means the app-level shared snippet stored in the cc-switch SQLite `settings` table as `common_config_claude` (JSON) or `common_config_codex` (TOML). cc-switch merges that snippet into every provider whose metadata enables "Apply Common Config" when switching providers.
+- Statusline actions must save/apply the local config first, then best-effort write cc-switch common config automatically. If cc-switch is missing, invalid, or unavailable, the local config write is the fallback and still succeeds.
+- Claude install/uninstall and profile save/switch flows may best-effort merge/remove the managed `statusLine` in cc-switch `settings.common_config_claude`.
 - CC Switch common-config sync reuses the Hook path resolver and transaction rules: explicit invalid paths never fall back, WSL/host mismatches are not written, malformed JSON is preserved, and local Claude installation remains successful when sync is unavailable.
 - `StatuslineStatus.ccSwitch` is `null` for read-only status checks and contains `{ state, dbPath, message, wslMismatch }` after install/uninstall. Supported states match Hook protection: `notDetected`, `notSynced`, `synced`, `invalidDb`, `unavailable`, `syncFailed`.
 - User configuration writes must be validated and use a same-directory temporary file before replacement.
 - Codex native statusline configuration is an ordered array at `[tui].status_line` in `<CODEX_HOME>/config.toml`; the editor changes only this assignment and preserves all other TOML lines and tables.
+- Codex statusline save/switch flows may best-effort merge the same `[tui].status_line` assignment into cc-switch `settings.common_config_codex`, preserving existing `[features]`, `[hooks.state.*]`, `[windows]`, `[projects.*]`, and unrelated `[tui]` keys. `common_config_codex` is TOML, not JSON.
 - The frontend item catalog must use current official Codex item ids. Unknown ids supplied for save return `codex_statusline_unknown_item` instead of writing invalid configuration.
 - Named Claude and Codex profiles live in `<home>/.cli-manager/statusline/profiles.json`; each tool has an independent active profile and strongly validated payload shape.
 - Saving or switching a profile applies the actual Claude/Codex configuration first, then updates the active profile metadata. Failed application must not change `activeProfileId`.

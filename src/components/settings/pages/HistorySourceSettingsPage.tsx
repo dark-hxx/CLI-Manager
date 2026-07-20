@@ -24,7 +24,7 @@ import {
   type HistorySourceDescriptor,
   type HistorySourceId,
 } from "../../../lib/historySources";
-import { useI18n } from "../../../lib/i18n";
+import { getLanguageLocale, pickByLanguage, useI18n } from "../../../lib/i18n";
 import { useHistorySourceSettingsStore } from "../../../stores/historySourceSettingsStore";
 import { VendorIcon, inferVendor } from "../../VendorIcon";
 
@@ -112,7 +112,7 @@ function formatBytes(bytes: number): string {
 
 function formatBackupTime(timestamp: number, language: string): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
-  return new Intl.DateTimeFormat(language === "zh-CN" ? "zh-CN" : "en-US", {
+  return new Intl.DateTimeFormat(getLanguageLocale(language as "zh-CN" | "zh-TW" | "en-US"), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -134,7 +134,7 @@ function validationMessage(code: string, text: (zh: string, en: string) => strin
 
 export function HistorySourceSettingsPage() {
   const { language, t } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const { loaded, settings, load, setSourceSettings, clearSource } = useHistorySourceSettingsStore();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [detectingSourceId, setDetectingSourceId] = useState<HistorySourceId | null>(null);

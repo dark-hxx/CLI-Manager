@@ -190,6 +190,7 @@ pub async fn hook_settings_install(
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
+    sync_cc_switch_common_config: Option<bool>,
 ) -> Result<HookSettingsStatus, String> {
     let claude_dir = resolve_claude_dir(selected_dir, true)?
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
@@ -201,35 +202,37 @@ pub async fn hook_settings_install(
         install_claude_hooks(&claude_dir)?;
     }
     let claude = build_claude_status(Some(claude_dir.clone()))?;
-    if requested_module.is_some() {
-        sync_ccswitch_for_tool_status(
-            &app,
-            cc_switch_db_path.clone(),
-            &claude_dir,
-            CommonConfigTool::Claude,
-            &claude,
-        )
-        .await;
-    } else {
-        sync_ccswitch_tool_common_config(
-            &app,
-            cc_switch_db_path.clone(),
-            &claude_dir,
-            CommonConfigTool::Claude,
-            CcSwitchSyncMode::Install,
-        )
-        .await;
-        if let Some(codex_dir) = codex_dir.as_ref() {
-            let codex_status = build_codex_status(Some(codex_dir.clone()))?;
-            if hook_status_has_hooks(&codex_status) {
-                sync_ccswitch_tool_common_config(
-                    &app,
-                    cc_switch_db_path.clone(),
-                    codex_dir,
-                    CommonConfigTool::Codex,
-                    CcSwitchSyncMode::Install,
-                )
-                .await;
+    if sync_cc_switch_common_config.unwrap_or(true) {
+        if requested_module.is_some() {
+            sync_ccswitch_for_tool_status(
+                &app,
+                cc_switch_db_path.clone(),
+                &claude_dir,
+                CommonConfigTool::Claude,
+                &claude,
+            )
+            .await;
+        } else {
+            sync_ccswitch_tool_common_config(
+                &app,
+                cc_switch_db_path.clone(),
+                &claude_dir,
+                CommonConfigTool::Claude,
+                CcSwitchSyncMode::Install,
+            )
+            .await;
+            if let Some(codex_dir) = codex_dir.as_ref() {
+                let codex_status = build_codex_status(Some(codex_dir.clone()))?;
+                if hook_status_has_hooks(&codex_status) {
+                    sync_ccswitch_tool_common_config(
+                        &app,
+                        cc_switch_db_path.clone(),
+                        codex_dir,
+                        CommonConfigTool::Codex,
+                        CcSwitchSyncMode::Install,
+                    )
+                    .await;
+                }
             }
         }
     }
@@ -258,6 +261,7 @@ pub async fn hook_settings_uninstall(
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
+    sync_cc_switch_common_config: Option<bool>,
 ) -> Result<HookSettingsStatus, String> {
     let claude_dir = resolve_claude_dir(selected_dir, true)?
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
@@ -269,24 +273,26 @@ pub async fn hook_settings_uninstall(
         uninstall_claude_hooks(&claude_dir)?;
     }
     let claude = build_claude_status(Some(claude_dir.clone()))?;
-    if requested_module.is_some() {
-        sync_ccswitch_for_tool_status(
-            &app,
-            cc_switch_db_path.clone(),
-            &claude_dir,
-            CommonConfigTool::Claude,
-            &claude,
-        )
-        .await;
-    } else {
-        sync_ccswitch_tool_common_config(
-            &app,
-            cc_switch_db_path.clone(),
-            &claude_dir,
-            CommonConfigTool::Claude,
-            CcSwitchSyncMode::Uninstall,
-        )
-        .await;
+    if sync_cc_switch_common_config.unwrap_or(true) {
+        if requested_module.is_some() {
+            sync_ccswitch_for_tool_status(
+                &app,
+                cc_switch_db_path.clone(),
+                &claude_dir,
+                CommonConfigTool::Claude,
+                &claude,
+            )
+            .await;
+        } else {
+            sync_ccswitch_tool_common_config(
+                &app,
+                cc_switch_db_path.clone(),
+                &claude_dir,
+                CommonConfigTool::Claude,
+                CcSwitchSyncMode::Uninstall,
+            )
+            .await;
+        }
     }
     let codex = build_codex_status(codex_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
@@ -313,6 +319,7 @@ pub async fn hook_settings_install_codex(
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
+    sync_cc_switch_common_config: Option<bool>,
 ) -> Result<HookSettingsStatus, String> {
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?
         .ok_or_else(|| "请先选择 Codex 配置目录".to_string())?;
@@ -324,35 +331,37 @@ pub async fn hook_settings_install_codex(
         install_codex_hooks(&codex_dir)?;
     }
     let codex = build_codex_status(Some(codex_dir.clone()))?;
-    if requested_module.is_some() {
-        sync_ccswitch_for_tool_status(
-            &app,
-            cc_switch_db_path.clone(),
-            &codex_dir,
-            CommonConfigTool::Codex,
-            &codex,
-        )
-        .await;
-    } else {
-        sync_ccswitch_tool_common_config(
-            &app,
-            cc_switch_db_path.clone(),
-            &codex_dir,
-            CommonConfigTool::Codex,
-            CcSwitchSyncMode::Install,
-        )
-        .await;
-        if let Some(claude_dir) = claude_dir.as_ref() {
-            let claude_status = build_claude_status(Some(claude_dir.clone()))?;
-            if hook_status_has_hooks(&claude_status) {
-                sync_ccswitch_tool_common_config(
-                    &app,
-                    cc_switch_db_path.clone(),
-                    claude_dir,
-                    CommonConfigTool::Claude,
-                    CcSwitchSyncMode::Install,
-                )
-                .await;
+    if sync_cc_switch_common_config.unwrap_or(true) {
+        if requested_module.is_some() {
+            sync_ccswitch_for_tool_status(
+                &app,
+                cc_switch_db_path.clone(),
+                &codex_dir,
+                CommonConfigTool::Codex,
+                &codex,
+            )
+            .await;
+        } else {
+            sync_ccswitch_tool_common_config(
+                &app,
+                cc_switch_db_path.clone(),
+                &codex_dir,
+                CommonConfigTool::Codex,
+                CcSwitchSyncMode::Install,
+            )
+            .await;
+            if let Some(claude_dir) = claude_dir.as_ref() {
+                let claude_status = build_claude_status(Some(claude_dir.clone()))?;
+                if hook_status_has_hooks(&claude_status) {
+                    sync_ccswitch_tool_common_config(
+                        &app,
+                        cc_switch_db_path.clone(),
+                        claude_dir,
+                        CommonConfigTool::Claude,
+                        CcSwitchSyncMode::Install,
+                    )
+                    .await;
+                }
             }
         }
     }
@@ -381,6 +390,7 @@ pub async fn hook_settings_uninstall_codex(
     codex_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
+    sync_cc_switch_common_config: Option<bool>,
 ) -> Result<HookSettingsStatus, String> {
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?
         .ok_or_else(|| "未找到 Codex 配置目录".to_string())?;
@@ -393,24 +403,26 @@ pub async fn hook_settings_uninstall_codex(
     }
     let claude = build_claude_status(claude_dir.clone())?;
     let codex = build_codex_status(Some(codex_dir.clone()))?;
-    if requested_module.is_some() {
-        sync_ccswitch_for_tool_status(
-            &app,
-            cc_switch_db_path.clone(),
-            &codex_dir,
-            CommonConfigTool::Codex,
-            &codex,
-        )
-        .await;
-    } else {
-        sync_ccswitch_tool_common_config(
-            &app,
-            cc_switch_db_path.clone(),
-            &codex_dir,
-            CommonConfigTool::Codex,
-            CcSwitchSyncMode::Uninstall,
-        )
-        .await;
+    if sync_cc_switch_common_config.unwrap_or(true) {
+        if requested_module.is_some() {
+            sync_ccswitch_for_tool_status(
+                &app,
+                cc_switch_db_path.clone(),
+                &codex_dir,
+                CommonConfigTool::Codex,
+                &codex,
+            )
+            .await;
+        } else {
+            sync_ccswitch_tool_common_config(
+                &app,
+                cc_switch_db_path.clone(),
+                &codex_dir,
+                CommonConfigTool::Codex,
+                CcSwitchSyncMode::Uninstall,
+            )
+            .await;
+        }
     }
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
@@ -873,6 +885,69 @@ fn strip_common_config_statusline(existing: Option<&str>) -> Result<Option<Strin
     Ok(Some(text))
 }
 
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn codex_status_line_assignment(items: &[String]) -> String {
+    format!(
+        "status_line = [{}]",
+        items
+            .iter()
+            .map(|item| toml_string(item))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn merge_common_config_codex_statusline(existing: Option<&str>, items: &[String]) -> String {
+    let mut lines: Vec<String> = existing
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.lines().map(ToString::to_string).collect())
+        .unwrap_or_default();
+    let assignment = codex_status_line_assignment(items);
+    let mut tui_header_index = None;
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() == "[tui]" {
+            tui_header_index = Some(index);
+            break;
+        }
+    }
+
+    if let Some(header_index) = tui_header_index {
+        let mut insert_index = lines.len();
+        for index in header_index + 1..lines.len() {
+            if is_toml_table_header(&lines[index]) {
+                insert_index = index;
+                break;
+            }
+            if lines[index]
+                .trim()
+                .split_once('=')
+                .is_some_and(|(key, _)| key.trim() == "status_line")
+            {
+                lines[index] = assignment;
+                return format!("{}\n", lines.join("\n"));
+            }
+        }
+        lines.insert(insert_index, assignment);
+        return format!("{}\n", lines.join("\n"));
+    }
+
+    let insert_index = first_toml_table_header_index(&lines).unwrap_or(lines.len());
+    let mut block = Vec::new();
+    if insert_index > 0 && !lines[insert_index - 1].trim().is_empty() {
+        block.push(String::new());
+    }
+    block.push("[tui]".to_string());
+    block.push(assignment);
+    if insert_index < lines.len() {
+        block.push(String::new());
+    }
+    lines.splice(insert_index..insert_index, block);
+    format!("{}\n", lines.join("\n"))
+}
+
 #[cfg(test)]
 fn strip_claude_common_config_hooks(existing: Option<&str>) -> Result<Option<String>, String> {
     strip_common_config_hooks(existing, CommonConfigTool::Claude)
@@ -1194,6 +1269,92 @@ pub(crate) async fn sync_ccswitch_claude_statusline(
             Some(&path),
             Some(err),
             claude_dir,
+        ),
+    }
+}
+
+pub(crate) async fn sync_ccswitch_codex_statusline(
+    app: &AppHandle,
+    db_path: Option<String>,
+    codex_dir: &Path,
+    items: &[String],
+) -> CcSwitchHookProtectionStatus {
+    let path = match resolve_ccswitch_db_path_for_hook(app, db_path, codex_dir) {
+        Ok(path) => path,
+        Err(status) => return status,
+    };
+    let result = async {
+        if crate::wsl::is_wsl_config_dir(&path_to_string(&path)) {
+            let prepared_path = crate::ccswitch_db::prepare_read_path(&path).await?;
+            let mut conn = open_db_readonly(prepared_path.path()).await?;
+            if !settings_table_exists(&mut conn).await? {
+                return Ok(CcSwitchHookProtectionState::Unavailable);
+            }
+            let existing =
+                read_common_config_value(&mut conn, CCSWITCH_COMMON_CONFIG_CODEX_KEY).await?;
+            drop(conn);
+            let next = merge_common_config_codex_statusline(existing.as_deref(), items);
+            let available = crate::ccswitch_db::write_wsl_setting(
+                &path,
+                CCSWITCH_COMMON_CONFIG_CODEX_KEY,
+                existing.as_deref(),
+                &next,
+                true,
+            )
+            .await?;
+            return Ok(if available {
+                CcSwitchHookProtectionState::Synced
+            } else {
+                CcSwitchHookProtectionState::Unavailable
+            });
+        }
+
+        let mut conn = open_db_readwrite(&path).await?;
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut conn)
+            .await
+            .map_err(|err| format!("db_write_failed: {err}"))?;
+        let update = async {
+            if !settings_table_exists(&mut conn).await? {
+                return Ok(CcSwitchHookProtectionState::Unavailable);
+            }
+            let existing =
+                read_common_config_value(&mut conn, CCSWITCH_COMMON_CONFIG_CODEX_KEY).await?;
+            let next = merge_common_config_codex_statusline(existing.as_deref(), items);
+            sqlx::query(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )
+            .bind(CCSWITCH_COMMON_CONFIG_CODEX_KEY)
+            .bind(next)
+            .execute(&mut conn)
+            .await
+            .map_err(|err| format!("db_write_failed: {err}"))?;
+            Ok(CcSwitchHookProtectionState::Synced)
+        }
+        .await;
+        match update {
+            Ok(state) => {
+                sqlx::query("COMMIT")
+                    .execute(&mut conn)
+                    .await
+                    .map_err(|err| format!("db_write_failed: {err}"))?;
+                Ok(state)
+            }
+            Err(err) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut conn).await;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    match result {
+        Ok(state) => cc_switch_status(state, Some(&path), None, codex_dir),
+        Err(err) => cc_switch_status(
+            CcSwitchHookProtectionState::SyncFailed,
+            Some(&path),
+            Some(err),
+            codex_dir,
         ),
     }
 }
@@ -2841,6 +3002,46 @@ mod tests {
         assert!(strip_common_config_statusline(Some(third_party))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn merge_codex_statusline_preserves_existing_common_config() {
+        let raw = r#"model_reasoning_effort = "xhigh"
+
+[features]
+hooks = true # CLI-Manager hook protection
+
+[windows]
+wsl = true
+"#;
+        let merged = merge_common_config_codex_statusline(
+            Some(raw),
+            &["model-with-reasoning".to_string(), "context-remaining".to_string()],
+        );
+        assert!(merged.contains("[tui]\nstatus_line = [\"model-with-reasoning\", \"context-remaining\"]"));
+        assert!(merged.contains("[features]\nhooks = true # CLI-Manager hook protection"));
+        assert!(merged.contains("[windows]\nwsl = true"));
+        assert!(merged.find("[tui]").unwrap() < merged.find("[features]").unwrap());
+    }
+
+    #[test]
+    fn merge_codex_statusline_replaces_existing_tui_status_line() {
+        let raw = r#"[features]
+hooks = true
+
+[tui]
+notifications = ["approval-requested"]
+status_line = ["model"]
+theme = "monokai"
+"#;
+        let merged = merge_common_config_codex_statusline(
+            Some(raw),
+            &["current-dir".to_string(), "status".to_string()],
+        );
+        assert!(merged.contains("notifications = [\"approval-requested\"]"));
+        assert!(merged.contains("status_line = [\"current-dir\", \"status\"]"));
+        assert!(merged.contains("theme = \"monokai\""));
+        assert_eq!(merged.matches("status_line =").count(), 1);
     }
 
     #[test]

@@ -7,7 +7,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
 import { Accordion, ActionIcon, Badge, Box, Button, Card, Checkbox, ColorSwatch, Group, NumberInput, ScrollArea, SegmentedControl, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Bot, Braces, Download, GripVertical, Plus, RefreshCw, Save, Trash2, Upload } from "lucide-react";
-import { useI18n } from "@/lib/i18n";
+import { pickByLanguage, useI18n } from "@/lib/i18n";
 import { normalizeTerminalFontFamily } from "@/lib/terminalFontFamily";
 import {
   STATUSLINE_PREVIEW_PAYLOAD,
@@ -337,6 +337,28 @@ function ClaudeStatuslineEditor({
     setActiveLineIndex(targetLine);
   };
 
+  const warnCcSwitchSync = (next: StatuslineStatus) => {
+    if (next.ccSwitch && ["invalidDb", "unavailable", "syncFailed"].includes(next.ccSwitch.state)) {
+      toast.warning(t("settings.statusline.ccSwitchSyncWarning"), {
+        description: t("settings.statusline.ccSwitchSyncWarningDescription"),
+      });
+    }
+  };
+
+  const syncClaudeCommonConfigIfInstalled = async () => {
+    if (!status?.installed) return;
+    try {
+      const nextStatus = await invoke<StatuslineStatus>("statusline_sync_ccswitch", {
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+        refreshInterval: 10,
+      });
+      setStatus(nextStatus);
+      warnCcSwitchSync(nextStatus);
+    } catch (error) {
+      toast.warning(t("settings.statusline.ccSwitchSyncWarning"), { description: errorMessage(error) });
+    }
+  };
+
   const save = async () => {
     if (!settings) return;
     setWorking(true);
@@ -344,6 +366,7 @@ function ClaudeStatuslineEditor({
       if (!profiles.state) return;
       const saved = await profiles.save(profiles.state.activeProfileId, settings);
       applyProfileState(saved);
+      await syncClaudeCommonConfigIfInstalled();
       toast.success(t("settings.statusline.saved"));
     } catch (error) {
       toast.error(t("settings.statusline.saveFailed"), { description: errorMessage(error) });
@@ -370,11 +393,7 @@ function ClaudeStatuslineEditor({
         : await invoke<StatuslineStatus>("statusline_install", { refreshInterval: 10, ccSwitchDbPath: ccSwitchDbPath ?? undefined });
       setStatus(next);
       toast.success(t(status?.installed ? "settings.statusline.uninstalled" : "settings.statusline.installed"));
-      if (next.ccSwitch && ["invalidDb", "unavailable", "syncFailed"].includes(next.ccSwitch.state)) {
-        toast.warning(t("settings.statusline.ccSwitchSyncWarning"), {
-          description: t("settings.statusline.ccSwitchSyncWarningDescription"),
-        });
-      }
+      warnCcSwitchSync(next);
     } catch (error) {
       toast.error(t("settings.statusline.installFailed"), { description: errorMessage(error) });
     } finally { setWorking(false); }
@@ -403,7 +422,7 @@ function ClaudeStatuslineEditor({
 
   const draggingCatalogEntry = draggingCatalogType ? catalog.find((entry) => entry.widgetType === draggingCatalogType) : null;
   const draggingCatalogLabel = draggingCatalogEntry
-    ? (language === "zh-CN" ? draggingCatalogEntry.zhName : draggingCatalogEntry.enName)
+    ? pickByLanguage(language, draggingCatalogEntry.zhName, draggingCatalogEntry.enName)
     : draggingCatalogType;
 
   if (!settings) return <Text c="var(--on-surface-variant)">{t("settings.statusline.loading")}</Text>;
@@ -416,12 +435,24 @@ function ClaudeStatuslineEditor({
           dirty={dirty}
           busy={working}
           onSave={save}
-          onCreate={async (name) => applyProfileState(await profiles.create(name, settings))}
-          onSwitch={async (profileId) => applyProfileState(await profiles.switchProfile(profileId))}
+          onCreate={async (name) => {
+            applyProfileState(await profiles.create(name, settings));
+            await syncClaudeCommonConfigIfInstalled();
+          }}
+          onSwitch={async (profileId) => {
+            applyProfileState(await profiles.switchProfile(profileId));
+            await syncClaudeCommonConfigIfInstalled();
+          }}
           onRename={async (profileId, name) => applyProfileState(await profiles.rename(profileId, name))}
-          onDuplicate={async (profileId, name) => applyProfileState(await profiles.duplicate(profileId, name))}
+          onDuplicate={async (profileId, name) => {
+            applyProfileState(await profiles.duplicate(profileId, name));
+            await syncClaudeCommonConfigIfInstalled();
+          }}
           onDelete={async (profileId) => applyProfileState(await profiles.remove(profileId))}
-          onCaptureExternal={async (name) => applyProfileState(await profiles.captureExternal(name))}
+          onCaptureExternal={async (name) => {
+            applyProfileState(await profiles.captureExternal(name));
+            await syncClaudeCommonConfigIfInstalled();
+          }}
         />
       </Card>
       <Card className="border border-border bg-surface-container-low" radius="lg" p="md">
@@ -475,7 +506,7 @@ function ClaudeStatuslineEditor({
                     <Accordion.Panel>
                       <Stack gap={6}>
                         {entries.map((entry) => {
-                          const title = language === "zh-CN" ? entry.zhName : entry.enName;
+                          const title = pickByLanguage(language, entry.zhName, entry.enName);
                           return (
                             <CatalogWidgetItem
                               key={entry.widgetType}
@@ -507,7 +538,7 @@ function ClaudeStatuslineEditor({
                     <Group gap={6} align="stretch">
                       {line.map((item) => {
                         const entry = catalog.find((candidate) => candidate.widgetType === item.type);
-                        const label = entry ? (language === "zh-CN" ? entry.zhName : entry.enName) : item.type;
+                        const label = entry ? pickByLanguage(language, entry.zhName, entry.enName) : item.type;
                         return <SortableWidgetChip key={item.id} item={item} label={label} selected={selectedId === item.id} removeLabel={t("settings.statusline.removeComponent").replace("{name}", label)} onSelect={() => { setSelectedId((current) => current === item.id ? null : item.id); setActiveLineIndex(lineIndex); }} onRemove={() => removeWidget(item.id)} />;
                       })}
                       {line.length === 0 && <Text size="xs" c="var(--on-surface-variant)">{t("settings.statusline.dropHere")}</Text>}

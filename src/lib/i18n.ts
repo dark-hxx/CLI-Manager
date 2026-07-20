@@ -1,15 +1,18 @@
+import OpenCC from "opencc-js";
 import { useMemo } from "react";
 import { useSettingsStore, type LanguagePreference } from "../stores/settingsStore";
 
-export type AppLanguage = "zh-CN" | "en-US";
+export type AppLanguage = "zh-CN" | "zh-TW" | "en-US";
 
 export const LANGUAGE_OPTIONS: { value: LanguagePreference; label: string }[] = [
   { value: "auto", label: "Auto / 自动" },
   { value: "zh-CN", label: "简体中文" },
+  { value: "zh-TW", label: "繁體中文" },
   { value: "en-US", label: "English" },
 ];
 
-const ZH_PREFIXES = ["zh", "zh-cn", "zh-hans", "zh-sg", "zh-my"];
+const TRADITIONAL_ZH_PREFIXES = ["zh-tw", "zh-hk", "zh-mo", "zh-hant"];
+const SIMPLIFIED_ZH_PREFIXES = ["zh", "zh-cn", "zh-hans", "zh-sg", "zh-my"];
 
 export function detectPreferredLanguage(): AppLanguage {
   const candidates =
@@ -21,13 +24,44 @@ export function detectPreferredLanguage(): AppLanguage {
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
 
-  return normalized.some((item) => ZH_PREFIXES.some((prefix) => item === prefix || item.startsWith(`${prefix}-`)))
-    ? "zh-CN"
-    : "en-US";
+  if (normalized.some((item) => TRADITIONAL_ZH_PREFIXES.some((prefix) => item === prefix || item.startsWith(`${prefix}-`)))) {
+    return "zh-TW";
+  }
+
+  if (normalized.some((item) => SIMPLIFIED_ZH_PREFIXES.some((prefix) => item === prefix || item.startsWith(`${prefix}-`)))) {
+    return "zh-CN";
+  }
+
+  return "en-US";
 }
 
 export function resolveLanguagePreference(language: LanguagePreference): AppLanguage {
   return language === "auto" ? detectPreferredLanguage() : language;
+}
+
+export function isEnglishLanguage(language: AppLanguage): boolean {
+  return language === "en-US";
+}
+
+export function isChineseLanguage(language: AppLanguage): boolean {
+  return !isEnglishLanguage(language);
+}
+
+export function convertChineseForLanguage(language: AppLanguage, text: string): string {
+  return language === "zh-TW" ? zhTwConverter(text) : text;
+}
+
+export function pickByLanguage<T>(language: AppLanguage, zh: T, en: T): T {
+  if (isEnglishLanguage(language)) return en;
+  if (typeof zh === "string" && typeof en === "string") {
+    return convertChineseForLanguage(language, zh) as T;
+  }
+  return zh;
+}
+
+export function getLanguageLocale(language: AppLanguage, englishLocale = "en-US"): string {
+  if (language === "en-US") return englishLocale;
+  return language;
 }
 
 const zh = {
@@ -305,6 +339,9 @@ const zh = {
   "externalSessionSync.empty": "没有找到可同步的项目",
   "externalSessionSync.cancel": "取消",
   "externalSessionSync.confirm": "同步",
+  "externalSessionSync.ignore": "忽略",
+  "externalSessionSync.ignoreConfirmTitle": "确认忽略所选项目？",
+  "externalSessionSync.ignoreConfirmMessage": "将忽略所选的 {count} 个项目，后续同步扫描不再提醒。",
   "externalSessionSync.shellLabel": "导入项目使用的 Shell",
   "externalSessionSync.syncing": "同步中...",
   "externalSessionSync.selectProjectAria": "同步 {name}",
@@ -770,6 +807,42 @@ const zh = {
   "settings.sshHosts.openSsh": "系统 OpenSSH",
   "settings.sshHosts.openSshMissing": "未检测到可用的 OpenSSH 客户端",
   "settings.sshHosts.add": "新建 SSH 主机",
+  "settings.sshHosts.import.action": "导入",
+  "settings.sshHosts.import.title": "导入 SSH Config",
+  "settings.sshHosts.import.description": "扫描配置目录中的 Host 别名，并作为系统 OpenSSH 配置引用导入。",
+  "settings.sshHosts.import.directory": "SSH 配置目录",
+  "settings.sshHosts.import.chooseDirectory": "选择 SSH 配置目录",
+  "settings.sshHosts.import.scan": "扫描",
+  "settings.sshHosts.import.scanning": "正在扫描 SSH Config...",
+  "settings.sshHosts.import.configFilePending": "等待扫描 config 文件",
+  "settings.sshHosts.import.group": "导入到 SSH 分组",
+  "settings.sshHosts.import.selectAll": "全选可导入主机",
+  "settings.sshHosts.import.selectedSummary": "已选择 {selected} / {total}",
+  "settings.sshHosts.import.empty": "没有发现可导入的具体 Host 别名。",
+  "settings.sshHosts.import.exists": "已存在",
+  "settings.sshHosts.import.selectHostAria": "选择 SSH 主机 {name}",
+  "settings.sshHosts.import.confirm": "导入 {count} 台主机",
+  "settings.sshHosts.import.importing": "正在导入...",
+  "settings.sshHosts.import.result": "导入结果：成功 {success}，失败 {failed}，跳过 {skipped}",
+  "settings.sshHosts.import.warning.conditionalInclude": "已跳过条件 Host/Match 块中的 Include：{file}",
+  "settings.sshHosts.import.error.directoryRequired": "请选择 SSH 配置目录。",
+  "settings.sshHosts.import.error.directoryInvalid": "SSH 配置目录必须是有效的绝对路径。",
+  "settings.sshHosts.import.error.directoryNotFound": "SSH 配置目录不存在或无法访问。",
+  "settings.sshHosts.import.error.notDirectory": "选择的路径不是目录。",
+  "settings.sshHosts.import.error.configNotFound": "所选目录中没有可读取的 config 文件。",
+  "settings.sshHosts.import.error.readFailed": "SSH Config 读取失败，请检查文件权限。",
+  "settings.sshHosts.import.error.fileTooLarge": "单个 SSH Config 文件不能超过 1 MiB。",
+  "settings.sshHosts.import.error.encodingInvalid": "SSH Config 必须使用 UTF-8 编码。",
+  "settings.sshHosts.import.error.parseFailed": "SSH Config 包含未闭合的引号或转义。",
+  "settings.sshHosts.import.error.includeCycle": "SSH Config 的 Include 存在循环引用。",
+  "settings.sshHosts.import.error.includeLimit": "SSH Config 的 Include 层级或文件数量超过限制。",
+  "settings.sshHosts.import.error.includeNotFound": "SSH Config 引用的 Include 文件不存在。",
+  "settings.sshHosts.import.error.includeNotFile": "SSH Config 的 Include 目标不是文件。",
+  "settings.sshHosts.import.error.includeEnvInvalid": "SSH Config 的 Include 环境变量格式无效。",
+  "settings.sshHosts.import.error.includeEnvMissing": "SSH Config 的 Include 引用了未定义的环境变量。",
+  "settings.sshHosts.import.error.includePatternInvalid": "SSH Config 的 Include 通配符格式无效。",
+  "settings.sshHosts.import.error.configFileInvalid": "SSH Config 文件路径无效。",
+  "settings.sshHosts.import.error.configFileUnavailable": "SSH Config 文件已移动、删除或无法读取。",
   "settings.sshHosts.edit": "编辑 SSH 主机",
   "settings.sshHosts.empty": "尚未配置 SSH 主机",
   "settings.sshHosts.emptyDescription": "添加主机后，可用于创建 SSH 远程项目或直接打开远程终端。",
@@ -806,9 +879,9 @@ const zh = {
   "settings.sshHosts.identityFile": "私钥文件",
   "settings.sshHosts.chooseIdentityFile": "选择 SSH 私钥文件",
   "settings.sshHosts.authOrder": "认证顺序由系统 OpenSSH、SSH Agent 和本机配置决定。密码和私钥口令不会写入数据库。",
-  "settings.sshHosts.configAuthManaged": "此连接使用 SSH Config 别名，认证、用户、端口、跳板和代理均由 ~/.ssh/config 管理。",
-  "settings.sshHosts.configRoutingManaged": "SSH Config 模式下，ProxyJump、ProxyCommand 和代理链路均由 ~/.ssh/config 管理。",
-  "settings.sshHosts.authHint.ssh_config": "复用 ~/.ssh/config 中的 Host 配置。",
+  "settings.sshHosts.configAuthManaged": "此连接使用 SSH Config 别名，认证、用户、端口、跳板和代理均由当前 SSH Config 管理。",
+  "settings.sshHosts.configRoutingManaged": "SSH Config 模式下，ProxyJump、ProxyCommand 和代理链路均由当前 SSH Config 管理。",
+  "settings.sshHosts.authHint.ssh_config": "复用当前 SSH Config 中的 Host 配置。",
   "settings.sshHosts.authHint.agent": "复用当前用户 SSH Agent 中已加载的密钥。",
   "settings.sshHosts.authHint.identity_file": "使用指定私钥文件；保存的只是本机路径。",
   "settings.sshHosts.authHint.password_prompt": "连接时在终端中询问密码，不保存密码。",
@@ -1736,6 +1809,8 @@ const zh = {
   "settings.options.close.ask": "每次询问",
   "settings.options.close.minimize": "最小化到托盘",
   "settings.options.close.exit": "直接退出",
+  "dialogs.closeConfirm.title": "您点击了关闭按钮，您想要：",
+  "dialogs.closeConfirm.remember": "不再提示",
   "settings.general.exitWithRunningTasks": "退出时有任务运行中",
   "settings.general.exitWithRunningTasksDescription": "退出应用时若有终端任务正在运行：每次询问、让任务在后台继续、最小化到托盘，或终止任务后退出。",
   "settings.general.backgroundIncludeFinished": "退出时也检测已完成的任务",
@@ -2168,6 +2243,15 @@ const zh = {
   "terminal.tab.paneName": "分屏 {index}",
   "terminal.tab.emptyTerminal": "空终端",
   "terminal.tab.copySessionId": "复制 Session ID",
+  "terminal.tab.saveToSidebar": "保存会话到侧边栏",
+  "terminal.tab.saveSession": "保存会话",
+  "saveSession.dialogTitle": "保存会话为新终端",
+  "saveSession.namePlaceholder": "输入新终端名称",
+  "saveSession.noSessionId": "未绑定会话 ID（需安装 CLI Hook）",
+  "saveSession.success": "已保存到侧边栏",
+  "saveSession.failed": "保存失败",
+  "saveSession.reason.noKind": "无法识别 CLI 类型（仅支持 claude / codex）",
+  "saveSession.reason.noPath": "会话没有工作目录，无法保存",
   "terminal.workspan.title": "Workspan · {count}",
   "terminal.workspan.tabList": "Workspan 标签列表",
   "terminal.workspan.openList": "打开 Workspan 标签列表",
@@ -2898,6 +2982,9 @@ const en: Record<keyof typeof zh, string> = {
   "externalSessionSync.empty": "No syncable projects found",
   "externalSessionSync.cancel": "Cancel",
   "externalSessionSync.confirm": "Sync",
+  "externalSessionSync.ignore": "Ignore",
+  "externalSessionSync.ignoreConfirmTitle": "Ignore selected projects?",
+  "externalSessionSync.ignoreConfirmMessage": "Ignore the {count} selected projects. Future sync scans will not prompt for them again.",
   "externalSessionSync.shellLabel": "Shell for imported projects",
   "externalSessionSync.syncing": "Syncing...",
   "externalSessionSync.selectProjectAria": "Sync {name}",
@@ -3363,6 +3450,42 @@ const en: Record<keyof typeof zh, string> = {
   "settings.sshHosts.openSsh": "System OpenSSH",
   "settings.sshHosts.openSshMissing": "No usable OpenSSH client was detected",
   "settings.sshHosts.add": "Add SSH Host",
+  "settings.sshHosts.import.action": "Import",
+  "settings.sshHosts.import.title": "Import SSH Config",
+  "settings.sshHosts.import.description": "Scan Host aliases from a configuration directory and import them as system OpenSSH references.",
+  "settings.sshHosts.import.directory": "SSH configuration directory",
+  "settings.sshHosts.import.chooseDirectory": "Choose SSH Configuration Directory",
+  "settings.sshHosts.import.scan": "Scan",
+  "settings.sshHosts.import.scanning": "Scanning SSH Config...",
+  "settings.sshHosts.import.configFilePending": "Waiting to scan the config file",
+  "settings.sshHosts.import.group": "Import into SSH group",
+  "settings.sshHosts.import.selectAll": "Select all importable hosts",
+  "settings.sshHosts.import.selectedSummary": "{selected} of {total} selected",
+  "settings.sshHosts.import.empty": "No concrete Host aliases were found.",
+  "settings.sshHosts.import.exists": "Exists",
+  "settings.sshHosts.import.selectHostAria": "Select SSH host {name}",
+  "settings.sshHosts.import.confirm": "Import {count} hosts",
+  "settings.sshHosts.import.importing": "Importing...",
+  "settings.sshHosts.import.result": "Import result: {success} succeeded, {failed} failed, {skipped} skipped",
+  "settings.sshHosts.import.warning.conditionalInclude": "Skipped an Include inside a conditional Host/Match block: {file}",
+  "settings.sshHosts.import.error.directoryRequired": "Choose an SSH configuration directory.",
+  "settings.sshHosts.import.error.directoryInvalid": "The SSH configuration directory must be a valid absolute path.",
+  "settings.sshHosts.import.error.directoryNotFound": "The SSH configuration directory does not exist or cannot be accessed.",
+  "settings.sshHosts.import.error.notDirectory": "The selected path is not a directory.",
+  "settings.sshHosts.import.error.configNotFound": "The selected directory does not contain a readable config file.",
+  "settings.sshHosts.import.error.readFailed": "Failed to read SSH Config. Check its file permissions.",
+  "settings.sshHosts.import.error.fileTooLarge": "An SSH Config file cannot exceed 1 MiB.",
+  "settings.sshHosts.import.error.encodingInvalid": "SSH Config must use UTF-8 encoding.",
+  "settings.sshHosts.import.error.parseFailed": "SSH Config contains an unterminated quote or escape.",
+  "settings.sshHosts.import.error.includeCycle": "SSH Config contains an Include cycle.",
+  "settings.sshHosts.import.error.includeLimit": "SSH Config exceeds the Include depth or file-count limit.",
+  "settings.sshHosts.import.error.includeNotFound": "An Include referenced by SSH Config does not exist.",
+  "settings.sshHosts.import.error.includeNotFile": "An SSH Config Include target is not a file.",
+  "settings.sshHosts.import.error.includeEnvInvalid": "An SSH Config Include environment variable is invalid.",
+  "settings.sshHosts.import.error.includeEnvMissing": "An SSH Config Include references an undefined environment variable.",
+  "settings.sshHosts.import.error.includePatternInvalid": "An SSH Config Include glob is invalid.",
+  "settings.sshHosts.import.error.configFileInvalid": "The SSH Config file path is invalid.",
+  "settings.sshHosts.import.error.configFileUnavailable": "The SSH Config file was moved, deleted, or is unreadable.",
   "settings.sshHosts.edit": "Edit SSH Host",
   "settings.sshHosts.empty": "No SSH hosts configured",
   "settings.sshHosts.emptyDescription": "Add a host to create SSH remote projects or open remote terminals.",
@@ -3399,9 +3522,9 @@ const en: Record<keyof typeof zh, string> = {
   "settings.sshHosts.identityFile": "Identity File",
   "settings.sshHosts.chooseIdentityFile": "Choose SSH Identity File",
   "settings.sshHosts.authOrder": "Authentication order is handled by system OpenSSH, SSH Agent, and local configuration. Passwords and passphrases are never stored in SQLite.",
-  "settings.sshHosts.configAuthManaged": "This connection uses an SSH Config alias. Authentication, user, port, jump, and proxy settings are managed by ~/.ssh/config.",
-  "settings.sshHosts.configRoutingManaged": "In SSH Config mode, ProxyJump, ProxyCommand, and proxy routing are managed by ~/.ssh/config.",
-  "settings.sshHosts.authHint.ssh_config": "Reuse the Host entry from ~/.ssh/config.",
+  "settings.sshHosts.configAuthManaged": "This connection uses an SSH Config alias. Authentication, user, port, jump, and proxy settings are managed by the active SSH Config file.",
+  "settings.sshHosts.configRoutingManaged": "In SSH Config mode, ProxyJump, ProxyCommand, and proxy routing are managed by the active SSH Config file.",
+  "settings.sshHosts.authHint.ssh_config": "Reuse the Host entry from the active SSH Config file.",
   "settings.sshHosts.authHint.agent": "Reuse keys loaded in the current user's SSH Agent.",
   "settings.sshHosts.authHint.identity_file": "Use the selected identity file; only the local path is stored.",
   "settings.sshHosts.authHint.password_prompt": "Ask for a password in the terminal and never save it.",
@@ -4363,6 +4486,8 @@ const en: Record<keyof typeof zh, string> = {
   "settings.options.close.ask": "Ask Every Time",
   "settings.options.close.minimize": "Minimize to Tray",
   "settings.options.close.exit": "Exit Directly",
+  "dialogs.closeConfirm.title": "You clicked the close button. What would you like to do?",
+  "dialogs.closeConfirm.remember": "Don't ask again",
   "common.close": "Close",
   "common.cancel": "Cancel",
   "common.browse": "Browse",
@@ -4761,6 +4886,15 @@ const en: Record<keyof typeof zh, string> = {
   "terminal.tab.paneName": "Pane {index}",
   "terminal.tab.emptyTerminal": "Empty Terminal",
   "terminal.tab.copySessionId": "Copy Session ID",
+  "terminal.tab.saveToSidebar": "Save session to sidebar",
+  "terminal.tab.saveSession": "Save session",
+  "saveSession.dialogTitle": "Save session as new terminal",
+  "saveSession.namePlaceholder": "Enter a name for the new terminal",
+  "saveSession.noSessionId": "No session ID bound (install the CLI hook)",
+  "saveSession.success": "Session saved to sidebar",
+  "saveSession.failed": "Failed to save session",
+  "saveSession.reason.noKind": "Unrecognized CLI (only claude / codex are supported)",
+  "saveSession.reason.noPath": "Session has no working directory to save",
   "terminal.workspan.title": "Workspan · {count}",
   "terminal.workspan.tabList": "Workspan tabs",
   "terminal.workspan.openList": "Open Workspan tab list",
@@ -5216,8 +5350,26 @@ const en: Record<keyof typeof zh, string> = {
   "git.smartCheckout.conflictHint": "The target branch was switched successfully, but applying the stash caused conflicts. There is no merge/rebase state to abort here; resolve the conflicts first, and check `git status` plus `git stash list` in the terminal if needed.",
 };
 
+const zhTwConverter = OpenCC.Converter({ from: "cn", to: "tw" });
+const zhTwOverrides: Partial<Record<keyof typeof zh, string>> = {
+  "desktopPet.mood.working": "工作中",
+};
+
+function buildTraditionalChineseDictionary(
+  base: typeof zh,
+  overrides: Partial<Record<keyof typeof zh, string>>
+): Record<keyof typeof zh, string> {
+  const converted = Object.fromEntries(
+    Object.entries(base).map(([key, value]) => [key, zhTwConverter(value)])
+  ) as Record<keyof typeof zh, string>;
+  return { ...converted, ...overrides };
+}
+
+const zhTw = buildTraditionalChineseDictionary(zh, zhTwOverrides);
+
 const dictionaries = {
   "zh-CN": zh,
+  "zh-TW": zhTw,
   "en-US": en,
 };
 

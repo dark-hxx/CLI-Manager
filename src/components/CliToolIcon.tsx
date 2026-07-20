@@ -39,7 +39,15 @@ const CLI_TOOL_ICONS: Record<CliToolIconKey, IconComponent> = {
   pi: Pi,
 };
 
-export function CliToolIcon({ icon, size = 16 }: { icon: CliToolIconKey; size?: number }) {
+export function CliToolIcon({
+  icon,
+  size = 16,
+  className = "text-text-primary",
+}: {
+  icon: CliToolIconKey;
+  size?: number;
+  className?: string;
+}) {
   const Icon = CLI_TOOL_ICONS[icon];
-  return <Icon size={size} className="text-text-primary" />;
+  return <Icon size={size} className={className} />;
 }

@@ -32,7 +32,7 @@ import {
 import { useModelPricingStore, type ModelPriceSyncCandidate } from "@/stores/modelPricingStore";
 import { VendorIcon, inferVendor } from "@/components/VendorIcon";
 import { normalizeModelId, type ModelPrice } from "@/lib/modelPricing";
-import { useI18n, type AppLanguage } from "@/lib/i18n";
+import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 
 interface Props {
   searchValue: string;
@@ -145,7 +145,7 @@ function formatPrice(value: number): string {
 }
 
 function pickText(language: AppLanguage, zh: string, en: string) {
-  return language === "zh-CN" ? zh : en;
+  return pickByLanguage(language, zh, en);
 }
 
 function sourceLabel(source: string, language: AppLanguage): string {
@@ -767,7 +767,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
         {pendingUnmatched.length > 0 && (filter === "all" || filter === "candidates") && (
           <Text size="xs" c="var(--text-muted)" mt="md">
             {text("未匹配模型（仍缺价）：", "Unmatched models still missing prices: ")}
-            {pendingUnmatched.slice(0, 12).join(language === "zh-CN" ? "、" : ", ")}
+            {pendingUnmatched.slice(0, 12).join(pickText(language, "、", ", "))}
             {pendingUnmatched.length > 12 ? text(` 等 ${pendingUnmatched.length} 个`, ` and ${pendingUnmatched.length} total`) : ""}
           </Text>
         )}

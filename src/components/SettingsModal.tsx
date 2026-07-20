@@ -73,7 +73,6 @@ interface SettingsTabConfig {
 
 const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "general",
-  "desktop-pet",
   "terminal-theme",
   "shortcuts",
   "templates",
@@ -87,6 +86,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "statusline",
   "command-suggestions",
   "sidebar",
+  "desktop-pet",
   "developer",
   "about",
 ];

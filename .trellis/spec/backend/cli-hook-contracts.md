@@ -112,8 +112,8 @@ return (
   - `AgentToolStart` should create/update a `pending` pane only; it must not subscribe to the parent transcript.
   - When a Claude start/update event already has `cwd`, `sessionId`, and `agentId`, the frontend may subscribe to the derived child JSONL immediately. The backend tail waits for the child file to appear, so streaming must not wait for the stop event.
   - `AgentToolStop` and Claude `ToolStop` with `agentId` may upgrade the matching pending pane to `child-jsonl` when they have an independent `agentTranscriptPath` or enough `cwd/sessionId/agentId` data to derive `subagents/agent-<agentId>.jsonl`.
-- Codex `SubagentStart` rollout discovery is eventually consistent: when the first discovery returns no path, the frontend performs a bounded per-child retry and subscribes as soon as the matching rollout appears. Retries stop after subscription, timeout, finish, pane close, or unsplit.
-- Codex rollout discovery must preserve the Hook runtime boundary: when `wslDistroName` is present, prefer the parent rollout's `/sessions/` root, otherwise resolve that distro's `$HOME` and scan its `.codex/sessions` through `wsl.exe`; never substitute the Windows process user's `.codex/sessions`. A configured Codex root may be a Linux absolute path, WSL UNC path, or Windows path convertible to `/mnt/<drive>` and takes precedence over the parent path.
+- Codex `SubagentStart` rollout discovery is eventually consistent: when the first discovery returns no path, the frontend performs a per-child lifecycle retry and subscribes as soon as the matching rollout appears. Retry every second during the initial 15-second window, then reduce to every 5 seconds; stop after subscription, finish, pane close, or unsplit. Do not use a fixed timeout that can leave a long-running child pending until `SubagentStop` backfills the transcript.
+- Codex rollout discovery must preserve the Hook runtime boundary: when `wslDistroName` is present, prefer the parent rollout's `/sessions/` root, otherwise use the configured Codex root, and finally resolve that distro's `$HOME` and scan its `.codex/sessions` through `wsl.exe`; never substitute the Windows process user's `.codex/sessions`. A configured Codex root may be a Linux absolute path, WSL UNC path, or Windows path convertible to `/mnt/<drive>`, but it must not override a valid parent rollout path from the current Hook payload.
 - `SubagentStop` may also carry the first independent child transcript path. When a matching pane already exists, the frontend must call `openSubagentTranscript(payload)` and await subscription/initial backfill before `finishSubagentTranscript(payload)`, regardless of CLI source.
 - Subscribe response fields:
   - `path`: resolved child JSONL path actually tailed by the backend.
@@ -147,7 +147,8 @@ return (
 - Good: Claude `SubagentStart` misses an independent child path, then `SubagentStop` provides `agentTranscriptPath`; frontend upgrades the existing pane before finish instead of ending in degraded state.
 - Good: Claude in WSL emits `ToolStop` with `agentId`, parent `transcriptPath`, UNC `cwd`, and no `wslDistroName`; frontend opens/updates a degraded child pane, derives the distro from `cwd`, and backend subscribes to the derived child path without rendering the parent transcript as child output.
 - Good: Claude emits `SubagentStart` before `agent-<agentId>.jsonl` exists; frontend subscribes to the derived child path immediately and the backend begins emitting complete lines as soon as the file is created.
-- Good: Codex emits `SubagentStart` before the matching rollout exists; bounded discovery retries find it during execution and start streaming before `SubagentStop`.
+- Good: Codex emits `SubagentStart` before the matching rollout exists; lifecycle discovery retries find it during execution and start streaming before `SubagentStop`.
+- Good: a WSL Codex child rollout becomes discoverable more than 15 seconds after `SubagentStart`; lifecycle retry continues at the reduced interval and starts streaming before `SubagentStop`.
 - Good: Codex runs in WSL with `cwd=/mnt/c/repo` and no custom `CODEX_HOME`; discovery prefers the parent rollout's sessions root, otherwise scans `$HOME/.codex/sessions` inside the reported distro and returns the matched rollout as WSL UNC for tailing.
 - Base: Claude `SubagentStart` includes `agent_transcript_path`; frontend uses it unchanged.
 - Good: `SubagentStop` includes `agent_id`; frontend marks the pane ended and closes it after the grace delay.
@@ -167,6 +168,7 @@ return (
 - Rust unit test: explicit `/Users/...` transcript paths stay native without `wslDistroName`; explicit `/home/...` paths convert to WSL UNC only when a distro is provided.
 - Rust unit test: WSL UNC `cwd` can provide a fallback distro for derived child transcript paths when `wslDistroName` is missing, and explicit `wslDistroName` still takes precedence.
 - Rust unit test: WSL Codex roots normalize Linux absolute, `\\wsl.localhost`, `\\wsl$`, and Windows drive paths to the correct Linux config root; missing config prefers the parent rollout root and otherwise uses `<WSL $HOME>/.codex`.
+- Rust unit test: WSL Codex roots accept verbatim `\\?\UNC\wsl*` paths and do not append a second `sessions` segment when the configured path already points to the sessions root.
 - Rust unit test: non-Windows hook exe paths with spaces or single quotes are POSIX single-quote escaped.
 - Rust compile check must pass after bridge payload or command signature changes.
 - Rust unit test: `hook_client` extracts `reasoningEffort` from Claude `effort.level`.
@@ -204,6 +206,21 @@ invoke("codex_subagent_transcript_discover", {
   wslDistroName,
   parentTranscriptPath,
 });
+```
+
+#### Wrong
+
+```ts
+// A long-running WSL child can become discoverable after this fixed deadline.
+if (elapsed > 15_000) stopDiscovery("ttl_expired");
+```
+
+#### Correct
+
+```ts
+// Keep discovery bound to the child pane lifecycle; reduce scan frequency after the fast window.
+const delay = elapsed < 15_000 ? 1_000 : 5_000;
+scheduleNextDiscovery(delay); // stop on subscribed / finished / closed / unsplit
 ```
 
 #### Wrong
@@ -402,8 +419,11 @@ interface HookSettingsStatus {
 
 - Frontend must pass `ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined`; `null`/missing means platform default `~/.cc-switch/cc-switch.db`.
 - Backend must reuse the cc-switch DB resolver: explicit custom paths are validated and never silently replaced by defaults.
+- cc-switch common config means the app-level shared snippet stored in the cc-switch SQLite `settings` table as `common_config_claude` (JSON) or `common_config_codex` (TOML). cc-switch merges that snippet into every provider whose metadata enables "Apply Common Config" when switching providers.
+- User-triggered Hook writes must update the local CLI config first, then best-effort write cc-switch common config automatically. If cc-switch is missing, invalid, or unavailable, the local config write is the fallback and still succeeds.
 - Installing Claude Hook writes normal Claude `settings.json` hooks first, then best-effort merges the same CLI-Manager-owned hook commands into `settings.common_config_claude`.
 - Installing Codex Hook writes normal Codex `hooks.json` commands and `config.toml` feature flags first, then best-effort merges the TOML `[features].hooks = true` flag plus any current CLI-Manager-owned Codex `[hooks.state.*]` trust blocks into `settings.common_config_codex`. Codex hook commands remain in `hooks.json`; `common_config_codex` is not JSON.
+- Only CLI-Manager-owned shared Hook state belongs in common config. Never write provider secrets, model-provider routing, base URLs, project-local hook files, or user-owned hook trust into cc-switch common config.
 - Hook settings UI shows the cc-switch protection card once, above system notification settings. Do not duplicate it in both Claude and Codex sections.
 - Claude common-config merge may remove/replace only CLI-Manager-owned hook commands (`__hook` marker or known legacy scripts); it must preserve non-hook fields and non-CLI-Manager hook entries. Codex common-config merge may only add or replace the TOML `features.hooks` flag and marker-owned `[hooks.state.*]` trust blocks for the current user-level Codex `hooks.json`; it must preserve other TOML fields and unrelated hook state.
 - `settings.value` is nullable in cc-switch DBs. A `NULL` value for `common_config_<tool>` is treated as missing config, not as `db_query_failed`.

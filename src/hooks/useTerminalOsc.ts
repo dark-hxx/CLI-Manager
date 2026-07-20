@@ -4,52 +4,34 @@ import {
   LEGACY_RUNTIME_OSC_PREFIX,
   OSC_PREFIX,
   findOscTerminator,
-  formatSpecialColorReply,
   matchIntegrationOscPrefix,
   parseSpecialColorQuery,
   parseStandardIntegrationCwd,
 } from "../lib/terminalOscParse";
 import { useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
 import type { OsPlatform } from "../lib/shell";
-import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 
 const OSC_CARRY_BUFFER_MAX = 8192;
 const SSH_CONNECTED_MARKER = "\x1b]777;cli-manager-ssh=connected\x07";
 const SSH_AUTH_PROMPT_PATTERN = /password|passphrase|verification code|one-time|authenticity of host|continue connecting|permission denied/i;
 
-interface TerminalColors {
-  foreground: string;
-  background: string;
-}
-
 interface UseTerminalOscOptions {
   sessionId: string;
   osPlatformRef: RefObject<OsPlatform>;
-  onPtyWriteError: (stage: string, err: unknown) => void;
-}
-
-export interface TerminalOutputNormalizationOptions {
-  replyToColorQueries?: boolean;
 }
 
 export interface UseTerminalOscResult {
-  normalizeTerminalOutput: (text: string, options?: TerminalOutputNormalizationOptions) => string;
+  normalizeTerminalOutput: (text: string) => string;
   updateSessionCwdIfChanged: (cwd: string | null) => void;
-  updateTerminalColorReplies: (colors: TerminalColors) => void;
 }
 
 export function useTerminalOsc({
   sessionId,
   osPlatformRef,
-  onPtyWriteError,
 }: UseTerminalOscOptions): UseTerminalOscResult {
   const runtimeOscBufferRef = useRef("");
   const specialOscBufferRef = useRef("");
   const sshMarkerBufferRef = useRef("");
-  const terminalColorRepliesRef = useRef({
-    foreground: formatSpecialColorReply(10, "#d8dee9"),
-    background: formatSpecialColorReply(11, "#0c0e10"),
-  });
 
   const emitShellRuntimeEvent = (event: ShellRuntimeEventName, exitCode: number | null) => {
     useTerminalStore.getState().handleShellRuntimeEvent({ sessionId, event, exitCode, origin: "osc" });
@@ -163,11 +145,10 @@ export function useTerminalOsc({
     return output;
   };
 
-  const processSpecialOscQueries = (text: string, replyToColorQueries: boolean) => {
+  const processSpecialOscQueries = (text: string) => {
     const combined = specialOscBufferRef.current + text;
     specialOscBufferRef.current = "";
     let output = "";
-    let colorReplies = "";
     let cursor = 0;
 
     while (cursor < combined.length) {
@@ -197,11 +178,8 @@ export function useTerminalOsc({
       const body = combined.slice(start + OSC_PREFIX.length, terminator.index);
       const queryId = parseSpecialColorQuery(body);
       if (queryId === 10 || queryId === 11) {
-        if (replyToColorQueries) {
-          colorReplies += queryId === 10
-            ? terminalColorRepliesRef.current.foreground
-            : terminalColorRepliesRef.current.background;
-        }
+        // Live replies are owned by the Rust PTY layer. Keep filtering here
+        // for legacy replay and snapshots that may still contain queries.
       } else {
         output += combined.slice(start, terminator.index + terminator.length);
       }
@@ -210,10 +188,6 @@ export function useTerminalOsc({
 
     if (specialOscBufferRef.current.length > OSC_CARRY_BUFFER_MAX) {
       specialOscBufferRef.current = "";
-    }
-
-    if (colorReplies) {
-      terminalProcessManager.write(sessionId, colorReplies).catch((err) => onPtyWriteError("osc_color_reply", err));
     }
 
     return output;
@@ -258,26 +232,12 @@ export function useTerminalOsc({
     return combined;
   };
 
-  const normalizeTerminalOutput = (
-    text: string,
-    options: TerminalOutputNormalizationOptions = {},
-  ) => processShellIntegrationOsc(
-    processSpecialOscQueries(
-      processSshConnectionMarker(text),
-      options.replyToColorQueries !== false,
-    ),
+  const normalizeTerminalOutput = (text: string) => processShellIntegrationOsc(
+    processSpecialOscQueries(processSshConnectionMarker(text)),
   );
-
-  const updateTerminalColorReplies = (colors: TerminalColors) => {
-    terminalColorRepliesRef.current = {
-      foreground: formatSpecialColorReply(10, colors.foreground),
-      background: formatSpecialColorReply(11, colors.background),
-    };
-  };
 
   return {
     normalizeTerminalOutput,
     updateSessionCwdIfChanged,
-    updateTerminalColorReplies,
   };
 }
