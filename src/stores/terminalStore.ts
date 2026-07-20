@@ -390,11 +390,18 @@ let workspanIdSeq = 0;
 let subagentSeq = 0;
 const subagentCloseTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const subagentDiscoveryTimers = new Map<string, ReturnType<typeof setInterval>>();
-const subagentTranscriptRetryTimers = new Map<string, ReturnType<typeof setInterval>>();
+const subagentTranscriptRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const subagentTranscriptRetryDiagnostics = new Map<string, {
+  startedAt: number;
+  attemptCount: number;
+  lastDelayMs: number;
+}>();
 const SUBAGENT_CLOSE_DELAY_MS = 1500;
 const SUBAGENT_CHILD_JSONL_CLOSE_DELAY_MS = 10_000;
 const SUBAGENT_DISCOVERY_INTERVAL_MS = 1000;
-const SUBAGENT_DISCOVERY_TTL_MS = 15000;
+const SUBAGENT_DISCOVERY_FAST_WINDOW_MS = 15000;
+const SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS = 5000;
+const SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS = 15000;
 const PTY_ORPHAN_RECONCILE_INTERVAL_MS = 30_000;
 const TERMINAL_STORE_IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -491,7 +498,7 @@ function inferWslDistroFromCwd(cwd: string | null | undefined): string | null {
   const value = trimOptional(cwd);
   if (!value) return null;
   const normalized = value.replace(/\//g, "\\");
-  const match = normalized.match(/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(?:\\|$)/i);
+  const match = normalized.match(/^(?:\\\\wsl(?:\.localhost|\$)\\|\\\\\?\\UNC\\wsl(?:\.localhost|\$)\\)([^\\]+)(?:\\|$)/i);
   return match?.[1]?.trim() || null;
 }
 
@@ -613,46 +620,95 @@ function shouldAttemptDerivedChildTranscript(payload: CliHookPayload, source: Su
 
 function stopSubagentTranscriptRetry(sessionId: string, reason: string) {
   const timer = subagentTranscriptRetryTimers.get(sessionId);
-  if (!timer) return;
-  clearInterval(timer);
+  const diagnostics = subagentTranscriptRetryDiagnostics.get(sessionId);
+  if (!timer && !diagnostics) return;
+  if (timer) clearTimeout(timer);
   subagentTranscriptRetryTimers.delete(sessionId);
-  logInfo("[subagent_transcript] stopped transcript discovery retry", { sessionId, reason });
+  subagentTranscriptRetryDiagnostics.delete(sessionId);
+  logInfo("[subagent_transcript] stopped transcript discovery retry", {
+    sessionId,
+    reason,
+    attemptCount: diagnostics?.attemptCount ?? 0,
+    elapsedMs: diagnostics ? Date.now() - diagnostics.startedAt : 0,
+    lastDelayMs: diagnostics?.lastDelayMs ?? null,
+  });
 }
 
 function startSubagentTranscriptRetry(sessionId: string, attempt: () => Promise<boolean>) {
   if (subagentTranscriptRetryTimers.has(sessionId)) return;
 
-  const startTime = Date.now();
-  let running = false;
-  const intervalId = setInterval(() => {
-    const elapsed = Date.now() - startTime;
+  const startedAt = Date.now();
+  subagentTranscriptRetryDiagnostics.set(sessionId, {
+    startedAt,
+    attemptCount: 0,
+    lastDelayMs: SUBAGENT_DISCOVERY_INTERVAL_MS,
+  });
+  const runAttempt = () => {
     const store = useTerminalStore.getState();
     const transcript = store.subagentTranscripts[sessionId];
     if (
-      elapsed > SUBAGENT_DISCOVERY_TTL_MS ||
       !store.sessions.some((session) => session.id === sessionId) ||
       transcript?.source.kind === "child-jsonl"
     ) {
-      stopSubagentTranscriptRetry(sessionId, elapsed > SUBAGENT_DISCOVERY_TTL_MS ? "ttl_expired" : "inactive");
+      stopSubagentTranscriptRetry(sessionId, "inactive");
       return;
     }
-    if (running) return;
 
-    running = true;
+    const diagnostics = subagentTranscriptRetryDiagnostics.get(sessionId);
+    if (diagnostics) diagnostics.attemptCount += 1;
+
     void attempt()
       .then((subscribed) => {
-        if (subscribed) stopSubagentTranscriptRetry(sessionId, "subscribed");
+        if (subscribed) {
+          stopSubagentTranscriptRetry(sessionId, "subscribed");
+          return;
+        }
+        if (!subagentTranscriptRetryTimers.has(sessionId)) return;
+        const elapsed = Date.now() - startedAt;
+        const delay = elapsed < SUBAGENT_DISCOVERY_FAST_WINDOW_MS ? SUBAGENT_DISCOVERY_INTERVAL_MS : SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS;
+        const currentDiagnostics = subagentTranscriptRetryDiagnostics.get(sessionId);
+        if (currentDiagnostics) {
+          currentDiagnostics.lastDelayMs = delay;
+          const attemptCount = currentDiagnostics.attemptCount;
+          if (attemptCount <= 3 || attemptCount === 5 || attemptCount % 12 === 0) {
+            logInfo("[subagent_transcript] transcript discovery retry checkpoint", {
+              sessionId,
+              attemptCount,
+              elapsedMs: elapsed,
+              sourceKind: transcript?.source.kind ?? null,
+              nextDelayMs: delay,
+            });
+          }
+        }
+        const timerId = setTimeout(runAttempt, delay);
+        subagentTranscriptRetryTimers.set(sessionId, timerId);
       })
-      .finally(() => {
-        running = false;
+      .catch((err) => {
+        if (!subagentTranscriptRetryTimers.has(sessionId)) return;
+        const currentDiagnostics = subagentTranscriptRetryDiagnostics.get(sessionId);
+        if (currentDiagnostics) {
+          currentDiagnostics.lastDelayMs = SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS;
+        }
+        logWarn("[subagent_transcript] transcript discovery retry failed", {
+          sessionId,
+          attemptCount: currentDiagnostics?.attemptCount ?? null,
+          elapsedMs: currentDiagnostics ? Date.now() - currentDiagnostics.startedAt : null,
+          nextDelayMs: SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS,
+          err,
+        });
+        const timerId = setTimeout(runAttempt, SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS);
+        subagentTranscriptRetryTimers.set(sessionId, timerId);
       });
-  }, SUBAGENT_DISCOVERY_INTERVAL_MS);
+  };
 
-  subagentTranscriptRetryTimers.set(sessionId, intervalId);
+  const timerId = setTimeout(runAttempt, SUBAGENT_DISCOVERY_INTERVAL_MS);
+  subagentTranscriptRetryTimers.set(sessionId, timerId);
   logInfo("[subagent_transcript] started transcript discovery retry", {
     sessionId,
-    intervalMs: SUBAGENT_DISCOVERY_INTERVAL_MS,
-    ttlMs: SUBAGENT_DISCOVERY_TTL_MS,
+    fastIntervalMs: SUBAGENT_DISCOVERY_INTERVAL_MS,
+    slowIntervalMs: SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS,
+    fastWindowMs: SUBAGENT_DISCOVERY_FAST_WINDOW_MS,
+    stopConditions: ["subscribed", "finished", "session_closed", "pane_unsplit"],
   });
 }
 
@@ -678,7 +734,7 @@ function startSubagentDiscovery(
 
   const intervalId = setInterval(() => {
     const elapsed = Date.now() - startTime;
-    if (elapsed > SUBAGENT_DISCOVERY_TTL_MS) {
+    if (elapsed > SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS) {
       clearInterval(intervalId);
       subagentDiscoveryTimers.delete(key);
       logInfo("[subagent_discovery] TTL expired", { parentTabId, elapsed });
@@ -770,7 +826,7 @@ function startSubagentDiscovery(
   }, SUBAGENT_DISCOVERY_INTERVAL_MS);
 
   subagentDiscoveryTimers.set(key, intervalId);
-  logInfo("[subagent_discovery] started", { parentTabId, cwd, sessionId: parentSessionId, wslDistroName, ttlMs: SUBAGENT_DISCOVERY_TTL_MS });
+  logInfo("[subagent_discovery] started", { parentTabId, cwd, sessionId: parentSessionId, wslDistroName, ttlMs: SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS });
 }
 
 function findSubagentSessionId(sessions: TerminalSession[], payload: CliHookPayload): string | null {
@@ -3040,42 +3096,70 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     };
 
     const subscribeCodexRolloutChild = async () => {
-      if (payload.source !== "codex" || source.kind === "child-jsonl" || !agentId || !payload.sessionId?.trim()) {
+      if (payload.source !== "codex" || source.kind === "child-jsonl") {
         return false;
       }
 
-      try {
-        const codexConfigDir = useSettingsStore.getState().codexHookConfigDir ?? undefined;
-        logInfo("[subagent_transcript] codex rollout discovery requested", {
+      const parentSessionId = payload.sessionId?.trim();
+      if (!agentId || !parentSessionId) {
+        logInfo("[subagent_transcript] codex rollout discovery skipped: missing identity", {
+          event: payload.event,
           pseudoId,
           agentId,
-          parentSessionId: payload.sessionId,
-          codexConfigDir: codexConfigDir ?? null,
-          cwd: payload.cwd ?? null,
-          resolvedWslDistroName,
-          sourceKind: source.kind,
-          sourceReason: source.reason ?? null,
+          sessionId: parentSessionId ?? null,
+          wslDistroName: resolvedWslDistroName,
           parentTranscriptPath: source.parentTranscriptPath ?? null,
-          payloadTranscriptPath: trimOptional(payload.transcriptPath),
-          payloadAgentTranscriptPath: trimOptional(payload.agentTranscriptPath),
         });
+        return false;
+      }
+
+      const retryDiagnostics = subagentTranscriptRetryDiagnostics.get(pseudoId);
+      const retryAttemptCount = retryDiagnostics?.attemptCount ?? null;
+      const shouldLogAttempt = retryAttemptCount === null
+        || retryAttemptCount <= 3
+        || retryAttemptCount === 5
+        || retryAttemptCount % 12 === 0;
+
+      try {
+        const codexConfigDir = useSettingsStore.getState().codexHookConfigDir ?? undefined;
+        if (shouldLogAttempt) {
+          logInfo("[subagent_transcript] codex rollout discovery requested", {
+            pseudoId,
+            agentId,
+            parentSessionId,
+            retryAttemptCount,
+            retryElapsedMs: retryDiagnostics ? Date.now() - retryDiagnostics.startedAt : null,
+            codexConfigDir: codexConfigDir ?? null,
+            cwd: payload.cwd ?? null,
+            resolvedWslDistroName,
+            sourceKind: source.kind,
+            sourceReason: source.reason ?? null,
+            parentTranscriptPath: source.parentTranscriptPath ?? null,
+            payloadTranscriptPath: trimOptional(payload.transcriptPath),
+            payloadAgentTranscriptPath: trimOptional(payload.agentTranscriptPath),
+          });
+        }
         const discoveredPath = await invoke<string | null>("codex_subagent_transcript_discover", {
-          parentSessionId: payload.sessionId,
+          parentSessionId,
           agentId,
           codexConfigDir,
           wslDistroName: resolvedWslDistroName,
           parentTranscriptPath: source.parentTranscriptPath ?? null,
         });
         if (!discoveredPath) {
-          logInfo("[subagent_transcript] codex rollout transcript not found yet", {
-            pseudoId,
-            agentId,
-            parentSessionId: payload.sessionId,
-            codexConfigDir: codexConfigDir ?? null,
-            sourceKind: source.kind,
-            sourceReason: source.reason ?? null,
-            parentTranscriptPath: source.parentTranscriptPath ?? null,
-          });
+          if (shouldLogAttempt) {
+            logInfo("[subagent_transcript] codex rollout transcript not found yet", {
+              pseudoId,
+              agentId,
+              parentSessionId,
+              retryAttemptCount,
+              retryElapsedMs: retryDiagnostics ? Date.now() - retryDiagnostics.startedAt : null,
+              codexConfigDir: codexConfigDir ?? null,
+              sourceKind: source.kind,
+              sourceReason: source.reason ?? null,
+              parentTranscriptPath: source.parentTranscriptPath ?? null,
+            });
+          }
           return false;
         }
 
@@ -3125,11 +3209,16 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         });
         return true;
       } catch (err) {
-        logWarn("[subagent_transcript] codex rollout transcript subscribe failed", {
-          pseudoId,
-          agentId,
-          err,
-        });
+        if (shouldLogAttempt) {
+          logWarn("[subagent_transcript] codex rollout transcript subscribe failed", {
+            pseudoId,
+            agentId,
+            parentSessionId,
+            retryAttemptCount,
+            retryElapsedMs: retryDiagnostics ? Date.now() - retryDiagnostics.startedAt : null,
+            err,
+          });
+        }
         return false;
       }
     };
@@ -3293,10 +3382,20 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       });
       return;
     }
+    const currentTranscript = get().subagentTranscripts[sessionId];
     logInfo("[subagent_transcript] stop target resolved", {
       sessionId,
       tabId: payload.tabId,
+      event: payload.event,
+      source: payload.source,
       agentId: trimOptional(payload.agentId),
+      parentSessionId: trimOptional(payload.sessionId),
+      wslDistroName: trimOptional(payload.wslDistroName),
+      transcriptPath: trimOptional(payload.transcriptPath),
+      agentTranscriptPath: trimOptional(payload.agentTranscriptPath),
+      currentSourceKind: currentTranscript?.source.kind ?? null,
+      currentTranscriptPath: currentTranscript?.source.transcriptPath ?? null,
+      currentParentTranscriptPath: currentTranscript?.source.parentTranscriptPath ?? null,
     });
     stopSubagentTranscriptRetry(sessionId, "subagent_finished");
 
@@ -3322,7 +3421,6 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     const existingTimer = subagentCloseTimers.get(sessionId);
     if (existingTimer) clearTimeout(existingTimer);
-    const currentTranscript = get().subagentTranscripts[sessionId];
     const closeDelayMs =
       currentTranscript?.source.kind === "child-jsonl" || payload.source === "codex"
         ? SUBAGENT_CHILD_JSONL_CLOSE_DELAY_MS

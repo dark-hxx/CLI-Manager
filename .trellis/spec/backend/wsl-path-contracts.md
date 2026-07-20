@@ -16,6 +16,9 @@
 ### `wsl.rs` — 路径转换工具
 
 ```rust
+// 将 `\\?\UNC\wsl*\...` 归一化为标准 WSL UNC
+pub fn normalize_wsl_unc_path(path: &str) -> String
+
 // 判断是否为 WSL UNC 路径
 pub fn is_wsl_config_dir(path: &str) -> bool
 
@@ -228,6 +231,7 @@ wsl.exe -d Ubuntu --exec sh -lc "curl -fsSL https://bun.sh/install | bash"
 ## 6. Tests Required
 
 - `parse_wsl_unc_path` 正常解析、`\\wsl$\` 变体、非 WSL 路径拒绝
+- `normalize_wsl_unc_path` / `parse_wsl_unc_path` 接受 `\\?\UNC\wsl.localhost\...` 与 `\\?\UNC\wsl$\...`
 - `linux_to_unc_wsl_path` 往返一致性、尾部斜杠处理
 - `wsl_find_session_files` 的 find 输出解析（纯解析单测覆盖 path/size/mtime；真实 WSL find 作为集成测试）
 - `open_git_repo` 在 WSL UNC 路径下成功打开仓库（需要 WSL 环境）

@@ -308,22 +308,6 @@ fn normalize_explicit_transcript_path(path: String, wsl_distro_name: Option<&str
     path
 }
 
-fn normalize_wsl_scope_unc(path: &str) -> String {
-    let normalized = path.trim().replace('/', "\\");
-    let lower = normalized.to_ascii_lowercase();
-    const VERBATIM_WSL_LOCALHOST_PREFIX: &str = "\\\\?\\UNC\\wsl.localhost\\";
-    const VERBATIM_WSL_DOLLAR_PREFIX: &str = "\\\\?\\UNC\\wsl$\\";
-    const VERBATIM_UNC_PREFIX_LEN: usize = "\\\\?\\UNC\\".len();
-
-    if lower.starts_with(&VERBATIM_WSL_LOCALHOST_PREFIX.to_ascii_lowercase())
-        || lower.starts_with(&VERBATIM_WSL_DOLLAR_PREFIX.to_ascii_lowercase())
-    {
-        return format!("\\\\{}", &normalized[VERBATIM_UNC_PREFIX_LEN..]);
-    }
-
-    normalized
-}
-
 fn has_current_or_parent_component(path: &Path) -> bool {
     path.components().any(|component| {
         matches!(
@@ -366,7 +350,7 @@ fn is_linux_transcript_scope(linux_path: &str) -> bool {
 }
 
 fn validate_explicit_transcript_path(path: &str) -> Result<(), String> {
-    let normalized_wsl = normalize_wsl_scope_unc(path);
+    let normalized_wsl = crate::wsl::normalize_wsl_unc_path(path);
     if let Some((_distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&normalized_wsl) {
         if is_linux_transcript_scope(&linux_path) {
             return Ok(());
@@ -502,7 +486,9 @@ fn resolve_wsl_distro_name(cwd: Option<&str>, wsl_distro_name: Option<String>) -
     if let Some(distro) = trimmed(wsl_distro_name) {
         return Some(distro);
     }
-    cwd.and_then(crate::wsl::parse_wsl_unc_path)
+    cwd.map(crate::wsl::normalize_wsl_unc_path)
+        .as_deref()
+        .and_then(crate::wsl::parse_wsl_unc_path)
         .map(|(distro, _)| distro)
 }
 
@@ -535,7 +521,18 @@ fn resolve_codex_sessions_root(codex_config_dir: Option<String>) -> PathBuf {
         })
         .or_else(|| home_dir().map(|home| home.join(".codex")))
         .unwrap_or_else(|| PathBuf::from(".codex"));
-    base.join("sessions")
+    ensure_codex_sessions_root(base)
+}
+
+fn ensure_codex_sessions_root(base: PathBuf) -> PathBuf {
+    if base
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("sessions"))
+    {
+        base
+    } else {
+        base.join("sessions")
+    }
 }
 
 fn resolve_wsl_codex_config_root(
@@ -550,7 +547,7 @@ fn resolve_wsl_codex_config_root(
         return Ok(config_dir.trim_end_matches('/').to_string());
     }
     if let Some((_configured_distro, linux_path)) =
-        crate::wsl::parse_wsl_unc_path(&normalize_wsl_scope_unc(&config_dir))
+        crate::wsl::parse_wsl_unc_path(&crate::wsl::normalize_wsl_unc_path(&config_dir))
     {
         return Ok(linux_path.trim_end_matches('/').to_string());
     }
@@ -577,7 +574,7 @@ fn resolve_wsl_codex_sessions_root(
             let linux_path = if is_linux_absolute_path(&path) {
                 Some(path)
             } else {
-                crate::wsl::parse_wsl_unc_path(&normalize_wsl_scope_unc(&path))
+                crate::wsl::parse_wsl_unc_path(&crate::wsl::normalize_wsl_unc_path(&path))
                     .map(|(_path_distro, linux_path)| linux_path)
             };
             if let Some(linux_path) = linux_path {
@@ -599,7 +596,12 @@ fn resolve_wsl_codex_sessions_root(
         let linux_home = wsl_home_dir(distro)?;
         resolve_wsl_codex_config_root(None, distro, &linux_home)?
     };
-    let linux_sessions_root = format!("{}/sessions", config_root.trim_end_matches('/'));
+    let config_root = config_root.trim_end_matches('/');
+    let linux_sessions_root = if config_root.ends_with("/sessions") {
+        config_root.to_string()
+    } else {
+        format!("{config_root}/sessions")
+    };
     Ok(PathBuf::from(crate::wsl::linux_to_unc_wsl_path(
         &linux_sessions_root,
         distro,
@@ -952,7 +954,9 @@ pub async fn codex_subagent_transcript_discover(
         return Err("missing_agent_id".to_string());
     }
 
-    let resolved_wsl_distro = trimmed(wsl_distro_name);
+    let resolved_wsl_distro =
+        resolve_wsl_distro_name(parent_transcript_path.as_deref(), wsl_distro_name)
+            .or_else(|| resolve_wsl_distro_name(codex_config_dir.as_deref(), None));
     let sessions_root = if let Some(distro) = resolved_wsl_distro.as_deref() {
         resolve_wsl_codex_sessions_root(codex_config_dir, parent_transcript_path, distro)?
     } else {
@@ -1186,6 +1190,19 @@ mod tests {
     }
 
     #[test]
+    fn resolves_wsl_distro_from_verbatim_unc_cwd_when_env_missing() {
+        let got =
+            resolve_wsl_distro_name(Some(r"\\?\UNC\wsl.localhost\Ubuntu\data\test\sys"), None);
+        assert_eq!(got.as_deref(), Some("Ubuntu"));
+    }
+
+    #[test]
+    fn codex_sessions_root_does_not_duplicate_sessions() {
+        let got = resolve_codex_sessions_root(Some("/home/me/.codex/sessions".to_string()));
+        assert_eq!(got, PathBuf::from("/home/me/.codex/sessions"));
+    }
+
+    #[test]
     fn resolves_default_wsl_codex_config_root_from_linux_home() {
         let got = resolve_wsl_codex_config_root(None, "Ubuntu", "/home/me").unwrap();
         assert_eq!(got, "/home/me/.codex");
@@ -1201,6 +1218,15 @@ mod tests {
         assert_eq!(
             resolve_wsl_codex_config_root(
                 Some(r"\\wsl$\Ubuntu\home\me\.codex".to_string()),
+                "Ubuntu",
+                "",
+            )
+            .unwrap(),
+            "/home/me/.codex"
+        );
+        assert_eq!(
+            resolve_wsl_codex_config_root(
+                Some(r"\\?\UNC\wsl.localhost\Ubuntu\home\me\.codex".to_string()),
                 "Ubuntu",
                 "",
             )
@@ -1225,6 +1251,20 @@ mod tests {
         assert_eq!(
             got.to_string_lossy(),
             r"\\wsl.localhost\Ubuntu\root\.codex\sessions"
+        );
+    }
+
+    #[test]
+    fn resolves_wsl_codex_sessions_root_without_duplicate_sessions() {
+        let got = resolve_wsl_codex_sessions_root(
+            Some("/home/me/.codex/sessions".to_string()),
+            None,
+            "Ubuntu",
+        )
+        .unwrap();
+        assert_eq!(
+            got.to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\me\.codex\sessions"
         );
     }
 

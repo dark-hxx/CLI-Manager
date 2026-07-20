@@ -45,16 +45,33 @@ pub fn wsl_mnt_path_to_windows(path: &str) -> Option<String> {
     }
 }
 
+/// 将 Windows verbatim WSL UNC 归一化为标准 UNC。
+pub fn normalize_wsl_unc_path(path: &str) -> String {
+    let normalized = path.trim().replace('/', "\\");
+    let lower = normalized.to_ascii_lowercase();
+    const VERBATIM_UNC_PREFIX: &str = "\\\\?\\UNC\\";
+    const VERBATIM_WSL_LOCALHOST_PREFIX: &str = "\\\\?\\UNC\\wsl.localhost\\";
+    const VERBATIM_WSL_DOLLAR_PREFIX: &str = "\\\\?\\UNC\\wsl$\\";
+
+    if lower.starts_with(&VERBATIM_WSL_LOCALHOST_PREFIX.to_ascii_lowercase())
+        || lower.starts_with(&VERBATIM_WSL_DOLLAR_PREFIX.to_ascii_lowercase())
+    {
+        return format!("\\\\{}", &normalized[VERBATIM_UNC_PREFIX.len()..]);
+    }
+
+    normalized
+}
+
 /// 判断一个配置目录路径是否指向 WSL（`\\wsl.localhost\...` 或 `\\wsl$\...`，大小写不敏感）。
 pub fn is_wsl_config_dir(path: &str) -> bool {
-    let normalized = path.trim().replace('/', "\\").to_ascii_lowercase();
+    let normalized = normalize_wsl_unc_path(path).to_ascii_lowercase();
     normalized.starts_with("\\\\wsl.localhost\\") || normalized.starts_with("\\\\wsl$\\")
 }
 
 /// 解析 WSL UNC 路径为 `(distro, linux_path)`。
 /// `\\wsl.localhost\Ubuntu\home\venti\.claude` → `Some(("Ubuntu", "/home/venti/.claude"))`
 pub fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
-    let normalized = path.trim().replace('/', "\\");
+    let normalized = normalize_wsl_unc_path(path);
     if !is_wsl_config_dir(&normalized) {
         return None;
     }
@@ -145,6 +162,10 @@ mod tests {
             r"\\wsl.localhost\Ubuntu-22.04\home\me\.claude"
         ));
         assert!(is_wsl_config_dir(r"\\wsl$\Ubuntu\home\me\.claude"));
+        assert!(is_wsl_config_dir(
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\me\.claude"
+        ));
+        assert!(is_wsl_config_dir(r"\\?\UNC\wsl$\Ubuntu\home\me\.claude"));
         assert!(is_wsl_config_dir(r"\\WSL.LOCALHOST\Ubuntu\home")); // 大小写不敏感
         assert!(!is_wsl_config_dir(r"C:\Users\me\.claude"));
         assert!(!is_wsl_config_dir(r"\\server\share\.claude")); // 普通 UNC 不算
@@ -166,6 +187,18 @@ mod tests {
         let (distro, linux) = result.unwrap();
         assert_eq!(distro, "Debian");
         assert_eq!(linux, "/root/projects");
+    }
+
+    #[test]
+    fn parse_wsl_unc_handles_verbatim_unc() {
+        let result = parse_wsl_unc_path(r"\\?\UNC\wsl.localhost\Ubuntu\home\venti\.codex\sessions");
+        assert_eq!(
+            result,
+            Some((
+                "Ubuntu".to_string(),
+                "/home/venti/.codex/sessions".to_string()
+            ))
+        );
     }
 
     #[test]
