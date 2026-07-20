@@ -70,6 +70,8 @@ import { useAppPrompt } from "./ui/useAppPrompt";
 import { useAppConfirm } from "./ui/useAppConfirm";
 import { useHistoryStore } from "../stores/historyStore";
 import { useSystemResources } from "../hooks/useSystemResources";
+import { useSaveSessionToSidebar } from "../hooks/useSaveSessionToSidebar";
+import { canSaveSessionToSidebar } from "../lib/saveSessionToSidebar";
 import {
   shouldConfirmTerminalTabClose,
   TERMINAL_TAB_CLOSE_REQUEST_EVENT,
@@ -1043,6 +1045,7 @@ interface PaneTabBarProps {
   onCancelEdit: () => void;
   onNewTab: () => void;
   onDuplicateSession: (session: TerminalSession) => void;
+  onSaveSessionToSidebar: (session: TerminalSession) => void;
   onOpenSplitPicker: (sessionId: string, direction: TerminalPaneSplitDirection, anchor?: SplitPickerAnchor) => void;
   onUnsplit: (sessionId: string) => void;
   onMoveToPane: (sessionId: string, paneId: string) => void;
@@ -1079,6 +1082,7 @@ function PaneTabBar({
   onCancelEdit,
   onNewTab,
   onDuplicateSession,
+  onSaveSessionToSidebar,
   onOpenSplitPicker,
   onUnsplit,
   onMoveToPane,
@@ -1394,6 +1398,24 @@ function PaneTabBar({
                   <ContextMenuItem onSelect={() => closePaneSessionsToRight(session.id, getAnchor())}>{t("terminal.tab.closeRight")}</ContextMenuItem>
                   <ContextMenuItem onSelect={onNewTab}>{t("terminal.toolbar.newTerminal")}</ContextMenuItem>
                   <ContextMenuItem onSelect={() => onDuplicateSession(session)}>{t("terminal.tab.duplicate")}</ContextMenuItem>
+                  {(() => {
+                    const saveProject = session.projectId ? projectById.get(session.projectId) ?? null : null;
+                    const canSave = canSaveSessionToSidebar(session, saveProject);
+                    return (
+                      <ContextMenuItem
+                        disabled={!canSave}
+                        onSelect={() => {
+                          // Radix 会在菜单关闭后恢复焦点到触发器 tab；延后一拍再打开命名 Modal，
+                          // 避免其 data-autofocus 输入框被 Radix 的 focus-restore 抢走焦点。
+                          // 与相邻 rename 项(第 1380-1383 行)相同 pattern。
+                          window.setTimeout(() => onSaveSessionToSidebar(session), 0);
+                        }}
+                        title={!canSave ? t("saveSession.noSessionId") : undefined}
+                      >
+                        {t("terminal.tab.saveToSidebar")}
+                      </ContextMenuItem>
+                    );
+                  })()}
                   {terminalBackgroundEnabled && terminalBackgroundImagePath && (
                     hiddenBackgroundSessionIds.has(session.id) ? (
                       <ContextMenuItem onSelect={() => onShowBackground(session.id)}>{t("terminal.tab.showBackground")}</ContextMenuItem>
@@ -1550,6 +1572,7 @@ interface PaneLeafViewProps {
   onCancelEdit: () => void;
   onNewTab: () => void;
   onDuplicateSession: (session: TerminalSession) => void;
+  onSaveSessionToSidebar: (session: TerminalSession) => void;
   onOpenSplitPicker: (sessionId: string, direction: TerminalPaneSplitDirection, anchor?: SplitPickerAnchor) => void;
   onUnsplit: (sessionId: string) => void;
   onMoveToPane: (sessionId: string, paneId: string) => void;
@@ -1596,6 +1619,7 @@ function PaneLeafView({
   onCancelEdit,
   onNewTab,
   onDuplicateSession,
+  onSaveSessionToSidebar,
   onOpenSplitPicker,
   onUnsplit,
   onMoveToPane,
@@ -1645,6 +1669,7 @@ function PaneLeafView({
           onCancelEdit={onCancelEdit}
           onNewTab={onNewTab}
           onDuplicateSession={onDuplicateSession}
+          onSaveSessionToSidebar={onSaveSessionToSidebar}
           onOpenSplitPicker={onOpenSplitPicker}
           onUnsplit={onUnsplit}
           onMoveToPane={onMoveToPane}
@@ -1860,6 +1885,7 @@ function arePaneLeafViewPropsEqual(prevProps: PaneLeafViewProps, nextProps: Pane
     prevProps.onCancelEdit === nextProps.onCancelEdit &&
     prevProps.onNewTab === nextProps.onNewTab &&
     prevProps.onDuplicateSession === nextProps.onDuplicateSession &&
+    prevProps.onSaveSessionToSidebar === nextProps.onSaveSessionToSidebar &&
     prevProps.onOpenSplitPicker === nextProps.onOpenSplitPicker &&
     prevProps.onUnsplit === nextProps.onUnsplit &&
     prevProps.onMoveToPane === nextProps.onMoveToPane &&
@@ -2176,6 +2202,7 @@ export function TerminalTabs({
   const { t } = useI18n();
   const { prompt, promptDialog } = useAppPrompt();
   const { confirm, confirmDialog } = useAppConfirm();
+  const { saveSession: saveSessionToSidebar, saveSessionDialog } = useSaveSessionToSidebar();
   const { sessions, activeSessionId, workspans, activeWorkspanId, tabNotifications } = useTerminalStore(
     useShallow((s) => ({
       sessions: s.sessions,
@@ -2836,6 +2863,11 @@ export function TerminalTabs({
       setActiveWorkspaceTab("terminal");
     }).catch(() => {});
   }, [closeHistory, createSession, rejectMissingSessionWorktree]);
+
+  const handleSaveSessionToSidebar = useCallback((session: TerminalSession) => {
+    const project = session.projectId ? projectById.get(session.projectId) ?? null : null;
+    void saveSessionToSidebar(session, project);
+  }, [projectById, saveSessionToSidebar]);
 
   const handleActivateSession = useCallback((sessionId: string) => {
     closeHistory();
@@ -3809,6 +3841,7 @@ export function TerminalTabs({
         onCancelEdit={handlePaneCancelEdit}
         onNewTab={handlePaneNewTab}
         onDuplicateSession={handleDuplicateSession}
+        onSaveSessionToSidebar={handleSaveSessionToSidebar}
         onOpenSplitPicker={handleOpenSplitPicker}
         onUnsplit={handlePaneUnsplit}
         onMoveToPane={moveSessionToPane}
@@ -3840,6 +3873,7 @@ export function TerminalTabs({
     handlePaneSubmitEdit,
     handlePaneUnsplit,
     handleDuplicateSession,
+    handleSaveSessionToSidebar,
     handleOpenSplitPicker,
     handleOpenWorktreeChanges,
     handleOpenWorktreeHistory,
@@ -3915,6 +3949,7 @@ export function TerminalTabs({
     >
       {promptDialog}
       {confirmDialog}
+      {saveSessionDialog}
       <SplitProjectPicker
         picker={splitPicker}
         tree={projectTree}
@@ -4035,6 +4070,35 @@ export function TerminalTabs({
                               }, 0)}>
                                 {t("terminal.workspan.rename")}
                               </ContextMenuItem>
+                              {/*
+                                Reachability: in the default single-pane layout the pane-level tab bar
+                                is hidden (hideTabBar when the workspan carries a single visible session),
+                                so the pane-tab context menu that hosts the primary "Save session to
+                                sidebar" item is unreachable. Mirror the item on the workspan-tab context
+                                menu whenever the workspan carries a single session, so the feature stays
+                                reachable from the visible tab in the default layout. Disabled with the
+                                same tooltip semantics as the pane-menu twin.
+                              */}
+                              {(() => {
+                                const singleSession = model.singleSession;
+                                if (!singleSession) return null;
+                                const saveProject = singleSession.projectId ? projectById.get(singleSession.projectId) ?? null : null;
+                                const canSave = canSaveSessionToSidebar(singleSession, saveProject);
+                                return (
+                                  <ContextMenuItem
+                                    disabled={!canSave}
+                                    onSelect={() => {
+                                      // Same setTimeout(0) deferral as the pane-menu twin at
+                                      // TerminalTabs.tsx ~line 1402 — avoids the Radix focus-restore
+                                      // race that would blur the useAppPrompt Modal's autofocused input.
+                                      window.setTimeout(() => handleSaveSessionToSidebar(singleSession), 0);
+                                    }}
+                                    title={!canSave ? t("saveSession.noSessionId") : undefined}
+                                  >
+                                    {t("terminal.tab.saveToSidebar")}
+                                  </ContextMenuItem>
+                                );
+                              })()}
                               <ContextMenuItem
                                 disabled={workspanTabModels.length <= 1}
                                 onSelect={() => handleCloseSessions(
