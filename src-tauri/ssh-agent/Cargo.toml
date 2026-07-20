@@ -7,9 +7,12 @@ description = "Remote SSH integration agent for CLI-Manager"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+cli-manager-hook-schema = { path = "../hook-schema" }
+libc = "0.2"
 semver = "1"
 sha2 = "0.10"
+toml_edit = "0.25.4"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

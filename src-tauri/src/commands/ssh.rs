@@ -1,5 +1,7 @@
+use cli_manager_hook_schema::{HookConfigReport, HookConfigRequest, HookExpectedFile};
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::process::Command;
 use std::time::Duration;
 use uuid::Uuid;
@@ -14,6 +16,7 @@ use crate::ssh_transport::{
 const AGENT_PROBE_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_PROBE/1";
 const AGENT_ENV_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_ENV/1";
 const AGENT_OPERATION_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_OPERATION/1";
+const AGENT_HOOK_CONFIG_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_HOOK_CONFIG/1";
 const AGENT_PROTOCOL_MAJOR: u16 = 1;
 const MAX_AGENT_PROBE_BANNER_BYTES: usize = 8 * 1024;
 const MAX_AGENT_PROBE_REPORT_BYTES: usize = 64 * 1024;
@@ -407,6 +410,8 @@ fn ssh_remote_command_with_options(
 pub struct SshAgentProbeResult {
     status: String,
     code: String,
+    installation_id: String,
+    remote_machine_id: String,
     install_path: String,
     agent_version: String,
     protocol_version: String,
@@ -431,6 +436,14 @@ struct AgentDoctorProbe {
     version: AgentVersionProbe,
     supported: bool,
     code: String,
+    installation: Option<AgentDoctorInstallation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentDoctorInstallation {
+    installation_id: String,
+    remote_machine_id: String,
 }
 
 #[derive(Debug)]
@@ -903,6 +916,289 @@ fn build_agent_management_script(
     ))
 }
 
+fn validate_hook_source(source: &str) -> Result<&str, String> {
+    match source.trim() {
+        "claude" => Ok("claude"),
+        "codex" => Ok("codex"),
+        _ => Err("hook_source_invalid".to_string()),
+    }
+}
+
+fn validate_hook_config_root(root: &str) -> Result<&str, String> {
+    let root = root.trim();
+    if root.is_empty() {
+        return Ok(root);
+    }
+    validate_remote_home_path(root).map_err(|error| match error {
+        SshRemoteHomePathError::Invalid => "hook_config_root_invalid".to_string(),
+        SshRemoteHomePathError::ParentTraversal => "hook_config_root_parent_forbidden".to_string(),
+    })?;
+    Ok(root)
+}
+
+fn build_agent_hook_config_script(
+    agent_path: Option<&str>,
+    action: &str,
+) -> Result<String, String> {
+    if !matches!(
+        action,
+        "inspect" | "preview-install" | "preview-uninstall" | "install" | "uninstall"
+    ) {
+        return Err("hook_config_action_invalid".to_string());
+    }
+    let discovery = agent_discovery_script(agent_path)?;
+    Ok(format!(
+        "set -eu\n{discovery}\
+         if [ -z \"$agent\" ]; then exit 127; fi\n\
+         printf '{AGENT_HOOK_CONFIG_MAGIC} result\\n'\n\
+         exec \"$agent\" hook-config {action}"
+    ))
+}
+
+fn validate_hook_fingerprint(value: &str) -> bool {
+    value == "missing" || (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+fn validate_hook_remote_path(value: &str) -> bool {
+    value.starts_with('/')
+        && !value.contains(['\0', '\r', '\n', '\\'])
+        && !value.split('/').any(|segment| segment == "..")
+}
+
+fn parse_agent_hook_config(stdout: &[u8]) -> Result<HookConfigReport, String> {
+    let text =
+        std::str::from_utf8(stdout).map_err(|_| "ssh_agent_hook_output_invalid".to_string())?;
+    let marker_offset = text
+        .find(AGENT_HOOK_CONFIG_MAGIC)
+        .ok_or_else(|| "ssh_agent_hook_magic_missing".to_string())?;
+    if marker_offset > MAX_AGENT_PROBE_BANNER_BYTES {
+        return Err("ssh_agent_probe_banner_too_large".to_string());
+    }
+    let (marker, payload) = text[marker_offset..]
+        .split_once('\n')
+        .ok_or_else(|| "ssh_agent_hook_output_invalid".to_string())?;
+    if marker.trim_end_matches('\r') != format!("{AGENT_HOOK_CONFIG_MAGIC} result") {
+        return Err("ssh_agent_hook_magic_invalid".to_string());
+    }
+    serde_json::from_str(payload.trim())
+        .map_err(|_| "ssh_agent_hook_output_contaminated".to_string())
+}
+
+fn validate_agent_hook_report(
+    report: &HookConfigReport,
+    expected_action: &str,
+    expected_source: &str,
+    expected_installation_id: &str,
+    expected_remote_machine_id: &str,
+    expected_configured_root: &str,
+    expected_canonical_root: Option<&str>,
+) -> Result<(), String> {
+    if report.action != expected_action {
+        return Err("ssh_agent_hook_action_invalid".to_string());
+    }
+    if report.source != expected_source {
+        return Err("ssh_agent_hook_source_invalid".to_string());
+    }
+    if report.configured_config_root != expected_configured_root {
+        return Err("ssh_agent_hook_root_invalid".to_string());
+    }
+    Uuid::parse_str(&report.installation_id)
+        .map_err(|_| "ssh_agent_hook_installation_id_invalid".to_string())?;
+    if report.installation_id != expected_installation_id {
+        return Err("ssh_agent_identity_changed".to_string());
+    }
+    if report.remote_machine_id.is_empty()
+        || report.remote_machine_id.len() > 256
+        || report.remote_machine_id.contains(['\0', '\r', '\n'])
+    {
+        return Err("ssh_agent_hook_machine_id_invalid".to_string());
+    }
+    if report.remote_machine_id != expected_remote_machine_id {
+        return Err("ssh_agent_identity_changed".to_string());
+    }
+    if !matches!(
+        report.status.as_str(),
+        "notInstalled" | "partialInstalled" | "outdated" | "installed" | "conflict"
+    ) {
+        return Err("ssh_agent_hook_status_invalid".to_string());
+    }
+    if !validate_hook_remote_path(&report.canonical_config_root)
+        || report.config_root_hash.len() != 64
+        || !report
+            .config_root_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("ssh_agent_hook_root_invalid".to_string());
+    }
+    if expected_canonical_root.is_some_and(|expected| report.canonical_config_root != expected) {
+        return Err("hook_config_root_changed".to_string());
+    }
+    if report.will_create_config_root
+        && (expected_action != "previewInstall" || report.config_root_exists)
+        || expected_action == "installed" && !report.config_root_exists
+    {
+        return Err("ssh_agent_hook_root_invalid".to_string());
+    }
+    let required = if expected_source == "claude" { 11 } else { 6 };
+    if report.required_entries != required || report.managed_entries > required {
+        return Err("ssh_agent_hook_count_invalid".to_string());
+    }
+    let expected_roles: HashSet<&str> = if expected_source == "claude" {
+        HashSet::from(["claudeSettings"])
+    } else {
+        HashSet::from(["codexHooks", "codexFeature"])
+    };
+    let mut files = HashSet::new();
+    for file in &report.config_files {
+        if !expected_roles.contains(file.role.as_str())
+            || !validate_hook_remote_path(&file.canonical_path)
+            || !validate_hook_fingerprint(&file.fingerprint)
+            || !files.insert((file.role.as_str(), file.canonical_path.as_str()))
+        {
+            return Err("ssh_agent_hook_file_invalid".to_string());
+        }
+    }
+    if report.config_files.len() != if expected_source == "claude" { 1 } else { 2 } {
+        return Err("ssh_agent_hook_file_invalid".to_string());
+    }
+    for change in &report.changes {
+        if !files.contains(&(change.role.as_str(), change.canonical_path.as_str()))
+            || !validate_hook_fingerprint(&change.before_fingerprint)
+            || !validate_hook_fingerprint(&change.after_fingerprint)
+            || !matches!(
+                change.action.as_str(),
+                "unchanged" | "create" | "update" | "delete"
+            )
+        {
+            return Err("ssh_agent_hook_change_invalid".to_string());
+        }
+        let Some(file) = report
+            .config_files
+            .iter()
+            .find(|file| file.role == change.role && file.canonical_path == change.canonical_path)
+        else {
+            return Err("ssh_agent_hook_change_invalid".to_string());
+        };
+        let expected_fingerprint = if matches!(expected_action, "installed" | "uninstalled") {
+            &change.after_fingerprint
+        } else {
+            &change.before_fingerprint
+        };
+        if &file.fingerprint != expected_fingerprint {
+            return Err("ssh_agent_hook_change_invalid".to_string());
+        }
+    }
+    if report.changes.len() != report.config_files.len() {
+        return Err("ssh_agent_hook_change_invalid".to_string());
+    }
+    if let Some(record) = &report.installation {
+        if expected_action != "installed"
+            || record.source != report.source
+            || record.installation_id != report.installation_id
+            || record.owner_id != format!("cli-manager-ssh-agent:{}", report.installation_id)
+            || record.configured_config_root != report.configured_config_root
+            || record.canonical_config_root != report.canonical_config_root
+            || record.history_source_candidate.source != report.source
+            || record.history_source_candidate.canonical_config_root != report.canonical_config_root
+            || record.history_source_candidate.config_root_hash != report.config_root_hash
+            || record.adapter_version == 0
+            || record.managed_entries != required
+            || record.config_files.len() != report.config_files.len()
+        {
+            return Err("ssh_agent_hook_record_invalid".to_string());
+        }
+        let mut record_files = HashSet::new();
+        for file in &record.config_files {
+            if !files.contains(&(file.role.as_str(), file.canonical_path.as_str()))
+                || !record_files.insert((file.role.as_str(), file.canonical_path.as_str()))
+                || !validate_hook_fingerprint(&file.before_fingerprint)
+                || !validate_hook_fingerprint(&file.after_fingerprint)
+            {
+                return Err("ssh_agent_hook_record_invalid".to_string());
+            }
+            let Some(change) = report.changes.iter().find(|change| {
+                change.role == file.role && change.canonical_path == file.canonical_path
+            }) else {
+                return Err("ssh_agent_hook_record_invalid".to_string());
+            };
+            if file.before_fingerprint != change.before_fingerprint
+                || file.after_fingerprint != change.after_fingerprint
+            {
+                return Err("ssh_agent_hook_record_invalid".to_string());
+            }
+        }
+        if record_files != files {
+            return Err("ssh_agent_hook_record_invalid".to_string());
+        }
+    } else if expected_action == "installed" {
+        return Err("ssh_agent_hook_record_missing".to_string());
+    }
+    Ok(())
+}
+
+async fn run_agent_hook_config(
+    spec: &SshConnectionSpec,
+    agent_path: Option<&str>,
+    action: &str,
+    expected_action: &str,
+    expected_installation_id: &str,
+    expected_remote_machine_id: &str,
+    request: HookConfigRequest,
+) -> Result<HookConfigReport, String> {
+    validate_spec(spec)?;
+    ensure_non_interactive(spec)?;
+    Uuid::parse_str(expected_installation_id)
+        .map_err(|_| "ssh_agent_identity_required".to_string())?;
+    if expected_remote_machine_id.is_empty()
+        || expected_remote_machine_id.len() > 256
+        || expected_remote_machine_id.contains(['\0', '\r', '\n'])
+    {
+        return Err("ssh_agent_identity_required".to_string());
+    }
+    let source = validate_hook_source(&request.source)?.to_string();
+    let configured_root = request.configured_config_root.clone();
+    let expected_canonical_root = request.expected_canonical_root.clone();
+    let script = build_agent_hook_config_script(agent_path, action)?;
+    let input =
+        serde_json::to_vec(&request).map_err(|_| "ssh_agent_hook_request_invalid".to_string())?;
+    let launch = spec.build_one_shot_launch(script, SshOneShotOptions::default())?;
+    let timeout = Duration::from_secs(spec.connect_timeout_sec.saturating_add(45).min(345));
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        run_agent_input_process(command_from_transport_launch(launch), input, timeout)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| format!("ssh_agent_hook_operation_failed:{error}"))?;
+    if output.stdout_truncated {
+        return Err("ssh_agent_probe_output_too_large".to_string());
+    }
+    let report = match parse_agent_hook_config(&output.stdout) {
+        Ok(report) if output.status_success => report,
+        Ok(_) | Err(_) => {
+            let detail = single_line(&output.stderr);
+            return Err(if detail.is_empty() {
+                format!(
+                    "ssh_agent_hook_operation_failed:{}",
+                    output.status_code.unwrap_or(-1)
+                )
+            } else {
+                detail
+            });
+        }
+    };
+    validate_agent_hook_report(
+        &report,
+        expected_action,
+        &source,
+        expected_installation_id,
+        expected_remote_machine_id,
+        &configured_root,
+        expected_canonical_root.as_deref(),
+    )?;
+    Ok(report)
+}
+
 async fn run_agent_operation(
     spec: &SshConnectionSpec,
     script: String,
@@ -984,6 +1280,8 @@ fn agent_probe_result(status: &str, code: &str, detail: String) -> SshAgentProbe
     SshAgentProbeResult {
         status: status.to_string(),
         code: code.to_string(),
+        installation_id: String::new(),
+        remote_machine_id: String::new(),
         install_path: String::new(),
         agent_version: String::new(),
         protocol_version: String::new(),
@@ -994,6 +1292,12 @@ fn agent_probe_result(status: &str, code: &str, detail: String) -> SshAgentProbe
 }
 
 fn result_from_agent_report(install_path: String, report: AgentDoctorProbe) -> SshAgentProbeResult {
+    let installation = report.installation.filter(|installation| {
+        Uuid::parse_str(&installation.installation_id).is_ok()
+            && !installation.remote_machine_id.is_empty()
+            && installation.remote_machine_id.len() <= 256
+            && !installation.remote_machine_id.contains(['\0', '\r', '\n'])
+    });
     let version = report.version;
     let protocol_version = format!("{}.{}", version.protocol_major, version.protocol_minor);
     let target = format!("{}/{}", version.target_os, version.target_arch);
@@ -1011,6 +1315,13 @@ fn result_from_agent_report(install_path: String, report: AgentDoctorProbe) -> S
     SshAgentProbeResult {
         status: status.to_string(),
         code: code.to_string(),
+        installation_id: installation
+            .as_ref()
+            .map(|value| value.installation_id.clone())
+            .unwrap_or_default(),
+        remote_machine_id: installation
+            .map(|value| value.remote_machine_id)
+            .unwrap_or_default(),
         install_path,
         agent_version: version.agent_version,
         protocol_version,
@@ -1325,6 +1636,149 @@ pub async fn ssh_agent_uninstall(
     run_agent_operation(&spec, script, None).await
 }
 
+fn hook_request(
+    source: String,
+    configured_config_root: String,
+    expected_canonical_root: Option<String>,
+    expected_files: Vec<HookExpectedFile>,
+) -> Result<HookConfigRequest, String> {
+    let source = validate_hook_source(&source)?.to_string();
+    let configured_config_root = validate_hook_config_root(&configured_config_root)?.to_string();
+    let expected_canonical_root = expected_canonical_root
+        .map(|value| {
+            let value = value.trim();
+            if !validate_hook_remote_path(value) {
+                return Err("hook_config_root_invalid".to_string());
+            }
+            Ok(value.to_string())
+        })
+        .transpose()?;
+    let allowed_roles: HashSet<&str> = if source == "claude" {
+        HashSet::from(["claudeSettings"])
+    } else {
+        HashSet::from(["codexHooks", "codexFeature"])
+    };
+    let mut seen = HashSet::new();
+    for file in &expected_files {
+        if !allowed_roles.contains(file.role.as_str())
+            || !validate_hook_remote_path(&file.canonical_path)
+            || !validate_hook_fingerprint(&file.fingerprint)
+            || !seen.insert((file.role.as_str(), file.canonical_path.as_str()))
+        {
+            return Err("ssh_agent_hook_expected_file_invalid".to_string());
+        }
+    }
+    Ok(HookConfigRequest {
+        source,
+        configured_config_root,
+        expected_canonical_root,
+        expected_files,
+    })
+}
+
+#[tauri::command]
+pub async fn ssh_agent_hook_inspect(
+    host_id: String,
+    spec: SshConnectionSpec,
+    agent_path: Option<String>,
+    expected_installation_id: String,
+    expected_remote_machine_id: String,
+    source: String,
+    configured_config_root: String,
+) -> Result<HookConfigReport, String> {
+    Uuid::parse_str(host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
+    let request = hook_request(source, configured_config_root, None, Vec::new())?;
+    run_agent_hook_config(
+        &spec,
+        agent_path.as_deref(),
+        "inspect",
+        "inspect",
+        &expected_installation_id,
+        &expected_remote_machine_id,
+        request,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn ssh_agent_hook_preview(
+    host_id: String,
+    spec: SshConnectionSpec,
+    agent_path: Option<String>,
+    expected_installation_id: String,
+    expected_remote_machine_id: String,
+    source: String,
+    configured_config_root: String,
+    expected_canonical_root: Option<String>,
+    action: String,
+) -> Result<HookConfigReport, String> {
+    Uuid::parse_str(host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
+    let (remote_action, expected_action) = match action.as_str() {
+        "install" => ("preview-install", "previewInstall"),
+        "uninstall" => ("preview-uninstall", "previewUninstall"),
+        _ => return Err("hook_config_action_invalid".to_string()),
+    };
+    if action == "install" && expected_canonical_root.is_some() {
+        return Err("hook_config_action_invalid".to_string());
+    }
+    let request = hook_request(
+        source,
+        configured_config_root,
+        expected_canonical_root,
+        Vec::new(),
+    )?;
+    run_agent_hook_config(
+        &spec,
+        agent_path.as_deref(),
+        remote_action,
+        expected_action,
+        &expected_installation_id,
+        &expected_remote_machine_id,
+        request,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn ssh_agent_hook_apply(
+    host_id: String,
+    spec: SshConnectionSpec,
+    agent_path: Option<String>,
+    expected_installation_id: String,
+    expected_remote_machine_id: String,
+    source: String,
+    configured_config_root: String,
+    expected_canonical_root: Option<String>,
+    action: String,
+    expected_files: Vec<HookExpectedFile>,
+) -> Result<HookConfigReport, String> {
+    Uuid::parse_str(host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
+    let (remote_action, expected_action) = match action.as_str() {
+        "install" => ("install", "installed"),
+        "uninstall" => ("uninstall", "uninstalled"),
+        _ => return Err("hook_config_action_invalid".to_string()),
+    };
+    if action == "install" && expected_canonical_root.is_some() {
+        return Err("hook_config_action_invalid".to_string());
+    }
+    let request = hook_request(
+        source,
+        configured_config_root,
+        expected_canonical_root,
+        expected_files,
+    )?;
+    run_agent_hook_config(
+        &spec,
+        agent_path.as_deref(),
+        remote_action,
+        expected_action,
+        &expected_installation_id,
+        &expected_remote_machine_id,
+        request,
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn ssh_check_path(
     spec: SshConnectionSpec,
@@ -1422,11 +1876,15 @@ pub async fn ssh_list_directories(
 mod tests {
     use super::{
         build_agent_install_script, build_agent_management_script, build_agent_probe_script,
-        host_key_fingerprint, install_action, is_authenticated_log, parse_agent_environment,
-        parse_agent_operation, parse_agent_probe_stdout, posix_quote, read_bounded,
-        result_from_agent_report, ssh_password_account, ssh_probe_command, validate_remote_path,
-        validate_spec, AgentDoctorProbe, AgentVersionProbe, ParsedAgentProbe,
-        RemoteAgentEnvironment, SshConnectionSpec,
+        hook_request, host_key_fingerprint, install_action, is_authenticated_log,
+        parse_agent_environment, parse_agent_operation, parse_agent_probe_stdout, posix_quote,
+        read_bounded, result_from_agent_report, ssh_password_account, ssh_probe_command,
+        validate_agent_hook_report, validate_remote_path, validate_spec, AgentDoctorProbe,
+        AgentVersionProbe, ParsedAgentProbe, RemoteAgentEnvironment, SshConnectionSpec,
+    };
+    use cli_manager_hook_schema::{
+        HookConfigChange, HookConfigFile, HookConfigReport, HookHistorySourceCandidate,
+        HookInstallationFile, HookInstallationRecord,
     };
 
     fn spec() -> SshConnectionSpec {
@@ -1595,6 +2053,7 @@ mod tests {
                 },
                 supported: true,
                 code: "ok".into(),
+                installation: None,
             },
         );
         assert_eq!(result.status, "incompatible");
@@ -1617,6 +2076,7 @@ mod tests {
                 },
                 supported: true,
                 code: "home_directory_unavailable".into(),
+                installation: None,
             },
         );
         assert_eq!(result.status, "corrupt");
@@ -1630,6 +2090,174 @@ mod tests {
         let (output, truncated) = read_bounded(std::io::Cursor::new(input), 32);
         assert_eq!(output.len(), 32);
         assert!(truncated);
+    }
+
+    #[test]
+    fn hook_request_validates_expected_canonical_root() {
+        let request = hook_request(
+            "claude".to_string(),
+            "~/.claude".to_string(),
+            Some("/home/dev/.claude".to_string()),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            request.expected_canonical_root.as_deref(),
+            Some("/home/dev/.claude")
+        );
+        assert_eq!(
+            hook_request(
+                "claude".to_string(),
+                "~/.claude".to_string(),
+                Some("/home/dev/../other".to_string()),
+                Vec::new(),
+            )
+            .unwrap_err(),
+            "hook_config_root_invalid"
+        );
+    }
+
+    #[test]
+    fn hook_report_must_match_expected_canonical_root() {
+        let fingerprint = "a".repeat(64);
+        let report = HookConfigReport {
+            action: "previewUninstall".to_string(),
+            status: "installed".to_string(),
+            source: "claude".to_string(),
+            installation_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            remote_machine_id: "machine".to_string(),
+            configured_config_root: "~/.claude".to_string(),
+            canonical_config_root: "/home/dev/.claude".to_string(),
+            config_root_hash: "b".repeat(64),
+            config_root_exists: true,
+            will_create_config_root: false,
+            config_files: vec![HookConfigFile {
+                role: "claudeSettings".to_string(),
+                canonical_path: "/home/dev/.claude/settings.json".to_string(),
+                fingerprint: fingerprint.clone(),
+                exists: true,
+            }],
+            managed_entries: 11,
+            required_entries: 11,
+            changes: vec![HookConfigChange {
+                role: "claudeSettings".to_string(),
+                canonical_path: "/home/dev/.claude/settings.json".to_string(),
+                before_fingerprint: fingerprint.clone(),
+                after_fingerprint: fingerprint,
+                action: "unchanged".to_string(),
+            }],
+            installation: None,
+        };
+        assert!(validate_agent_hook_report(
+            &report,
+            "previewUninstall",
+            "claude",
+            "00000000-0000-4000-8000-000000000001",
+            "machine",
+            "~/.claude",
+            Some("/home/dev/.claude"),
+        )
+        .is_ok());
+        assert_eq!(
+            validate_agent_hook_report(
+                &report,
+                "previewUninstall",
+                "claude",
+                "00000000-0000-4000-8000-000000000001",
+                "machine",
+                "~/.claude",
+                Some("/home/dev/other"),
+            )
+            .unwrap_err(),
+            "hook_config_root_changed"
+        );
+    }
+
+    #[test]
+    fn hook_installation_record_requires_each_config_file_once() {
+        let hooks_path = "/home/dev/.codex/hooks.json";
+        let feature_path = "/home/dev/.codex/config.toml";
+        let hooks_fingerprint = "a".repeat(64);
+        let feature_fingerprint = "b".repeat(64);
+        let duplicate = HookInstallationFile {
+            role: "codexHooks".to_string(),
+            canonical_path: hooks_path.to_string(),
+            before_fingerprint: "missing".to_string(),
+            after_fingerprint: hooks_fingerprint.clone(),
+        };
+        let report = HookConfigReport {
+            action: "installed".to_string(),
+            status: "installed".to_string(),
+            source: "codex".to_string(),
+            installation_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            remote_machine_id: "machine".to_string(),
+            configured_config_root: "~/.codex".to_string(),
+            canonical_config_root: "/home/dev/.codex".to_string(),
+            config_root_hash: "c".repeat(64),
+            config_root_exists: true,
+            will_create_config_root: false,
+            config_files: vec![
+                HookConfigFile {
+                    role: "codexHooks".to_string(),
+                    canonical_path: hooks_path.to_string(),
+                    fingerprint: hooks_fingerprint.clone(),
+                    exists: true,
+                },
+                HookConfigFile {
+                    role: "codexFeature".to_string(),
+                    canonical_path: feature_path.to_string(),
+                    fingerprint: feature_fingerprint.clone(),
+                    exists: true,
+                },
+            ],
+            managed_entries: 6,
+            required_entries: 6,
+            changes: vec![
+                HookConfigChange {
+                    role: "codexHooks".to_string(),
+                    canonical_path: hooks_path.to_string(),
+                    before_fingerprint: "missing".to_string(),
+                    after_fingerprint: hooks_fingerprint,
+                    action: "create".to_string(),
+                },
+                HookConfigChange {
+                    role: "codexFeature".to_string(),
+                    canonical_path: feature_path.to_string(),
+                    before_fingerprint: "missing".to_string(),
+                    after_fingerprint: feature_fingerprint,
+                    action: "create".to_string(),
+                },
+            ],
+            installation: Some(HookInstallationRecord {
+                source: "codex".to_string(),
+                installation_id: "00000000-0000-4000-8000-000000000001".to_string(),
+                owner_id: "cli-manager-ssh-agent:00000000-0000-4000-8000-000000000001".to_string(),
+                configured_config_root: "~/.codex".to_string(),
+                canonical_config_root: "/home/dev/.codex".to_string(),
+                config_files: vec![duplicate.clone(), duplicate],
+                managed_entries: 6,
+                adapter_version: 1,
+                installed_at: 1,
+                history_source_candidate: HookHistorySourceCandidate {
+                    source: "codex".to_string(),
+                    canonical_config_root: "/home/dev/.codex".to_string(),
+                    config_root_hash: "c".repeat(64),
+                },
+            }),
+        };
+        assert_eq!(
+            validate_agent_hook_report(
+                &report,
+                "installed",
+                "codex",
+                "00000000-0000-4000-8000-000000000001",
+                "machine",
+                "~/.codex",
+                None,
+            )
+            .unwrap_err(),
+            "ssh_agent_hook_record_invalid"
+        );
     }
 
     #[test]

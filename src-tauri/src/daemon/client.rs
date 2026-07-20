@@ -211,8 +211,13 @@ impl DaemonClient {
             DaemonFrame::HookReport { payload } => {
                 let _ = app_handle.emit("claude-hook-notification", payload);
             }
-            DaemonFrame::CheckpointAccepted { .. }
-            | DaemonFrame::CheckpointRejected { .. } => {}
+            DaemonFrame::SshAgentHookGap { host_id, dropped } => {
+                let _ = app_handle.emit(
+                    "ssh-agent-hook-gap",
+                    serde_json::json!({ "hostId": host_id, "dropped": dropped }),
+                );
+            }
+            DaemonFrame::CheckpointAccepted { .. } | DaemonFrame::CheckpointRejected { .. } => {}
             DaemonFrame::Pong { id }
             | DaemonFrame::Ok { id }
             | DaemonFrame::Created { id, .. }

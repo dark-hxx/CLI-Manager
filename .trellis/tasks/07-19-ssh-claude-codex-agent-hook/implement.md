@@ -84,7 +84,7 @@
 
 - 从本地 Hook parser 抽取共享 stdin 归一化逻辑。
 - Agent `hook` one-shot + Unix socket/named pipe + spool。
-- clientInstanceId/installationId namespace，普通远端 CLI 无绑定环境时 no-op，多桌面端不串事件。
+- hostId/clientInstanceId/installationId namespace，普通远端 CLI 无绑定环境时 no-op，多 Host 档案与多桌面端不串事件。
 - Claude/Codex 配置 dry-run、owner/install id、原子合并、journal、第三方保留。
 - `hook_inspect/preview/install` 接收当前 Host/工具唯一的 `toolConfigRoot`，返回 canonical config root、实际配置文件路径/fingerprint 和 `HookInstallationRecord`；前端记录并展示，不把 Agent binary path 当 Hook/history root。
 - SSH 设置页按 Host、按工具提供“CLI 配置目录（Hook 与历史）”、远程目录选择、恢复默认、预览、安装、升级、卸载和 Hook 配置冲突状态；默认分别为当前 SSH 用户的 `$HOME/.claude` 与 `$HOME/.codex`，不读取远端 cc-switch/provider 数据。
@@ -214,7 +214,7 @@ cd src-tauri && cargo test
 | 只读 Git 意外执行 hook/textconv/credential helper/写锁 | 固定 allowlist、no external diff/textconv、optional locks off；首期不开放网络/mutation。 |
 | Git 状态过大或 watcher 频繁 | 条目/时间/Diff 上限、invalidation debounce、可见时刷新和低优先级调度。 |
 | Host 档案指向新机器 | installationId/remoteMachineId 变化，旧缓存停止复用。 |
-| 多客户端/普通远端 CLI 被全局 Hook 捕获 | client namespace + 缺绑定环境 no-op。 |
+| 多 Host 档案、多客户端或普通远端 CLI 被全局 Hook 捕获 | Host/client namespace + 缺绑定环境 no-op。 |
 | SSH provider 残留字段触发本机供应商 | capability/Rust 启动双重忽略，编辑/导入清理。 |
 | 连接过多/服务器压力 | per-host/global gate、idle close、降频和取消。 |
 | 密码/MFA 终端可用但 bridge 无法后台认证 | 设置页分开诊断；首期 bridge 限定非交互认证，返回 `authenticationRequired` 后停止重试。 |

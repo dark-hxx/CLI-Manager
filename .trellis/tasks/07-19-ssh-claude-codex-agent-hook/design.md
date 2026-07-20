@@ -327,7 +327,7 @@ CLI_MANAGER_BRIDGE_EPOCH
 
 Hook 从 stdin 获取 CLI `session_id`、cwd 和 transcript path，再与环境绑定合并。缺少 `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`、`CLI_MANAGER_TAB_ID` 或 bridge binding 时必须立即 no-op，不写 spool、不上报；这样远端用户从普通 SSH、IDE、tmux 或其他终端启动的 Claude/Codex 不会被 Hook 采集。历史索引与 Hook 独立，但首期历史也只返回已绑定项目范围。
 
-同一远端用户被多个 CLI-Manager 桌面端连接时，每个客户端使用独立 `clientInstanceId`、bridge endpoint 和 spool namespace。Hook 只投递到启动该会话的客户端；一个客户端断线不得把事件广播给另一个客户端。
+同一远端用户被多条 SSH Host 配置或多个 CLI-Manager 桌面端连接时，每个 `hostId + clientInstanceId + installationId` 使用独立 bridge endpoint 和 spool namespace。Hook 只投递到启动该会话的 Host/客户端；一条 Host 配置或一个客户端断线不得把事件广播给其他 Host 档案或桌面端。
 
 远端 payload 增加：
 
@@ -1024,7 +1024,7 @@ dubiousOwnership | scanning | fresh | stale | partial | unavailable
 - bridge 属于 daemon/主机连接池，不属于某个 React 组件或窗口。
 - Hook 广播到多个窗口时，只有拥有 `terminalTabId + bridgeEpoch` 的窗口处理绑定事件。
 - 同一主机多 Tab 共用 bridge，但统计严格按 cliSessionId 隔离。
-- 同一远端用户的多个 CLI-Manager 客户端按 clientInstanceId 隔离 bridge/spool；不同 SSH 用户按 installationId 隔离历史和 Hook。
+- 同一远端用户的多条 SSH Host 配置与多个 CLI-Manager 客户端按 `hostId + clientInstanceId + installationId` 隔离 bridge/spool；不同 SSH 用户仍由各自 Agent installation 隔离历史和 Hook。
 - 窗口关闭或 Tab 隐藏只取消该订阅，不关闭仍被其他 Tab/窗口使用的 bridge。
 - App/daemon 重启后重新建立 bridge，使用 cursor 补发 Hook/历史；不得重启仍存活的远端 Claude/Codex。
 - 已退出 PTY 只恢复 replay/断开信息；历史仍可从 Agent/缓存查看。

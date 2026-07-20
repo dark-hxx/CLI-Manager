@@ -4,7 +4,7 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The current delivered scope is the standalone Agent protocol skeleton, explicit one-shot `version/status/doctor` probing, and the signed Agent install/upgrade/rollback/uninstall supply chain. Agent lifecycle availability does not imply that Hook, history, files, Git, stats, or a persistent bridge is already delivered.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, and one reusable daemon-owned Hook spool bridge per active SSH Host. History, files, Git, historical stats, generic bridge RPC scheduling, heartbeat, and idle subscriptions remain separate stages.
 
 ## 2. Signatures
 
@@ -49,6 +49,9 @@ pub async fn ssh_agent_install_preview(...) -> Result<SshAgentInstallPreview, St
 pub async fn ssh_agent_install(...) -> Result<SshAgentOperationResult, String>;
 pub async fn ssh_agent_rollback(...) -> Result<SshAgentOperationResult, String>;
 pub async fn ssh_agent_uninstall(...) -> Result<SshAgentOperationResult, String>;
+pub async fn ssh_agent_hook_inspect(...) -> Result<HookConfigReport, String>;
+pub async fn ssh_agent_hook_preview(...) -> Result<HookConfigReport, String>;
+pub async fn ssh_agent_hook_apply(...) -> Result<HookConfigReport, String>;
 ```
 
 `SshAgentProbeResult` contains `status`, stable `code`, sanitized executable/version/protocol/target metadata, `supported`, and an ephemeral diagnostic `detail`. Only metadata fields enter `ssh_agent_installations`; `detail` is never persisted.
@@ -62,6 +65,9 @@ cli-manager-ssh-agent doctor
 cli-manager-ssh-agent install [--install-dir PATH] [--allow-downgrade]
 cli-manager-ssh-agent rollback [--install-dir PATH]
 cli-manager-ssh-agent uninstall [--install-dir PATH] [--purge]
+cli-manager-ssh-agent hook --source claude|codex --event EVENT \
+  --managed-by cli-manager-ssh-agent --installation-id UUID
+cli-manager-ssh-agent hook-config inspect|preview-install|preview-uninstall|install|uninstall
 cli-manager-ssh-agent bridge --stdio --protocol 1
 ```
 
@@ -94,6 +100,19 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Downgrades are rejected unless explicitly allowed. A failed promote restores `current`, `previous`, and the launcher. Rollback swaps only distinct valid versions and restores links if self-check or record persistence fails.
 - Uninstall quarantines managed versions before removing links and the discovery record; a failure restores all original links and versions. Normal uninstall keeps one bounded record, while `--purge` removes Agent state. No Agent lifecycle command modifies Claude/Codex Hook configuration.
 - Operation JSON is accepted only after strict marker, action, UUID, version, protocol, target, path, source, manifest URL, and SHA-256 validation. Arbitrary remote output is never persisted.
+- Hook config requests use the Host/tool `configuredConfigRoot`; empty means `$HOME/.claude` or `$HOME/.codex`. Inspect and preview never create directories. Confirmed install may create only a missing native default root; a missing custom root is rejected.
+- Hook reports return the configured and canonical roots, `configRootHash`, actual canonical config files, fingerprints, change actions, Agent installation/machine identity, and an installation record. The desktop validates every field before persisting `hook_record_json`.
+- A later inspect refresh preserves the last validated `HookInstallationRecord` for the same canonical root until explicit uninstall. Host-primary and project-override rows that resolve to the same Host/source/canonical root mirror the same Hook report so one physical installation cannot appear installed in one scope and absent in another.
+- Claude JSON and Codex JSON/TOML are parsed structurally. Install normalizes only exact Agent-owned duplicates in place; uninstall removes only the exact path/source/event/owner/installation command. Unknown events and third-party fields, array order, matchers, symlinks, TOML comments, and user-owned `features.hooks = true` remain intact.
+- Config writes hold a per-root lock, verify preview fingerprints and current symlink targets, journal original bytes/mode, atomically replace files, reread, and roll back safely. A stale or externally edited target returns a conflict instead of overwriting it.
+- Hook execution requires all reserved Host/client/project/Tab/bridge-epoch variables. Missing or invalid binding is a successful no-op. Runtime errors are swallowed by the `hook` CLI so Claude/Codex is never blocked.
+- Hook stdin is limited to 1 MiB and normalized through `hook-schema`. Prompt/message text is removed before spooling. Remote transcript paths remain opaque references and never become desktop-local paths.
+- Spool/socket namespace is `SHA-256(hostId, clientInstanceId, installationId)`. It is bounded by 24 hours, 10000 records, and 32 MiB; overflow emits a sequenced `gap`. A stale PID lock is recoverable, JSONL/meta divergence rebuilds monotonic sequence state, ACK removes only confirmed records, and reconnect dedup covers the full bounded spool.
+- Bridge hello requires Host/client/installation identity and reports remote machine identity. The desktop also validates every event against the live daemon session's Host/client/project/Tab/epoch/installation/source binding before routing it to the existing Hook sink.
+- SSH PTY launch injects Agent bridge identity only when the effective Host/source/configured root has a locally validated `installed` Hook report whose Agent installation and remote machine identities still match. Agent installation alone must not create a background Hook bridge.
+- Agent uninstall returns `agent_managed_hooks_present` while any Agent Hook installation record remains. Hook uninstall does not delete the configured root, future history source identity, or unrelated Agent state.
+- If a custom config root was deleted externally, install/inspect still report it missing, but preview-uninstall/uninstall may recover exactly one matching canonical identity from the bounded Agent-owned record set and remove that stale record without recreating the directory. Retained-root cleanup also sends the previously validated `expectedCanonicalRoot`; if the configured path is a symlink that now resolves elsewhere, only an exact unique Agent record may route cleanup back to the old canonical root. Ambiguous, missing, invalid, or retargeted canonical records fail closed.
+- Remote Hook third-party notification jobs omit remote cwd, transcript refs, Host/project/session/Tab identifiers, and prompt text.
 
 ## 4. Validation & Error Matrix
 
@@ -123,6 +142,15 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 | `bridge --stdio` omits `--protocol` | `bridge_protocol_required` |
 | Frame length is zero or over 1 MiB | `frame_size_invalid` |
 | EOF occurs after only part of the length prefix | `frame_length_read_failed:*` |
+| Custom Hook config root is missing | `hook_config_root_missing` |
+| Deleted custom root has one valid matching Agent record during uninstall | use its canonical identity for no-op config cleanup and remove the record |
+| Deleted custom root has multiple or invalid matching records | `hook_config_record_conflict` / `hook_config_record_invalid` |
+| Configured-root symlink now points from canonical root A to B | uninstall based on a stored Hook report carries `expectedCanonicalRoot=A` and uses one exact Agent record; a direct request without an expected identity follows the current B root |
+| Hook JSON/TOML is malformed or a managed event has an invalid shape | stable `hook_config_*_invalid` error; no write |
+| Preview fingerprint or symlink/root target changed | `hook_config_changed` / `hook_config_root_changed` |
+| Another live Hook config transaction owns the root lock | `hook_config_locked` |
+| CLI-Manager marker belongs to another installation or placement | status `conflict` / `hook_config_owner_conflict` |
+| Spool JSONL was appended but meta is stale | rebuild count/bytes/next sequence before append |
 
 ## 5. Good / Base / Bad Cases
 
@@ -132,8 +160,12 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Base: MFA authentication requires an interactive terminal; the probe reports `authenticationRequired` and does not retry.
 - Good: a signed x64/aarch64 artifact is uploaded through stdin, self-checks from staging, atomically becomes `current`, and leaves the former version as `previous`.
 - Good: an existing custom install root is upgraded in place without needing to repeat `--install-dir` inside the Agent transaction.
+- Good: Claude and Codex Hooks use different roots; preview shows actual files, confirmation preserves third-party entries, and both tools can be removed independently.
+- Good: the desktop disconnects, events spool under the bound Host/client namespace, and reconnect replays each event at most once before ACK deletion.
 - Base: a missing or malformed discovery record is reconstructed only after an explicit install; no page-open or probe action changes remote files.
+- Base: Claude/Codex launched from an ordinary SSH shell has no binding variables; the installed Hook exits successfully without writing spool data.
 - Bad: trust an artifact hash from the WebView, skip manifest re-verification after preview, overwrite a non-owned launcher, or run `curl | sh` without review.
+- Bad: identify ownership by substring alone, rewrite unknown Hook events, trust only the WebView fingerprint, reuse a stale spool meta sequence, or send remote cwd to third-party notifications.
 - Bad: reuse the `-tt` terminal launch to run doctor, causing PTY/profile output to contaminate protocol stdout.
 - Bad: cache remote stderr, proxy credentials, AskPass tokens, or arbitrary doctor JSON in SQLite.
 - Bad: treat partial frame headers as clean disconnects; this hides protocol truncation and corrupt streams.
@@ -149,6 +181,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Assert bounded banner/report parsing, invalid UTF-8/contamination, protocol mismatch, identity mismatch, unsupported target, clean EOF, partial frame length, oversized frame, and mandatory bridge protocol.
 - Assert manifest tampering, duplicate/unknown targets, HTTP opt-in, query/fragment rejection, target selection, size/SHA-256 mismatch, and bounded downloads.
 - Assert install path quoting, strict operation markers/metadata, semantic version actions, lock conflicts, default/custom roots, corrupt/missing discovery recovery, promote rollback, distinct previous versions, and transactional uninstall.
+- Assert Claude/Codex exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, user-owned Codex feature/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.
+- Assert missing binding no-op, event allowlists, 1 MiB stdin bound, message redaction, Host/client/installation namespace isolation, stale lock recovery, monotonic meta rebuild, TTL/count/byte gap, ACK replay, full-window event/gap dedup, and remote notification cwd redaction.
 - Run the POSIX installer smoke test for HTTPS dry-run, default HTTP rejection, explicit HTTP, custom install root, downgrade forwarding, and temporary-directory cleanup.
 - Compile the Agent for Linux `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` in addition to host tests.
 - Manually verify the CLI Integration page opens without SSH traffic and only Probe Agent starts a one-shot connection.

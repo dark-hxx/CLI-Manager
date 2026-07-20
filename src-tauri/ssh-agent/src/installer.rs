@@ -584,6 +584,13 @@ pub fn uninstall(install_dir: Option<PathBuf>, purge: bool) -> Result<InstallRes
     let mut lock = acquire_lock(&layout)?;
     let record = read_installation_record(&layout)?
         .ok_or_else(|| "agent_installation_record_missing".to_string())?;
+    let hook_records = layout.state_dir.join("hooks").join("installations");
+    if fs::read_dir(&hook_records)
+        .ok()
+        .is_some_and(|mut entries| entries.any(|entry| entry.is_ok()))
+    {
+        return Err("agent_managed_hooks_present".to_string());
+    }
     let install_root = normalized_absolute(
         install_dir.as_deref().unwrap_or(&record.install_root),
         &layout.home,
@@ -865,6 +872,24 @@ mod tests {
                 .state_dir
                 .join("installation.uninstalled.json")
                 .is_file());
+        }
+
+        #[test]
+        fn uninstall_refuses_to_leave_managed_hooks_broken() {
+            let _lock = ENV_LOCK.lock().unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let _env = EnvGuard::set(temp.path());
+            let source = fake_agent(temp.path(), AGENT_VERSION);
+            install_from_exe(options(None), &source).unwrap();
+            let layout = resolve_layout().unwrap();
+            let hooks = layout.state_dir.join("hooks/installations");
+            fs::create_dir_all(&hooks).unwrap();
+            fs::write(hooks.join("claude-record.json"), b"{}").unwrap();
+            assert_eq!(
+                uninstall(None, false).unwrap_err(),
+                "agent_managed_hooks_present"
+            );
+            assert!(layout.installation_record.exists());
         }
     }
 }

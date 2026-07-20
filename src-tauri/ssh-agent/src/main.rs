@@ -1,10 +1,12 @@
+use cli_manager_hook_schema::HookConfigRequest;
+use cli_manager_ssh_agent::hook_runtime::{run_hook, HookCommandOptions};
 use cli_manager_ssh_agent::installer::{install_current_exe, rollback, uninstall, InstallOptions};
 use cli_manager_ssh_agent::layout::{path_state, resolve_layout};
 use cli_manager_ssh_agent::protocol::run_bridge;
 use cli_manager_ssh_agent::target_supported;
 use cli_manager_ssh_agent::version_report;
 use serde_json::json;
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Read};
 use uuid::Uuid;
 
 fn option_value(options: &[String], name: &str) -> Result<Option<String>, String> {
@@ -23,6 +25,18 @@ fn print_json(value: serde_json::Value) {
         "{}",
         serde_json::to_string(&value).expect("serialize agent output")
     );
+}
+
+fn read_json_stdin<T: serde::de::DeserializeOwned>() -> Result<T, String> {
+    let mut bytes = Vec::new();
+    io::stdin()
+        .take(64 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "agent_stdin_read_failed".to_string())?;
+    if bytes.len() > 64 * 1024 {
+        return Err("agent_stdin_too_large".to_string());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "agent_stdin_json_invalid".to_string())
 }
 
 fn status_report() -> serde_json::Value {
@@ -95,6 +109,40 @@ fn run() -> Result<(), String> {
         }
         "status" => print_json(status_report()),
         "doctor" => print_json(doctor_report()),
+        "hook" => {
+            let options: Vec<String> = args.collect();
+            let parsed = (|| {
+                Ok::<_, String>(HookCommandOptions {
+                    source: option_value(&options, "--source")?
+                        .ok_or_else(|| "hook_source_required".to_string())?,
+                    event: option_value(&options, "--event")?
+                        .ok_or_else(|| "hook_event_required".to_string())?,
+                    managed_by: option_value(&options, "--managed-by")?
+                        .ok_or_else(|| "hook_owner_required".to_string())?,
+                    installation_id: option_value(&options, "--installation-id")?
+                        .ok_or_else(|| "hook_installation_id_required".to_string())?,
+                })
+            })();
+            if let Ok(options) = parsed {
+                let stdin = io::stdin();
+                let _ = run_hook(options, &mut stdin.lock());
+            }
+        }
+        "hook-config" => {
+            let action = args
+                .next()
+                .ok_or_else(|| "hook_config_action_required".to_string())?;
+            let request: HookConfigRequest = read_json_stdin()?;
+            let report = match action.as_str() {
+                "inspect" => cli_manager_ssh_agent::hook_config::inspect(request)?,
+                "preview-install" => cli_manager_ssh_agent::hook_config::preview(request, true)?,
+                "preview-uninstall" => cli_manager_ssh_agent::hook_config::preview(request, false)?,
+                "install" => cli_manager_ssh_agent::hook_config::apply(request, true)?,
+                "uninstall" => cli_manager_ssh_agent::hook_config::apply(request, false)?,
+                _ => return Err("hook_config_action_invalid".to_string()),
+            };
+            print_json(serde_json::to_value(report).map_err(|error| error.to_string())?);
+        }
         "install" => {
             let options: Vec<String> = args.collect();
             let result = install_current_exe(InstallOptions {

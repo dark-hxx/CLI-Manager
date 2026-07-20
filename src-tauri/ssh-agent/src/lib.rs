@@ -1,3 +1,5 @@
+pub mod hook_config;
+pub mod hook_runtime;
 pub mod installer;
 pub mod layout;
 pub mod protocol;

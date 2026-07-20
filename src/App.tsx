@@ -736,19 +736,20 @@ function App() {
         event.payload.source === "claude" &&
         (event.payload.event === "ToolStart" || event.payload.event === "ToolStop") &&
         Boolean(event.payload.agentId?.trim());
+      const supportsLocalSubagentTranscript = event.payload.environmentType !== "ssh";
 
       // SubagentStart / AgentToolStart：开/更新子 Agent 转录分屏，独立于 Tab 状态机与 toast。
-      if (event.payload.event === "SubagentStart" || event.payload.event === "AgentToolStart" || isClaudeToolSubagentEvent) {
+      if (supportsLocalSubagentTranscript && (event.payload.event === "SubagentStart" || event.payload.event === "AgentToolStart" || isClaudeToolSubagentEvent)) {
         void useTerminalStore.getState().openSubagentTranscript(event.payload);
         return;
       }
-      if (event.payload.event === "AgentToolStop") {
+      if (supportsLocalSubagentTranscript && event.payload.event === "AgentToolStop") {
         void useTerminalStore.getState().openSubagentTranscript(event.payload).finally(() => {
           useTerminalStore.getState().finishSubagentTranscript(event.payload);
         });
         return;
       }
-      if (event.payload.event === "SubagentStop") {
+      if (supportsLocalSubagentTranscript && event.payload.event === "SubagentStop") {
         if (event.payload.agentTranscriptPath?.trim() || event.payload.source === "codex") {
           void useTerminalStore.getState().openSubagentTranscript(event.payload).finally(() => {
             useTerminalStore.getState().finishSubagentTranscript(event.payload);
@@ -777,6 +778,9 @@ function App() {
     const unlistenSystemNotification = listen<SystemNotificationActionPayload>(SYSTEM_NOTIFICATION_ACTION_EVENT, (event) => {
       void handleActivateHookNotificationTarget(event.payload.tabId);
     });
+    const unlistenSshHookGap = listen<{ hostId: string; dropped: number }>("ssh-agent-hook-gap", (event) => {
+      toast.warning(t("terminal.ssh.hookGap", { count: event.payload.dropped }));
+    });
     // 子 Agent 转录 tail 增量：路由到对应转录面板。
     const unlistenTranscript = listen<SubagentTranscriptAppendPayload>("subagent-transcript-append", (event) => {
       const { key, content, reset } = event.payload;
@@ -786,9 +790,10 @@ function App() {
     return () => {
       void unlistenHook.then((unlisten) => unlisten());
       void unlistenSystemNotification.then((unlisten) => unlisten());
+      void unlistenSshHookGap.then((unlisten) => unlisten());
       void unlistenTranscript.then((unlisten) => unlisten());
     };
-  }, [handleActivateHookNotificationTarget]);
+  }, [handleActivateHookNotificationTarget, t]);
 
   useEffect(() => {
     if (!IN_TAURI) return;

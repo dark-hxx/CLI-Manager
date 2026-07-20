@@ -299,6 +299,10 @@ pub enum DaemonFrame {
     HookReport {
         payload: serde_json::Value,
     },
+    SshAgentHookGap {
+        host_id: String,
+        dropped: u64,
+    },
     CheckpointAccepted {
         session_id: String,
         sequence: u64,
@@ -474,6 +478,7 @@ const DAEMON_FRAME_TYPES: &[&str] = &[
     "output",
     "exit",
     "hook_report",
+    "ssh_agent_hook_gap",
     "checkpoint_accepted",
     "checkpoint_rejected",
 ];
@@ -532,6 +537,13 @@ mod tests {
                 server_alive_interval_sec: 30,
                 server_alive_count_max: 3,
                 remote_path: "/srv/app".into(),
+                client_instance_id: String::new(),
+                project_id: String::new(),
+                bridge_epoch: String::new(),
+                agent_path: String::new(),
+                agent_installation_id: String::new(),
+                agent_remote_machine_id: String::new(),
+                tool_source: String::new(),
                 environment_overrides: HashMap::new(),
                 initialization_command: None,
                 startup_command: Some("codex".into()),

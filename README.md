@@ -218,9 +218,11 @@ When developing across multiple projects, you may run into these problems:
 - **Proxy and diagnostics** - built-in HTTP CONNECT / SOCKS5 proxy helper, connection tests, host-key confirmation, and detailed diagnostic logs
 - **Remote project workflow** - browse remote directories, configure remote startup commands and environment variables, and launch AI CLI sessions directly in the target path
 - **Workspace integration** - remote terminals support tabs, splits, Workspan, background execution, and daemon-backed recovery
+- **Remote Agent and Hook** - explicitly install or upgrade the signed `cli-manager-ssh-agent`, configure Claude/Codex roots per host or project, preview Hook changes, and install or remove only CLI-Manager-owned entries
+- **Reliable live status** - SSH sessions with a validated installed Hook reuse one per-host Agent bridge; offline Hook events use a bounded Host/client-isolated spool with ACK replay, deduplication, and visible gap warnings
 - **Credential safety** - passwords use the operating system credential store; sync and export never include passwords, credentials, or private-key paths
 
-> SSH MVP intentionally keeps local-only features such as file browsing, Git / Worktree tools, local history, Hook statistics, and provider switching disabled for remote projects.
+> Remote Hook status is available for Claude Code and Codex. Remote history, history analytics, file/Git panels, Worktree tools, external terminal launch, and remote resource monitoring are not available yet. SSH projects never scan or switch remote providers.
 
 <p align="center">
 <img src="docs/img/ssh-settings.png" width="85%" alt="SSH host settings and connection diagnostics" />
@@ -481,6 +483,8 @@ Go to the [Releases](https://github.com/dark-hxx/CLI-Manager/releases) page and 
 
 For a configured SSH Host, open **Settings -> SSH Hosts -> CLI Integration** to explicitly preview and install, upgrade, roll back, or uninstall `cli-manager-ssh-agent`. The first supported remote targets are Linux x86_64 and aarch64. Opening the page never connects automatically, and Agent lifecycle operations never install or modify Claude/Codex Hooks.
 
+After the Agent is installed and detected, use the Claude or Codex card on the same page to inspect the configured root, preview the exact files and fingerprints, and explicitly confirm Hook installation or removal. Each SSH Host and project override keeps its own config-root identity; the default roots are `$HOME/.claude` and `$HOME/.codex`.
+
 The same signed release artifacts can be installed from a reviewed POSIX script:
 
 ```sh
@@ -602,6 +606,9 @@ cd src-tauri && cargo test
 - Connection diagnostics and host-key confirmation
 - Remote directory browsing and startup commands
 - Remote tabs / splits / Workspan / background recovery
+- Signed `cli-manager-ssh-agent` install / upgrade / rollback / uninstall
+- Per-host and per-project Claude/Codex config roots plus previewed remote Hook lifecycle
+- Bound Hook events, live tab status, offline spool replay, and gap warnings
 
 </details>
 

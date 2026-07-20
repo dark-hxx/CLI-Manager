@@ -9,6 +9,7 @@ pub mod client;
 pub mod discovery;
 pub mod protocol;
 pub mod server;
+mod ssh_agent_bridge;
 
 /// 进程治理兜底（契约★）：Windows 上把 daemon 自身挂进
 /// `KILL_ON_JOB_CLOSE` 的 Job Object——之后 daemon 创建的全部 PTY 子进程

@@ -39,6 +39,13 @@ struct ClaudeHookRequest {
     transcript_path: Option<String>,
     reasoning_effort: Option<String>,
     wsl_distro_name: Option<String>,
+    environment_type: Option<String>,
+    remote_host_id: Option<String>,
+    remote_project_id: Option<String>,
+    remote_transcript_ref: Option<String>,
+    remote_agent_transcript_ref: Option<String>,
+    remote_event_id: Option<String>,
+    remote_sequence: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -62,6 +69,13 @@ pub struct ClaudeHookPayload {
     transcript_path: Option<String>,
     reasoning_effort: Option<String>,
     wsl_distro_name: Option<String>,
+    environment_type: Option<String>,
+    remote_host_id: Option<String>,
+    remote_project_id: Option<String>,
+    remote_transcript_ref: Option<String>,
+    remote_agent_transcript_ref: Option<String>,
+    remote_event_id: Option<String>,
+    remote_sequence: Option<u64>,
 }
 
 impl ClaudeHookPayload {
@@ -77,7 +91,11 @@ impl ClaudeHookPayload {
         HookNotificationJob {
             source: self.source.clone(),
             event: self.event.clone(),
-            cwd: self.cwd.clone(),
+            cwd: if self.environment_type.as_deref() == Some("ssh") {
+                None
+            } else {
+                self.cwd.clone()
+            },
             timestamp: self.timestamp.clone(),
         }
     }
@@ -161,11 +179,123 @@ fn handle_stream(mut stream: TcpStream, sink: HookPayloadSink, token: &str) {
         transcript_path: payload.transcript_path,
         reasoning_effort: payload.reasoning_effort,
         wsl_distro_name: payload.wsl_distro_name,
+        environment_type: payload.environment_type,
+        remote_host_id: payload.remote_host_id,
+        remote_project_id: payload.remote_project_id,
+        remote_transcript_ref: payload.remote_transcript_ref,
+        remote_agent_transcript_ref: payload.remote_agent_transcript_ref,
+        remote_event_id: payload.remote_event_id,
+        remote_sequence: payload.remote_sequence,
     };
 
     sink(payload);
 
     write_response(&mut stream, "204 No Content", "");
+}
+
+pub fn remote_hook_payload_from_spool(
+    value: &serde_json::Value,
+) -> Result<ClaudeHookPayload, String> {
+    for key in [
+        "tabId",
+        "source",
+        "event",
+        "sessionId",
+        "agentId",
+        "toolUseId",
+        "toolName",
+        "mcpServer",
+        "skillName",
+        "agentType",
+        "hostId",
+        "projectId",
+        "eventId",
+    ] {
+        if value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|text| text.len() > 256 || text.contains(['\0', '\r', '\n']))
+        {
+            return Err("remote_hook_payload_invalid".to_string());
+        }
+    }
+    for key in ["remoteCwd", "remoteTranscriptRef", "agentTranscriptPath"] {
+        if value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|text| text.len() > 4096 || text.contains(['\0', '\r', '\n']))
+        {
+            return Err("remote_hook_payload_invalid".to_string());
+        }
+    }
+    let string = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let occurred_at = value
+        .get("occurredAt")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let request = ClaudeHookRequest {
+        tab_id: string("tabId").ok_or_else(|| "remote_hook_tab_missing".to_string())?,
+        source: string("source"),
+        event: string("event").ok_or_else(|| "remote_hook_event_missing".to_string())?,
+        title: None,
+        message: None,
+        session_id: string("sessionId"),
+        cwd: string("remoteCwd"),
+        timestamp: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(occurred_at as i64)
+            .map(|value| value.to_rfc3339()),
+        agent_id: string("agentId"),
+        tool_use_id: string("toolUseId"),
+        tool_name: string("toolName"),
+        mcp_server: string("mcpServer"),
+        skill_name: string("skillName"),
+        agent_type: string("agentType"),
+        agent_transcript_path: None,
+        transcript_path: None,
+        reasoning_effort: string("reasoningEffort"),
+        wsl_distro_name: None,
+        environment_type: Some("ssh".to_string()),
+        remote_host_id: string("hostId"),
+        remote_project_id: string("projectId"),
+        remote_transcript_ref: string("remoteTranscriptRef"),
+        remote_agent_transcript_ref: string("agentTranscriptPath"),
+        remote_event_id: string("eventId"),
+        remote_sequence: value.get("sequence").and_then(serde_json::Value::as_u64),
+    };
+    if !is_valid_payload(&request) {
+        return Err("remote_hook_payload_invalid".to_string());
+    }
+    Ok(ClaudeHookPayload {
+        tab_id: request.tab_id,
+        source: normalize_source(request.source.as_deref()).to_string(),
+        event: request.event,
+        title: request.title,
+        message: request.message,
+        session_id: request.session_id,
+        cwd: request.cwd,
+        timestamp: request.timestamp,
+        agent_id: request.agent_id,
+        tool_use_id: request.tool_use_id,
+        tool_name: request.tool_name,
+        mcp_server: request.mcp_server,
+        skill_name: request.skill_name,
+        agent_type: request.agent_type,
+        agent_transcript_path: None,
+        transcript_path: None,
+        reasoning_effort: request.reasoning_effort,
+        wsl_distro_name: None,
+        environment_type: request.environment_type,
+        remote_host_id: request.remote_host_id,
+        remote_project_id: request.remote_project_id,
+        remote_transcript_ref: request.remote_transcript_ref,
+        remote_agent_transcript_ref: request.remote_agent_transcript_ref,
+        remote_event_id: request.remote_event_id,
+        remote_sequence: request.remote_sequence,
+    })
 }
 
 struct HttpRequest {
@@ -344,4 +474,28 @@ fn write_response(stream: &mut TcpStream, status: &str, body: &str) {
     );
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::remote_hook_payload_from_spool;
+    use serde_json::json;
+
+    #[test]
+    fn remote_hook_notification_job_omits_remote_cwd() {
+        let payload = remote_hook_payload_from_spool(&json!({
+            "kind": "hookEvent",
+            "eventId": "00000000-0000-4000-8000-000000000001",
+            "sequence": 1,
+            "hostId": "host",
+            "projectId": "project",
+            "tabId": "00000000-0000-4000-8000-000000000002",
+            "source": "claude",
+            "event": "Stop",
+            "remoteCwd": "/srv/private-project",
+            "occurredAt": 1
+        }))
+        .unwrap();
+        assert_eq!(payload.to_notification_job().cwd, None);
+    }
 }

@@ -8,11 +8,12 @@ use super::discovery::{remove_daemon_info, write_daemon_info_exclusive, DaemonIn
 use super::protocol::{
     decode_binary_terminal_frame, decode_client_frame, encode_binary_terminal_frame, encode_frame,
     supported_features, ClientFrame, DaemonFrame, ProcessTraits, ProtocolError, ReplayEntry,
-    SessionMeta, SessionStatusInfo, BINARY_KIND_CHECKPOINT, BINARY_KIND_INPUT,
-    BINARY_KIND_OUTPUT, BINARY_KIND_REPLAY, BINARY_KIND_REPLAY_RESET,
-    BINARY_PROTOCOL_VERSION, CONTROL_PROTOCOL_VERSION, MAX_FRAME_BYTES,
+    SessionMeta, SessionStatusInfo, BINARY_KIND_CHECKPOINT, BINARY_KIND_INPUT, BINARY_KIND_OUTPUT,
+    BINARY_KIND_REPLAY, BINARY_KIND_REPLAY_RESET, BINARY_PROTOCOL_VERSION,
+    CONTROL_PROTOCOL_VERSION, MAX_FRAME_BYTES,
 };
-use crate::claude_hook::{spawn_hook_listener, HookPayloadSink};
+use super::ssh_agent_bridge::SshAgentBridgeManager;
+use crate::claude_hook::{remote_hook_payload_from_spool, spawn_hook_listener, HookPayloadSink};
 use crate::pty::manager::{PtyEventSink, PtyManager, PtyProcessStatus};
 use crate::ssh_launch::SshLaunchPlan;
 use crate::third_party_notification::DispatcherHandle;
@@ -164,8 +165,8 @@ impl SessionBuffer {
             .map(|frame| frame.sequence)
             .or_else(|| {
                 self.read_spooled_frames()
-            .first()
-            .map(|frame| frame.sequence)
+                    .first()
+                    .map(|frame| frame.sequence)
             })
             .or_else(|| self.frames.front().map(|frame| frame.sequence))
     }
@@ -476,7 +477,9 @@ impl ClientWriterState {
             return Some(frame);
         }
         let frame = self.output.pop_front()?;
-        self.output_bytes = self.output_bytes.saturating_sub(frame_payload_bytes(&frame));
+        self.output_bytes = self
+            .output_bytes
+            .saturating_sub(frame_payload_bytes(&frame));
         Some(frame)
     }
 }
@@ -558,7 +561,8 @@ impl ClientWriter {
         let mut state = lock
             .lock()
             .map_err(|_| "client writer unavailable".to_string())?;
-        if state.closed || state.output_bytes.saturating_add(bytes) > CLIENT_OUTPUT_QUEUE_MAX_BYTES {
+        if state.closed || state.output_bytes.saturating_add(bytes) > CLIENT_OUTPUT_QUEUE_MAX_BYTES
+        {
             state.closed = true;
             changed.notify_all();
             return Err("client output queue full".to_string());
@@ -600,6 +604,16 @@ struct SessionEntry {
     cols: u16,
     rows: u16,
     next_sequence: u64,
+    ssh_hook_binding: Option<SshHookBinding>,
+}
+
+struct SshHookBinding {
+    host_id: String,
+    client_instance_id: String,
+    project_id: String,
+    bridge_epoch: String,
+    installation_id: String,
+    source: String,
 }
 
 type SharedSession = Arc<Mutex<SessionEntry>>;
@@ -612,6 +626,9 @@ pub struct DaemonHost {
     last_idle_since: Mutex<Instant>,
     /// 无客户端期间收到的 hook 上报缓存，客户端连上后补发（契约）。
     hook_cache: Mutex<VecDeque<serde_json::Value>>,
+    hook_gap_cache: Mutex<VecDeque<(String, u64)>>,
+    hook_sink: Mutex<Option<HookPayloadSink>>,
+    ssh_agent_bridges: SshAgentBridgeManager,
     spool_dir: PathBuf,
 }
 
@@ -631,6 +648,9 @@ impl DaemonHost {
             clients: Mutex::new(HashMap::new()),
             last_idle_since: Mutex::new(Instant::now()),
             hook_cache: Mutex::new(VecDeque::new()),
+            hook_gap_cache: Mutex::new(VecDeque::new()),
+            hook_sink: Mutex::new(None),
+            ssh_agent_bridges: SshAgentBridgeManager::default(),
             spool_dir,
         }
     }
@@ -644,6 +664,71 @@ impl DaemonHost {
             .lock()
             .ok()
             .and_then(|sessions| sessions.get(session_id).cloned())
+    }
+
+    fn set_hook_sink(&self, sink: HookPayloadSink) {
+        if let Ok(mut current) = self.hook_sink.lock() {
+            *current = Some(sink);
+        }
+    }
+
+    fn ensure_ssh_agent_bridge(self: &Arc<Self>, session_id: &str, plan: &SshLaunchPlan) {
+        self.ssh_agent_bridges
+            .ensure(Arc::downgrade(self), session_id, plan);
+    }
+
+    fn release_ssh_agent_bridge(&self, session_id: &str) {
+        let host_id = self.get_session(session_id).and_then(|session| {
+            session
+                .lock()
+                .ok()
+                .and_then(|entry| entry.meta.ssh_host_id.clone())
+        });
+        if let Some(host_id) = host_id {
+            self.ssh_agent_bridges.release(&host_id, session_id);
+        }
+    }
+
+    pub(crate) fn accept_remote_hook_event(&self, value: serde_json::Value) {
+        let Some(tab_id) = value.get("tabId").and_then(serde_json::Value::as_str) else {
+            return;
+        };
+        let matches = self.get_session(tab_id).is_some_and(|session| {
+            session.lock().ok().is_some_and(|entry| {
+                let Some(binding) = entry.ssh_hook_binding.as_ref() else {
+                    return false;
+                };
+                if !entry.meta.alive {
+                    return false;
+                }
+                let field = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
+                field("hostId") == Some(binding.host_id.as_str())
+                    && field("clientInstanceId") == Some(binding.client_instance_id.as_str())
+                    && field("projectId") == Some(binding.project_id.as_str())
+                    && field("bridgeEpoch") == Some(binding.bridge_epoch.as_str())
+                    && field("installationId") == Some(binding.installation_id.as_str())
+                    && field("source") == Some(binding.source.as_str())
+            })
+        });
+        if !matches {
+            log::warn!("rejected remote Hook event with an unknown SSH session binding");
+            return;
+        }
+        let payload = match remote_hook_payload_from_spool(&value) {
+            Ok(payload) => payload,
+            Err(error) => {
+                log::warn!("rejected invalid remote Hook event: {error}");
+                return;
+            }
+        };
+        let sink = self
+            .hook_sink
+            .lock()
+            .ok()
+            .and_then(|sink| sink.as_ref().cloned());
+        if let Some(sink) = sink {
+            sink(payload);
+        }
     }
 
     #[cfg(test)]
@@ -697,6 +782,21 @@ impl DaemonHost {
                 cols: 80,
                 rows: 24,
                 next_sequence: 1,
+                ssh_hook_binding: ssh_launch.and_then(|plan| {
+                    (!plan.client_instance_id.is_empty()
+                        && !plan.project_id.is_empty()
+                        && !plan.bridge_epoch.is_empty()
+                        && !plan.agent_installation_id.is_empty()
+                        && !plan.tool_source.is_empty())
+                    .then(|| SshHookBinding {
+                        host_id: plan.host_id.clone(),
+                        client_instance_id: plan.client_instance_id.clone(),
+                        project_id: plan.project_id.clone(),
+                        bridge_epoch: plan.bridge_epoch.clone(),
+                        installation_id: plan.agent_installation_id.clone(),
+                        source: plan.tool_source.clone(),
+                    })
+                }),
             })),
         );
         Ok(())
@@ -714,6 +814,29 @@ impl DaemonHost {
             drop(clients);
             if let Ok(mut cache) = self.hook_cache.lock() {
                 cache.push_back(payload);
+                while cache.len() > HOOK_CACHE_MAX {
+                    cache.pop_front();
+                }
+            }
+            return;
+        }
+        for client in clients.values() {
+            let _ = client.writer.send_frame(&frame);
+        }
+    }
+
+    pub(crate) fn broadcast_remote_hook_gap(&self, host_id: String, dropped: u64) {
+        let frame = DaemonFrame::SshAgentHookGap {
+            host_id: host_id.clone(),
+            dropped,
+        };
+        let Ok(clients) = self.clients.lock() else {
+            return;
+        };
+        if clients.is_empty() {
+            drop(clients);
+            if let Ok(mut cache) = self.hook_gap_cache.lock() {
+                cache.push_back((host_id, dropped));
                 while cache.len() > HOOK_CACHE_MAX {
                     cache.pop_front();
                 }
@@ -763,6 +886,13 @@ impl DaemonHost {
         for payload in cached {
             let _ = writer.send_frame(&DaemonFrame::HookReport { payload });
         }
+        let gaps: Vec<(String, u64)> = match self.hook_gap_cache.lock() {
+            Ok(mut cache) => cache.drain(..).collect(),
+            Err(_) => return,
+        };
+        for (host_id, dropped) in gaps {
+            let _ = writer.send_frame(&DaemonFrame::SshAgentHookGap { host_id, dropped });
+        }
     }
 
     fn alive_session_count(&self) -> usize {
@@ -773,7 +903,12 @@ impl DaemonHost {
             .unwrap_or_default();
         sessions
             .into_iter()
-            .filter(|session| session.lock().map(|entry| entry.meta.alive).unwrap_or(false))
+            .filter(|session| {
+                session
+                    .lock()
+                    .map(|entry| entry.meta.alive)
+                    .unwrap_or(false)
+            })
             .count()
     }
 
@@ -798,7 +933,11 @@ impl DaemonHost {
             .filter_map(|(id, session)| {
                 let entry = session.lock().ok()?;
                 (!entry.meta.alive).then(|| {
-                    (id.clone(), entry.meta.created_at_ms, entry.buffer.total_bytes)
+                    (
+                        id.clone(),
+                        entry.meta.created_at_ms,
+                        entry.buffer.total_bytes,
+                    )
                 })
             })
             .collect();
@@ -1070,6 +1209,7 @@ fn emit_daemon_status(host: &DaemonHost, session_id: &str, status: PtyProcessSta
             exit_code: status.exit_code,
         },
     );
+    host.release_ssh_agent_bridge(session_id);
     host.enforce_total_buffer_cap();
 }
 
@@ -1251,6 +1391,7 @@ impl DaemonServer {
                 Err(err) => log::warn!("daemon hook payload serialize failed: {err}"),
             }
         });
+        server.host.set_hook_sink(Arc::clone(&hook_sink));
         spawn_hook_listener(hook_listener, token, hook_sink);
 
         server.spawn_idle_watchdog();
@@ -1477,12 +1618,7 @@ impl DaemonServer {
         log::debug!("daemon websocket client disconnected ({peer}, id={client_id})");
     }
 
-    fn handle_binary_frame(
-        &self,
-        client_id: u64,
-        data: &[u8],
-        writer: &Arc<ClientWriter>,
-    ) -> bool {
+    fn handle_binary_frame(&self, client_id: u64, data: &[u8], writer: &Arc<ClientWriter>) -> bool {
         let frame = match decode_binary_terminal_frame(data) {
             Ok(frame) => frame,
             Err(message) => {
@@ -1495,9 +1631,11 @@ impl DaemonServer {
             .clients
             .lock()
             .ok()
-            .and_then(|clients| clients.get(&client_id).map(|client| {
-                client.attached.contains(&frame.session_id)
-            }))
+            .and_then(|clients| {
+                clients
+                    .get(&client_id)
+                    .map(|client| client.attached.contains(&frame.session_id))
+            })
             .unwrap_or(false);
         if !attached || !is_valid_session_id(&frame.session_id) {
             let _ = writer.send_frame(&DaemonFrame::Err {
@@ -1638,13 +1776,11 @@ impl DaemonServer {
                 if !is_valid_session_id(&session_id) {
                     return err_frame(id, "invalid session id");
                 }
-                match self.host.pty.resize(
-                    &session_id,
-                    cols,
-                    rows,
-                    pixel_width,
-                    pixel_height,
-                ) {
+                match self
+                    .host
+                    .pty
+                    .resize(&session_id, cols, rows, pixel_width, pixel_height)
+                {
                     Ok(()) => {
                         if let Some(session) = self.host.get_session(&session_id) {
                             if let Ok(mut entry) = session.lock() {
@@ -1843,15 +1979,12 @@ impl DaemonServer {
             session_id.clone(),
         ));
         // 检查、预留与插入保持在同一临界区；并发 create 不得同时通过。
-        if let Err(message) = self
-            .host
-            .reserve_session_with_launch(
-                &session_id,
-                cwd.clone(),
-                shell.clone(),
-                ssh_launch.as_ref(),
-            )
-        {
+        if let Err(message) = self.host.reserve_session_with_launch(
+            &session_id,
+            cwd.clone(),
+            shell.clone(),
+            ssh_launch.as_ref(),
+        ) {
             return err_frame(id, message);
         }
         let attached = self.host.clients.lock().ok().and_then(|mut clients| {
@@ -1880,19 +2013,23 @@ impl DaemonServer {
             ssh_launch.as_ref(),
             sink,
         ) {
-            Ok(process_traits) => self
-                .host
-                .get_session(&session_id)
-                .and_then(|session| {
-                    session.lock().ok().map(|mut entry| {
-                        entry.meta.process_traits = Some(ProcessTraits::current_platform(
-                            process_traits.uses_conpty_dll,
-                        ));
-                        entry.meta.clone()
+            Ok(process_traits) => {
+                if let Some(plan) = ssh_launch.as_ref() {
+                    self.host.ensure_ssh_agent_bridge(&session_id, plan);
+                }
+                self.host
+                    .get_session(&session_id)
+                    .and_then(|session| {
+                        session.lock().ok().map(|mut entry| {
+                            entry.meta.process_traits = Some(ProcessTraits::current_platform(
+                                process_traits.uses_conpty_dll,
+                            ));
+                            entry.meta.clone()
+                        })
                     })
-                })
-                .map(|meta| DaemonFrame::Created { id, meta })
-                .unwrap_or_else(|| err_frame(id, "session state unavailable")),
+                    .map(|meta| DaemonFrame::Created { id, meta })
+                    .unwrap_or_else(|| err_frame(id, "session state unavailable"))
+            }
             Err(message) => {
                 if let Ok(mut sessions) = self.host.sessions.lock() {
                     sessions.remove(&session_id);
@@ -2009,6 +2146,7 @@ mod tests {
             cols: 80,
             rows: 24,
             next_sequence,
+            ssh_hook_binding: None,
         }))
     }
 
@@ -2061,10 +2199,10 @@ mod tests {
         let client_id = 7;
         let mut buffer = SessionBuffer::new();
         buffer.push_output(80, 24, 1, b"replay-before-attach");
-        host.sessions.lock().expect("lock sessions").insert(
-            session_id.to_string(),
-            test_session(session_id, buffer, 2),
-        );
+        host.sessions
+            .lock()
+            .expect("lock sessions")
+            .insert(session_id.to_string(), test_session(session_id, buffer, 2));
         host.clients.lock().expect("lock clients").insert(
             client_id,
             ClientHandle {
@@ -2126,10 +2264,10 @@ mod tests {
         let client_id = 9;
         let mut buffer = SessionBuffer::new();
         buffer.push_output(80, 24, 1, b"replay");
-        host.sessions.lock().unwrap().insert(
-            session_id.to_string(),
-            test_session(session_id, buffer, 2),
-        );
+        host.sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), test_session(session_id, buffer, 2));
         let writer = ClientWriter::new(ClientTransport::Ndjson(Mutex::new(server_stream)));
         host.clients.lock().unwrap().insert(
             client_id,

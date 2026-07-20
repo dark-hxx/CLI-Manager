@@ -159,7 +159,7 @@
 ### 9. Additional Review Boundaries
 
 - Hook 配置虽然位于远端用户级 Claude/Codex 配置，但只有存在 CLI-Manager 注入的 client/tab/session 绑定环境时才上报；用户在普通 SSH、tmux 或其他终端启动的 CLI 不进入 Hook spool，不被误绑定到 CLI-Manager Tab。
-- 同一远端用户允许多个 CLI-Manager 客户端存在，但 bridge/socket/spool 必须按 `clientInstanceId + installationId` 隔离；事件只送给启动该会话的客户端，不能广播给其他桌面端。
+- 同一远端用户允许多个 SSH Host 配置与多个 CLI-Manager 客户端存在，但 bridge/socket/spool 必须按 `hostId + clientInstanceId + installationId` 隔离；事件只送给启动该会话的 Host/客户端，不能广播给其他 Host 档案或桌面端。
 - 同一服务器不同 SSH 用户视为不同 Agent 安装、不同历史和不同缓存，禁止跨用户扫描。
 - 历史默认只索引 CLI-Manager 已绑定的远端项目路径；“扫描该主机全部 Claude/Codex 历史”需要未来独立显式开关，首期不自动导入未管理项目。
 - 首期远端历史为只读：支持列表、搜索、详情、Diff、收藏快照和同主机 resume；编辑、删除、插入消息、原文件还原和远端备份写回不在首期范围。

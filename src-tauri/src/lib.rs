@@ -919,6 +919,9 @@ pub fn run() {
             commands::ssh::ssh_agent_install,
             commands::ssh::ssh_agent_rollback,
             commands::ssh::ssh_agent_uninstall,
+            commands::ssh::ssh_agent_hook_inspect,
+            commands::ssh::ssh_agent_hook_preview,
+            commands::ssh::ssh_agent_hook_apply,
             commands::ssh::ssh_save_password,
             commands::ssh::ssh_password_status,
             commands::ssh::ssh_delete_password,
@@ -1328,10 +1331,11 @@ mod ssh_migration_tests {
             integration.get::<String, _>("configured_root"),
             "/home/dev/.claude"
         );
-        let preference_count = sqlx::query("SELECT COUNT(*) AS count FROM ssh_host_tool_preferences")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
+        let preference_count =
+            sqlx::query("SELECT COUNT(*) AS count FROM ssh_host_tool_preferences")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
         assert_eq!(preference_count.get::<i64, _>("count"), 0);
     }
 }

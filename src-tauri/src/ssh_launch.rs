@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::ssh_transport::{
-    format_remote_home_path, posix_quote, validate_remote_home_path, SshRemoteHomePathError,
-    SshTransportLaunch, SshTransportSpec,
+    format_remote_home_path, posix_quote, validate_remote_home_path, SshOneShotOptions,
+    SshRemoteHomePathError, SshTransportLaunch, SshTransportSpec,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -32,6 +32,20 @@ pub struct SshLaunchPlan {
     pub server_alive_count_max: u32,
     pub remote_path: String,
     #[serde(default)]
+    pub client_instance_id: String,
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub bridge_epoch: String,
+    #[serde(default)]
+    pub agent_path: String,
+    #[serde(default)]
+    pub agent_installation_id: String,
+    #[serde(default)]
+    pub agent_remote_machine_id: String,
+    #[serde(default)]
+    pub tool_source: String,
+    #[serde(default)]
     pub environment_overrides: HashMap<String, String>,
     #[serde(default)]
     pub initialization_command: Option<String>,
@@ -47,12 +61,58 @@ impl SshLaunchPlan {
             .build_interactive_launch(self.remote_command())
     }
 
+    pub(crate) fn build_agent_bridge_launch(&self) -> Result<SshProcessLaunch, String> {
+        self.validate()?;
+        if self.agent_path.is_empty() {
+            return Err("ssh_agent_identity_required".to_string());
+        }
+        self.transport_spec().build_one_shot_launch(
+            format!(
+                "exec {} bridge --stdio --protocol 1",
+                format_remote_home_path(&self.agent_path)
+            ),
+            SshOneShotOptions::default(),
+        )
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.host_id.trim().is_empty() {
             return Err("ssh_host_not_found".to_string());
         }
         self.transport_spec().validate()?;
         validate_remote_path(&self.remote_path)?;
+        for value in [&self.client_instance_id, &self.bridge_epoch] {
+            if !value.is_empty() && uuid::Uuid::parse_str(value).is_err() {
+                return Err("ssh_hook_binding_invalid".to_string());
+            }
+        }
+        if self.project_id.contains(['\0', '\r', '\n', '/', '\\']) || self.project_id.len() > 256 {
+            return Err("ssh_hook_binding_invalid".to_string());
+        }
+        let agent_fields_present = [
+            !self.agent_path.is_empty(),
+            !self.agent_installation_id.is_empty(),
+            !self.agent_remote_machine_id.is_empty(),
+        ];
+        if agent_fields_present.iter().any(|value| *value)
+            && !agent_fields_present.iter().all(|value| *value)
+        {
+            return Err("ssh_agent_identity_required".to_string());
+        }
+        if !self.agent_path.is_empty() {
+            validate_remote_home_path(&self.agent_path)
+                .map_err(|_| "ssh_agent_path_invalid".to_string())?;
+            uuid::Uuid::parse_str(&self.agent_installation_id)
+                .map_err(|_| "ssh_agent_identity_required".to_string())?;
+            if self.agent_remote_machine_id.len() > 256
+                || self.agent_remote_machine_id.contains(['\0', '\r', '\n'])
+            {
+                return Err("ssh_agent_identity_required".to_string());
+            }
+        }
+        if !matches!(self.tool_source.as_str(), "" | "claude" | "codex") {
+            return Err("ssh_tool_source_invalid".to_string());
+        }
         if self
             .environment_overrides
             .keys()
@@ -206,6 +266,13 @@ mod tests {
             server_alive_interval_sec: 30,
             server_alive_count_max: 3,
             remote_path: "/srv/project name/开发".into(),
+            client_instance_id: String::new(),
+            project_id: String::new(),
+            bridge_epoch: String::new(),
+            agent_path: String::new(),
+            agent_installation_id: String::new(),
+            agent_remote_machine_id: String::new(),
+            tool_source: String::new(),
             environment_overrides: [("APP_MODE".to_string(), "remote dev".to_string())].into(),
             initialization_command: None,
             startup_command: Some("printf '%s\\n' \"it's ready\"".into()),

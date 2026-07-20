@@ -7,7 +7,7 @@ This is the single execution tracker for the task. Research, product requirement
 | S01 | Config roots and launch injection | completed | migration, TS type-check, SSH launch Rust tests |
 | S02 | Shared transport and Agent probe | completed | transport parity, probe/error classification, protocol tests |
 | S03 | Agent install supply chain | completed | signature/hash/target/install/rollback tests |
-| S04 | Remote Hook lifecycle | pending | adapter merge, ownership, atomicity, spool tests |
+| S04 | Remote Hook lifecycle | completed | adapter merge, ownership, atomicity, spool tests |
 | S05 | Reusable Agent bridge runtime | pending | one-bridge invariant, reconnect, cancellation, shutdown tests |
 | S06 | Remote history indexing and cache | pending | parser/index/catalog/cursor/offline tests |
 | S07 | Remote session resume | pending | preflight/ownership/cwd/config-root routing tests |
@@ -67,14 +67,35 @@ This is the single execution tracker for the task. Research, product requirement
 
 ### S04 Remote Hook lifecycle
 
-- [ ] Implement Claude/Codex discovery, preview, install, upgrade, uninstall, and conflict diagnostics.
-- [ ] Preserve third-party configuration and remove only CLI-Manager-owned entries.
-- [ ] Implement bounded one-shot Hook IPC/spool behavior and lifecycle tests.
+- [x] Implement Claude/Codex discovery, preview, install, upgrade, uninstall, and conflict diagnostics.
+- [x] Preserve third-party configuration and remove only CLI-Manager-owned entries.
+- [x] Implement bounded one-shot Hook IPC/spool behavior and lifecycle tests.
+
+#### S04 Root-Cause And Discovery Record
+
+- GitNexus was unavailable in this session. Discovery used the SSH Agent/Hook/terminal contracts plus `rg` call-site tracing before edits.
+- Agent touchpoints checked: shared Hook schema, Claude/Codex structural adapters, root/symlink resolution, ownership matching, lock/journal transaction, installation records, one-shot runtime, spool namespace/limits/ACK, and bridge protocol.
+- Desktop touchpoints checked: strict Hook report validation, SSH launch binding, daemon session ownership, bridge lifecycle, Hook payload routing, notification redaction, Replay routing, integration persistence, settings UI, and i18n.
+- Confirmed unrelated/local-only: local/WSL Hook transport remains on the loopback path; remote cwd/transcript refs do not enter local history, transcript, filesystem, Git, snapshot, or provider APIs; SSH provider launch parameters remain discarded in both frontend and Rust.
+- Root cause 1: spool/socket identity omitted `hostId` while bridge ownership was per SSH Host, so duplicate Host profiles for one Agent installation collided. The namespace now binds Host/client/installation on both Hook and hello paths.
+- Root cause 2: canonical-root status mirroring copied one row's configured root into sibling Host/project rows, making the sibling UI state disappear. Mirrored reports now preserve each row's own configured root.
+- Root cause 3: PTY launch treated Agent installation as sufficient for Hook delivery, creating an unnecessary SSH bridge before Hook installation. Bridge identity is now injected only for an effective root with validated `installed` Hook state and matching Agent/machine identity.
+- Root cause 4: strict desktop validation accepted a duplicate Codex installation-record file in place of the second required file. Record file identity is now unique and must equal the complete report file set.
+- Crash recovery remains fail-safe: a process crash can leave a stale Agent-owned installation record that blocks Agent removal, but it cannot overwrite user config; explicit Hook uninstall removes the stale record. Generic bounded preamble/hello timeout, heartbeat, cancellation, and idle lifecycle remain explicitly owned by S05.
+
+#### S04 Review Log
+
+1. Review 1 found retained-root symlink cleanup could follow a retargeted configured path, Hook spool gap bytes were outside quota accounting, SSH provider arguments survived at one backend boundary, and remote Hook Replay could call local Git snapshot logic. Added canonical identity cleanup, hard byte accounting, Rust provider isolation, and remote-path refusal.
+2. Review 2 found config-root TOCTOU gaps, stale retained-root actions, bridge identity missing KeepAlive settings, stale bilingual delivery text, and incomplete HTTP(S)/explicit-Hook documentation. Fixed the shared boundaries and reran focused tests.
+3. Review 3 found duplicate SSH Host profiles collided on one Agent socket/spool namespace, sibling integration rows overwrote configured roots, duplicate installation-record files passed strict validation, and Agent-only terminals created unnecessary Hook bridges. Fixed all four root causes and added focused regressions where a runnable harness exists.
+4. Review 4 found no further S04 correctness, security, provider-isolation, remote-path, ownership, or documentation issues. S05 retains the generic reusable bridge timeout/heartbeat/cancellation work by design.
+
+Final evidence: Agent `cargo fmt --check`; Agent tests `29 passed`; Agent Clippy with `-D warnings`; Linux x64/aarch64 Agent `cargo check --all-targets`; touched desktop Rust `rustfmt --check --config skip_children=true`; desktop `cargo check`; desktop tests `570 passed, 1 ignored`; `npx tsc --noEmit`; `git diff --check`. A repo-wide desktop Clippy attempt remains non-green with 75 accumulated crate-wide style warnings, including unrelated modules and Tauri command argument-count lints, so it is not used as the S04 gate.
 
 ### S05 Reusable Agent bridge runtime
 
 - [ ] Maintain at most one reusable bridge per Host/client while PTYs remain independent.
-- [ ] Implement framing, capabilities, heartbeat, cancellation, backpressure, reconnect, and shutdown.
+- [ ] Implement framing, capabilities, bounded preamble/hello handshake timeout, heartbeat, cancellation, backpressure, reconnect, and shutdown.
 - [ ] Verify connection counts, multi-window ownership, banner contamination, and authentication-required behavior.
 
 ### S06 Remote history indexing and cache

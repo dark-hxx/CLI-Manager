@@ -715,6 +715,7 @@ dependencies = [
  "base64 0.22.1",
  "chardetng",
  "chrono",
+ "cli-manager-hook-schema",
  "encoding_rs",
  "fontdb",
  "git2",
@@ -759,6 +760,14 @@ dependencies = [
  "windows-sys 0.61.2",
  "zbus-secret-service-keyring-store",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "cli-manager-hook-schema"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

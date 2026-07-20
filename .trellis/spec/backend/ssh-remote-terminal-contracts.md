@@ -4,7 +4,7 @@
 
 Apply this contract when changing SSH host persistence, remote project creation, remote directory queries, terminal launch, PTY/daemon restore, project capability routing, or project sync/import behavior.
 
-The first SSH scope is a remote terminal MVP, not a remote IDE. Local and WSL projects retain their existing capabilities. SSH projects may use terminals, split panes, command templates, groups, and Workspans; remote files, Git, Worktree, history, hooks, statistics, provider switching, external terminal launch, and remote resource monitoring require separate implementations.
+SSH projects support remote terminals plus explicit Claude/Codex Agent Hook integration. Local and WSL projects retain their existing capabilities. Remote files, Git, Worktree, history, historical statistics, provider switching, external terminal launch, and remote resource monitoring remain separate implementations.
 
 ## 2. Signatures
 
@@ -46,6 +46,9 @@ pub async fn ssh_check_path(spec: SshConnectionSpec, path: String)
     -> Result<SshPathCheckResult, String>;
 pub async fn ssh_list_directories(spec: SshConnectionSpec, path: String)
     -> Result<Vec<SshDirectoryEntry>, String>;
+pub async fn ssh_agent_hook_inspect(...) -> Result<HookConfigReport, String>;
+pub async fn ssh_agent_hook_preview(...) -> Result<HookConfigReport, String>;
+pub async fn ssh_agent_hook_apply(...) -> Result<HookConfigReport, String>;
 ```
 
 ### Terminal launch
@@ -65,6 +68,13 @@ pub struct SshLaunchPlan {
     pub server_alive_interval_sec: u64,
     pub server_alive_count_max: u32,
     pub remote_path: String,
+    pub client_instance_id: String,
+    pub project_id: String,
+    pub bridge_epoch: String,
+    pub agent_path: String,
+    pub agent_installation_id: String,
+    pub agent_remote_machine_id: String,
+    pub tool_source: String,
     pub environment_overrides: HashMap<String, String>,
     pub initialization_command: Option<String>,
     pub startup_command: Option<String>,
@@ -128,14 +138,18 @@ pub struct SshLaunchPlan {
 - Reopen a live daemon session by attaching to its existing PTY. Never rerun the SSH launch or startup command.
 - An exited daemon session may restore replay and disconnected metadata only.
 - If an older daemon rejects the SSH create frame, fall back to the in-process PTY path; legacy local Create frames remain compatible.
+- Rust removes user-supplied reserved Hook variables and injects `CLI_MANAGER_SSH_HOST_ID`, `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`, `CLI_MANAGER_PROJECT_ID`, `CLI_MANAGER_TAB_ID`, and `CLI_MANAGER_BRIDGE_EPOCH` from validated launch/session state.
+- The daemon stores the corresponding Hook binding with the live PTY. Remote events are accepted only when Host/client/project/Tab/epoch/Agent installation/source all match and the session remains alive.
+- One daemon Agent bridge is reused for active sessions on the same Host/client/connection identity. PTYs remain independent SSH processes. The last Host session release stops the Hook bridge; probe/install/config operations remain short-lived connections.
 
 ### Capability routing
 
 - All SSH feature entry points must consult `resolveProjectCapabilities` or an equivalent hard backend/store guard.
-- SSH MVP allows `terminal`, `splitTerminal`, and `commandTemplates` only.
+- SSH project capabilities allow `terminal`, `splitTerminal`, and `commandTemplates`; remote Hook state is routed by the dedicated Agent/binding contract rather than by local history/provider capability fallbacks.
 - A hidden or disabled UI control is not sufficient for files and Worktree: stores must reject SSH projects before invoking local filesystem/Git processes.
 - `findProjectByPath` and other local path matchers must exclude SSH projects and empty local paths.
 - The system resources panel is local-only and must be labelled `Local Resources` / `本机资源` for SSH sessions.
+- SSH provider fields stay null/ignored in the launch plan. Hook inspect/install never reads cc-switch or discovers remote provider data.
 
 ### Sync
 
@@ -169,6 +183,9 @@ pub struct SshLaunchPlan {
 | Host key changed | OpenSSH blocks the connection; do not auto-ignore the warning. |
 | First connection has no known host key | Return a confirmation-required diagnostic; only an explicit user action may retry with `StrictHostKeyChecking=accept-new`. |
 | SSH transport exits | Persist disconnected/failed state and classified reason; do not interpret remote output as local paths. |
+| Reserved Hook binding is missing/invalid | remote Hook exits successfully as no-op; do not spool or broadcast |
+| Remote event binding does not match a live daemon PTY | reject and log a sanitized warning |
+| Agent installation or remote machine identity changed | refuse Hook config/bridge with `ssh_agent_identity_changed` |
 
 ## 5. Good / Base / Bad Cases
 
@@ -177,7 +194,9 @@ pub struct SshLaunchPlan {
 - Good: application restart attaches a daemon-owned SSH PTY without repeating initialization commands.
 - Good: Username / Password host can test connection and browse/check a remote path through AskPass without exposing the password.
 - Good: project `~/state/claude` overrides the Host Claude root and launches with `CLAUDE_CONFIG_DIR="${HOME}"/'state/claude'`.
+- Good: two projects on one Host use independent Tab/epoch bindings while sharing one client/Host Hook bridge; events route only to the originating live Tab.
 - Base: no project or Host root exists, so Claude/Codex uses its native default without an injected variable.
+- Base: Hook is not installed; the SSH terminal still runs normally and only live Hook status is unavailable.
 - Base: password-prompt/MFA users manually enter a remote path, then authenticate in the real PTY.
 - Base: an imported SSH project remains visible with a rebinding warning.
 - Bad: treating `path = ""` as a local project key; on POSIX this can match every local path.
@@ -198,6 +217,7 @@ pub struct SshLaunchPlan {
 - Assert project root overrides Host root, Host root overrides native default, and unrelated/local/WSL launches receive no SSH tool-root injection.
 - Assert absolute, `~`, and `~/...` config roots render safely; reject traversal, relative paths, expansion syntax, backslashes, NUL, CR, and LF at the Rust boundary.
 - Assert deleting a Host cascades Host preferences while retaining validated integration identity with `host_id = NULL` and `unbound/retained` state.
+- Assert Rust overwrites reserved binding env, provider launch fields remain null for SSH, one Host bridge serves multiple PTYs, mismatched events are rejected, and the final PTY release stops the bridge.
 - Assert session restore attaches live daemon PTYs and never reruns an exited SSH command.
 - Assert SSH projects are rejected by file and Worktree stores and excluded from local path matching.
 - Assert export/import omits all host and credential fields and requires rebinding.

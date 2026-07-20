@@ -1,4 +1,4 @@
-import type { SshToolSource } from "./types";
+import type { SshRemoteHookConfigReport, SshToolSource } from "./types";
 
 export const DEFAULT_SSH_TOOL_CONFIG_ROOT: Record<SshToolSource, string> = {
   claude: "$HOME/.claude",
@@ -20,4 +20,18 @@ export function validateSshToolConfigRoot(value: string): string | null {
   if (!(path.startsWith("/") || path === "~" || path.startsWith("~/"))) return "ssh_tool_config_root_invalid";
   if (path.split("/").some((segment) => segment === "..")) return "ssh_tool_config_root_parent_forbidden";
   return null;
+}
+
+export function parseStoredSshHookReport(value: string): SshRemoteHookConfigReport | null {
+  try {
+    const report = JSON.parse(value) as SshRemoteHookConfigReport;
+    return report
+      && ["claude", "codex"].includes(report.source)
+      && ["notInstalled", "partialInstalled", "outdated", "installed", "conflict"].includes(report.status)
+      && Array.isArray(report.configFiles)
+      ? report
+      : null;
+  } catch {
+    return null;
+  }
 }

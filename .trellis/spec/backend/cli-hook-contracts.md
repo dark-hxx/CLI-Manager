@@ -474,3 +474,86 @@ let db = PathBuf::from(r"C:\Users\Admini\.cc-switch\cc-switch.db");
 ```rust
 let path = resolve_ccswitch_db_path_for_hook(&app, cc_switch_db_path, &claude_dir)?;
 ```
+
+## Scenario: SSH Agent Hook Lifecycle And Delivery
+
+### 1. Scope / Trigger
+
+- Trigger: an SSH Host explicitly installs Claude/Codex Hook entries through `cli-manager-ssh-agent`, or a bound remote CLI emits one of those events.
+- Applies to: `hook-schema`, Agent `hook_config`/`hook_runtime`/bridge protocol, SSH launch binding, daemon event validation, `ClaudeHookPayload`, and SSH CLI Integration UI/storage.
+
+### 2. Signatures
+
+```text
+ssh_agent_hook_inspect(configuredConfigRoot, source, Agent identity) -> HookConfigReport
+ssh_agent_hook_preview(..., action=install|uninstall, expectedCanonicalRoot?) -> HookConfigReport
+ssh_agent_hook_apply(..., expectedCanonicalRoot?, expectedFiles[]) -> HookConfigReport
+
+cli-manager-ssh-agent hook --source <source> --event <event>
+  --managed-by cli-manager-ssh-agent --installation-id <uuid>
+```
+
+Reserved launch environment: `CLI_MANAGER_SSH_HOST_ID`, `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`, `CLI_MANAGER_PROJECT_ID`, `CLI_MANAGER_TAB_ID`, and `CLI_MANAGER_BRIDGE_EPOCH`.
+
+### 3. Contracts
+
+- Remote Hook installation is explicit per Host/tool/config root. Page open, Host save, Agent probe, Agent install, and config-root browsing do not write Hook configuration.
+- Agent reports and desktop persistence use the canonical config root plus actual config file paths/fingerprints. Agent binary/install paths are never treated as Hook or history roots.
+- Re-inspection preserves the prior validated installation record for the same canonical root, while explicit uninstall clears it. Multiple Host/project references to one canonical root mirror one physical Hook status.
+- Ownership requires the exact stable Agent command, source/event, `--managed-by cli-manager-ssh-agent`, and current installation UUID. Substring matching is forbidden.
+- Missing standard defaults may be created only by confirmed Hook install. Missing custom roots are rejected. Root or config-file symlinks remain links; a target change after preview aborts the transaction.
+- A custom root deleted after installation remains missing for install/inspect. Uninstall alone may recover one exact Agent-owned canonical record to clear stale ownership without recreating the directory. Any UI uninstall based on a stored Hook report supplies the prior canonical identity, so a configured-root symlink retargeted from A to B can clean only A through an exact unique Agent record; a direct request without an expected identity follows B. Missing, ambiguous, or invalid records fail closed.
+- Config merging preserves unrelated entries and unknown events. Duplicate exact entries are normalized in place. User-owned Codex `features.hooks = true` remains enabled after uninstall.
+- Remote runtime requires all reserved binding variables. Ordinary SSH/IDE/tmux launches and other desktop clients are no-op and produce no spool record.
+- A remote SSH PTY receives the Agent bridge identity only when its effective Host/source/configured root is recorded as `installed` and still matches the current Agent installation/machine identity. Installing Agent without Hook does not add a background SSH connection.
+- Hook stdin is bounded; shared normalization feeds local and remote paths. Remote spool removes prompt/message before persistence.
+- Daemon validates Host/client/project/Tab/epoch/installation/source against a live PTY before routing. Remote transcript refs stay in `remoteTranscriptRef` fields and never enter local transcript/file commands.
+- Delivery is at least once from Agent to daemon, then deduplicated by event id. Spool uses monotonic sequence, ACK deletion, TTL/count/byte limits, and sequenced gap warnings.
+- `ClaudeHookPayload::to_notification_job` must clear SSH cwd. Third-party notifications never receive remote cwd, transcript refs, Host/project/session/Tab identity, or prompt text.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Missing/invalid reserved binding | successful Hook no-op |
+| Source/event/installation/owner invalid | Hook runtime error is swallowed by CLI; no spool write |
+| Config changed after preview | `hook_config_changed` |
+| Root/config symlink target changed | `hook_config_root_changed` |
+| Foreign CLI-Manager marker/placement | `hook_config_owner_conflict` |
+| Stale spool lock | remove only after dead PID/age check and retry |
+| Spool limit/TTL removes events | insert `gap` with dropped count and sequence |
+| Event does not match a live daemon binding | reject without frontend/third-party delivery |
+
+### 5. Good/Base/Bad Cases
+
+- Good: one Host has Claude default root and a Codex project override; both Hooks install independently and share the Host bridge without cross-routing events.
+- Base: Agent is installed but Hook is not; remote terminal behavior is unchanged and live Hook status is unavailable.
+- Base: bridge is offline; Hook appends to its Host/client/installation spool and exits promptly, then reconnect replays and ACKs it.
+- Bad: rewrite all `hooks` arrays, infer ownership from an Agent-name substring, broadcast to every client, interpret a remote transcript ref as a local path, or include remote cwd in third-party notification data.
+
+### 6. Tests Required
+
+- Agent tests: exact merge/uninstall, duplicates, unknown events, malformed JSON/TOML, Codex feature/comment ownership, default/custom roots, symlink target changes, fingerprints, journal rollback, binding no-op, stdin bound, message redaction, stale lock, meta rebuild, spool limits/gap, and ACK.
+- Desktop Rust tests: strict report validation, reserved env overwrite, session binding rejection, bridge full-spool dedup including gap replay, remote payload validation, and third-party cwd redaction.
+- Frontend/type tests: per-tool Host roots, grouped project overrides, retained-root cleanup, preview confirmation, canonical paths, bilingual states, and remote transcript local-API refusal.
+- Run Agent host tests, Linux x64/arm64 all-target checks, desktop Rust tests, TypeScript, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+if command.contains("cli-manager-ssh-agent") {
+    remove_hook(command);
+}
+```
+
+#### Correct
+
+```rust
+if command == expected_command(source, event, installation_id) && matcher == expected_matcher {
+    remove_hook(command);
+}
+```
+
+Exact ownership prevents upgrades or uninstalls from deleting third-party and other-installation entries.

@@ -26,7 +26,7 @@ export type SshJumpMode = "none" | "host" | "proxy_jump";
 
 export type SshProxyType = "none" | "http" | "socks5" | "proxy_command";
 export type SshToolSource = "claude" | "codex";
-export type SshToolIntegrationScopeKind = "hostPrimary" | "projectOverride";
+export type SshToolIntegrationScopeKind = "hostPrimary" | "projectOverride" | "retainedRoot";
 export type SshToolIntegrationValidationState =
   | "unvalidated"
   | "validating"
@@ -150,12 +150,76 @@ export interface SshAgentOperationResult {
 export interface SshAgentProbeResult {
   status: "installed" | "notInstalled" | "incompatible" | "corrupt" | "unreachable" | "unsupported" | "authenticationRequired";
   code: string;
+  installationId: string;
+  remoteMachineId: string;
   installPath: string;
   agentVersion: string;
   protocolVersion: string;
   target: string;
   supported: boolean;
   detail: string;
+}
+
+export type SshRemoteHookStatus = "notInstalled" | "partialInstalled" | "outdated" | "installed" | "conflict";
+
+export interface SshRemoteHookExpectedFile {
+  role: string;
+  canonicalPath: string;
+  fingerprint: string;
+}
+
+export interface SshRemoteHookConfigFile extends SshRemoteHookExpectedFile {
+  exists: boolean;
+}
+
+export interface SshRemoteHookConfigChange {
+  role: string;
+  canonicalPath: string;
+  beforeFingerprint: string;
+  afterFingerprint: string;
+  action: "unchanged" | "create" | "update" | "delete";
+}
+
+export interface SshRemoteHookInstallationFile {
+  role: string;
+  canonicalPath: string;
+  beforeFingerprint: string;
+  afterFingerprint: string;
+}
+
+export interface SshRemoteHookInstallationRecord {
+  source: SshToolSource;
+  installationId: string;
+  ownerId: string;
+  configuredConfigRoot: string;
+  canonicalConfigRoot: string;
+  configFiles: SshRemoteHookInstallationFile[];
+  managedEntries: number;
+  adapterVersion: number;
+  installedAt: number;
+  historySourceCandidate: {
+    source: SshToolSource;
+    canonicalConfigRoot: string;
+    configRootHash: string;
+  };
+}
+
+export interface SshRemoteHookConfigReport {
+  action: "inspect" | "previewInstall" | "previewUninstall" | "installed" | "uninstalled";
+  status: SshRemoteHookStatus;
+  source: SshToolSource;
+  installationId: string;
+  remoteMachineId: string;
+  configuredConfigRoot: string;
+  canonicalConfigRoot: string;
+  configRootHash: string;
+  configRootExists: boolean;
+  willCreateConfigRoot: boolean;
+  configFiles: SshRemoteHookConfigFile[];
+  managedEntries: number;
+  requiredEntries: number;
+  changes: SshRemoteHookConfigChange[];
+  installation: SshRemoteHookInstallationRecord | null;
 }
 
 export interface SshHostToolPreference {

@@ -8,6 +8,10 @@
 - 删除 SSH 主机时会先阻止活动终端和跳板机引用，再解除项目绑定；远端 Agent/Hook 不会被隐式卸载，已验证的远端集成身份保留为待重新绑定状态。
 - 新增独立 `cli-manager-ssh-agent` 协议骨架以及每台 SSH 主机的显式 Agent 检测入口；交互终端与后台短连接复用同一套认证、跳板机、代理和 AskPass 参数。打开设置不会自动连接，只有点击“检测 Agent”才建立一次 `ssh -T` 短连接；登录提示、输出大小、Agent 身份、Linux x64/arm64 目标和协议主版本均经过有界校验，检测结果只保存脱敏的版本、协议、目标和路径元数据。
 - SSH 主机“CLI 集成”新增 `cli-manager-ssh-agent` 安装、升级、回滚和卸载预览；桌面端复用当前 SSH 认证链上传 Linux x64/arm64 签名制品，Agent 通过安装锁、discovery record、版本目录及 `current/previous` 原子链接完成切换，默认拒绝降级并在失败时恢复旧链接。发布流程同步生成 Minisign 签名 manifest 与可审阅的 POSIX `install-ssh-agent.sh`，支持 HTTPS 和显式受信 HTTP 镜像、自定义安装目录、size/SHA-256 校验及 dry-run；这些操作均不修改 Claude/Codex Hook。
+- SSH 主机“CLI 集成”现可按 Claude/Codex 及项目覆盖目录独立检查、预览、安装、升级和卸载远端 Hook；Agent 返回规范化配置根、实际 `settings.json` / `hooks.json` / `config.toml` 路径和指纹，通过锁、备份 journal、原子替换及复读校验保留第三方字段、顺序、matcher、symlink 和用户自有 Codex feature。默认目录仅在明确确认安装后创建，自定义缺失目录拒绝，Agent 卸载会阻止遗留自有 Hook。
+- SSH Claude/Codex 终端注入按主机、客户端、项目、Tab 和 bridge epoch 隔离的非敏感绑定；普通 SSH/IDE/tmux 启动因缺少绑定而快速 no-op。只有有效配置根已验证为 Hook `installed` 且 Agent 身份仍匹配时，每条活动主机配置才复用一个 daemon Agent bridge；断线事件进入 24 小时、10000 条或 32 MiB 的主机/客户端隔离 spool，重连后按 sequence 补发、ACK 删除、event id 去重并显示 gap 告警；远端路径不会交给本地 transcript API 或第三方通知。
+
+- SSH Hook 边界复审：远端 Hook 事件仍可进入本地 Replay 的事件列表，但远端 `cwd` 只作为不透明引用保存，不会被当作本地项目路径或触发本地 Git 快照；SSH PTY 创建链路在 Rust 侧同时忽略供应商启动参数。Hook spool 的 gap 记录也计入字节配额，已保存 Hook 状态的 symlink 卸载会校验旧 canonical 根，避免误操作改指后的目录。
 
 ## [V1.2.9] - 2026-07-18
 

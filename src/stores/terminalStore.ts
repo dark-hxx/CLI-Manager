@@ -16,7 +16,7 @@ import { useProjectStore } from "./projectStore";
 import { useSshHostStore } from "./sshHostStore";
 import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "../lib/ssh";
-import { resolveSshToolSource } from "../lib/sshToolIntegration";
+import { parseStoredSshHookReport, resolveSshToolSource } from "../lib/sshToolIntegration";
 import { appendSyncedHistoryContextArg } from "../lib/syncedHistoryContext";
 import { translateCurrent } from "../lib/i18n";
 import { findProjectByPath, findWorktreeByPath, resolveProjectForProviderLaunch } from "../lib/terminalProject";
@@ -164,6 +164,13 @@ export interface CliHookPayload {
   transcriptPath?: string | null;
   reasoningEffort?: string | null;
   wslDistroName?: string | null;
+  environmentType?: "ssh" | null;
+  remoteHostId?: string | null;
+  remoteProjectId?: string | null;
+  remoteTranscriptRef?: string | null;
+  remoteAgentTranscriptRef?: string | null;
+  remoteEventId?: string | null;
+  remoteSequence?: number | null;
 }
 
 /** 子 Agent 转录面板的实时内容（按订阅 key=伪会话 id 存放）。 */
@@ -1054,9 +1061,32 @@ function persistSshConnectionStateAfterPtyStatus(sessionId: string, payload: Pty
 interface SshLaunchPayload extends SshConnectionSpecPayload {
   hostId: string;
   remotePath: string;
+  clientInstanceId: string;
+  projectId: string;
+  bridgeEpoch: string;
+  agentPath: string;
+  agentInstallationId: string;
+  agentRemoteMachineId: string;
+  toolSource: "" | "claude" | "codex";
   environmentOverrides: Record<string, string>;
   initializationCommand: string | null;
   startupCommand: string | null;
+}
+
+const SSH_CLIENT_INSTANCE_ID_KEY = "cli-manager.sshClientInstanceId";
+let fallbackSshClientInstanceId = "";
+
+function getSshClientInstanceId(): string {
+  try {
+    const current = localStorage.getItem(SSH_CLIENT_INSTANCE_ID_KEY)?.trim();
+    if (current && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(current)) return current;
+    const created = crypto.randomUUID();
+    localStorage.setItem(SSH_CLIENT_INSTANCE_ID_KEY, created);
+    return created;
+  } catch {
+    fallbackSshClientInstanceId ||= crypto.randomUUID();
+    return fallbackSshClientInstanceId;
+  }
 }
 
 interface ResolvedPtyLaunch {
@@ -1201,17 +1231,38 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
     const toolSource = project?.environment_type === "ssh"
       ? resolveSshToolSource(project.cli_tool)
       : null;
+    let agentInstallation: ReturnType<typeof useSshAgentIntegrationStore.getState>["installations"][number] | undefined;
+    let hookBridgeEnabled = false;
     if (toolSource) {
       const integrationStore = useSshAgentIntegrationStore.getState();
       if (!integrationStore.loaded) await integrationStore.fetchAll();
-      const hostConfiguredRoot = useSshAgentIntegrationStore.getState().preferences.find(
+      const integrationState = useSshAgentIntegrationStore.getState();
+      agentInstallation = integrationState.installations.find(
+        (candidate) => candidate.host_id === host.id && candidate.status === "installed",
+      );
+      const hostConfiguredRoot = integrationState.preferences.find(
         (preference) => preference.host_id === host.id && preference.source === toolSource,
       )?.configured_root.trim();
-      const effectiveConfigRoot = project?.cli_config_root.trim() || hostConfiguredRoot;
+      const effectiveConfigRoot = project?.cli_config_root.trim() || hostConfiguredRoot || "";
       if (effectiveConfigRoot) {
         const environmentKey = toolSource === "claude" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
         resolvedEnvironmentOverrides[environmentKey] = effectiveConfigRoot;
       }
+      const hookIntegration = integrationState.integrations.find((candidate) => (
+        candidate.host_id === host.id
+        && candidate.source === toolSource
+        && candidate.configured_root === effectiveConfigRoot
+        && candidate.cleanup_state === "active"
+      ));
+      const hookReport = hookIntegration
+        ? parseStoredSshHookReport(hookIntegration.hook_record_json)
+        : null;
+      hookBridgeEnabled = Boolean(
+        agentInstallation
+        && hookReport?.status === "installed"
+        && hookReport.installationId === agentInstallation.installation_id
+        && hookReport.remoteMachineId === agentInstallation.remote_machine_id,
+      );
     }
 
     return {
@@ -1232,6 +1283,13 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
           ...buildSshConnectionSpec(host, hosts),
           hostId: host.id,
           remotePath,
+          clientInstanceId: getSshClientInstanceId(),
+          projectId: project?.id ?? "",
+          bridgeEpoch: crypto.randomUUID(),
+          agentPath: hookBridgeEnabled ? agentInstallation?.install_path ?? "" : "",
+          agentInstallationId: hookBridgeEnabled ? agentInstallation?.installation_id ?? "" : "",
+          agentRemoteMachineId: hookBridgeEnabled ? agentInstallation?.remote_machine_id ?? "" : "",
+          toolSource: hookBridgeEnabled ? toolSource ?? "" : "",
           environmentOverrides: resolvedEnvironmentOverrides,
           initializationCommand: host.startup_script.trim() || null,
           startupCommand: resolvedStartupCmd ?? null,
