@@ -409,6 +409,8 @@ export interface TerminalSession {
   /** true 时启动命令由 XTermTerminal 在 initialTerminalOutput 写完后再发送。 */
   deferStartupUntilInitialOutput?: boolean;
   cliSessionId?: string;
+  remoteHistoryConsumerId?: string;
+  remoteHistorySourceInstanceId?: string;
   /** CLI hook 上报的当前 effort，仅用于实时统计展示，不作为历史解析来源。 */
   cliReasoningEffort?: string;
   /** 会话类型；缺省视为 "pty"。"subagent-transcript" 为只读转录伪会话（无 PTY、不持久化）。 */
@@ -706,6 +708,23 @@ export interface SshRemoteHistorySyncResult {
   sessions: unknown[];
   tombstones: string[];
   warnings: string[];
+}
+
+export interface SshRemoteResumePreflight {
+  source: SshToolSource;
+  sourceSessionId: string;
+  sourceInstanceId: string;
+  installationId: string;
+  remoteMachineId: string;
+  sshUser: string;
+  canonicalConfigRoot: string;
+  remoteCwd: string;
+  cliCommand: string;
+  resumeArgs: string[];
+  resumeCommand: string;
+  environmentOverrides: Record<string, string>;
+  parserVersion: number;
+  indexedAt: number;
 }
 
 export type HistoryIndexPhase = "idle" | "seeding" | "scanning" | "indexing" | "ready" | "error";

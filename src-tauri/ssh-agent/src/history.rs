@@ -51,6 +51,35 @@ pub struct HistoryGetRequest {
     pub source_session_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryResumePreflightRequest {
+    pub source: String,
+    pub configured_config_root: String,
+    pub source_session_id: String,
+    pub expected_source_instance_id: String,
+    pub expected_remote_machine_id: String,
+    pub expected_ssh_user: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryResumePreflight {
+    pub source: String,
+    pub source_session_id: String,
+    pub source_instance_id: String,
+    pub installation_id: String,
+    pub remote_machine_id: String,
+    pub ssh_user: String,
+    pub canonical_config_root: String,
+    pub remote_cwd: String,
+    pub cli_command: String,
+    pub resume_args: Vec<String>,
+    pub environment_overrides: BTreeMap<String, String>,
+    pub parser_version: u32,
+    pub indexed_at: i64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HistoryIndex {
@@ -309,6 +338,138 @@ pub fn get(request: HistoryGetRequest) -> Result<RemoteHistorySessionDetail, Str
         index.generation,
         lines,
     ))
+}
+
+pub fn resume_preflight(
+    request: HistoryResumePreflightRequest,
+) -> Result<HistoryResumePreflight, String> {
+    let source = request.source.trim().to_lowercase();
+    if !matches!(source.as_str(), "claude" | "codex") {
+        return Err("history_resume_source_invalid".to_string());
+    }
+    let source_session_id = request.source_session_id.trim();
+    if source_session_id.is_empty()
+        || source_session_id.len() > 512
+        || source_session_id.contains(['\0', '\r', '\n', ' '])
+    {
+        return Err("history_resume_session_id_invalid".to_string());
+    }
+    let scope = resolve_scope(&HistoryScopeRequest {
+        source: source.clone(),
+        configured_config_root: request.configured_config_root.clone(),
+        project_paths: vec!["/".to_string()],
+        cursor: String::new(),
+        limit: 1,
+    })?;
+    if !request.expected_source_instance_id.trim().is_empty()
+        && request.expected_source_instance_id.trim() != scope.source_instance_id
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    if request.expected_remote_machine_id.trim() != scope.remote_machine_id
+        || (!request.expected_ssh_user.trim().is_empty()
+            && request.expected_ssh_user.trim() != scope.ssh_user)
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    let index = load_index(&scope)?;
+    let entry = index
+        .entries
+        .values()
+        .find(|entry| {
+            entry
+                .summary
+                .as_ref()
+                .is_some_and(|summary| summary.session_ref.source_session_id == source_session_id)
+        })
+        .ok_or_else(|| "remote_session_source_missing".to_string())?;
+    let artifact = safe_artifact_path(&scope.canonical_root, &entry.relative_path)
+        .map_err(|_| "remote_session_source_missing".to_string())?;
+    File::open(artifact).map_err(|_| "remote_session_source_missing".to_string())?;
+    let summary = entry
+        .summary
+        .as_ref()
+        .ok_or_else(|| "remote_session_source_missing".to_string())?;
+    let remote_cwd = summary
+        .cwd
+        .as_deref()
+        .ok_or_else(|| "remote_session_cwd_missing".to_string())?;
+    let remote_cwd = validate_resume_cwd(remote_cwd)?;
+    let cli_command = if source == "claude" {
+        "claude"
+    } else {
+        "codex"
+    };
+    if !command_available(cli_command) {
+        return Err("unsupported_resume_tool".to_string());
+    }
+    let resume_args = build_resume_args(&source, source_session_id);
+    let mut environment_overrides = BTreeMap::new();
+    environment_overrides.insert(
+        if source == "claude" {
+            "CLAUDE_CONFIG_DIR".to_string()
+        } else {
+            "CODEX_HOME".to_string()
+        },
+        path_text(&scope.canonical_root),
+    );
+    Ok(HistoryResumePreflight {
+        source,
+        source_session_id: source_session_id.to_string(),
+        source_instance_id: scope.source_instance_id,
+        installation_id: scope.installation_id,
+        remote_machine_id: scope.remote_machine_id,
+        ssh_user: scope.ssh_user,
+        canonical_config_root: path_text(&scope.canonical_root),
+        remote_cwd,
+        cli_command: cli_command.to_string(),
+        resume_args,
+        environment_overrides,
+        parser_version: PARSER_VERSION,
+        indexed_at: index.updated_at,
+    })
+}
+
+fn build_resume_args(source: &str, source_session_id: &str) -> Vec<String> {
+    if source == "claude" {
+        vec![
+            "claude".to_string(),
+            "--resume".to_string(),
+            source_session_id.to_string(),
+        ]
+    } else {
+        vec![
+            "codex".to_string(),
+            "resume".to_string(),
+            source_session_id.to_string(),
+        ]
+    }
+}
+
+fn validate_resume_cwd(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if !value.starts_with('/')
+        || value.contains(['\0', '\r', '\n', '\\'])
+        || value.split('/').any(|part| part == "..")
+    {
+        return Err("remote_session_cwd_invalid".to_string());
+    }
+    let path = Path::new(value);
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| "remote_session_cwd_unavailable".to_string())?;
+    if !canonical.is_dir() {
+        return Err("remote_session_cwd_unavailable".to_string());
+    }
+    Ok(path_text(&canonical))
+}
+
+fn command_available(command: &str) -> bool {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|path| path.join(command))
+        .any(|path| path.is_file())
 }
 
 fn resolve_scope(request: &HistoryScopeRequest) -> Result<ResolvedScope, String> {
@@ -991,10 +1152,11 @@ fn set_file_permissions(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_lock_with_stale_after, complete_jsonl_bytes, empty_index, file_id,
-        initialize_lock_dir, load_index, refresh_summaries, relative_string,
+        acquire_lock_with_stale_after, build_resume_args, complete_jsonl_bytes, empty_index,
+        file_id, initialize_lock_dir, load_index, refresh_summaries, relative_string,
         remote_source_instance_id, remove_missing_entries, sync_cursor_offset, update_entry,
-        validate_project_path, ResolvedScope, MAX_FILE_READ_BYTES, MAX_SCAN_BYTES,
+        validate_project_path, validate_resume_cwd, ResolvedScope, MAX_FILE_READ_BYTES,
+        MAX_SCAN_BYTES,
     };
     use std::collections::BTreeSet;
     use std::fs::{self, OpenOptions};
@@ -1034,6 +1196,30 @@ mod tests {
         assert_eq!(validate_project_path("/srv/app/").unwrap(), "/srv/app");
         assert!(validate_project_path("../srv/app").is_err());
         assert!(validate_project_path("/srv/../root").is_err());
+    }
+
+    #[test]
+    fn resume_arguments_are_structured_per_source() {
+        assert_eq!(
+            build_resume_args("claude", "session-1"),
+            ["claude", "--resume", "session-1"]
+        );
+        assert_eq!(
+            build_resume_args("codex", "session-2"),
+            ["codex", "resume", "session-2"]
+        );
+    }
+
+    #[test]
+    fn resume_cwd_rejects_relative_and_parent_paths() {
+        assert_eq!(
+            validate_resume_cwd("relative/path").unwrap_err(),
+            "remote_session_cwd_invalid"
+        );
+        assert_eq!(
+            validate_resume_cwd("/srv/../secret").unwrap_err(),
+            "remote_session_cwd_invalid"
+        );
     }
 
     #[test]

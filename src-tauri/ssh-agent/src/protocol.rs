@@ -7,7 +7,9 @@ use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
 
-use crate::history::{HistoryGetRequest, HistoryScopeRequest, HistorySearchRequest};
+use crate::history::{
+    HistoryGetRequest, HistoryResumePreflightRequest, HistoryScopeRequest, HistorySearchRequest,
+};
 use crate::hook_runtime::{ack_spool, read_spool_batch, spool_namespace};
 use crate::installer::read_installation_record;
 use crate::layout::resolve_layout;
@@ -262,7 +264,8 @@ fn capabilities() -> Value {
         "historyIndex",
         "historySearch",
         "historyDetail",
-        "historyDetailChunks"
+        "historyDetailChunks",
+        "historyResumePreflight"
     ])
 }
 
@@ -388,6 +391,26 @@ pub fn run_bridge(
                     json!({ "code": "history_request_invalid" }),
                 ),
             };
+            write_frame(writer, &response)?;
+            continue;
+        }
+        if frame.kind == "historyResumePreflight" {
+            let response =
+                match serde_json::from_value::<HistoryResumePreflightRequest>(frame.payload) {
+                    Ok(request) => match crate::history::resume_preflight(request) {
+                        Ok(result) => response(
+                            request_id,
+                            "response",
+                            serde_json::to_value(result).unwrap_or(Value::Null),
+                        ),
+                        Err(code) => response(request_id, "error", json!({ "code": code })),
+                    },
+                    Err(_) => response(
+                        request_id,
+                        "error",
+                        json!({ "code": "history_resume_request_invalid" }),
+                    ),
+                };
             write_frame(writer, &response)?;
             continue;
         }
@@ -682,6 +705,7 @@ mod tests {
             "requestCancellation",
             "boundedBackpressure",
             "historyDetailChunks",
+            "historyResumePreflight",
         ] {
             assert!(frame.payload["capabilities"]
                 .as_array()
@@ -714,6 +738,25 @@ mod tests {
         let response: ServerFrame = serde_json::from_slice(&payload).unwrap();
         assert_eq!(response.kind, "response");
         assert_eq!(response.payload["accepted"], true);
+    }
+
+    #[test]
+    fn resume_preflight_rejects_unstructured_requests() {
+        let mut input = encoded_client_frame(&ClientFrame {
+            request_id: "resume-1".into(),
+            kind: "historyResumePreflight".into(),
+            payload: json!({}),
+        });
+        input.extend(encoded_client_frame(&ClientFrame {
+            request_id: "shutdown-1".into(),
+            kind: "shutdown".into(),
+            payload: json!({}),
+        }));
+        let mut output = Vec::new();
+        run_bridge(&mut Cursor::new(input), &mut output, "nonce-1").unwrap();
+        let frames = decoded_server_frames(&output);
+        assert_eq!(frames[0].kind, "error");
+        assert_eq!(frames[0].payload["code"], "history_resume_request_invalid");
     }
 
     #[test]

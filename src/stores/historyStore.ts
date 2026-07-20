@@ -92,7 +92,7 @@ interface HistoryStore {
   remoteContext: SshAgentHistoryContext | null;
   ensureMetaTable: () => Promise<void>;
   openHistory: (options?: OpenHistoryOptions) => Promise<void>;
-  closeHistory: () => void;
+  closeHistory: (options?: { preserveRemoteConsumer?: boolean }) => void;
   toggleHistory: () => Promise<void>;
   setSourceFilter: (filter: HistorySourceFilter) => Promise<void>;
   setProjectPathFilter: (projectPath: string | null) => Promise<void>;
@@ -1726,13 +1726,13 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
   },
 
-  closeHistory: () => {
+  closeHistory: (options) => {
     historyOpenRequestSeq += 1;
     sessionListRequestSeq += 1;
     sessionDetailRequestSeq += 1;
     globalSearchRequestSeq += 1;
     const remoteContext = get().remoteContext;
-    if (remoteContext) {
+    if (remoteContext && !options?.preserveRemoteConsumer) {
       void invoke("history_remote_close", {
         hostId: remoteContext.hostId,
         consumerId: remoteContext.consumerId,

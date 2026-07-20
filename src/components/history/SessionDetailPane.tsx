@@ -819,7 +819,7 @@ export function SessionDetailPane({
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               onClick={onResumeSession}
-              disabled={loadingSessionDetail || !activeSession || activeView.session_ref?.transportKind === "ssh"}
+              disabled={loadingSessionDetail || !activeSession}
               aria-label={t("history.detail.resume")}
               className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact ui-history-detail-resume-action"
               title={t("history.detail.resumeTitle")}

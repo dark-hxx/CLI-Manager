@@ -200,9 +200,31 @@ impl EventDedup {
 #[derive(Default)]
 pub struct SshAgentBridgeManager {
     bridges: Mutex<HashMap<String, BridgeEntry>>,
+    resume_claims: Mutex<HashMap<String, String>>,
 }
 
 impl SshAgentBridgeManager {
+    fn claim_resume_session(&self, claim_key: &str, consumer_id: &str) -> Result<(), String> {
+        let mut claims = self
+            .resume_claims
+            .lock()
+            .map_err(|_| "history_resume_claims_unavailable".to_string())?;
+        if claims
+            .get(claim_key)
+            .is_some_and(|owner| owner != consumer_id)
+        {
+            return Err("remote_session_active_elsewhere".to_string());
+        }
+        claims.insert(claim_key.to_string(), consumer_id.to_string());
+        Ok(())
+    }
+
+    fn release_resume_claims(&self, _host_id: &str, consumer_id: &str) {
+        if let Ok(mut claims) = self.resume_claims.lock() {
+            claims.retain(|_, owner| owner != consumer_id);
+        }
+    }
+
     pub fn ensure(&self, host: Weak<DaemonHost>, session_id: &str, plan: &SshLaunchPlan) {
         let _ = self.ensure_bridge(host, plan, Some(session_id), None);
     }
@@ -283,24 +305,64 @@ impl SshAgentBridgeManager {
         if consumer_id.is_empty()
             || consumer_id.len() > 512
             || consumer_id.contains(['\0', '\r', '\n'])
-            || !matches!(kind, "historySync" | "historySearch" | "historyGet")
+            || !matches!(
+                kind,
+                "historySync" | "historySearch" | "historyGet" | "historyResumePreflight"
+            )
         {
             return Err("ssh_agent_request_invalid".to_string());
         }
-        let sender = self
-            .ensure_bridge(host, plan, None, Some(consumer_id))
-            .ok_or_else(|| "ssh_agent_identity_required".to_string())?;
-        let (response_sender, response_receiver) = mpsc::sync_channel(1);
-        sender
-            .send(AgentBridgeRequest {
-                kind: kind.to_string(),
-                payload,
-                response: response_sender,
-            })
-            .map_err(|_| "ssh_agent_bridge_request_queue_closed".to_string())?;
-        response_receiver
-            .recv_timeout(HISTORY_RESPONSE_TIMEOUT + RESPONSE_TIMEOUT)
-            .map_err(|_| "ssh_agent_bridge_response_timeout".to_string())?
+        let resume_claim_key = if kind == "historyResumePreflight" {
+            let source = payload
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let session_id = payload
+                .get("sourceSessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let source_instance_id = payload
+                .get("expectedSourceInstanceId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if source.is_empty() || source_instance_id.is_empty() || session_id.is_empty() {
+                return Err("history_resume_request_invalid".to_string());
+            }
+            let claim_key = format!("{}\0{}\0{}", source_instance_id, source, session_id);
+            self.claim_resume_session(&claim_key, consumer_id)?;
+            Some(claim_key)
+        } else {
+            None
+        };
+        let result = (|| {
+            let sender = self
+                .ensure_bridge(host, plan, None, Some(consumer_id))
+                .ok_or_else(|| "ssh_agent_identity_required".to_string())?;
+            let (response_sender, response_receiver) = mpsc::sync_channel(1);
+            sender
+                .send(AgentBridgeRequest {
+                    kind: kind.to_string(),
+                    payload,
+                    response: response_sender,
+                })
+                .map_err(|_| "ssh_agent_bridge_request_queue_closed".to_string())?;
+            response_receiver
+                .recv_timeout(HISTORY_RESPONSE_TIMEOUT + RESPONSE_TIMEOUT)
+                .map_err(|_| "ssh_agent_bridge_response_timeout".to_string())?
+        })();
+        if result.is_err() {
+            if let (Some(claim_key), Ok(mut claims)) =
+                (resume_claim_key.as_ref(), self.resume_claims.lock())
+            {
+                if claims
+                    .get(claim_key)
+                    .is_some_and(|owner| owner == consumer_id)
+                {
+                    claims.remove(claim_key);
+                }
+            }
+        }
+        result
     }
 
     pub fn release(&self, host_id: &str, session_id: &str) {
@@ -320,6 +382,7 @@ impl SshAgentBridgeManager {
     }
 
     pub fn release_consumer(&self, host_id: &str, consumer_id: &str) {
+        self.release_resume_claims(host_id, consumer_id);
         let mut bridges = match self.bridges.lock() {
             Ok(bridges) => bridges,
             Err(_) => return,
@@ -832,6 +895,7 @@ fn run_bridge_once_inner(
             "historySearch",
             "historyDetail",
             "historyDetailChunks",
+            "historyResumePreflight",
         ]
         .iter()
         .any(|required| {
@@ -1033,6 +1097,20 @@ mod tests {
     }
 
     #[test]
+    fn resume_claims_block_other_consumers_until_release() {
+        let manager = SshAgentBridgeManager::default();
+        let key = "source-instance-1\0claude\0session-1";
+        manager.claim_resume_session(key, "consumer-1").unwrap();
+        manager.claim_resume_session(key, "consumer-1").unwrap();
+        assert_eq!(
+            manager.claim_resume_session(key, "consumer-2").unwrap_err(),
+            "remote_session_active_elsewhere"
+        );
+        manager.release_resume_claims("host-1", "consumer-1");
+        manager.claim_resume_session(key, "consumer-2").unwrap();
+    }
+
+    #[test]
     fn hook_batch_requires_monotonic_sequences_and_exact_latest() {
         assert!(validate_hook_batch(
             &json!({
@@ -1204,6 +1282,7 @@ mod tests {
                     control: Arc::clone(&control),
                 },
             )])),
+            resume_claims: std::sync::Mutex::new(HashMap::new()),
         };
         manager.release("host-1", "session-1");
         assert_eq!(manager.bridges.lock().unwrap().len(), 1);
@@ -1228,6 +1307,7 @@ mod tests {
                     control: Arc::clone(&control),
                 },
             )])),
+            resume_claims: std::sync::Mutex::new(HashMap::new()),
         };
         manager.release("host-1", "session-1");
         assert_eq!(manager.bridges.lock().unwrap().len(), 1);

@@ -10,7 +10,7 @@ This is the single execution tracker for the task. Research, product requirement
 | S04 | Remote Hook lifecycle | completed | adapter merge, ownership, atomicity, spool tests |
 | S05 | Reusable Agent bridge runtime | completed | one-bridge invariant, reconnect, cancellation, shutdown tests |
 | S06 | Remote history indexing and cache | completed | parser/index/catalog/cursor/offline tests |
-| S07 | Remote session resume | pending | preflight/ownership/cwd/config-root routing tests |
+| S07 | Remote session resume | completed | preflight/ownership/cwd/config-root routing tests |
 | S08 | Read-only remote file panel | pending | confinement/read limits/provider routing tests |
 | S09 | Read-only remote Git panel | pending | porcelain/diff/repo identity/read-only boundary tests |
 | S10 | Stats, docs, security and release verification | pending | stats/performance/security/i18n/docs/full regression |
@@ -144,9 +144,27 @@ Final evidence: history-core tests `4 passed`; Agent tests `48 passed`; Agent Cl
 
 ### S07 Remote session resume
 
-- [ ] Implement same-machine/user/source/config-root preflight and session ownership checks.
-- [ ] Route Claude/Codex native resume into a new interactive SSH PTY.
-- [ ] Support original remote location when the project is missing but Host identity is valid.
+- [x] Implement same-machine/user/source/config-root preflight and session ownership checks.
+- [x] Route Claude/Codex native resume into a new interactive SSH PTY.
+- [x] Support original remote location when the project is missing but Host identity is valid.
+
+#### S07 Root-Cause And Discovery Record
+
+- GitNexus impact was available for the existing history-store entry points but the index did not yet contain the new resume symbols; contract + `rg` tracing covered History resume UI, terminal launch resolution, daemon Agent requests, Agent history lookup, session persistence, and PTY exit/close cleanup.
+- Root cause 1: the local resume flow constructs `cwd + command` for local/WSL sessions and cannot prove remote machine/user/config-root identity. SSH resume now has a dedicated Agent preflight and a Rust-generated POSIX-quoted command.
+- Root cause 2: project selection previously used local `project.path` and could show local/WSL or a different remote config root. SSH candidates now require the same Host, source, and effective config-root scope and compare `remote_path` to the verified cwd.
+- Root cause 3: a late or duplicate resume could create concurrent tabs for one remote source session. Current-client tabs jump by Host/source-instance/session identity; daemon ownership claims block a different consumer until the resumed PTY exits or closes.
+- Root cause 4: resume ownership metadata was initially present only on the new Tab. It is now persisted through daemon attach/recreate and released on exit, error, or explicit close.
+- Confirmed unrelated: local/WSL resume command construction, provider args, Worktree selection, and terminal restore behavior remain unchanged; Hook installation is not required for remote resume.
+
+#### S07 Review Log
+
+1. Review 1 added Agent preflight, protocol 1.4 capability negotiation, structured resume args, Rust quoting, same-Host project routing, and original-remote-location launch.
+2. Review 2 found SSH Config hosts with an implicit username were falsely rejected and project candidates could override the preflight config root. Made username validation conditional and constrained candidates to the same root scope.
+3. Review 3 found cached summaries could outlive deleted JSONL and ownership metadata could be lost across daemon attach. Added source-file readability checks and persisted/released resume identity across terminal lifecycle.
+4. Review 4 found no further S07 identity, cwd, source-file, config-root, command quoting, duplicate-tab, ownership, or local/WSL isolation issues.
+
+Final evidence: Agent tests `51 passed`; Agent Clippy with `-D warnings`; focused bridge tests `16 passed`; desktop library tests `620 passed, 1 ignored`; `npx tsc --noEmit`.
 
 ### S08 Read-only remote file panel
 

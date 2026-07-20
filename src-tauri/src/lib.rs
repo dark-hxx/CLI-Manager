@@ -991,6 +991,7 @@ pub fn run() {
             commands::history::history_remote_list_cached,
             commands::history::history_remote_search,
             commands::history::history_remote_get_session,
+            commands::history::history_remote_resume_preflight,
             commands::history::history_remote_close,
             commands::history::history_get_conversion_matrix,
             commands::history::history_refresh_index,

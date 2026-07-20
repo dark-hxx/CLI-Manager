@@ -4,7 +4,7 @@
 
 Apply this contract when changing SSH host persistence, remote project creation, remote directory queries, terminal launch, PTY/daemon restore, project capability routing, or project sync/import behavior.
 
-SSH projects support remote terminals plus explicit Claude/Codex Agent Hook integration. Local and WSL projects retain their existing capabilities. Remote files, Git, Worktree, history, historical statistics, provider switching, external terminal launch, and remote resource monitoring remain separate implementations.
+SSH projects support remote terminals plus explicit Claude/Codex Agent Hook integration, read-only history, and same-source remote resume. Local and WSL projects retain their existing capabilities. Remote files, Git, Worktree, historical statistics, provider switching, external terminal launch, and remote resource monitoring remain separate implementations.
 
 ## 2. Signatures
 
@@ -140,6 +140,7 @@ pub struct SshLaunchPlan {
 - `credential_ref` directory browsing/check commands use `BatchMode=no` plus AskPass. Any AskPass/credential error must be returned; do not silently retry without the password.
 - `password_prompt` and `interactive` modes require a real PTY and must return `ssh_interactive_auth_required` for directory browsing/check commands.
 - A successful launch enters `remote_path`, emits OSC 777 `cli-manager-ssh=connected`, applies environment overrides, runs initialization/startup commands, and finally returns to the user's remote login shell.
+- Remote history resume uses the Agent-verified original cwd. A no-project resume may pass that cwd as the structured SSH `remote_path`; it never becomes a desktop-local cwd.
 - Claude/Codex tool config roots use this priority: SSH project `cli_config_root`, matching `ssh_host_tool_preferences`, then the CLI native default. Native default means no environment variable is injected.
 - Resolve the source only from the SSH project's configured `cli_tool`. Inject `CLAUDE_CONFIG_DIR` for Claude or `CODEX_HOME` for Codex; do not scan or switch remote providers.
 - Absolute POSIX roots use normal POSIX quoting. `~` and `~/...` roots must be rendered with an explicit quoted `${HOME}` prefix so shell expansion occurs without evaluating arbitrary variables or command substitution.
@@ -158,6 +159,7 @@ pub struct SshLaunchPlan {
 - Rust removes user-supplied reserved Hook variables and injects `CLI_MANAGER_SSH_HOST_ID`, `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`, `CLI_MANAGER_PROJECT_ID`, `CLI_MANAGER_TAB_ID`, and `CLI_MANAGER_BRIDGE_EPOCH` from validated launch/session state.
 - The daemon stores the corresponding Hook binding with the live PTY. Remote events are accepted only when Host/client/project/Tab/epoch/Agent installation/source all match and the session remains alive.
 - One daemon Agent bridge is reused for active sessions on the same Host/client/connection identity. PTYs remain independent SSH processes. The last Host session release stops the Hook bridge; probe/install/config operations remain short-lived connections.
+- Remote resume persists `cliSessionId`, history source instance, and history consumer identity with the terminal. The same current-client session jumps to its existing Tab; another consumer is blocked until PTY exit/error/close releases ownership.
 
 ### Capability routing
 

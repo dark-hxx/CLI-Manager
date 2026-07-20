@@ -10,6 +10,7 @@ interface HistoryResumeProjectDialogProps {
   projects: Project[];
   groups: Group[];
   onUseNewWindow?: () => void;
+  useOriginalRemoteLocation?: boolean;
   onSelect: (project: Project) => void;
   onClose: () => void;
 }
@@ -25,7 +26,7 @@ function ProjectIcon({ project }: { project: Project }) {
   return vendor ? <VendorIcon vendor={vendor} size={15} /> : <Terminal size={15} strokeWidth={1.5} />;
 }
 
-export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWindow, onSelect, onClose }: HistoryResumeProjectDialogProps) {
+export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWindow, useOriginalRemoteLocation = false, onSelect, onClose }: HistoryResumeProjectDialogProps) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
@@ -56,7 +57,8 @@ export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWin
     const buckets = new Map<string, ProjectGroup>();
 
     for (const project of projects) {
-      const haystack = `${project.name}\n${project.path}\n${project.cli_tool}\n${project.cli_args}`.toLowerCase();
+      const projectPath = project.environment_type === "ssh" ? project.remote_path : project.path;
+      const haystack = `${project.name}\n${projectPath}\n${project.cli_tool}\n${project.cli_args}`.toLowerCase();
       if (normalizedQuery && !haystack.includes(normalizedQuery)) continue;
 
       const group = project.group_id ? groupById.get(project.group_id) : null;
@@ -137,12 +139,12 @@ export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWin
               aria-selected="false"
               onClick={onUseNewWindow}
               className="ui-tree-node ui-tree-project ui-focus-ring flex min-h-9 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs"
-              title={t("history.resumeProject.useNewWindowDescription")}
+              title={t(useOriginalRemoteLocation ? "history.resumeProject.useOriginalRemoteLocationDescription" : "history.resumeProject.useNewWindowDescription")}
             >
               <span className="ui-tree-leading-icon"><Terminal size={15} strokeWidth={1.5} /></span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium text-text-primary">{t("history.resumeProject.useNewWindow")}</span>
-                <span className="block truncate text-[10px] text-text-muted">{t("history.resumeProject.useNewWindowDescription")}</span>
+                <span className="block truncate font-medium text-text-primary">{t(useOriginalRemoteLocation ? "history.resumeProject.useOriginalRemoteLocation" : "history.resumeProject.useNewWindow")}</span>
+                <span className="block truncate text-[10px] text-text-muted">{t(useOriginalRemoteLocation ? "history.resumeProject.useOriginalRemoteLocationDescription" : "history.resumeProject.useNewWindowDescription")}</span>
               </span>
             </button>
           )}
@@ -174,7 +176,7 @@ export function HistoryResumeProjectDialog({ open, projects, groups, onUseNewWin
                     aria-selected="false"
                     onClick={() => onSelect(project)}
                     className="ui-tree-node ui-tree-project ui-focus-ring flex min-h-9 w-full items-center gap-2 rounded-lg py-1.5 pl-7 pr-2 text-left text-xs"
-                    title={`${project.name}\n${project.path}\n${project.cli_tool} ${project.cli_args}`.trim()}
+                    title={`${project.name}\n${project.environment_type === "ssh" ? project.remote_path : project.path}\n${project.cli_tool} ${project.cli_args}`.trim()}
                   >
                     <span className="ui-tree-leading-icon"><ProjectIcon project={project} /></span>
                     <span className="min-w-0 flex-1">

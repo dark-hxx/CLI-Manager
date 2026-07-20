@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useHistoryStore } from "../stores/historyStore";
 import { useTerminalStore } from "../stores/terminalStore";
-import type { HistoryFileChangeSummary, HistoryMessage, HistorySearchHit, HistorySessionDetail, HistorySessionView, HistorySourceFilter, Project, WorktreeRecord } from "../lib/types";
+import type { HistoryFileChangeSummary, HistoryMessage, HistorySearchHit, HistorySessionDetail, HistorySessionView, HistorySourceFilter, Project, SshRemoteResumePreflight, WorktreeRecord } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorktreeStore } from "../stores/worktreeStore";
@@ -124,6 +124,22 @@ function findHistoryProjects(session: HistorySessionView | HistorySessionDetail,
   });
 }
 
+function findRemoteHistoryProjects(
+  session: HistorySessionView | HistorySessionDetail,
+  projects: Project[],
+  hostId: string,
+): Project[] {
+  const sourceProjects = projects.filter((project) => (
+    project.environment_type === "ssh"
+    && project.ssh_host_id === hostId
+    && matchesHistorySource(project, session.source)
+  ));
+  const cwd = "cwd" in session ? session.cwd?.trim() : null;
+  if (!cwd) return [];
+  const normalizedCwd = normalizePathKey(cwd);
+  return sourceProjects.filter((project) => normalizePathKey(project.remote_path) === normalizedCwd);
+}
+
 function resolveResumeCommand(session: HistorySessionView | HistorySessionDetail, project?: Project | null): string | null {
   const sessionId = session.session_id.trim();
   if (!sessionId || /\s/.test(sessionId) || /[\r\n]/.test(sessionId)) return null;
@@ -170,6 +186,7 @@ type ResumeIntent = {
   worktree: WorktreeRecord | null;
   projects: Project[];
   allowNewWindow: boolean;
+  remote: boolean;
 };
 
 interface HistoryConversionResult {
@@ -257,6 +274,8 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const groups = useProjectStore((s) => s.groups);
   const worktrees = useWorktreeStore((s) => s.worktrees);
   const createSession = useTerminalStore((s) => s.createSession);
+  const terminalSessions = useTerminalStore((s) => s.sessions);
+  const setActiveTerminalSession = useTerminalStore((s) => s.setActive);
 
   const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const sessionSearchRef = useRef<HTMLInputElement | null>(null);
@@ -827,6 +846,79 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     project: Project | null,
     worktree: WorktreeRecord | null
   ) => {
+    const isRemote = session.session_ref?.transportKind === "ssh";
+    if (isRemote) {
+      const context = remoteContext;
+      const sourceSessionId = session.session_ref?.sourceSessionId?.trim() || session.session_id.trim();
+      if (!context || context.source !== session.source || !context.sourceInstanceId || !sourceSessionId) {
+        toast.error(t("history.toast.resumeTerminalFailed"), { description: t("history.resumeProject.remoteUnavailable") });
+        return;
+      }
+      const activeTerminal = terminalSessions.find((item) => (
+        item.environmentType === "ssh"
+        && item.sshHostId === context.hostId
+        && item.cliSessionId === sourceSessionId
+        && item.remoteHistorySourceInstanceId === context.sourceInstanceId
+      ));
+      if (activeTerminal) {
+        setActiveTerminalSession(activeTerminal.id);
+        setResumeIntent(null);
+        closeHistory();
+        return;
+      }
+      const projectPaths = project?.environment_type === "ssh" ? [project.remote_path] : context.projectPaths;
+      try {
+        const preflight = await invoke<SshRemoteResumePreflight>("history_remote_resume_preflight", {
+          consumerId: context.consumerId,
+          sshLaunch: context.launch,
+          source: context.source,
+          configuredConfigRoot: context.configuredConfigRoot,
+          projectPaths,
+          sourceInstanceId: context.sourceInstanceId,
+          sourceSessionId,
+        });
+        const launchProject = project && worktree ? projectWithWorktreeProviderOverrides(project, worktree) : project;
+        const env = {
+          ...(parseProjectEnvVars(launchProject) ?? {}),
+          ...preflight.environmentOverrides,
+        };
+        await createSession(
+          project?.id,
+          preflight.remoteCwd,
+          worktree?.name ?? (project?.name.trim() || title),
+          preflight.resumeCommand,
+          env,
+          undefined,
+          undefined,
+          worktree?.id,
+          context.hostId,
+          preflight.sourceSessionId,
+          context.consumerId,
+          context.sourceInstanceId,
+        );
+        setResumeIntent(null);
+        closeHistory({ preserveRemoteConsumer: true });
+      } catch (err) {
+        void invoke("history_remote_close", {
+          hostId: context.hostId,
+          consumerId: context.consumerId,
+        }).catch(() => undefined);
+        const code = String(err);
+        const description = code.includes("remote_session_source_missing")
+          ? t("history.resumeProject.remoteSourceMissing")
+          : code.includes("remote_session_cwd_")
+            ? t("history.resumeProject.remoteCwdUnavailable")
+            : code.includes("unsupported_resume_tool")
+              ? t("history.resumeProject.remoteToolUnavailable")
+              : code.includes("history_remote_identity_changed")
+                ? t("history.resumeProject.remoteIdentityChanged")
+                : code.includes("remote_session_active_elsewhere")
+                  ? t("history.resumeProject.remoteActiveElsewhere")
+                : code;
+        toast.error(t("history.toast.resumeTerminalFailed"), { description });
+      }
+      return;
+    }
     const launchProject = project && worktree ? projectWithWorktreeProviderOverrides(project, worktree) : project;
     const command = resolveResumeCommand(session, launchProject);
     if (!command) {
@@ -857,9 +949,37 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
     } catch (err) {
       toast.error(t("history.toast.resumeTerminalFailed"), { description: String(err) });
     }
-  }, [closeHistory, createSession, t]);
+  }, [closeHistory, createSession, remoteContext, setActiveTerminalSession, t, terminalSessions]);
 
   const requestResume = useCallback((session: HistorySessionView | HistorySessionDetail, title: string) => {
+    if (session.session_ref?.transportKind === "ssh") {
+      if (!remoteContext) {
+        toast.error(t("history.toast.resumeTerminalFailed"), { description: t("history.resumeProject.remoteUnavailable") });
+        return;
+      }
+      const hostProjects = projects.filter((project) => (
+        project.environment_type === "ssh"
+        && project.ssh_host_id === remoteContext.hostId
+        && matchesHistorySource(project, session.source)
+        && (project.cli_config_root.trim()
+          ? project.cli_config_root.trim() === remoteContext.configuredConfigRoot.trim()
+          : remoteContext.scopeKind === "hostPrimary")
+      ));
+      const candidates = findRemoteHistoryProjects(session, hostProjects, remoteContext.hostId);
+      if (candidates.length === 1) {
+        void resumeSession(session, title, candidates[0], null);
+        return;
+      }
+      setResumeIntent({
+        session,
+        title,
+        worktree: null,
+        projects: candidates.length > 1 ? candidates : hostProjects,
+        allowNewWindow: candidates.length === 0,
+        remote: true,
+      });
+      return;
+    }
     const worktree = findHistoryWorktree(session, worktrees);
     const worktreeProject = findProjectForWorktree(worktree, historyProjects);
     const matchedProjects = findHistoryProjects(session, historyProjects);
@@ -868,15 +988,15 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
       : matchedProjects;
 
     if (candidates.length === 0) {
-      setResumeIntent({ session, title, worktree: null, projects, allowNewWindow: true });
+      setResumeIntent({ session, title, worktree: null, projects, allowNewWindow: true, remote: false });
       return;
     }
     if (candidates.length === 1) {
       void resumeSession(session, title, candidates[0], worktree);
       return;
     }
-    setResumeIntent({ session, title, worktree, projects: candidates, allowNewWindow: false });
-  }, [projects, resumeSession, worktrees]);
+    setResumeIntent({ session, title, worktree, projects: candidates, allowNewWindow: false, remote: false });
+  }, [historyProjects, projects, remoteContext, resumeSession, t, worktrees]);
 
   const resumeConversation = useCallback(() => {
     if (!activeSession) {
@@ -1268,6 +1388,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
         open={resumeIntent !== null}
         projects={resumeIntent?.projects ?? []}
         groups={groups}
+        useOriginalRemoteLocation={resumeIntent?.remote ?? false}
         onUseNewWindow={resumeIntent?.allowNewWindow ? () => {
           if (!resumeIntent) return;
           void resumeSession(resumeIntent.session, resumeIntent.title, null, null);

@@ -239,7 +239,7 @@ interface TerminalStore {
   /** 仅运行态：XTerm 输出监听就绪后才可执行 daemon attach。 */
   daemonAttachPendingSessionIds: Set<string>;
   subagentTranscripts: Record<string, SubagentTranscriptContent>;
-  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string, sshHostId?: string) => Promise<string>;
+  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string, sshHostId?: string, cliSessionId?: string, remoteHistoryConsumerId?: string, remoteHistorySourceInstanceId?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
   setWorkspanModeEnabled: (enabled: boolean) => void;
@@ -1274,7 +1274,9 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
   }
   if (requestedSshHostId) {
     const sshHostId = requestedSshHostId;
-    const remotePath = project?.environment_type === "ssh" ? project.remote_path.trim() : "/";
+    const remotePath = project?.environment_type === "ssh"
+      ? project.remote_path.trim()
+      : options.cwd?.trim() || "/";
     if (!sshHostId || !remotePath) throw new Error("ssh_project_configuration_invalid");
 
     const sshStore = useSshHostStore.getState();
@@ -1398,6 +1400,14 @@ function isCliManagerSyncArtifactText(value: string): boolean {
   );
 }
 
+function releaseRemoteHistoryConsumer(session: TerminalSession | undefined): void {
+  if (!session?.sshHostId || !session.remoteHistoryConsumerId) return;
+  void invoke("history_remote_close", {
+    hostId: session.sshHostId,
+    consumerId: session.remoteHistoryConsumerId,
+  }).catch(() => undefined);
+}
+
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
@@ -1461,7 +1471,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }));
   },
 
-  createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId, sshHostId) => {
+  createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId, sshHostId, cliSessionId, remoteHistoryConsumerId, remoteHistorySourceInstanceId) => {
     const os = await getOsPlatform();
     let launch: ResolvedPtyLaunch;
     let sessionId: string;
@@ -1502,6 +1512,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       sshHostId: launch.sshHostId,
       remotePath: launch.remotePath,
       connectionState: launch.environmentType === "ssh" ? "connecting" : undefined,
+      cliSessionId: cliSessionId?.trim() || undefined,
+      remoteHistoryConsumerId: remoteHistoryConsumerId?.trim() || undefined,
+      remoteHistorySourceInstanceId: remoteHistorySourceInstanceId?.trim() || undefined,
     };
 
     const unlisten = await terminalProcessManager.subscribeStatus(sessionId, (payload) => {
@@ -1512,6 +1525,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         sessionStatuses: { ...state.sessionStatuses, [sessionId]: status },
       }));
       persistSshConnectionStateAfterPtyStatus(sessionId, payload);
+      if (
+        (status === "exited" || status === "error")
+      ) {
+        releaseRemoteHistoryConsumer(session);
+      }
     });
 
     const state = get();
@@ -1653,6 +1671,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         await useSessionStore.getState().saveSplits(persistedSplits);
       }
     } finally {
+      releaseRemoteHistoryConsumer(closingSession);
       if (isFileEditor) {
         return;
       }
@@ -2343,11 +2362,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
               // 仅保留给 Tab 厂商识别；daemon attach 不会重新执行该命令。
               startupCmd: ps.startupCmd,
               cliSessionId: ps.cliSessionId,
+              remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
+              remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
               deferStartupUntilInitialOutput: false,
             };
             const unlisten = await terminalProcessManager.subscribeStatus(ps.id, (payload) => {
               const status = payload.status as SessionStatus;
               logTerminalExitStatus(attachedSession, payload);
+              if (status !== "running") releaseRemoteHistoryConsumer(attachedSession);
               useTerminalStore.setState((state) => {
                 const sessionStatuses = { ...state.sessionStatuses, [ps.id]: status };
                 if (status === "running") return { sessionStatuses };
@@ -2371,6 +2393,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
             restoredListeners[ps.id] = unlisten;
             daemonAttachPendingSessionIds.add(ps.id);
             restoredTabState = buildTabStatusUpdate(restoredTabState, ps.id, "hook", taskStatus, taskUpdatedAt);
+            if (!daemonSession.alive) releaseRemoteHistoryConsumer(attachedSession);
             continue;
         } catch (err) {
           logError("daemon attach failed, falling back to recreate", { sessionId: ps.id, err });
@@ -2465,6 +2488,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         disconnectReason: undefined,
         // 保留 cliSessionId：hook 上报会用它绑定实时统计；下次落盘也需要它继续 resume。
         cliSessionId: ps.cliSessionId,
+        remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
+        remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
         initialTerminalOutput,
         deferStartupUntilInitialOutput,
       };
@@ -2479,6 +2504,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
             sessionStatuses: { ...state.sessionStatuses, [newSessionId]: status },
           }));
           persistSshConnectionStateAfterPtyStatus(newSessionId, payload);
+          if (status === "exited" || status === "error") {
+            releaseRemoteHistoryConsumer(restoredSession);
+          }
         });
       } catch (err) {
         logError("Failed to register status listener", { sessionId: newSessionId, err });
@@ -2604,10 +2632,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       // 元数据用于 Tab 厂商识别；daemon attach 不会重新执行该命令。
       startupCmd: persisted?.startupCmd,
       cliSessionId: persisted?.cliSessionId,
+      remoteHistoryConsumerId: persisted?.remoteHistoryConsumerId,
+      remoteHistorySourceInstanceId: persisted?.remoteHistorySourceInstanceId,
       deferStartupUntilInitialOutput: false,
     };
     const unlisten = await terminalProcessManager.subscribeStatus(sessionId, (payload) => {
       const status = payload.status as SessionStatus;
+      if (status !== "running") releaseRemoteHistoryConsumer(session);
       useTerminalStore.setState((state) => {
         const sessionStatuses = { ...state.sessionStatuses, [sessionId]: status };
         if (status === "running") return { sessionStatuses };
@@ -2637,6 +2668,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       taskStatus,
       taskUpdatedAt
     );
+    if (!daemonSession.alive) releaseRemoteHistoryConsumer(session);
     set({
       sessions: nextSessions,
       ...mirror,

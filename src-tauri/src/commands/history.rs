@@ -2,6 +2,7 @@ use crate::commands::model_pricing::{find_cached_model_pricing, CachedModelPrici
 use crate::daemon::client::DaemonBridge;
 use crate::shell_resolver::silent_command;
 use crate::ssh_launch::SshLaunchPlan;
+use crate::ssh_transport::posix_quote;
 use chrono::{DateTime, Datelike, SecondsFormat, Utc};
 use cli_manager_history_core::{
     RemoteHistorySearchHit, RemoteHistorySessionDetail, RemoteHistorySyncResult,
@@ -2057,6 +2058,112 @@ pub async fn history_remote_get_session(
         cache.insert(cache_key, value.clone());
     }
     Ok(value)
+}
+
+#[tauri::command]
+pub async fn history_remote_resume_preflight(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: String,
+    source_session_id: String,
+) -> Result<Value, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let expected_installation_id = ssh_launch.agent_installation_id.clone();
+    let expected_machine_id = ssh_launch.agent_remote_machine_id.clone();
+    let expected_ssh_user = ssh_launch.username.clone();
+    let source_session_id = source_session_id.trim().to_string();
+    if source_session_id.is_empty() || source_session_id.len() > 512 {
+        return Err("history_resume_session_id_invalid".to_string());
+    }
+    let mut payload = remote_scope_payload(
+        &source,
+        &configured_config_root,
+        project_paths,
+        None,
+        Some(1),
+    );
+    payload["sourceSessionId"] = Value::String(source_session_id.clone());
+    payload["expectedSourceInstanceId"] = Value::String(source_instance_id.clone());
+    payload["expectedRemoteMachineId"] = Value::String(ssh_launch.agent_remote_machine_id.clone());
+    payload["expectedSshUser"] = Value::String(ssh_launch.username.clone());
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let mut response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(
+            consumer_id,
+            ssh_launch,
+            "historyResumePreflight".to_string(),
+            payload,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+    let object = response
+        .as_object()
+        .ok_or_else(|| "history_resume_response_invalid".to_string())?;
+    let string_field = |name: &str| {
+        object
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "history_resume_response_invalid".to_string())
+    };
+    if string_field("source")? != source
+        || string_field("sourceSessionId")? != source_session_id
+        || string_field("sourceInstanceId")? != source_instance_id
+        || string_field("installationId")? != expected_installation_id
+        || string_field("remoteMachineId")? != expected_machine_id
+        || (!expected_ssh_user.trim().is_empty() && string_field("sshUser")? != expected_ssh_user)
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    let remote_cwd = string_field("remoteCwd")?;
+    if !remote_cwd.starts_with('/')
+        || remote_cwd.contains(['\0', '\r', '\n', '\\'])
+        || remote_cwd.split('/').any(|part| part == "..")
+    {
+        return Err("history_resume_response_invalid".to_string());
+    }
+    let resume_args = object
+        .get("resumeArgs")
+        .and_then(Value::as_array)
+        .filter(|args| args.len() == 3)
+        .ok_or_else(|| "history_resume_response_invalid".to_string())?;
+    if resume_args.iter().any(|arg| {
+        arg.as_str().is_none_or(|value| {
+            value.is_empty() || value.contains(['\0', '\r', '\n', ';', '|', '&'])
+        })
+    }) {
+        return Err("history_resume_response_invalid".to_string());
+    }
+    let args = resume_args
+        .iter()
+        .map(|arg| arg.as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    let expected_prefix = if source == "claude" {
+        ["claude", "--resume"]
+    } else {
+        ["codex", "resume"]
+    };
+    if args[0] != expected_prefix[0]
+        || args[1] != expected_prefix[1]
+        || args[2] != source_session_id
+    {
+        return Err("history_resume_response_invalid".to_string());
+    }
+    response["resumeCommand"] = Value::String(
+        args.into_iter()
+            .map(posix_quote)
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    Ok(response)
 }
 
 #[tauri::command]
