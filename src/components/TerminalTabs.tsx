@@ -2844,6 +2844,7 @@ export function TerminalTabs({
       sourceFilter: resolveHistorySourceFilter(project.cli_tool),
       projectPath: project.path,
       scopedProjectPath: worktree.path,
+      projectId: project.id,
     });
   }, [openHistory, rejectMissingWorktree, terminalSidePanelSingleOpen]);
 
@@ -3275,6 +3276,7 @@ export function TerminalTabs({
       sourceFilter: resolveHistorySourceFilter(project?.cli_tool),
       projectPath: project?.path ?? activeSession?.cwd ?? null,
       scopedProjectPath: activeWorktree?.path ?? null,
+      projectId: project?.id ?? null,
     });
   }, [activeSession, activeWorktree?.path, closeHistory, historyOpen, openHistory, projects, rejectUnsupportedCapability, terminalSidePanelSingleOpen]);
 

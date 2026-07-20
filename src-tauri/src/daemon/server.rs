@@ -1971,6 +1971,32 @@ impl DaemonServer {
                     .collect();
                 DaemonFrame::Statuses { id, statuses }
             }
+            ClientFrame::SshAgentRequest {
+                id,
+                consumer_id,
+                ssh_launch,
+                request_kind,
+                payload,
+            } => match self.host.ssh_agent_bridges.request(
+                Arc::downgrade(&self.host),
+                &consumer_id,
+                &ssh_launch,
+                &request_kind,
+                payload,
+            ) {
+                Ok(payload) => DaemonFrame::SshAgentResponse { id, payload },
+                Err(message) => DaemonFrame::Err { id, message },
+            },
+            ClientFrame::SshAgentRelease {
+                id,
+                host_id,
+                consumer_id,
+            } => {
+                self.host
+                    .ssh_agent_bridges
+                    .release_consumer(&host_id, &consumer_id);
+                DaemonFrame::Ok { id }
+            }
             ClientFrame::Shutdown { id } => {
                 if self.host.alive_session_count() > 0 {
                     return err_frame(id, "sessions active");

@@ -7,6 +7,7 @@ use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
 
+use crate::history::{HistoryGetRequest, HistoryScopeRequest, HistorySearchRequest};
 use crate::hook_runtime::{ack_spool, read_spool_batch, spool_namespace};
 use crate::installer::read_installation_record;
 use crate::layout::resolve_layout;
@@ -15,6 +16,8 @@ use crate::{PROTOCOL_MAJOR, PROTOCOL_MINOR};
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_PREAMBLE_BANNER_BYTES: usize = 8 * 1024;
 const MAX_CANCELLED_REQUESTS: usize = 1024;
+const HISTORY_DETAIL_CHUNK_BYTES: usize = 256 * 1024;
+const MAX_HISTORY_DETAIL_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -249,6 +252,56 @@ fn response(request_id: String, kind: &str, payload: Value) -> ServerFrame {
     }
 }
 
+fn capabilities() -> Value {
+    json!([
+        "bridgeProtocol",
+        "hookSpool",
+        "heartbeat",
+        "requestCancellation",
+        "boundedBackpressure",
+        "historyIndex",
+        "historySearch",
+        "historyDetail",
+        "historyDetailChunks"
+    ])
+}
+
+fn history_detail_chunks(serialized: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < serialized.len() {
+        let mut end = start
+            .saturating_add(HISTORY_DETAIL_CHUNK_BYTES)
+            .min(serialized.len());
+        while end > start && !serialized.is_char_boundary(end) {
+            end -= 1;
+        }
+        chunks.push(&serialized[start..end]);
+        start = end;
+    }
+    chunks
+}
+
+fn write_history_detail_chunks(
+    writer: &mut impl Write,
+    request_id: &str,
+    serialized: &str,
+) -> Result<(), String> {
+    let chunks = history_detail_chunks(serialized);
+    let total = chunks.len();
+    for (index, data) in chunks.into_iter().enumerate() {
+        write_frame(
+            writer,
+            &response(
+                request_id.to_string(),
+                "historyDetailChunk",
+                json!({ "index": index, "total": total, "data": data }),
+            ),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn handle_frame(frame: ClientFrame) -> (ServerFrame, bool) {
     let ClientFrame {
         request_id,
@@ -263,13 +316,7 @@ pub fn handle_frame(frame: ClientFrame) -> (ServerFrame, bool) {
                 json!({
                     "protocolMajor": PROTOCOL_MAJOR,
                     "protocolMinor": PROTOCOL_MINOR,
-                    "capabilities": [
-                        "bridgeProtocol",
-                        "hookSpool",
-                        "heartbeat",
-                        "requestCancellation",
-                        "boundedBackpressure"
-                    ],
+                    "capabilities": capabilities(),
                 }),
             ),
             false,
@@ -314,6 +361,36 @@ pub fn run_bridge(
             )?;
             continue;
         }
+        if frame.kind == "historyGet" {
+            let response = match serde_json::from_value::<HistoryGetRequest>(frame.payload) {
+                Ok(request) => match crate::history::get(request) {
+                    Ok(result) => match serde_json::to_string(&result) {
+                        Ok(serialized) if serialized.len() <= MAX_HISTORY_DETAIL_RESPONSE_BYTES => {
+                            write_history_detail_chunks(writer, &request_id, &serialized)?;
+                            continue;
+                        }
+                        Ok(_) => response(
+                            request_id,
+                            "error",
+                            json!({ "code": "history_detail_too_large" }),
+                        ),
+                        Err(_) => response(
+                            request_id,
+                            "error",
+                            json!({ "code": "history_response_invalid" }),
+                        ),
+                    },
+                    Err(code) => response(request_id, "error", json!({ "code": code })),
+                },
+                Err(_) => response(
+                    request_id,
+                    "error",
+                    json!({ "code": "history_request_invalid" }),
+                ),
+            };
+            write_frame(writer, &response)?;
+            continue;
+        }
         let (response, shutdown) = match frame.kind.as_str() {
             "hello" if hook_binding.is_some() => (
                 response(
@@ -335,13 +412,7 @@ pub fn run_bridge(
                             json!({
                                 "protocolMajor": PROTOCOL_MAJOR,
                                 "protocolMinor": PROTOCOL_MINOR,
-                                "capabilities": [
-                                    "bridgeProtocol",
-                                    "hookSpool",
-                                    "heartbeat",
-                                    "requestCancellation",
-                                    "boundedBackpressure"
-                                ],
+                                "capabilities": capabilities(),
                                 "hookNamespace": namespace,
                                 "remoteMachineId": remote_machine_id,
                             }),
@@ -483,6 +554,52 @@ pub fn run_bridge(
                     ),
                 }
             }
+            "historySync" => match serde_json::from_value::<HistoryScopeRequest>(frame.payload) {
+                Ok(request) => match crate::history::sync(request) {
+                    Ok(result) => (
+                        response(
+                            request_id,
+                            "response",
+                            serde_json::to_value(result).unwrap_or(Value::Null),
+                        ),
+                        false,
+                    ),
+                    Err(code) => (
+                        response(request_id, "error", json!({ "code": code })),
+                        false,
+                    ),
+                },
+                Err(_) => (
+                    response(
+                        request_id,
+                        "error",
+                        json!({ "code": "history_request_invalid" }),
+                    ),
+                    false,
+                ),
+            },
+            "historySearch" => {
+                match serde_json::from_value::<HistorySearchRequest>(frame.payload) {
+                    Ok(request) => match crate::history::search(request) {
+                        Ok(result) => (
+                            response(request_id, "response", json!({ "hits": result })),
+                            false,
+                        ),
+                        Err(code) => (
+                            response(request_id, "error", json!({ "code": code })),
+                            false,
+                        ),
+                    },
+                    Err(_) => (
+                        response(
+                            request_id,
+                            "error",
+                            json!({ "code": "history_request_invalid" }),
+                        ),
+                        false,
+                    ),
+                }
+            }
             _ => handle_frame(frame),
         };
         write_frame(writer, &response)?;
@@ -496,8 +613,8 @@ pub fn run_bridge(
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_frame, read_frame, run_bridge, write_frame, CancelledRequests, ClientFrame,
-        ServerFrame, MAX_CANCELLED_REQUESTS,
+        handle_frame, read_frame, run_bridge, write_frame, write_history_detail_chunks,
+        CancelledRequests, ClientFrame, ServerFrame, MAX_CANCELLED_REQUESTS, MAX_FRAME_BYTES,
     };
     use serde_json::json;
     use std::io::Cursor;
@@ -564,6 +681,7 @@ mod tests {
             "heartbeat",
             "requestCancellation",
             "boundedBackpressure",
+            "historyDetailChunks",
         ] {
             assert!(frame.payload["capabilities"]
                 .as_array()
@@ -667,5 +785,38 @@ mod tests {
         .unwrap();
         let length = u32::from_be_bytes(output[..4].try_into().unwrap()) as usize;
         assert_eq!(length, output.len() - 4);
+    }
+
+    #[test]
+    fn history_detail_chunks_round_trip_above_the_frame_limit() {
+        let serialized = serde_json::to_string(&json!({
+            "messages": [{ "content": "\\\"中".repeat(MAX_FRAME_BYTES) }]
+        }))
+        .unwrap();
+        let mut output = Vec::new();
+        write_history_detail_chunks(&mut output, "history-1", &serialized).unwrap();
+
+        let mut reader = Cursor::new(output);
+        let mut rebuilt = String::new();
+        let mut expected_index = 0usize;
+        let mut total = None;
+        while (reader.position() as usize) < reader.get_ref().len() {
+            let mut length = [0u8; 4];
+            std::io::Read::read_exact(&mut reader, &mut length).unwrap();
+            let length = u32::from_be_bytes(length) as usize;
+            assert!(length <= MAX_FRAME_BYTES);
+            let mut payload = vec![0; length];
+            std::io::Read::read_exact(&mut reader, &mut payload).unwrap();
+            let frame: ServerFrame = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(frame.request_id, "history-1");
+            assert_eq!(frame.kind, "historyDetailChunk");
+            assert_eq!(frame.payload["index"], expected_index);
+            let frame_total = frame.payload["total"].as_u64().unwrap() as usize;
+            assert_eq!(*total.get_or_insert(frame_total), frame_total);
+            rebuilt.push_str(frame.payload["data"].as_str().unwrap());
+            expected_index += 1;
+        }
+        assert_eq!(Some(expected_index), total);
+        assert_eq!(rebuilt, serialized);
     }
 }

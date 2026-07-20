@@ -49,7 +49,7 @@ const SSH_CAPABILITIES: Omit<ProjectCapabilities, "environment"> = {
   files: false,
   git: false,
   worktree: false,
-  history: false,
+  history: true,
   hooks: false,
   statistics: false,
   providerSwitch: false,

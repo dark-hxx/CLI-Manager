@@ -221,14 +221,15 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const sessionQuery = useHistoryStore((s) => s.sessionQuery);
   const searchHits = useHistoryStore((s) => s.searchHits);
   const indexStatus = useHistoryStore((s) => s.indexStatus);
+  const remoteContext = useHistoryStore((s) => s.remoteContext);
   const backendHasMoreSessions = useHistoryStore((s) => s.hasMoreSessions);
   const focusedMessageIndex = useHistoryStore((s) => s.focusedMessageIndex);
   const focusedMessageSeq = useHistoryStore((s) => s.focusedMessageSeq);
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
   const focusSessionSearchSeq = useHistoryStore((s) => s.focusSessionSearchSeq);
   const closeHistory = useHistoryStore((s) => s.closeHistory);
+  const openHistory = useHistoryStore((s) => s.openHistory);
   const setSourceFilter = useHistoryStore((s) => s.setSourceFilter);
-  const setProjectPathFilter = useHistoryStore((s) => s.setProjectPathFilter);
   const loadMoreSessions = useHistoryStore((s) => s.loadMoreSessions);
   const refreshIndex = useHistoryStore((s) => s.refreshIndex);
   const openSession = useHistoryStore((s) => s.openSession);
@@ -690,7 +691,11 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
 
   // ---- 消息级编辑（聊天式操作） ----
 
-  const canEditMessages = Boolean(activeSession) && !loadingSessionDetail && !activeView?.favoriteSnapshot;
+  const canEditMessages = Boolean(activeSession)
+    && !loadingSessionDetail
+    && !activeView?.favoriteSnapshot
+    && activeView?.session_ref?.transportKind !== "ssh"
+    && !activeView?.read_only;
 
   const isActiveSessionLive = useCallback(() => {
     const sessionId = activeSession?.session_id?.trim();
@@ -1063,6 +1068,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           sessionListRef={sessionListRef}
           sourceFilter={sourceFilter}
           projectPathFilter={projectPathFilter}
+          projectIdFilter={remoteContext?.launch.projectId ?? null}
           scopedProjectPathFilter={scopedProjectPathFilter}
           projects={historyProjects}
           groups={groups}
@@ -1090,8 +1096,10 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           onSourceFilterChange={(value) => {
             void setSourceFilter(value as HistorySourceFilter);
           }}
-          onProjectPathFilterChange={(value) => {
-            void setProjectPathFilter(value);
+          onProjectPathFilterChange={(value, projectId) => {
+            void openHistory({ projectPath: value, projectId: projectId ?? null }).catch((error) => {
+              toast.error(t("history.toast.refreshFailed"), { description: String(error) });
+            });
           }}
           onGlobalQueryChange={setGlobalQuery}
           onFavoriteOnlyChange={setFavoriteOnly}

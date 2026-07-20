@@ -1,12 +1,17 @@
 use crate::commands::model_pricing::{find_cached_model_pricing, CachedModelPricingLookup};
+use crate::daemon::client::DaemonBridge;
 use crate::shell_resolver::silent_command;
+use crate::ssh_launch::SshLaunchPlan;
 use chrono::{DateTime, Datelike, SecondsFormat, Utc};
+use cli_manager_history_core::{
+    RemoteHistorySearchHit, RemoteHistorySessionDetail, RemoteHistorySyncResult,
+};
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, Row, SqliteConnection};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -391,6 +396,64 @@ static HISTORY_STATS_AGGREGATION_CACHE: OnceLock<Mutex<HistoryStatsAggregationCa
     OnceLock::new();
 static HISTORY_STATS_DAILY_INDEX_CACHE: OnceLock<Mutex<HistoryStatsDailyIndexCache>> =
     OnceLock::new();
+static REMOTE_HISTORY_DETAIL_CACHE: OnceLock<Mutex<RemoteHistoryDetailCache>> = OnceLock::new();
+
+const REMOTE_HISTORY_DETAIL_CACHE_MAX: usize = 20;
+const REMOTE_HISTORY_DETAIL_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct RemoteHistoryDetailCache {
+    entries: VecDeque<(String, Value, usize)>,
+    bytes: usize,
+}
+
+impl RemoteHistoryDetailCache {
+    fn get(&mut self, key: &str) -> Option<Value> {
+        let index = self.entries.iter().position(|entry| entry.0 == key)?;
+        let entry = self.entries.remove(index)?;
+        let value = entry.1.clone();
+        self.entries.push_back(entry);
+        Some(value)
+    }
+
+    fn insert(&mut self, key: String, value: Value) {
+        let size = serde_json::to_vec(&value).map_or(0, |bytes| bytes.len());
+        if size > REMOTE_HISTORY_DETAIL_CACHE_BYTES {
+            return;
+        }
+        if let Some(index) = self.entries.iter().position(|entry| entry.0 == key) {
+            if let Some(removed) = self.entries.remove(index) {
+                self.bytes = self.bytes.saturating_sub(removed.2);
+            }
+        }
+        while self.entries.len() >= REMOTE_HISTORY_DETAIL_CACHE_MAX
+            || self.bytes.saturating_add(size) > REMOTE_HISTORY_DETAIL_CACHE_BYTES
+        {
+            let Some(removed) = self.entries.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(removed.2);
+        }
+        self.bytes = self.bytes.saturating_add(size);
+        self.entries.push_back((key, value, size));
+    }
+
+    fn invalidate_instance(&mut self, source_instance_id: &str) {
+        let prefix = format!("{source_instance_id}:");
+        self.entries.retain(|(key, _, size)| {
+            if key.starts_with(&prefix) {
+                self.bytes = self.bytes.saturating_sub(*size);
+                false
+            } else {
+                true
+            }
+        });
+    }
+}
+
+fn remote_history_detail_cache() -> &'static Mutex<RemoteHistoryDetailCache> {
+    REMOTE_HISTORY_DETAIL_CACHE.get_or_init(|| Mutex::new(RemoteHistoryDetailCache::default()))
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1711,6 +1774,401 @@ pub async fn history_index_v2_deactivate_source_instance(
     instance_id: Option<String>,
 ) -> Result<HistoryIndexV2Status, String> {
     catalog::deactivate_v2_source_instance(source_id, instance_id).await
+}
+
+fn validate_remote_history_plan(plan: &SshLaunchPlan, source: &str) -> Result<(), String> {
+    if !matches!(source, "claude" | "codex")
+        || plan.host_id.trim().is_empty()
+        || plan.agent_path.trim().is_empty()
+        || plan.agent_installation_id.trim().is_empty()
+        || plan.agent_remote_machine_id.trim().is_empty()
+        || plan.client_instance_id.trim().is_empty()
+        || (!plan.tool_source.is_empty() && plan.tool_source != source)
+    {
+        return Err("history_remote_plan_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn remote_scope_payload(
+    source: &str,
+    configured_config_root: &str,
+    project_paths: Vec<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+) -> Value {
+    json!({
+        "source": source,
+        "configuredConfigRoot": configured_config_root,
+        "projectPaths": project_paths,
+        "cursor": cursor.unwrap_or_default(),
+        "limit": limit.unwrap_or(200).clamp(1, 1000),
+    })
+}
+
+fn remote_error_code(error: &str) -> &str {
+    error
+        .split([':', ' '])
+        .find(|value| !value.is_empty())
+        .unwrap_or("history_remote_unavailable")
+}
+
+fn validate_remote_history_sync_result(
+    plan: &SshLaunchPlan,
+    source: &str,
+    configured_config_root: &str,
+    expected_source_instance_id: Option<&str>,
+    result: &RemoteHistorySyncResult,
+) -> Result<(), String> {
+    if result.source != source
+        || result.installation_id != plan.agent_installation_id
+        || result.remote_machine_id != plan.agent_remote_machine_id
+        || result.configured_config_root != configured_config_root.trim()
+        || (!plan.username.trim().is_empty() && result.ssh_user != plan.username.trim())
+        || expected_source_instance_id
+            .filter(|value| !value.trim().is_empty())
+            .is_some_and(|expected| result.source_instance_id != expected)
+        || result.sessions.iter().any(|summary| {
+            summary.session_ref.source_instance_id != result.source_instance_id
+                || summary.session_ref.source_id != source
+                || summary.session_ref.transport_kind != "ssh"
+        })
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn history_remote_sync(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let host_id = ssh_launch.host_id.clone();
+    let payload = remote_scope_payload(
+        &source,
+        &configured_config_root,
+        project_paths,
+        cursor,
+        limit,
+    );
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let request_consumer_id = consumer_id.clone();
+    let request_plan = ssh_launch.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(
+            request_consumer_id,
+            request_plan,
+            "historySync".to_string(),
+            payload,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    let response = match response {
+        Ok(value) => value,
+        Err(error) => {
+            if let Some(instance_id) = source_instance_id.as_deref() {
+                let _ = catalog::mark_remote_stale(instance_id, remote_error_code(&error)).await;
+            }
+            return Err(error);
+        }
+    };
+    let result: RemoteHistorySyncResult = serde_json::from_value(response)
+        .map_err(|_| "history_remote_response_invalid".to_string())?;
+    validate_remote_history_sync_result(
+        &ssh_launch,
+        &source,
+        &configured_config_root,
+        source_instance_id.as_deref(),
+        &result,
+    )?;
+    catalog::apply_remote_sync(&host_id, &result).await?;
+    if let Ok(mut cache) = remote_history_detail_cache().lock() {
+        cache.invalidate_instance(&result.source_instance_id);
+    }
+    serde_json::to_value(result).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn history_remote_list_cached(
+    source_instance_id: String,
+    project_path: Option<String>,
+    query: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<Value>, String> {
+    catalog::list_remote_cached(
+        source_instance_id.trim(),
+        project_path.as_deref(),
+        query.as_deref(),
+        limit.unwrap_or(20).clamp(1, 1000),
+        offset.unwrap_or_default(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn history_remote_search(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<Value>, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let normalized_query = query.trim();
+    if normalized_query.chars().count() < 3 {
+        return Ok(Vec::new());
+    }
+    let payload = {
+        let mut payload =
+            remote_scope_payload(&source, &configured_config_root, project_paths, None, limit);
+        payload["query"] = Value::String(normalized_query.to_string());
+        payload
+    };
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(
+            consumer_id,
+            ssh_launch,
+            "historySearch".to_string(),
+            payload,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    let response = match response {
+        Ok(value) => value,
+        Err(error) => {
+            let _ =
+                catalog::mark_remote_stale(&source_instance_id, remote_error_code(&error)).await;
+            return Err(error);
+        }
+    };
+    let hits: Vec<RemoteHistorySearchHit> = serde_json::from_value(
+        response
+            .get("hits")
+            .cloned()
+            .ok_or_else(|| "history_remote_response_invalid".to_string())?,
+    )
+    .map_err(|_| "history_remote_response_invalid".to_string())?;
+    if hits.iter().any(|hit| {
+        hit.session_ref.source_instance_id != source_instance_id
+            || hit.session_ref.source_id != source
+            || hit.session_ref.transport_kind != "ssh"
+    }) {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    Ok(hits
+        .into_iter()
+        .map(|hit| {
+            json!({
+                "sessionId": hit.session_ref.source_session_id,
+                "source": hit.session_ref.source_id,
+                "projectKey": hit.project_key,
+                "title": hit.title,
+                "filePath": "",
+                "role": hit.role,
+                "snippet": hit.snippet,
+                "timestamp": hit.timestamp,
+                "sessionRef": hit.session_ref,
+                "readOnly": true,
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn history_remote_get_session(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: String,
+    source_session_id: String,
+) -> Result<Value, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let cache_key = format!("{}:{}", source_instance_id.trim(), source_session_id.trim());
+    if let Ok(mut cache) = remote_history_detail_cache().lock() {
+        if let Some(value) = cache.get(&cache_key) {
+            return Ok(value);
+        }
+    }
+    let payload = {
+        let mut payload = remote_scope_payload(
+            &source,
+            &configured_config_root,
+            project_paths,
+            None,
+            Some(1),
+        );
+        payload["sourceSessionId"] = Value::String(source_session_id.clone());
+        payload
+    };
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(consumer_id, ssh_launch, "historyGet".to_string(), payload)
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    let response = match response {
+        Ok(value) => value,
+        Err(error) => {
+            let _ =
+                catalog::mark_remote_stale(&source_instance_id, remote_error_code(&error)).await;
+            return Err(error);
+        }
+    };
+    let detail: RemoteHistorySessionDetail = serde_json::from_value(response)
+        .map_err(|_| "history_remote_response_invalid".to_string())?;
+    if detail.summary.session_ref.source_instance_id != source_instance_id
+        || detail.summary.session_ref.source_session_id != source_session_id
+        || detail.summary.session_ref.source_id != source
+        || detail.summary.session_ref.transport_kind != "ssh"
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    let value = remote_detail_value(detail);
+    if let Ok(mut cache) = remote_history_detail_cache().lock() {
+        cache.insert(cache_key, value.clone());
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub fn history_remote_close(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    host_id: String,
+    consumer_id: String,
+) -> Result<(), String> {
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    client.ssh_agent_release(host_id, consumer_id)
+}
+
+fn remote_detail_value(detail: RemoteHistorySessionDetail) -> Value {
+    let summary = detail.summary;
+    let mut grouped = BTreeMap::<String, Vec<_>>::new();
+    for change in detail.file_changes {
+        grouped
+            .entry(change.file_path.clone())
+            .or_default()
+            .push(change);
+    }
+    let file_changes = grouped
+        .into_iter()
+        .map(|(file_path, operations)| {
+            let additions = operations.iter().map(|item| item.additions).sum::<u64>();
+            let deletions = operations.iter().map(|item| item.deletions).sum::<u64>();
+            let latest_message_index = operations.last().and_then(|item| item.message_index);
+            json!({
+                "filePath": file_path,
+                "status": "M",
+                "additions": additions,
+                "deletions": deletions,
+                "latestMessageIndex": latest_message_index,
+                "latestOperationGroupIndex": Value::Null,
+                "latestTimestamp": operations.last().and_then(|item| item.timestamp.clone()),
+                "operations": operations.into_iter().map(|item| json!({
+                    "source": summary.session_ref.source_id,
+                    "toolName": item.tool_name,
+                    "filePath": item.file_path,
+                    "oldText": item.old_text,
+                    "newText": item.new_text,
+                    "patch": item.patch,
+                    "additions": item.additions,
+                    "deletions": item.deletions,
+                    "messageIndex": item.message_index,
+                    "operationGroupIndex": Value::Null,
+                    "timestamp": item.timestamp,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let token_trend = summary
+        .usage_facts
+        .iter()
+        .map(|fact| {
+            json!({
+                "inputTokens": fact.usage.input_tokens,
+                "outputTokens": fact.usage.output_tokens,
+                "cacheReadTokens": fact.usage.cache_read_tokens,
+                "cacheCreationTokens": fact.usage.cache_creation_tokens,
+                "totalTokens": fact.usage.total(),
+                "model": fact.model,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "sessionId": summary.session_ref.source_session_id,
+        "source": summary.session_ref.source_id,
+        "projectKey": summary.project_key,
+        "title": summary.title,
+        "filePath": "",
+        "cwd": summary.cwd,
+        "createdAt": summary.created_at,
+        "updatedAt": summary.updated_at,
+        "messageCount": summary.message_count,
+        "branch": summary.branch,
+        "sessionRef": summary.session_ref,
+        "materializationLevel": "detail",
+        "freshnessState": "fresh",
+        "asOf": now_millis(),
+        "readOnly": true,
+        "usage": {
+            "inputTokens": summary.usage.input_tokens,
+            "outputTokens": summary.usage.output_tokens,
+            "cacheReadTokens": summary.usage.cache_read_tokens,
+            "cacheCreationTokens": summary.usage.cache_creation_tokens,
+            "totalCostUsd": 0,
+            "dominantModel": summary.dominant_model,
+            "currentModel": summary.current_model,
+            "tokenTrend": token_trend,
+            "toolCallCount": 0,
+            "mcpCalls": [],
+            "skillCalls": [],
+            "builtinCalls": [],
+        },
+        "toolEvents": [],
+        "fileChanges": file_changes,
+        "messages": detail.messages.into_iter().map(|message| json!({
+            "role": message.role,
+            "content": message.content,
+            "timestamp": message.timestamp,
+            "model": message.model,
+            "inputTokens": message.input_tokens,
+            "outputTokens": message.output_tokens,
+            "cacheReadTokens": message.cache_read_tokens,
+            "cacheCreationTokens": message.cache_creation_tokens,
+            "lineIndex": message.line_index,
+            "editable": false,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 #[tauri::command]
@@ -11231,6 +11689,104 @@ mod tests {
             Ok(_) => panic!("expected error"),
             Err(err) => err,
         }
+    }
+
+    fn remote_history_plan() -> SshLaunchPlan {
+        SshLaunchPlan {
+            host_id: "host-1".to_string(),
+            host: "example.test".to_string(),
+            port: 22,
+            username: "dev".to_string(),
+            config_alias: String::new(),
+            config_file: String::new(),
+            auth_mode: "agent".to_string(),
+            identity_file: String::new(),
+            credential_ref: String::new(),
+            jump_target: String::new(),
+            proxy_type: String::new(),
+            proxy_host: String::new(),
+            proxy_port: 0,
+            proxy_command: String::new(),
+            connect_timeout_sec: 10,
+            server_alive_interval_sec: 15,
+            server_alive_count_max: 3,
+            remote_path: "/work/project".to_string(),
+            client_instance_id: "client-1".to_string(),
+            project_id: "project-1".to_string(),
+            bridge_epoch: "epoch-1".to_string(),
+            agent_path: "~/.local/bin/cli-manager-ssh-agent".to_string(),
+            agent_installation_id: "installation-1".to_string(),
+            agent_remote_machine_id: "machine-1".to_string(),
+            tool_source: "claude".to_string(),
+            environment_overrides: HashMap::new(),
+            initialization_command: None,
+            startup_command: None,
+        }
+    }
+
+    fn remote_sync_result() -> RemoteHistorySyncResult {
+        serde_json::from_value(json!({
+            "sourceInstanceId": "instance-1",
+            "source": "claude",
+            "installationId": "installation-1",
+            "remoteMachineId": "machine-1",
+            "sshUser": "dev",
+            "configuredConfigRoot": "~/.claude",
+            "canonicalConfigRoot": "/home/dev/.claude",
+            "configRootHash": "root-1",
+            "generation": 1,
+            "cursor": "1:0",
+            "hasMore": false,
+            "totalSessions": 0,
+            "freshnessState": "fresh",
+            "asOf": 1,
+            "discoveryComplete": true,
+            "partial": false,
+            "sessions": [],
+            "tombstones": [],
+            "warnings": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn remote_history_sync_rejects_identity_changes_between_pages() {
+        let plan = remote_history_plan();
+        let result = remote_sync_result();
+        validate_remote_history_sync_result(
+            &plan,
+            "claude",
+            "~/.claude",
+            Some("instance-1"),
+            &result,
+        )
+        .unwrap();
+        assert_eq!(
+            validate_remote_history_sync_result(
+                &plan,
+                "claude",
+                "~/.claude",
+                Some("instance-2"),
+                &result,
+            )
+            .unwrap_err(),
+            "history_remote_identity_changed"
+        );
+    }
+
+    #[test]
+    fn remote_history_detail_cache_evicts_lru_and_invalidates_instance() {
+        let mut cache = RemoteHistoryDetailCache::default();
+        for index in 0..REMOTE_HISTORY_DETAIL_CACHE_MAX {
+            cache.insert(format!("instance:{index}"), json!({ "index": index }));
+        }
+        assert!(cache.get("instance:0").is_some());
+        cache.insert("instance:next".to_string(), json!({ "index": "next" }));
+        assert!(cache.get("instance:1").is_none());
+        assert!(cache.get("instance:0").is_some());
+        cache.invalidate_instance("instance");
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.bytes, 0);
     }
 
     fn empty_usage() -> HistorySessionUsage {

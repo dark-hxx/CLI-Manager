@@ -252,6 +252,8 @@ fn client_frame_id(frame: &ClientFrame) -> Option<u64> {
         | ClientFrame::Detach { id }
         | ClientFrame::Reconcile { id, .. }
         | ClientFrame::Status { id }
+        | ClientFrame::SshAgentRequest { id, .. }
+        | ClientFrame::SshAgentRelease { id, .. }
         | ClientFrame::Shutdown { id } => Some(*id),
     }
 }

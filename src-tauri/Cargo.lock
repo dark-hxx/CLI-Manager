@@ -715,6 +715,7 @@ dependencies = [
  "base64 0.22.1",
  "chardetng",
  "chrono",
+ "cli-manager-history-core",
  "cli-manager-hook-schema",
  "encoding_rs",
  "fontdb",
@@ -760,6 +761,15 @@ dependencies = [
  "windows-sys 0.61.2",
  "zbus-secret-service-keyring-store",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "cli-manager-history-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

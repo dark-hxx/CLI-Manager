@@ -9,7 +9,7 @@ This is the single execution tracker for the task. Research, product requirement
 | S03 | Agent install supply chain | completed | signature/hash/target/install/rollback tests |
 | S04 | Remote Hook lifecycle | completed | adapter merge, ownership, atomicity, spool tests |
 | S05 | Reusable Agent bridge runtime | completed | one-bridge invariant, reconnect, cancellation, shutdown tests |
-| S06 | Remote history indexing and cache | pending | parser/index/catalog/cursor/offline tests |
+| S06 | Remote history indexing and cache | completed | parser/index/catalog/cursor/offline tests |
 | S07 | Remote session resume | pending | preflight/ownership/cwd/config-root routing tests |
 | S08 | Read-only remote file panel | pending | confinement/read limits/provider routing tests |
 | S09 | Read-only remote Git panel | pending | porcelain/diff/repo identity/read-only boundary tests |
@@ -120,9 +120,27 @@ Final evidence: Agent protocol minor `1.1`; Agent `cargo fmt --check`; Agent tes
 
 ### S06 Remote history indexing and cache
 
-- [ ] Implement incremental Claude/Codex adapters and the shared single-writer remote index.
-- [ ] Register scoped remote source instances in the existing history catalog.
-- [ ] Implement list/search/detail/diff/usage, freshness, stale/offline, cursor, rotate, and tombstone behavior.
+- [x] Implement incremental Claude/Codex adapters and the shared single-writer remote index.
+- [x] Register scoped remote source instances in the existing history catalog.
+- [x] Implement list/search/detail/diff/usage, freshness, stale/offline, cursor, rotate, and tombstone behavior.
+
+#### S06 Root-Cause And Discovery Record
+
+- GitNexus remained unavailable. Contract + `rg` tracing covered Agent history adapters/index ownership, bridge request/chunk framing, desktop identity validation, catalog materialization, frontend list/search/detail routing, and local/WSL isolation.
+- Root cause 1: the Agent included its replaceable installation ID in `sourceInstanceId`, so reinstalling the same machine/user/source/config root could fork one logical source. Stable identity now contains only machine, SSH user, source, and canonical config-root hash.
+- Root cause 2: writer-lock directory creation and owner initialization were not one transaction. Permission or owner-file failure now removes the incomplete lock before returning the stable error.
+- Root cause 3: a JSONL record larger than the 8 MiB read window made no cursor progress. The index now records an oversized-line skip state, advances in bounded windows, and resumes parsing after the next newline.
+- Root cause 4: remote open/list/load-more/search/detail requests could commit after the user switched SSH projects. Request generations and consumer identity now invalidate stale results without allowing old `finally` blocks to clear current loading state.
+- Confirmed unrelated: local/WSL source discovery and parsing remain on their existing paths; remote paths stay opaque and never enter local file, Git, provider, edit, or delete commands.
+
+#### S06 Review Log
+
+1. Review 1 hardened remote identity reuse, numeric conversion, summary-only catalog cleanup, continuation identity, detail chunk ordering/size/deadline, pagination, and LRU ownership.
+2. Review 2 corrected stable source identity and transactional writer-lock cleanup, then added focused regressions.
+3. Review 3 found non-progressing oversized JSONL records and duplicate catalog fixtures. Added bounded skip progress and consolidated coverage without reducing assertions.
+4. Review 4 found cross-project async state races in remote open, pagination, search, and detail. Added generation/consumer guards; final review found no further S06 correctness, isolation, pagination, or cache-lifetime issues.
+
+Final evidence: history-core tests `4 passed`; Agent tests `48 passed`; Agent Clippy with `-D warnings`; focused bridge tests `15 passed`; focused catalog tests `21 passed`; desktop `cargo check`; desktop library tests `619 passed, 1 ignored`; `npx tsc --noEmit`; `git diff --check`; GitNexus change detection completed with the expected cross-layer S06 scope.
 
 ### S07 Remote session resume
 

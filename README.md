@@ -219,10 +219,11 @@ When developing across multiple projects, you may run into these problems:
 - **Remote project workflow** - browse remote directories, configure remote startup commands and environment variables, and launch AI CLI sessions directly in the target path
 - **Workspace integration** - remote terminals support tabs, splits, Workspan, background execution, and daemon-backed recovery
 - **Remote Agent and Hook** - explicitly install or upgrade the signed `cli-manager-ssh-agent`, configure Claude/Codex roots per host or project, preview Hook changes, and install or remove only CLI-Manager-owned entries
-- **Reliable live status** - SSH sessions with a validated installed Hook reuse one per-host protocol 1.1 Agent bridge with bounded handshake/response timeouts, heartbeat, reconnect gates, and a streaming Host/client-isolated spool
+- **Reliable live status** - SSH sessions with a validated installed Hook reuse one per-host protocol 1.3 Agent bridge with bounded handshake/response timeouts, heartbeat, reconnect gates, and a streaming Host/client-isolated spool
+- **Remote history** - browse scoped Claude Code and Codex sessions from the existing history workspace, with incremental list/search, on-demand detail and Diff, usage summaries, pagination, and explicit stale/offline cache state
 - **Credential safety** - passwords use the operating system credential store; sync and export never include passwords, credentials, or private-key paths
 
-> Remote Hook status is available for Claude Code and Codex. Remote history, history analytics, file/Git panels, Worktree tools, external terminal launch, and remote resource monitoring are not available yet. SSH projects never scan or switch remote providers.
+> Remote Hook status and read-only remote history are available for Claude Code and Codex. Remote resume, aggregate history analytics, file/Git panels, Worktree tools, external terminal launch, and remote resource monitoring are not available yet. SSH projects never scan or switch remote providers.
 
 <p align="center">
 <img src="docs/img/ssh-settings.png" width="85%" alt="SSH host settings and connection diagnostics" />

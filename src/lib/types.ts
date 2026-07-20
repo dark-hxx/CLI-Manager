@@ -515,6 +515,29 @@ export type HistorySource = HistorySourceId;
 export type HistorySourceFilter = "all" | HistorySourceId;
 export type CcusageSource = "all" | "claude" | "codex";
 
+export interface HistoryRawPointer {
+  role: string;
+  kind: string;
+  rawKey: string;
+  lineIndex?: number | null;
+}
+
+export interface HistorySessionRef {
+  sourceId: HistorySource;
+  sourceInstanceId: string;
+  sourceSessionId: string;
+  transportKind: "local" | "wsl" | "ssh" | string;
+  rawPointers: HistoryRawPointer[];
+}
+
+export interface HistoryRemoteIdentity {
+  hostId?: string;
+  installationId?: string;
+  remoteMachineId?: string;
+  sshUser?: string;
+  configRootHash?: string;
+}
+
 export interface HistorySessionSummary {
   session_id: string;
   source: HistorySource;
@@ -526,6 +549,12 @@ export interface HistorySessionSummary {
   updated_at: number;
   message_count: number;
   branch?: string | null;
+  session_ref?: HistorySessionRef | null;
+  materialization_level?: "summary" | "detail" | "full" | string;
+  freshness_state?: "fresh" | "partial" | "stale" | "offline" | string;
+  as_of?: number | null;
+  remote_identity?: HistoryRemoteIdentity | null;
+  read_only?: boolean;
 }
 
 export interface HistoryMessage {
@@ -653,6 +682,30 @@ export interface HistorySearchHit {
   role: string;
   snippet: string;
   timestamp?: string | null;
+  session_ref?: HistorySessionRef | null;
+  read_only?: boolean;
+}
+
+export interface SshRemoteHistorySyncResult {
+  sourceInstanceId: string;
+  source: SshToolSource;
+  installationId: string;
+  remoteMachineId: string;
+  sshUser: string;
+  configuredConfigRoot: string;
+  canonicalConfigRoot: string;
+  configRootHash: string;
+  generation: number;
+  cursor: string;
+  hasMore: boolean;
+  totalSessions: number;
+  freshnessState: string;
+  asOf: number;
+  discoveryComplete: boolean;
+  partial: boolean;
+  sessions: unknown[];
+  tombstones: string[];
+  warnings: string[];
 }
 
 export type HistoryIndexPhase = "idle" | "seeding" | "scanning" | "indexing" | "ready" | "error";

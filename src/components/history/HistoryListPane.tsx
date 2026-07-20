@@ -44,12 +44,17 @@ type HistoryProjectTreeNode =
   | { type: "group"; group: Group; children: HistoryProjectTreeNode[] }
   | { type: "project"; project: Project };
 
+function historyProjectPath(project: Project): string {
+  return project.environment_type === "ssh" ? project.remote_path : project.path;
+}
+
 interface HistoryListPaneProps {
   historySidebarWidth: number;
   sidebarRef: RefObject<HTMLElement | null>;
   sessionListRef: RefObject<HTMLDivElement | null>;
   sourceFilter: HistorySourceFilter;
   projectPathFilter: string | null;
+  projectIdFilter: string | null;
   scopedProjectPathFilter: string | null;
   projects: Project[];
   groups: Group[];
@@ -75,7 +80,7 @@ interface HistoryListPaneProps {
   onRefresh: () => void;
   onClose: () => void;
   onSourceFilterChange: (value: HistorySourceFilter) => void;
-  onProjectPathFilterChange: (value: string | null) => void;
+  onProjectPathFilterChange: (value: string | null, projectId?: string) => void;
   onGlobalQueryChange: (value: string) => void;
   onFavoriteOnlyChange: (value: boolean) => void;
   onEnterSelectionMode: () => void;
@@ -295,6 +300,7 @@ export function HistoryListPane({
   sessionListRef,
   sourceFilter,
   projectPathFilter,
+  projectIdFilter,
   scopedProjectPathFilter,
   projects,
   groups,
@@ -355,8 +361,10 @@ export function HistoryListPane({
 
   const projectTree = useMemo(() => buildHistoryProjectTree(groups, projects), [groups, projects]);
   const selectedProject = useMemo(
-    () => projects.find((project) => project.path === projectPathFilter) ?? null,
-    [projectPathFilter, projects]
+    () => projects.find((project) => (
+      projectIdFilter ? project.id === projectIdFilter : historyProjectPath(project) === projectPathFilter
+    )) ?? null,
+    [projectIdFilter, projectPathFilter, projects]
   );
   const selectedWorktree = useMemo(
     () => findWorktreeByPath(worktrees, scopedProjectPathFilter ?? projectPathFilter),
@@ -428,8 +436,8 @@ export function HistoryListPane({
   }, []);
 
   const handleProjectFilterChange = useCallback(
-    (projectPath: string | null) => {
-      onProjectPathFilterChange(projectPath);
+    (projectPath: string | null, projectId?: string) => {
+      onProjectPathFilterChange(projectPath, projectId);
       setProjectMenuOpen(false);
     },
     [onProjectPathFilterChange]
@@ -580,16 +588,19 @@ export function HistoryListPane({
       );
     }
 
-    const selected = projectPathFilter === node.project.path;
+    const projectPath = historyProjectPath(node.project);
+    const selected = projectIdFilter
+      ? node.project.id === projectIdFilter
+      : projectPathFilter === projectPath;
     return (
       <button
         key={`project:${node.project.id}`}
         type="button"
-        onClick={() => handleProjectFilterChange(selected ? null : node.project.path)}
+        onClick={() => handleProjectFilterChange(selected ? null : projectPath, selected ? undefined : node.project.id)}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
         style={{ paddingLeft }}
-        title={node.project.path}
+        title={projectPath}
       >
         <span className="ui-tree-leading-icon">
           <ProjectFilterIcon project={node.project} size={13} />

@@ -18,6 +18,7 @@ import { useSshHostStore } from "./sshHostStore";
 import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "../lib/ssh";
 import { parseStoredSshHookReport, resolveSshToolSource } from "../lib/sshToolIntegration";
+import { getSshClientInstanceId } from "../lib/sshClientIdentity";
 import { appendSyncedHistoryContextArg } from "../lib/syncedHistoryContext";
 import { translateCurrent } from "../lib/i18n";
 import { findProjectByPath, findWorktreeByPath, resolveProjectForProviderLaunch } from "../lib/terminalProject";
@@ -1145,22 +1146,6 @@ interface SshLaunchPayload extends SshConnectionSpecPayload {
   environmentOverrides: Record<string, string>;
   initializationCommand: string | null;
   startupCommand: string | null;
-}
-
-const SSH_CLIENT_INSTANCE_ID_KEY = "cli-manager.sshClientInstanceId";
-let fallbackSshClientInstanceId = "";
-
-function getSshClientInstanceId(): string {
-  try {
-    const current = localStorage.getItem(SSH_CLIENT_INSTANCE_ID_KEY)?.trim();
-    if (current && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(current)) return current;
-    const created = crypto.randomUUID();
-    localStorage.setItem(SSH_CLIENT_INSTANCE_ID_KEY, created);
-    return created;
-  } catch {
-    fallbackSshClientInstanceId ||= crypto.randomUUID();
-    return fallbackSshClientInstanceId;
-  }
 }
 
 interface ResolvedPtyLaunch {
