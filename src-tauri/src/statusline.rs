@@ -6,6 +6,7 @@ use crate::app_paths;
 use crate::commands::hook_settings::{
     sync_ccswitch_claude_statusline, CcSwitchHookProtectionStatus,
 };
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use crate::shell_resolver::{output_with_timeout, silent_command};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -378,6 +379,7 @@ fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
     Ok(powerline_font_status(None))
 }
 
+#[cfg(target_os = "windows")]
 fn preferred_powerline_font(fonts: &[PathBuf]) -> Option<&Path> {
     fonts
         .iter()
