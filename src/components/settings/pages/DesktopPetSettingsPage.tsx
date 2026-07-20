@@ -803,7 +803,9 @@ export function DesktopPetSettingsPage() {
               {t("desktopPet.settings.storageDescription", {
                 managedPath: "~/.cli-manager/pets",
                 codexPath: "~/.codex/pets",
-                downloadUrl: "https://codex-pets.net/",
+                downloadUrl1: "https://codex-pets.net/",
+                downloadUrl2: "https://petdex.dev/",
+                downloadUrl3: "https://codexpets.net/",
               })}
             </Text>
           </Alert>
