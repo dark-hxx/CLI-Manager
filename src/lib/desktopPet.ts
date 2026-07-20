@@ -16,6 +16,17 @@ import type {
 } from "../stores/terminalStore";
 import type { DesktopPetSettings, LanguagePreference } from "../stores/settingsStore";
 
+export {
+  calculateDesktopPetMenuWindowGeometry,
+  createLatestAsyncTaskRunner,
+  type DesktopPetMenuHorizontalPlacement,
+  type DesktopPetMenuVerticalPlacement,
+  type DesktopPetMenuWindowGeometry,
+  type DesktopPetWindowRect,
+  type LatestAsyncTaskContext,
+  type LatestAsyncTaskRunner,
+} from "./desktopPetMenu";
+
 export const DESKTOP_PET_WINDOW_LABEL = "desktop-pet";
 export const DESKTOP_PET_CONFIG_EVENT = "desktop-pet-config";
 export const DESKTOP_PET_SNAPSHOT_EVENT = "desktop-pet-snapshot";
@@ -172,115 +183,8 @@ export interface DesktopPetOpenTargetPayload {
   daemonOnly: boolean;
 }
 
-export interface DesktopPetWindowRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface DesktopPetMenuWindowGeometry {
-  logicalWidth: number;
-  logicalHeight: number;
-  x: number;
-  y: number;
-  anchorWidth: number;
-  anchorHeight: number;
-  panelWidth: number;
-  targetListHeight: number;
-}
-
-const DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH = 440;
-const DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH = 190;
-const DESKTOP_PET_MENU_CARD_HEIGHT = 58;
-const DESKTOP_PET_MENU_CARD_STEP = 54;
-const DESKTOP_PET_MENU_CARD_BREATHING_ROOM = 12;
-const DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS = 5;
-const DESKTOP_PET_MENU_VERTICAL_CHROME = 28;
 export const DESKTOP_PET_OUTPUT_ACTIVITY_TTL_MS = 6000;
 const DESKTOP_PET_OUTPUT_ACTIVITY_FINAL_GRACE_MS = 1200;
-
-function clampWindowCoordinate(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
-}
-
-export function calculateDesktopPetMenuWindowGeometry(
-  collapsed: DesktopPetWindowRect,
-  scaleFactor: number,
-  targetCount: number,
-  workArea?: DesktopPetWindowRect | null,
-  secondaryHeaderHeight = 0
-): DesktopPetMenuWindowGeometry {
-  const safeScaleFactor = Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1;
-  const anchorWidth = collapsed.width / safeScaleFactor;
-  const anchorHeight = collapsed.height / safeScaleFactor;
-  const visibleTargets = Math.min(
-    Math.max(0, Math.floor(targetCount)),
-    DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS
-  );
-  const requestedTargetListHeight = visibleTargets > 0
-    ? DESKTOP_PET_MENU_CARD_HEIGHT
-      + (visibleTargets - 1) * DESKTOP_PET_MENU_CARD_STEP
-      + DESKTOP_PET_MENU_CARD_BREATHING_ROOM
-      + Math.max(0, secondaryHeaderHeight)
-    : 0;
-  const requestedPanelWidth = visibleTargets > 0
-    ? DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH
-    : DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH;
-  let logicalWidth = anchorWidth + requestedPanelWidth;
-  let logicalHeight = Math.max(
-    anchorHeight,
-    224,
-    requestedTargetListHeight > 0
-      ? requestedTargetListHeight + DESKTOP_PET_MENU_VERTICAL_CHROME
-      : anchorHeight
-  );
-  if (workArea) {
-    logicalWidth = Math.min(logicalWidth, workArea.width / safeScaleFactor);
-    logicalHeight = Math.min(logicalHeight, workArea.height / safeScaleFactor);
-  }
-  const panelWidth = Math.max(0, logicalWidth - anchorWidth);
-  const targetListHeight = Math.min(
-    requestedTargetListHeight,
-    Math.max(0, logicalHeight - DESKTOP_PET_MENU_VERTICAL_CHROME)
-  );
-  const physicalWidth = Math.round(logicalWidth * safeScaleFactor);
-  const physicalHeight = Math.round(logicalHeight * safeScaleFactor);
-  const desiredX = collapsed.x - Math.max(0, physicalWidth - collapsed.width);
-  const desiredY = collapsed.y - Math.max(0, physicalHeight - collapsed.height);
-
-  if (!workArea) {
-    return {
-      logicalWidth,
-      logicalHeight,
-      x: desiredX,
-      y: desiredY,
-      anchorWidth,
-      anchorHeight,
-      panelWidth,
-      targetListHeight,
-    };
-  }
-
-  return {
-    logicalWidth,
-    logicalHeight,
-    x: clampWindowCoordinate(
-      desiredX,
-      workArea.x,
-      workArea.x + workArea.width - physicalWidth
-    ),
-    y: clampWindowCoordinate(
-      desiredY,
-      workArea.y,
-      workArea.y + workArea.height - physicalHeight
-    ),
-    anchorWidth,
-    anchorHeight,
-    panelWidth,
-    targetListHeight,
-  };
-}
 
 const STATUS_PRIORITY: Record<TabNotificationState, number> = {
   none: 0,

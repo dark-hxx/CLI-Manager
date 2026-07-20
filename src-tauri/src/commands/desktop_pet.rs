@@ -8,6 +8,8 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
+#[cfg(not(target_os = "windows"))]
+use tauri::PhysicalSize;
 use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, Runtime};
 use uuid::Uuid;
 use zip::ZipArchive;
@@ -165,6 +167,15 @@ pub struct DesktopPetWindowConfig {
     pub always_on_top: bool,
     pub scale: f64,
     pub position: Option<PetPosition>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopPetWindowBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 fn pets_root() -> Result<PathBuf, String> {
@@ -1192,6 +1203,73 @@ pub fn desktop_pet_window_sync(
         .map_err(|err| format!("pet_window_show_failed: {err}"))
 }
 
+fn validated_window_size(bounds: DesktopPetWindowBounds) -> Result<(i32, i32), String> {
+    let width = i32::try_from(bounds.width).map_err(|_| "pet_window_bounds_invalid".to_string())?;
+    let height =
+        i32::try_from(bounds.height).map_err(|_| "pet_window_bounds_invalid".to_string())?;
+    if width <= 0 || height <= 0 {
+        return Err("pet_window_bounds_invalid".to_string());
+    }
+    Ok((width, height))
+}
+
+#[cfg(target_os = "windows")]
+fn apply_window_bounds<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    bounds: DesktopPetWindowBounds,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+
+    let (width, height) = validated_window_size(bounds)?;
+    let hwnd = window
+        .hwnd()
+        .map_err(|err| format!("pet_window_handle_failed: {err}"))?;
+    let updated = unsafe {
+        SetWindowPos(
+            hwnd.0 as _,
+            std::ptr::null_mut(),
+            bounds.x,
+            bounds.y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        )
+    };
+    if updated == 0 {
+        Err(format!(
+            "pet_window_bounds_failed: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_window_bounds<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    bounds: DesktopPetWindowBounds,
+) -> Result<(), String> {
+    validated_window_size(bounds)?;
+    window
+        .set_size(PhysicalSize::new(bounds.width, bounds.height))
+        .map_err(|err| format!("pet_window_resize_failed: {err}"))?;
+    window
+        .set_position(PhysicalPosition::new(bounds.x, bounds.y))
+        .map_err(|err| format!("pet_window_position_failed: {err}"))
+}
+
+#[tauri::command]
+pub fn desktop_pet_window_set_bounds(
+    app: AppHandle,
+    bounds: DesktopPetWindowBounds,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
+        return Err("pet_window_missing".to_string());
+    };
+    apply_window_bounds(&window, bounds)
+}
+
 #[tauri::command]
 pub fn desktop_pet_window_reset_position(app: AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
@@ -1215,6 +1293,33 @@ pub fn desktop_pet_window_hide(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    #[test]
+    fn desktop_pet_window_bounds_require_positive_i32_dimensions() {
+        assert_eq!(
+            validated_window_size(DesktopPetWindowBounds {
+                x: 0,
+                y: 0,
+                width: 640,
+                height: 480,
+            }),
+            Ok((640, 480))
+        );
+        assert!(validated_window_size(DesktopPetWindowBounds {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 480,
+        })
+        .is_err());
+        assert!(validated_window_size(DesktopPetWindowBounds {
+            x: 0,
+            y: 0,
+            width: i32::MAX as u32 + 1,
+            height: 480,
+        })
+        .is_err());
+    }
 
     fn fake_vp8x_webp(width: u32, height: u32) -> Vec<u8> {
         let mut payload = [0u8; 10];

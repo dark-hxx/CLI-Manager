@@ -7,7 +7,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { LogicalSize, PhysicalPosition, type PhysicalSize } from "@tauri-apps/api/dpi";
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -37,10 +36,13 @@ import {
   DESKTOP_PET_READY_EVENT,
   DESKTOP_PET_SNAPSHOT_EVENT,
   calculateDesktopPetMenuWindowGeometry,
+  createLatestAsyncTaskRunner,
   desktopPetScale,
   type DesktopPetConfigPayload,
   type DesktopPetMenuWindowGeometry,
   type DesktopPetMood,
+  type DesktopPetWindowRect,
+  type LatestAsyncTaskRunner,
   type DesktopPetSnapshot,
   type DesktopPetTarget,
   type InstalledPet,
@@ -211,9 +213,19 @@ function PlatformIcon({ platform }: { platform: CcConnectPlatform }) {
 }
 
 interface CollapsedPetWindowGeometry {
-  position: PhysicalPosition;
-  size: PhysicalSize;
+  bounds: DesktopPetWindowRect;
   scaleFactor: number;
+  workArea: DesktopPetWindowRect | null;
+}
+
+interface DesktopPetMenuWindowRequest {
+  open: boolean;
+  secondaryItemCount: number;
+  secondaryHeaderHeight: number;
+}
+
+function setDesktopPetWindowBounds(bounds: DesktopPetWindowRect): Promise<void> {
+  return invoke("desktop_pet_window_set_bounds", { bounds });
 }
 
 function targetFanStyle(index: number, count: number): CSSProperties {
@@ -254,7 +266,90 @@ export default function DesktopPetApp() {
   const dragResetTimerRef = useRef<number | null>(null);
   const userDraggingRef = useRef(false);
   const collapsedWindowGeometryRef = useRef<CollapsedPetWindowGeometry | null>(null);
-  const menuWindowTaskRef = useRef<Promise<void>>(Promise.resolve());
+  const menuWindowTaskRef = useRef<LatestAsyncTaskRunner<DesktopPetMenuWindowRequest> | null>(null);
+  if (!menuWindowTaskRef.current) {
+    menuWindowTaskRef.current = createLatestAsyncTaskRunner<DesktopPetMenuWindowRequest>(
+      async (request, context) => {
+        if (request.open) {
+          let collapsed = collapsedWindowGeometryRef.current;
+          try {
+            if (!collapsed) {
+              const appWindow = getCurrentWindow();
+              const [position, size, scaleFactor, monitor] = await Promise.all([
+                appWindow.outerPosition(),
+                appWindow.outerSize(),
+                appWindow.scaleFactor(),
+                currentMonitor().catch(() => null),
+              ]);
+              collapsed = {
+                bounds: {
+                  x: position.x,
+                  y: position.y,
+                  width: size.width,
+                  height: size.height,
+                },
+                scaleFactor,
+                workArea: monitor
+                  ? {
+                      x: monitor.workArea.position.x,
+                      y: monitor.workArea.position.y,
+                      width: monitor.workArea.size.width,
+                      height: monitor.workArea.size.height,
+                    }
+                  : null,
+              };
+              collapsedWindowGeometryRef.current = collapsed;
+            }
+
+            const geometry = calculateDesktopPetMenuWindowGeometry(
+              collapsed.bounds,
+              collapsed.scaleFactor,
+              request.secondaryItemCount,
+              collapsed.workArea,
+              request.secondaryHeaderHeight
+            );
+            if (!context.isLatest()) return;
+
+            setMenuGeometry(geometry);
+            await setDesktopPetWindowBounds({
+              x: geometry.x,
+              y: geometry.y,
+              width: geometry.physicalWidth,
+              height: geometry.physicalHeight,
+            });
+          } catch (error) {
+            if (context.isLatest()) {
+              if (collapsed) {
+                await setDesktopPetWindowBounds(collapsed.bounds).catch(() => {});
+              }
+              collapsedWindowGeometryRef.current = null;
+              setMenuGeometry(null);
+              setMenuOpen(false);
+              setTargetMode("open");
+              setSelectedPlatform(null);
+            }
+            throw error;
+          }
+          return;
+        }
+
+        if (!context.isLatest()) return;
+        const collapsed = collapsedWindowGeometryRef.current;
+        if (!collapsed) {
+          setMenuGeometry(null);
+          return;
+        }
+
+        await setDesktopPetWindowBounds(collapsed.bounds);
+        if (!context.isLatest()) return;
+        collapsedWindowGeometryRef.current = null;
+        setMenuGeometry(null);
+      },
+      (error) => {
+        logWarn("Failed to resize desktop pet menu window", error);
+      }
+    );
+  }
 
   useEffect(() => {
     const rootElements = [document.documentElement, document.body, document.getElementById("root")];
@@ -311,72 +406,10 @@ export default function DesktopPetApp() {
   }, []);
 
   useEffect(() => {
-    const appWindow = getCurrentWindow();
-    menuWindowTaskRef.current = menuWindowTaskRef.current
-      .catch(() => {})
-      .then(async () => {
-        if (menuOpen) {
-          let collapsed = collapsedWindowGeometryRef.current;
-          if (!collapsed) {
-            const [position, size, scaleFactor] = await Promise.all([
-              appWindow.outerPosition(),
-              appWindow.outerSize(),
-              appWindow.scaleFactor(),
-            ]);
-            collapsed = { position, size, scaleFactor };
-            collapsedWindowGeometryRef.current = collapsed;
-          }
-          const monitor = await currentMonitor().catch(() => null);
-          const geometry = calculateDesktopPetMenuWindowGeometry(
-            {
-              x: collapsed.position.x,
-              y: collapsed.position.y,
-              width: collapsed.size.width,
-              height: collapsed.size.height,
-            },
-            collapsed.scaleFactor,
-            secondaryItemCount,
-            monitor
-              ? {
-                  x: monitor.workArea.position.x,
-                  y: monitor.workArea.position.y,
-                  width: monitor.workArea.size.width,
-                  height: monitor.workArea.size.height,
-                }
-              : null,
-            secondaryHeaderHeight
-          );
-          setMenuGeometry(geometry);
-          try {
-            await appWindow.setSize(new LogicalSize(geometry.logicalWidth, geometry.logicalHeight));
-            await appWindow.setPosition(new PhysicalPosition(geometry.x, geometry.y));
-          } catch (err) {
-            await Promise.allSettled([
-              appWindow.setSize(collapsed.size),
-              appWindow.setPosition(collapsed.position),
-            ]);
-            collapsedWindowGeometryRef.current = null;
-            setMenuGeometry(null);
-            setMenuOpen(false);
-            setTargetMode("open");
-            setSelectedPlatform(null);
-            throw err;
-          }
-          return;
-        }
-
-        setMenuGeometry(null);
-        const collapsed = collapsedWindowGeometryRef.current;
-        if (!collapsed) return;
-        try {
-          await appWindow.setSize(collapsed.size);
-          await appWindow.setPosition(collapsed.position);
-        } finally {
-          collapsedWindowGeometryRef.current = null;
-        }
-      });
-    void menuWindowTaskRef.current.catch((err) => {
-      logWarn("Failed to resize desktop pet menu window", err);
+    menuWindowTaskRef.current?.schedule({
+      open: menuOpen,
+      secondaryItemCount,
+      secondaryHeaderHeight,
     });
   }, [menuOpen, secondaryHeaderHeight, secondaryItemCount]);
 
@@ -471,6 +504,8 @@ export default function DesktopPetApp() {
     "--pet-work-bounce-offset": `${-config.settings.workingBounceDistancePx}px`,
     ...(menuGeometry
       ? {
+          "--pet-anchor-x": `${menuGeometry.anchorX}px`,
+          "--pet-anchor-y": `${menuGeometry.anchorY}px`,
           "--pet-anchor-width": `${menuGeometry.anchorWidth}px`,
           "--pet-anchor-height": `${menuGeometry.anchorHeight}px`,
           "--pet-menu-panel-width": `${menuGeometry.panelWidth}px`,
@@ -551,6 +586,8 @@ export default function DesktopPetApp() {
           : undefined
       }
       data-menu-open={menuGeometry ? "true" : undefined}
+      data-menu-horizontal={menuGeometry?.horizontalPlacement}
+      data-menu-vertical={menuGeometry?.verticalPlacement}
       data-rendering-active={renderingActive ? "true" : "false"}
       style={rootStyle}
       onPointerDown={handlePointerDown}

@@ -17,6 +17,8 @@
   --pet-cat-width: 132px;
   --pet-cat-height: 96px;
   --pet-work-bounce-offset: 0px;
+  --pet-anchor-x: 0px;
+  --pet-anchor-y: 0px;
   --pet-anchor-width: 100%;
   --pet-anchor-height: 100%;
   --pet-menu-panel-width: 0px;
@@ -45,8 +47,8 @@
 
 .desktop-pet-root[data-menu-open="true"] .desktop-pet-anchor {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  left: var(--pet-anchor-x);
+  top: var(--pet-anchor-y);
   width: var(--pet-anchor-width);
   height: var(--pet-anchor-height);
 }
@@ -568,6 +570,41 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pet-accent) 24%, transparent);
 }
 
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-target-list {
+  right: auto;
+  left: calc(var(--pet-anchor-width) + 144px);
+  align-items: flex-start;
+  padding: 0 28px 0 10px;
+}
+
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-platform,
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-target {
+  transform: translateX(var(--fan-shift)) rotate(calc(0deg - var(--fan-angle)));
+  transform-origin: 0 50%;
+  animation-name: desktop-pet-fan-card-in-right;
+}
+
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-platform[data-ready="true"]:hover,
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-platform[data-ready="true"]:focus-visible {
+  transform: translateX(20px) rotate(0deg);
+}
+
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-target:hover,
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-target:focus-visible {
+  transform: translateX(26px) rotate(0deg) scale(1.02);
+}
+
+.desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-menu-actions {
+  right: auto;
+  left: calc(var(--pet-anchor-width) - 20px);
+}
+
+.desktop-pet-root[data-menu-vertical="below"] .desktop-pet-target-list,
+.desktop-pet-root[data-menu-vertical="below"] .desktop-pet-menu-actions {
+  top: 12px;
+  bottom: auto;
+}
+
 @keyframes desktop-pet-breathe {
   0%, 100% { transform: translateY(0) scaleY(1); }
   50% { transform: translateY(-2px) scaleY(1.02); }
@@ -604,6 +641,11 @@
 }
 @keyframes desktop-pet-fan-card-in {
   from { opacity: 0; translate: 46px 0; scale: .94; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+
+@keyframes desktop-pet-fan-card-in-right {
+  from { opacity: 0; translate: -46px 0; scale: .94; }
   to { opacity: 1; translate: 0 0; scale: 1; }
 }
 
