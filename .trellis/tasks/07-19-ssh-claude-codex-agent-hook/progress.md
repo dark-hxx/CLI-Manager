@@ -168,8 +168,20 @@ Final evidence: Agent tests `51 passed`; Agent Clippy with `-D warnings`; focuse
 
 ### S08 Read-only remote file panel
 
-- [ ] Implement confined tree, search, text/image preview, path copy, and history/diff navigation.
-- [ ] Hard-reject write, external opener, local filesystem, and Worktree operations.
+- [x] Implement Agent-confined lazy tree, bounded filename/content search, UTF-8 text and data-URL image preview, remote path copy, and existing file-editor navigation.
+- [x] Hard-reject writes at the store boundary; hide drag, local Explorer/Finder, Git, and write menus for SSH projects.
+
+#### S08 Root-Cause And Discovery Record
+
+- Root cause: the existing file explorer assumed every project path was local and routed tree, preview, search, watcher, Git, and mutation actions directly to local Tauri commands. SSH paths must remain opaque and use an Agent-owned root confinement boundary.
+- Discovery: `fileExplorerStore` open/refresh/expand/search/preview and mutation methods; `FileExplorerSidebar` tree/context menus/watcher/external opener; project capability resolution; Agent protocol/bridge allowlist; Tauri SSH file commands; Agent path and size limits.
+- Scenario coverage: online/offline bridge errors, project switching during async open/search, POSIX/Windows absolute root validation, traversal/NUL/CRLF/backslash rejection, symlink escape, binary and oversized files, image data URLs, 500-entry directory and 200-result search caps, local/WSL routing unchanged, SSH writes and local external operations rejected.
+
+#### S08 Review Log
+
+1. Review 1 added remote context routing and store-level read-only guards, then fixed search traversal to count visited files independently from matched results and bumped capability negotiation to protocol `1.5`.
+2. Review 2 added Agent security/limit tests and hid SSH watcher, drag, write, Git, and local Explorer actions in the shared file UI.
+3. Final evidence: Agent tests `56 passed`; Agent Clippy with `-D warnings`; desktop library tests `620 passed, 1 ignored`; `npx tsc --noEmit`; `git diff --check`.
 
 ### S09 Read-only remote Git panel
 

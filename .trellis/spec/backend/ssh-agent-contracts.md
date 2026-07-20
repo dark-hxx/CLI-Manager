@@ -4,7 +4,7 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and one reusable daemon-owned protocol `1.4` bridge per active SSH Host. Files, Git, and realtime/historical stats remain separate stages.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and one reusable daemon-owned protocol `1.5` bridge per active SSH Host. The protocol 1.5 file RPCs are read-only; Git and realtime/historical stats remain separate stages.
 
 ## 2. Signatures
 
@@ -163,6 +163,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 | Detail chunks are reordered, duplicated, oversized, or exceed the deadline | close/fail the request without caching partial detail |
 | Resume source JSONL or cwd is missing | `remote_session_source_missing` / `remote_session_cwd_unavailable`; create no PTY |
 | Another daemon consumer owns the same source-instance/session | `remote_session_active_elsewhere` |
+| Remote file root is not absolute/canonical or a relative path escapes through `..`/symlink | stable `remote_file_root_*` / `remote_file_path_*` error; no local fallback |
+| Remote file is binary or exceeds 8 MiB | `remote_file_binary` / `remote_file_too_large` |
 | Spool record is malformed or over 1 MiB | stable `hook_spool_record_*` error; preserve original spool |
 | Custom Hook config root is missing | `hook_config_root_missing` |
 | Deleted custom root has one valid matching Agent record during uninstall | use its canonical identity for no-op config cleanup and remove the record |
@@ -185,6 +187,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Good: Claude and Codex Hooks use different roots; preview shows actual files, confirmation preserves third-party entries, and both tools can be removed independently.
 - Good: the desktop disconnects, events spool under the bound Host/client namespace, and reconnect replays each event at most once before ACK deletion.
 - Good: four Host bridges are connected, a fifth waits without starting SSH, and closing one Host releases a permit for the waiting Host.
+- Good: an SSH project file panel reuses its Host bridge, lists only canonical-root descendants, skips symlinks, and reads bounded UTF-8 text or supported image data URLs.
+- Bad: pass a remote absolute path to local `file_*`/Git commands, expose create/save/delete/move/external opener actions, or traverse more than the Agent file quotas.
 - Good: a replaced bridge briefly receives `bridge_already_active`, backs off, then takes ownership after the old Agent process removes its socket.
 - Base: a missing or malformed discovery record is reconstructed only after an explicit install; no page-open or probe action changes remote files.
 - Base: Claude/Codex launched from an ordinary SSH shell has no binding variables; the installed Hook exits successfully without writing spool data.
@@ -205,7 +209,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Assert bounded banner/report parsing, invalid UTF-8/contamination, protocol mismatch, identity mismatch, unsupported target, clean EOF, partial frame length, oversized frame, and mandatory bridge protocol.
 - Assert protocol minor 1 capability negotiation, bounded reader/response timeouts, global bridge/connect permits, retry jitter/reset classification, `bridge_already_active` takeover, heartbeat echo, cancellation bounds, and last-session shutdown.
 - Assert protocol minor 3 history capability negotiation, generation cursors, continuation identity, chunk ordering/size/deadline, detail LRU eviction, and consumer release.
-- Assert protocol minor 4 resume capability, structured Claude/Codex args, source/cwd validation, ownership claim/release, and implicit SSH Config username handling.
+- Assert protocol minor 4 resume capability and protocol minor 5 remote-file capability, structured Claude/Codex args, source/cwd validation, ownership claim/release, and implicit SSH Config username handling.
+- Assert remote file root/path confinement, symlink escape rejection, binary/oversized refusal, directory/search/visited limits, image data URLs, and UI/store read-only routing.
 - Assert manifest tampering, duplicate/unknown targets, HTTP opt-in, query/fragment rejection, target selection, size/SHA-256 mismatch, and bounded downloads.
 - Assert install path quoting, strict operation markers/metadata, semantic version actions, lock conflicts, default/custom roots, corrupt/missing discovery recovery, promote rollback, distinct previous versions, and transactional uninstall.
 - Assert Claude/Codex exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, user-owned Codex feature/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.

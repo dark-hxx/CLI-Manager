@@ -46,7 +46,7 @@ const SSH_CAPABILITIES: Omit<ProjectCapabilities, "environment"> = {
   terminal: true,
   splitTerminal: true,
   commandTemplates: true,
-  files: false,
+  files: true,
   git: false,
   worktree: false,
   history: true,

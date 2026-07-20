@@ -7,6 +7,7 @@ use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
 
+use crate::files::{FileListRequest, FileReadRequest, FileSearchRequest};
 use crate::history::{
     HistoryGetRequest, HistoryResumePreflightRequest, HistoryScopeRequest, HistorySearchRequest,
 };
@@ -265,7 +266,10 @@ fn capabilities() -> Value {
         "historySearch",
         "historyDetail",
         "historyDetailChunks",
-        "historyResumePreflight"
+        "historyResumePreflight",
+        "fileList",
+        "fileRead",
+        "fileSearch"
     ])
 }
 
@@ -411,6 +415,53 @@ pub fn run_bridge(
                         json!({ "code": "history_resume_request_invalid" }),
                     ),
                 };
+            write_frame(writer, &response)?;
+            continue;
+        }
+        if matches!(frame.kind.as_str(), "fileList" | "fileRead" | "fileSearch") {
+            let response = match frame.kind.as_str() {
+                "fileList" => match serde_json::from_value::<FileListRequest>(frame.payload) {
+                    Ok(request) => match crate::files::list(request) {
+                        Ok(entries) => {
+                            response(request_id, "response", json!({ "entries": entries }))
+                        }
+                        Err(code) => response(request_id, "error", json!({ "code": code })),
+                    },
+                    Err(_) => response(
+                        request_id,
+                        "error",
+                        json!({ "code": "remote_file_request_invalid" }),
+                    ),
+                },
+                "fileRead" => match serde_json::from_value::<FileReadRequest>(frame.payload) {
+                    Ok(request) => match crate::files::read(request) {
+                        Ok(result) => response(
+                            request_id,
+                            "response",
+                            serde_json::to_value(result).unwrap_or(Value::Null),
+                        ),
+                        Err(code) => response(request_id, "error", json!({ "code": code })),
+                    },
+                    Err(_) => response(
+                        request_id,
+                        "error",
+                        json!({ "code": "remote_file_request_invalid" }),
+                    ),
+                },
+                _ => match serde_json::from_value::<FileSearchRequest>(frame.payload) {
+                    Ok(request) => match crate::files::search(request) {
+                        Ok(entries) => {
+                            response(request_id, "response", json!({ "entries": entries }))
+                        }
+                        Err(code) => response(request_id, "error", json!({ "code": code })),
+                    },
+                    Err(_) => response(
+                        request_id,
+                        "error",
+                        json!({ "code": "remote_file_request_invalid" }),
+                    ),
+                },
+            };
             write_frame(writer, &response)?;
             continue;
         }
@@ -706,6 +757,9 @@ mod tests {
             "boundedBackpressure",
             "historyDetailChunks",
             "historyResumePreflight",
+            "fileList",
+            "fileRead",
+            "fileSearch",
         ] {
             assert!(frame.payload["capabilities"]
                 .as_array()

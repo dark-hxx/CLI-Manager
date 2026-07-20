@@ -307,7 +307,13 @@ impl SshAgentBridgeManager {
             || consumer_id.contains(['\0', '\r', '\n'])
             || !matches!(
                 kind,
-                "historySync" | "historySearch" | "historyGet" | "historyResumePreflight"
+                "historySync"
+                    | "historySearch"
+                    | "historyGet"
+                    | "historyResumePreflight"
+                    | "fileList"
+                    | "fileRead"
+                    | "fileSearch"
             )
         {
             return Err("ssh_agent_request_invalid".to_string());

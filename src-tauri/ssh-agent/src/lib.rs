@@ -1,3 +1,4 @@
+pub mod files;
 pub mod history;
 pub mod hook_config;
 pub mod hook_runtime;
@@ -12,7 +13,7 @@ pub const AGENT_VERSION: &str = match option_env!("CLI_MANAGER_SSH_AGENT_VERSION
     None => env!("CARGO_PKG_VERSION"),
 };
 pub const PROTOCOL_MAJOR: u16 = 1;
-pub const PROTOCOL_MINOR: u16 = 4;
+pub const PROTOCOL_MINOR: u16 = 5;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +50,7 @@ mod tests {
         let report = version_report();
         assert_eq!(report.agent_name, "cli-manager-ssh-agent");
         assert_eq!(report.protocol_major, 1);
-        assert_eq!(report.protocol_minor, 4);
+        assert_eq!(report.protocol_minor, 5);
     }
 
     #[test]
