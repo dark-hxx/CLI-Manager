@@ -8,6 +8,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::files::{FileListRequest, FileReadRequest, FileSearchRequest};
+use crate::git::GitRequest;
 use crate::history::{
     HistoryGetRequest, HistoryResumePreflightRequest, HistoryScopeRequest, HistorySearchRequest,
 };
@@ -269,7 +270,12 @@ fn capabilities() -> Value {
         "historyResumePreflight",
         "fileList",
         "fileRead",
-        "fileSearch"
+        "fileSearch",
+        "gitListRepositories",
+        "gitChanges",
+        "gitDiff",
+        "gitBranchStatus",
+        "gitBranches"
     ])
 }
 
@@ -461,6 +467,40 @@ pub fn run_bridge(
                         json!({ "code": "remote_file_request_invalid" }),
                     ),
                 },
+            };
+            write_frame(writer, &response)?;
+            continue;
+        }
+
+        if matches!(
+            frame.kind.as_str(),
+            "gitListRepositories" | "gitChanges" | "gitDiff" | "gitBranchStatus" | "gitBranches"
+        ) {
+            let request_id = frame.request_id.clone();
+            let response = match serde_json::from_value::<GitRequest>(frame.payload) {
+                Ok(request) => {
+                    let result = match frame.kind.as_str() {
+                        "gitListRepositories" => crate::git::list_repositories(request)
+                            .map(|repositories| json!({ "repositories": repositories, "asOf": crate::git::as_of_ms() })),
+                        "gitChanges" => crate::git::changes(request)
+                            .map(|changes| json!({ "changes": changes, "asOf": crate::git::as_of_ms() })),
+                        "gitDiff" => crate::git::diff(request)
+                            .map(|content| json!({ "content": content, "asOf": crate::git::as_of_ms() })),
+                        "gitBranchStatus" => crate::git::branch_status(request)
+                            .map(|status| json!({ "status": status, "asOf": crate::git::as_of_ms() })),
+                        _ => crate::git::branches(request)
+                            .map(|branches| json!({ "branches": branches, "asOf": crate::git::as_of_ms() })),
+                    };
+                    match result {
+                        Ok(payload) => response(request_id, "response", payload),
+                        Err(code) => response(request_id, "error", json!({ "code": code })),
+                    }
+                }
+                Err(_) => response(
+                    request_id,
+                    "error",
+                    json!({ "code": "remote_git_request_invalid" }),
+                ),
             };
             write_frame(writer, &response)?;
             continue;
@@ -760,6 +800,11 @@ mod tests {
             "fileList",
             "fileRead",
             "fileSearch",
+            "gitListRepositories",
+            "gitChanges",
+            "gitDiff",
+            "gitBranchStatus",
+            "gitBranches",
         ] {
             assert!(frame.payload["capabilities"]
                 .as_array()

@@ -18,7 +18,7 @@ const AGENT_ENV_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_ENV/1";
 const AGENT_OPERATION_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_OPERATION/1";
 const AGENT_HOOK_CONFIG_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_HOOK_CONFIG/1";
 const AGENT_PROTOCOL_MAJOR: u16 = 1;
-const AGENT_PROTOCOL_MINOR_REQUIRED: u16 = 5;
+const AGENT_PROTOCOL_MINOR_REQUIRED: u16 = 6;
 const MAX_AGENT_PROBE_BANNER_BYTES: usize = 8 * 1024;
 const MAX_AGENT_PROBE_REPORT_BYTES: usize = 64 * 1024;
 const MAX_AGENT_PROBE_STDERR_BYTES: usize = 8 * 1024;
@@ -2017,7 +2017,7 @@ mod tests {
 
     #[test]
     fn agent_probe_parser_allows_bounded_login_banner() {
-        let stdout = b"Welcome to server\nCLI_MANAGER_SSH_AGENT_PROBE/1 found\n/usr/bin/cli-manager-ssh-agent\n{\"version\":{\"agentName\":\"cli-manager-ssh-agent\",\"agentVersion\":\"0.1.0\",\"protocolMajor\":1,\"protocolMinor\":5,\"targetOs\":\"linux\",\"targetArch\":\"x86_64\"},\"supported\":true,\"code\":\"ok\"}\n";
+        let stdout = b"Welcome to server\nCLI_MANAGER_SSH_AGENT_PROBE/1 found\n/usr/bin/cli-manager-ssh-agent\n{\"version\":{\"agentName\":\"cli-manager-ssh-agent\",\"agentVersion\":\"0.1.0\",\"protocolMajor\":1,\"protocolMinor\":6,\"targetOs\":\"linux\",\"targetArch\":\"x86_64\"},\"supported\":true,\"code\":\"ok\"}\n";
         let ParsedAgentProbe::Report {
             install_path,
             report,
@@ -2028,7 +2028,7 @@ mod tests {
         assert_eq!(install_path, "/usr/bin/cli-manager-ssh-agent");
         let result = result_from_agent_report(install_path, report);
         assert_eq!(result.status, "installed");
-        assert_eq!(result.protocol_version, "1.5");
+        assert_eq!(result.protocol_version, "1.6");
         assert_eq!(result.target, "linux/x86_64");
     }
 

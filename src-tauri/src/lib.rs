@@ -996,6 +996,7 @@ pub fn run() {
             commands::ssh_files::ssh_remote_file_list,
             commands::ssh_files::ssh_remote_file_read,
             commands::ssh_files::ssh_remote_file_search,
+            commands::ssh_git::ssh_remote_git_request,
             commands::history::history_get_conversion_matrix,
             commands::history::history_refresh_index,
             commands::history::history_list_prompts,

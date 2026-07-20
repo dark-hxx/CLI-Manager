@@ -2435,6 +2435,7 @@ export function TerminalTabs({
   const panelSessionId = panelSession?.id ?? null;
   const panelProject = panelSession?.projectId ? projectById.get(panelSession.projectId) ?? null : null;
   const panelCapabilities = resolveProjectCapabilities(panelProject);
+  const panelGitSupported = panelCapabilities.git || panelProject?.environment_type === "ssh";
   const activeWorktree = useMemo(
     () => findWorktreeForSession(activeSession, sessions, worktrees),
     [activeSession, sessions, worktrees]
@@ -2640,13 +2641,13 @@ export function TerminalTabs({
   );
   const visibleSidePanelTabs = useMemo(
     () => TERMINAL_SIDE_PANEL_TAB_ORDER.filter((tab) => {
-      if (tab === "git") return terminalToolbarVisibility.gitChanges && panelCapabilities.git;
+      if (tab === "git") return terminalToolbarVisibility.gitChanges && panelGitSupported;
       if (tab === "stats") return terminalToolbarVisibility.stats && panelCapabilities.statistics;
       if (tab === "replay") return terminalToolbarVisibility.replay && panelCapabilities.history;
       if (tab === "files") return terminalToolbarVisibility.files && panelCapabilities.files;
       return terminalToolbarVisibility[tab];
     }),
-    [panelCapabilities.files, panelCapabilities.git, panelCapabilities.history, panelCapabilities.statistics, terminalToolbarVisibility]
+    [panelCapabilities.files, panelCapabilities.history, panelCapabilities.statistics, panelGitSupported, terminalToolbarVisibility]
   );
   const historyActive = historyOpen && activeWorkspaceTab === "history";
   const statsPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "stats" : statsOpen;
@@ -3066,7 +3067,7 @@ export function TerminalTabs({
       return;
     }
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
-    if (rejectUnsupportedCapability(project, "git")) return;
+    if (project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
     if (sidePanelMerged) {
       if (terminalSidePanelSingleOpen) {
         closeHistory();
@@ -3192,7 +3193,7 @@ export function TerminalTabs({
       });
       return;
     }
-    if (tab === "git" && rejectUnsupportedCapability(project, "git")) return;
+    if (tab === "git" && project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
     if (tab === "replay" && rejectUnsupportedCapability(project, "history")) return;
     setSidePanelTab(tab);
   }, [ensureStatsPanelAllowed, filePanelProject, panelSession, projectById, rejectUnsupportedCapability, syncFilePanelProject]);
@@ -4275,6 +4276,7 @@ export function TerminalTabs({
               visibleTabs={visibleSidePanelTabs}
               activeSessionId={panelSessionId}
               projectPath={sidePanelProjectPath}
+              projectId={panelSession?.projectId}
               filesTabDisabled={!filePanelProject}
               systemResourcesEnabled
               filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
@@ -4294,7 +4296,7 @@ export function TerminalTabs({
                   </Suspense>
                 </ResizableTerminalPanelFrame>
               )}
-              {gitOpen && panelCapabilities.git && (
+              {gitOpen && panelGitSupported && (
                 <ResizableTerminalPanelFrame
                   widthKey="git"
                   defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.git}
@@ -4302,7 +4304,7 @@ export function TerminalTabs({
                   resizeTitle={t("terminal.panel.resizeGitTitle")}
                 >
                   <Suspense fallback={null}>
-                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} embedded />
+                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} projectId={panelSession?.projectId} embedded />
                   </Suspense>
                 </ResizableTerminalPanelFrame>
               )}

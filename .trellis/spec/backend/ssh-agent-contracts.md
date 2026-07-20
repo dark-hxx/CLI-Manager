@@ -4,7 +4,7 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and one reusable daemon-owned protocol `1.5` bridge per active SSH Host. The protocol 1.5 file RPCs are read-only; Git and realtime/historical stats remain separate stages.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and one reusable daemon-owned protocol `1.6` bridge per active SSH Host. Protocol 1.5 file RPCs and protocol 1.6 Git RPCs are read-only; realtime/historical stats remain separate stages.
 
 ## 2. Signatures
 

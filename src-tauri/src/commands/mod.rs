@@ -20,6 +20,7 @@ pub mod shell;
 pub mod ssh;
 pub mod ssh_config;
 pub mod ssh_files;
+pub mod ssh_git;
 pub mod subagent_transcript;
 pub mod sync;
 pub mod system_notification;

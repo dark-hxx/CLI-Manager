@@ -185,8 +185,14 @@ Final evidence: Agent tests `51 passed`; Agent Clippy with `-D warnings`; focuse
 
 ### S09 Read-only remote Git panel
 
-- [ ] Implement repository discovery, status, diff, branches, upstream, ahead/behind, and `asOf`.
-- [ ] Use stable repo IDs and hard-reject mutation, network, credentials, Worktree, external diff, and textconv.
+- [x] Implement protocol 1.6 repository discovery, NUL status, bounded diff, branches, upstream, ahead/behind, and `asOf` snapshots through the Agent bridge.
+- [x] Use stable relative repo IDs; fixed Git allowlist disables optional locks, fsmonitor, external diff, textconv, network, credentials, Worktree, and all store/UI mutations.
+
+#### S09 Review Log
+
+1. Added Agent Git RPCs with root/repository confinement, NUL status parsing, bounded diff, branch/upstream data, and timestamped snapshots.
+2. Added remote Git bridge commands, provider routing, a read-only Git panel with repository selector and diff viewer, and store-level mutation guards.
+3. Final focused evidence: Agent tests `58 passed`; Agent Clippy with `-D warnings`; desktop tests `620 passed, 1 ignored`; `npx tsc --noEmit`; `git diff --check`.
 
 ### S10 Stats, docs, security and release verification
 

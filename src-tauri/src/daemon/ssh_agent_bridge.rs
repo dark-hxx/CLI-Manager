@@ -314,6 +314,11 @@ impl SshAgentBridgeManager {
                     | "fileList"
                     | "fileRead"
                     | "fileSearch"
+                    | "gitListRepositories"
+                    | "gitChanges"
+                    | "gitDiff"
+                    | "gitBranchStatus"
+                    | "gitBranches"
             )
         {
             return Err("ssh_agent_request_invalid".to_string());
