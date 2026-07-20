@@ -1,5 +1,6 @@
 import type { Project } from "./types";
 import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject } from "./providerSwitching";
+import { stripResumeCliArgs } from "./resumeCliArgs";
 import { normalizeShellKey } from "./shell";
 
 const CODEX_PROFILE_ARG = "--profile";
@@ -114,6 +115,6 @@ export function appendResumeCliArgs(
   const matchesSource = source === "codex" ? isExactCodexProject(project) : getProviderSwitchAppType(project) === "claude";
   if (!matchesSource) return baseCommand;
 
-  const cliArgs = project.cli_args.trim();
+  const cliArgs = stripResumeCliArgs(project.cli_args);
   return appendProviderOverrideArgs(cliArgs ? `${baseCommand} ${cliArgs}` : baseCommand, project);
 }

@@ -374,3 +374,28 @@
 
 - 本机没有 WSL，无法原样复现用户报告的 10GB 峰值；本次修复切断了已定位的持续 IPC/渲染放大链并为资源解码建立上界，但发布前仍建议在反馈环境执行至少 2 小时 WSL 持续输出 soak test，分别记录桌宠 renderer、主 renderer 和 GPU 进程的 Private Working Set。
 - 本次未生成安装包、未启动或停止用户安装目录中的 CLI-Manager/cc-connect，也未 push。
+
+## 停止远程托管后重复 Resume 参数修复（2026-07-20）
+
+### 根因陈述与发现清单
+
+- 根因位于“项目持久化 CLI 参数 → 公共会话恢复命令”的数据边界：保存到侧栏的项目会把旧 Session 的 `resume` 片段写入 `cli_args`，而远程托管取消、工作区恢复和历史恢复又为目标 Session 构造新的 resume 命令；旧实现无条件继承 `cli_args`，因此一条命令中出现两个 Session ID。
+- 新增共享 `stripResumeCliArgs`，在 fresh resume 链路继承项目参数前移除 Codex/Claude 已有的 `resume <id>`、`resume --no-alt-screen <id>`、`resume --last`、`--resume <id>` 和 `--continue`，保留模型、沙箱、Provider 等普通参数。
+- `appendResumeCliArgs` 已接入共享清理，覆盖远程托管取消后的本地恢复、工作区恢复和历史会话恢复；`buildResumeCliArgs` 复用同一规则，避免重新保存侧栏会话时规则漂移。
+- 已确认无需修改：`terminalStore.resumeSessionFromRemoteHandoff`、`buildCliResumeStartupCommand`、`HistoryWorkspace` 调用入口、`resolveProjectStartupCommand` 的正常侧栏启动行为、Rust 托管后端、cc-connect 源码与平台协议。
+- GitNexus 工具在当前会话未暴露；已降级使用 codebase-memory 调用链追踪、契约、`rg`、源码和 Git diff。公共 `appendResumeCliArgs` 的影响分析为 CRITICAL，直接覆盖历史恢复和终端恢复主流程。
+
+### 场景覆盖
+
+- 多会话/不同 Session ID：新目标 ID 保留且只出现一次，项目中旧 ID 被移除；Provider profile 只追加一次。
+- 项目来源：普通项目参数、保存到侧栏的项目、重复保存的项目、Worktree 继承参数均走同一清理规则。
+- CLI/环境：Codex 与 Claude 均覆盖；PowerShell/CMD/Pwsh、WSL/Bash 的 shell 包装位于此纯参数处理之外，不改变去重结果。
+- 窗口焦点、分屏、最小化/托盘和 Hook 安装状态不参与命令构造，确认与本问题无关。
+
+### 验证结果
+
+- `node scripts/resumeCliArgs.test.mjs`：4 项通过，包含用户此次精确的 `fresh resume + cli_args 中旧 resume` 场景、两种 Codex 格式、Claude resume/continue、普通参数保留和 Provider 单次追加。
+- `.\node_modules\.bin\tsc.cmd --noEmit`：通过。
+- `npm run build`：通过，Vite 完成 6673 个模块转换。
+- `git diff --check`：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- 本次未生成安装包，未启动/停止用户安装目录中的 CLI-Manager 或 cc-connect，也未 push。

@@ -152,6 +152,7 @@ if (useProjectStore.getState().projects.length > 0) {
 - Match maintained projects by history `cwd` first, then by `project_key`, and require the project's CLI type to match the history source.
 - One candidate resumes directly; multiple candidates require explicit selection; cancel creates no terminal.
 - The selected project supplies `cli_args`, provider overrides, environment variables, shell, and Worktree overrides.
+- Existing session-selection fragments in project `cli_args` must be removed before the selected history session's resume command is built; ordinary CLI arguments and Provider overrides remain in effect.
 - Zero matching candidates must show all maintained projects plus a localized `Use New Window` option instead of stopping with an error.
 - `Use New Window` creates an unscoped internal terminal with the resolved history working directory as PTY `cwd`, then runs the bare resume command without project CLI arguments.
 - If no working directory can be resolved, stop with a localized error and create no terminal.
@@ -177,6 +178,7 @@ if (useProjectStore.getState().projects.length > 0) {
 ### 6. Tests Required
 
 - Run `npx tsc --noEmit`.
+- Run `node scripts/resumeCliArgs.test.mjs`.
 - Manually verify detail and context-menu resume for Claude/Codex, one/multiple/no candidates, picker cancel, Local/WSL/Bash, and main project/Worktree.
 - Switch between `zh-CN` and `en-US` and verify picker, aria labels, and errors.
 
