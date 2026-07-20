@@ -7,7 +7,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
 import { Accordion, ActionIcon, Badge, Box, Button, Card, Checkbox, ColorSwatch, Group, NumberInput, ScrollArea, SegmentedControl, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Bot, Braces, Download, GripVertical, Plus, RefreshCw, Save, Trash2, Upload } from "lucide-react";
-import { useI18n } from "@/lib/i18n";
+import { pickByLanguage, useI18n } from "@/lib/i18n";
 import { normalizeTerminalFontFamily } from "@/lib/terminalFontFamily";
 import {
   STATUSLINE_PREVIEW_PAYLOAD,
@@ -403,7 +403,7 @@ function ClaudeStatuslineEditor({
 
   const draggingCatalogEntry = draggingCatalogType ? catalog.find((entry) => entry.widgetType === draggingCatalogType) : null;
   const draggingCatalogLabel = draggingCatalogEntry
-    ? (language === "zh-CN" ? draggingCatalogEntry.zhName : draggingCatalogEntry.enName)
+    ? pickByLanguage(language, draggingCatalogEntry.zhName, draggingCatalogEntry.enName)
     : draggingCatalogType;
 
   if (!settings) return <Text c="var(--on-surface-variant)">{t("settings.statusline.loading")}</Text>;
@@ -475,7 +475,7 @@ function ClaudeStatuslineEditor({
                     <Accordion.Panel>
                       <Stack gap={6}>
                         {entries.map((entry) => {
-                          const title = language === "zh-CN" ? entry.zhName : entry.enName;
+                          const title = pickByLanguage(language, entry.zhName, entry.enName);
                           return (
                             <CatalogWidgetItem
                               key={entry.widgetType}
@@ -507,7 +507,7 @@ function ClaudeStatuslineEditor({
                     <Group gap={6} align="stretch">
                       {line.map((item) => {
                         const entry = catalog.find((candidate) => candidate.widgetType === item.type);
-                        const label = entry ? (language === "zh-CN" ? entry.zhName : entry.enName) : item.type;
+                        const label = entry ? pickByLanguage(language, entry.zhName, entry.enName) : item.type;
                         return <SortableWidgetChip key={item.id} item={item} label={label} selected={selectedId === item.id} removeLabel={t("settings.statusline.removeComponent").replace("{name}", label)} onSelect={() => { setSelectedId((current) => current === item.id ? null : item.id); setActiveLineIndex(lineIndex); }} onRemove={() => removeWidget(item.id)} />;
                       })}
                       {line.length === 0 && <Text size="xs" c="var(--on-surface-variant)">{t("settings.statusline.dropHere")}</Text>}

@@ -25,6 +25,7 @@ pub const FEATURE_WS_BINARY_INPUT: &str = "ws_binary_input_v1";
 pub const FEATURE_CHECKPOINT_REPLAY: &str = "checkpoint_replay_v1";
 pub const FEATURE_PIXEL_RESIZE: &str = "pixel_resize_v1";
 pub const FEATURE_PROCESS_TRAITS: &str = "process_traits_v1";
+pub const FEATURE_TERMINAL_COLORS: &str = "terminal_colors_v1";
 
 pub fn supported_features() -> Vec<String> {
     [
@@ -33,6 +34,7 @@ pub fn supported_features() -> Vec<String> {
         FEATURE_CHECKPOINT_REPLAY,
         FEATURE_PIXEL_RESIZE,
         FEATURE_PROCESS_TRAITS,
+        FEATURE_TERMINAL_COLORS,
     ]
     .into_iter()
     .map(str::to_string)
@@ -63,6 +65,13 @@ pub enum ClientFrame {
         shell: Option<String>,
         #[serde(default)]
         ssh_launch: Option<SshLaunchPlan>,
+        #[serde(default)]
+        terminal_colors: Option<TerminalColorSpec>,
+    },
+    SetTerminalColors {
+        id: u64,
+        session_id: String,
+        terminal_colors: TerminalColorSpec,
     },
     Write {
         id: u64,
@@ -116,6 +125,12 @@ pub enum ClientFrame {
     Shutdown {
         id: u64,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalColorSpec {
+    pub foreground: String,
+    pub background: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -452,6 +467,7 @@ const CLIENT_FRAME_TYPES: &[&str] = &[
     "ping",
     "list",
     "create",
+    "set_terminal_colors",
     "write",
     "ack",
     "resize",
@@ -525,6 +541,7 @@ mod tests {
                 port: 22,
                 username: "dev".into(),
                 config_alias: String::new(),
+                config_file: String::new(),
                 auth_mode: "agent".into(),
                 identity_file: String::new(),
                 credential_ref: String::new(),
@@ -548,6 +565,10 @@ mod tests {
                 initialization_command: None,
                 startup_command: Some("codex".into()),
             }),
+            terminal_colors: Some(TerminalColorSpec {
+                foreground: "#D3D7CF".into(),
+                background: "#000000".into(),
+            }),
         };
         assert_eq!(
             decode_client_frame(encode_frame(&frame).trim_end()).unwrap(),
@@ -562,6 +583,7 @@ mod tests {
             legacy,
             ClientFrame::Create {
                 ssh_launch: None,
+                terminal_colors: None,
                 ..
             }
         ));

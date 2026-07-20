@@ -35,28 +35,27 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 
 **Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalResizeDebouncer.test.mjs scripts/terminalResizeRenderBarrier.test.mjs scripts/terminalReflowPolicy.test.mjs`; manually verify background output, reconnect replay, rapid split/fullscreen shrink, transparent terminal backgrounds, IME, WebGL fallback, and no duplicate output after daemon reconnect.
 
-### Convention: Replay normalization has no PTY input side effects
+### Convention: OSC color-query normalization has no frontend PTY side effects
 
-**What**: OSC 10/11 color queries may be answered only while processing live PTY output. Replay must remove these queries from the display stream without writing a response to the current PTY. Multiple live color queries received in one output batch are combined into one ordered write.
+**What**: Rust PTY owns live OSC 10/11 replies. Frontend normalization only removes residual queries from live, replay, and restored display text; it must not import the process manager or write a reply.
 
-**Why**: Replay contains historical terminal output. Re-executing its terminal queries injects stale OSC responses into the current CLI input state; separate asynchronous replies also increase the chance that a short-lived terminal probe has already switched to its composer.
+**Why**: A WebView → daemon → PTY round trip can exceed a CLI's short terminal-probe window. The late response is then parsed as user input. Replay is historical output and must also remain side-effect free.
 
 **Correct**:
 
 ```ts
-normalizeOutput(rawText, {
-  replyToColorQueries: frame.kind === "output",
-});
+const text = normalizeTerminalOutput(rawText);
 ```
 
 **Wrong**:
 
 ```ts
-// Historical queries must not produce live input.
-normalizeOutput(replayText);
+terminalProcessManager.write(sessionId, colorReply);
 ```
 
-**Tests**: Run `node --test scripts/terminalOsc.test.mjs`; assert live OSC 10/11 queries produce one combined write and replay queries produce no write.
+**Contracts**: See [Terminal OSC Color Contracts](../backend/terminal-osc-color-contracts.md) for protocol, validation, local/WSL/SSH behavior, and required tests.
+
+**Tests**: Run `node --test scripts/terminalOsc.test.mjs`; assert both live and replay queries are filtered and `useTerminalOsc.ts` contains no `terminalProcessManager.write` or `replyToColorQueries` path.
 
 > How components are built in this project.
 
@@ -72,9 +71,9 @@ normalizeOutput(replayText);
 
 ### Convention: User-facing app shell text goes through `useI18n`
 
-**What**: New or changed user-facing labels, button text, menu text, aria labels, tooltips, settings titles, empty states, toast messages, OS notifications, stats/history text, and hook-notification script text must use `src/lib/i18n.ts` through `useI18n()` or `translateCurrent()` instead of hard-coded Chinese/English strings. Persisted language preference lives in `settingsStore.language` as `"auto" | "zh-CN" | "en-US"`.
+**What**: New or changed user-facing labels, button text, menu text, aria labels, tooltips, settings titles, empty states, toast messages, OS notifications, stats/history text, and hook-notification script text must use `src/lib/i18n.ts` through `useI18n()` or `translateCurrent()` instead of hard-coded Chinese/English strings. Persisted language preference lives in `settingsStore.language` as `"auto" | "zh-CN" | "zh-TW" | "en-US"`.
 
-**Why**: Language switching must be consistent across visible shell UI. Keeping translation keys in one local module avoids adding an i18n dependency while the app only supports Simplified Chinese and English.
+**Why**: Language switching must be consistent across visible shell UI. Keeping translation keys in one local module avoids adding a heavyweight i18n dependency while the app supports Simplified Chinese, Traditional Chinese, and English.
 
 **Correct**:
 
@@ -96,13 +95,14 @@ const { t } = useI18n();
 
 - Use `language: "auto"` as the default; resolve it from WebView/browser locale.
 - Set document language from the resolved language in `App`.
-- Add both `zh-CN` and `en-US` entries for every new translation key.
-- Treat i18n as part of every frontend requirement, not as a later cleanup. If a task adds UI, tooltip, notification, history, stats, settings, or hook-facing copy, the task is incomplete until both languages work.
+- Add both `zh-CN` and `en-US` entries for every new translation key; `zh-TW` is generated from `zh-CN` unless a task explicitly needs a Traditional Chinese override.
+- Treat i18n as part of every frontend requirement, not as a later cleanup. If a task adds UI, tooltip, notification, history, stats, settings, or hook-facing copy, the task is incomplete until all supported languages work, including `zh-TW`.
 - For non-React event paths, background callbacks, and hook notification handlers, use `translateCurrent()` so messages still follow the persisted language outside render scope.
+- When inline code needs to choose between Chinese and English copy, route it through `pickByLanguage()` so `zh-TW` resolves to converted Traditional Chinese instead of falling back to Simplified Chinese or English.
 - Keep clock-only times in 24-hour format by passing `hour12: false` when formatting with `toLocaleTimeString`; switching to English must not turn `15:31` into `03:31`.
 - Do not introduce a third-party i18n library without an explicit dependency-change decision.
 
-**Tests**: Run `npx tsc --noEmit` and `npm run build`; manually verify Settings > General language switching changes the touched UI and persists after restart. Smoke-test hover cards/tooltips, right-side action buttons, session history, stats panels, toast/system notifications, and hook notifications when those areas are touched.
+**Tests**: Run `npx tsc --noEmit` and `npm run build`; manually verify Settings > General language switching changes the touched UI and persists after restart across `zh-CN`, `zh-TW`, and `en-US`. Smoke-test hover cards/tooltips, right-side action buttons, session history, stats panels, toast/system notifications, and hook notifications when those areas are touched.
 
 ### Convention: Text input and confirmation prompts use themed application dialogs
 

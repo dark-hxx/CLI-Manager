@@ -1,17 +1,20 @@
 import { useMemo, useState } from "react";
+import { convertChineseForLanguage, getLanguageLocale, useI18n } from "../../lib/i18n";
 import type { HistoryStatsSourceItem } from "../../lib/types";
 
 interface StatsSourceComparisonChartProps {
   items: HistoryStatsSourceItem[];
 }
 
-function formatCount(value: number): string {
+function formatCount(value: number, language: "zh-CN" | "zh-TW" | "en-US"): string {
   if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat(getLanguageLocale(language)).format(value);
 }
 
 export function StatsSourceComparisonChart({ items }: StatsSourceComparisonChartProps) {
+  const { language } = useI18n();
   const [activeSource, setActiveSource] = useState<string | null>(null);
+  const zh = (text: string) => convertChineseForLanguage(language, text);
 
   const maxValue = useMemo(() => {
     if (items.length === 0) return 1;
@@ -32,17 +35,17 @@ export function StatsSourceComparisonChart({ items }: StatsSourceComparisonChart
   return (
     <div className="rounded-md border border-border bg-bg-secondary p-3">
       <div className="mb-2 flex items-center gap-2">
-        <div className="text-xs font-semibold text-text-primary">来源对比（C8）</div>
+        <div className="text-xs font-semibold text-text-primary">{zh("来源对比（C8）")}</div>
         <div className="ml-auto text-[11px] text-text-secondary">
           {active
-            ? `${active.source} · 输入 ${formatCount(active.input_tokens)} · 输出 ${formatCount(active.output_tokens)}`
-            : "暂无来源数据"}
+            ? `${active.source} · ${zh("输入")} ${formatCount(active.input_tokens, language)} · ${zh("输出")} ${formatCount(active.output_tokens, language)}`
+            : zh("暂无来源数据")}
         </div>
       </div>
 
       {items.length === 0 && (
         <div className="py-8 text-center text-[11px] text-text-muted">
-          当前过滤条件下没有来源分布数据
+          {zh("当前过滤条件下没有来源分布数据")}
         </div>
       )}
 
@@ -51,11 +54,11 @@ export function StatsSourceComparisonChart({ items }: StatsSourceComparisonChart
           <div className="mb-1 flex items-center gap-3 text-[10px] text-text-muted">
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "var(--accent)" }} />
-              会话
+              {zh("会话")}
             </span>
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "#4F8DFF" }} />
-              消息
+              {zh("消息")}
             </span>
           </div>
 
@@ -77,7 +80,7 @@ export function StatsSourceComparisonChart({ items }: StatsSourceComparisonChart
                   <div className="mb-1 flex items-center justify-between text-[11px]">
                     <span className="text-text-secondary">{item.source}</span>
                     <span className="text-text-muted">
-                      {formatCount(item.sessions)} 会话 / {formatCount(item.messages)} 消息
+                      {formatCount(item.sessions, language)} {zh("会话")} / {formatCount(item.messages, language)} {zh("消息")}
                     </span>
                   </div>
 

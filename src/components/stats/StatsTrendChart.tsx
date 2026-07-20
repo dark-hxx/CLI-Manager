@@ -1,4 +1,5 @@
 import { memo, useMemo, useState } from "react";
+import { convertChineseForLanguage, getLanguageLocale, useI18n, type AppLanguage } from "../../lib/i18n";
 import type { HistoryStatsHeatmapDay } from "../../lib/types";
 
 type TrendMetric = "sessions" | "messages";
@@ -18,15 +19,18 @@ interface ChartPoint {
   messagesY: number;
 }
 
-const DAY_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  weekday: "short",
-});
+function formatCount(value: number, language: AppLanguage): string {
+  if (!Number.isFinite(value)) return "0";
+  return new Intl.NumberFormat(getLanguageLocale(language)).format(value);
+}
 
-function formatDayLabel(dayStartUtc: number): string {
+function formatDayLabel(dayStartUtc: number, language: AppLanguage): string {
   if (!Number.isFinite(dayStartUtc) || dayStartUtc <= 0) return "-";
-  return DAY_FORMATTER.format(new Date(dayStartUtc));
+  return new Intl.DateTimeFormat(getLanguageLocale(language), {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).format(new Date(dayStartUtc));
 }
 
 function linePath(points: ChartPoint[], key: PointKey): string {
@@ -47,8 +51,10 @@ function areaPath(points: ChartPoint[], baselineY: number, key: PointKey): strin
 export const StatsTrendChart = memo(StatsTrendChartImpl);
 
 function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrendChartProps) {
+  const { language } = useI18n();
   const [hoverDayStart, setHoverDayStart] = useState<number | null>(null);
   const [visible, setVisible] = useState({ sessions: true, messages: true });
+  const zh = (text: string) => convertChineseForLanguage(language, text);
   const chartHeight = 228;
   const paddingX = 18;
   const paddingTop = 14;
@@ -109,9 +115,9 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
   if (days.length === 0) {
     return (
       <div className="rounded-md border border-border bg-bg-secondary p-3">
-        <div className="mb-2 text-xs font-semibold text-text-primary">日趋势（会话 / 消息）</div>
+        <div className="mb-2 text-xs font-semibold text-text-primary">{zh("日趋势（会话 / 消息）")}</div>
         <div className="py-9 text-center text-[11px] text-text-muted">
-          当前过滤条件下暂无趋势数据
+          {zh("当前过滤条件下暂无趋势数据")}
         </div>
       </div>
     );
@@ -120,7 +126,7 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
   return (
     <div className="rounded-md border border-border bg-bg-secondary p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <div className="text-xs font-semibold text-text-primary">日趋势（C1/C2）</div>
+        <div className="text-xs font-semibold text-text-primary">{zh("日趋势（C1/C2）")}</div>
         <button
           type="button"
           className="ui-btn px-2 py-0.5 text-[11px]"
@@ -130,7 +136,7 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
           }}
           onClick={() => toggleMetric("sessions")}
         >
-          会话
+          {zh("会话")}
         </button>
         <button
           type="button"
@@ -141,10 +147,10 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
           }}
           onClick={() => toggleMetric("messages")}
         >
-          消息
+          {zh("消息")}
         </button>
         <div className="ml-auto text-[11px] text-text-secondary">
-          {activeDay ? `${formatDayLabel(activeDay.day_start_utc)} · ${activeDay.sessions} 会话 · ${activeDay.messages} 消息` : "-"}
+          {activeDay ? `${formatDayLabel(activeDay.day_start_utc, language)} · ${formatCount(activeDay.sessions, language)} ${zh("会话")} · ${formatCount(activeDay.messages, language)} ${zh("消息")}` : "-"}
         </div>
       </div>
 
@@ -158,7 +164,7 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
           height={chartHeight}
           viewBox={`0 0 ${chart.width} ${chartHeight}`}
           className="block"
-          aria-label="日会话与消息趋势图"
+          aria-label={zh("日会话与消息趋势图")}
           role="img"
         >
           {[0, 1, 2, 3].map((step) => {
@@ -176,7 +182,7 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
                   strokeWidth="1"
                 />
                 <text x={paddingX + 2} y={y - 2} fill="var(--text-muted)" fontSize="10">
-                  {value}
+                  {formatCount(value, language)}
                 </text>
               </g>
             );
@@ -213,7 +219,7 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
             return (
               <g key={point.day.day_start_utc}>
                 <title>
-                  {`${formatDayLabel(point.day.day_start_utc)} · ${point.day.sessions} 会话 · ${point.day.messages} 消息`}
+                  {`${formatDayLabel(point.day.day_start_utc, language)} · ${formatCount(point.day.sessions, language)} ${zh("会话")} · ${formatCount(point.day.messages, language)} ${zh("消息")}`}
                 </title>
                 {visible.sessions && (
                   <circle
@@ -244,7 +250,7 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
                   role="button"
                   tabIndex={0}
                   style={{ cursor: "pointer" }}
-                  aria-label={`${formatDayLabel(point.day.day_start_utc)}，${point.day.sessions} 会话，${point.day.messages} 消息`}
+                  aria-label={`${formatDayLabel(point.day.day_start_utc, language)}，${formatCount(point.day.sessions, language)} ${zh("会话")}，${formatCount(point.day.messages, language)} ${zh("消息")}`}
                   data-day-index={point.index}
                   onMouseEnter={() => setHoverDayStart(point.day.day_start_utc)}
                   onFocus={() => setHoverDayStart(point.day.day_start_utc)}
@@ -275,8 +281,8 @@ function StatsTrendChartImpl({ days, selectedDayStart, onSelectDay }: StatsTrend
       </div>
 
       <div className="mt-1.5 flex items-center justify-between text-[10px] text-text-muted">
-        <span>{formatDayLabel(days[0]?.day_start_utc ?? 0)}</span>
-        <span>{formatDayLabel(days[days.length - 1]?.day_start_utc ?? 0)}</span>
+        <span>{formatDayLabel(days[0]?.day_start_utc ?? 0, language)}</span>
+        <span>{formatDayLabel(days[days.length - 1]?.day_start_utc ?? 0, language)}</span>
       </div>
       <div className="mt-1 text-[10px] text-text-muted">
         鼠标悬停查看详情，点击或回车下钻到当天会话

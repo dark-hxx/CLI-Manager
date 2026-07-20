@@ -281,12 +281,20 @@ pub fn history_sources_list_descriptors() -> Vec<HistorySourceDescriptor> {
 }
 
 #[tauri::command]
-pub fn history_sources_detect(source_id: Option<String>) -> Result<Vec<HistorySourceCandidate>, String> {
+pub fn history_sources_detect(
+    source_id: Option<String>,
+) -> Result<Vec<HistorySourceCandidate>, String> {
     let home = home_dir().ok_or_else(|| "home_dir_unavailable".to_string())?;
-    let source_id = source_id.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let source_id = source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let mut candidates = Vec::new();
 
-    for spec in SOURCES.iter().filter(|spec| source_id.is_none_or(|id| id == spec.id)) {
+    for spec in SOURCES
+        .iter()
+        .filter(|spec| source_id.is_none_or(|id| id == spec.id))
+    {
         let path = default_candidate_path(spec, &home);
         if candidate_exists(&path, spec.location.kind) {
             candidates.push(HistorySourceCandidate {
@@ -299,7 +307,10 @@ pub fn history_sources_detect(source_id: Option<String>) -> Result<Vec<HistorySo
         }
     }
 
-    if source_id.is_some() && candidates.is_empty() && !SOURCES.iter().any(|spec| Some(spec.id) == source_id) {
+    if source_id.is_some()
+        && candidates.is_empty()
+        && !SOURCES.iter().any(|spec| Some(spec.id) == source_id)
+    {
         return Err("history_source_unknown".to_string());
     }
 
@@ -338,7 +349,10 @@ fn default_candidate_path(spec: &SourceSpec, home: &Path) -> PathBuf {
 pub fn history_sources_validate(
     request: HistorySourceValidateRequest,
 ) -> Result<HistorySourceValidateResult, String> {
-    let Some(spec) = SOURCES.iter().find(|spec| spec.id == request.source_id.trim()) else {
+    let Some(spec) = SOURCES
+        .iter()
+        .find(|spec| spec.id == request.source_id.trim())
+    else {
         return Err("history_source_unknown".to_string());
     };
 

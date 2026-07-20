@@ -6,6 +6,7 @@ import {
   CircleAlert,
   Folder,
   FolderPlus,
+  Import as ImportIcon,
   Pencil,
   Plug,
   Plus,
@@ -26,12 +27,13 @@ import { useAppConfirm } from "../../ui/useAppConfirm";
 import { useAppPrompt } from "../../ui/useAppPrompt";
 import { SshHostEditor } from "./SshHostEditor";
 import { SshCliIntegrationDialog } from "./SshCliIntegrationDialog";
+import { SshConfigImportDialog } from "./SshConfigImportDialog";
 
 interface Props { searchValue: string; onTerminalOpened?: () => void }
 interface SshClientStatus { available: boolean; version: string | null; error: string | null }
 interface SshConnectionTestResult { success: boolean; stages: Array<{ key: string; status: string; detail: string }> }
 const EMPTY_FORM: CreateSshHostInput = {
-  name: "", group_name: "", host: "", port: 22, username: "", config_alias: "",
+  name: "", group_name: "", host: "", port: 22, username: "", config_alias: "", config_file: "",
   auth_mode: "credential_ref", identity_file: "", jump_mode: "none", jump_host_id: null,
   proxy_type: "none", proxy_host: "", proxy_port: 0, proxy_command: "",
   connect_timeout_sec: 15, server_alive_interval_sec: 30, server_alive_count_max: 3,
@@ -59,6 +61,8 @@ const ERROR_LABELS: Record<string, TranslationKey> = {
   ssh_group_name_duplicate: "settings.sshHosts.error.groupNameDuplicate",
   ssh_group_parent_not_found: "settings.sshHosts.error.groupParentNotFound",
   ssh_group_schema_unavailable: "settings.sshHosts.error.groupSchemaUnavailable",
+  ssh_config_file_invalid: "settings.sshHosts.import.error.configFileInvalid",
+  ssh_config_file_not_found: "settings.sshHosts.import.error.configFileUnavailable",
 };
 
 function formFromHost(host: SshHost): CreateSshHostInput { return { ...host }; }
@@ -66,7 +70,7 @@ function formFromHost(host: SshHost): CreateSshHostInput { return { ...host }; }
 function hostFromForm(form: CreateSshHostInput, id: string): SshHost {
   return {
     id, name: form.name, group_name: form.group_name ?? "", group_id: form.group_id ?? null, host: form.host ?? "", port: form.port ?? 22,
-    username: form.username ?? "", config_alias: form.config_alias ?? "", auth_mode: form.auth_mode ?? "ssh_config",
+    username: form.username ?? "", config_alias: form.config_alias ?? "", config_file: form.config_file ?? "", auth_mode: form.auth_mode ?? "ssh_config",
     identity_file: form.identity_file ?? "", credential_ref: form.credential_ref ?? "", jump_mode: form.jump_mode ?? "none",
     jump_host_id: form.jump_host_id ?? null, proxy_type: form.proxy_type ?? "none", proxy_host: form.proxy_host ?? "",
     proxy_port: form.proxy_port ?? 0, proxy_command: form.proxy_command ?? "", connect_timeout_sec: form.connect_timeout_sec ?? 15,
@@ -109,6 +113,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
   const [password, setPassword] = useState("");
   const [credentialStored, setCredentialStored] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     void fetchHosts();
@@ -315,7 +320,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
           {client?.available ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <CircleAlert className="h-5 w-5 text-warning" />}
           <div><div className="text-sm font-bold text-text-primary">{t("settings.sshHosts.openSsh")}</div><div className="text-xs text-text-muted">{client?.available ? client.version : t("settings.sshHosts.openSshMissing")}</div></div>
         </div>
-        <div className="flex items-center gap-2"><button className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold" onClick={() => void addGroup(null)}><FolderPlus className="h-4 w-4" />{t("settings.sshHosts.groupAdd")}</button><button className="ui-button-primary flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold" onClick={() => openCreate(null)}><Plus className="h-4 w-4" />{t("settings.sshHosts.add")}</button></div>
+        <div className="flex items-center gap-2"><button className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold" onClick={() => void addGroup(null)}><FolderPlus className="h-4 w-4" />{t("settings.sshHosts.groupAdd")}</button><button className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold" onClick={() => setImportOpen(true)}><ImportIcon className="h-4 w-4" />{t("settings.sshHosts.import.action")}</button><button className="ui-button-primary flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold" onClick={() => openCreate(null)}><Plus className="h-4 w-4" />{t("settings.sshHosts.add")}</button></div>
       </div>
       <div className="overflow-hidden rounded-2xl border border-border bg-surface-lowest">
         {!loaded ? <div className="p-8 text-center text-sm text-text-muted">{t("common.loading")}</div> : filteredHosts.length === 0 && groups.length === 0 ? (
@@ -324,6 +329,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
       </div>
       {visibleLoadError && <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">{visibleLoadError}</div>}
       {visibleError && !editorOpen && <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{visibleError}</div>}
+      <SshConfigImportDialog open={importOpen} hosts={hosts} groups={groups} onOpenChange={setImportOpen} />
       <SshHostEditor
         open={editorOpen}
         editingId={editingId}

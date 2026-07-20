@@ -51,6 +51,7 @@
     "ignore": "^7.0.6",
     "lucide-react": "^0.577.0",
     "monaco-editor": "^0.55.1",
+    "opencc-js": "^1.4.1",
     "react": "^19.1.0",
     "react-diff-view": "^3.3.3",
     "react-dom": "^19.1.0",

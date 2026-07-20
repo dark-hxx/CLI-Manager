@@ -24,7 +24,7 @@ import {
 import { backgroundAssetUrl } from "../../../lib/assetUrl";
 import { formatFileSize } from "../../../lib/utils";
 import { logError } from "../../../lib/logger";
-import { useI18n } from "../../../lib/i18n";
+import { pickByLanguage, useI18n } from "../../../lib/i18n";
 import { useAppConfirm } from "@/components/ui/useAppConfirm";
 
 interface SavedBackground {
@@ -79,7 +79,7 @@ const POSITION_LABEL_EN: Record<TerminalBackgroundPosition, string> = {
 export function TerminalBackgroundSection({ embedded = false }: { embedded?: boolean }) {
   const { language } = useI18n();
   const { confirm, confirmDialog } = useAppConfirm();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const terminalBackground = useSettingsStore((s) => s.terminalBackground);
   const update = useSettingsStore((s) => s.update);
   const terminalBackgroundMissing = useSettingsStore((s) => s.terminalBackgroundMissing);
@@ -338,7 +338,7 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
                 }}
                 data={FIT_OPTIONS.map((option) => ({
                   value: option.value,
-                  label: language === "zh-CN" ? option.label : option.labelEn,
+                  label: pickByLanguage(language, option.label, option.labelEn),
                 }))}
                 allowDeselect={false}
                 size="xs"
@@ -387,7 +387,7 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
                       data-selected={active ? "true" : "false"}
                       aria-pressed={active}
                       aria-label={text(`位置：${POSITION_LABEL[pos]}`, `Position: ${POSITION_LABEL_EN[pos]}`)}
-                      title={language === "zh-CN" ? POSITION_LABEL[pos] : POSITION_LABEL_EN[pos]}
+                      title={pickByLanguage(language, POSITION_LABEL[pos], POSITION_LABEL_EN[pos])}
                     >
                       <Box
                         component="span"

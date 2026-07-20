@@ -14,6 +14,8 @@ pub struct SshLaunchPlan {
     pub port: u16,
     pub username: String,
     pub config_alias: String,
+    #[serde(default)]
+    pub config_file: String,
     pub auth_mode: String,
     pub identity_file: String,
     #[serde(default)]
@@ -152,6 +154,7 @@ impl SshLaunchPlan {
             port: self.port,
             username: self.username.clone(),
             config_alias: self.config_alias.clone(),
+            config_file: self.config_file.clone(),
             auth_mode: self.auth_mode.clone(),
             identity_file: self.identity_file.clone(),
             credential_ref: self.credential_ref.clone(),
@@ -254,6 +257,7 @@ mod tests {
             port: 2222,
             username: "dev".into(),
             config_alias: String::new(),
+            config_file: String::new(),
             auth_mode: "identity_file".into(),
             identity_file: "C:/Users/dev/.ssh/id key".into(),
             credential_ref: String::new(),
@@ -313,6 +317,33 @@ mod tests {
         assert!(!launch.args.iter().any(|arg| arg == "-p"));
         assert!(!launch.args.iter().any(|arg| arg == "-i"));
         assert_eq!(launch.args[launch.args.len() - 2], "prod");
+    }
+
+    #[test]
+    fn custom_config_file_is_forwarded_to_terminal_launch() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let mut value = plan();
+        value.config_alias = "prod".into();
+        value.config_file = temp.path().to_string_lossy().into_owned();
+        value.auth_mode = "ssh_config".into();
+
+        let launch = value.build_process_launch().unwrap();
+
+        assert!(launch
+            .args
+            .windows(2)
+            .any(|pair| pair == ["-F", value.config_file.as_str()]));
+    }
+
+    #[test]
+    fn config_file_defaults_for_legacy_serialized_plans() {
+        let value = plan();
+        let mut serialized = serde_json::to_value(&value).unwrap();
+        serialized.as_object_mut().unwrap().remove("configFile");
+
+        let decoded: SshLaunchPlan = serde_json::from_value(serialized).unwrap();
+
+        assert!(decoded.config_file.is_empty());
     }
 
     #[test]

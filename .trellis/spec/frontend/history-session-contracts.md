@@ -91,7 +91,7 @@ await updateMeta(sessionKey, { starred: true });
 - Manual detection is user-triggered from the history session list refresh action. It must still run when maintained projects exist.
 - Manual detection should prompt only for history candidates whose project path/source is not already represented by a maintained project.
 - No-candidate manual scans should use a toast and keep the sync dialog closed.
-- Candidate and dialog copy must use `useI18n()` / `translateCurrent()` in both `zh-CN` and `en-US`.
+- Candidate and dialog copy must use `useI18n()` / `translateCurrent()` in `zh-CN`, `zh-TW`, and `en-US`.
 
 ### 4. Validation & Error Matrix
 
@@ -113,7 +113,7 @@ await updateMeta(sessionKey, { starred: true });
 
 - Run `npx tsc --noEmit` after frontend store/component changes.
 - Manually verify the history refresh button reloads sessions and opens the sync dialog only when missing projects exist.
-- Manually verify Settings -> General language switching updates the sync dialog, tooltips/aria labels where visible, and toasts.
+- Manually verify Settings -> General language switching updates the sync dialog, tooltips/aria labels where visible, and toasts across `zh-CN`, `zh-TW`, and `en-US`.
 
 ### 7. Wrong vs Correct
 
@@ -178,7 +178,7 @@ if (useProjectStore.getState().projects.length > 0) {
 
 - Run `npx tsc --noEmit`.
 - Manually verify detail and context-menu resume for Claude/Codex, one/multiple/no candidates, picker cancel, Local/WSL/Bash, and main project/Worktree.
-- Switch between `zh-CN` and `en-US` and verify picker, aria labels, and errors.
+- Switch between `zh-CN`, `zh-TW`, and `en-US` and verify picker, aria labels, and errors.
 
 ### 7. Wrong vs Correct
 

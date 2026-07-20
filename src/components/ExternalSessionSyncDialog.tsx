@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,6 +8,7 @@ import {
 } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Check, RefreshCw } from "./icons";
 import { useExternalSessionSyncStore, type ExternalSessionProjectCandidate, type ExternalSessionSource } from "../stores/externalSessionSyncStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -42,51 +43,58 @@ function ProjectRow({
   checked,
   disabled,
   onToggle,
+  onIgnore,
   t,
 }: {
   project: ExternalSessionProjectCandidate;
   checked: boolean;
   disabled: boolean;
   onToggle: () => void;
+  onIgnore: () => void;
   t: Translate;
 }) {
   const latestTitle = project.sessions[0]?.title ?? project.name;
   return (
-    <label className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-surface-container-highest/70">
-      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
-        <input
-          type="checkbox"
-          checked={checked}
-          disabled={disabled}
-          onChange={onToggle}
-          className="peer h-5 w-5 appearance-none rounded border border-border bg-surface-container-lowest transition-colors checked:border-[var(--color-primary)] checked:bg-[var(--color-primary)] disabled:opacity-60"
-          aria-label={t("externalSessionSync.selectProjectAria", { name: project.name })}
-        />
-        <Check
-          size={13}
-          strokeWidth={2.4}
-          className="pointer-events-none absolute text-white opacity-0 transition-opacity peer-checked:opacity-100"
-        />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium text-on-surface">{project.name}</span>
-          <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-on-surface-variant ring-1 ring-border/70">
-            {sourceLabel(project.source)}
+    <div className="flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-surface-container-highest/70">
+      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+        <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            onChange={onToggle}
+            className="peer h-5 w-5 appearance-none rounded border border-border bg-surface-container-lowest transition-colors checked:border-[var(--color-primary)] checked:bg-[var(--color-primary)] disabled:opacity-60"
+            aria-label={t("externalSessionSync.selectProjectAria", { name: project.name })}
+          />
+          <Check
+            size={13}
+            strokeWidth={2.4}
+            className="pointer-events-none absolute text-white opacity-0 transition-opacity peer-checked:opacity-100"
+          />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-medium text-on-surface">{project.name}</span>
+            <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-on-surface-variant ring-1 ring-border/70">
+              {sourceLabel(project.source)}
+            </span>
+            <span className="shrink-0 text-xs text-on-surface-variant">
+              {t("externalSessionSync.sessionCount", { count: project.sessionCount })}
+            </span>
           </span>
-          <span className="shrink-0 text-xs text-on-surface-variant">
-            {t("externalSessionSync.sessionCount", { count: project.sessionCount })}
+          <span className="mt-0.5 block truncate text-xs text-on-surface-variant" title={project.cwd}>
+            {project.cwd}
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-on-surface-variant/80" title={latestTitle}>
+            {latestTitle}
           </span>
         </span>
-        <span className="mt-0.5 block truncate text-xs text-on-surface-variant" title={project.cwd}>
-          {project.cwd}
-        </span>
-        <span className="mt-0.5 block truncate text-xs text-on-surface-variant/80" title={latestTitle}>
-          {latestTitle}
-        </span>
-      </span>
+      </label>
       <span className="shrink-0 text-xs text-on-surface-variant">{formatRelativeTime(project.updatedAt, t)}</span>
-    </label>
+      <Button variant="ghost" size="sm" disabled={disabled} onClick={onIgnore}>
+        {t("externalSessionSync.ignore")}
+      </Button>
+    </div>
   );
 }
 
@@ -99,16 +107,26 @@ export function ExternalSessionSyncDialog() {
   const syncing = useExternalSessionSyncStore((state) => state.syncingProjects);
   const closeProjectDialog = useExternalSessionSyncStore((state) => state.closeProjectDialog);
   const syncProjectCandidates = useExternalSessionSyncStore((state) => state.syncProjectCandidates);
+  const ignoreProjectCandidates = useExternalSessionSyncStore((state) => state.ignoreProjectCandidates);
   const defaultShell = useSettingsStore((state) => state.defaultShell);
   const terminalShellProfiles = useSettingsStore((state) => state.terminalShellProfiles);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [osPlatform, setOsPlatform] = useState<OsPlatform>("unknown");
   const [shell, setShell] = useState("");
+  const [ignoreConfirmationOpen, setIgnoreConfirmationOpen] = useState(false);
+  const dialogWasOpenRef = useRef(false);
   const shellFieldId = useId();
 
   useEffect(() => {
-    if (!open) return;
-    setSelectedKeys(new Set(candidates.map((candidate) => candidate.key)));
+    if (!open) {
+      dialogWasOpenRef.current = false;
+      return;
+    }
+    const candidateKeys = new Set(candidates.map((candidate) => candidate.key));
+    setSelectedKeys((current) => dialogWasOpenRef.current
+      ? new Set(Array.from(current).filter((key) => candidateKeys.has(key)))
+      : candidateKeys);
+    dialogWasOpenRef.current = true;
   }, [candidates, open]);
 
   useEffect(() => {
@@ -211,6 +229,7 @@ export function ExternalSessionSyncDialog() {
                           checked={selectedKeys.has(project.key)}
                           disabled={disabled}
                           onToggle={() => toggleProject(project.key)}
+                          onIgnore={() => void ignoreProjectCandidates([project.key])}
                           t={t}
                         />
                       ))}
@@ -243,6 +262,13 @@ export function ExternalSessionSyncDialog() {
             {t("externalSessionSync.cancel")}
           </Button>
           <Button
+            variant="outline"
+            disabled={disabled || selectedCount === 0}
+            onClick={() => setIgnoreConfirmationOpen(true)}
+          >
+            {t("externalSessionSync.ignore")}
+          </Button>
+          <Button
             variant="default"
             disabled={disabled || candidates.length === 0}
             onClick={() => void syncProjectCandidates(Array.from(selectedKeys), shell.trim() || undefined)}
@@ -251,6 +277,20 @@ export function ExternalSessionSyncDialog() {
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ConfirmDialog
+        open={ignoreConfirmationOpen}
+        title={t("externalSessionSync.ignoreConfirmTitle")}
+        message={t("externalSessionSync.ignoreConfirmMessage", { count: selectedCount })}
+        confirmText={t("externalSessionSync.ignore")}
+        cancelText={t("externalSessionSync.cancel")}
+        danger
+        zIndex={70}
+        onConfirm={() => {
+          setIgnoreConfirmationOpen(false);
+          void ignoreProjectCandidates(Array.from(selectedKeys));
+        }}
+        onClose={() => setIgnoreConfirmationOpen(false)}
+      />
     </Dialog>
   );
 }

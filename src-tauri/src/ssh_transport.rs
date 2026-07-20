@@ -8,6 +8,8 @@ pub struct SshTransportSpec {
     pub port: u16,
     pub username: String,
     pub config_alias: String,
+    #[serde(default)]
+    pub config_file: String,
     pub auth_mode: String,
     pub identity_file: String,
     #[serde(default)]
@@ -79,6 +81,7 @@ impl SshTransportSpec {
         if self.config_alias.trim().is_empty() && self.port == 0 {
             return Err("ssh_host_port_invalid".to_string());
         }
+        validate_config_file(&self.config_file)?;
         if self.connect_timeout_sec == 0 || self.connect_timeout_sec > 300 {
             return Err("ssh_connect_timeout_invalid".to_string());
         }
@@ -104,6 +107,7 @@ impl SshTransportSpec {
         }
         for value in [
             &self.config_alias,
+            &self.config_file,
             &self.host,
             &self.username,
             &self.identity_file,
@@ -193,6 +197,9 @@ impl SshTransportSpec {
     }
 
     fn append_connection_args(&self, args: &mut Vec<String>, one_shot: bool) {
+        if !self.config_file.trim().is_empty() {
+            args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
+        }
         args.extend([
             "-o".to_string(),
             format!("ConnectTimeout={}", self.connect_timeout_sec),
@@ -287,6 +294,20 @@ fn validate_single_line(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_config_file(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if trimmed.contains(['\0', '\r', '\n']) || !std::path::Path::new(trimmed).is_absolute() {
+        return Err("ssh_config_file_invalid".to_string());
+    }
+    if !std::path::Path::new(trimmed).is_file() {
+        return Err("ssh_config_file_not_found".to_string());
+    }
+    Ok(())
+}
+
 fn contains_url_credentials(value: &str) -> bool {
     value.split_whitespace().any(|token| {
         let Some((_, remainder)) = token.split_once("://") else {
@@ -312,6 +333,7 @@ mod tests {
             port: 2222,
             username: "dev".into(),
             config_alias: String::new(),
+            config_file: String::new(),
             auth_mode: auth_mode.into(),
             identity_file: "/home/dev/.ssh/id key".into(),
             credential_ref: String::new(),
@@ -388,6 +410,24 @@ mod tests {
             .unwrap();
         assert!(!launch.args.iter().any(|arg| arg == "-p"));
         assert_eq!(launch.args[launch.args.len() - 2], "prod");
+    }
+
+    #[test]
+    fn custom_config_file_is_shared_by_interactive_and_one_shot_launches() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let mut value = spec("ssh_config");
+        value.config_file = temp.path().to_string_lossy().into_owned();
+        for launch in [
+            value.build_interactive_launch("shell".into()).unwrap(),
+            value
+                .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+                .unwrap(),
+        ] {
+            assert!(launch
+                .args
+                .windows(2)
+                .any(|pair| pair == ["-F", value.config_file.as_str()]));
+        }
     }
 
     #[test]

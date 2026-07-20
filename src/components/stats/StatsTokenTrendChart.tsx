@@ -1,4 +1,5 @@
 import { memo, useMemo, useState } from "react";
+import { convertChineseForLanguage, getLanguageLocale, useI18n, type AppLanguage } from "../../lib/i18n";
 import type { HistoryStatsDailySeriesItem } from "../../lib/types";
 
 interface StatsTokenTrendChartProps {
@@ -13,20 +14,18 @@ interface TrendPoint {
   outputY: number;
 }
 
-function formatCount(value: number): string {
+function formatCount(value: number, language: AppLanguage): string {
   if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat(getLanguageLocale(language)).format(value);
 }
 
-const DAY_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  weekday: "short",
-});
-
-function formatDay(dayStartUtc: number): string {
+function formatDay(dayStartUtc: number, language: AppLanguage): string {
   if (!Number.isFinite(dayStartUtc) || dayStartUtc <= 0) return "-";
-  return DAY_FORMATTER.format(new Date(dayStartUtc));
+  return new Intl.DateTimeFormat(getLanguageLocale(language), {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).format(new Date(dayStartUtc));
 }
 
 function linePath(points: TrendPoint[], key: "inputY" | "outputY"): string {
@@ -39,7 +38,9 @@ function linePath(points: TrendPoint[], key: "inputY" | "outputY"): string {
 export const StatsTokenTrendChart = memo(StatsTokenTrendChartImpl);
 
 function StatsTokenTrendChartImpl({ items }: StatsTokenTrendChartProps) {
+  const { language } = useI18n();
   const [hoverDayStart, setHoverDayStart] = useState<number | null>(null);
+  const zh = (text: string) => convertChineseForLanguage(language, text);
   const chartHeight = 220;
   const paddingX = 18;
   const paddingTop = 14;
@@ -80,17 +81,17 @@ function StatsTokenTrendChartImpl({ items }: StatsTokenTrendChartProps) {
   return (
     <div className="rounded-md border border-border bg-bg-secondary p-3">
       <div className="mb-2 flex items-center gap-2">
-        <div className="text-xs font-semibold text-text-primary">Token 日趋势（C7）</div>
+        <div className="text-xs font-semibold text-text-primary">{zh("Token 日趋势（C7）")}</div>
         <div className="ml-auto text-[11px] text-text-secondary">
           {active
-            ? `${formatDay(active.day_start_utc)} · 输入 ${formatCount(active.input_tokens)} · 输出 ${formatCount(active.output_tokens)}`
-            : "暂无数据"}
+            ? `${formatDay(active.day_start_utc, language)} · ${zh("输入")} ${formatCount(active.input_tokens, language)} · ${zh("输出")} ${formatCount(active.output_tokens, language)}`
+            : zh("暂无数据")}
         </div>
       </div>
 
       {items.length === 0 && (
         <div className="py-8 text-center text-[11px] text-text-muted">
-          当前过滤条件下没有 Token 趋势数据
+          {zh("当前过滤条件下没有 Token 趋势数据")}
         </div>
       )}
 
@@ -105,7 +106,7 @@ function StatsTokenTrendChartImpl({ items }: StatsTokenTrendChartProps) {
               height={chartHeight}
               viewBox={`0 0 ${chart.width} ${chartHeight}`}
               role="img"
-              aria-label="按天输入输出 Token 双折线图"
+              aria-label={zh("按天输入输出 Token 双折线图")}
               className="block"
             >
               {[0, 1, 2, 3].map((step) => {
@@ -123,7 +124,7 @@ function StatsTokenTrendChartImpl({ items }: StatsTokenTrendChartProps) {
                       strokeWidth="1"
                     />
                     <text x={paddingX + 2} y={y - 2} fill="var(--text-muted)" fontSize="10">
-                      {formatCount(value)}
+                      {formatCount(value, language)}
                     </text>
                   </g>
                 );
@@ -178,7 +179,7 @@ function StatsTokenTrendChartImpl({ items }: StatsTokenTrendChartProps) {
                     onFocus={() => setHoverDayStart(point.item.day_start_utc)}
                     onBlur={() => setHoverDayStart(null)}
                     tabIndex={0}
-                    aria-label={`${formatDay(point.item.day_start_utc)}，输入 ${point.item.input_tokens}，输出 ${point.item.output_tokens}`}
+                    aria-label={`${formatDay(point.item.day_start_utc, language)}，${zh("输入")} ${point.item.input_tokens}，${zh("输出")} ${point.item.output_tokens}`}
                     data-token-day-index={point.index}
                     onKeyDown={(event) => {
                       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -199,17 +200,17 @@ function StatsTokenTrendChartImpl({ items }: StatsTokenTrendChartProps) {
             </svg>
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[10px] text-text-muted">
-            <span>{formatDay(items[0]?.day_start_utc ?? 0)}</span>
-            <span>{formatDay(items[items.length - 1]?.day_start_utc ?? 0)}</span>
+            <span>{formatDay(items[0]?.day_start_utc ?? 0, language)}</span>
+            <span>{formatDay(items[items.length - 1]?.day_start_utc ?? 0, language)}</span>
           </div>
           <div className="mt-1 flex items-center gap-3 text-[10px] text-text-muted">
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "#2F8F62" }} />
-              输入 Token
+              {zh("输入 Token")}
             </span>
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "#C46A2D" }} />
-              输出 Token
+              {zh("输出 Token")}
             </span>
           </div>
         </>

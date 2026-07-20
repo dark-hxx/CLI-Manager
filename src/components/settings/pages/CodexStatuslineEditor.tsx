@@ -6,7 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ActionIcon, Badge, Box, Button, Card, Group, SimpleGrid, Stack, Text } from "@mantine/core";
 import { ArrowDown, ArrowUp, Check, GripVertical, Plus, Save, X } from "lucide-react";
 import { toast } from "sonner";
-import { useI18n } from "@/lib/i18n";
+import { pickByLanguage, type AppLanguage, useI18n } from "@/lib/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { StatuslinePreview, type StatuslinePreviewState } from "./StatuslinePreview";
 import { StatuslineProfileBar } from "@/components/settings/StatuslineProfileBar";
@@ -70,11 +70,11 @@ function codexAnsiCode(id: string) {
   return 35;
 }
 
-function buildCodexPreview(items: string[], definitions: Map<string, ItemDefinition>, language: "zh-CN" | "en-US") {
+function buildCodexPreview(items: string[], definitions: Map<string, ItemDefinition>, language: AppLanguage) {
   return items.map((id) => {
     const definition = definitions.get(id);
     const value = definition?.preview ?? id;
-    const label = definition ? (language === "zh-CN" ? definition.zh : definition.en) : id;
+    const label = definition ? pickByLanguage(language, definition.zh, definition.en) : id;
     return `\x1b[${codexAnsiCode(id)}m${label}: ${value}\x1b[0m`;
   }).join("\x1b[90m · \x1b[0m");
 }
@@ -228,7 +228,7 @@ export function CodexStatuslineEditor({
                   const definition = definitions.get(id);
                   return (
                     <SortableCodexItem key={id} id={id}>{(dragHandle) => <>
-                      <Group gap="xs" wrap="nowrap">{dragHandle}<Box><Text size="sm">{definition ? (language === "zh-CN" ? definition.zh : definition.en) : id}</Text><Text size="xs" c="var(--on-surface-variant)">{id}</Text></Box></Group>
+                      <Group gap="xs" wrap="nowrap">{dragHandle}<Box><Text size="sm">{definition ? pickByLanguage(language, definition.zh, definition.en) : id}</Text><Text size="xs" c="var(--on-surface-variant)">{id}</Text></Box></Group>
                       <Group gap={4}>
                         <ActionIcon variant="subtle" disabled={index === 0} onClick={() => move(index, -1)} aria-label={t("settings.codexStatusline.moveUp")}><ArrowUp size={15} /></ActionIcon>
                         <ActionIcon variant="subtle" disabled={index === items.length - 1} onClick={() => move(index, 1)} aria-label={t("settings.codexStatusline.moveDown")}><ArrowDown size={15} /></ActionIcon>
@@ -248,7 +248,7 @@ export function CodexStatuslineEditor({
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mah={500} className="overflow-y-auto pr-1">
             {filteredItems.map((item) => {
               const selected = items.includes(item.id);
-              return <Button key={item.id} variant={selected ? "light" : "subtle"} color={selected ? "green" : "gray"} justify="space-between" rightSection={selected ? <Check size={14} /> : <Plus size={14} />} onClick={() => toggle(item.id)}>{language === "zh-CN" ? item.zh : item.en}</Button>;
+              return <Button key={item.id} variant={selected ? "light" : "subtle"} color={selected ? "green" : "gray"} justify="space-between" rightSection={selected ? <Check size={14} /> : <Plus size={14} />} onClick={() => toggle(item.id)}>{pickByLanguage(language, item.zh, item.en)}</Button>;
             })}
           </SimpleGrid>
         </section>

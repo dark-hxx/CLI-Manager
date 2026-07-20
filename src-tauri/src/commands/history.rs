@@ -1203,14 +1203,10 @@ pub async fn history_get_session(
     if source_normalized == "opencode" {
         let started_at = Instant::now();
         let roots = history_roots(claude_config_dir, codex_config_dir);
-        let summary = catalog::get_session_by_file_path(
-            &roots,
-            &file_path,
-            "opencode",
-            &project_key,
-        )
-        .await?
-        .ok_or_else(|| "session_file_not_indexed".to_string())?;
+        let summary =
+            catalog::get_session_by_file_path(&roots, &file_path, "opencode", &project_key)
+                .await?
+                .ok_or_else(|| "session_file_not_indexed".to_string())?;
         let detail = build_opencode_session_detail(&file_path, summary).await?;
         log_history_detail_oom_diagnostic(
             "history_get_session",
@@ -1751,7 +1747,12 @@ pub async fn history_get_conversion_matrix() -> Result<Vec<HistoryConversionMatr
                 source_id: source.to_string(),
                 target_id: target.to_string(),
                 state: if supported { "supported" } else { "planned" }.to_string(),
-                loss_kind: if supported { "lossyPotential" } else { "unknown" }.to_string(),
+                loss_kind: if supported {
+                    "lossyPotential"
+                } else {
+                    "unknown"
+                }
+                .to_string(),
                 writer_state: if supported { "supported" } else { "planned" }.to_string(),
                 note: if supported {
                     "current_native_writer"
@@ -2052,7 +2053,8 @@ pub async fn history_get_stats(
         )
         .await?
         {
-            let day_start = stats_day_start_with_offset(fact.occurred_at, stats_day_start_offset(bounds));
+            let day_start =
+                stats_day_start_with_offset(fact.occurred_at, stats_day_start_offset(bounds));
             days.entry(day_start).or_default().push(fact);
         }
     }
@@ -2070,7 +2072,9 @@ pub async fn history_get_stats(
                 .map(|fact| history_stats_session_key(&fact.summary))
                 .collect();
             for facts in days.values_mut() {
-                facts.retain(|fact| !v2_session_keys.contains(&history_stats_session_key(&fact.summary)));
+                facts.retain(|fact| {
+                    !v2_session_keys.contains(&history_stats_session_key(&fact.summary))
+                });
             }
             let day_offset = stats_day_start_offset(bounds);
             for fact in v2_facts {
@@ -2124,7 +2128,9 @@ fn source_includes(source: &Option<String>, target: &str) -> bool {
         .as_deref()
         .map(|value| {
             let value = value.trim();
-            value.is_empty() || value.eq_ignore_ascii_case("all") || value.eq_ignore_ascii_case(target)
+            value.is_empty()
+                || value.eq_ignore_ascii_case("all")
+                || value.eq_ignore_ascii_case(target)
         })
         .unwrap_or(true)
 }
@@ -3499,7 +3505,10 @@ fn v2_message_raw_pointers(
         .line_index
         .map(|line_index| HistoryIndexV2RawPointer {
             role: "message".to_string(),
-            kind: format!("{}-line", session_file_kind(&file_ref.source, &file_ref.path)),
+            kind: format!(
+                "{}-line",
+                session_file_kind(&file_ref.source, &file_ref.path)
+            ),
             path: Some(file_ref.path.to_string_lossy().to_string()),
             line_index: Some(line_index),
             raw_key: None,
@@ -3512,7 +3521,11 @@ fn v2_session_raw_pointers(
     file_ref: &SessionFileRef,
     roots: &HistoryRoots,
     source_session_id: &str,
-) -> (Option<String>, Option<String>, Vec<HistoryIndexV2RawPointer>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Vec<HistoryIndexV2RawPointer>,
+) {
     let primary_path = file_ref.path.to_string_lossy().to_string();
     let mut pointers = vec![v2_path_pointer(
         "primary",
@@ -3584,7 +3597,10 @@ fn build_v2_adapter_session_from_parts(
             message_index,
             role: message.role.clone(),
             display_content: message.content.clone(),
-            timestamp_ms: message.timestamp.as_deref().and_then(parse_timestamp_millis_str),
+            timestamp_ms: message
+                .timestamp
+                .as_deref()
+                .and_then(parse_timestamp_millis_str),
             model: message.model.clone(),
             input_tokens: message.input_tokens,
             output_tokens: message.output_tokens,
@@ -4801,7 +4817,12 @@ fn resolve_kiro_history_root() -> PathBuf {
 
 fn resolve_opencode_database_path() -> PathBuf {
     detect_home_dir()
-        .map(|home| home.join(".local").join("share").join("opencode").join("opencode.db"))
+        .map(|home| {
+            home.join(".local")
+                .join("share")
+                .join("opencode")
+                .join("opencode.db")
+        })
         .unwrap_or_else(|| {
             PathBuf::from(".local")
                 .join("share")
@@ -4934,17 +4955,19 @@ async fn parse_opencode_database(
             .unwrap_or(db_fingerprint.created_at);
         let updated_at = opencode_time_millis(row.try_get("time_updated").ok().flatten())
             .unwrap_or(db_fingerprint.updated_at.max(created_at));
-        sessions.push(parse_opencode_session_row(
-            &mut conn,
-            db_path,
-            db_fingerprint,
-            session_id,
-            cwd,
-            title,
-            created_at,
-            updated_at,
-        )
-        .await?);
+        sessions.push(
+            parse_opencode_session_row(
+                &mut conn,
+                db_path,
+                db_fingerprint,
+                session_id,
+                cwd,
+                title,
+                created_at,
+                updated_at,
+            )
+            .await?,
+        );
     }
     Ok(sessions)
 }
@@ -5028,7 +5051,9 @@ async fn parse_opencode_session_row(
         if usage_total_tokens(usage) > 0 {
             stats.input_tokens = stats.input_tokens.saturating_add(usage.input_tokens);
             stats.output_tokens = stats.output_tokens.saturating_add(usage.output_tokens);
-            stats.cache_read_tokens = stats.cache_read_tokens.saturating_add(usage.cache_read_tokens);
+            stats.cache_read_tokens = stats
+                .cache_read_tokens
+                .saturating_add(usage.cache_read_tokens);
             stats.cache_creation_tokens = stats
                 .cache_creation_tokens
                 .saturating_add(usage.cache_creation_tokens);
@@ -5049,7 +5074,9 @@ async fn parse_opencode_session_row(
                 let entry = stats.model_usage.entry(model.clone()).or_default();
                 entry.input_tokens = entry.input_tokens.saturating_add(usage.input_tokens);
                 entry.output_tokens = entry.output_tokens.saturating_add(usage.output_tokens);
-                entry.cache_read_tokens = entry.cache_read_tokens.saturating_add(usage.cache_read_tokens);
+                entry.cache_read_tokens = entry
+                    .cache_read_tokens
+                    .saturating_add(usage.cache_read_tokens);
                 entry.cache_creation_tokens = entry
                     .cache_creation_tokens
                     .saturating_add(usage.cache_creation_tokens);
@@ -5383,7 +5410,6 @@ fn collect_session_files_with_force(
                     return entry.files.clone();
                 }
             }
-
         }
     }
 
@@ -5420,10 +5446,18 @@ fn scan_session_files(source_filter: Option<&str>, roots: &HistoryRoots) -> Vec<
             roots,
         )));
     }
-    if source_filter.as_ref().map(|v| v == "gemini").unwrap_or(true) {
+    if source_filter
+        .as_ref()
+        .map(|v| v == "gemini")
+        .unwrap_or(true)
+    {
         files.extend(collect_gemini_session_files(&resolve_gemini_history_root()));
     }
-    if source_filter.as_ref().map(|v| v == "copilot").unwrap_or(true) {
+    if source_filter
+        .as_ref()
+        .map(|v| v == "copilot")
+        .unwrap_or(true)
+    {
         files.extend(collect_copilot_session_files(
             &resolve_copilot_history_root(),
         ));
@@ -5451,7 +5485,11 @@ fn scan_session_files(source_filter: Option<&str>, roots: &HistoryRoots) -> Vec<
             files.extend(collect_cline_session_files(&root));
         }
     }
-    if source_filter.as_ref().map(|v| v == "cursor").unwrap_or(true) {
+    if source_filter
+        .as_ref()
+        .map(|v| v == "cursor")
+        .unwrap_or(true)
+    {
         files.extend(collect_cursor_session_files(&resolve_cursor_history_root()));
     }
 
@@ -6045,10 +6083,10 @@ fn looks_like_antigravity_transcript_file(path: &Path) -> bool {
 }
 
 fn antigravity_path_parts(path: &Path) -> Option<(PathBuf, String)> {
-    if !path
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("transcript.jsonl"))
-    {
+    if !path.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .eq_ignore_ascii_case("transcript.jsonl")
+    }) {
         return None;
     }
     let logs = path.parent()?;
@@ -6086,11 +6124,7 @@ fn load_antigravity_workspace_map(root: &Path) -> HashMap<String, String> {
         .map_while(Result::ok)
         .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
         .filter_map(|value| {
-            let conversation_id = value
-                .get("conversationId")?
-                .as_str()?
-                .trim()
-                .to_string();
+            let conversation_id = value.get("conversationId")?.as_str()?.trim().to_string();
             let workspace = value.get("workspace")?.as_str()?.trim().to_string();
             (!conversation_id.is_empty() && !workspace.is_empty())
                 .then_some((conversation_id, workspace))
@@ -6246,7 +6280,9 @@ fn pi_string_by_keys(value: &Value, keys: &[&str]) -> Option<String> {
 }
 
 fn pi_workspace_from_path(path: &Path) -> Option<String> {
-    pi_session_meta(path).as_ref().and_then(|meta| extract_cwd(meta))
+    pi_session_meta(path)
+        .as_ref()
+        .and_then(|meta| extract_cwd(meta))
 }
 
 fn pi_session_id_from_path(path: &Path) -> Option<String> {
@@ -6310,10 +6346,10 @@ fn cursor_path_parts(path: &Path) -> Option<(String, String)> {
     let session_dir = path.parent()?;
     let transcripts = session_dir.parent()?;
     let project_dir = transcripts.parent()?;
-    if !transcripts
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("agent-transcripts"))
-    {
+    if !transcripts.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .eq_ignore_ascii_case("agent-transcripts")
+    }) {
         return None;
     }
     let session_id = path
@@ -6507,7 +6543,9 @@ async fn read_cursor_state_metadata(
             .ok()
             .flatten()
             .and_then(normalize_unix_timestamp_millis),
-        cwd: value_json.as_ref().and_then(cursor_workspace_from_state_value),
+        cwd: value_json
+            .as_ref()
+            .and_then(cursor_workspace_from_state_value),
     })
 }
 
@@ -6639,13 +6677,15 @@ fn cline_workspace_from_path(path: &Path) -> Option<String> {
 fn cline_workspace_from_api_history(path: &Path) -> Option<String> {
     let raw = fs::read_to_string(path).ok()?;
     let value = serde_json::from_str::<Value>(&raw).ok()?;
-    cline_api_message_values(&value).into_iter().find_map(|message| {
-        let text = extract_content(message)?;
-        extract_simple_tag_block(&text, "current_working_directory")
-            .map(str::trim)
-            .filter(|cwd| !cwd.is_empty())
-            .map(str::to_string)
-    })
+    cline_api_message_values(&value)
+        .into_iter()
+        .find_map(|message| {
+            let text = extract_content(message)?;
+            extract_simple_tag_block(&text, "current_working_directory")
+                .map(str::trim)
+                .filter(|cwd| !cwd.is_empty())
+                .map(str::to_string)
+        })
 }
 
 fn cline_session_id_from_path(path: &Path) -> Option<String> {
@@ -7084,7 +7124,13 @@ fn extract_cwd(value: &Value) -> Option<String> {
         return Some(path.to_string());
     }
 
-    for key in ["payload", "metadata", "environment_context", "data", "context"] {
+    for key in [
+        "payload",
+        "metadata",
+        "environment_context",
+        "data",
+        "context",
+    ] {
         if let Some(cwd) = value.get(key).and_then(extract_cwd) {
             return Some(cwd);
         }
@@ -7430,7 +7476,10 @@ fn scan_copilot_jsonl_session(
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
         };
-        let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
+        let event_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let data = value.get("data");
 
         if event_type == "session.start" {
@@ -7517,12 +7566,8 @@ fn copilot_message_from_event(value: &Value, line_index: usize) -> Option<Histor
         "tool.execution_complete" => ("tool", copilot_tool_result_text(data)?, None),
         _ => return None,
     };
-    let mut message = json_history_message(
-        role.to_string(),
-        content,
-        extract_timestamp(value),
-        model,
-    );
+    let mut message =
+        json_history_message(role.to_string(), content, extract_timestamp(value), model);
     message.line_index = Some(line_index);
     Some(message)
 }
@@ -7598,7 +7643,10 @@ fn scan_grok_jsonl_session(
         )
     });
     let model = summary.as_ref().and_then(|value| {
-        grok_string_by_paths(value, &[&["current_model_id"], &["model"], &["selectedModel"]])
+        grok_string_by_paths(
+            value,
+            &[&["current_model_id"], &["model"], &["selectedModel"]],
+        )
     });
 
     let mut messages = Vec::new();
@@ -7717,12 +7765,9 @@ fn scan_grok_jsonl_session(
 
 fn grok_update_value(value: &Value) -> Option<&Value> {
     let params = value.get("params").unwrap_or(value);
-    params.get("update").or_else(|| {
-        params
-            .get("sessionUpdate")
-            .is_some()
-            .then_some(params)
-    })
+    params
+        .get("update")
+        .or_else(|| params.get("sessionUpdate").is_some().then_some(params))
 }
 
 fn grok_event_timestamp(value: &Value, update: &Value) -> Option<String> {
@@ -8135,8 +8180,14 @@ fn scan_antigravity_jsonl_session(
             }
         }
 
-        let source = value.get("source").and_then(Value::as_str).unwrap_or_default();
-        let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
+        let source = value
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let event_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let content = value
             .get("content")
             .and_then(Value::as_str)
@@ -8168,12 +8219,8 @@ fn scan_antigravity_jsonl_session(
         }
     }
 
-    let (summary, mut stats, output_messages) = json_session_scan_result(
-        session_id.as_deref(),
-        None,
-        messages,
-        collect_messages,
-    );
+    let (summary, mut stats, output_messages) =
+        json_session_scan_result(session_id.as_deref(), None, messages, collect_messages);
     stats.tool_call_count = tool_call_count;
     stats.builtin_calls = builtin_calls;
     (summary, stats, output_messages)
@@ -8220,8 +8267,7 @@ fn scan_json_session(
     if looks_like_cline_session_file(path) {
         return scan_cline_json_session(path, &value, collect_messages);
     }
-    if value.get("history").and_then(Value::as_array).is_some()
-        && value.get("sessionId").is_some()
+    if value.get("history").and_then(Value::as_array).is_some() && value.get("sessionId").is_some()
     {
         return scan_kiro_json_session(&value, collect_messages);
     }
@@ -8360,12 +8406,15 @@ fn json_session_scan_result(
     messages: Vec<HistoryMessage>,
     collect_messages: bool,
 ) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
-    let first_message = messages.iter().find_map(message_title_candidate).or_else(|| {
-        fallback_title
-            .map(str::trim)
-            .filter(|title| !title.is_empty())
-            .map(str::to_string)
-    });
+    let first_message = messages
+        .iter()
+        .find_map(message_title_candidate)
+        .or_else(|| {
+            fallback_title
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(str::to_string)
+        });
     let first_user_message = messages
         .iter()
         .filter(|message| message.role == "user")
@@ -8386,7 +8435,11 @@ fn json_session_scan_result(
             branch: None,
         },
         json_session_stats(model),
-        if collect_messages { messages } else { Vec::new() },
+        if collect_messages {
+            messages
+        } else {
+            Vec::new()
+        },
     )
 }
 
@@ -11294,7 +11347,10 @@ mod tests {
     #[test]
     fn scan_json_session_reads_kiro_workspace_history() {
         let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("workspace-key").join("kiro-session.json");
+        let path = temp_dir
+            .path()
+            .join("workspace-key")
+            .join("kiro-session.json");
         write_text(
             &path,
             &json!({
@@ -11431,7 +11487,10 @@ mod tests {
         assert_eq!(tool_events.len(), 1);
         assert_eq!(tool_events[0].name, "read_file");
         assert_eq!(tool_events[0].status.as_deref(), Some("completed"));
-        assert_eq!(tool_events[0].output_summary.as_deref(), Some("# Project\nHello"));
+        assert_eq!(
+            tool_events[0].output_summary.as_deref(),
+            Some("# Project\nHello")
+        );
 
         let mut iterated = Vec::new();
         iter_session_messages(&path, |_, message| {
@@ -11516,7 +11575,10 @@ mod tests {
         let (summary, stats, messages) = scan_session_detail(&path);
         assert_eq!(summary.session_id.as_deref(), Some(conversation_id));
         assert_eq!(summary.message_count, 2);
-        assert_eq!(summary.first_user_message.as_deref(), Some("Analyze this project"));
+        assert_eq!(
+            summary.first_user_message.as_deref(),
+            Some("Analyze this project")
+        );
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "Analyze this project");
         assert_eq!(messages[1].role, "assistant");
@@ -11866,7 +11928,10 @@ mod tests {
             messages[0].timestamp.as_deref(),
             Some("2026-07-17T00:00:00.000Z")
         );
-        assert_eq!(stats.current_model.as_deref(), Some("claude-3-5-sonnet-20241022"));
+        assert_eq!(
+            stats.current_model.as_deref(),
+            Some("claude-3-5-sonnet-20241022")
+        );
         assert_eq!(stats.tool_call_count, 1);
         assert_eq!(stats.builtin_calls.get("replace_in_file"), Some(&1));
 
@@ -12277,7 +12342,10 @@ mod tests {
         assert_eq!(parsed.messages.len(), 2);
         assert_eq!(parsed.messages[0].role, "user");
         assert_eq!(parsed.messages[0].content, "hello opencode");
-        assert_eq!(parsed.messages[1].model.as_deref(), Some("anthropic/claude-sonnet-4"));
+        assert_eq!(
+            parsed.messages[1].model.as_deref(),
+            Some("anthropic/claude-sonnet-4")
+        );
         assert_eq!(parsed.computed.stats.input_tokens, 10);
         assert_eq!(parsed.computed.stats.output_tokens, 25);
         assert_eq!(parsed.computed.stats.cache_read_tokens, 3);

@@ -1738,7 +1738,34 @@ impl DaemonServer {
                 env_vars,
                 shell,
                 ssh_launch,
-            } => self.handle_create(client_id, id, session_id, cwd, env_vars, shell, ssh_launch),
+                terminal_colors,
+            } => self.handle_create(
+                client_id,
+                id,
+                session_id,
+                cwd,
+                env_vars,
+                shell,
+                ssh_launch,
+                terminal_colors,
+            ),
+            ClientFrame::SetTerminalColors {
+                id,
+                session_id,
+                terminal_colors,
+            } => {
+                if !is_valid_session_id(&session_id) {
+                    return err_frame(id, "invalid session id");
+                }
+                match self.host.pty.update_terminal_colors(
+                    &session_id,
+                    &terminal_colors.foreground,
+                    &terminal_colors.background,
+                ) {
+                    Ok(()) => DaemonFrame::Ok { id },
+                    Err(message) => DaemonFrame::Err { id, message },
+                }
+            }
             ClientFrame::Write {
                 id,
                 session_id,
@@ -1970,6 +1997,7 @@ impl DaemonServer {
         env_vars: Option<HashMap<String, String>>,
         shell: Option<String>,
         ssh_launch: Option<SshLaunchPlan>,
+        terminal_colors: Option<crate::daemon::protocol::TerminalColorSpec>,
     ) -> DaemonFrame {
         if !is_valid_session_id(&session_id) {
             return err_frame(id, "invalid session id");
@@ -2011,6 +2039,9 @@ impl DaemonServer {
             env_vars,
             shell.as_deref(),
             ssh_launch.as_ref(),
+            terminal_colors
+                .as_ref()
+                .map(|colors| (colors.foreground.as_str(), colors.background.as_str())),
             sink,
         ) {
             Ok(process_traits) => {

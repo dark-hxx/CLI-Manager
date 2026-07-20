@@ -18,6 +18,7 @@ export class TerminalCapabilityStore {
 writeFileSync(join(tempDir, "ptyHostSocket.mjs"), `
 const listeners = new Map();
 export const acknowledgments = [];
+export const terminalColorUpdates = [];
 export const ptyHostSocket = {
   async connect() {},
   subscribeOutput(sessionId, listener) {
@@ -32,6 +33,7 @@ export const ptyHostSocket = {
   async closeAll() {},
   async write() {},
   async resize() {},
+  async setTerminalColors(sessionId, colors) { terminalColorUpdates.push({ sessionId, colors }); },
   async attach() { return { attached: false, alive: false, replay: [] }; },
   async create() {},
 };
@@ -103,4 +105,17 @@ test("out-of-order write callbacks drain and ACK frames in sequence order", asyn
     { sessionId: "session-1", sequence: 2, charCount: 3 },
     { sessionId: "session-1", sequence: 3, charCount: 5 },
   ]);
+});
+
+test("terminal color updates stay behind the process manager boundary", async () => {
+  socketStub.terminalColorUpdates.length = 0;
+  const manager = new TerminalProcessManager();
+  await manager.setTerminalColors("session-colors", {
+    foreground: "#FFFFFF",
+    background: "#101010",
+  });
+  assert.deepEqual(socketStub.terminalColorUpdates, [{
+    sessionId: "session-colors",
+    colors: { foreground: "#FFFFFF", background: "#101010" },
+  }]);
 });

@@ -1,4 +1,5 @@
 import type { Project, TerminalSession } from "./types";
+import { convertChineseForLanguage, isEnglishLanguage, resolveLanguagePreference, type AppLanguage } from "./i18n";
 import type { TabNotificationState, TabStatusDetails } from "../stores/terminalStore";
 import type { DesktopPetSettings, LanguagePreference } from "../stores/settingsStore";
 
@@ -99,7 +100,7 @@ export interface DesktopPetSnapshot {
 }
 
 export interface DesktopPetConfigPayload {
-  language: "zh-CN" | "en-US";
+  language: AppLanguage;
   settings: DesktopPetSettings;
   labels: {
     openMain: string;
@@ -407,7 +408,10 @@ export function desktopPetScale(size: DesktopPetSettings["size"]): number {
 }
 
 export function localizedPetText(text: PetLocalizedText, language: LanguagePreference): string {
-  return language === "en-US" ? text["en-US"] : text["zh-CN"];
+  const resolvedLanguage = resolveLanguagePreference(language);
+  return isEnglishLanguage(resolvedLanguage)
+    ? text["en-US"]
+    : convertChineseForLanguage(resolvedLanguage, text["zh-CN"]);
 }
 
 export function joinPetAssetPath(baseDir: string, relativePath: string): string {

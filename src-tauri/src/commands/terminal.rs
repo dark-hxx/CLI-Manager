@@ -242,6 +242,7 @@ fn client_frame_id(frame: &ClientFrame) -> Option<u64> {
         ClientFrame::Ping { id }
         | ClientFrame::List { id }
         | ClientFrame::Create { id, .. }
+        | ClientFrame::SetTerminalColors { id, .. }
         | ClientFrame::Write { id, .. }
         | ClientFrame::Ack { id, .. }
         | ClientFrame::Resize { id, .. }

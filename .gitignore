@@ -37,6 +37,9 @@ src-tauri/ssh-agent/target/
 src-tauri/hook-schema/target/
 src-tauri/hook-schema/Cargo.lock
 server/target/
+apps/server/target
+apps/web/dist
+crates/web-protocol/target
 
 prototype/
 .cursor

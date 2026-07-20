@@ -29,6 +29,9 @@ fn try_notify(source: &str, event: &str) -> Option<()> {
     let mut stdin_raw = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin_raw);
     let hook_input: Value = serde_json::from_str(stdin_raw.trim()).unwrap_or(Value::Null);
+    if should_suppress_codex_permission_request(source, event, &hook_input) {
+        return None;
+    }
 
     let normalized = normalize_hook_input(event, &hook_input)?;
     let reasoning_effort = normalized
@@ -94,6 +97,14 @@ fn non_empty_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.trim().is_empty())
 }
 
+fn should_suppress_codex_permission_request(source: &str, event: &str, hook_input: &Value) -> bool {
+    source == "codex"
+        && event == "PermissionRequest"
+        && matches!(
+            hook_input.get("permission_mode").and_then(Value::as_str),
+            Some("dontAsk" | "bypassPermissions")
+        )
+}
 /// 与旧 PowerShell 脚本保持一致的标题文案；前端在缺省时会自行兜底（App.tsx）。
 fn title_for(source: &str, event: &str) -> &'static str {
     match (source, event) {
@@ -119,6 +130,7 @@ fn title_for(source: &str, event: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::should_suppress_codex_permission_request;
     use serde_json::json;
 
     #[test]
@@ -154,5 +166,43 @@ mod tests {
             Some("exa")
         );
         assert_eq!(cli_manager_hook_schema::extract_mcp_server("Read"), None);
+    }
+
+    #[test]
+    fn suppresses_codex_permission_request_without_interactive_approval() {
+        for permission_mode in ["dontAsk", "bypassPermissions"] {
+            let input = json!({ "permission_mode": permission_mode });
+            assert!(should_suppress_codex_permission_request(
+                "codex",
+                "PermissionRequest",
+                &input
+            ));
+        }
+    }
+
+    #[test]
+    fn preserves_permission_request_for_interactive_or_unknown_modes() {
+        for input in [
+            json!({ "permission_mode": "default" }),
+            json!({ "permission_mode": "acceptEdits" }),
+            json!({ "permission_mode": "plan" }),
+            json!({}),
+        ] {
+            assert!(!should_suppress_codex_permission_request(
+                "codex",
+                "PermissionRequest",
+                &input
+            ));
+        }
+
+        let bypass = json!({ "permission_mode": "bypassPermissions" });
+        assert!(!should_suppress_codex_permission_request(
+            "claude",
+            "PermissionRequest",
+            &bypass
+        ));
+        assert!(!should_suppress_codex_permission_request(
+            "codex", "Stop", &bypass
+        ));
     }
 }

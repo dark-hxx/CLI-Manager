@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { convertChineseForLanguage, getLanguageLocale, useI18n } from "../../lib/i18n";
 import type { HistoryStatsModelItem } from "../../lib/types";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 
@@ -22,9 +23,9 @@ const MODEL_COLORS = [
   "#6A5B4D",
 ];
 
-function formatCount(value: number): string {
+function formatCount(value: number, language: "zh-CN" | "zh-TW" | "en-US"): string {
   if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat(getLanguageLocale(language)).format(value);
 }
 
 function formatPercent(value: number): string {
@@ -33,7 +34,9 @@ function formatPercent(value: number): string {
 }
 
 export function StatsModelComposition({ items }: StatsModelCompositionProps) {
+  const { language } = useI18n();
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const zh = (text: string) => convertChineseForLanguage(language, text);
 
   const segments = useMemo<ModelSegment[]>(() => {
     const top = items.slice(0, 5).map((item) => ({
@@ -53,13 +56,13 @@ export function StatsModelComposition({ items }: StatsModelCompositionProps) {
     if (otherRatio > 0 || otherSessions > 0) {
       top.push({
         key: "__other__",
-        label: "其他",
+        label: zh("其他"),
         ratio: otherRatio,
         sessions: otherSessions,
       });
     }
     return top;
-  }, [items]);
+  }, [items, language]);
 
   const normalized = useMemo(() => {
     const ratioSum = segments.reduce((sum, item) => sum + Math.max(0, item.ratio), 0);
@@ -72,11 +75,11 @@ export function StatsModelComposition({ items }: StatsModelCompositionProps) {
 
   return (
     <div className="rounded-md border border-border bg-bg-secondary p-3">
-      <div className="mb-2 text-xs font-semibold text-text-primary">模型占比（C5）</div>
+      <div className="mb-2 text-xs font-semibold text-text-primary">{zh("模型占比（C5）")}</div>
 
       {normalized.length === 0 && (
         <div className="py-8 text-center text-[11px] text-text-muted">
-          当前过滤条件下没有模型数据
+          {zh("当前过滤条件下没有模型数据")}
         </div>
       )}
 
@@ -97,7 +100,7 @@ export function StatsModelComposition({ items }: StatsModelCompositionProps) {
                     backgroundColor: MODEL_COLORS[idx % MODEL_COLORS.length],
                     opacity: activeKey && activeKey !== segment.key ? 0.35 : 1,
                   }}
-                  title={`${segment.label} · ${formatPercent(segment.ratio)} · ${formatCount(segment.sessions)} 会话`}
+                  title={`${segment.label} · ${formatPercent(segment.ratio)} · ${formatCount(segment.sessions, language)} ${zh("会话")}`}
                 />
               ))}
             </div>
@@ -115,7 +118,7 @@ export function StatsModelComposition({ items }: StatsModelCompositionProps) {
                 onMouseLeave={() => setActiveKey(null)}
                 onFocus={() => setActiveKey(segment.key)}
                 onBlur={() => setActiveKey(null)}
-                title={`${segment.label} · ${formatPercent(segment.ratio)} · ${formatCount(segment.sessions)} 会话`}
+                title={`${segment.label} · ${formatPercent(segment.ratio)} · ${formatCount(segment.sessions, language)} ${zh("会话")}`}
               >
                 <span className="inline-flex min-w-0 items-center gap-1.5 text-text-secondary">
                   <span
@@ -126,7 +129,7 @@ export function StatsModelComposition({ items }: StatsModelCompositionProps) {
                   <span className="truncate">{segment.label}</span>
                 </span>
                 <span className="shrink-0 text-text-muted">
-                  {formatPercent(segment.ratio)} · {formatCount(segment.sessions)}
+                  {formatPercent(segment.ratio)} · {formatCount(segment.sessions, language)}
                 </span>
               </button>
               );

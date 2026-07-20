@@ -52,6 +52,7 @@ export interface SshHost {
   port: number;
   username: string;
   config_alias: string;
+  config_file: string;
   auth_mode: SshAuthMode;
   identity_file: string;
   credential_ref: string;
@@ -80,6 +81,7 @@ export interface CreateSshHostInput {
   port?: number;
   username?: string;
   config_alias?: string;
+  config_file?: string;
   auth_mode?: SshAuthMode;
   identity_file?: string;
   credential_ref?: string;
@@ -245,6 +247,24 @@ export interface SshAgentToolIntegration {
   validation_state: SshToolIntegrationValidationState;
   cleanup_state: SshToolIntegrationCleanupState;
   checked_at: string;
+}
+
+export interface SshConfigImportHost {
+  alias: string;
+  sourceFile: string;
+}
+
+export interface SshConfigImportWarning {
+  code: string;
+  sourceFile: string;
+}
+
+export interface SshConfigImportPreview {
+  configDir: string;
+  configFile: string;
+  isDefault: boolean;
+  hosts: SshConfigImportHost[];
+  warnings: SshConfigImportWarning[];
 }
 
 export type WorktreeStatus = "active" | "missing";

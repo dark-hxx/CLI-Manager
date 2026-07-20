@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Portal } from "../ui/Portal";
-import { useI18n, type TranslationKey } from "../../lib/i18n";
+import { getCurrentLanguage, getLanguageLocale, pickByLanguage, useI18n, type TranslationKey } from "../../lib/i18n";
 import type { CcusageSource } from "../../lib/types";
 import { resolveCcusageRuntimeScope, resolveCcusageWslTarget, useCcusageStore } from "../../stores/ccusageStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -145,18 +145,6 @@ const SOURCE_OPTIONS: { value: CcusageSource; label: string; labelKey?: Translat
   { value: "codex", label: "Codex", descriptionKey: "ccusage.source.codexDescription" },
 ];
 
-const DATETIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-});
-const DAY_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-});
-const COUNT_FORMATTER = new Intl.NumberFormat("zh-CN");
 const REGISTRY_MIRROR_TEXT = "https://registry.npmmirror.com";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -197,7 +185,7 @@ function stringArrayField(record: Record<string, unknown> | null, keys: string[]
 }
 
 function formatCount(value: number): string {
-  return COUNT_FORMATTER.format(Math.max(0, Math.round(value)));
+  return new Intl.NumberFormat(getLanguageLocale(getCurrentLanguage())).format(Math.max(0, Math.round(value)));
 }
 
 function formatCost(value: number): string {
@@ -211,12 +199,21 @@ function formatPercent(value: number): string {
 
 function formatDateTime(ts: number | null): string {
   if (!ts || !Number.isFinite(ts)) return "-";
-  return DATETIME_FORMATTER.format(new Date(ts));
+  return new Intl.DateTimeFormat(getLanguageLocale(getCurrentLanguage()), {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(ts));
 }
 
 function formatDayFromStart(dayStart: number): string {
   if (!Number.isFinite(dayStart) || dayStart <= 0) return "-";
-  return DAY_FORMATTER.format(new Date(dayStart));
+  return new Intl.DateTimeFormat(getLanguageLocale(getCurrentLanguage()), {
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(dayStart));
 }
 
 function parseDayStart(date: string): number {
@@ -912,7 +909,7 @@ function tooltipNumber(value: Record<string, unknown>, key: string): number {
 
 function KpiStrip({ summary }: { summary: CcusageSummary }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const peak = getPeakDay(summary.daily);
   const peakShare = peak && summary.totalTokens > 0 ? (peak.totalTokens / summary.totalTokens) * 100 : 0;
   const items: { label: string; value: string; hint: string; icon: typeof Coins; accent: string }[] = [
@@ -972,7 +969,7 @@ function KpiStrip({ summary }: { summary: CcusageSummary }) {
 
 function PeakDaySummaryCard({ summary }: { summary: CcusageSummary }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const peak = getPeakDay(summary.daily);
   const peakShare = peak && summary.totalTokens > 0 ? (peak.totalTokens / summary.totalTokens) * 100 : 0;
   const metrics = peak
@@ -1022,7 +1019,7 @@ function PeakDaySummaryCard({ summary }: { summary: CcusageSummary }) {
 
 function TokenCompositionStrip({ summary }: { summary: CcusageSummary }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const parts = [
     { key: "input", label: text("输入", "Input"), value: summary.inputTokens, color: USAGE_SERIES_COLORS.input },
     { key: "output", label: text("输出", "Output"), value: summary.outputTokens, color: USAGE_SERIES_COLORS.output },
@@ -1060,7 +1057,7 @@ function TokenCompositionStrip({ summary }: { summary: CcusageSummary }) {
 
 function ReportContextNote({ reportKind, sourceLabel, schemaLabel }: { reportKind: string; sourceLabel: string; schemaLabel: string }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border/60 bg-bg-secondary px-3 py-2 text-[11px] text-text-secondary">
       <span className="inline-flex items-center gap-1 font-semibold text-text-primary">
@@ -1191,7 +1188,7 @@ function TimeWindowSelector({
 
 function DailyUsageTrendChart({ items, granularity }: { items: CcusageDailyItem[]; granularity: string }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const peak = useMemo(() => getPeakDay(items), [items]);
   const hasItems = items.length > 0;
   const displayGranularity = granularity === "小时" ? text("小时", "hour") : granularity === "月" ? text("月", "month") : text("天", "day");
@@ -1408,7 +1405,7 @@ function heatmapCellColor(value: number, maxValue: number): string {
 
 function DailyUsageHeatmap({ items, granularity }: { items: CcusageDailyItem[]; granularity: string }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const peak = useMemo(() => getPeakDay(items), [items]);
   const maxTokens = Math.max(0, ...items.map((item) => item.totalTokens));
   const hasItems = items.length > 0;
@@ -1459,7 +1456,7 @@ function DailyUsageHeatmap({ items, granularity }: { items: CcusageDailyItem[]; 
 
 function ModelRankingChart({ summary }: { summary: CcusageSummary }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const models = useMemo(
     () => summary.models.filter((item) => item.totalTokens > 0).slice(0, 8).reverse(),
     [summary.models]
@@ -1542,7 +1539,7 @@ function ModelRankingChart({ summary }: { summary: CcusageSummary }) {
 
 function PayloadOverviewFooter({ summary }: { summary: CcusageSummary }) {
   const { language } = useI18n();
-  const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
+  const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   return (
     <section className="rounded-xl border border-border/60 bg-bg-secondary px-3 py-2 text-[11px] text-text-muted">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">

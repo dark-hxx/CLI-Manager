@@ -183,6 +183,9 @@ fn collect_claude_session_files(root: &Path) -> Vec<SessionFileRef> {
 }
 ```
 
+- Windows 调用 WSL 内的非交互命令时必须使用 `wsl.exe -d <distro> --exec <program> ...`，确保参数直接传给目标程序，不经过用户默认 Shell。
+- `find -name` 等参数中的 `*` / `?` 必须作为原始 argv 传递；不要依赖 bash/zsh 转义。缺少 `--exec` 时，zsh 的 `nomatch` 会在文件尚未出现时直接返回 exit 1。
+
 ### Base: 错误时优雅降级
 
 ```rust
@@ -262,7 +265,7 @@ if crate::wsl::is_wsl_config_dir(&path_str) {
     // 走 wsl.exe 命令
     let (distro, linux_path) = crate::wsl::parse_wsl_unc_path(&path_str).unwrap();
     let output = silent_command("wsl.exe")
-        .args(["-d", &distro, "find", &linux_path, "-name", "*.jsonl", "-type", "f"])
+        .args(["-d", &distro, "--exec", "find", &linux_path, "-name", "*.jsonl", "-type", "f"])
         .output()?;
     // 解析 output.stdout
 } else {

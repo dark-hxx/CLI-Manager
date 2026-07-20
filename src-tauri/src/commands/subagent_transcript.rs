@@ -426,11 +426,16 @@ fn wsl_exe() -> String {
         .unwrap_or_else(|| "wsl.exe".to_string())
 }
 
+fn build_wsl_command_args(distro: &str, args: &[&str]) -> Vec<String> {
+    let mut command_args = vec!["-d".to_string(), distro.to_string(), "--exec".to_string()];
+    command_args.extend(args.iter().map(|arg| (*arg).to_string()));
+    command_args
+}
+
 fn wsl_command_text(distro: &str, args: &[&str]) -> Result<(String, String), String> {
     let program = wsl_exe();
     let mut cmd = silent_command(&program);
-    cmd.args(["-d", distro]);
-    cmd.args(args);
+    cmd.args(build_wsl_command_args(distro, args));
     run_wsl_command(cmd, &program)
 }
 
@@ -569,23 +574,21 @@ fn resolve_wsl_codex_sessions_root(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .is_some();
-    if !has_explicit_config {
-        if let Some(path) = trimmed(parent_transcript_path) {
-            let linux_path = if is_linux_absolute_path(&path) {
-                Some(path)
-            } else {
-                crate::wsl::parse_wsl_unc_path(&crate::wsl::normalize_wsl_unc_path(&path))
-                    .map(|(_path_distro, linux_path)| linux_path)
-            };
-            if let Some(linux_path) = linux_path {
-                let normalized = linux_path.replace('\\', "/");
-                if let Some(index) = normalized.find("/sessions/") {
-                    let sessions_root = &normalized[..index + "/sessions".len()];
-                    return Ok(PathBuf::from(crate::wsl::linux_to_unc_wsl_path(
-                        sessions_root,
-                        distro,
-                    )));
-                }
+    if let Some(path) = trimmed(parent_transcript_path) {
+        let linux_path = if is_linux_absolute_path(&path) {
+            Some(path)
+        } else {
+            crate::wsl::parse_wsl_unc_path(&crate::wsl::normalize_wsl_unc_path(&path))
+                .map(|(_path_distro, linux_path)| linux_path)
+        };
+        if let Some(linux_path) = linux_path {
+            let normalized = linux_path.replace('\\', "/");
+            if let Some(index) = normalized.find("/sessions/") {
+                let sessions_root = &normalized[..index + "/sessions".len()];
+                return Ok(PathBuf::from(crate::wsl::linux_to_unc_wsl_path(
+                    sessions_root,
+                    distro,
+                )));
             }
         }
     }
@@ -1025,7 +1028,7 @@ fn discover_wsl_subagent_files(
         slug_for_cwd(&linux_cwd),
         session_id
     );
-    let pattern = "agent-\\*.jsonl";
+    let pattern = "agent-*.jsonl";
     let args = [
         "find",
         subagents_dir.as_str(),
@@ -1074,6 +1077,34 @@ fn discover_wsl_subagent_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wsl_command_args_use_exec_and_preserve_glob_arguments() {
+        assert_eq!(
+            build_wsl_command_args(
+                "Ubuntu",
+                &[
+                    "find",
+                    "/home/me/.codex/sessions",
+                    "-name",
+                    "rollout-*-agent.jsonl",
+                ],
+            ),
+            vec![
+                "-d",
+                "Ubuntu",
+                "--exec",
+                "find",
+                "/home/me/.codex/sessions",
+                "-name",
+                "rollout-*-agent.jsonl",
+            ]
+        );
+        assert_eq!(
+            build_wsl_command_args("Ubuntu", &["find", "-name", "agent-*.jsonl"]),
+            vec!["-d", "Ubuntu", "--exec", "find", "-name", "agent-*.jsonl",]
+        );
+    }
 
     #[test]
     fn slug_replaces_separators_only() {
@@ -1251,6 +1282,20 @@ mod tests {
         assert_eq!(
             got.to_string_lossy(),
             r"\\wsl.localhost\Ubuntu\root\.codex\sessions"
+        );
+    }
+
+    #[test]
+    fn parent_transcript_root_overrides_incorrect_explicit_config() {
+        let got = resolve_wsl_codex_sessions_root(
+            Some("/home/dministrator".to_string()),
+            Some("/home/dministrator/.codex/sessions/2026/07/20/rollout-parent.jsonl".to_string()),
+            "Ubuntu-22.04",
+        )
+        .unwrap();
+        assert_eq!(
+            got.to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\sessions"
         );
     }
 

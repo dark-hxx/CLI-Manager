@@ -35,7 +35,7 @@ pub struct CliManagerDataPaths {
     pub claude_providers_dir: String,
 }
 
-fn home_dir_from_env() -> Result<PathBuf, String> {
+pub(crate) fn home_dir_from_env() -> Result<PathBuf, String> {
     if let Some(home) = std::env::var_os("USERPROFILE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

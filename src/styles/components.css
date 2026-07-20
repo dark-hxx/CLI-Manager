@@ -7084,6 +7084,55 @@
   z-index: 0;
 }
 
+.terminal-link-hover-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 8;
+  display: flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--terminal-link-icon-fg) 32%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--terminal-link-icon-bg) 88%, transparent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  color: var(--terminal-link-icon-fg);
+  pointer-events: none;
+}
+
+.terminal-link-hover-icon[hidden] {
+  display: none;
+}
+
+.terminal-link-hover-icon::before {
+  width: 11px;
+  height: 11px;
+  background-color: currentColor;
+  content: "";
+  -webkit-mask-image: var(--terminal-link-icon-mask);
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-image: var(--terminal-link-icon-mask);
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
+
+.terminal-link-hover-icon[data-kind="link"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.07.07l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.07-.07l-2 2A5 5 0 0 0 12 20l1.15-1.15'/%3E%3C/svg%3E");
+}
+
+.terminal-link-hover-icon[data-kind="file"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z'/%3E%3Cpolyline points='14 2 14 8 20 8'/%3E%3C/svg%3E");
+}
+
+.terminal-link-hover-icon[data-kind="directory"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z'/%3E%3C/svg%3E");
+}
+
 .ui-terminal-bg-layer[data-bg-enabled="true"]::before {
   content: "";
   position: absolute;

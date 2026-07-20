@@ -7,6 +7,7 @@ import {
   DialogFooter,
 } from "./ui/dialog";
 import { Button } from "./ui/button";
+import { useI18n } from "../lib/i18n";
 
 type CloseAction = "minimize" | "exit";
 
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export function CloseConfirmDialog({ open, onMinimize, onExit, onClose }: Props) {
+  const { t } = useI18n();
   const [action, setAction] = useState<CloseAction>("minimize");
   const [remember, setRemember] = useState(false);
 
@@ -55,7 +57,7 @@ export function CloseConfirmDialog({ open, onMinimize, onExit, onClose }: Props)
             strokeWidth={2}
           />
           <DialogTitle id="close-confirm-title" className="text-[13px]">
-            您点击了关闭按钮，您想要：
+            {t("dialogs.closeConfirm.title")}
           </DialogTitle>
         </div>
 
@@ -69,7 +71,7 @@ export function CloseConfirmDialog({ open, onMinimize, onExit, onClose }: Props)
               onChange={() => setAction("minimize")}
               className="h-3.5 w-3.5 accent-accent"
             />
-            最小化到托盘
+            {t("settings.options.close.minimize")}
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-[13px] text-text-primary">
             <input
@@ -80,7 +82,7 @@ export function CloseConfirmDialog({ open, onMinimize, onExit, onClose }: Props)
               onChange={() => setAction("exit")}
               className="h-3.5 w-3.5 accent-accent"
             />
-            退出
+            {t("settings.options.close.exit")}
           </label>
         </div>
 
@@ -92,14 +94,14 @@ export function CloseConfirmDialog({ open, onMinimize, onExit, onClose }: Props)
               onChange={(e) => setRemember(e.target.checked)}
               className="h-3 w-3 accent-accent"
             />
-            不再提示
+            {t("dialogs.closeConfirm.remember")}
           </label>
           <div className="flex items-center gap-1.5">
             <Button variant="outline" size="sm" onClick={onClose}>
-              取消
+              {t("common.cancel")}
             </Button>
             <Button variant="default" size="sm" onClick={handleConfirm}>
-              确定
+              {t("common.confirm")}
             </Button>
           </div>
         </DialogFooter>

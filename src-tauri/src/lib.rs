@@ -348,7 +348,12 @@ const MIGRATION_CREATE_SSH_HOST_GROUPS_SQL: &str = "
                     ON ssh_hosts(group_id, sort_order, name);
               ";
 
-const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_VERSION: i64 = 22;
+const MIGRATION_ADD_SSH_CONFIG_FILE_VERSION: i64 = 22;
+const MIGRATION_ADD_SSH_CONFIG_FILE_DESCRIPTION: &str = "add_ssh_config_file";
+const MIGRATION_ADD_SSH_CONFIG_FILE_SQL: &str =
+    "ALTER TABLE ssh_hosts ADD COLUMN config_file TEXT NOT NULL DEFAULT '';";
+
+const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_VERSION: i64 = 23;
 const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_DESCRIPTION: &str =
     "create_ssh_agent_integrations_and_project_cli_config_root";
 const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL: &str = "
@@ -402,7 +407,7 @@ const MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL: &str = "
                     ON ssh_agent_tool_integrations(history_source_instance_id);
               ";
 
-const MIGRATION_EXTEND_SSH_AGENT_INSTALLATIONS_VERSION: i64 = 23;
+const MIGRATION_EXTEND_SSH_AGENT_INSTALLATIONS_VERSION: i64 = 24;
 const MIGRATION_EXTEND_SSH_AGENT_INSTALLATIONS_DESCRIPTION: &str =
     "extend_ssh_agent_installation_metadata";
 const MIGRATION_EXTEND_SSH_AGENT_INSTALLATIONS_SQL: &str = "
@@ -412,7 +417,6 @@ const MIGRATION_EXTEND_SSH_AGENT_INSTALLATIONS_SQL: &str = "
                 ALTER TABLE ssh_agent_installations ADD COLUMN artifact_sha256 TEXT NOT NULL DEFAULT '';
                 ALTER TABLE ssh_agent_installations ADD COLUMN previous_version TEXT NOT NULL DEFAULT '';
               ";
-
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -643,6 +647,12 @@ fn migrations() -> Vec<Migration> {
             version: MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
             description: MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION,
             sql: MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_ADD_SSH_CONFIG_FILE_VERSION,
+            description: MIGRATION_ADD_SSH_CONFIG_FILE_DESCRIPTION,
+            sql: MIGRATION_ADD_SSH_CONFIG_FILE_SQL,
             kind: MigrationKind::Up,
         },
         Migration {
@@ -927,9 +937,12 @@ pub fn run() {
             commands::ssh::ssh_delete_password,
             commands::ssh::ssh_check_path,
             commands::ssh::ssh_list_directories,
+            commands::ssh_config::ssh_config_default_directory,
+            commands::ssh_config::ssh_config_import_preview,
             commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::fs::check_paths_exist,
+            commands::fs::file_get_path_kind,
             commands::fs::file_watch_start,
             commands::fs::file_watch_stop,
             commands::fs::file_list_dir,
@@ -1144,8 +1157,8 @@ pub fn run() {
 #[cfg(test)]
 mod ssh_migration_tests {
     use super::{
-        MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL, MIGRATION_CREATE_SSH_HOSTS_SQL,
-        MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+        MIGRATION_ADD_SSH_CONFIG_FILE_SQL, MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL,
+        MIGRATION_CREATE_SSH_HOSTS_SQL, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
     };
     use sqlx::{Connection, Row, SqliteConnection};
 
@@ -1337,5 +1350,37 @@ mod ssh_migration_tests {
                 .await
                 .unwrap();
         assert_eq!(preference_count.get::<i64, _>("count"), 0);
+    }
+
+    #[tokio::test]
+    async fn ssh_config_file_migration_defaults_existing_hosts_to_system_config() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO ssh_hosts (id, name, config_alias, created_at, updated_at)
+             VALUES ('host-1', 'Server', 'prod', '1', '1')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_ADD_SSH_CONFIG_FILE_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        let row = sqlx::query("SELECT config_file FROM ssh_hosts WHERE id = 'host-1'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("config_file"), "");
     }
 }

@@ -337,11 +337,9 @@ pub async fn sync_save_password(password: String) -> Result<(), String> {
 pub async fn sync_load_password() -> Result<Option<String>, String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
-        tokio::task::spawn_blocking(|| {
-            crate::credential_store::get("webdav")
-        })
-        .await
-        .map_err(|e| format!("内部错误: {}", e))?
+        tokio::task::spawn_blocking(|| crate::credential_store::get("webdav"))
+            .await
+            .map_err(|e| format!("内部错误: {}", e))?
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     Ok(None)

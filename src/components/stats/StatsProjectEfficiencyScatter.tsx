@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
+import { convertChineseForLanguage, getLanguageLocale, useI18n } from "../../lib/i18n";
 import type { HistoryStatsProjectEfficiencyItem } from "../../lib/types";
 
 interface StatsProjectEfficiencyScatterProps {
   items: HistoryStatsProjectEfficiencyItem[];
 }
 
-function formatCount(value: number): string {
+function formatCount(value: number, language: "zh-CN" | "zh-TW" | "en-US"): string {
   if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat(getLanguageLocale(language)).format(value);
 }
 
 function formatFloat(value: number): string {
@@ -16,8 +17,10 @@ function formatFloat(value: number): string {
 }
 
 export function StatsProjectEfficiencyScatter({ items }: StatsProjectEfficiencyScatterProps) {
+  const { language } = useI18n();
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const data = useMemo(() => items.slice(0, 30), [items]);
+  const zh = (text: string) => convertChineseForLanguage(language, text);
 
   const chart = useMemo(() => {
     const width = 460;
@@ -61,17 +64,17 @@ export function StatsProjectEfficiencyScatter({ items }: StatsProjectEfficiencyS
   return (
     <div className="rounded-md border border-border bg-bg-secondary p-3">
       <div className="mb-2 flex items-center gap-2">
-        <div className="text-xs font-semibold text-text-primary">项目效率散点（C9）</div>
+        <div className="text-xs font-semibold text-text-primary">{zh("项目效率散点（C9）")}</div>
         <div className="ml-auto text-[11px] text-text-secondary">
           {active
-            ? `${active.project_key} · ${formatCount(active.sessions)} 会话 · 均值 ${formatFloat(active.avg_messages_per_session)}`
-            : "暂无效率数据"}
+            ? `${active.project_key} · ${formatCount(active.sessions, language)} ${zh("会话")} · ${zh("均值")} ${formatFloat(active.avg_messages_per_session)}`
+            : zh("暂无效率数据")}
         </div>
       </div>
 
       {data.length === 0 && (
         <div className="py-8 text-center text-[11px] text-text-muted">
-          当前过滤条件下没有项目效率数据
+          {zh("当前过滤条件下没有项目效率数据")}
         </div>
       )}
 
@@ -83,7 +86,7 @@ export function StatsProjectEfficiencyScatter({ items }: StatsProjectEfficiencyS
               height={chart.height}
               viewBox={`0 0 ${chart.width} ${chart.height}`}
               role="img"
-              aria-label="项目效率散点图，X 轴会话数，Y 轴平均每会话消息数"
+              aria-label={zh("项目效率散点图，X 轴会话数，Y 轴平均每会话消息数")}
             >
               {[0, 1, 2, 3].map((step) => {
                 const y = chart.paddingTop + (chart.innerHeight * step) / 3;
@@ -130,7 +133,7 @@ export function StatsProjectEfficiencyScatter({ items }: StatsProjectEfficiencyS
             </svg>
           </div>
           <div className="mt-1 flex items-center justify-between text-[10px] text-text-muted">
-            <span>X：会话数（最大 {formatCount(chart.maxSessions)}）</span>
+            <span>X：会话数（最大 {formatCount(chart.maxSessions, language)}）</span>
             <span>Y：平均每会话消息数（最大 {formatFloat(chart.maxAvg)}）</span>
           </div>
           <div className="mt-1 text-[10px] text-text-muted">

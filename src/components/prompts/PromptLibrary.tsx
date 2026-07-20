@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Select } from "@/components/ui/select";
 import { Copy, Search, X } from "lucide-react";
 import { toast } from "sonner";
+import { convertChineseForLanguage, getLanguageLocale, useI18n } from "../../lib/i18n";
 import type { HistorySessionView, PromptScope } from "../../lib/types";
 import { useHistoryStore } from "../../stores/historyStore";
 import { MarkdownContent } from "../ui/MarkdownContent";
@@ -18,9 +19,9 @@ function makeSessionKey(source: string, sessionId: string, filePath: string): st
   return `${source}:${sessionId}:${filePath}`;
 }
 
-function formatUpdatedAt(ts: number): string {
+function formatUpdatedAt(ts: number, language: "zh-CN" | "zh-TW" | "en-US"): string {
   if (!Number.isFinite(ts) || ts <= 0) return "-";
-  return new Date(ts).toLocaleString("zh-CN", {
+  return new Date(ts).toLocaleString(getLanguageLocale(language), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -35,9 +36,11 @@ export function PromptLibrary({
   onClose,
   onJumpToPrompt,
 }: PromptLibraryProps) {
+  const { language } = useI18n();
   const loadingPrompts = useHistoryStore((s) => s.loadingPrompts);
   const prompts = useHistoryStore((s) => s.prompts);
   const loadPrompts = useHistoryStore((s) => s.loadPrompts);
+  const zh = (text: string) => convertChineseForLanguage(language, text);
 
   const [scope, setScope] = useState<PromptScope>("global");
   const [query, setQuery] = useState("");
@@ -70,7 +73,7 @@ export function PromptLibrary({
         sessionKey: scope === "session" ? activeSessionKey : null,
         limit: 300,
       }).catch((err) => {
-        toast.error("加载 Prompt 失败", { description: String(err) });
+        toast.error(zh("加载 Prompt 失败"), { description: String(err) });
       });
     }, 220);
     return () => clearTimeout(timer);
@@ -93,17 +96,17 @@ export function PromptLibrary({
         <div className="px-3 py-2 border-b flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              历史 Prompt 库
+              {zh("历史 Prompt 库")}
             </div>
             <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              来源于已发生会话，用于复用与回放定位
+              {zh("来源于已发生会话，用于复用与回放定位")}
             </div>
           </div>
           <button
             onClick={onClose}
             className="inline-flex items-center justify-center rounded-md border w-7 h-7"
             style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-            title="关闭"
+            title={zh("关闭")}
           >
             <X size={14} />
           </button>
@@ -119,7 +122,7 @@ export function PromptLibrary({
               color: scope === "global" ? "var(--text-primary)" : "var(--text-secondary)",
             }}
           >
-            全局
+            {zh("全局")}
           </button>
           <button
             onClick={() => setScope("project")}
@@ -130,7 +133,7 @@ export function PromptLibrary({
               color: scope === "project" ? "var(--text-primary)" : "var(--text-secondary)",
             }}
           >
-            项目
+            {zh("项目")}
           </button>
           <button
             onClick={() => setScope("session")}
@@ -141,7 +144,7 @@ export function PromptLibrary({
               color: scope === "session" ? "var(--text-primary)" : "var(--text-secondary)",
             }}
           >
-            会话
+            {zh("会话")}
           </button>
 
           {scope === "project" && (
@@ -169,7 +172,7 @@ export function PromptLibrary({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索 Prompt"
+              placeholder={zh("搜索 Prompt")}
               className="flex-1 min-w-0 bg-transparent text-xs outline-none"
               style={{ color: "var(--text-primary)" }}
             />
@@ -179,19 +182,19 @@ export function PromptLibrary({
         <div className="flex-1 min-h-0 overflow-y-auto">
           {loadingPrompts && (
             <div className="px-3 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
-              正在加载 Prompt...
+              {zh("正在加载 Prompt...")}
             </div>
           )}
 
           {!loadingPrompts && scope === "session" && !activeSessionKey && (
             <div className="px-3 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-              当前未选择会话，无法查看会话级 Prompt
+              {zh("当前未选择会话，无法查看会话级 Prompt")}
             </div>
           )}
 
           {!loadingPrompts && prompts.length === 0 && !(scope === "session" && !activeSessionKey) && (
             <div className="px-3 py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-              没有匹配的 Prompt
+              {zh("没有匹配的 Prompt")}
             </div>
           )}
 
@@ -210,8 +213,8 @@ export function PromptLibrary({
                         {item.session_title}
                       </div>
                       <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        {item.source} · {item.project_key} · #{item.message_index + 1} · 更新于{" "}
-                        {formatUpdatedAt(item.updated_at)}
+                        {item.source} · {item.project_key} · #{item.message_index + 1} · {zh("更新于")}{" "}
+                        {formatUpdatedAt(item.updated_at, language)}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -219,9 +222,9 @@ export function PromptLibrary({
                         onClick={() => {
                           void navigator.clipboard
                             .writeText(item.prompt)
-                            .then(() => toast.success("Prompt 已复制"))
+                            .then(() => toast.success(zh("Prompt 已复制")))
                             .catch((err) =>
-                              toast.error("复制失败", { description: String(err) })
+                              toast.error(zh("复制失败"), { description: String(err) })
                             );
                         }}
                         className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border"
@@ -232,20 +235,20 @@ export function PromptLibrary({
                         }}
                       >
                         <Copy size={12} />
-                        复制
+                        {zh("复制")}
                       </button>
                       <button
                         onClick={() => {
                           void onJumpToPrompt(sessionKey, item.message_index)
                             .then(() => onClose())
                             .catch((err) =>
-                              toast.error("跳转失败", { description: String(err) })
+                              toast.error(zh("跳转失败"), { description: String(err) })
                             );
                         }}
                         className="text-xs px-2 py-1 rounded-md"
                         style={{ backgroundColor: "var(--accent)", color: "#fff" }}
                       >
-                        跳转
+                        {zh("跳转")}
                       </button>
                     </div>
                   </div>

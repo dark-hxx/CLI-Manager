@@ -314,10 +314,7 @@ pub async fn open_windows_terminal(tabs: Vec<ExternalTab>) -> Result<(), String>
 
 /// 在系统文件管理器中打开指定路径
 #[tauri::command]
-pub async fn open_folder_in_explorer(
-    path: String,
-    open_file: Option<bool>,
-) -> Result<(), String> {
+pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> Result<(), String> {
     let path_buf = PathBuf::from(&path);
 
     // 检查路径是否存在

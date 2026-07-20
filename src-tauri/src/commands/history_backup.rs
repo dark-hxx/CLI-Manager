@@ -180,7 +180,12 @@ pub fn backup_file_path(session_path: &Path, backups_dir: &Path) -> PathBuf {
     backups_dir.join(format!("{}__{}.jsonl.bak", &digest[..16], stem))
 }
 
-fn mutation_backup_dir(backups_dir: &Path, source: &str, source_instance_id: &str, id: &str) -> PathBuf {
+fn mutation_backup_dir(
+    backups_dir: &Path,
+    source: &str,
+    source_instance_id: &str,
+    id: &str,
+) -> PathBuf {
     backups_dir.join(source).join(source_instance_id).join(id)
 }
 
@@ -220,7 +225,10 @@ fn artifact_fingerprint(path: &Path) -> String {
         .and_then(|metadata| metadata.modified().ok())
         .map(system_time_to_millis)
         .unwrap_or(0);
-    let size = metadata.as_ref().map(|metadata| metadata.len()).unwrap_or(0);
+    let size = metadata
+        .as_ref()
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
     format!("mtime_ms={updated_at};size={size}")
 }
 
@@ -466,7 +474,13 @@ fn create_file_backup_snapshot_with_limit(
     fs::create_dir_all(&files_dir).map_err(|err| err.to_string())?;
     let backup = files_dir.join(safe_backup_file_name(session_path));
     fs::copy(session_path, &backup).map_err(|err| err.to_string())?;
-    write_file_manifest(&backup, session_path, source, source_session_id, mutation_kind)?;
+    write_file_manifest(
+        &backup,
+        session_path,
+        source,
+        source_session_id,
+        mutation_kind,
+    )?;
     cleanup_backup_root(backups_dir)?;
     Ok(backup)
 }
@@ -595,7 +609,11 @@ pub fn build_file_restore_plan(
         backup_path: hit
             .as_ref()
             .map(|hit| hit.backup_path.to_string_lossy().to_string())
-            .unwrap_or_else(|| backup_file_path(session_path, backups_dir).to_string_lossy().to_string()),
+            .unwrap_or_else(|| {
+                backup_file_path(session_path, backups_dir)
+                    .to_string_lossy()
+                    .to_string()
+            }),
         original_path: session_path.to_string_lossy().to_string(),
         can_restore: backup_exists && original_exists && !tool_running && conflict.is_none(),
         required_tool_closed: !tool_running,
@@ -619,8 +637,14 @@ pub fn write_file_manifest(
     let manifest_path = backup_path
         .parent()
         .and_then(|parent| {
-            if parent.file_name().map(|name| name == "files").unwrap_or(false) {
-                parent.parent().map(|mutation_dir| mutation_dir.join("manifest.json"))
+            if parent
+                .file_name()
+                .map(|name| name == "files")
+                .unwrap_or(false)
+            {
+                parent
+                    .parent()
+                    .map(|mutation_dir| mutation_dir.join("manifest.json"))
             } else {
                 None
             }
@@ -821,11 +845,18 @@ mod tests {
         write_text(&session, "{}\n");
 
         let backup =
-            create_file_backup_snapshot(&session, &backups, "claude", "session", "delete")
-                .unwrap();
+            create_file_backup_snapshot(&session, &backups, "claude", "session", "delete").unwrap();
         assert!(backup.exists());
-        assert!(backup.to_string_lossy().contains("\\files\\") || backup.to_string_lossy().contains("/files/"));
-        let manifest = backup.parent().unwrap().parent().unwrap().join("manifest.json");
+        assert!(
+            backup.to_string_lossy().contains("\\files\\")
+                || backup.to_string_lossy().contains("/files/")
+        );
+        let manifest = backup
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("manifest.json");
         assert!(manifest.exists());
     }
 
@@ -837,8 +868,7 @@ mod tests {
         write_text(&session, "{}\n");
 
         let backup =
-            create_file_backup_snapshot(&session, &backups, "claude", "session-1", "edit")
-                .unwrap();
+            create_file_backup_snapshot(&session, &backups, "claude", "session-1", "edit").unwrap();
         let candidates = list_file_restore_candidates(&backups);
 
         assert_eq!(candidates.len(), 1);
@@ -885,13 +915,21 @@ mod tests {
         let backups = temp.path().join("backups");
         write_text(&session, "before");
         let backup =
-            create_file_backup_snapshot(&session, &backups, "claude", "session", "delete")
-                .unwrap();
-        let manifest = backup.parent().unwrap().parent().unwrap().join("manifest.json");
+            create_file_backup_snapshot(&session, &backups, "claude", "session", "delete").unwrap();
+        let manifest = backup
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("manifest.json");
         let mut manifest_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
         manifest_json["state"] = serde_json::json!("manualRecoveryRequired");
-        fs::write(&manifest, serde_json::to_vec_pretty(&manifest_json).unwrap()).unwrap();
+        fs::write(
+            &manifest,
+            serde_json::to_vec_pretty(&manifest_json).unwrap(),
+        )
+        .unwrap();
         write_text(&session, "changed-after-failure");
 
         let plan = build_file_restore_plan(&session, &backups, None);

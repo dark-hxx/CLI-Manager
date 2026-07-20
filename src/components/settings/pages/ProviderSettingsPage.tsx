@@ -42,7 +42,7 @@ import { ProviderBadge } from "@/components/provider/ProviderRow";
 import { SettingsListItem } from "@/components/settings/SettingsListItem";
 import { VendorIcon, inferVendor, type VendorKey } from "@/components/VendorIcon";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useI18n, type AppLanguage } from "@/lib/i18n";
+import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 
 // 深度合并对象（target 覆盖 source）
 function deepMerge(source: any, target: any): any {
@@ -198,7 +198,7 @@ const providerPageStyles = `
 `;
 
 function pickText(language: AppLanguage, zh: string, en: string) {
-  return language === "zh-CN" ? zh : en;
+  return pickByLanguage(language, zh, en);
 }
 
 const ERROR_HINTS: Record<string, { zh: string; en: string }> = {
@@ -898,7 +898,7 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
                 </Group>
                 <Text size="xs" c="var(--text-muted)">
                   {text("只读解析 cc-switch 的供应商配置；密钥已脱敏，留空使用默认路径", "Read-only parsing of cc-switch provider configs; keys are masked. Leave blank to use default path")}
-                  ~/.cc-switch/cc-switch.db{language === "zh-CN" ? "。" : "."}
+                  ~/.cc-switch/cc-switch.db{pickText(language, "。", ".")}
                 </Text>
               </Box>
             </Group>

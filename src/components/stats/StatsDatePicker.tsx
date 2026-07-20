@@ -96,7 +96,7 @@ export function StatsDatePicker({
     if (open) setViewDate(parseViewDate(value, mode, min, max));
   }, [max, min, mode, open, value]);
 
-  const locale = language === "en-US" ? "en-US" : "zh-CN";
+  const locale = language === "en-US" ? "en-US" : language;
   const displayText = useMemo(() => {
     if (!value) return ariaLabel;
     const date = parseViewDate(value, mode);
