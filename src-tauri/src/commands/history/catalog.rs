@@ -3432,6 +3432,18 @@ mod tests {
         .execute(&mut conn)
         .await
         .unwrap();
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'codex-stats', 'codex', 'windows', 'windows', 'file',
+                '{}', 'codex-settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
         let gemini_result = sqlx::query(
             "INSERT INTO history_sessions(
                 source_instance_id, source_session_id, storage_kind, primary_path,
@@ -3455,6 +3467,32 @@ mod tests {
              ) VALUES (?1, 0, 2000, 'gemini-2.5-pro', 7, 4, 0, 0, 0)",
         )
         .bind(gemini_result.last_insert_rowid())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        let codex_result = sqlx::query(
+            "INSERT INTO history_sessions(
+                source_instance_id, source_session_id, storage_kind, primary_path,
+                project_key, cwd, cwd_normalized, title, created_at, updated_at,
+                message_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, fingerprint_kind, fingerprint_value, parser_version,
+                model_version, parse_status, last_seen_generation, indexed_at
+             ) VALUES (
+                'codex-stats', 'codex-v2', 'file', 'D:/codex/session.jsonl',
+                'codex-proj', 'D:/work/codex', 'd:/work/codex', 'Codex stats', 10, 30,
+                1, 9, 2, 3, 0, 'file-stat', 'codex-fp', 1, 1, 'ok', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_usage_events(
+                session_id, event_index, timestamp_ms, model, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd
+             ) VALUES (?1, 0, 2000, 'gpt-5.4', 9, 2, 3, 0, 0)",
+        )
+        .bind(codex_result.last_insert_rowid())
         .execute(&mut conn)
         .await
         .unwrap();
@@ -3490,7 +3528,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(facts.len(), 2);
+        assert_eq!(facts.len(), 3);
         let claude = facts
             .iter()
             .find(|fact| fact.summary.session_id == "stats-v2")
@@ -3506,6 +3544,11 @@ mod tests {
             .unwrap();
         assert_eq!(gemini.summary.source, "gemini");
         assert_eq!(gemini.stats.input_tokens, 7);
+        let codex = facts
+            .iter()
+            .find(|fact| fact.summary.session_id == "codex-v2")
+            .unwrap();
+        assert_eq!(codex.occurred_at, 2000);
     }
 
     #[tokio::test]

@@ -115,9 +115,9 @@ interface TerminalSession {
 
 - Token fields are non-negative counts. Missing usage data must normalize to `0`.
 - Claude Code JSONL streams one assistant message as multiple lines sharing the same `message.id` + `requestId`, each carrying identical usage. Usage must be counted **once** per `(message.id, requestId)` — both in aggregate stats (`scan_session_combined`) and per-message detail (`iter_session_messages` blanks token fields on duplicate lines). Without dedup, totals inflate ~3x on real data.
-- Codex rollout token usage comes from `event_msg.payload.info.total_token_usage`, which is a **cumulative** session counter. Per-turn usage = adjacent diff; a shrinking cumulative value means session reset (take current value as the delta). Do not sum `last_token_usage` (duplicate events inflate it 2-5%).
-- For `history_get_session` message details, Codex `response_item` messages must inherit an outer wrapper timestamp when the inner payload has none, and deduped Codex `token_count` deltas should backfill the latest assistant message that has no token fields. This keeps transcript bubbles able to show `MM/DD HH:mm  in N / out N / cache N` without changing aggregate totals.
-- `HistorySessionUsage.token_trend` exposes per-usage **delta** points after the same dedup/diff rules used for totals. Skip zero-token points. Do not synthesize frontend trend points from final totals.
+- Codex rollout token usage comes from `event_msg.payload.info.total_token_usage`, which is a cumulative session counter. Per-turn usage uses high-water adjacent diffs: a smaller cumulative snapshot is stale/interleaved data, contributes zero, and must not lower the previous high-water mark. This makes the session sum converge to ccusage's final cumulative total without multiplying temporary rollbacks.
+- For `history_get_session` message details, Codex `response_item` messages must inherit an outer wrapper timestamp when the inner payload has none, and normalized Codex `token_count` deltas should backfill the latest assistant message that has no token fields. This keeps transcript bubbles able to show `MM/DD HH:mm  in N / out N / cache N` without changing aggregate totals.
+- `HistorySessionUsage.token_trend` exposes normalized per-usage points after the same cumulative high-water rules used for totals. Skip zero-token points. Do not synthesize frontend trend points from final totals.
 - `HistorySessionUsage.token_trend[].model` should carry the model attributed to that usage delta when known. Realtime Token Trend can use it for per-segment coloring and tooltip model names. Missing model normalizes to `null` and must fall back to the default trend color.
 - Codex `input_tokens` **includes** `cached_input_tokens`. Extraction normalizes to non-cached input + `cache_read_tokens` (Claude semantics), so pricing applies uniformly with no source-specific input deduction.
 - Usage lines without a model (e.g. Codex `token_count` events) attribute to the most recent model seen in the session (e.g. from `turn_context.payload.model`).
@@ -125,7 +125,7 @@ interface TerminalSession {
 - `HistorySessionUsage.dominant_model` is an aggregate model signal and must not be reused as the realtime "current model". `HistorySessionUsage.current_model` tracks the latest non-synthetic model seen in the session; realtime model/context display should prefer it so same-session model switches update context-limit fallback and remaining-space calculation without changing historical model distribution semantics.
 - The `<synthetic>` model (Claude error placeholder lines) must never enter model distribution or model attribution.
 - Stats aggregates must include input, output, cache read, cache creation, estimated cost, and unpriced token counts at every exposed usage level: total, project, model, source, daily series, and hourly activity.
-- History stats token/cost/model aggregates must bucket by each deduped usage event timestamp (`timestamp`, `time`, `created_at`, `createdAt`, or `message.timestamp`), not by the session file `updated_at`. If a usage event has no parseable timestamp, fall back to the session `updated_at`. Range-level `sessions` must be counted by unique session identity so multiple usage events in one session do not inflate session counts.
+- History stats bucket token/cost/model aggregates by each deduped usage event timestamp (`timestamp`, `time`, `created_at`, `createdAt`, or `message.timestamp`), falling back to the session `updated_at` when missing. A session continued on a later day contributes its later usage and one session to that day even when it was created earlier. Range-level `sessions` must be counted by unique session identity so multiple usage events in one session do not inflate session counts.
 - `history_get_stats.project_path` and `project_paths` filter by configured project paths and must use the same `session_matches_project_path` rules as `history_list_sessions`: Claude project-key normalization, WSL/UNC path variants, and metadata `cwd` matching for Codex. Multiple paths use OR semantics, while `project_key` remains conjunctive when also present.
 - Realtime “today project usage” sends the parent project path plus all active Worktree paths in one `project_paths` request. Backend aggregation iterates each indexed session once, so overlapping parent/child paths cannot double count usage.
 - Stats aggregation and daily-index cache keys must include the canonical sorted/deduplicated project-path set, so ordering and duplicates reuse the same cache while different path sets remain isolated.
@@ -192,7 +192,7 @@ interface TerminalSession {
 ### 5. Good/Base/Bad Cases
 
 - Good: a Claude session with input/output/cache usage and known model produces complete totals, cost, model distribution, daily trend, and per-session message token fields.
-- Good: a Codex session with multiple cumulative `token_count` events returns `token_trend` as adjacent deltas, and two Codex windows in the same project show different realtime session details after their hook `sessionId` values arrive.
+- Good: a Codex session with multiple `token_count` events returns `token_trend` from cumulative high-water deltas, ignores temporary cumulative rollbacks, and two Codex windows in the same project show different realtime session details after their hook `sessionId` values arrive.
 - Good: a Codex `response_item` assistant message followed by a `token_count` event returns the assistant `HistoryMessage` with inherited timestamp and normalized per-turn `input_tokens` / `output_tokens` / `cache_read_tokens`.
 - Good: realtime Token Trend receives per-point model attribution and renders one continuous line with segment colors by model; hover tooltip shows the hovered point model.
 - Good: a history detail payload exposes `cwd` when the JSONL contains session metadata, allowing the frontend to create a resume terminal in the original project directory.
@@ -220,10 +220,10 @@ interface TerminalSession {
   - Codex rollout files expose `session_meta.payload.id` as `session_id`, fall back to file stem when absent, and Claude files keep file-stem identity.
   - Case-insensitive ASCII search avoids per-message lowercasing regressions.
   - Claude streamed duplicate usage lines produce one total and one matching `token_trend` point.
-  - Codex cumulative `token_count` events produce delta totals and matching `token_trend` points.
-  - Codex detail messages inherit outer `response_item` timestamps and receive the matching `token_count` delta on the latest assistant message for transcript metadata display.
+  - Codex cumulative `token_count` events ignore smaller stale snapshots, retain the previous high-water mark, and produce delta totals matching the final cumulative usage.
+  - Codex detail messages inherit outer `response_item` timestamps and receive the matching normalized `token_count` delta on the latest assistant message for transcript metadata display.
   - Token trend points preserve model attribution for same-session model switches and aggregate-subtask merged trends.
-  - History stats bucket cross-day session usage by usage event timestamp while counting the session once for range totals.
+  - History stats bucket cross-day usage by event timestamp, so a continued Codex session remains visible and contributes tokens on every day where usage occurs, while counting the session once per queried range.
   - Parser semantic changes that affect persisted scan output bump `HISTORY_INDEX_CACHE_VERSION`.
   - History stats single/multi-path filtering reuses `session_matches_project_path`, canonicalizes cache keys, and counts overlapping matches once.
   - Tool event extraction returns bounded diagnostic rows for Claude `tool_use`, Codex `function_call`, `function_call_output`, and MCP end/error events without changing aggregate tool counts.

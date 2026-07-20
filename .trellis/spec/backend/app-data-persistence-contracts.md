@@ -15,11 +15,13 @@
 - Stable data directory: `<home>/.cli-manager`.
 - Stable store files: `settings.json`, production `sessions.json`, development `sessions.dev.json`, `sync-config.json`, `external-session-sync.json`.
 - Stable SQLite DB: `cli-manager.db`.
+- History index cache: production `history-cache`, development `history-cache-dev`.
 
 ### 3. Contracts
 
 - All durable CLI-Manager user data must resolve under `.cli-manager`, not versioned or identifier-dependent Tauri data folders.
 - `app_get_data_paths().sessionsStorePath` must use `sessions.dev.json` under Tauri `cfg(dev)` and `sessions.json` otherwise. Other stores remain shared unless another contract explicitly isolates them.
+- History index caches must use `history-cache-dev` under Tauri `cfg(dev)` and `history-cache` otherwise, so installed and development apps can run concurrently without competing over catalog activation/index runs.
 - Legacy store migration continues to migrate `sessions.json` as production user data. It must not copy production or legacy sessions into `sessions.dev.json`.
 - Store migration from legacy Tauri app data must be non-destructive:
   - copy the legacy store file when the target file is missing;
@@ -38,6 +40,7 @@
 | Legacy store missing | No-op. |
 | Target store missing | Copy legacy store to `.cli-manager`. |
 | `cfg(dev)` runtime | Return `.cli-manager/sessions.dev.json`; do not read or modify production `sessions.json`. |
+| `cfg(dev)` and installed runtimes run together | Use separate history catalog directories; neither runtime may activate/deactivate the other's source instances. |
 | Installed runtime | Return `.cli-manager/sessions.json`; ignore `sessions.dev.json`. |
 | Both stores are JSON objects | Add only keys missing from target. |
 | Legacy `sync-config.json` only has removed password keys missing from target | No-op; do not backup target. |
@@ -60,6 +63,7 @@
 
 - Rust unit tests for missing-store copy, JSON object merge, and unchanged target when legacy has no new keys.
 - Rust unit test for development/installed session store file-name selection.
+- Rust unit test for development/installed history cache directory selection.
 - Rust unit tests for legacy DB recovery when current DB has no user rows and rejection when current DB has user rows.
 - `cargo check` after backend path or DB repair changes.
 - `cargo test --lib` or focused `cargo test app_paths db_repair --lib` after persistence migration changes.

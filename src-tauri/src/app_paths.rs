@@ -100,6 +100,14 @@ fn sessions_store_file_name(is_dev: bool) -> &'static str {
     }
 }
 
+fn history_cache_dir_name(is_dev: bool) -> &'static str {
+    if is_dev {
+        "history-cache-dev"
+    } else {
+        "history-cache"
+    }
+}
+
 pub fn data_paths() -> Result<CliManagerDataPaths, String> {
     let data_dir = cli_manager_data_dir()?;
     let db_path = db_path()?;
@@ -257,7 +265,7 @@ fn ensure_dirs() -> Result<(), String> {
         codex_providers_dir()?,
         claude_providers_dir()?,
         cli_manager_data_dir()?.join("backups"),
-        cli_manager_data_dir()?.join("history-cache"),
+        cli_manager_data_dir()?.join(history_cache_dir_name(cfg!(dev))),
     ] {
         fs::create_dir_all(dir).map_err(|err| format!("data_dir_create_failed: {err}"))?;
     }
@@ -288,7 +296,7 @@ pub fn migrate_legacy_app_files<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 }
 
 pub fn history_cache_dir() -> Result<PathBuf, String> {
-    Ok(cli_manager_data_dir()?.join("history-cache"))
+    Ok(cli_manager_data_dir()?.join(history_cache_dir_name(cfg!(dev))))
 }
 
 /// 会话历史 mutation 备份目录。
@@ -307,6 +315,8 @@ mod tests {
     fn separates_development_and_installed_session_store_files() {
         assert_eq!(sessions_store_file_name(false), "sessions.json");
         assert_eq!(sessions_store_file_name(true), "sessions.dev.json");
+        assert_eq!(history_cache_dir_name(false), "history-cache");
+        assert_eq!(history_cache_dir_name(true), "history-cache-dev");
     }
 
     #[test]

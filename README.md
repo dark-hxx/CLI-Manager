@@ -13,9 +13,9 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/dark-hxx/CLI-Manager)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue)](LICENSE)
 
-A multi-project terminal manager deeply optimized for **Claude Code / Codex CLI**
+A multi-project AI CLI workspace for local terminals, SSH hosts, and mobile-assisted workflows
 
-[Features](#-core-features) • [Comparison](#-comparison) • [Preview](#-preview) • [Quick Start](#-quick-start) • [Tech Stack](#-tech-stack) • [Community](#-community)
+[Features](#-core-features) • [Comparison](#-product-positioning-and-comparison) • [Preview](#-preview) • [Quick Start](#-quick-start) • [Tech Stack](#-tech-stack) • [Community](#-community)
 
 </div>
 
@@ -23,7 +23,7 @@ A multi-project terminal manager deeply optimized for **Claude Code / Codex CLI*
 
 ## 💡 Overview
 
-CLI-Manager is a desktop app focused on **AI CLI workflow enhancement**. It combines multi-project terminal management with deep Claude Code / Codex CLI integration.
+CLI-Manager is a desktop app focused on **AI CLI workflow enhancement**. It combines local and SSH terminals, multi-project management, deep Claude Code / Codex integration, multi-source history, Git Worktree isolation, and mobile-assisted conversations.
 
 > **Platform support**: Windows (fully tested) | macOS / Linux (experimental, feedback welcome)
 
@@ -43,6 +43,12 @@ When developing across multiple projects, you may run into these problems:
 ✅ **Live session statistics** - token usage, cost, and tool calls for each terminal session<br>
 ✅ **Historical Diff review** - review code changes across sessions and jump back to the triggering message<br>
 ✅ **Usage analytics dashboard** - heatmaps, trends, efficiency scatter charts, and more<br>
+✅ **SSH remote development** - launch and manage remote AI CLI terminals without leaving the workspace<br>
+✅ **cc-connect phone conversations** - continue Claude Code / Codex sessions from Telegram or Feishu<br>
+✅ **Multi-source session history** - parse and search histories from 11 AI CLI / coding-agent sources<br>
+✅ **Mature Worktree isolation** - isolate, commit, merge, and clean up parallel tasks through a guided workflow<br>
+✅ **Durable background tasks** - keep terminal jobs running and attach again after reopening the app<br>
+✅ **Desktop pets** - visualize session status and jump back to active tasks from a floating companion<br>
 ✅ **Project-level provider switching** - switch Claude backend per project without editing config manually<br>
 ✅ **Flexible split layout** - free terminal splits plus tab dragging across panes<br>
 ✅ **Command palette and templates** - launch projects or run common commands quickly with `Ctrl+P`
@@ -81,11 +87,11 @@ When developing across multiple projects, you may run into these problems:
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/消息通知跳转.gif" width="100%" alt="Hook notifications and status sync" />
+<img src="docs/img/hook-notification-jump.gif" width="100%" alt="Hook notifications and status sync" />
 <br><sub>Hook notification popup + live tab status sync</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/实时统计.png" width="100%" alt="Live session statistics panel" />
+<img src="docs/img/live-session-stats.png" width="100%" alt="Live session statistics panel" />
 <br><sub>Live terminal statistics: tokens / cost / Git branch</sub>
 </td>
 </tr>
@@ -101,7 +107,7 @@ When developing across multiple projects, you may run into these problems:
 
 #### 🗂️ Session Browsing
 
-- **Unified view** - browse Claude Code / Codex history in one place
+- **Multi-source view** - browse Claude Code, Codex, Gemini, Copilot CLI, Antigravity, Grok Build, Pi, OpenCode, Kiro, Cursor, and Cline history in one place
 - **Smart filters** - group and filter by source / project / time
 - **In-session search** - highlighted search results with jump navigation
 - **Tags and favorites** - mark important sessions for later
@@ -111,6 +117,7 @@ When developing across multiple projects, you may run into these problems:
 
 #### 🔍 Diff Review
 
+- **Deep Claude / Codex workflows** - Diff review, message editing, session resume, and cross-format conversion
 - **Code change visualization** - supports Unified Diff and Codex Patch style
 - **Line-level highlighting** - added / removed / hunk header lines use distinct colors
 - **Jump to triggering message** - navigate from a Diff block back to the related conversation
@@ -121,9 +128,29 @@ When developing across multiple projects, you may run into these problems:
 </table>
 
 <p align="center">
-<img src="docs/会话历史.png" width="85%" alt="Session history list" />
+<img src="docs/img/session-history.png" width="85%" alt="Session history list" />
 <br><sub>Session history list + in-session search and Diff review</sub>
 </p>
+
+#### Session Source Capability Matrix
+
+`✅` Full support · `👁️` Read-only support · `—` Not supported · `DB` Database-backed source without a standalone raw session file
+
+| Source | Browse | Search | Statistics | Raw source | Diff / changes | Resume | Edit / delete | Convert | Live stats |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Claude Code | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Codex CLI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Gemini CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| GitHub Copilot CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| Antigravity | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| Grok Build | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| Pi | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| OpenCode | 👁️ | 👁️ | 👁️ | DB | — | — | — | — | — |
+| Kiro | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| Cursor | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| Cline | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+
+> Statistics depend on the fields exposed by each source. Claude Code and Codex CLI provide the deepest integration, including Hook-driven live status, file-change Diff, message editing with audit / rollback, resume, and two-way session conversion.
 
 ---
 
@@ -142,11 +169,11 @@ When developing across multiple projects, you may run into these problems:
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/用量分析看板.png" width="100%" alt="Usage analytics dashboard" />
+<img src="docs/img/usage-analytics-dashboard.png" width="100%" alt="Usage analytics dashboard" />
 <br><sub>Analytics dashboard: heatmap / token trend / efficiency scatter / project ranking</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/多维度统计.png" width="100%" alt="Usage analytics details" />
+<img src="docs/img/usage-analytics-details.png" width="100%" alt="Usage analytics details" />
 <br><sub>Token composition pie chart / model share / active hour distribution</sub>
 </td>
 </tr>
@@ -173,13 +200,50 @@ When developing across multiple projects, you may run into these problems:
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/供应商列表.png" width="100%" alt="Provider management" />
+<img src="docs/img/provider-list.png" width="100%" alt="Provider management" />
 <br><sub>Provider list and details</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/切换供应商.png" width="100%" alt="Project-level provider switching" />
+<img src="docs/img/provider-switch.png" width="100%" alt="Project-level provider switching" />
 <br><sub>Project context menu: switch provider with one click</sub>
 </td>
+</tr>
+</table>
+
+---
+
+### 🌐 SSH Remote Development
+
+- **SSH host management** - SSH Config, Agent, private key, password / keyboard-interactive authentication, jump hosts, and ProxyCommand
+- **Proxy and diagnostics** - built-in HTTP CONNECT / SOCKS5 proxy helper, connection tests, host-key confirmation, and detailed diagnostic logs
+- **Remote project workflow** - browse remote directories, configure remote startup commands and environment variables, and launch AI CLI sessions directly in the target path
+- **Workspace integration** - remote terminals support tabs, splits, Workspan, background execution, and daemon-backed recovery
+- **Credential safety** - passwords use the operating system credential store; sync and export never include passwords, credentials, or private-key paths
+
+> SSH MVP intentionally keeps local-only features such as file browsing, Git / Worktree tools, local history, Hook statistics, and provider switching disabled for remote projects.
+
+<p align="center">
+<img src="docs/img/ssh-settings.png" width="85%" alt="SSH host settings and connection diagnostics" />
+<br><sub>SSH host management, authentication, proxy, and connection diagnostics</sub>
+</p>
+
+---
+
+### 📱 Mobile Conversations with cc-connect
+
+- **Chat from your phone** - use Telegram or Feishu to start independent Claude Code / Codex conversations on the desktop host
+- **Project-scoped access** - explicitly select the project exposed to remote conversations and restrict access with a fail-closed user-ID allowlist
+- **Managed runtime** - CLI-Manager verifies the supported cc-connect binary checksum, generates an isolated configuration, supervises the process, and can start it with the app
+- **Secure credentials** - bot tokens and app secrets are stored in Windows Credential Manager instead of generated config files
+- **Claude and Codex support** - Claude uses its permission modes; Codex uses the app-server stdio approval channel, with YOLO mode available only through an explicit warning and confirmation
+- **History convergence** - remote conversations create native CLI histories and flow back into CLI-Manager's unified session workspace
+
+> The current cc-connect integration runs on a Windows desktop host and supervises one project plus one messaging platform at a time. Telegram and Feishu are supported.
+
+<table>
+<tr>
+<td width="50%" align="center"><img src="docs/img/cc-connect-settings.png" width="100%" alt="cc-connect settings" /><br><sub>Project / Agent selection, allowlist, credentials, and process status</sub></td>
+<td width="50%" align="center"><img src="docs/img/cc-connect-mobile.png" width="55%" alt="cc-connect mobile conversation" /><br><sub>Claude Code / Codex conversation from Telegram or Feishu</sub></td>
 </tr>
 </table>
 
@@ -215,9 +279,16 @@ When developing across multiple projects, you may run into these problems:
 </table>
 
 <p align="center">
-<img src="docs/终端与分屏.png" width="85%" alt="Terminal splits" />
+<img src="docs/img/terminal-splits.png" width="85%" alt="Terminal splits" />
 <br><sub>Flexible split layout + dragging tabs across panes</sub>
 </p>
+
+#### Durable Workspaces and Background Tasks
+
+- **Workspan workspaces** - group multiple terminals and nested panes into a persistent top-level workspace
+- **Daemon-backed sessions** - keep CLI tasks running after the main window exits, then attach without restarting the command
+- **Ordered replay and recovery** - restore terminal output, tab metadata, split layout, and live output in order after reconnecting
+- **Background task center** - inspect, restore, discard, or clean up tasks that continue outside the main window
 
 ---
 
@@ -233,16 +304,16 @@ When developing across multiple projects, you may run into these problems:
 
 - **Three scopes** - global / project / session-level templates
 - **Variable substitution** - `${projectPath}` / `${projectName}`
-- **Command history** - automatically records commands, with search and replay
+- **Command suggestions** - combine templates, existing local history, built-in AI CLI commands, and path completion without automatically executing the candidate
 
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/全局面板.png" width="100%" alt="Command palette" />
+<img src="docs/img/command-palette.png" width="100%" alt="Command palette" />
 <br><sub>Command palette: fuzzy search + quick launch</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/命令模板.png" width="100%" alt="Command templates" />
+<img src="docs/img/command-templates.png" width="100%" alt="Command templates" />
 <br><sub>Command templates: three scopes + variable substitution</sub>
 </td>
 </tr>
@@ -257,15 +328,19 @@ When developing across multiple projects, you may run into these problems:
 - **Health checks** - automatically detects invalid paths
 - **Context menu** - open directory / switch provider / launch terminal
 - **Git integration** - automatically detects project Git branch
+- **Built-in file and Git tools** - file browsing / editing, Git status and Diff, hunk rollback, and sub-repository visibility
+- **Mature Worktree isolation** - prompt, auto-isolate parallel tasks, or always isolate into dedicated directories and `wt/<task-name>` branches
+- **Finish-task workflow** - review and commit changes, merge into the main workspace, abort safely on conflicts, then clean up the Worktree and branch
 
 ---
 
 ### ☁️ WebDAV Cloud Sync
 
-- **Multi-device sync** - saves independent snapshots by device name
-- **Custom remote directory** - supports nested paths such as `backups/cli-mgr`
-- **Conflict detection** - local first / remote first / manual merge
-- **Local import and export** - zip backup support
+- **Versioned backups** - immutable snapshots instead of a single overwrite-only backup
+- **Selective restore** - restore individual data domains, create a safety snapshot first, and undo the most recent restore
+- **Multi-device retention** - independent device snapshots with automatic retention of recent versions
+- **Offline retry** - failed uploads stay in an outbox and retry on a later launch
+- **Local import and export** - ZIP backup support with the same restore workflow
 
 ---
 
@@ -276,55 +351,76 @@ When developing across multiple projects, you may run into these problems:
 - **Font customization** - UI font / terminal font / size / font color
 - **Shortcut configuration** - all shortcuts are customizable
 - **Compact mode** - compact UI plus external terminal by default
+- **Desktop pets** - floating status companion, task list and session jump-back, size / position / always-on-top controls, `.clipet` packages, and Codex Pets compatibility
+
+<p align="center">
+<img src="docs/img/pet-settings.png" width="85%" alt="Desktop pet settings and gallery" />
+<br><sub>Desktop pet, task list, pet gallery, and `.clipet` package management</sub>
+</p>
 
 ---
 
-## 🧭 Comparison
+## 🧭 Product Positioning and Comparison
 
-This comparison is based on the public README / project positioning of [Orca](https://github.com/stablyai/orca) and [cmux](https://github.com/manaflow-ai/cmux) as of 2026-07-05.
+CLI-Manager is positioned as a **durable AI CLI workspace**: it connects local and SSH terminals, multi-agent execution, long-term session history, Git Worktree isolation, analytics, provider configuration, background tasks, and phone conversations into one product.
+
+The comparison below is based on the public positioning of [Orca](https://github.com/stablyai/orca) and [cmux](https://github.com/manaflow-ai/cmux) as of 2026-07-05. Planned CLI-Manager capabilities are explicitly marked as planned.
 
 | Area | CLI-Manager | Orca | cmux |
 |---|---|---|---|
-| Core positioning | Claude Code / Codex CLI workflow workspace for multi-project terminals, agent splits, history, analytics, and provider switching | AI Orchestrator / ADE for running multiple agents in isolated worktrees | Native macOS terminal built on Ghostty, focused on tabs, splits, and notifications for AI coding agents |
-| Best fit | Heavy Claude / Codex users who want durable session history, Diff review, token cost tracking, project analytics, and automatic sub-agent visualization | Developers who want to fan one task across multiple agents, compare results, and merge the winner | macOS terminal-first users who want every agent pane, notification, and browser surface in one native workspace |
-| Agent model | Deep Claude / Codex integration with hook events, session binding, live stats, history parsing, and mature automatic sub-agent splitting | Any CLI agent, with parallel git worktree orchestration as the main workflow | Any terminal agent, with Claude Teams / subagents surfaced as native panes and splits |
-| Terminal and splits | Tauri + xterm.js, fully tested on Windows; tab / pane drag, mixed splits, and Chinese IME optimizations | WebGL terminals, infinite splits, and restart-persistent scrollback | Swift / AppKit + libghostty, vertical / horizontal tabs, Ghostty config compatibility, native performance |
-| History and data | Session history, Diff review, search, favorites, Prompt Library, token / cost / project-level analytics | Account switching, usage tracking, notifications, and AI Diff annotation | Session restore, notification panel, workspace metadata, and programmable terminal primitives |
-| Git / worktrees | Git status, Diff, sub-repo panel, and project health checks; project-level worktree task isolation is being productized with parallel-risk detection, isolated directories / branches, commit, merge, and cleanup flow | Parallel worktrees are a core feature, with GitHub / Linear / SSH worktree workflows | Sidebar shows branch, PR, working directory, and ports; supports SSH / tmux with a more composable workflow |
-| Config and providers | Read-only cc-switch parsing, project-level Claude / Codex provider switching, WebDAV sync | Account switching plus usage and rate-limit tracking | Reads Ghostty config and exposes cmux CLI / socket APIs plus hooks / OSC notifications |
-| Platform and license | Windows fully tested, macOS / Linux experimental; AGPL-3.0-or-later + commercial license | macOS / Windows / Linux plus mobile companion; MIT | macOS only for now; GPL-3.0-or-later + commercial license |
+| Primary focus | Long-running AI CLI workspace across projects, local / SSH terminals, history, analytics, and configuration | Multi-agent orchestration and result comparison in isolated worktrees | Native macOS terminal workspace for agent panes, notifications, and programmable surfaces |
+| Desktop platforms | Windows fully tested; macOS / Linux experimental | macOS / Windows / Linux | macOS |
+| Remote workflows | Built-in SSH projects / terminals plus cc-connect phone conversations through Telegram or Feishu | SSH-oriented worktree workflows and remote orchestration | SSH / tmux through a composable terminal workflow |
+| Session history | 11 parsed sources with unified browse, search, filtering, tags, favorites, and statistics | Usage, account, notification, and AI Diff-oriented features | Session restore, notification panel, and workspace metadata |
+| Deep history operations | Claude / Codex Diff, file changes, message edit / delete, audit rollback, resume, and two-way conversion | Not the primary focus of its public positioning | Not the primary focus of its public positioning |
+| Git Worktree lifecycle | Mature project-level isolation: prompt / automatic strategies, dedicated branches, dependency setup, history, commit, merge, conflict abort, and cleanup | Core parallel-agent orchestration model | External / composable Git workflow rather than a guided task lifecycle |
+| Agent visualization | Automatic sub-agent splits with session association and live status | Parallel agents, isolated attempts, comparison, and merge workflow | Native panes / splits for agents and related tools |
+| Analytics and configuration | Token / cost / model / project analytics, cc-switch provider integration, versioned WebDAV backups | Usage and rate-limit tracking plus account switching | Ghostty configuration, CLI / socket APIs, hooks, and OSC integration |
+| Mobile and web | cc-connect phone conversations available now; dedicated Web and mobile clients are in planning | Includes a mobile companion in its public product positioning | macOS desktop focus |
+| Personalization | App / terminal themes, custom backgrounds, status-line tools, and desktop pets | Product-specific UI and orchestration views | Native terminal theming and Ghostty compatibility |
 
 **How to choose:**
 
-- Choose **CLI-Manager** if you mainly need long-term Claude / Codex usage management: project terminals, sub-agent splits, historical Diff, token cost analytics, and provider configuration.
-- Choose **Orca** if you mainly need to send one task to multiple agents, isolate them in worktrees, then review and merge the best result.
-- Choose **cmux** if you mainly want a native high-performance macOS terminal with visible multi-agent panes, notifications, and programmable terminal / browser primitives.
+- Choose **CLI-Manager** for a persistent daily workspace around Claude Code, Codex, and other AI CLI histories, especially when you need SSH, Worktree task isolation, deep history operations, analytics, provider management, and phone access.
+- Choose **Orca** when the central workflow is dispatching the same task to multiple isolated agents, comparing their results, and merging the preferred output.
+- Choose **cmux** when the priority is a native high-performance macOS terminal with programmable panes, notifications, and terminal / browser surfaces.
+
+### 🌍 Multi-surface Roadmap
+
+| Surface | Status | Role |
+|---|---|---|
+| Desktop app | ✅ Available | Full terminal, project, history, Git, analytics, SSH, and background-task workspace |
+| Phone conversations | ✅ Available through cc-connect | Talk to Claude Code / Codex from Telegram or Feishu while the desktop host supervises the session |
+| Web client | 🧭 Planning | Browser-based access to CLI-Manager workflows; scope and release schedule are not yet committed |
+| Dedicated mobile client | 🧭 Planning | A first-party mobile companion beyond messaging-platform conversations; scope and release schedule are not yet committed |
 
 ---
 
 ## 🤖 Agent Parallelism
 
-CLI-Manager treats automatic sub-agent splitting as a stable capability, while project-level worktree isolation is being actively productized.
+CLI-Manager provides two mature parallel-work paths: automatic sub-agent visualization inside the terminal workspace, and project-level Git Worktree isolation for independent tasks.
 
-### 🤖 Automatic Sub-agent Splitting (cmux-like)
+### 🤖 Automatic Sub-agent Splitting
 
 - **Smart splits** - automatically creates split terminals when Claude Code dispatches sub-agents
 - **Session association** - each sub-agent gets an independent terminal with live status sync
 - **Layout optimization** - automatically adjusts split layout based on agent count
 
-### 🌿 Git Worktree Task Isolation (in progress)
+### 🌿 Mature Git Worktree Task Isolation
 
-- **Parallel-risk detection** - when a project already has a running task, opening another terminal will be able to prompt for an isolated worktree
-- **Project-level isolation strategy** - will support prompt, auto-isolate parallel sessions, or always isolate
-- **Dedicated directory and branch** - will create an independent worktree directory and `wt/<task-name>` branch per parallel task
-- **Finish-task wizard** - will guide commit, merge, and cleanup; dirty main workspaces or merge conflicts are blocked before destructive half-states happen
+- **Flexible isolation strategies** - keep normal opening as the default, prompt when a parallel CLI task exists, auto-isolate parallel sessions, or always create a Worktree
+- **Dedicated directory and branch** - each task uses an independent Worktree directory and `wt/<task-name>` branch
+- **Integrated project context** - file browsing, Git status, history, live statistics, provider overrides, and terminal focus follow the active Worktree
+- **Dependency setup** - optionally detect missing dependencies and open a dedicated installation terminal
+- **Finish-task wizard** - review and commit changes, merge into the main workspace, abort safely on conflicts, and clean up the Worktree / branch
+- **Safety guards** - block merges into a dirty main workspace, skip no-diff merges, handle stale / damaged Worktrees, and retry cleanup around Windows file locks
 
 ---
 
 ## 📸 Preview
 
 <p align="center">
-<img src="docs/主界面.png" width="90%" alt="Main interface" />
+<img src="docs/img/main-workspace.png" width="90%" alt="Main interface" />
 <br><sub>Main interface - terminal workspace</sub>
 </p>
 
@@ -358,9 +454,15 @@ CLI-Manager treats automatic sub-agent splitting as a stable capability, while p
 - Cross-platform desktop app (Windows / macOS / Linux, based on Tauri 2)
 - Multi-shell support (Windows: PowerShell / CMD / Pwsh / WSL / Git Bash; macOS / Linux: Bash / Zsh, etc.)
 - PTY session management and status broadcasting
+- Daemon-backed background tasks, ordered replay, attach, and workspace recovery
 - Claude Code / Codex Hook Bridge (127.0.0.1 loopback + bearer token validation)
 - Automatic sub-agent splitting (cmux-like, creates split terminals when Claude Code dispatches sub-agents)
-- History parsing (Claude / Codex sessions and Diffs)
+- Mature Git Worktree task isolation and commit / merge / cleanup workflow
+- Multi-source history parsing (Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Antigravity, Grok Build, Pi, OpenCode, Kiro, Cursor, and Cline)
+- Deep Claude / Codex history workflows (Diff, edit, resume, conversion, and analytics)
+- SSH remote projects and terminals (OpenSSH launch plans, proxy support, diagnostics, and remote directory browsing)
+- cc-connect mobile conversations (Telegram / Feishu with Claude Code or Codex)
+- Desktop pets (`.clipet` packages and Codex Pets compatibility)
 - Read-only cc-switch provider database parsing
 - WebDAV cloud sync and conflict handling
 - Git integration (branch detection / project path health checks)
@@ -421,6 +523,12 @@ cd src-tauri && cargo test
 - ✅ Developers who use Claude Code / Codex CLI heavily
 - ✅ Users who need real-time token usage and cost monitoring
 - ✅ Users who want to review historical session code changes
+- ✅ Users who need one searchable history workspace across multiple AI CLI tools
+- ✅ Developers who run AI CLI tasks on remote SSH hosts
+- ✅ Developers who want to continue Claude Code / Codex conversations from a phone
+- ✅ Teams running parallel tasks that need mature Git Worktree isolation and merge cleanup
+- ✅ Users who need long-running CLI tasks to survive window or app restarts
+- ✅ Users who want a lightweight visual companion for task and session status
 - ✅ Multi-project development workflows with frequent terminal switching
 - ✅ Users who manage multiple Claude backends with cc-switch
 - ✅ Users who need to sync development configuration across devices
@@ -437,6 +545,8 @@ cd src-tauri && cargo test
 - Path health checks
 - Automatic Git branch detection
 - Context menu (open directory / switch provider)
+- Built-in file browser / editor and Git Diff tools
+- Git Worktree isolation strategies and finish-task workflow
 
 </details>
 
@@ -447,6 +557,8 @@ cd src-tauri && cargo test
 - Tab management (drag sorting / overflow scrolling / duplicate configuration)
 - Flexible splits (Split Right / Split Down / mixed nested splits)
 - Drag tabs across panes
+- Persistent Workspan workspaces
+- Daemon-backed background tasks and session recovery
 - Terminal search (`Ctrl+F`)
 - Custom background (image / opacity / blur)
 - Chinese IME support
@@ -454,15 +566,40 @@ cd src-tauri && cargo test
 </details>
 
 <details>
-<summary><b>Claude / Codex Integration</b></summary>
+<summary><b>AI CLI Integration and Session History</b></summary>
 
 - Real-time hook notifications (approval / completed / failed)
 - Tab status dots (running / waiting approval / completed / failed)
 - Live session statistics (tokens / cost / tool calls / Git branch)
-- Unified session history
+- Multi-source history parsing (11 supported sources)
+- Unified filtering / search / tags / favorites
 - Diff review (Unified Diff / Codex Patch)
-- In-session search / tags / favorites
+- Claude / Codex message editing, resume, and conversion
 - Prompt Library
+
+</details>
+
+<details>
+<summary><b>SSH Remote Development</b></summary>
+
+- SSH host groups and host management
+- SSH Config / Agent / private key / password authentication
+- Jump hosts / ProxyCommand / HTTP CONNECT / SOCKS5
+- Connection diagnostics and host-key confirmation
+- Remote directory browsing and startup commands
+- Remote tabs / splits / Workspan / background recovery
+
+</details>
+
+<details>
+<summary><b>cc-connect Mobile Conversations</b></summary>
+
+- Telegram / Feishu phone conversations
+- Claude Code / Codex Agent selection
+- Project-scoped access and user-ID allowlist
+- Verified cc-connect binary and managed process lifecycle
+- Windows Credential Manager for platform credentials
+- Native history convergence into CLI-Manager
 
 </details>
 
@@ -496,7 +633,7 @@ cd src-tauri && cargo test
 
 - Command palette (`Ctrl+P`)
 - Command templates (global / project / session-level)
-- Command history (automatic recording / search / replay)
+- Inline command suggestions (templates / existing local history / AI CLI commands / paths)
 - Variable substitution (`${projectPath}` / `${projectName}`)
 
 </details>
@@ -504,10 +641,11 @@ cd src-tauri && cargo test
 <details>
 <summary><b>Cloud Sync</b></summary>
 
-- WebDAV multi-device sync
-- Custom remote directory
-- Conflict detection (local first / remote first)
-- Local import and export (zip)
+- Versioned WebDAV snapshots
+- Selective data-domain restore
+- Safety snapshot and one-step undo
+- Per-device retention and offline outbox retry
+- Local import and export (ZIP)
 
 </details>
 
@@ -518,6 +656,7 @@ cd src-tauri && cargo test
 - Font customization (UI / terminal / size / color)
 - Shortcut configuration
 - Compact mode
+- Desktop pets / `.clipet` packages / Codex Pets
 - Custom terminal background
 
 </details>
@@ -544,7 +683,7 @@ cd src-tauri && cargo test
 ## 💬 Community
 
 <p align="center">
-  <img src="docs/wechat-group-qr.png" width="280" alt="WeChat community group" />
+  <img src="docs/img/wechat-group-qr.png" width="280" alt="WeChat community group" />
   <br>
   <sub>Scan the QR code to join the WeChat community for updates and support</sub>
 </p>

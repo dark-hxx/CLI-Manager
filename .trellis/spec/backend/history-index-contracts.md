@@ -12,7 +12,7 @@
 - Existing commands remain compatible: `history_list_sessions(...) -> Vec<HistorySessionSummary>` and `history_search(...) -> Vec<HistorySearchResult>`.
 - Index commands: `history_get_index_status(...) -> HistoryIndexStatus` and `history_refresh_index(..., wait) -> HistoryIndexStatus`.
 - Event: `history-index-status` with `rootsKey`, `phase`, `indexedFiles`, `totalFiles`, `generation`, `partial`, `lastCompletedAt`, and `error`.
-- Derived cache: `.cli-manager/history-cache/history-catalog.db`.
+- Derived cache: installed `.cli-manager/history-cache/history-catalog.db`; Tauri dev `.cli-manager/history-cache-dev/history-catalog.db`.
 
 ### 3. Contracts
 

@@ -1,5 +1,4 @@
-import Editor from "@monaco-editor/react";
-import { useEffect, useMemo, useState, useCallback, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, useCallback, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { X, Undo2 } from "../icons";
@@ -8,13 +7,14 @@ import type { ChangeData } from "react-diff-view";
 import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n } from "../../lib/i18n";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { configureMonaco } from "../../lib/monacoSetup";
 import { refractor, detectLanguage } from "./diffHighlight";
 import { Portal } from "../ui/Portal";
 import "react-diff-view/style/index.css";
 import "./diffViewer.css";
 
-configureMonaco();
+const MonacoDiffFallback = lazy(() =>
+  import("./MonacoDiffFallback").then((module) => ({ default: module.MonacoDiffFallback }))
+);
 
 interface DiffViewerModalProps {
   open: boolean;
@@ -78,22 +78,6 @@ const TERMINAL_DIFF_TABLE_STYLE = {
   backgroundColor: "var(--surface-container-lowest)",
   borderColor: "var(--border)",
 } as CSSProperties;
-
-const FALLBACK_DIFF_EDITOR_OPTIONS = {
-  automaticLayout: true,
-  readOnly: true,
-  domReadOnly: true,
-  minimap: { enabled: false },
-  scrollBeyondLastLine: false,
-  wordWrap: "off",
-  fontSize: 13,
-  lineNumbersMinChars: 4,
-  renderLineHighlight: "none",
-  scrollbar: {
-    verticalScrollbarSize: 10,
-    horizontalScrollbarSize: 10,
-  },
-} as const;
 
 export function GitDiffViewer({
   projectPath,
@@ -378,12 +362,9 @@ export function GitDiffViewer({
               className="diff-viewer-container h-full min-h-[320px] rounded-lg border overflow-hidden"
               style={useTerminalTheme ? TERMINAL_DIFF_TABLE_STYLE : { backgroundColor: "var(--surface-container-lowest)", borderColor: "var(--border)" }}
             >
-              <Editor
-                value={diffText}
-                language="diff"
-                theme={fallbackEditorTheme}
-                options={FALLBACK_DIFF_EDITOR_OPTIONS}
-              />
+              <Suspense fallback={null}>
+                <MonacoDiffFallback value={diffText} theme={fallbackEditorTheme} />
+              </Suspense>
             </div>
           )}
 

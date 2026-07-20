@@ -4,7 +4,7 @@ export interface TerminalFileLinkMatch {
   endIndex: number;
 }
 
-const ABSOLUTE_FILE_PATH_PATTERN = /(?:[A-Za-z]:[\\/][^\s`"'<>|?*]+|\\\\[^\\/\s]+[\\/][^\s`"'<>|?*]+|\/(?:mnt\/[A-Za-z]|home|root|workspace|work|data|opt|tmp|usr|var)(?:\/[^\s`"'<>|]+)+)/gu;
+const ABSOLUTE_FILE_PATH_PATTERN = /(?:\/?[A-Za-z]:[\\/][^\s`"'<>|?*]+|\\\\[^\\/\s]+[\\/][^\s`"'<>|?*]+|\/(?:mnt\/[A-Za-z]|home|root|workspace|work|data|opt|tmp|usr|var)(?:\/[^\s`"'<>|]+)+)/gu;
 const TRAILING_PATH_PUNCTUATION = /[,.;:!?，。；：！？、)\]}）】》」』]+$/u;
 const TRAILING_SOURCE_LOCATION = /:\d+(?::\d+)?(?::[^\s]*)?$/u;
 const WSL_UNC_ROOT_PATTERN = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/]|$)/iu;
@@ -34,6 +34,7 @@ export function findTerminalFileLinks(line: string): TerminalFileLinkMatch[] {
 
 export function resolveTerminalFileSystemPath(path: string, currentRootPath?: string | null): string | null {
   const trimmed = path.trim();
+  if (/^\/[A-Za-z]:[\\/]/u.test(trimmed)) return trimmed.slice(1);
   if (/^[A-Za-z]:[\\/]/u.test(trimmed) || /^\\\\[^\\/]+[\\/]/u.test(trimmed)) return trimmed;
 
   const mountedDrive = /^\/mnt\/([A-Za-z])(?:\/(.*))?$/u.exec(trimmed);

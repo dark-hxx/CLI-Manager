@@ -33,7 +33,7 @@ const OOM_HISTORY_DETAIL_WARN_BYTES: usize = 10 * 1024 * 1024;
 const OOM_HISTORY_STATS_WARN_BYTES: usize = 5 * 1024 * 1024;
 const OOM_HISTORY_MESSAGES_WARN_COUNT: usize = 2_000;
 const CODEX_HISTORY_INDEX_TEXT_MAX_CHARS: usize = 4_000;
-const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 1;
+const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 3;
 const HISTORY_INDEX_V2_ADAPTER_MODEL_VERSION: i64 = 1;
 const OPENCODE_SESSION_LOCATOR_MARKER: &str = "#session=";
 
@@ -2957,7 +2957,7 @@ pub(crate) fn invalidate_history_stats_caches() {
 // 内存索引（HISTORY_SESSION_INDEX）每次 App 启动后为空，首个 history_get_stats 必须
 // 全量解析所有 JSONL（可能上千个），冷启动耗时不可接受。这里把 per-file 解析结果落盘，
 // 重启后载入作为 build_history_index 的 previous，按 fingerprint 仅重解析变更文件。
-const HISTORY_INDEX_CACHE_VERSION: u32 = 8;
+const HISTORY_INDEX_CACHE_VERSION: u32 = 10;
 const HISTORY_INDEX_CACHE_FILE: &str = "history-index-cache.json";
 
 static HISTORY_INDEX_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -7174,7 +7174,7 @@ fn scan_session_inner(
     let mut seen_usage_keys: HashSet<String> = HashSet::new();
     // usage 行（如 Codex token_count 事件）可能不带 model，回退到最近一次出现的模型。
     let mut current_model: Option<String> = None;
-    // Codex total_token_usage 是会话累计值，需相邻差分还原每回合用量。
+    // Codex total_token_usage 是会话累计值；回退值是陈旧/交错快照，保持高水位后再差分。
     let mut codex_prev_totals: Option<CodexCumulativeUsage> = None;
     let mut context_window: Option<u64> = None;
     let mut last_context_tokens: Option<u64> = None;
@@ -7290,7 +7290,12 @@ fn scan_session_inner(
                 last_context_tokens = last_context;
             }
             let usage = codex_usage_delta(codex_prev_totals, current);
-            codex_prev_totals = Some(current);
+            if codex_prev_totals
+                .map(|previous| current.total_tokens > previous.total_tokens)
+                .unwrap_or(true)
+            {
+                codex_prev_totals = Some(current);
+            }
             codex_message_usage = Some(usage);
             usage
         } else {
@@ -9946,7 +9951,7 @@ fn sorted_tool_counts(map: &HashMap<String, u64>) -> Vec<HistoryToolCount> {
     items
 }
 
-/// 相邻差分还原单回合用量；累计值变小视为会话重置，直接取当前值。
+/// 相邻高水位差分还原单回合用量；累计值变小是陈旧/交错快照，不产生新增用量。
 /// Codex 的 `input_tokens` 包含 `cached_input_tokens`，此处归一化为
 /// 非缓存 input + cache_read，与 Claude 口径一致。
 fn codex_usage_delta(
@@ -9954,8 +9959,8 @@ fn codex_usage_delta(
     current: CodexCumulativeUsage,
 ) -> UsageTokenScan {
     let previous = previous.unwrap_or_default();
-    let delta = if current.total_tokens < previous.total_tokens {
-        current
+    let delta = if current.total_tokens <= previous.total_tokens {
+        CodexCumulativeUsage::default()
     } else {
         CodexCumulativeUsage {
             input_tokens: current.input_tokens.saturating_sub(previous.input_tokens),
@@ -9966,10 +9971,16 @@ fn codex_usage_delta(
             total_tokens: current.total_tokens.saturating_sub(previous.total_tokens),
         }
     };
+    codex_usage_from_counts(delta)
+}
+
+fn codex_usage_from_counts(counts: CodexCumulativeUsage) -> UsageTokenScan {
     UsageTokenScan {
-        input_tokens: delta.input_tokens.saturating_sub(delta.cached_input_tokens),
-        output_tokens: delta.output_tokens,
-        cache_read_tokens: delta.cached_input_tokens,
+        input_tokens: counts
+            .input_tokens
+            .saturating_sub(counts.cached_input_tokens),
+        output_tokens: counts.output_tokens,
+        cache_read_tokens: counts.cached_input_tokens,
         cache_creation_tokens: 0,
         explicit_cost_usd: None,
     }
@@ -13575,6 +13586,77 @@ mod tests {
     }
 
     #[test]
+    fn history_stats_buckets_codex_usage_by_event_day() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("rollout-session.jsonl");
+        write_text(
+            &file,
+            concat!(
+                r#"{"type":"event_msg","timestamp":"1970-01-02T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10,"total_tokens":110}}}}"#,
+                "\n",
+                r#"{"type":"event_msg","timestamp":"1970-01-03T15:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"cached_input_tokens":0,"output_tokens":30,"total_tokens":330}}}}"#,
+                "\n",
+            ),
+        );
+        let computed = scan_session_computation(&file, DAY_MS, 3 * DAY_MS);
+        let entry = HistoryIndexEntry {
+            file_ref: SessionFileRef {
+                source: "codex".to_string(),
+                project_key: "project-a".to_string(),
+                path: file,
+            },
+            fingerprint: SessionFileFingerprint {
+                created_at: DAY_MS,
+                updated_at: 3 * DAY_MS,
+                size: 1,
+            },
+            computed,
+        };
+        let bounds = StatsTimeBounds {
+            start_at: DAY_MS,
+            end_at: 3 * DAY_MS - 1,
+            start_day: DAY_MS,
+            range_days: 2,
+            explicit: true,
+        };
+
+        let daily_index = build_history_stats_daily_index(vec![entry], None, None, &[], bounds);
+        let response = build_history_stats_response(&daily_index.days, bounds);
+
+        assert_eq!(response.daily_series[0].input_tokens, 100);
+        assert_eq!(response.daily_series[0].output_tokens, 10);
+        assert_eq!(response.daily_series[1].input_tokens, 200);
+        assert_eq!(response.daily_series[1].output_tokens, 20);
+        assert_eq!(response.hourly_activity[1].input_tokens, 100);
+        assert_eq!(response.hourly_activity[15].input_tokens, 200);
+    }
+
+    #[test]
+    fn scan_session_combined_ignores_codex_cumulative_stale_snapshots() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("rollout-session.jsonl");
+        write_text(
+            &file,
+            concat!(
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5000,"cached_input_tokens":3000,"output_tokens":500,"total_tokens":5500},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":600,"output_tokens":100,"total_tokens":1100}}}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5100,"cached_input_tokens":3100,"output_tokens":400,"total_tokens":5500},"last_token_usage":{"input_tokens":100,"cached_input_tokens":100,"output_tokens":0,"total_tokens":100}}}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":4000,"cached_input_tokens":2000,"output_tokens":400,"total_tokens":4400},"last_token_usage":{"input_tokens":2000,"cached_input_tokens":1200,"output_tokens":200,"total_tokens":2200}}}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":7000,"cached_input_tokens":4200,"output_tokens":700,"total_tokens":7700},"last_token_usage":{"input_tokens":3000,"cached_input_tokens":1800,"output_tokens":300,"total_tokens":3300}}}}"#,
+                "\n",
+            ),
+        );
+
+        let (_, stats) = scan_session_combined(&file);
+
+        assert_eq!(stats.input_tokens, 2_800);
+        assert_eq!(stats.cache_read_tokens, 4_200);
+        assert_eq!(stats.output_tokens, 700);
+    }
+
+    #[test]
     fn scan_session_combined_extracts_codex_context_window() {
         let temp_dir = TempDir::new().unwrap();
         let file = temp_dir.path().join("rollout-session.jsonl");
@@ -13828,7 +13910,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_usage_delta_resets_when_cumulative_shrinks() {
+    fn codex_usage_delta_ignores_cumulative_shrinks() {
         let previous = CodexCumulativeUsage {
             input_tokens: 5000,
             cached_input_tokens: 2000,
@@ -13844,9 +13926,9 @@ mod tests {
 
         let usage = codex_usage_delta(Some(previous), current);
 
-        assert_eq!(usage.input_tokens, 200);
-        assert_eq!(usage.cache_read_tokens, 100);
-        assert_eq!(usage.output_tokens, 30);
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
     }
 
     #[test]

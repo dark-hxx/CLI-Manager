@@ -968,7 +968,7 @@ const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 
 // 恢复会话时判定它是否为 codex/claude 这类 TUI CLI 会话。判定依据 = startupCmd 文本 + 项目 cli_tool 配置。
 // 判不出（如普通 pwsh/bash）返回 null，走 shell 分支（静态贴回 scrollback）。
-function detectCliResumeKind(
+export function detectCliResumeKind(
   startupCmd: string | undefined,
   project: Project | undefined
 ): "claude" | "codex" | null {

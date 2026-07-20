@@ -1,9 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, BarChart3, Cpu, Folder, GitBranch } from "../icons";
 import { TERM_PANEL, getTerminalSidePanelSkinStyle, panelColorTint } from "../stats/termStatsUi";
-import { SessionReplayPanel } from "./SessionReplayPanel";
 import { SystemResourcesPanel } from "./SystemResourcesPanel";
-import { TerminalStatsPanel } from "./TerminalStatsPanel";
 import { useI18n } from "../../lib/i18n";
 import {
   TERMINAL_PANEL_WIDTH_DEFAULTS,
@@ -14,6 +12,14 @@ import {
 
 const GitChangesPanel = lazy(() =>
   import("../git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
+);
+
+const TerminalStatsPanel = lazy(() =>
+  import("./TerminalStatsPanel").then((module) => ({ default: module.TerminalStatsPanel }))
+);
+
+const SessionReplayPanel = lazy(() =>
+  import("./SessionReplayPanel").then((module) => ({ default: module.SessionReplayPanel }))
 );
 
 export type TerminalSidePanelTab = "stats" | "replay" | "git" | "files" | "systemResources";
@@ -355,13 +361,17 @@ export function TerminalSidePanel({
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {statsEnabled && (
-          <TerminalStatsPanel activeSessionId={activeSessionId} open={open} visible={activeTab === "stats"} embedded />
+          <Suspense fallback={null}>
+            <TerminalStatsPanel activeSessionId={activeSessionId} open={open} visible={activeTab === "stats"} embedded />
+          </Suspense>
         )}
         {systemResourcesEnabled && (
           <SystemResourcesPanel open={open} visible={activeTab === "systemResources"} embedded />
         )}
         {replayEnabled && (
-          <SessionReplayPanel activeSessionId={activeSessionId} open={open} visible={activeTab === "replay"} />
+          <Suspense fallback={null}>
+            <SessionReplayPanel activeSessionId={activeSessionId} open={open} visible={activeTab === "replay"} />
+          </Suspense>
         )}
         {gitEnabled && activeTab === "git" && (
           <Suspense fallback={null}>
