@@ -122,6 +122,7 @@ export interface DesktopPetSnapshot {
 
 export interface DesktopPetConfigPayload {
   language: "zh-CN" | "en-US";
+  visible: boolean;
   settings: DesktopPetSettings;
   labels: {
     openMain: string;
@@ -369,6 +370,7 @@ interface DeriveDesktopPetSnapshotInput {
   backgroundTasks: BackgroundPetTask[];
   activeHandoff: CcConnectHandoffInfo | null;
   handoffBusy: boolean;
+  now?: number;
 }
 
 function compareDesktopPetTargets(left: DesktopPetTarget, right: DesktopPetTarget): number {
@@ -420,7 +422,7 @@ function snapshotFromTargets(
 }
 
 export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): DesktopPetSnapshot {
-  const now = Date.now();
+  const now = input.now ?? Date.now();
   const openPtySessions = input.sessions.filter((session) => !session.kind || session.kind === "pty");
   const openIds = new Set(openPtySessions.map((session) => session.id));
   const projectById = new Map(input.projects.map((project) => [project.id, project]));

@@ -23,6 +23,10 @@ const MAX_EXTRACTED_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 40;
 const MAX_CODEX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_CODEX_SPRITESHEET_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_IMAGE_ASSET_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_SVG_ASSET_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_RASTER_DIMENSION: u32 = 4096;
+const MAX_RASTER_PIXELS: u64 = 16 * 1024 * 1024;
 const CODEX_PET_ENGINE: &str = "codex-sprite";
 const CODEX_PET_ID_PREFIX: &str = "codex.";
 const CODEX_SPRITE_CELL_WIDTH: u32 = 192;
@@ -326,6 +330,50 @@ fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 24 || &bytes[0..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some((
+        u32::from_be_bytes(bytes[16..20].try_into().ok()?),
+        u32::from_be_bytes(bytes[20..24].try_into().ok()?),
+    ))
+}
+
+fn validate_image_asset(path: &Path, extension: &str) -> Result<(), String> {
+    let metadata =
+        fs::metadata(path).map_err(|err| format!("pet_manifest_asset_read_failed: {err}"))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_IMAGE_ASSET_BYTES {
+        return Err("pet_manifest_asset_size_invalid".to_string());
+    }
+    if extension == "svg" {
+        if metadata.len() > MAX_SVG_ASSET_BYTES {
+            return Err("pet_manifest_asset_size_invalid".to_string());
+        }
+        let text = fs::read_to_string(path).map_err(|err| format!("pet_svg_read_failed: {err}"))?;
+        return validate_svg(&text);
+    }
+
+    let bytes = fs::read(path).map_err(|err| format!("pet_manifest_asset_read_failed: {err}"))?;
+    let dimensions = match extension {
+        "png" => png_dimensions(&bytes),
+        "webp" => webp_dimensions(&bytes),
+        _ => None,
+    }
+    .ok_or_else(|| "pet_manifest_asset_format_invalid".to_string())?;
+    let pixels = u64::from(dimensions.0) * u64::from(dimensions.1);
+    if dimensions.0 == 0
+        || dimensions.1 == 0
+        || dimensions.0 > MAX_RASTER_DIMENSION
+        || dimensions.1 > MAX_RASTER_DIMENSION
+        || pixels > MAX_RASTER_PIXELS
+    {
+        return Err("pet_manifest_asset_dimensions_invalid".to_string());
+    }
+    Ok(())
+}
+
 fn codex_sprite_dimensions(sprite_version_number: u32) -> Option<(u32, u32)> {
     let rows = match sprite_version_number {
         1 => CODEX_V1_ROWS,
@@ -504,19 +552,12 @@ fn validate_manifest(manifest: &PetManifest, base_dir: &Path) -> Result<(), Stri
             return Err("pet_manifest_asset_type_unsupported".to_string());
         }
         let absolute = base_dir.join(&relative);
-        if !absolute.is_file() {
-            return Err("pet_manifest_asset_missing".to_string());
-        }
-        if relative
+        let extension = relative
             .extension()
             .and_then(|value| value.to_str())
-            .map(|value| value.eq_ignore_ascii_case("svg"))
-            .unwrap_or(false)
-        {
-            let text = fs::read_to_string(&absolute)
-                .map_err(|err| format!("pet_svg_read_failed: {err}"))?;
-            validate_svg(&text)?;
-        }
+            .map(str::to_ascii_lowercase)
+            .ok_or_else(|| "pet_manifest_asset_type_unsupported".to_string())?;
+        validate_image_asset(&absolute, &extension)?;
     }
     Ok(())
 }
@@ -1190,6 +1231,14 @@ mod tests {
         bytes
     }
 
+    fn fake_png(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = vec![0u8; 24];
+        bytes[0..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes[12..16].copy_from_slice(b"IHDR");
+        bytes[16..20].copy_from_slice(&width.to_be_bytes());
+        bytes[20..24].copy_from_slice(&height.to_be_bytes());
+        bytes
+    }
     fn codex_manifest(id: &str, sprite_version_number: u32) -> Vec<u8> {
         serde_json::to_vec_pretty(&serde_json::json!({
             "id": id,
@@ -1260,6 +1309,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn png_dimensions_reads_ihdr_dimensions() {
+        assert_eq!(png_dimensions(&fake_png(320, 240)), Some((320, 240)));
+        assert_eq!(png_dimensions(b"not a png"), None);
+    }
+
+    #[test]
+    fn image_asset_validation_bounds_raster_decode_size() {
+        let root = tempfile::tempdir().unwrap();
+        let image = root.path().join("pet.png");
+
+        fs::write(&image, fake_png(4096, 4096)).unwrap();
+        assert!(validate_image_asset(&image, "png").is_ok());
+
+        fs::write(&image, fake_png(4097, 1)).unwrap();
+        assert_eq!(
+            validate_image_asset(&image, "png").unwrap_err(),
+            "pet_manifest_asset_dimensions_invalid"
+        );
+
+        fs::write(&image, fake_png(4096, 4097)).unwrap();
+        assert_eq!(
+            validate_image_asset(&image, "png").unwrap_err(),
+            "pet_manifest_asset_dimensions_invalid"
+        );
+
+        fs::write(&image, b"invalid png").unwrap();
+        assert_eq!(
+            validate_image_asset(&image, "png").unwrap_err(),
+            "pet_manifest_asset_format_invalid"
+        );
+
+        let webp = root.path().join("pet.webp");
+        fs::write(&webp, b"invalid webp").unwrap();
+        assert_eq!(
+            validate_image_asset(&webp, "webp").unwrap_err(),
+            "pet_manifest_asset_format_invalid"
+        );
+    }
     #[test]
     fn codex_directory_scan_namespaces_and_marks_external_pets_read_only() {
         let root = tempfile::tempdir().unwrap();

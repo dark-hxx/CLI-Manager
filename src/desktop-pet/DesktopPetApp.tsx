@@ -56,6 +56,7 @@ import "./desktopPet.css";
 
 const DEFAULT_CONFIG: DesktopPetConfigPayload = {
   language: "zh-CN",
+  visible: false,
   settings: {
     enabled: true,
     petId: BUILTIN_DESKTOP_PET_ID,
@@ -237,6 +238,7 @@ export default function DesktopPetApp() {
   const [targetMode, setTargetMode] = useState<"open" | "platforms" | "handoff">("open");
   const [selectedPlatform, setSelectedPlatform] = useState<CcConnectPlatform | null>(null);
   const [menuGeometry, setMenuGeometry] = useState<DesktopPetMenuWindowGeometry | null>(null);
+  const [documentVisible, setDocumentVisible] = useState(() => !document.hidden);
   const menuTargets = targetMode === "handoff"
     ? snapshot.targets.filter((target) => target.handoffEligible)
     : snapshot.targets;
@@ -260,6 +262,8 @@ export default function DesktopPetApp() {
       if (element) element.style.background = "transparent";
     });
     document.documentElement.dataset.window = "desktop-pet";
+    const handleVisibilityChange = () => setDocumentVisible(!document.hidden);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     let disposed = false;
     const unlistenConfig = listen<DesktopPetConfigPayload>(DESKTOP_PET_CONFIG_EVENT, (event) => {
       if (!disposed) setConfig(event.payload);
@@ -298,6 +302,7 @@ export default function DesktopPetApp() {
       disposed = true;
       if (moveTimerRef.current !== null) window.clearTimeout(moveTimerRef.current);
       if (dragResetTimerRef.current !== null) window.clearTimeout(dragResetTimerRef.current);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       void unlistenConfig.then((unlisten) => unlisten());
       void unlistenSnapshot.then((unlisten) => unlisten());
       void unlistenCloseMenu.then((unlisten) => unlisten());
@@ -458,6 +463,7 @@ export default function DesktopPetApp() {
     : "";
   const petScale = desktopPetScale(config.settings.size);
   const stageSize = Math.round(144 * petScale);
+  const renderingActive = config.visible && documentVisible;
   const rootStyle = {
     "--pet-stage-size": `${stageSize}px`,
     "--pet-cat-width": `${Math.round(132 * petScale)}px`,
@@ -545,6 +551,7 @@ export default function DesktopPetApp() {
           : undefined
       }
       data-menu-open={menuGeometry ? "true" : undefined}
+      data-rendering-active={renderingActive ? "true" : "false"}
       style={rootStyle}
       onPointerDown={handlePointerDown}
       onDoubleClick={(event) => {
@@ -580,6 +587,7 @@ export default function DesktopPetApp() {
               width={stageSize}
               height={stageSize}
               alt={localPetName(installedPet, config.language)}
+              animated={renderingActive}
               onError={() => setInstalledPet(null)}
             />
           ) : (
@@ -781,6 +789,7 @@ export default function DesktopPetApp() {
               role="menuitem"
               onClick={() => {
                 closeMenu();
+                setConfig((current) => ({ ...current, visible: false }));
                 void invoke("desktop_pet_window_hide").catch((err) => {
                   logWarn("Failed to hide desktop pet window", err);
                 });

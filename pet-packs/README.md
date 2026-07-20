@@ -41,7 +41,9 @@ manifest.json uses schema version 1:
 Only png, webp, and sanitized svg assets are accepted. HTML, JavaScript,
 executables, symbolic links, absolute paths, and parent-directory paths are
 rejected. Packages are limited to 25 MB compressed, 30 MB extracted, 40
-archive entries, and four directory levels.
+archive entries, and four directory levels. Individual raster assets are
+limited to 20 MB, 4096 pixels per side, and 16 megapixels after decoding;
+SVG assets are limited to 2 MB.
 
 Published packages live in public/pet-catalog/packages/. Each catalog item
 must include its SHA-256 hash, byte size, minimum CLI-Manager version, preview

@@ -607,6 +607,12 @@
   to { opacity: 1; translate: 0 0; scale: 1; }
 }
 
+.desktop-pet-root[data-rendering-active="false"] *,
+.desktop-pet-root[data-rendering-active="false"] *::before,
+.desktop-pet-root[data-rendering-active="false"] *::after {
+  animation-play-state: paused !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .desktop-pet-stage,
   .desktop-pet-badge,

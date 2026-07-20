@@ -338,3 +338,39 @@
 - `npm run build`：通过，Vite 完成 6668 个模块转换；仅保留既有的大 chunk 警告。
 - 设置 `CLI_MANAGER_TEST_CC_CONNECT` 指向本机 cc-connect v1.4.1 后，受管配置通过真实 `config format` 校验；官方 `config example` 同时确认 `0` 表示禁用时限。
 - 未启动或停止用户安装目录中的 CLI-Manager/cc-connect，未向真实机器人发送消息；本次未生成安装包，也未 push。
+
+## WSL 桌面宠物内存增长根因修复（2026-07-20）
+
+### 根因陈述与发现清单
+
+- 根因位于 PTY 活动状态跨窗口传输与桌宠 WebView 渲染边界：WSL 持续输出会每秒刷新 `ptyOutputActivityAt`，旧协调器随每次快照变化重复跨窗口发送并重建事件监听；桌宠同时以隐藏探测图和 `background-position` 精灵动画持续解码/绘制透明 WebView，长期运行会放大 IPC 队列、React 重渲染和 WebView2/GPU 资源占用。
+- 已修改 `useDesktopPetCoordinator`：配置与快照按可见语义去重、单飞发送并合并最新状态，READY 才强制重发；事件监听改为稳定注册；相同 daemon 轮询结果复用旧数组；桌宠不可见时停止 daemon 轮询，并用一次性 TTL 刷新保证输出停止后从 working 正确回落。
+- 已修改 `desktopPet.ts` / `desktopPetTransport.ts`：快照推导支持显式时钟；working 状态的纯时间戳变化不再触发跨窗口投递，成功状态时间戳、目标顺序、状态、托管信息等可见变化仍会投递。
+- 已修改 `DesktopPetApp` / `desktopPet.css`：桌宠禁用、自动全屏隐藏、原生窗口隐藏或 document 不可见时暂停动画；隐藏操作先本地停画，避免等待 IPC 回环。
+- 已修改 `PetArtwork`：Codex Pets 精灵由双重的 probe 图片 + CSS background 改为单一 `<img>` 与 GPU transform 分帧；测量 canvas 用后释放 backing store，内容边界缓存限制为 128 条。
+- 已修改 `desktop_pet.rs`：image-v1 资源增加单文件、SVG、4096 单边和 16MP 解码尺寸上限，阻止小压缩包携带超大解码位图；PNG/WebP 头与尺寸异常会在安装/读取阶段拒绝。
+- 已确认无需修改：PTY 输出生产与每秒节流、TerminalStore 会话清理、桌宠原生窗口尺寸、cc-connect 源码/平台协议、远程托管菜单与取消流程。
+
+### 场景覆盖
+
+- 运行环境：本地 PowerShell/CMD/Pwsh、WSL/Bash 均走同一 PTY 活动去重链路；本机无 WSL，自动验证以持续更新时间戳模拟 WSL 高频状态。
+- 可见性：正常显示、主应用失焦、桌宠原生隐藏、设置禁用、终端全屏自动隐藏时均有明确发送/动画策略；重新显示通过配置变更或 READY 强制同步最新状态。
+- 会话：单会话、多会话、daemon-only、目标排序变化、attention/failed/done/success、working TTL 到期与远程托管状态都保留可见更新；success 的 3.5 秒展示时间戳未被去重。
+- 宠物格式：内置 SVG 猫、image-v1 PNG/WebP/SVG、Codex Pets V1/V2 精灵均保持入口；托管菜单、扇形会话卡片和打开主窗口调用链未改动。
+- 包来源：`%USERPROFILE%\.codex\pets` 外部只读包继续扫描；自行导入的 CLI-Manager 包在安装和后续读取时应用新增资源上限。
+
+### 验证结果
+
+- `.\node_modules\.bin\tsc.cmd --noEmit`：通过。
+- `node scripts/desktopPetTransport.test.mjs`：4 项通过，覆盖 working 时间戳去重、可见状态变化、success 时间戳和 daemon 数组复用。
+- `cargo test --manifest-path src-tauri/Cargo.toml desktop_pet`：11 项通过，覆盖 PNG 尺寸解析、4096 边界、超限像素及无效 PNG/WebP。
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过。
+- `npm run build`：通过，Vite 完成 6672 个模块转换。
+- 使用本机 `shinobu-q` 1536×2288 Codex Pets V2 资源执行同源浏览器视觉验证：working 第 7 行、6 帧 transform 动画裁剪、内容边界测量与自适应缩放正确。
+- `git diff --check`：通过，仅有仓库既有 LF/CRLF 转换提示。
+- GitNexus CLI 基线仍因本机缺少 `tree-sitter-kotlin` 且无可用索引而不可执行；已降级用 codebase-memory moderate 重建索引、调用链追踪、源码/rg/Git diff 与实际构建测试复核。高风险触点为 App 桌宠协调主流程、DesktopPetApp 渲染入口及宠物包安装/读取链路。
+
+### 限制与后续验证
+
+- 本机没有 WSL，无法原样复现用户报告的 10GB 峰值；本次修复切断了已定位的持续 IPC/渲染放大链并为资源解码建立上界，但发布前仍建议在反馈环境执行至少 2 小时 WSL 持续输出 soak test，分别记录桌宠 renderer、主 renderer 和 GPU 进程的 Private Working Set。
+- 本次未生成安装包、未启动或停止用户安装目录中的 CLI-Manager/cc-connect，也未 push。
