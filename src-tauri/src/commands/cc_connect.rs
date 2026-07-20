@@ -4340,7 +4340,7 @@ fn push_log_line(
     }
 }
 
-fn redact_log_line(raw: &str, secrets: &[String]) -> String {
+pub(crate) fn redact_log_line(raw: &str, secrets: &[String]) -> String {
     let mut value = raw.to_string();
     for secret in secrets.iter().filter(|secret| secret.len() >= 4) {
         value = value.replace(secret, "[REDACTED]");
@@ -4353,6 +4353,7 @@ fn redact_log_line(raw: &str, secrets: &[String]) -> String {
         "api_key",
         "api key",
         "authorization",
+        "bearer ",
     ]
     .iter()
     .any(|keyword| lower.contains(keyword))

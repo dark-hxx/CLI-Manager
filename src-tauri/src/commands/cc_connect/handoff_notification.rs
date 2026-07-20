@@ -1,4 +1,7 @@
-use super::handoff::send_handoff_notification;
+use super::handoff::{
+    send_handoff_notification_once, HandoffNotificationSendError, HANDOFF_NOTIFICATION_ATTEMPTS,
+    HANDOFF_NOTIFICATION_RETRY_DELAY,
+};
 use super::handoff_session::{load_handoff_record, PersistedHandoffRecord};
 use super::*;
 use crate::daemon::discovery::{daemon_info_path, is_pid_alive, read_daemon_info, DaemonInfo};
@@ -137,6 +140,7 @@ struct TaskState {
     phase: TaskPhase,
     terminal_kind: Option<NotificationKind>,
     terminal_enqueued: bool,
+    status_unknown_enqueued: bool,
     last_permission_fingerprint: Option<u64>,
     last_permission_at: Option<Instant>,
 }
@@ -150,6 +154,7 @@ impl TaskState {
             phase: TaskPhase::Running,
             terminal_kind: None,
             terminal_enqueued: false,
+            status_unknown_enqueued: false,
             last_permission_fingerprint: None,
             last_permission_at: None,
         }
@@ -161,6 +166,28 @@ impl TaskState {
         }
         self.last_permission_at
             .is_some_and(|last| now.duration_since(last) < PERMISSION_DEDUP_WINDOW)
+    }
+
+    fn mark_status_unknown_enqueued(&mut self) -> bool {
+        if self.status_unknown_enqueued {
+            return false;
+        }
+        self.status_unknown_enqueued = true;
+        true
+    }
+
+    fn mark_terminal(&mut self, kind: NotificationKind) -> bool {
+        if self.phase == TaskPhase::Terminal {
+            return false;
+        }
+        debug_assert!(matches!(
+            kind,
+            NotificationKind::Completed | NotificationKind::Failed
+        ));
+        self.phase = TaskPhase::Terminal;
+        self.terminal_kind = Some(kind);
+        self.terminal_enqueued = false;
+        true
     }
 }
 
@@ -343,15 +370,14 @@ fn handle_hook_payload(
         }
         "Stop" | "StopFailure" => {
             let current = state.get_or_insert_with(|| TaskState::new(&record, now));
-            if current.phase == TaskPhase::Terminal {
-                return;
-            }
-            current.phase = TaskPhase::Terminal;
-            current.terminal_kind = Some(if event.event == "StopFailure" {
+            let kind = if event.event == "StopFailure" {
                 NotificationKind::Failed
             } else {
                 NotificationKind::Completed
-            });
+            };
+            if !current.mark_terminal(kind) {
+                return;
+            }
             enqueue_terminal(current, &record, delivery_sender);
         }
         _ => {}
@@ -382,9 +408,7 @@ fn tick_scheduler(state: &mut Option<TaskState>, delivery_sender: &SyncSender<De
     let settings = read_notification_settings();
     let interval = Duration::from_secs(settings.progress_interval_minutes * 60);
     if elapsed >= task_stale_after(settings) {
-        current.phase = TaskPhase::Terminal;
-        current.terminal_kind = Some(NotificationKind::TimedOut);
-        enqueue_terminal(current, &record, delivery_sender);
+        enqueue_status_unknown(current, &record, delivery_sender);
         return;
     }
     if !settings.enabled || !settings.progress_enabled {
@@ -400,6 +424,29 @@ fn tick_scheduler(state: &mut Option<TaskState>, delivery_sender: &SyncSender<De
         elapsed,
     ) {
         current.last_progress_at = now;
+    }
+}
+
+fn enqueue_status_unknown(
+    state: &mut TaskState,
+    record: &PersistedHandoffRecord,
+    delivery_sender: &SyncSender<DeliveryJob>,
+) {
+    if state.status_unknown_enqueued {
+        return;
+    }
+    let settings = read_notification_settings();
+    if !settings.enabled || !settings.completion_enabled {
+        state.mark_status_unknown_enqueued();
+        return;
+    }
+    if enqueue_delivery(
+        delivery_sender,
+        record,
+        NotificationKind::TimedOut,
+        Instant::now().duration_since(state.started_at),
+    ) {
+        state.mark_status_unknown_enqueued();
     }
 }
 
@@ -479,18 +526,22 @@ fn run_delivery_worker(receiver: Receiver<DeliveryJob>) {
         status.last_error = None;
         let _ = write_notification_status(&status);
 
-        let result = deliver(&job, &mut cached_binary);
-        match result {
-            Ok(()) => {
+        match deliver(&job, &mut cached_binary) {
+            DeliveryOutcome::Delivered => {
                 status.last_success_at_ms = Some(now_millis());
                 status.last_error = None;
             }
-            Err(err) => {
-                status.last_error = Some(sanitize_delivery_error(&err));
+            DeliveryOutcome::Stale => {
+                status.last_error = Some("handoff_changed".to_string());
+            }
+            DeliveryOutcome::Failed(failure) => {
+                status.last_error = Some(failure.code.to_string());
                 warn!(
-                    "remote handoff notification delivery failed: event={} platform={:?}",
+                    "remote handoff notification delivery failed: event={} platform={:?} error={} detail={}",
                     job.kind.key(),
-                    job.record.platform
+                    job.record.platform,
+                    failure.code,
+                    failure.detail
                 );
             }
         }
@@ -505,30 +556,208 @@ fn delivery_job_is_current(job: &DeliveryJob) -> bool {
         .is_some_and(|record| job.identity.matches_record(&record))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct DeliveryFailure {
+    code: &'static str,
+    detail: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DeliveryOutcome {
+    Delivered,
+    Stale,
+    Failed(DeliveryFailure),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DeliveryAttemptOutcome {
+    Delivered,
+    Stale,
+    Failed(HandoffNotificationSendError),
+}
+
+fn retry_delivery<Current, Send, Wait>(
+    attempts: usize,
+    mut is_current: Current,
+    mut send_once: Send,
+    mut wait: Wait,
+) -> DeliveryAttemptOutcome
+where
+    Current: FnMut() -> bool,
+    Send: FnMut() -> Result<(), HandoffNotificationSendError>,
+    Wait: FnMut(),
+{
+    let mut last_error = None;
+    for attempt in 0..attempts {
+        if !is_current() {
+            return DeliveryAttemptOutcome::Stale;
+        }
+        match send_once() {
+            Ok(()) => return DeliveryAttemptOutcome::Delivered,
+            Err(err) => last_error = Some(err),
+        }
+        if attempt + 1 < attempts {
+            wait();
+        }
+    }
+    DeliveryAttemptOutcome::Failed(last_error.unwrap_or(HandoffNotificationSendError {
+        code: "send_unavailable",
+        detail: "no delivery attempt was configured".to_string(),
+    }))
+}
+
 fn deliver(
     job: &DeliveryJob,
     cached_binary: &mut Option<(Option<String>, DetectedBinary)>,
-) -> Result<(), String> {
-    let profile =
-        load_profile()?.ok_or_else(|| "cc-connect profile is not configured".to_string())?;
+) -> DeliveryOutcome {
+    let profile = match load_profile() {
+        Ok(Some(profile)) => profile,
+        Ok(None) => {
+            return DeliveryOutcome::Failed(delivery_failure(
+                "profile_not_configured",
+                "cc-connect profile is not configured",
+                &[],
+            ))
+        }
+        Err(err) => {
+            return DeliveryOutcome::Failed(delivery_failure("profile_read_failed", &err, &[]))
+        }
+    };
+    let secrets = delivery_redaction_secrets(&profile, &job.record);
     let requested_path = profile.executable_path.clone();
     let binary = match cached_binary {
         Some((cached_path, binary)) if cached_path == &requested_path => binary.clone(),
         _ => {
-            let binary = detect_binary_uncached(requested_path.as_deref())?;
+            let binary = match detect_binary_uncached(requested_path.as_deref()) {
+                Ok(binary) => binary,
+                Err(err) => {
+                    return DeliveryOutcome::Failed(delivery_failure(
+                        "binary_detection_failed",
+                        &err,
+                        &secrets,
+                    ))
+                }
+            };
             *cached_binary = Some((requested_path, binary.clone()));
             binary
         }
     };
     if !binary.compatible {
-        return Err("cc_connect_version_unsupported".to_string());
+        return DeliveryOutcome::Failed(delivery_failure(
+            "version_unsupported",
+            "cc-connect version is unsupported",
+            &secrets,
+        ));
     }
-    send_handoff_notification(
-        &binary.path,
-        &job.record.project_name,
-        &job.record.platform_session_key,
-        &job.message,
-    )
+    match retry_delivery(
+        HANDOFF_NOTIFICATION_ATTEMPTS,
+        || delivery_job_is_current(job),
+        || {
+            send_handoff_notification_once(
+                &binary.path,
+                &job.record.project_name,
+                &job.record.platform_session_key,
+                &job.message,
+            )
+        },
+        || std::thread::sleep(HANDOFF_NOTIFICATION_RETRY_DELAY),
+    ) {
+        DeliveryAttemptOutcome::Delivered => DeliveryOutcome::Delivered,
+        DeliveryAttemptOutcome::Stale => DeliveryOutcome::Stale,
+        DeliveryAttemptOutcome::Failed(err) => {
+            DeliveryOutcome::Failed(delivery_failure(err.code, &err.detail, &secrets))
+        }
+    }
+}
+
+fn delivery_failure(code: &'static str, detail: &str, secrets: &[String]) -> DeliveryFailure {
+    DeliveryFailure {
+        code: safe_delivery_error_code(code),
+        detail: redact_delivery_detail(detail, secrets),
+    }
+}
+
+fn safe_delivery_error_code(code: &str) -> &'static str {
+    match code {
+        "binary_detection_failed" => "binary_detection_failed",
+        "delivery_failed" => "delivery_failed",
+        "handoff_changed" => "handoff_changed",
+        "legacy_error_redacted" => "legacy_error_redacted",
+        "profile_not_configured" => "profile_not_configured",
+        "profile_read_failed" => "profile_read_failed",
+        "send_data_dir_unavailable" => "send_data_dir_unavailable",
+        "send_exit_nonzero" => "send_exit_nonzero",
+        "send_process_error" => "send_process_error",
+        "send_timeout" => "send_timeout",
+        "send_unavailable" => "send_unavailable",
+        "version_unsupported" => "version_unsupported",
+        _ => "delivery_failed",
+    }
+}
+
+fn redact_delivery_detail(detail: &str, secrets: &[String]) -> String {
+    redact_log_line(detail, secrets)
+        .replace(['\r', '\n'], " ")
+        .chars()
+        .take(1_000)
+        .collect()
+}
+
+fn delivery_redaction_secrets(
+    profile: &CcConnectProfile,
+    record: &PersistedHandoffRecord,
+) -> Vec<String> {
+    let mut secrets = Vec::new();
+    for account in [
+        TELEGRAM_TOKEN_ACCOUNT,
+        FEISHU_APP_ID_ACCOUNT,
+        FEISHU_APP_SECRET_ACCOUNT,
+        WEIXIN_TOKEN_ACCOUNT,
+        WECOM_BOT_ID_ACCOUNT,
+        WECOM_BOT_SECRET_ACCOUNT,
+    ] {
+        if let Ok(Some(value)) = get_credential(account) {
+            secrets.push(value);
+        }
+    }
+    if let (Some(provider_id), Some(database_path)) = (
+        record.provider_id.as_deref(),
+        configured_cc_switch_db_path(Some(profile)),
+    ) {
+        if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            if let Ok(provider) = runtime.block_on(
+                crate::commands::ccswitch::load_codex_runtime_config_from_path(
+                    provider_id,
+                    &database_path,
+                ),
+            ) {
+                secrets.push(provider.secret_value);
+            }
+        }
+    }
+    if let Ok(data_dir) = crate::app_paths::cli_manager_data_dir() {
+        if let Ok(Some(info)) =
+            read_daemon_info(&daemon_info_path(&data_dir, cfg!(debug_assertions)))
+        {
+            secrets.push(info.token);
+        }
+    }
+    for (key, value) in std::env::vars() {
+        let key = key.to_ascii_lowercase();
+        if ["token", "secret", "password", "api_key", "authorization"]
+            .iter()
+            .any(|keyword| key.contains(keyword))
+        {
+            secrets.push(value);
+        }
+    }
+    secrets.retain(|secret| secret.len() >= 4);
+    secrets.sort();
+    secrets.dedup();
+    secrets
 }
 
 fn read_notification_settings() -> NotificationSettings {
@@ -614,8 +843,16 @@ fn read_notification_status() -> Result<CcConnectHandoffNotificationStatus, Stri
         }
         Err(err) => return Err(format!("read handoff notification status failed: {err}")),
     };
-    serde_json::from_str(&raw)
-        .map_err(|err| format!("parse handoff notification status failed: {err}"))
+    let mut status: CcConnectHandoffNotificationStatus = serde_json::from_str(&raw)
+        .map_err(|err| format!("parse handoff notification status failed: {err}"))?;
+    if let Some(error) = status.last_error.as_deref() {
+        let safe_error = safe_delivery_error_code(error);
+        if safe_error != error {
+            status.last_error = Some("legacy_error_redacted".to_string());
+            let _ = write_notification_status(&status);
+        }
+    }
+    Ok(status)
 }
 
 fn write_notification_status(status: &CcConnectHandoffNotificationStatus) -> Result<(), String> {
@@ -626,10 +863,6 @@ fn write_notification_status(status: &CcConnectHandoffNotificationStatus) -> Res
         &payload,
         "handoff notification status",
     )
-}
-
-fn sanitize_delivery_error(error: &str) -> String {
-    error.replace(['\r', '\n'], " ").chars().take(240).collect()
 }
 
 fn format_notification(
@@ -727,6 +960,7 @@ pub fn cc_connect_handoff_notification_status() -> Result<CcConnectHandoffNotifi
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::cell::Cell;
 
     fn record() -> PersistedHandoffRecord {
         PersistedHandoffRecord {
@@ -806,6 +1040,108 @@ mod tests {
         assert!(!state.is_duplicate_permission(Some(99), now));
         assert!(state.is_duplicate_permission(None, now));
         assert!(!state.is_duplicate_permission(None, now + PERMISSION_DEDUP_WINDOW));
+    }
+
+    #[test]
+    fn completed_event_remains_terminal_after_status_unknown_reminder() {
+        let record = record();
+        let mut state = TaskState::new(&record, Instant::now());
+        assert!(state.mark_status_unknown_enqueued());
+        assert_ne!(state.phase, TaskPhase::Terminal);
+        assert!(state.mark_terminal(NotificationKind::Completed));
+        assert_eq!(state.phase, TaskPhase::Terminal);
+        assert_eq!(state.terminal_kind, Some(NotificationKind::Completed));
+    }
+
+    #[test]
+    fn failed_event_remains_terminal_after_status_unknown_reminder() {
+        let record = record();
+        let mut state = TaskState::new(&record, Instant::now());
+        assert!(state.mark_status_unknown_enqueued());
+        assert_ne!(state.phase, TaskPhase::Terminal);
+        assert!(state.mark_terminal(NotificationKind::Failed));
+        assert_eq!(state.phase, TaskPhase::Terminal);
+        assert_eq!(state.terminal_kind, Some(NotificationKind::Failed));
+    }
+
+    #[test]
+    fn notification_retry_stops_when_handoff_is_cancelled() {
+        let checks = Cell::new(0usize);
+        let sends = Cell::new(0usize);
+        let waits = Cell::new(0usize);
+        let outcome = retry_delivery(
+            4,
+            || {
+                let check = checks.get();
+                checks.set(check + 1);
+                check == 0
+            },
+            || {
+                sends.set(sends.get() + 1);
+                Err(HandoffNotificationSendError {
+                    code: "send_exit_nonzero",
+                    detail: "not ready".to_string(),
+                })
+            },
+            || waits.set(waits.get() + 1),
+        );
+        assert_eq!(outcome, DeliveryAttemptOutcome::Stale);
+        assert_eq!(checks.get(), 2);
+        assert_eq!(sends.get(), 1);
+        assert_eq!(waits.get(), 1);
+    }
+
+    #[test]
+    fn replacement_invalidates_every_handoff_identity_field() {
+        let original = record();
+        let identity = HandoffIdentity::from_record(&original);
+        let mut replacements = Vec::new();
+
+        let mut changed = original.clone();
+        changed.local_session_id = "other-local".to_string();
+        replacements.push(changed);
+        let mut changed = original.clone();
+        changed.cli_session_id = "other-cli".to_string();
+        replacements.push(changed);
+        let mut changed = original.clone();
+        changed.platform = CcConnectPlatform::Feishu;
+        replacements.push(changed);
+        let mut changed = original.clone();
+        changed.platform_session_key = "feishu:other".to_string();
+        replacements.push(changed);
+        let mut changed = original;
+        changed.started_at_ms += 1;
+        replacements.push(changed);
+
+        assert!(replacements
+            .iter()
+            .all(|replacement| !identity.matches_record(replacement)));
+    }
+
+    #[test]
+    fn notification_errors_redact_known_and_pattern_credentials() {
+        let secrets = vec![
+            "telegram-credential".to_string(),
+            "feishu-app-secret".to_string(),
+            "weixin-token-value".to_string(),
+            "wecom-bot-secret".to_string(),
+            "provider-api-key".to_string(),
+            "daemon-notify-token".to_string(),
+        ];
+        for secret in &secrets {
+            let detail =
+                redact_delivery_detail(&format!("cc-connect failed with {secret}"), &secrets);
+            assert!(!detail.contains(secret));
+            assert!(detail.contains("[REDACTED]"));
+        }
+        assert_eq!(
+            redact_delivery_detail("authorization: Bearer unlisted-value", &[]),
+            "[sensitive output redacted]"
+        );
+        assert_eq!(
+            safe_delivery_error_code("token=must-not-be-persisted"),
+            "delivery_failed"
+        );
     }
 
     #[test]

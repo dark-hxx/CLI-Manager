@@ -1,9 +1,15 @@
 use super::handoff_session::*;
 use super::*;
 
-const HANDOFF_NOTIFICATION_ATTEMPTS: usize = 24;
-const HANDOFF_NOTIFICATION_RETRY_DELAY: Duration = Duration::from_millis(250);
+pub(super) const HANDOFF_NOTIFICATION_ATTEMPTS: usize = 24;
+pub(super) const HANDOFF_NOTIFICATION_RETRY_DELAY: Duration = Duration::from_millis(250);
 const HANDOFF_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(4);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct HandoffNotificationSendError {
+    pub(super) code: &'static str,
+    pub(super) detail: String,
+}
 
 #[derive(Debug, Clone)]
 struct RegisteredWorktree {
@@ -418,37 +424,64 @@ pub(super) fn send_handoff_notification(
     platform_session_key: &str,
     message: &str,
 ) -> Result<(), String> {
-    let data_directory = data_dir()?;
-    let mut last_error = "cc-connect notification API was not ready".to_string();
-    for _ in 0..HANDOFF_NOTIFICATION_ATTEMPTS {
-        let mut command = silent_command(&path_string(binary));
-        command
-            .arg("send")
-            .arg("--project")
-            .arg(project_name)
-            .arg("--session")
-            .arg(platform_session_key)
-            .arg("--message")
-            .arg(message)
-            .arg("--data-dir")
-            .arg(&data_directory);
-        match output_with_timeout(command, HANDOFF_NOTIFICATION_TIMEOUT) {
-            Ok(output) if output.status.success() => return Ok(()),
-            Ok(output) => {
-                let detail = output_text(&output.stdout, &output.stderr);
-                last_error = if detail.trim().is_empty() {
+    let mut last_error_code = "send_unavailable";
+    for attempt in 0..HANDOFF_NOTIFICATION_ATTEMPTS {
+        match send_handoff_notification_once(binary, project_name, platform_session_key, message) {
+            Ok(()) => return Ok(()),
+            Err(err) => last_error_code = err.code,
+        }
+        if attempt + 1 < HANDOFF_NOTIFICATION_ATTEMPTS {
+            std::thread::sleep(HANDOFF_NOTIFICATION_RETRY_DELAY);
+        }
+    }
+    Err(format!(
+        "send remote handoff notification failed: {last_error_code}"
+    ))
+}
+
+pub(super) fn send_handoff_notification_once(
+    binary: &Path,
+    project_name: &str,
+    platform_session_key: &str,
+    message: &str,
+) -> Result<(), HandoffNotificationSendError> {
+    let data_directory = data_dir().map_err(|detail| HandoffNotificationSendError {
+        code: "send_data_dir_unavailable",
+        detail,
+    })?;
+    let mut command = silent_command(&path_string(binary));
+    command
+        .arg("send")
+        .arg("--project")
+        .arg(project_name)
+        .arg("--session")
+        .arg(platform_session_key)
+        .arg("--message")
+        .arg(message)
+        .arg("--data-dir")
+        .arg(&data_directory);
+    match output_with_timeout(command, HANDOFF_NOTIFICATION_TIMEOUT) {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let detail = output_text(&output.stdout, &output.stderr);
+            Err(HandoffNotificationSendError {
+                code: "send_exit_nonzero",
+                detail: if detail.trim().is_empty() {
                     format!("cc-connect send exited with {}", output.status)
                 } else {
                     detail
-                };
-            }
-            Err(err) => last_error = err.to_string(),
+                },
+            })
         }
-        std::thread::sleep(HANDOFF_NOTIFICATION_RETRY_DELAY);
+        Err(err) => Err(HandoffNotificationSendError {
+            code: if err.kind() == std::io::ErrorKind::TimedOut {
+                "send_timeout"
+            } else {
+                "send_process_error"
+            },
+            detail: err.to_string(),
+        }),
     }
-    Err(format!(
-        "send remote handoff notification failed: {last_error}"
-    ))
 }
 
 fn manager_process_running(manager: &CcConnectManager) -> Result<bool, String> {
