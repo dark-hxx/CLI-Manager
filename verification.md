@@ -431,3 +431,37 @@
 - git diff --check：通过，仅输出仓库既有的 LF/CRLF 转换提示。
 - GitNexus CLI 仍因本机缺少 tree-sitter-kotlin 无法执行；已降级为 codebase-memory moderate 重建索引、变更影响检测、rg、源码、Git diff 和构建测试复核。
 - 本次未生成安装包，未启动/停止用户安装目录中的 CLI-Manager 或 cc-connect，也未 push。
+
+## PR #160 审查意见修复与 V1.3.1 打包（2026-07-20）
+
+### 根因陈述与发现清单
+
+- 最终通知丢失的根因位于远程 Hook 事件状态机：超时提醒被错误建模为 Terminal，真实 Stop/StopFailure 因而被去重；修复将超时改为一次性“状态未知”提醒，仅真实完成/失败进入终态。
+- 取消后旧通知的根因位于 handoff 持久化身份与 cc-connect 发送重试边界：旧实现仅在进入 worker 时校验一次；修复将发送拆为单次尝试，并在每次尝试前校验本地 Session、CLI Session、平台、平台会话标识和 startedAt。
+- 凭据风险位于外部进程 stdout/stderr 到状态文件的持久化边界：旧清理仅去换行和截断；修复复用日志脱敏并收集平台凭据、Provider API Key、daemon Token 与敏感环境变量，状态文件只允许安全错误码，旧的不安全字段读取时会被替换。
+- Resume 重复的根因位于项目 CLI 参数到 fresh resume 命令的解析边界：旧逻辑假设 Session ID 紧跟子命令；修复按 Codex CLI 的带值选项、无值选项、选择参数和位置参数解析，删除旧 Session/Prompt 并保留模型、沙箱和 Provider 配置。
+- 已修改：cc-connect handoff 通知状态机与发送器、共享日志脱敏、Resume 参数清理与专项测试、npm/Cargo/Tauri 版本、CHANGELOG、PR CI。
+- 已确认无需修改：cc-connect 源码、消息平台协议、托管记录 Schema、桌宠托管入口、终端锁定蒙层、SQLite Schema 和用户安装目录中的运行进程。
+
+### 场景覆盖
+
+- 超时后真实完成、超时后真实失败、重复终止事件、进度/权限提醒关闭或启用均保留明确状态。
+- 通知首次成功、多次失败、重试期间取消、同一平台替换 handoff、切换平台/平台会话、记录读取失败均采用 fail-closed 校验。
+- Telegram、飞书、微信、企业微信凭据，Provider API Key 和 daemon Token 均覆盖精确值与 token/secret/api_key/authorization/bearer 模式脱敏。
+- Resume 覆盖 model、sandbox、config、profile、enable、all、include-non-interactive、no-alt-screen、旧 Session ID 与旧 Prompt 位于不同顺序。
+- 本次行为与窗口焦点、分屏、最小化、WSL、Worktree 和 Hook 是否安装无额外分支；这些状态继续通过原托管入口提供同一 handoff 身份。
+
+### 验证结果
+
+- cargo check：通过。
+- cargo test --lib：603 项通过、0 项失败、1 项因缺少指定 WSL 测试环境而忽略。
+- 前端 TypeScript noEmit 检查：通过。
+- resumeCliArgs.test.mjs：5 项通过。
+- desktopPetTransport.test.mjs：4 项通过。
+- desktopPetMenuGeometry.test.mjs：11 项通过。
+- desktopPetSize.test.mjs：3 项通过。
+- git diff --check：通过，仅有仓库既有 LF/CRLF 转换提示。
+- GitNexus 索引因 tree-sitter-kotlin 安装失败而不可用，codebase-memory transport 同时关闭；已降级使用契约、rg、源码、Git diff、全量 Rust 测试和生产构建复核。
+- 已同步并合并 origin/master 44f5695c，冲突仅为上游 1.3.0 与本分支 1.3.1 的五个版本字段，统一保留 1.3.1。
+- 使用 tauri.local.conf.json 关闭 updater artifacts，仅构建 NSIS；产物为 src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.1_x64-setup.exe，大小 19021755 字节，SHA-256 为 E13FCF061B1B2EFDB7FABBF63C6050F4F7781992DE23948C049F11FE0AE1A3B9。
+- 未构建 MSI、未生成更新签名、未复制到 F:\cli-manager、未停止用户安装目录中的服务，也未 push。
