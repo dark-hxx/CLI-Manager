@@ -50,7 +50,7 @@ const createCanvasTerminalResizeFrame = (
   terminal: Terminal,
   container: HTMLElement,
 ): TerminalResizeFrame | null => {
-  const screen = terminal.screenElement;
+  const screen = terminal.element;
   if (!screen) return null;
   const canvases = [...screen.querySelectorAll("canvas")];
   if (canvases.length === 0) return null;
