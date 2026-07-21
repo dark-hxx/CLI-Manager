@@ -40,6 +40,7 @@ export {
   DESKTOP_PET_SIZE_MIN_PERCENT,
   DESKTOP_PET_SIZE_STEP_PERCENT,
   normalizeDesktopPetSizePercent,
+  stepDesktopPetSizePercent,
 } from "./desktopPetSize";
 
 export const DESKTOP_PET_WINDOW_LABEL = "desktop-pet";

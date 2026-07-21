@@ -34,3 +34,15 @@ export function normalizeDesktopPetSizePercent(
 export function desktopPetScaleFromPercent(sizePercent: number): number {
   return normalizeDesktopPetSizePercent(sizePercent) / 100;
 }
+
+export function stepDesktopPetSizePercent(
+  sizePercent: number,
+  direction: number
+): number {
+  const current = normalizeDesktopPetSizePercent(sizePercent);
+  if (!Number.isFinite(direction) || direction === 0) return current;
+  return normalizeDesktopPetSizePercent(
+    current + Math.sign(direction) * DESKTOP_PET_SIZE_STEP_PERCENT,
+    current
+  );
+}

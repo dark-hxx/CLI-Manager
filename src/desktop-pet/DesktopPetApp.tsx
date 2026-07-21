@@ -45,6 +45,7 @@ import {
   desktopPetScale,
   normalizeDesktopPetSizePercent,
   resizeDesktopPetCollapsedWindowBounds,
+  stepDesktopPetSizePercent,
   type DesktopPetConfigPayload,
   type DesktopPetMenuWindowGeometry,
   type DesktopPetMood,
@@ -242,6 +243,17 @@ interface DesktopPetMenuWindowRequest {
 
 const DESKTOP_PET_HOVER_OPEN_DELAY_MS = 200;
 const DESKTOP_PET_HOVER_CLOSE_DELAY_MS = 350;
+const DESKTOP_PET_SIZE_WHEEL_COMMIT_DELAY_MS = 250;
+const DESKTOP_PET_SIZE_ADJUSTMENT_KEYS = new Set([
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+]);
 
 function setDesktopPetWindowBounds(bounds: DesktopPetWindowRect): Promise<void> {
   return invoke("desktop_pet_window_set_bounds", { bounds });
@@ -283,7 +295,7 @@ export default function DesktopPetApp() {
     : menuTargets.length;
   const secondaryHeaderHeight = targetMode === "open" ? 0 : 34;
   const effectiveSize = previewSize ?? config.settings.size;
-  const petScale = desktopPetScale(effectiveSize);
+  const petScale = desktopPetScale(config.settings.size);
   const moveTimerRef = useRef<number | null>(null);
   const dragResetTimerRef = useRef<number | null>(null);
   const userDraggingRef = useRef(false);
@@ -291,6 +303,9 @@ export default function DesktopPetApp() {
   const menuOpenRef = useRef(menuOpen);
   const previewSizeRef = useRef<number | null>(previewSize);
   const sizeAdjustingRef = useRef(false);
+  const sizeWheelCommitTimerRef = useRef<number | null>(null);
+  const sizeControlRef = useRef<HTMLDivElement | null>(null);
+  const sizeWheelHandlerRef = useRef<(event: WheelEvent) => void>(() => {});
   const closeAfterSizeAdjustmentRef = useRef(false);
   const hoverOpenTimerRef = useRef<number | null>(null);
   const hoverCloseTimerRef = useRef<number | null>(null);
@@ -487,6 +502,9 @@ export default function DesktopPetApp() {
       if (dragResetTimerRef.current !== null) window.clearTimeout(dragResetTimerRef.current);
       if (hoverOpenTimerRef.current !== null) window.clearTimeout(hoverOpenTimerRef.current);
       if (hoverCloseTimerRef.current !== null) window.clearTimeout(hoverCloseTimerRef.current);
+      if (sizeWheelCommitTimerRef.current !== null) {
+        window.clearTimeout(sizeWheelCommitTimerRef.current);
+      }
       menuWindowTaskRef.current?.dispose();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       void unlistenConfig.then((unlisten) => unlisten());
@@ -620,13 +638,40 @@ export default function DesktopPetApp() {
     hoverCloseTimerRef.current = null;
   };
 
+  const clearSizeWheelCommitTimer = () => {
+    if (sizeWheelCommitTimerRef.current === null) return;
+    window.clearTimeout(sizeWheelCommitTimerRef.current);
+    sizeWheelCommitTimerRef.current = null;
+  };
+
+  const beginSizeAdjustment = () => {
+    sizeAdjustingRef.current = true;
+    closeAfterSizeAdjustmentRef.current = false;
+    clearHoverCloseTimer();
+  };
+
   const commitSizePreview = () => {
+    clearSizeWheelCommitTimer();
     const size = previewSizeRef.current;
     const shouldCloseAfterAdjustment = closeAfterSizeAdjustmentRef.current;
     sizeAdjustingRef.current = false;
     closeAfterSizeAdjustmentRef.current = false;
     if (size !== null) {
-      const collapsed = collapsedWindowGeometryRef.current;
+      let collapsed = collapsedWindowGeometryRef.current;
+      const nextScale = desktopPetScale(size);
+      if (collapsed && collapsed.petScale !== nextScale) {
+        collapsed = {
+          ...collapsed,
+          bounds: resizeDesktopPetCollapsedWindowBounds(
+            collapsed.bounds,
+            collapsed.scaleFactor,
+            nextScale,
+            collapsed.workArea
+          ),
+          petScale: nextScale,
+        };
+        collapsedWindowGeometryRef.current = collapsed;
+      }
       previewSizeRef.current = null;
       setPreviewSize(null);
       setConfig((current) => ({
@@ -704,25 +749,43 @@ export default function DesktopPetApp() {
     }, DESKTOP_PET_HOVER_CLOSE_DELAY_MS);
   };
 
-  const handleSizePreview = (value: number) => {
-    const size = normalizeDesktopPetSizePercent(value, effectiveSize);
-    const nextScale = desktopPetScale(size);
-    const collapsed = collapsedWindowGeometryRef.current;
-    if (collapsed && collapsed.petScale !== nextScale) {
-      collapsedWindowGeometryRef.current = {
-        ...collapsed,
-        bounds: resizeDesktopPetCollapsedWindowBounds(
-          collapsed.bounds,
-          collapsed.scaleFactor,
-          nextScale,
-          collapsed.workArea
-        ),
-        petScale: nextScale,
-      };
-    }
+  const handleSizePreview = (value: number): boolean => {
+    const currentSize = previewSizeRef.current ?? config.settings.size;
+    const size = normalizeDesktopPetSizePercent(value, currentSize);
+    if (size === currentSize) return false;
     previewSizeRef.current = size;
     setPreviewSize(size);
+    return true;
   };
+
+  const scheduleSizeWheelCommit = () => {
+    clearSizeWheelCommitTimer();
+    sizeWheelCommitTimerRef.current = window.setTimeout(() => {
+      sizeWheelCommitTimerRef.current = null;
+      commitSizePreview();
+    }, DESKTOP_PET_SIZE_WHEEL_COMMIT_DELAY_MS);
+  };
+
+  const handleSizeWheel = (event: WheelEvent) => {
+    if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const currentSize = previewSizeRef.current ?? config.settings.size;
+    const size = stepDesktopPetSizePercent(currentSize, event.deltaY < 0 ? 1 : -1);
+    if (size === currentSize && previewSizeRef.current === null) return;
+    beginSizeAdjustment();
+    handleSizePreview(size);
+    scheduleSizeWheelCommit();
+  };
+  sizeWheelHandlerRef.current = handleSizeWheel;
+
+  useEffect(() => {
+    const sizeControl = sizeControlRef.current;
+    if (!sizeControl || !menuGeometry) return;
+    const handleWheel = (event: WheelEvent) => sizeWheelHandlerRef.current(event);
+    sizeControl.addEventListener("wheel", handleWheel, { passive: false });
+    return () => sizeControl.removeEventListener("wheel", handleWheel);
+  }, [menuGeometry]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || config.settings.lockPosition) return;
@@ -1024,6 +1087,7 @@ export default function DesktopPetApp() {
               <span>{labels.openMain}</span>
             </button>
             <div
+              ref={sizeControlRef}
               className="desktop-pet-size-control"
               role="group"
               aria-label={labels.size}
@@ -1045,9 +1109,8 @@ export default function DesktopPetApp() {
                 aria-valuetext={`${effectiveSize}%`}
                 onPointerDown={(event) => {
                   event.stopPropagation();
-                  sizeAdjustingRef.current = true;
-                  closeAfterSizeAdjustmentRef.current = false;
-                  clearHoverCloseTimer();
+                  clearSizeWheelCommitTimer();
+                  beginSizeAdjustment();
                   event.currentTarget.setPointerCapture(event.pointerId);
                 }}
                 onPointerUp={(event) => {
@@ -1057,6 +1120,12 @@ export default function DesktopPetApp() {
                 onPointerCancel={commitSizePreview}
                 onLostPointerCapture={commitSizePreview}
                 onChange={(event) => handleSizePreview(Number(event.currentTarget.value))}
+                onKeyDown={(event) => {
+                  if (DESKTOP_PET_SIZE_ADJUSTMENT_KEYS.has(event.key)) {
+                    clearSizeWheelCommitTimer();
+                    beginSizeAdjustment();
+                  }
+                }}
                 onKeyUp={commitSizePreview}
                 onBlur={commitSizePreview}
               />
