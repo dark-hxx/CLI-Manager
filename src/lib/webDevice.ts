@@ -5,6 +5,7 @@ export interface WebDeviceProfile {
   deviceId: string;
   name: string;
   autoStart: boolean;
+  uploadWallpaper: boolean;
   capabilities: string[];
 }
 
@@ -24,6 +25,7 @@ export interface WebDeviceProfileInput {
   serverUrl: string;
   name: string;
   autoStart: boolean;
+  uploadWallpaper: boolean;
 }
 
 export interface WebDeviceOperation {

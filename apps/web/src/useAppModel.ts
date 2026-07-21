@@ -274,6 +274,7 @@ export function useAppModel() {
 
   const selectDevice = (deviceId: string) => {
     setSelectedDeviceId(deviceId);
+    setHistory([]);
     setSelectedSessionId(undefined);
     setSelectedProjectContextKey(undefined);
     setTimeline([]);

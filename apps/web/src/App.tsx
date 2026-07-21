@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { LanguageMode, TranslationKey, resolveLanguage, translate } from "./i18n";
 import { useAppModel } from "./useAppModel";
-import { GlobalErrorPage, LoadingPage, LoginPage, SessionExpiredPage, Workbench } from "./views";
+import { GlobalErrorPage, HostHome, LoadingPage, LoginPage, SessionExpiredPage, Workbench } from "./views";
 
 type ThemeMode = "system" | "light" | "dark";
 
@@ -14,6 +14,7 @@ function loadStored<T extends string>(key: string, allowed: readonly T[], fallba
 }
 
 export function App() {
+  const [page, setPage] = useState<"hosts" | "workbench">("hosts");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
     loadStored(THEME_KEY, ["system", "light", "dark"], "system"),
   );
@@ -44,6 +45,10 @@ export function App() {
     );
   }, [language, languageMode, resolvedTheme, themeMode]);
 
+  useEffect(() => {
+    if (model.authPhase !== "authenticated") setPage("hosts");
+  }, [model.authPhase]);
+
   const cycleTheme = () => {
     setThemeMode((current) => (current === "system" ? "light" : current === "light" ? "dark" : "system"));
   };
@@ -58,6 +63,29 @@ export function App() {
   if (model.authPhase === "error") return <GlobalErrorPage t={t} error={model.error} onRetry={model.checkAuth} />;
   if (model.loadState === "loading" || model.loadState === "idle") return <LoadingPage t={t} />;
   if (model.loadState === "error") return <GlobalErrorPage t={t} error={model.error} onRetry={model.loadWorkspace} />;
+
+  if (page === "hosts") {
+    return (
+      <HostHome
+        t={t}
+        userName={model.user?.username ?? t("developer")}
+        devices={model.devices}
+        pairing={model.pairing}
+        socketState={model.socketState}
+        resolvedTheme={resolvedTheme}
+        onTheme={cycleTheme}
+        onLanguage={cycleLanguage}
+        onLogout={() => void model.logout()}
+        onRefresh={() => void model.loadWorkspace()}
+        onSelectDevice={(deviceId) => {
+          model.selectDevice(deviceId);
+          setPage("workbench");
+        }}
+        onClaimPairing={model.claimPairing}
+        onResetPairing={() => model.setPairing({ status: "idle" })}
+      />
+    );
+  }
 
   return (
     <Workbench
@@ -79,6 +107,7 @@ export function App() {
       onTheme={cycleTheme}
       onLanguage={cycleLanguage}
       onLogout={() => void model.logout()}
+      onBackToHosts={() => setPage("hosts")}
       onRefresh={() => void model.loadWorkspace()}
       onSelectDevice={model.selectDevice}
       onSelectSession={model.selectSession}

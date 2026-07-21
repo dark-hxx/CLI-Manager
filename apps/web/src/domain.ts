@@ -7,6 +7,16 @@ export type AuthStatus = {
 
 export type DeviceStatus = "online" | "offline";
 
+export type DeviceHostInfo = {
+  hostName: string;
+  osVersion: string;
+  cpuArch: string;
+  cpuModel: string;
+  totalMemoryBytes: number;
+  displayWidth: number;
+  displayHeight: number;
+};
+
 export type Device = {
   id: string;
   name: string;
@@ -16,6 +26,8 @@ export type Device = {
   lastSeenAt: number | string | null;
   pairedAt: number | string | null;
   capabilities: string[];
+  hostInfo: DeviceHostInfo | null;
+  wallpaperRevision: string | null;
 };
 
 export type Pairing = {

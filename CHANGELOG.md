@@ -3,10 +3,12 @@
 ## [TEMP] - 2026-07-20
 
 ### 新增
+- 新增 `cli-manager-web-daemon` 独立 Web 设备桥接进程；Tauri 通过 loopback NDJSON 与其通信，WebSocket、配对 Token、历史上报和 operation 队列脱离桌面主进程运行。
 - 设置“远程连接”改为纵向排列的“本机 cc-connect”和“Web 设备连接”两个独立入口，入口显示未配置、已配置或运行中状态；点击后分别在右侧抽屉中展示对应配置。
 - 新增独立 `apps/web` React/Vite 工程，与 Tauri 桌面入口隔离；首批实现响应式工作台、浅色/深色/跟随系统主题、中英文切换、浏览器草稿和明确标识的演示数据，并提供根级 Web 开发、类型检查和构建脚本。
 - Web P0-S2 新增独立 Rust 模块化单体服务与共享协议包：支持 Argon2 本地单用户登录、HttpOnly 严格同站会话、短期单次设备配对、设备/浏览器双 WebSocket、事件游标补传、服务端历史快照、幂等对话操作和桌面最终回执状态机；离线设备禁止新建操作，服务重启后设备状态统一回落为离线。
 - Web 工作台接入真实认证、设备、历史和操作 API，支持会话过期、设备配对 Drawer、按用户隔离的 WebSocket 游标、断线重连、结构化 Prompt/Operation 时间线及按设备/项目/会话保存草稿；新增 `web:server:check`、`web:server:test`、`web:server:run` 根级脚本。
+- Web 登录后新增桌面主机首页，集中展示全部已配对设备的在线状态、平台、版本和最后心跳时间；支持在线优先排序、实时状态更新、空状态直接配对，点击主机后进入现有工程工作台，并可随时返回主机列表。
 - Tauri 桌面端新增 Rust 托管的 `/ws/device` 设备适配器：支持稳定设备身份、系统凭据存储、配对、心跳、自动重连、历史快照和有界 operation 队列；远程地址强制 `wss://`。Web 新建/继续对话显式携带项目上下文，桌面校验历史会话、项目/Worktree、CLI 来源、Hook、会话 ID 与原生/WSL 路径边界后启动 Claude/Codex，并以 `SessionStart`、`Stop`、`StopFailure` Hook 驱动 Prompt 提交和最终回执；SSH 继续排除。
 - Web 管理能力新增 SSH、文件、Git、Worktree 与 Hook 五类统一入口，复用 `/api/operations` 和桌面现有 command/store；写操作、Git Fetch 与 SSH 新主机密钥需 Web 目标确认和桌面原生确认，路径由桌面历史与本地项目解析，结果会移除凭据、本机绝对路径和 OpenSSH 原始诊断。operation 通过服务端 ACK 保留到可靠回执，队列溢出和桌面执行中断会安全恢复或失败，不重复执行危险操作。
 

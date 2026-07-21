@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -7,15 +8,18 @@ import {
   CircleUserRound,
   Clock3,
   Folder,
+  FolderTree,
+  GitBranch,
   History,
   Languages,
   LoaderCircle,
   LogOut,
-  Menu,
   MessageCircle,
   Monitor,
   Moon,
   Plus,
+  PanelRightClose,
+  PanelRightOpen,
   Radio,
   RefreshCw,
   Send,
@@ -29,6 +33,7 @@ import {
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TimelineItem } from "./domain";
 import type { TranslationKey } from "./i18n";
+import { deviceWallpaperUrl } from "./webClient";
 import { isManagementOperation, ManagementPanel } from "./ManagementPanel";
 
 type T = (key: TranslationKey) => string;
@@ -79,6 +84,87 @@ export function GlobalErrorPage({ t, error, onRetry }: { t: T; error: string; on
   return <main className="state-page"><AlertTriangle size={42} /><h1>{t("connectionError")}</h1><p>{error ? localizedError(t, error) : t("unknownError")}</p><button className="primary-button" type="button" onClick={onRetry}><RefreshCw size={18} />{t("retry")}</button></main>;
 }
 
+type HostHomeProps = {
+  t: T;
+  userName: string;
+  devices: Device[];
+  pairing: PairingState;
+  socketState: "connecting" | "open" | "closed";
+  resolvedTheme: "light" | "dark";
+  onTheme: () => void;
+  onLanguage: () => void;
+  onLogout: () => void;
+  onRefresh: () => void;
+  onSelectDevice: (id: string) => void;
+  onClaimPairing: (code: string) => Promise<void>;
+  onResetPairing: () => void;
+};
+
+export function HostHome(props: HostHomeProps) {
+  const [pairingOpen, setPairingOpen] = useState(false);
+  const devices = [...props.devices].sort((left, right) => {
+    if (left.status !== right.status) return left.status === "online" ? -1 : 1;
+    return (serverTimestamp(right.lastSeenAt) ?? 0) - (serverTimestamp(left.lastSeenAt) ?? 0);
+  });
+  const closePairing = () => {
+    setPairingOpen(false);
+    props.onResetPairing();
+  };
+
+  return (
+    <main className="host-home">
+      <header className="host-home-header">
+        <div className="host-brand"><AppLogo /><div><strong>CLI-Manager</strong><span>{props.t("hostsSubtitle")}</span></div></div>
+        <div className="host-home-actions">
+          <span className={`browser-status ${props.socketState}`}>{props.socketState === "open" ? <Wifi size={16} /> : <WifiOff size={16} />}{props.t(props.socketState === "open" ? "connected" : props.socketState === "connecting" ? "reconnecting" : "disconnected")}</span>
+          <button className="icon-button" type="button" onClick={props.onRefresh} aria-label={props.t("refresh")}><RefreshCw size={19} /></button>
+          <button className="icon-button" type="button" onClick={props.onLanguage} aria-label={props.t("language")}><Languages size={19} /></button>
+          <button className="icon-button" type="button" onClick={props.onTheme} aria-label={props.t("theme")}>{props.resolvedTheme === "dark" ? <Moon size={19} /> : <Sun size={19} />}</button>
+          <button className="host-account" type="button" onClick={props.onLogout} aria-label={props.t("logout")}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button>
+        </div>
+      </header>
+
+      <section className="host-home-content" aria-labelledby="hosts-title">
+        <div className="host-home-title">
+          <div><h1 id="hosts-title">{props.t("hostsTitle")}</h1><p>{props.t("hostsHint")}</p></div>
+          <button className="secondary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{props.t("pairDevice")}</button>
+        </div>
+
+        {devices.length === 0 ? (
+          <div className="host-empty"><Monitor size={42} /><h2>{props.t("noHostsTitle")}</h2><p>{props.t("noHostsHint")}</p><button className="primary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{props.t("pairDevice")}</button></div>
+        ) : (
+          <div className="host-list" aria-label={`${props.t("hostsTitle")} · ${devices.length}`}>
+            {devices.map((device) => (
+              <button className={`host-card ${device.status}${device.wallpaperRevision ? " has-wallpaper" : ""}`} type="button" key={device.id} onClick={() => props.onSelectDevice(device.id)} aria-label={`${props.t("openHost")} ${device.name}`}>
+                {device.wallpaperRevision && <img className="host-card-wallpaper" src={deviceWallpaperUrl(device) ?? undefined} alt="" loading="lazy" />}
+                <span className="host-card-shade" aria-hidden="true" />
+                <span className="host-card-icon"><Monitor size={24} /></span>
+                <span className="host-card-body">
+                  <span className="host-card-heading"><strong>{device.name}</strong><span className={`host-status ${device.status}`}><span className={`status-dot ${device.status === "online" ? "" : "warning"}`} />{props.t(device.status === "online" ? "online" : "offline")}</span></span>
+                  <span className="host-meta"><span>{device.hostInfo?.hostName || device.platform || props.t("unknown")}</span><span>{device.hostInfo?.osVersion || device.platform || props.t("unknown")}</span></span>
+                  {device.hostInfo && <span className="host-specs">
+                    <span title={device.hostInfo.cpuModel}>{props.t("cpu")}: {device.hostInfo.cpuModel} · {device.hostInfo.cpuArch}</span>
+                    <span>{props.t("memory")}: {formatMemory(device.hostInfo.totalMemoryBytes)} · {props.t("display")}: {device.hostInfo.displayWidth}x{device.hostInfo.displayHeight}</span>
+                  </span>}
+                  <span className="host-heartbeat"><Clock3 size={15} />{props.t("lastHeartbeat")} <time dateTime={formatServerDateTime(device.lastSeenAt)}>{device.lastSeenAt === null ? props.t("noHeartbeat") : formatServerTime(device.lastSeenAt)}</time></span>
+                </span>
+                <ChevronRight className="host-card-arrow" size={20} />
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {pairingOpen && <OverlayPanel title={props.t("pairDevice")} closeLabel={props.t("close")} onClose={closePairing}><PairingForm t={props.t} state={props.pairing} onClaim={props.onClaimPairing} /></OverlayPanel>}
+    </main>
+  );
+}
+
+function formatMemory(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "-";
+  return `${Math.round(bytes / 1024 ** 3)} GB`;
+}
+
 type WorkbenchProps = {
   t: T;
   userName: string;
@@ -98,6 +184,7 @@ type WorkbenchProps = {
   onTheme: () => void;
   onLanguage: () => void;
   onLogout: () => void;
+  onBackToHosts: () => void;
   onRefresh: () => void;
   onSelectDevice: (id: string) => void;
   onSelectSession: (id?: string) => void;
@@ -114,13 +201,14 @@ export function Workbench(props: WorkbenchProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
   const [managementOpen, setManagementOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const canSend = Boolean(props.draft.trim() && selectedDevice?.status === "online" && selectedProjectContext);
   const selectedFreshness = selectedSession?.freshness ?? selectedProjectContext?.freshness ?? "stale";
   const syncText = props.latestSyncAt === null ? t("unknown") : formatServerTime(props.latestSyncAt);
   return (
-    <div className="app-shell">
+    <div className={`app-shell${detailsOpen ? " details-open" : ""}`}>
       <a className="skip-link" href="#conversation-main">{t("skipToContent")}</a>
-      <HistorySidebar {...props} onPair={() => setPairingOpen(true)} />
+      <ProjectSidebar {...props} onPair={() => setPairingOpen(true)} />
       <main className="main-panel" id="conversation-main">
         <header className="desktop-header">
           <div className="context-block">
@@ -151,6 +239,17 @@ export function Workbench(props: WorkbenchProps) {
             <div className="context-meta"><span>{t("worktree")}: {selectedProjectContext?.cwd ?? t("unknown")}</span><span>CLI: {selectedProjectContext?.source ?? capabilityValue(selectedDevice, "cli:")}</span><span>{t("model")}: {capabilityValue(selectedDevice, "model:")}</span><span>{t("reasoning")}: {capabilityValue(selectedDevice, "reasoning:")}</span><span>{t("permission")}: {capabilityValue(selectedDevice, "permission:")}</span></div>
           </div>
           <div className="header-actions">
+            <button className="icon-button" type="button" onClick={props.onBackToHosts} aria-label={t("backToHosts")}><ArrowLeft size={20} /></button>
+            <button
+              className="icon-button details-toggle"
+              type="button"
+              onClick={() => setDetailsOpen((open) => !open)}
+              aria-label={t("deviceDetails")}
+              aria-expanded={detailsOpen}
+              aria-controls="device-details-drawer"
+            >
+              {detailsOpen ? <PanelRightClose size={20} /> : <PanelRightOpen size={20} />}
+            </button>
             <button className="icon-button" type="button" onClick={() => setManagementOpen(true)} aria-label={t("management")}><Settings size={20} /></button>
             <button className="icon-button" type="button" onClick={props.onRefresh} aria-label={t("refresh")}><RefreshCw size={20} /></button>
             <button className="icon-button" type="button" onClick={props.onLanguage} aria-label={t("language")}><Languages size={20} /></button>
@@ -158,7 +257,7 @@ export function Workbench(props: WorkbenchProps) {
           </div>
         </header>
         <header className="mobile-header">
-          <button className="icon-button" type="button" onClick={() => setHistoryOpen(true)} aria-label={t("openHistory")}><Menu size={24} /></button>
+          <button className="icon-button" type="button" onClick={props.onBackToHosts} aria-label={t("backToHosts")}><ArrowLeft size={22} /></button>
           <div><strong>{selectedSession?.title ?? "CLI-Manager"}</strong><span className="mobile-device-line"><span className={`status-dot ${selectedDevice?.status === "online" ? "" : "warning"}`} role="img" aria-label={selectedDevice?.status === "online" ? t("online") : t("offline")} />{selectedDevice?.name ?? t("noDevice")}</span></div>
           <button className="icon-button" type="button" onClick={() => setManagementOpen(true)} aria-label={t("management")}><Settings size={22} /></button>
         </header>
@@ -181,8 +280,11 @@ export function Workbench(props: WorkbenchProps) {
         <Composer t={t} value={props.draft} disabled={!canSend} offline={selectedDevice?.status !== "online"} message={props.composerMessage} onChange={props.onDraft} onSend={props.onSend} />
       </main>
 
-      <aside className="action-panel" aria-label={t("deviceDetails")}>
-        <h2>{t("deviceDetails")}</h2>
+      <aside id="device-details-drawer" className="action-panel" aria-label={t("deviceDetails")} aria-hidden={!detailsOpen}>
+        <div className="action-title">
+          <h2>{t("deviceDetails")}</h2>
+          <button className="icon-button" type="button" onClick={() => setDetailsOpen(false)} aria-label={t("close")}><X size={18} /></button>
+        </div>
         {selectedDevice ? <DeviceCard device={selectedDevice} t={t} syncText={syncText} /> : <p className="muted">{t("noDeviceHint")}</p>}
         <button className="secondary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{t("pairDevice")}</button>
         <button className="secondary-button" type="button" onClick={() => setManagementOpen(true)}><Settings size={18} />{t("management")}</button>
@@ -205,8 +307,80 @@ export function Workbench(props: WorkbenchProps) {
   );
 }
 
-function HistorySidebar(props: WorkbenchProps & { onPair: () => void }) {
-  return <aside className="sidebar" aria-label={props.t("history")}><div className="sidebar-brand"><AppLogo /></div><button className="new-chat-button" type="button" onClick={() => props.onSelectSession(undefined)}><Plus size={18} /><span>{props.t("newConversation")}</span></button><HistoryList t={props.t} items={props.history} selectedId={props.selectedSession?.sessionId} onSelect={props.onSelectSession} /><div className="sidebar-footer"><button className="footer-row" type="button" onClick={props.onPair}><Monitor size={20} /><span>{props.t("pairDevice")}</span></button><button className="account-row" type="button" onClick={props.onLogout}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button></div></aside>;
+function ProjectSidebar(props: WorkbenchProps & { onPair: () => void }) {
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+  const projects = Array.from(
+    props.projectContexts.reduce((groups, context) => {
+      const contexts = groups.get(context.projectKey) ?? [];
+      contexts.push(context);
+      groups.set(context.projectKey, contexts);
+      return groups;
+    }, new Map<string, ProjectContext[]>()),
+  );
+
+  const toggleProject = (projectKey: string) => {
+    setCollapsedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(projectKey)) next.delete(projectKey);
+      else next.add(projectKey);
+      return next;
+    });
+  };
+
+  return (
+    <aside className="sidebar project-sidebar" aria-label={props.t("projects")}>
+      <div className="sidebar-brand"><AppLogo /><strong>CLI-Manager</strong></div>
+      <button className="new-chat-button" type="button" onClick={() => props.onSelectSession(undefined)}><Plus size={18} /><span>{props.t("newConversation")}</span></button>
+      <div className="project-tree">
+        <div className="side-section-title"><span>{props.t("projects")}</span><span className="count">{projects.length}</span></div>
+        {projects.length === 0 ? <p className="empty-copy">{props.t("noProjectContext")}</p> : projects.map(([projectKey, contexts]) => {
+          const collapsed = collapsedProjects.has(projectKey);
+          const activeProject = props.selectedProjectContext?.projectKey === projectKey;
+          return (
+            <section className={`project-node${activeProject ? " active" : ""}`} key={projectKey}>
+              <button className="project-node-header" type="button" onClick={() => toggleProject(projectKey)} aria-expanded={!collapsed}>
+                {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                <FolderTree size={17} />
+                <strong>{projectKey}</strong>
+                <span className="project-node-count">{contexts.length}</span>
+              </button>
+              {!collapsed && <div className="project-branches">{contexts.map((context) => {
+                const selected = props.selectedProjectContext?.key === context.key;
+                const sessions = props.history.filter((session) => session.source === context.source && session.projectKey === context.projectKey && normalizePath(session.cwd) === normalizePath(context.cwd));
+                return (
+                  <div className="project-context-node" key={context.key}>
+                    <button className={`project-context-row${selected ? " active" : ""}`} type="button" onClick={() => props.onSelectProjectContext(context.key)} title={context.cwd}>
+                      <Folder size={16} />
+                      <span><strong>{pathLeaf(context.cwd) || context.projectKey}</strong><small><GitBranch size={11} />{context.branch ?? context.source}</small></span>
+                      <span
+                        className={`freshness-dot ${context.freshness}`}
+                        role="img"
+                        aria-label={props.t(context.freshness === "live" ? "liveData" : context.freshness === "cached" ? "cachedData" : "staleData")}
+                      />
+                    </button>
+                    {sessions.length > 0 && <div className="project-sessions">{sessions.map((session) => (
+                      <button className={`project-session-row${props.selectedSession?.sessionId === session.sessionId ? " active" : ""}`} type="button" key={session.sessionId} onClick={() => props.onSelectSession(session.sessionId)} title={session.title}>
+                        <MessageCircle size={13} /><span>{session.title}</span>
+                      </button>
+                    ))}</div>}
+                  </div>
+                );
+              })}</div>}
+            </section>
+          );
+        })}
+      </div>
+      <div className="sidebar-footer"><button className="footer-row" type="button" onClick={props.onPair}><Monitor size={20} /><span>{props.t("pairDevice")}</span></button><button className="account-row" type="button" onClick={props.onLogout}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button></div>
+    </aside>
+  );
+}
+
+function normalizePath(path: string | null | undefined) {
+  return path?.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() ?? "";
+}
+
+function pathLeaf(path: string) {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() ?? path;
 }
 
 function HistoryList({ t, items, selectedId, onSelect }: { t: T; items: HistorySessionSummary[]; selectedId?: string; onSelect: (id: string) => void }) {
@@ -312,6 +486,18 @@ function localizedError(t: T, code: string) {
 }
 
 function formatServerTime(value: number | string) {
-  const date = new Date(typeof value === "number" && value < 10_000_000_000 ? value * 1000 : value);
-  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  const timestamp = serverTimestamp(value);
+  if (timestamp === null) return "—";
+  return new Intl.DateTimeFormat(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(timestamp);
+}
+
+function formatServerDateTime(value: number | string | null) {
+  const timestamp = serverTimestamp(value);
+  return timestamp === null ? undefined : new Date(timestamp).toISOString();
+}
+
+function serverTimestamp(value: number | string | null): number | null {
+  if (value === null) return null;
+  const timestamp = typeof value === "number" && value < 10_000_000_000 ? value * 1000 : new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
 }

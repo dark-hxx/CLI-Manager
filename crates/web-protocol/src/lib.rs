@@ -83,6 +83,27 @@ pub struct AuthStatusResponse {
     pub user: Option<UserView>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceHostInfo {
+    pub host_name: String,
+    pub os_version: String,
+    pub cpu_arch: String,
+    pub cpu_model: String,
+    pub total_memory_bytes: u64,
+    pub display_width: u32,
+    pub display_height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceWallpaperUpload {
+    pub mime_type: String,
+    pub data_base64: String,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceView {
@@ -94,6 +115,8 @@ pub struct DeviceView {
     pub last_seen_at: i64,
     pub paired_at: Option<i64>,
     pub capabilities: Vec<String>,
+    pub host_info: Option<DeviceHostInfo>,
+    pub wallpaper_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -149,6 +172,10 @@ pub enum DeviceToServerFrame {
         platform: String,
         app_version: String,
         capabilities: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host_info: Option<DeviceHostInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wallpaper: Option<DeviceWallpaperUpload>,
     },
     PairingOffer {
         code: String,
@@ -282,6 +309,54 @@ mod tests {
                 "status": "succeeded"
             })
         );
+    }
+
+    #[test]
+    fn hello_identity_fields_are_optional_and_camel_case() {
+        let legacy = serde_json::json!({
+            "type": "hello",
+            "protocolVersion": 1,
+            "deviceId": "device-1",
+            "deviceToken": null,
+            "name": "PC",
+            "platform": "windows",
+            "appVersion": "1.0",
+            "capabilities": []
+        });
+        let frame: DeviceToServerFrame = serde_json::from_value(legacy).unwrap();
+        let DeviceToServerFrame::Hello {
+            host_info,
+            wallpaper,
+            ..
+        } = frame
+        else {
+            panic!("expected hello frame");
+        };
+        assert!(host_info.is_none());
+        assert!(wallpaper.is_none());
+
+        let value = serde_json::to_value(DeviceToServerFrame::Hello {
+            protocol_version: 1,
+            device_id: "device-1".to_string(),
+            device_token: None,
+            name: "PC".to_string(),
+            platform: "windows".to_string(),
+            app_version: "1.0".to_string(),
+            capabilities: vec![],
+            host_info: Some(DeviceHostInfo {
+                host_name: "WORKSTATION".to_string(),
+                os_version: "Windows 11".to_string(),
+                cpu_arch: "x86_64".to_string(),
+                cpu_model: "Example CPU".to_string(),
+                total_memory_bytes: 16 * 1024 * 1024 * 1024,
+                display_width: 1920,
+                display_height: 1080,
+            }),
+            wallpaper: None,
+        })
+        .unwrap();
+        assert_eq!(value["hostInfo"]["hostName"], "WORKSTATION");
+        assert!(value.get("wallpaper").is_none());
     }
 
     #[test]

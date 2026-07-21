@@ -59,6 +59,10 @@ notify-debouncer-mini = "0.4"
 fontdb = "0.23"
 tauri-plugin-clipboard-manager = "2"
 sysinfo = "0.39.5"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+display-info = "0.5.9"
+wallpaper = "3.2.0"
+url = "2"
 local-ip-address = "0.6.13"
 tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 cli-manager-web-protocol = { path = "../crates/web-protocol" }

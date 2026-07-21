@@ -2,13 +2,14 @@ use cli_manager_web_protocol::{
     DeviceToServerFrame, HistorySessionSummary, OperationError, OperationStatus, OperationView,
     ServerToDeviceFrame, DEVICE_PROTOCOL_VERSION,
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::fs;
 use std::net::{IpAddr, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -40,6 +41,8 @@ pub struct WebDeviceProfile {
     pub name: String,
     #[serde(default)]
     pub auto_start: bool,
+    #[serde(default = "default_true")]
+    pub upload_wallpaper: bool,
     #[serde(default = "default_capabilities")]
     pub capabilities: Vec<String>,
 }
@@ -51,9 +54,11 @@ pub struct SaveProfileRequest {
     pub name: String,
     #[serde(default)]
     pub auto_start: bool,
+    #[serde(default = "default_true")]
+    pub upload_wallpaper: bool,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WebDeviceStatus {
     pub configured: bool,
@@ -67,7 +72,7 @@ pub struct WebDeviceStatus {
     pub last_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairingResult {
     pub code: String,
@@ -315,6 +320,7 @@ impl WebDeviceManager {
         let (mut socket, _) =
             connect(url.as_str()).map_err(|err| format!("connect web device failed: {err}"))?;
         set_read_timeout(&mut socket)?;
+        let identity = crate::device_identity::collect(profile.upload_wallpaper);
         send_frame(
             &mut socket,
             &DeviceToServerFrame::Hello {
@@ -325,6 +331,8 @@ impl WebDeviceManager {
                 platform: env::consts::OS.to_string(),
                 app_version: env!("CARGO_PKG_VERSION").to_string(),
                 capabilities: default_capabilities(),
+                host_info: Some(identity.host_info),
+                wallpaper: identity.wallpaper,
             },
         )?;
         if let Ok(mut runtime) = self.runtime.lock() {
@@ -501,6 +509,10 @@ fn default_capabilities() -> Vec<String> {
     ]
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn new_profile(
     request: SaveProfileRequest,
     existing: Option<WebDeviceProfile>,
@@ -512,6 +524,7 @@ fn new_profile(
             .unwrap_or_else(|| Uuid::new_v4().to_string()),
         name: request.name,
         auto_start: request.auto_start,
+        upload_wallpaper: request.upload_wallpaper,
         capabilities: default_capabilities(),
     }
 }
@@ -693,10 +706,71 @@ fn pairing_code() -> String {
     Uuid::new_v4().simple().to_string()[..8].to_ascii_uppercase()
 }
 
+fn daemon_call<T: DeserializeOwned>(request: crate::web_daemon::Request) -> Result<T, String> {
+    crate::web_daemon::request(request)
+}
+
+fn daemon_executable_path() -> Result<PathBuf, String> {
+    let current = std::env::current_exe().map_err(|err| format!("current_exe failed: {err}"))?;
+    let name = if cfg!(windows) {
+        "cli-manager-web-daemon.exe"
+    } else {
+        "cli-manager-web-daemon"
+    };
+    Ok(current.with_file_name(name))
+}
+
+fn ensure_web_daemon() -> Result<(), String> {
+    if let Some(info) = crate::web_daemon::read_discovery()? {
+        if crate::daemon::discovery::is_pid_alive(info.pid) {
+            if daemon_call::<serde_json::Value>(crate::web_daemon::Request::GetStatus).is_ok() {
+                return Ok(());
+            }
+        } else {
+            crate::web_daemon::remove_discovery();
+        }
+    }
+    let executable = daemon_executable_path()?;
+    if !executable.is_file() {
+        return Err(format!(
+            "web daemon executable not found: {}",
+            executable.display()
+        ));
+    }
+    let mut command = Command::new(executable);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command
+        .spawn()
+        .map_err(|err| format!("spawn web daemon failed: {err}"))?;
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(250));
+        if daemon_call::<serde_json::Value>(crate::web_daemon::Request::GetStatus).is_ok() {
+            return Ok(());
+        }
+    }
+    Err("web daemon did not become ready in time".to_string())
+}
+
 #[tauri::command]
 pub fn web_device_get_status(
     manager: State<'_, WebDeviceManager>,
 ) -> Result<WebDeviceStatus, String> {
+    if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::GetStatus) {
+        return Ok(status);
+    }
     manager.status()
 }
 
@@ -706,6 +780,18 @@ pub fn web_device_save_profile(
     manager: State<'_, WebDeviceManager>,
     request: SaveProfileRequest,
 ) -> Result<WebDeviceStatus, String> {
+    if ensure_web_daemon().is_ok() {
+        if let Ok(status) =
+            daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::SaveProfile {
+                server_url: request.server_url.clone(),
+                name: request.name.clone(),
+                auto_start: request.auto_start,
+                upload_wallpaper: request.upload_wallpaper,
+            })
+        {
+            return Ok(status);
+        }
+    }
     let mut profile = new_profile(request, load_profile()?);
     profile.server_url = normalize_server_url(&profile.server_url)?;
     save_profile_file(&profile)?;
@@ -718,6 +804,11 @@ pub fn web_device_start(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<WebDeviceStatus, String> {
+    if ensure_web_daemon().is_ok() {
+        if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Start) {
+            return Ok(status);
+        }
+    }
     manager.start(app)?;
     manager.status()
 }
@@ -727,6 +818,9 @@ pub fn web_device_stop(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<WebDeviceStatus, String> {
+    if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Stop) {
+        return Ok(status);
+    }
     manager.stop(&app);
     manager.status()
 }
@@ -736,6 +830,11 @@ pub fn web_device_restart(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<WebDeviceStatus, String> {
+    if ensure_web_daemon().is_ok() {
+        if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Restart) {
+            return Ok(status);
+        }
+    }
     manager.stop(&app);
     manager.start(app)?;
     manager.status()
@@ -746,6 +845,9 @@ pub fn web_device_create_pairing(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<PairingResult, String> {
+    if let Ok(result) = daemon_call::<PairingResult>(crate::web_daemon::Request::CreatePairing) {
+        return Ok(result);
+    }
     let code = pairing_code();
     let expires_at = now_millis().saturating_add(PAIRING_LIFETIME_MS);
     {
@@ -778,6 +880,9 @@ pub fn web_device_clear_pairing(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<WebDeviceStatus, String> {
+    if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::ClearPairing) {
+        return Ok(status);
+    }
     let was_running = manager
         .runtime
         .lock()
@@ -812,6 +917,11 @@ pub fn web_device_take_operations(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<Vec<OperationView>, String> {
+    if let Ok(operations) =
+        daemon_call::<Vec<OperationView>>(crate::web_daemon::Request::TakeOperations)
+    {
+        return Ok(operations);
+    }
     let operations = manager
         .operations
         .lock()
@@ -826,6 +936,15 @@ pub fn web_device_publish_history(
     manager: State<'_, WebDeviceManager>,
     request: PublishHistoryRequest,
 ) -> Result<(), String> {
+    if ensure_web_daemon().is_ok() {
+        if daemon_call::<()>(crate::web_daemon::Request::PublishHistory {
+            sessions: request.sessions.clone(),
+        })
+        .is_ok()
+        {
+            return Ok(());
+        }
+    }
     let sequence = {
         let mut runtime = manager
             .runtime
@@ -855,6 +974,11 @@ pub fn web_device_operation_accepted(
     manager: State<'_, WebDeviceManager>,
     request: OperationIdRequest,
 ) -> Result<(), String> {
+    if let Ok(()) = daemon_call::<()>(crate::web_daemon::Request::OperationAccepted {
+        operation_id: request.operation_id.clone(),
+    }) {
+        return Ok(());
+    }
     manager.queue(DeviceToServerFrame::OperationAccepted {
         operation_id: request.operation_id.clone(),
     })?;
@@ -873,6 +997,11 @@ pub fn web_device_operation_running(
     manager: State<'_, WebDeviceManager>,
     request: OperationIdRequest,
 ) -> Result<(), String> {
+    if let Ok(()) = daemon_call::<()>(crate::web_daemon::Request::OperationRunning {
+        operation_id: request.operation_id.clone(),
+    }) {
+        return Ok(());
+    }
     manager.queue(DeviceToServerFrame::OperationRunning {
         operation_id: request.operation_id.clone(),
     })?;
@@ -894,6 +1023,14 @@ pub fn web_device_operation_completed(
     if !request.status.is_terminal() {
         return Err("operation completed status must be terminal".to_string());
     }
+    if let Ok(()) = daemon_call::<()>(crate::web_daemon::Request::OperationCompleted {
+        operation_id: request.operation_id.clone(),
+        status: request.status.clone(),
+        result: request.result.clone(),
+        error: request.error.clone(),
+    }) {
+        return Ok(());
+    }
     manager.queue(DeviceToServerFrame::OperationCompleted {
         operation_id: request.operation_id.clone(),
         status: request.status.clone(),
@@ -914,12 +1051,20 @@ pub fn auto_start(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     };
     if profile.auto_start {
+        if ensure_web_daemon().is_ok()
+            && daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Start).is_ok()
+        {
+            return Ok(());
+        }
         app.state::<WebDeviceManager>().start(app.clone())?;
     }
     Ok(())
 }
 
 pub fn shutdown(app: &AppHandle) {
+    if daemon_call::<()>(crate::web_daemon::Request::Shutdown).is_ok() {
+        return;
+    }
     app.state::<WebDeviceManager>().stop(app);
 }
 
@@ -961,6 +1106,7 @@ mod tests {
             device_id: "device-1".to_string(),
             name: "Desktop".to_string(),
             auto_start: false,
+            upload_wallpaper: true,
             capabilities: default_capabilities(),
         };
         assert!(validate_profile(&valid).is_ok());
@@ -979,6 +1125,7 @@ mod tests {
             device_id: "stable-device".to_string(),
             name: "Old".to_string(),
             auto_start: false,
+            upload_wallpaper: false,
             capabilities: vec!["untrusted".to_string()],
         };
         let profile = new_profile(
@@ -986,11 +1133,13 @@ mod tests {
                 server_url: "https://example.com".to_string(),
                 name: "Desktop".to_string(),
                 auto_start: true,
+                upload_wallpaper: true,
             },
             Some(existing),
         );
         assert_eq!(profile.device_id, "stable-device");
         assert_eq!(profile.capabilities, default_capabilities());
+        assert!(profile.upload_wallpaper);
     }
 
     #[test]
@@ -1039,11 +1188,13 @@ mod tests {
             device_id: "device-1".to_string(),
             name: "Desktop".to_string(),
             auto_start: true,
+            upload_wallpaper: true,
             capabilities: default_capabilities(),
         };
         let value = serde_json::to_value(profile).unwrap();
         assert_eq!(value["serverUrl"], "wss://example.com/ws/device");
         assert_eq!(value["deviceId"], "device-1");
+        assert_eq!(value["uploadWallpaper"], true);
         assert!(value.get("deviceToken").is_none());
         assert!(value.get("token").is_none());
     }

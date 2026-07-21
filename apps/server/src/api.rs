@@ -215,6 +215,33 @@ pub async fn list_devices(
     }))
 }
 
+pub async fn get_device_wallpaper(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<String>,
+) -> Result<Response, AppError> {
+    let user = require_user(&state, &headers).await?;
+    let wallpaper = state
+        .storage
+        .device_wallpaper_for_user(&user.id, &device_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("wallpaper_not_found", "device wallpaper not found"))?;
+    let mut response = wallpaper.bytes.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    response.headers_mut().insert(
+        header::ETAG,
+        HeaderValue::from_str(&format!("\"{}\"", wallpaper.revision))
+            .map_err(|error| AppError::Internal(format!("invalid wallpaper revision: {error}")))?,
+    );
+    Ok(response)
+}
+
 #[derive(Deserialize)]
 pub struct PairingClaimRequest {
     code: String,

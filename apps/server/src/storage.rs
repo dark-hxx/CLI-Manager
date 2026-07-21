@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use cli_manager_web_protocol::{
-    BrowserEventPayload, BrowserSocketFrame, DeviceStatus, DeviceView, HistorySessionSummary,
-    OperationError, OperationStatus, OperationView, UserView,
+    BrowserEventPayload, BrowserSocketFrame, DeviceHostInfo, DeviceStatus, DeviceView,
+    HistorySessionSummary, OperationError, OperationStatus, OperationView, UserView,
 };
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -22,6 +22,11 @@ pub struct PairingClaim {
     pub pairing_id: String,
     pub expires_at: i64,
     pub device: DeviceView,
+}
+
+pub struct DeviceWallpaper {
+    pub bytes: Vec<u8>,
+    pub revision: String,
 }
 
 #[derive(Clone)]
@@ -161,20 +166,30 @@ impl Storage {
         platform: &str,
         app_version: &str,
         capabilities: &[String],
+        host_info: Option<&DeviceHostInfo>,
+        wallpaper: Option<(&[u8], &str)>,
     ) -> Result<DeviceView, AppError> {
         let now = now_ms();
         let capabilities_json = serde_json::to_string(capabilities)?;
+        let host_info_json = host_info.map(serde_json::to_string).transpose()?;
+        let (wallpaper_jpeg, wallpaper_revision) = wallpaper
+            .map(|(bytes, revision)| (Some(bytes), Some(revision)))
+            .unwrap_or((None, None));
         sqlx::query(
             "INSERT INTO devices
-                (id, name, platform, app_version, status, capabilities_json, last_seen_at)
-             VALUES (?1, ?2, ?3, ?4, 'online', ?5, ?6)
+                (id, name, platform, app_version, status, capabilities_json, last_seen_at,
+                 host_info_json, wallpaper_jpeg, wallpaper_revision)
+             VALUES (?1, ?2, ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 platform = excluded.platform,
                 app_version = excluded.app_version,
                 status = 'online',
                 capabilities_json = excluded.capabilities_json,
-                last_seen_at = excluded.last_seen_at",
+                last_seen_at = excluded.last_seen_at,
+                host_info_json = COALESCE(excluded.host_info_json, devices.host_info_json),
+                wallpaper_jpeg = COALESCE(excluded.wallpaper_jpeg, devices.wallpaper_jpeg),
+                wallpaper_revision = COALESCE(excluded.wallpaper_revision, devices.wallpaper_revision)",
         )
         .bind(device_id)
         .bind(name)
@@ -182,6 +197,9 @@ impl Storage {
         .bind(app_version)
         .bind(capabilities_json)
         .bind(now)
+        .bind(host_info_json)
+        .bind(wallpaper_jpeg)
+        .bind(wallpaper_revision)
         .execute(&self.pool)
         .await?;
         self.device_by_id(device_id)
@@ -238,7 +256,8 @@ impl Storage {
 
     pub async fn list_devices(&self, user_id: &str) -> Result<Vec<DeviceView>, AppError> {
         let rows = sqlx::query(
-            "SELECT id, name, platform, app_version, status, capabilities_json, paired_at, last_seen_at
+            "SELECT id, name, platform, app_version, status, capabilities_json, paired_at,
+                    last_seen_at, host_info_json, wallpaper_revision
              FROM devices WHERE user_id = ?1 ORDER BY last_seen_at DESC, id",
         )
         .bind(user_id)
@@ -253,7 +272,8 @@ impl Storage {
         device_id: &str,
     ) -> Result<Option<DeviceView>, AppError> {
         let row = sqlx::query(
-            "SELECT id, name, platform, app_version, status, capabilities_json, paired_at, last_seen_at
+            "SELECT id, name, platform, app_version, status, capabilities_json, paired_at,
+                    last_seen_at, host_info_json, wallpaper_revision
              FROM devices WHERE user_id = ?1 AND id = ?2",
         )
         .bind(user_id)
@@ -265,13 +285,33 @@ impl Storage {
 
     async fn device_by_id(&self, device_id: &str) -> Result<Option<DeviceView>, AppError> {
         let row = sqlx::query(
-            "SELECT id, name, platform, app_version, status, capabilities_json, paired_at, last_seen_at
+            "SELECT id, name, platform, app_version, status, capabilities_json, paired_at,
+                    last_seen_at, host_info_json, wallpaper_revision
              FROM devices WHERE id = ?1",
         )
         .bind(device_id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(device_from_row).transpose()
+    }
+
+    pub async fn device_wallpaper_for_user(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<Option<DeviceWallpaper>, AppError> {
+        let row = sqlx::query(
+            "SELECT wallpaper_jpeg, wallpaper_revision FROM devices
+             WHERE user_id = ?1 AND id = ?2 AND wallpaper_jpeg IS NOT NULL",
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| DeviceWallpaper {
+            bytes: row.get("wallpaper_jpeg"),
+            revision: row.get("wallpaper_revision"),
+        }))
     }
 
     pub async fn store_pairing_offer(
@@ -768,6 +808,7 @@ pub fn now_ms() -> i64 {
 
 fn device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<DeviceView, AppError> {
     let status: String = row.get("status");
+    let host_info_json: Option<String> = row.get("host_info_json");
     Ok(DeviceView {
         id: row.get("id"),
         name: row.get("name"),
@@ -781,6 +822,11 @@ fn device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<DeviceView, AppError>
         last_seen_at: row.get("last_seen_at"),
         paired_at: row.get("paired_at"),
         capabilities: serde_json::from_str(row.get::<&str, _>("capabilities_json"))?,
+        host_info: host_info_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()?,
+        wallpaper_revision: row.get("wallpaper_revision"),
     })
 }
 
@@ -857,7 +903,7 @@ mod tests {
             .unwrap()
             .unwrap();
         storage
-            .upsert_device_hello("device-1", "PC", "windows", "1.0", &[])
+            .upsert_device_hello("device-1", "PC", "windows", "1.0", &[], None, None)
             .await
             .unwrap();
         sqlx::query("UPDATE devices SET user_id = ?1 WHERE id = 'device-1'")
@@ -911,7 +957,7 @@ mod tests {
             .unwrap()
             .unwrap();
         storage
-            .upsert_device_hello("device-1", "PC", "windows", "1.0", &[])
+            .upsert_device_hello("device-1", "PC", "windows", "1.0", &[], None, None)
             .await
             .unwrap();
         sqlx::query("UPDATE devices SET user_id = ?1 WHERE id = 'device-1'")

@@ -18,6 +18,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   const [serverUrl, setServerUrl] = useState("");
   const [deviceName, setDeviceName] = useState("");
   const [autoStart, setAutoStart] = useState(true);
+  const [uploadWallpaper, setUploadWallpaper] = useState(true);
   const [working, setWorking] = useState<string | null>(null);
 
   const applyStatus = useCallback((next: WebDeviceStatus) => {
@@ -27,6 +28,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
       setServerUrl(next.profile.serverUrl);
       setDeviceName(next.profile.name);
       setAutoStart(next.profile.autoStart);
+      setUploadWallpaper(next.profile.uploadWallpaper);
     }
   }, [onStatusChange]);
 
@@ -60,6 +62,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
     serverUrl: serverUrl.trim(),
     name: deviceName.trim() || t("settings.webDevice.defaultName"),
     autoStart,
+    uploadWallpaper,
   }), "settings.webDevice.toast.saved");
 
   const createPairing = async () => {
@@ -97,6 +100,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
         <TextInput label={t("settings.webDevice.serverUrl")} description={t("settings.webDevice.serverUrlHint")} placeholder="https://example.com" value={serverUrl} onChange={(event) => setServerUrl(event.currentTarget.value)} />
         <TextInput label={t("settings.webDevice.deviceName")} placeholder={t("settings.webDevice.defaultName")} value={deviceName} onChange={(event) => setDeviceName(event.currentTarget.value)} />
         <Switch checked={autoStart} onChange={(event) => setAutoStart(event.currentTarget.checked)} label={t("settings.webDevice.autoStart")} description={t("settings.webDevice.autoStartHint")} />
+        <Switch checked={uploadWallpaper} onChange={(event) => setUploadWallpaper(event.currentTarget.checked)} label={t("settings.webDevice.uploadWallpaper")} description={t("settings.webDevice.uploadWallpaperHint")} />
         {status?.profile && <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.webDevice.deviceId")}: {status.profile.deviceId}</Text>}
         {status?.lastError && <Text size="xs" c="red">{status.lastError}</Text>}
 

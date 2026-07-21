@@ -6,13 +6,16 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap};
 use axum::response::Response;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use cli_manager_web_protocol::{
-    BrowserEventPayload, BrowserSocketFrame, DeviceStatus, DeviceToServerFrame, OperationStatus,
-    ServerToDeviceFrame, DEVICE_PROTOCOL_VERSION,
+    BrowserEventPayload, BrowserSocketFrame, DeviceHostInfo, DeviceStatus, DeviceToServerFrame,
+    DeviceWallpaperUpload, OperationStatus, ServerToDeviceFrame, DEVICE_PROTOCOL_VERSION,
 };
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde::Deserialize;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::fmt::Display;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -23,6 +26,8 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const SESSION_RECHECK_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_SOCKET_FRAME_BYTES: usize = 1024 * 1024;
 const DEVICE_SEND_QUEUE: usize = 64;
+const MAX_WALLPAPER_BYTES: usize = 384 * 1024;
+const MAX_WALLPAPER_DIMENSION: u32 = 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,6 +208,8 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
             platform,
             app_version,
             capabilities,
+            host_info,
+            wallpaper,
         }) => (
             protocol_version,
             device_id,
@@ -211,6 +218,8 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
             platform,
             app_version,
             capabilities,
+            host_info,
+            wallpaper,
         ),
         _ => {
             let _ = socket
@@ -222,8 +231,17 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
             return;
         }
     };
-    let (protocol_version, device_id, device_token, name, platform, app_version, capabilities) =
-        hello;
+    let (
+        protocol_version,
+        device_id,
+        device_token,
+        name,
+        platform,
+        app_version,
+        capabilities,
+        host_info,
+        wallpaper,
+    ) = hello;
     if let Err(message) = validate_device_hello(
         protocol_version,
         &device_id,
@@ -231,6 +249,7 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
         &platform,
         &app_version,
         &capabilities,
+        host_info.as_ref(),
     ) {
         let _ = socket
             .send(Message::Close(Some(CloseFrame {
@@ -240,6 +259,18 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
             .await;
         return;
     }
+    let wallpaper = match wallpaper.as_ref().map(validate_wallpaper).transpose() {
+        Ok(wallpaper) => wallpaper,
+        Err(message) => {
+            let _ = socket
+                .send(Message::Close(Some(CloseFrame {
+                    code: 1008,
+                    reason: message.into(),
+                })))
+                .await;
+            return;
+        }
+    };
 
     let mut user_id = match state.storage.device_user_id(&device_id).await {
         Ok(user_id) => user_id,
@@ -276,7 +307,17 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
 
     let device = match state
         .storage
-        .upsert_device_hello(&device_id, &name, &platform, &app_version, &capabilities)
+        .upsert_device_hello(
+            &device_id,
+            &name,
+            &platform,
+            &app_version,
+            &capabilities,
+            host_info.as_ref(),
+            wallpaper
+                .as_ref()
+                .map(|(bytes, revision)| (bytes.as_slice(), revision.as_str())),
+        )
         .await
     {
         Ok(device) => device,
@@ -697,6 +738,7 @@ fn validate_device_hello(
     platform: &str,
     app_version: &str,
     capabilities: &[String],
+    host_info: Option<&DeviceHostInfo>,
 ) -> Result<(), String> {
     if protocol_version != DEVICE_PROTOCOL_VERSION {
         return Err("unsupported protocol version".to_string());
@@ -716,7 +758,46 @@ fn validate_device_hello(
     if capabilities.len() > 64 || capabilities.iter().any(|value| value.len() > 128) {
         return Err("invalid capabilities".to_string());
     }
+    if let Some(info) = host_info {
+        let strings = [
+            (&info.host_name, 128usize),
+            (&info.os_version, 256),
+            (&info.cpu_arch, 64),
+            (&info.cpu_model, 256),
+        ];
+        if strings
+            .iter()
+            .any(|(value, max)| value.is_empty() || value.len() > *max)
+            || info.display_width == 0
+            || info.display_height == 0
+            || info.display_width > 16_384
+            || info.display_height > 16_384
+        {
+            return Err("invalid host info".to_string());
+        }
+    }
     Ok(())
+}
+
+fn validate_wallpaper(upload: &DeviceWallpaperUpload) -> Result<(Vec<u8>, String), String> {
+    if upload.mime_type != "image/jpeg"
+        || upload.width == 0
+        || upload.height == 0
+        || upload.width > MAX_WALLPAPER_DIMENSION
+        || upload.height > MAX_WALLPAPER_DIMENSION
+        || upload.data_base64.len() > MAX_WALLPAPER_BYTES * 2
+    {
+        return Err("invalid wallpaper metadata".to_string());
+    }
+    let bytes = STANDARD
+        .decode(&upload.data_base64)
+        .map_err(|_| "invalid wallpaper encoding".to_string())?;
+    if bytes.is_empty() || bytes.len() > MAX_WALLPAPER_BYTES {
+        return Err("invalid wallpaper size".to_string());
+    }
+    let digest = Sha256::digest(&bytes);
+    let revision = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok((bytes, revision))
 }
 
 fn validate_browser_origin(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
@@ -801,12 +882,26 @@ mod tests {
 
     #[test]
     fn hello_validation_rejects_wrong_version() {
-        assert!(validate_device_hello(2, "device", "PC", "windows", "1.0", &[]).is_err());
+        assert!(validate_device_hello(2, "device", "PC", "windows", "1.0", &[], None).is_err());
     }
 
     #[test]
     fn hello_validation_bounds_capabilities() {
         let capabilities = vec!["x".to_string(); 65];
-        assert!(validate_device_hello(1, "device", "PC", "windows", "1.0", &capabilities).is_err());
+        assert!(
+            validate_device_hello(1, "device", "PC", "windows", "1.0", &capabilities, None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn wallpaper_validation_rejects_oversized_metadata() {
+        let upload = DeviceWallpaperUpload {
+            mime_type: "image/jpeg".to_string(),
+            data_base64: STANDARD.encode([1, 2, 3]),
+            width: MAX_WALLPAPER_DIMENSION + 1,
+            height: 270,
+        };
+        assert!(validate_wallpaper(&upload).is_err());
     }
 }

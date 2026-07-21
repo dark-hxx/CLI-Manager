@@ -33,6 +33,10 @@ pub fn build_router(state: AppState) -> Result<Router, String> {
         .route("/auth/login", post(api::login))
         .route("/auth/logout", post(api::logout))
         .route("/devices", get(api::list_devices))
+        .route(
+            "/devices/{device_id}/wallpaper",
+            get(api::get_device_wallpaper),
+        )
         .route("/pairing/claim", post(api::claim_pairing))
         .route("/history", get(api::list_history))
         .route("/operations", post(api::create_operation))

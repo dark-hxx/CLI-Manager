@@ -3,6 +3,7 @@
 ## 1. Scope / Trigger
 
 - Applies to `apps/server`, `apps/web` transport calls, and `crates/web-protocol`.
+- The desktop Device WebSocket adapter may run in the sibling `cli-manager-web-daemon` process. The daemon-to-Tauri loopback protocol is an internal transport; browser and server contracts remain unchanged.
 - Trigger this contract when changing Web authentication, pairing, HTTP routes, WebSocket frames, SQLite tables, event sequence handling, or operation states.
 - The Web service is a single-process Rust modular monolith. Desktop remains authoritative for projects, files, Git, CLI execution, Hook state, and final operation results.
 
@@ -78,6 +79,7 @@
 - Desktop keeps delivered operations until a server `OperationAck` confirms the state update. If the local operation queue overflows, it keeps the connection alive long enough to consume ACKs, then reconnects after capacity is recovered so the server can resend deferred operations.
 - History snapshot sequence is per `(device, history)` and full snapshots replace missing sessions atomically.
 - Tauri owns `/ws/device`, heartbeat, reconnect, pairing, history, and outbound queues in Rust; hiding, minimizing, or unmounting a settings component must not stop the connection.
+- When `cli-manager-web-daemon` is available, it owns `/ws/device`, heartbeat, reconnect, pairing, history, and outbound queues; Tauri remains the local operation executor and keeps the existing command/event surface.
 - The non-secret profile lives under stable `.cli-manager` app data. `deviceToken` lives only in the native credential store and must never enter a WebView payload, log, SQLite row, or JSON profile.
 - Only loopback servers may use `ws://`; remote device servers require `wss://`.
 

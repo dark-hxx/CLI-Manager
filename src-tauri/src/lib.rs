@@ -7,10 +7,11 @@ pub mod codex_statusline;
 mod commands;
 mod conpty_sideload;
 mod crash_reporter;
-mod credential_store;
+pub(crate) mod credential_store;
 // daemon 二进制（src/bin/cli-manager-daemon.rs）经 lib 复用以下模块，
 // 因此 app_paths 与 daemon 需 pub。
 pub mod daemon;
+pub mod device_identity;
 mod file_watcher;
 mod git_watcher;
 pub mod hook_client;
@@ -26,6 +27,7 @@ pub mod statusline_profiles;
 mod sync;
 mod text_encoding;
 mod third_party_notification;
+pub mod web_daemon;
 mod webdav;
 mod wsl;
 
@@ -1091,8 +1093,8 @@ pub fn run() {
 #[cfg(test)]
 mod ssh_migration_tests {
     use super::{
-        MIGRATION_ADD_SSH_CONFIG_FILE_SQL, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
-        MIGRATION_CREATE_SSH_HOSTS_SQL,
+        MIGRATION_ADD_SSH_CONFIG_FILE_SQL, MIGRATION_CREATE_SSH_HOSTS_SQL,
+        MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
     };
     use sqlx::{Connection, Row, SqliteConnection};
 

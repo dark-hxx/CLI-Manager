@@ -737,7 +737,9 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
 
-        assert!(args.windows(2).any(|pair| pair == ["-F", spec.config_file.as_str()]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-F", spec.config_file.as_str()]));
     }
 
     #[test]
@@ -748,7 +750,10 @@ mod tests {
             .to_string_lossy()
             .into_owned();
 
-        assert_eq!(validate_spec(&spec).unwrap_err(), "ssh_config_file_not_found");
+        assert_eq!(
+            validate_spec(&spec).unwrap_err(),
+            "ssh_config_file_not_found"
+        );
     }
 
     #[test]

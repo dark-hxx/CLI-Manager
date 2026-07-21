@@ -184,11 +184,7 @@ fn non_empty_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.trim().is_empty())
 }
 
-fn should_suppress_codex_permission_request(
-    source: &str,
-    event: &str,
-    hook_input: &Value,
-) -> bool {
+fn should_suppress_codex_permission_request(source: &str, event: &str, hook_input: &Value) -> bool {
     source == "codex"
         && event == "PermissionRequest"
         && matches!(
@@ -342,9 +338,7 @@ mod tests {
             &bypass
         ));
         assert!(!should_suppress_codex_permission_request(
-            "codex",
-            "Stop",
-            &bypass
+            "codex", "Stop", &bypass
         ));
     }
 }

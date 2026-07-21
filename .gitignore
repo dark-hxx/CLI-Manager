@@ -30,6 +30,7 @@ dist-ssr
 .agents/
 .codex/
 .xcodemap/
+data/
 
 # Tauri
 src-tauri/target/

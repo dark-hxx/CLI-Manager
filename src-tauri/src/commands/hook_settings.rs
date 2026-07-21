@@ -3016,9 +3016,13 @@ wsl = true
 "#;
         let merged = merge_common_config_codex_statusline(
             Some(raw),
-            &["model-with-reasoning".to_string(), "context-remaining".to_string()],
+            &[
+                "model-with-reasoning".to_string(),
+                "context-remaining".to_string(),
+            ],
         );
-        assert!(merged.contains("[tui]\nstatus_line = [\"model-with-reasoning\", \"context-remaining\"]"));
+        assert!(merged
+            .contains("[tui]\nstatus_line = [\"model-with-reasoning\", \"context-remaining\"]"));
         assert!(merged.contains("[features]\nhooks = true # CLI-Manager hook protection"));
         assert!(merged.contains("[windows]\nwsl = true"));
         assert!(merged.find("[tui]").unwrap() < merged.find("[features]").unwrap());

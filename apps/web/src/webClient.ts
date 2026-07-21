@@ -56,6 +56,11 @@ export const webClient = {
   }) => request<{ operation: Operation }>("/operations", { method: "POST", body: JSON.stringify(input) }),
 };
 
+export function deviceWallpaperUrl(device: Pick<Device, "id" | "wallpaperRevision">): string | null {
+  if (!device.wallpaperRevision) return null;
+  return `/api/devices/${encodeURIComponent(device.id)}/wallpaper?revision=${encodeURIComponent(device.wallpaperRevision)}`;
+}
+
 type BrowserSocketOptions = {
   afterSequence: () => number;
   onMessage: (message: BrowserMessage) => void;
