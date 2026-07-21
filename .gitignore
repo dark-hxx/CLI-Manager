@@ -30,6 +30,7 @@ dist-ssr
 .agents/
 .codex/
 .xcodemap/
+data/
 
 # Tauri
 src-tauri/target/
@@ -41,7 +42,7 @@ src-tauri/hook-schema/Cargo.lock
 server/target/
 apps/server/target
 apps/web/dist
-crates/web-protocol/target
+crates/web-protocol
 
 prototype/
 .cursor
