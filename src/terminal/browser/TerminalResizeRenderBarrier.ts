@@ -1,9 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
 
-const RESIZE_SETTLE_DELAY_MS = 72;
-
-type TimerHandle = ReturnType<typeof setTimeout>;
-
 export const hasVisibleTerminalFrameContent = (pixels: Uint8ClampedArray): boolean => {
   if (pixels.length < 4) return false;
   let minRed = 255;
@@ -34,14 +30,33 @@ export const hasVisibleTerminalFrameContent = (pixels: Uint8ClampedArray): boole
 
 interface TerminalResizeFrame {
   syncBounds: () => void;
-  refresh: () => void;
   dispose: () => void;
 }
 
+export interface TerminalResizeCaptureElements {
+  screen: HTMLElement;
+  canvases: HTMLCanvasElement[];
+}
+
+export const resolveTerminalResizeCaptureElements = (
+  terminal: Terminal,
+): TerminalResizeCaptureElements | null => {
+  const root = terminal.element;
+  const screen = terminal.screenElement ?? root?.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen) return null;
+
+  const screenCanvases = [...screen.querySelectorAll<HTMLCanvasElement>("canvas")];
+  const rootCanvases = root
+    ? [...root.querySelectorAll<HTMLCanvasElement>("canvas")].filter(
+      (canvas) => !canvas.classList.contains("xterm-decoration-overview-ruler"),
+    )
+    : [];
+  const canvases = screenCanvases.length > 0 ? screenCanvases : rootCanvases;
+  return canvases.length > 0 ? { screen, canvases } : null;
+};
+
 export interface TerminalResizeRenderBarrierOptions {
   createFrame?: (terminal: Terminal, container: HTMLElement) => TerminalResizeFrame | null;
-  requestTimer?: (callback: () => void, delayMs: number) => TimerHandle;
-  cancelTimer?: (handle: TimerHandle) => void;
   requestFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (handle: number) => void;
 }
@@ -50,22 +65,22 @@ const createCanvasTerminalResizeFrame = (
   terminal: Terminal,
   container: HTMLElement,
 ): TerminalResizeFrame | null => {
-  const screen = terminal.element;
-  if (!screen) return null;
-  const canvases = [...screen.querySelectorAll("canvas")];
-  if (canvases.length === 0) return null;
+  const captureElements = resolveTerminalResizeCaptureElements(terminal);
+  if (!captureElements) return null;
+  const { screen, canvases } = captureElements;
 
+  const overlayViewport = document.createElement("div");
   const overlay = document.createElement("canvas");
   const capture = document.createElement("canvas");
   const probe = document.createElement("canvas");
   probe.width = 64;
   probe.height = 36;
-  overlay.setAttribute("aria-hidden", "true");
-  Object.assign(overlay.style, {
+  overlayViewport.setAttribute("aria-hidden", "true");
+  Object.assign(overlayViewport.style, {
     position: "absolute",
     pointerEvents: "none",
     zIndex: "5",
-    transformOrigin: "left top",
+    overflow: "hidden",
   });
 
   const screenRect = screen.getBoundingClientRect();
@@ -78,10 +93,10 @@ const createCanvasTerminalResizeFrame = (
 
   const syncBounds = () => {
     const bounds = container.getBoundingClientRect();
-    overlay.style.left = `${left}px`;
-    overlay.style.top = `${top}px`;
-    overlay.style.width = `${Math.max(1, bounds.width - left - rightInset)}px`;
-    overlay.style.height = `${Math.max(1, bounds.height - top - bottomInset)}px`;
+    overlayViewport.style.left = `${left}px`;
+    overlayViewport.style.top = `${top}px`;
+    overlayViewport.style.width = `${Math.max(1, bounds.width - left - rightInset)}px`;
+    overlayViewport.style.height = `${Math.max(1, bounds.height - top - bottomInset)}px`;
   };
 
   const captureFrame = () => {
@@ -132,22 +147,18 @@ const createCanvasTerminalResizeFrame = (
   } catch {
     return null;
   }
+  overlay.style.display = "block";
+  overlay.style.width = `${screenRect.width}px`;
+  overlay.style.height = `${screenRect.height}px`;
   syncBounds();
-  container.appendChild(overlay);
+  overlayViewport.appendChild(overlay);
+  container.appendChild(overlayViewport);
   screen.style.visibility = "hidden";
 
   return {
     syncBounds,
-    refresh: () => {
-      try {
-        refresh();
-      } catch {
-        // A renderer swap or image canvas can make a single capture fail. Keep
-        // the last stable bitmap until the resize barrier settles.
-      }
-    },
     dispose: () => {
-      overlay.remove();
+      overlayViewport.remove();
       screen.style.visibility = previousVisibility;
     },
   };
@@ -155,20 +166,15 @@ const createCanvasTerminalResizeFrame = (
 
 export class TerminalResizeRenderBarrier {
   private active: { terminal: Terminal; frame: TerminalResizeFrame } | null = null;
-  private settleTimer: TimerHandle | null = null;
-  private refreshFrameOne: number | null = null;
-  private refreshFrameTwo: number | null = null;
+  private revealFrameOne: number | null = null;
+  private revealFrameTwo: number | null = null;
   private disposed = false;
   private readonly createFrame: (terminal: Terminal, container: HTMLElement) => TerminalResizeFrame | null;
-  private readonly requestTimer: (callback: () => void, delayMs: number) => TimerHandle;
-  private readonly cancelTimer: (handle: TimerHandle) => void;
   private readonly requestFrame: (callback: FrameRequestCallback) => number;
   private readonly cancelFrame: (handle: number) => void;
 
   constructor(options: TerminalResizeRenderBarrierOptions = {}) {
     this.createFrame = options.createFrame ?? createCanvasTerminalResizeFrame;
-    this.requestTimer = options.requestTimer ?? ((callback, delayMs) => window.setTimeout(callback, delayMs));
-    this.cancelTimer = options.cancelTimer ?? ((handle) => window.clearTimeout(handle));
     this.requestFrame = options.requestFrame ?? ((callback) => window.requestAnimationFrame(callback));
     this.cancelFrame = options.cancelFrame ?? ((handle) => window.cancelAnimationFrame(handle));
   }
@@ -182,19 +188,13 @@ export class TerminalResizeRenderBarrier {
       this.active = { terminal, frame };
     }
     this.active.frame.syncBounds();
-    this.scheduleSettle();
+    this.scheduleReveal();
     return true;
   }
 
   noteContainerResize(): void {
     if (!this.active || this.disposed) return;
     this.active.frame.syncBounds();
-    this.scheduleSettle();
-  }
-
-  handleWriteCommitted(terminal: Terminal): void {
-    if (this.active?.terminal !== terminal || this.disposed) return;
-    this.scheduleRefresh(false);
   }
 
   cancel(): void {
@@ -208,45 +208,31 @@ export class TerminalResizeRenderBarrier {
     this.cancel();
   }
 
-  private scheduleSettle(): void {
-    if (this.settleTimer !== null) this.cancelTimer(this.settleTimer);
-    this.settleTimer = this.requestTimer(() => {
-      this.settleTimer = null;
-      this.scheduleRefresh(true);
-    }, RESIZE_SETTLE_DELAY_MS);
-  }
-
-  private scheduleRefresh(revealAfterRefresh: boolean): void {
-    this.clearRefreshFrames();
-    this.refreshFrameOne = this.requestFrame(() => {
-      this.refreshFrameOne = null;
-      this.refreshFrameTwo = this.requestFrame(() => {
-        this.refreshFrameTwo = null;
-        const active = this.active;
-        if (!active || this.disposed) return;
-        active.frame.refresh();
-        if (revealAfterRefresh) this.clearActive();
+  private scheduleReveal(): void {
+    this.clearRevealFrames();
+    this.revealFrameOne = this.requestFrame(() => {
+      this.revealFrameOne = null;
+      this.revealFrameTwo = this.requestFrame(() => {
+        this.revealFrameTwo = null;
+        if (!this.active || this.disposed) return;
+        this.clearActive();
       });
     });
   }
 
-  private clearRefreshFrames(): void {
-    if (this.refreshFrameOne !== null) {
-      this.cancelFrame(this.refreshFrameOne);
-      this.refreshFrameOne = null;
+  private clearRevealFrames(): void {
+    if (this.revealFrameOne !== null) {
+      this.cancelFrame(this.revealFrameOne);
+      this.revealFrameOne = null;
     }
-    if (this.refreshFrameTwo !== null) {
-      this.cancelFrame(this.refreshFrameTwo);
-      this.refreshFrameTwo = null;
+    if (this.revealFrameTwo !== null) {
+      this.cancelFrame(this.revealFrameTwo);
+      this.revealFrameTwo = null;
     }
   }
 
   private clearScheduledWork(): void {
-    if (this.settleTimer !== null) {
-      this.cancelTimer(this.settleTimer);
-      this.settleTimer = null;
-    }
-    this.clearRefreshFrames();
+    this.clearRevealFrames();
   }
 
   private clearActive(): void {

@@ -68,7 +68,6 @@ writeFileSync(join(tempDir, "resizeBarrier.mjs"), `
 export class TerminalResizeRenderBarrier {
   begin() { return true; }
   noteContainerResize() {}
-  handleWriteCommitted() {}
   cancel() {}
   dispose() {}
 }
