@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { BarChart3, Settings } from "../icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../SettingsModal";
+import { getErrorMessage, getPiHookErrorMessage } from "../../lib/hookErrors";
 import { useSettingsStore, type SidebarToolbarVisibilitySettings } from "../../stores/settingsStore";
 import { useI18n } from "../../lib/i18n";
 
@@ -33,10 +34,6 @@ interface SidebarFooterProps {
 function trimDir(value: string | null): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function getApplicableTools(
@@ -186,7 +183,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       await refreshStatus();
       toast.success(t("sidebar.hook.reinstalled"));
     } catch (error) {
-      toast.error(t("sidebar.hook.reinstallFailed"), { description: getErrorMessage(error) });
+      toast.error(t("sidebar.hook.reinstallFailed"), { description: getPiHookErrorMessage(error, t) });
       await refreshStatus();
     } finally {
       setWorking(false);

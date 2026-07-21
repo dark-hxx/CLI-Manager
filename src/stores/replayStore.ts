@@ -286,6 +286,7 @@ function buildPromptSessionTitle(message: string | null | undefined): string | n
 function buildSourceSessionTitle(source: string | null | undefined): string {
   if (source === "codex") return translateCurrent("aiReplay.source.codex");
   if (source === "claude") return translateCurrent("aiReplay.source.claude");
+  if (source === "pi") return translateCurrent("aiReplay.source.pi");
   return translateCurrent("aiReplay.source.default");
 }
 

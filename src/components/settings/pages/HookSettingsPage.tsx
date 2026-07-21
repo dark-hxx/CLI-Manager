@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ActionIcon, Badge, Box, Button, Card, Divider, Group, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X, Activity, Bell, ShieldAlert, ToggleRight, AlertTriangle, BellOff, XCircle, Layers } from "lucide-react";
 import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "@/stores/settingsStore";
+import { getErrorMessage, getPiHookErrorMessage } from "@/lib/hookErrors";
 import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 import { ThirdPartyNotificationSection } from "../ThirdPartyNotificationSection";
 
@@ -90,10 +91,6 @@ function pickText(language: AppLanguage, zh: string, en: string) {
 
 function formatPath(value: string | null, language: AppLanguage): string {
   return value && value.trim() ? value : pickText(language, "未选择", "Not selected");
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function formatCcSwitchMessage(message: string | null, language: AppLanguage): string | null {
@@ -776,7 +773,9 @@ export function HookSettingsPage() {
       if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
       toast.success(text("Pi Hook 已安装", "Pi Hook installed"));
     } catch (error) {
-      toast.error(text("安装 Pi Hook 失败", "Failed to install Pi Hook"), { description: getErrorMessage(error) });
+      toast.error(text("安装 Pi Hook 失败", "Failed to install Pi Hook"), {
+        description: getPiHookErrorMessage(error, t),
+      });
     } finally {
       setPiWorking(false);
     }
@@ -850,7 +849,7 @@ export function HookSettingsPage() {
           tool: toolLabel,
           module: moduleLabel,
         }),
-        { description: getErrorMessage(error) }
+        { description: tool === "pi" ? getPiHookErrorMessage(error, t) : getErrorMessage(error) }
       );
     } finally {
       setWorking(false);

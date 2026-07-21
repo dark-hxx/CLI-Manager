@@ -206,6 +206,7 @@ function buildPromptReplayTitle(message: string | null | undefined): string | nu
 function getReplaySourceLabel(source: string | null | undefined, t: TranslateFn): string {
   if (source === "codex") return t("aiReplay.source.codex");
   if (source === "claude") return t("aiReplay.source.claude");
+  if (source === "pi") return t("aiReplay.source.pi");
   return t("aiReplay.source.default");
 }
 
@@ -215,8 +216,9 @@ function isGeneratedReplaySessionTitle(title: string): boolean {
   return [
     /^codex cli (?:session started|running|done|subagent started|subagent done|needs attention)$/i,
     /^claude code (?:session started|running|done|failed|subagent started|subagent done|agent tool started|agent tool done|tool started|tool done|needs attention)$/i,
+    /^pi agent (?:session started|running|done|needs attention)$/i,
     /^(?:SessionStart|UserPromptSubmit|Notification|Stop|StopFailure|PermissionRequest)$/i,
-    /^(?:codex|claude|cli) replay$/i,
+    /^(?:codex|claude|pi|cli) replay$/i,
   ].some((pattern) => pattern.test(normalized));
 }
 

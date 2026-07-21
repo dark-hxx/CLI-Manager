@@ -2,9 +2,6 @@
 
 ## [TEMP] - 2026-07-20
 
-### 新增
-- **Pi Agent Hook 桥接与实时统计**：Hook 设置新增 Pi Agent 桥接，安装 TypeScript Extension（`~/.pi/agent/extensions/cli-manager-hook.ts`）上报 `session_start` / `agent_start` / `agent_settled` 生命周期事件；HTTP 桥接识别 `source=pi`，绑定 `sessionId` 后终端侧栏可读取 Pi 会话实时 Token 统计。支持按模块安装/卸载、配置目录选择，以及侧栏 Hook 状态灯与自动修复流程。
-
 ### 修复
 - **Pi 实时用量读不到**：Pi 会话日志的 `usage` 字段为 `input` / `output` / `cacheRead` / `cacheWrite` / `reasoning`（非 Claude 的 `input_tokens` 风格），原先解析器无法识别；且 Pi 扫描路径未把消息级 token 汇总到会话 `usage`。现已兼容 Pi 字段别名，并从消息汇总会话统计。
 - **Pi 侧栏用量延迟闪烁**：Hook 已完成通知但侧栏 Token 要等 catalog 索引 TTL / 10s 轮询才出现。现改为绑定 `sessionId` 或回合结束时立即刷新，等待用量时 2s 快轮询并强制刷新索引，miss 时不清空已有数据。
@@ -13,6 +10,7 @@
 ## [V1.3.0] - 2026-07-20
 
 ### 新增
+- **Pi Agent Hook 桥接与实时统计**：Hook 设置新增 Pi Agent 桥接，安装 TypeScript Extension（`~/.pi/agent/extensions/cli-manager-hook.ts`）上报 `session_start` / `agent_start` / `agent_settled` 生命周期事件；HTTP 桥接识别 `source=pi`，绑定 `sessionId` 后终端侧栏可读取 Pi 会话实时 Token 统计。支持按模块安装/卸载、配置目录选择、简中/繁中/英文界面，以及侧栏 Hook 状态灯与自动修复流程。
 - **SSH Config 主机导入**：SSH 主机设置可从原生 Windows、Linux、macOS 的默认 `~/.ssh/config` 或用户选择的配置目录扫描具体 `Host` 别名，预览来源、跳过重复项、多选并批量导入到指定 SSH 分组，完成后提示成功、失败和重复跳过数量；支持递归 Include、通配符、BOM、CRLF/LF 和循环检测，目录或配置异常时整体失败且不产生部分数据。自定义目录通过机器本地 `config_file` 引用，连接测试、远程目录查询和 PTY/daemon 启动统一传递 `ssh -F`，该路径不进入同步、导出或普通日志；WSL 配置不在本次支持范围。
 - **繁体中文界面支持**：设置中的界面语言新增 `繁體中文`；`auto` 语言检测支持 `zh-TW`、`zh-HK`、`zh-MO` 与 `zh-Hant`。现有 `zh-CN` 文案通过 OpenCC 映射生成 `zh-TW`，覆盖设置、统计看板、历史会话、桌面宠物联动、关闭按钮两类弹框与常见提示文案；桌宠窗口中的状态、操作按钮、宠物名称与目标标题也会按 `zh-TW` 显示，并对少量简繁同形词做繁中术语覆写（例如桌宠状态“工作中”），同时保留英文文案与 24 小时制时间格式。
 - 终端中的 HTTP/HTTPS、OSC 8、文件与目录链接支持悬停类型图标，并统一改为 `Ctrl + 单击`打开，普通单击不再误触。
@@ -22,6 +20,7 @@
 - 设置页将“桌面宠物”移动到倒数第三，位于“开发者”上方。
 
 ### 修复
+- 修复 Pi Agent Hook 完整安装被错误判定为部分安装、同名用户扩展可能被覆盖，以及单轮运行重复上报状态的问题；冲突文件现在会保留并在设置页和侧边栏显示本地化错误，AI 回放也会正确标识 Pi Agent 来源。
 - 修复终端侧边栏实时统计第一次打开后停留在空态、不会立即自动刷新的问题；面板首次激活时会主动重新拉取当前会话统计。
 - SSH 主机编辑器的认证方式、跳板模式、跳板主机和 SSH Config 导入目标分组统一改用应用主题化下拉框，修复 Windows 深色主题下原生选项菜单显示为白底、文字对比异常的问题。
 - 修复 Claude Code 与 Codex 历史目录切换到 WSL 后，多个配置根的索引任务并发写入同一缓存数据库并触发 `database is locked`，导致历史刷新持续显示上次缓存结果的问题。

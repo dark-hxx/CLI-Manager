@@ -49,6 +49,7 @@ const PI_EXTENSION_MARKER: &str = "__CLI_MANAGER_PI_HOOK__";
 const PI_MODULE_SESSION_START: &str = "CLI_MANAGER_MODULE:sessionStart";
 const PI_MODULE_RUNNING: &str = "CLI_MANAGER_MODULE:running";
 const PI_MODULE_STOP: &str = "CLI_MANAGER_MODULE:stop";
+const PI_EXTENSION_CONFLICT_ERROR: &str = "pi_extension_conflict";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2451,13 +2452,6 @@ export default function (pi: ExtensionAPI) {{
     pi.on("agent_start", async (_event, ctx) => {{
       await postHookEvent("UserPromptSubmit", readSessionId(ctx));
     }});
-    pi.on("before_agent_start", async (event, ctx) => {{
-      const prompt =
-        typeof (event as {{ prompt?: unknown }}).prompt === "string"
-          ? String((event as {{ prompt?: string }}).prompt)
-          : null;
-      await postHookEvent("UserPromptSubmit", readSessionId(ctx), prompt);
-    }});
   }}
 
   if (ENABLED.stop) {{
@@ -2565,9 +2559,21 @@ fn install_pi_modules(pi_dir: &Path, modules: &[PiHookModule]) -> Result<(), Str
     fs::create_dir_all(&extensions_dir)
         .map_err(|e| format!("创建 {} 失败: {e}", path_to_string(&extensions_dir)))?;
     let path = pi_extension_path(pi_dir);
+    ensure_pi_extension_writable(&path)?;
     let source = pi_extension_source(modules);
     fs::write(&path, source).map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&path)))?;
     Ok(())
+}
+
+fn ensure_pi_extension_writable(path: &Path) -> Result<(), String> {
+    match fs::read_to_string(path) {
+        Ok(content) if !content.contains(PI_EXTENSION_MARKER) => {
+            Err(PI_EXTENSION_CONFLICT_ERROR.to_string())
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("读取 {} 失败: {error}", path_to_string(path))),
+    }
 }
 
 fn build_pi_status(pi_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, String> {
@@ -2605,6 +2611,7 @@ fn build_pi_status(pi_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, St
         session_start_hook_installed: session_start,
         running_hook_installed: running,
         attention_hook_installed: false,
+        attention_hook_required: false,
         stop_hook_installed: stop,
         failure_hook_installed: false,
         failure_hook_required: false,
@@ -2722,6 +2729,7 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
         session_start_hook_installed: registered("SessionStart"),
         running_hook_installed: registered("UserPromptSubmit"),
         attention_hook_installed: registered("Notification"),
+        attention_hook_required: true,
         stop_hook_installed: registered("Stop"),
         failure_hook_installed: registered("StopFailure"),
         failure_hook_required: true,
@@ -2789,6 +2797,7 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
         session_start_hook_installed: registered("SessionStart"),
         running_hook_installed: registered("UserPromptSubmit"),
         attention_hook_installed: registered("PermissionRequest"),
+        attention_hook_required: true,
         stop_hook_installed: registered("Stop"),
         failure_hook_installed: false,
         failure_hook_required: false,
@@ -2812,6 +2821,7 @@ struct ToolChecks {
     session_start_hook_installed: bool,
     running_hook_installed: bool,
     attention_hook_installed: bool,
+    attention_hook_required: bool,
     stop_hook_installed: bool,
     failure_hook_installed: bool,
     failure_hook_required: bool,
@@ -2849,10 +2859,12 @@ fn status_from_checks(
     let mut values = vec![
         checks.session_start_hook_installed,
         checks.running_hook_installed,
-        checks.attention_hook_installed,
         checks.stop_hook_installed,
         checks.hooks_feature_installed,
     ];
+    if checks.attention_hook_required {
+        values.push(checks.attention_hook_installed);
+    }
     if checks.failure_hook_required {
         values.push(checks.failure_hook_installed);
     }
@@ -3861,7 +3873,9 @@ model_instructions_file = "./instruction.md"
         assert!(extension.contains(PI_EXTENSION_MARKER));
         assert!(extension.contains(r#"source: "pi""#));
         assert!(extension.contains("session_start"));
+        assert!(extension.contains("agent_start"));
         assert!(extension.contains("agent_settled"));
+        assert!(!extension.contains("before_agent_start"));
 
         uninstall_pi_hooks(&pi_dir).unwrap();
         let after = build_pi_status(Some(pi_dir.clone())).unwrap();
@@ -3881,6 +3895,22 @@ model_instructions_file = "./instruction.md"
         assert!(status.session_start_hook_installed);
         assert!(!status.running_hook_installed);
         assert!(!status.stop_hook_installed);
+    }
+
+    #[test]
+    fn install_pi_preserves_unmanaged_extension() {
+        let tmp = TempDir::new().unwrap();
+        let pi_dir = tmp.path().join("pi-agent");
+        let extensions_dir = pi_dir.join(PI_EXTENSION_DIR_NAME);
+        fs::create_dir_all(&extensions_dir).unwrap();
+        let extension_path = pi_extension_path(&pi_dir);
+        let user_content = "export default function userExtension() {}\n";
+        fs::write(&extension_path, user_content).unwrap();
+
+        let error = install_pi_hooks(&pi_dir).unwrap_err();
+
+        assert_eq!(error, PI_EXTENSION_CONFLICT_ERROR);
+        assert_eq!(fs::read_to_string(extension_path).unwrap(), user_content);
     }
 
 
