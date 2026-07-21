@@ -613,7 +613,7 @@
   height: 12px;
   margin: 0;
   accent-color: var(--pet-accent);
-  cursor: ew-resize;
+  cursor: default;
 }
 
 .desktop-pet-size-control:focus-within {
