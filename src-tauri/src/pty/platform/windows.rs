@@ -2,7 +2,7 @@ use super::{
     PlatformExitStatus, PlatformPtyChild, PlatformPtyController, PlatformPtyTraits,
     PtyLaunchOptions, SpawnedPty,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::c_void;
 use std::fs::File;
 use std::mem::{size_of, zeroed};
@@ -14,17 +14,19 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, FreeLibrary, GetLastError, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT,
     HMODULE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
 };
-use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY};
 use windows_sys::Win32::System::Console::{
     ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
 };
+use windows_sys::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, TerminateProcess, UpdateProcThreadAttribute,
-    WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
-    PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, OpenProcessToken, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT,
+    EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
 const PSEUDOCONSOLE_RESIZE_QUIRK: u32 = 0x2;
@@ -40,6 +42,18 @@ impl OwnedWindowsHandle {
         let handle = self.0;
         std::mem::forget(self);
         unsafe { File::from_raw_handle(handle as RawHandle) }
+    }
+}
+
+struct OwnedEnvironmentBlock(*mut c_void);
+
+impl Drop for OwnedEnvironmentBlock {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                DestroyEnvironmentBlock(self.0);
+            }
+        }
     }
 }
 
@@ -362,7 +376,14 @@ fn wide_null(value: &str) -> Vec<u16> {
 }
 
 fn build_environment_block(overrides: &std::collections::HashMap<String, String>) -> Vec<u16> {
-    let environment = merge_environment(std::env::vars(), overrides.clone());
+    let refreshed = match current_user_environment() {
+        Ok(environment) => environment,
+        Err(err) => {
+            log::warn!("refresh Windows environment failed, using daemon environment: {err}");
+            Vec::new()
+        }
+    };
+    let environment = merge_environment(std::env::vars(), refreshed, overrides.clone());
     let mut block = Vec::new();
     for (_, (key, value)) in environment {
         block.extend(format!("{key}={value}").encode_utf16());
@@ -372,15 +393,101 @@ fn build_environment_block(overrides: &std::collections::HashMap<String, String>
     block
 }
 
+fn current_user_environment() -> Result<Vec<(String, String)>, String> {
+    let mut token: HANDLE = null_mut();
+    if unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_QUERY | TOKEN_DUPLICATE,
+            &mut token,
+        )
+    } == 0
+    {
+        return Err(last_error("OpenProcessToken"));
+    }
+    let token = OwnedWindowsHandle(token);
+
+    let mut block: *mut c_void = null_mut();
+    if unsafe { CreateEnvironmentBlock(&mut block, token.0, 0) } == 0 {
+        return Err(last_error("CreateEnvironmentBlock"));
+    }
+    if block.is_null() {
+        return Err("CreateEnvironmentBlock returned an empty environment".to_string());
+    }
+    let block = OwnedEnvironmentBlock(block);
+    Ok(unsafe { parse_environment_block(block.0.cast()) })
+}
+
+unsafe fn parse_environment_block(mut cursor: *const u16) -> Vec<(String, String)> {
+    let mut environment = Vec::new();
+    while unsafe { *cursor } != 0 {
+        let start = cursor;
+        while unsafe { *cursor } != 0 {
+            cursor = unsafe { cursor.add(1) };
+        }
+        let len = unsafe { cursor.offset_from(start) } as usize;
+        let entry = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(start, len) });
+        if let Some((key, value)) = split_environment_entry(&entry) {
+            environment.push((key.to_string(), value.to_string()));
+        }
+        cursor = unsafe { cursor.add(1) };
+    }
+    environment
+}
+
+fn split_environment_entry(entry: &str) -> Option<(&str, &str)> {
+    let separator = if let Some(rest) = entry.strip_prefix('=') {
+        rest.find('=').map(|index| index + 1)?
+    } else {
+        entry.find('=')?
+    };
+    let key = &entry[..separator];
+    (!key.is_empty()).then_some((key, &entry[separator + 1..]))
+}
+
 fn merge_environment(
     base: impl IntoIterator<Item = (String, String)>,
+    refreshed: impl IntoIterator<Item = (String, String)>,
     overrides: impl IntoIterator<Item = (String, String)>,
 ) -> BTreeMap<String, (String, String)> {
     let mut environment = BTreeMap::<String, (String, String)>::new();
-    for (key, value) in base.into_iter().chain(overrides) {
+    for (key, value) in base {
+        environment.insert(key.to_ascii_uppercase(), (key, value));
+    }
+
+    let base_path = environment.get("PATH").cloned();
+    for (key, value) in refreshed {
+        environment.insert(key.to_ascii_uppercase(), (key, value));
+    }
+    if let (Some((_, base_value)), Some((refreshed_key, refreshed_value))) =
+        (base_path, environment.get("PATH").cloned())
+    {
+        environment.insert(
+            "PATH".to_string(),
+            (
+                refreshed_key,
+                merge_windows_path(&refreshed_value, &base_value),
+            ),
+        );
+    }
+
+    // Project/provider/hook values are explicit launch overrides and remain authoritative.
+    for (key, value) in overrides {
         environment.insert(key.to_ascii_uppercase(), (key, value));
     }
     environment
+}
+
+fn merge_windows_path(refreshed: &str, base: &str) -> String {
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in refreshed.split(';').chain(base.split(';')) {
+        let normalized = entry.trim().to_lowercase();
+        if seen.insert(normalized) {
+            entries.push(entry);
+        }
+    }
+    entries.join(";")
 }
 
 fn build_command_line(exe: &str, args: &[String]) -> String {
@@ -450,12 +557,73 @@ mod tests {
     fn environment_overrides_are_case_insensitive() {
         let environment = merge_environment(
             [("Path".to_string(), "base".to_string())],
+            [("path".to_string(), "refreshed".to_string())],
             [("PATH".to_string(), "override".to_string())],
         );
         assert_eq!(environment.len(), 1);
         assert_eq!(
             environment.get("PATH"),
             Some(&("PATH".to_string(), "override".to_string()))
+        );
+    }
+
+    #[test]
+    fn refreshed_path_keeps_daemon_only_entries() {
+        let environment = merge_environment(
+            [("Path".to_string(), r"C:\daemon-temp;C:\Windows".to_string())],
+            [("PATH".to_string(), r"c:\windows;C:\fresh-cli".to_string())],
+            [],
+        );
+
+        assert_eq!(
+            environment.get("PATH"),
+            Some(&(
+                "PATH".to_string(),
+                r"c:\windows;C:\fresh-cli;C:\daemon-temp".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn explicit_path_override_replaces_merged_path() {
+        let environment = merge_environment(
+            [("Path".to_string(), r"C:\daemon-temp".to_string())],
+            [("PATH".to_string(), r"C:\fresh-cli".to_string())],
+            [("path".to_string(), r"C:\project-only".to_string())],
+        );
+
+        assert_eq!(
+            environment.get("PATH"),
+            Some(&(
+                "path".to_string(),
+                r"C:\project-only".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn splits_regular_and_drive_environment_entries() {
+        assert_eq!(
+            split_environment_entry("Path=C:\\bin"),
+            Some(("Path", "C:\\bin"))
+        );
+        assert_eq!(
+            split_environment_entry("=C:=C:\\workspace"),
+            Some(("=C:", "C:\\workspace"))
+        );
+        assert_eq!(split_environment_entry("invalid"), None);
+    }
+
+    #[test]
+    fn parses_utf16_environment_block() {
+        let block: Vec<u16> = "Path=C:\\bin\0UNICODE=\u{503c}\0\0".encode_utf16().collect();
+
+        assert_eq!(
+            unsafe { parse_environment_block(block.as_ptr()) },
+            vec![
+                ("Path".to_string(), "C:\\bin".to_string()),
+                ("UNICODE".to_string(), "\u{503c}".to_string()),
+            ]
         );
     }
 }

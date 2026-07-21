@@ -1246,3 +1246,36 @@ Replaced the custom file-tree ignore parser with ignore@7.0.6, reloaded project-
 ### Next Steps
 
 - None - task complete
+
+
+## Session 36: 修复 Windows PTY 环境与 daemon 退出
+
+**Date**: 2026-07-21
+**Task**: 修复 Windows PTY 环境与 daemon 退出
+**Branch**: `master`
+
+### Summary
+
+刷新新建 Windows PTY 的用户环境并合并 daemon 临时 PATH；修正 daemon 会话查询和退出清理语义，补充退出编排测试、V1.3.0 变更说明及 PTY daemon 契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `15d5fb84` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

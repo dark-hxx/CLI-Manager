@@ -255,20 +255,15 @@ pub async fn pty_daemon_upgrade_if_idle(
 pub async fn pty_daemon_sessions(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<Vec<SessionMeta>, String> {
-    match wait_for_daemon(&daemon_bridge).await {
-        Some(client) => {
-            let sessions = client.list()?;
-            let alive_count = sessions.iter().filter(|session| session.alive).count();
-            debug!(
-                "pty_daemon_sessions requested: count={}, alive_count={}",
-                sessions.len(),
-                alive_count
-            );
-            Ok(sessions)
-        }
-        None => {
-            debug!("pty_daemon_sessions requested: daemon unavailable");
-            Ok(Vec::new())
-        }
-    }
+    let client = wait_for_daemon(&daemon_bridge)
+        .await
+        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
+    let sessions = client.list()?;
+    let alive_count = sessions.iter().filter(|session| session.alive).count();
+    debug!(
+        "pty_daemon_sessions requested: count={}, alive_count={}",
+        sessions.len(),
+        alive_count
+    );
+    Ok(sessions)
 }

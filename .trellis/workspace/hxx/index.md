@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 35
+- **Total Sessions**: 36
 - **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1248 | Active |
+| `journal-1.md` | ~1281 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 36 | 2026-07-21 | 修复 Windows PTY 环境与 daemon 退出 | `15d5fb84` | `master` |
 | 35 | 2026-07-21 | 移除历史上下文注入并修复同步与字体状态 | `627f85ea` | `master` |
 | 34 | 2026-07-20 | 完成 SSH Config 导入与主题适配 | `64dd055` | `master` |
 | 35 | 2026-07-18 | Repair PR 156 Gitignore semantics | `c1c21c3` | `fix-pr-156` |

@@ -49,6 +49,7 @@ import { translateCurrent, useI18n } from "./lib/i18n";
 import { getOsPlatform } from "./lib/shell";
 import { normalizeFontFamilyStack } from "./lib/systemFonts";
 import { ALL_TERMINALS_SCOPE } from "./lib/terminalScope";
+import { cleanupTerminalProcessesForExit } from "./lib/terminalExitCleanup";
 import { shouldIncludeDaemonExitTask } from "./lib/terminalExitTask";
 import { requestSidebarToggle } from "./lib/sidebarCommands";
 import { getTerminalTheme, isLightTerminalTheme } from "./lib/terminalThemes";
@@ -492,6 +493,7 @@ function App() {
   const restoreWindowWidthRef = useRef<number | null>(null);
   const closeBehaviorRef = useRef(closeBehavior);
   const exitTasksBehaviorRef = useRef(exitWithRunningTasksBehavior);
+  const pendingExitDaemonSessionsCheckedRef = useRef(false);
   const pendingExitSourceRef = useRef("window close");
 
   const handleOpenSettings = useCallback((tab?: SettingsTab) => {
@@ -1116,12 +1118,14 @@ function App() {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  const exitApp = useCallback(async (source: string) => {
+  const exitApp = useCallback(async (source: string): Promise<boolean> => {
     logInfo("exit: terminating app", { source });
     try {
       await invoke("app_exit");
+      return true;
     } catch (err) {
       logWarn(`Failed to exit application from ${source}`, err);
+      return false;
     }
   }, []);
 
@@ -1133,8 +1137,10 @@ function App() {
     const foregroundSessionIds = new Set(terminalState.sessions.map((session) => session.id));
     let daemonAliveIds: string[] = [];
     let daemonFinishedIds: string[] = [];
+    let daemonSessionsChecked = false;
     try {
       const daemonSessions = await invoke<DaemonSessionMeta[]>("pty_daemon_sessions");
+      daemonSessionsChecked = true;
       daemonAliveIds = daemonSessions
         .filter((session) => (
           session.alive
@@ -1163,15 +1169,19 @@ function App() {
     } catch (err) {
       logWarn("exit: failed to query daemon sessions", { source, err });
     }
-    return Array.from(new Set([...foregroundRunningIds, ...daemonAliveIds, ...daemonFinishedIds]));
+    return {
+      runningIds: Array.from(new Set([...foregroundRunningIds, ...daemonAliveIds, ...daemonFinishedIds])),
+      daemonSessionsChecked,
+    };
   }, []);
 
   const runExitCleanup = useCallback(async (
     source: string,
-    options?: { closePty?: boolean; discardSessions?: boolean }
+    options?: { closePty?: boolean; discardSessions?: boolean; closeAllPty?: boolean }
   ) => {
     const closePty = options?.closePty ?? true;
     const discardSessions = options?.discardSessions ?? false;
+    const closeAllPty = options?.closeAllPty ?? true;
     const ptySessionIds = useTerminalStore
       .getState()
       .sessions
@@ -1184,6 +1194,7 @@ function App() {
       ptySessionCount: ptySessionIds.length,
       ptySessionIds,
     });
+    let canExit = false;
     try {
       // 全程保持窗口可见并显示进度遮罩；destroy 前不复位 exitPhase。
       flushSync(() => {
@@ -1200,37 +1211,42 @@ function App() {
       }
       // Phase 2：daemon 模式"转入后台"时 closePty=false——PTY 留在守护进程里继续跑，
       // 快照仍落盘作为 daemon 也挂掉时的最终兜底。
+      const terminalCleanup = await cleanupTerminalProcessesForExit(
+        { closePty, closeAllPty, foregroundSessionIds: ptySessionIds },
+        {
+          closeAll: () => terminalProcessManager.closeAll(),
+          close: (sessionId) => terminalProcessManager.close(sessionId),
+          shutdownDaemonIfIdle: () => invoke<boolean>("pty_daemon_shutdown_if_idle"),
+        },
+      );
+      if (terminalCleanup.closeAllError) {
+        logWarn("Failed to close all PTY sessions before exit", {
+          source,
+          err: terminalCleanup.closeAllError,
+        });
+      }
+      for (const failure of terminalCleanup.foregroundCloseErrors) {
+        logWarn("Failed to close foreground PTY session before exit", {
+          source,
+          sessionId: failure.sessionId,
+          err: failure.error,
+        });
+      }
       if (closePty) {
-        if (discardSessions) {
-          logInfo("exit: closing all PTY sessions", { source });
-          try {
-            await terminalProcessManager.closeAll();
-            logInfo("exit: close_all completed", { source });
-          } catch (err) {
-            logWarn("Failed to close all PTY sessions before exit", { source, err });
-          }
-        } else {
-          let closedCount = 0;
-          for (const sessionId of ptySessionIds) {
-            try {
-              await terminalProcessManager.close(sessionId);
-              closedCount += 1;
-            } catch (err) {
-              logWarn("Failed to close foreground PTY session before exit", { source, sessionId, err });
-            }
-          }
-          logInfo("exit: foreground PTY close completed", {
-            source,
-            requestedCount: ptySessionIds.length,
-            closedCount,
-          });
-        }
-        try {
-          const daemonStopped = await invoke<boolean>("pty_daemon_shutdown_if_idle");
-          logInfo("exit: idle PTY daemon shutdown requested", { source, daemonStopped });
-        } catch (err) {
-          logWarn("Failed to stop idle PTY daemon before exit", { source, err });
-        }
+        logInfo("exit: PTY cleanup completed", {
+          source,
+          closeAllPty,
+          requestedCount: ptySessionIds.length,
+          failedForegroundCount: terminalCleanup.foregroundCloseErrors.length,
+          daemonStopped: terminalCleanup.daemonStopped,
+        });
+      }
+      if (!terminalCleanup.canExit) {
+        logWarn("exit: daemon shutdown failed, keeping application open", {
+          source,
+          err: terminalCleanup.shutdownError,
+        });
+        return;
       }
       if (discardSessions) {
         await useSessionStore.getState().clear().catch((err) => {
@@ -1238,9 +1254,16 @@ function App() {
         });
         logInfo("exit: persisted sessions discarded", { source });
       }
+      canExit = true;
+    } catch (err) {
+      logWarn("exit: cleanup failed, keeping application open", { source, err });
     } finally {
-      logInfo("exit: cleanup finished", { source, closePty, discardSessions });
-      await exitApp(source);
+      logInfo("exit: cleanup finished", { source, closePty, discardSessions, canExit });
+      if (canExit && await exitApp(source)) return;
+      flushSync(() => {
+        setExitPhase(null);
+        setExitNotice(null);
+      });
     }
   }, [exitApp, runCloseAutoSync]);
 
@@ -1279,17 +1302,19 @@ function App() {
   }, [minimizeToTray, runExitCleanup]);
 
   // 所有"退出应用"入口（closeBehavior=exit、关闭弹窗选退出、托盘退出）必须经此守卫：
-  // 无运行中任务 → 行为与旧版完全一致；有 → 按 exitWithRunningTasksBehavior 分流。
+  // 无运行中任务且 daemon 查询成功 → 清理全部空闲 PTY 后退出；有任务 → 按设置分流。
+  // daemon 查询失败 → 仅关闭前台 PTY，不能以“未知”等同“无后台任务”。
   const requestExitGuardedByRunningTasks = useCallback(async (source: string) => {
-    const runningIds = await getExitRunningTaskIds(source);
+    const { runningIds, daemonSessionsChecked } = await getExitRunningTaskIds(source);
     logInfo("exit: guarded request evaluated", {
       source,
       runningCount: runningIds.length,
       runningIds,
+      daemonSessionsChecked,
       behavior: exitTasksBehaviorRef.current,
     });
     if (runningIds.length === 0) {
-      await runExitCleanup(source);
+      await runExitCleanup(source, { closeAllPty: daemonSessionsChecked });
       return;
     }
     const behavior = exitTasksBehaviorRef.current;
@@ -1302,10 +1327,14 @@ function App() {
       return;
     }
     if (behavior === "discard") {
-      await runExitCleanup(source, { discardSessions: true });
+      await runExitCleanup(source, {
+        discardSessions: true,
+        closeAllPty: daemonSessionsChecked,
+      });
       return;
     }
     pendingExitSourceRef.current = source;
+    pendingExitDaemonSessionsCheckedRef.current = daemonSessionsChecked;
     setRunningTasksCount(runningIds.length);
     // 托盘退出时窗口可能处于隐藏态，弹窗前必须先恢复窗口。
     await focusMainWindow();
@@ -1348,7 +1377,10 @@ function App() {
     if (remember) {
       void updateSetting("exitWithRunningTasksBehavior", "discard");
     }
-    void runExitCleanup(pendingExitSourceRef.current, { discardSessions: true });
+    void runExitCleanup(pendingExitSourceRef.current, {
+      discardSessions: true,
+      closeAllPty: pendingExitDaemonSessionsCheckedRef.current,
+    });
   }, [runExitCleanup, runningTasksCount, updateSetting]);
 
   // 窗口重新获得焦点（托盘左键 / 通知点击唤回）即退出后台任务模式。
@@ -1397,13 +1429,14 @@ function App() {
         return;
       }
       event.preventDefault();
-      const runningIds = await getExitRunningTaskIds("window close");
+      const { runningIds, daemonSessionsChecked } = await getExitRunningTaskIds("window close");
       logInfo("exit: close ask evaluated", {
         runningCount: runningIds.length,
         runningIds,
       });
       if (runningIds.length > 0) {
         pendingExitSourceRef.current = "window close";
+        pendingExitDaemonSessionsCheckedRef.current = daemonSessionsChecked;
         setRunningTasksCount(runningIds.length);
         setRunningTasksDialogOpen(true);
       } else {

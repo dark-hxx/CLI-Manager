@@ -55,7 +55,7 @@ export const CLI_TOOL_DESCRIPTORS: readonly CliToolDescriptor[] = [
   },
   {
     id: "grok",
-    command: "grok build .",
+    command: "grok",
     label: "Grok Build",
     icon: "grok",
     vendor: "grok",
