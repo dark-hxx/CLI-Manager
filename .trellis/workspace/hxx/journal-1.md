@@ -1279,3 +1279,36 @@ Replaced the custom file-tree ignore parser with ignore@7.0.6, reloaded project-
 ### Next Steps
 
 - None - task complete
+
+
+## Session 37: 修复终端 Tab 切换自动聚焦
+
+**Date**: 2026-07-21
+**Task**: 修复终端 Tab 切换自动聚焦
+**Branch**: `master`
+
+### Summary
+
+修复 XTermTerminal 在渐进可见性恢复期间过早聚焦的问题；恢复遮罩解除后下一动画帧重新聚焦活动终端，补充前端焦点契约与 V1.3.0 Changelog。npx tsc --noEmit 和相关终端测试通过；完整终端测试仅有既有 terminalCursorMovement 缺失文件失败。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27b71e60` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
