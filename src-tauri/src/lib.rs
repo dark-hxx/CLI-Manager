@@ -280,9 +280,10 @@ pub(crate) const MIGRATION_CREATE_REQUEST_LOGS_SQL: &str = "
                 );
             ";
 
-const MIGRATION_CREATE_SSH_HOSTS_VERSION: i64 = 20;
-const MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION: &str = "create_ssh_hosts_and_project_environment";
-const MIGRATION_CREATE_SSH_HOSTS_SQL: &str = "
+pub(crate) const MIGRATION_CREATE_SSH_HOSTS_VERSION: i64 = 20;
+pub(crate) const MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION: &str =
+    "create_ssh_hosts_and_project_environment";
+pub(crate) const MIGRATION_CREATE_SSH_HOSTS_SQL: &str = "
                 CREATE TABLE IF NOT EXISTS ssh_hosts (
                     id                        TEXT PRIMARY KEY,
                     name                      TEXT NOT NULL,
@@ -320,9 +321,10 @@ const MIGRATION_CREATE_SSH_HOSTS_SQL: &str = "
                 CREATE INDEX IF NOT EXISTS idx_projects_ssh_host ON projects(ssh_host_id);
               ";
 
-const MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION: i64 = 21;
-const MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION: &str = "create_hierarchical_ssh_host_groups";
-const MIGRATION_CREATE_SSH_HOST_GROUPS_SQL: &str = "
+pub(crate) const MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION: i64 = 21;
+pub(crate) const MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION: &str =
+    "create_hierarchical_ssh_host_groups";
+pub(crate) const MIGRATION_CREATE_SSH_HOST_GROUPS_SQL: &str = "
                 CREATE TABLE IF NOT EXISTS ssh_host_groups (
                     id         TEXT PRIMARY KEY,
                     name       TEXT NOT NULL,

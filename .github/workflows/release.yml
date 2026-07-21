@@ -104,7 +104,8 @@ jobs:
             ## 变更日志
 
             ${{ steps.changelog.outputs.content }}
-          releaseDraft: false
+          # Keep the release out of `releases/latest` until the required SSH Agent assets exist.
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
@@ -179,3 +180,23 @@ jobs:
             dist/ssh-agent/ssh-agent-release-manifest.json
             dist/ssh-agent/ssh-agent-release-manifest.json.sig
             dist/ssh-agent/install-ssh-agent.sh
+
+      - name: Verify assets and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          assets=$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')
+          for required in \
+            cli-manager-ssh-agent-linux-x86_64 \
+            cli-manager-ssh-agent-linux-aarch64 \
+            ssh-agent-release-manifest.json \
+            ssh-agent-release-manifest.json.sig \
+            install-ssh-agent.sh
+          do
+            printf '%s\n' "$assets" | grep -Fxq "$required" || {
+              echo "Missing required SSH Agent release asset: $required" >&2
+              exit 1
+            }
+          done
+          gh release edit "${GITHUB_REF_NAME}" --draft=false

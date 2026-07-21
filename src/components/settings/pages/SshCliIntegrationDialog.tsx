@@ -67,6 +67,7 @@ const AGENT_CODE_KEYS: Record<string, TranslationKey> = {
   ssh_interactive_auth_required: "settings.sshHosts.cliIntegration.agent.code.ssh_interactive_auth_required",
   ssh_agent_manifest_signature_invalid: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_manifest_signature_invalid",
   ssh_agent_release_https_required: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_release_https_required",
+  ssh_agent_release_http_status: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_release_http_status",
   ssh_agent_release_target_missing: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_release_target_missing",
   ssh_agent_artifact_sha256_mismatch: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_artifact_sha256_mismatch",
   ssh_agent_artifact_size_mismatch: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_artifact_size_mismatch",
@@ -223,6 +224,9 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   const agentErrorText = (value: unknown) => {
     const raw = String(value);
     const code = raw.split(":", 1)[0];
+    if (code === "ssh_agent_release_http_status") {
+      return t(AGENT_CODE_KEYS[code], { status: raw.slice(code.length + 1) || "-" });
+    }
     return AGENT_CODE_KEYS[code]
       ? t(AGENT_CODE_KEYS[code])
       : t("settings.sshHosts.cliIntegration.agent.operationFailed", { code: raw });
