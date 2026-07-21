@@ -400,8 +400,9 @@ export function useTerminalDisplay({
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       if (!forwardPtyResizeRef.current) return;
       if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
-      const pixelWidth = terminal.dimensions?.css.canvas.width;
-      const pixelHeight = terminal.dimensions?.css.canvas.height;
+      const canvas = terminal.element?.querySelector("canvas");
+      const pixelWidth = canvas?.width;
+      const pixelHeight = canvas?.height;
       terminalProcessManager.resize(
         sessionId,
         cols,
