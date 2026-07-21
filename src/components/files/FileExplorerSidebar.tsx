@@ -434,7 +434,9 @@ function FileNode({
   const setClipboard = useFileExplorerStore((s) => s.setClipboard);
   const pasteInto = useFileExplorerStore((s) => s.pasteInto);
   const clipboard = useFileExplorerStore((s) => s.clipboard);
-  const activePath = useFileExplorerStore((s) => s.activeFile?.path ?? null);
+  const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
+  const activeFilePath = useFileExplorerStore((s) => s.activeFile?.path ?? null);
+  const activePath = selectedTreePath ?? activeFilePath;
   const isDir = entry.kind === "directory";
   const { suffixParts, leaf: displayEntry, chainPaths } = isDir
     ? collectCompactDirectoryChain(entry)
@@ -510,6 +512,7 @@ function FileNode({
         <div
           className="ui-file-tooltip ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
           data-selected={activePath === displayEntry.path ? "true" : "false"}
+          data-file-tree-path={displayEntry.path}
           style={{ paddingLeft }}
           data-tooltip={displayEntry.path}
         >
@@ -539,6 +542,7 @@ function FileNode({
             tabIndex={0}
             className="ui-file-tooltip ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
             data-selected={activePath === displayEntry.path ? "true" : "false"}
+            data-file-tree-path={displayEntry.path}
             data-file-drop-target-path={displayEntry.kind === "directory" ? displayEntry.path : parentPath(displayEntry.path)}
             draggable={false}
             style={{ paddingLeft }}
@@ -801,6 +805,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const project = useFileExplorerStore((s) => s.project);
   const readOnly = project?.environment_type === "ssh";
   const tree = useFileExplorerStore((s) => s.tree);
+  const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
   const searchMode = useFileExplorerStore((s) => s.searchMode);
   const searchQuery = useFileExplorerStore((s) => s.searchQuery);
   const searchResults = useFileExplorerStore((s) => s.searchResults);
@@ -975,6 +980,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   }, [project?.path, readOnly, refreshVisibleState]);
 
   const hasSearchQuery = Boolean(searchQuery.trim());
+
   const visibleRows = hasSearchQuery && searchMode === "files" ? searchResults : tree;
   const gitChangeByPath = useMemo(() => new Map(gitChanges.map((change) => [change.path, change])), [gitChanges]);
   const dirtyFilePathList = useMemo(
@@ -1035,6 +1041,34 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     }
     return createDefaultIgnoreMatcher(gitIgnoreCaseInsensitive);
   }, [gitIgnoreCaseInsensitive, gitIgnoreLoadState, projectGitIgnoreMatcher]);
+
+  useEffect(() => {
+    if (!selectedTreePath) return;
+    const rootPath = selectedTreePath.split("/")[0];
+    const rootEntry = tree.find((entry) => entry.path === rootPath);
+    if (
+      rootEntry?.kind !== "directory"
+      || !(
+        isDefaultCollapsedDirectoryName(rootEntry.name)
+        || ignoredPaths.has(rootEntry.path)
+        || ignoreMatcher.ignores(rootEntry.path, true)
+      )
+    ) {
+      return;
+    }
+    setExpandedAutoCollapseGroups((current) => {
+      if (current.has("")) return current;
+      return new Set([...current, ""]);
+    });
+  }, [ignoreMatcher, ignoredPaths, selectedTreePath, tree]);
+
+  useEffect(() => {
+    if (!selectedTreePath) return;
+    const escapedPath = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(selectedTreePath)
+      : selectedTreePath.replace(/(["\\])/gu, "\\$1");
+    document.querySelector<HTMLElement>(`[data-file-tree-path="${escapedPath}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [expandedAutoCollapseGroups, selectedTreePath, tree]);
 
   const autoCollapseGroups = useMemo<AutoCollapseGroupState>(() => ({
     expandedGroupPaths: expandedAutoCollapseGroups,

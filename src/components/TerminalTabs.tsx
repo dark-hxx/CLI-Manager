@@ -102,6 +102,10 @@ import {
   resolveProjectForSessionFileContext,
 } from "../lib/terminalProject";
 import { ALL_TERMINALS_SCOPE, collectProjectIdsForGroup, sessionMatchesTerminalScope } from "../lib/terminalScope";
+import {
+  TERMINAL_FILE_NAVIGATION_REQUEST_EVENT,
+  type TerminalFileNavigationRequest,
+} from "../lib/terminalFileNavigation";
 
 const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
@@ -2263,6 +2267,8 @@ export function TerminalTabs({
   const updateSettings = useSettingsStore((s) => s.update);
   const openFileProject = useFileExplorerStore((s) => s.openProject);
   const fileProject = useFileExplorerStore((s) => s.project);
+  const revealFilePath = useFileExplorerStore((s) => s.revealPath);
+  const openFileEditorPane = useTerminalStore((s) => s.openFileEditorPane);
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
   const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || t("common.none");
   const historyOpen = useHistoryStore((s) => s.isOpen);
@@ -3154,15 +3160,9 @@ export function TerminalTabs({
     setFilesOpen(false);
   }, [sidePanelMerged, sidePanelTab]);
 
-  const handleToggleFilesPanel = useCallback(async () => {
-    if (filesPanelActive) {
-      closeFilesPanel();
-      return;
-    }
-    if (!filePanelProject) return;
-    if (rejectUnsupportedCapability(filePanelProject, "files")) return;
-    const allowed = await syncFilePanelProject(filePanelProject);
-    if (!allowed) return;
+  const openFilesPanelForProject = useCallback(async (project: Project): Promise<boolean> => {
+    const allowed = await syncFilePanelProject(project);
+    if (!allowed) return false;
     if (terminalSidePanelSingleOpen) {
       closeHistory();
       setActiveWorkspaceTab("terminal");
@@ -3170,16 +3170,50 @@ export function TerminalTabs({
     if (sidePanelMerged) {
       setSidePanelTab("files");
       setSidePanelOpen(true);
-    } else {
-      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
-        setStatsOpen(false);
-        setGitOpen(false);
-        setReplayOpen(false);
-        setSystemResourcesOpen(false);
-      }
-      setFilesOpen(true);
+      return true;
     }
-  }, [closeFilesPanel, closeHistory, filePanelProject, filesPanelActive, rejectUnsupportedCapability, sidePanelMerged, syncFilePanelProject, terminalSidePanelSingleOpen]);
+    if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
+      setStatsOpen(false);
+      setGitOpen(false);
+      setReplayOpen(false);
+      setSystemResourcesOpen(false);
+    }
+    setFilesOpen(true);
+    return true;
+  }, [closeHistory, sidePanelMerged, syncFilePanelProject, terminalSidePanelSingleOpen]);
+
+  const handleToggleFilesPanel = useCallback(async () => {
+    if (filesPanelActive) {
+      closeFilesPanel();
+      return;
+    }
+    if (!filePanelProject) return;
+    void openFilesPanelForProject(filePanelProject);
+  }, [closeFilesPanel, filePanelProject, filesPanelActive, openFilesPanelForProject]);
+
+  useEffect(() => {
+    const handleTerminalFileNavigation = (event: Event) => {
+      const request = (event as CustomEvent<TerminalFileNavigationRequest>).detail;
+      const sourceSession = sessions.find((session) => session.id === request.sessionId) ?? null;
+      const project = resolveProjectForSessionFileContext(sourceSession, sessions, projects, projectById, worktrees);
+      if (!project) return;
+      void openFilesPanelForProject(project).then(async (opened) => {
+        if (!opened) return;
+        try {
+          const revealed = await revealFilePath(request.path, {
+            ...(request.lineNumber ? { lineNumber: request.lineNumber } : {}),
+            ...(request.columnNumber ? { columnNumber: request.columnNumber } : {}),
+          });
+          if (revealed && request.kind === "file") openFileEditorPane(project);
+        } catch (err) {
+          logError("Failed to reveal terminal relative path", { request, err });
+          toast.error(t("files.toast.openFileFailed"), { description: String(err) });
+        }
+      });
+    };
+    window.addEventListener(TERMINAL_FILE_NAVIGATION_REQUEST_EVENT, handleTerminalFileNavigation);
+    return () => window.removeEventListener(TERMINAL_FILE_NAVIGATION_REQUEST_EVENT, handleTerminalFileNavigation);
+  }, [openFileEditorPane, openFilesPanelForProject, projectById, projects, revealFilePath, sessions, t, worktrees]);
 
   const handleSidePanelTabChange = useCallback((tab: TerminalSidePanelTab) => {
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;

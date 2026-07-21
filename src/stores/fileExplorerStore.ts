@@ -83,7 +83,9 @@ interface ActiveProjectDiff {
 interface FileSearchNavigationTarget {
   path: string;
   lineNumber: number;
-  lineText: string;
+  lineText?: string;
+  columnNumber?: number;
+  source: "search" | "terminal";
 }
 
 interface FileExplorerStore {
@@ -96,6 +98,7 @@ interface FileExplorerStore {
   contentSearchResults: ProjectFileContentMatch[];
   searchLoading: boolean;
   expandedPaths: Set<string>;
+  selectedTreePath: string | null;
   loading: boolean;
   openFiles: ActiveProjectFile[];
   activeFilePath: string | null;
@@ -120,6 +123,7 @@ interface FileExplorerStore {
   setSearchQuery: (query: string) => Promise<void>;
   openFile: (entry: ProjectFileEntry) => Promise<void>;
   openFileAtSearchMatch: (match: ProjectFileContentMatch) => Promise<void>;
+  revealPath: (path: string, options?: { lineNumber?: number; columnNumber?: number }) => Promise<boolean>;
   clearSearchNavigationTarget: () => void;
   setActiveFilePath: (path: string) => void;
   closeFile: (path: string) => void;
@@ -596,6 +600,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   contentSearchResults: [],
   searchLoading: false,
   expandedPaths: new Set([""]),
+  selectedTreePath: null,
   loading: false,
   openFiles: [],
   activeFilePath: null,
@@ -623,6 +628,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       contentSearchResults: [],
       searchLoading: false,
       expandedPaths: keepCurrentProject ? pruneDefaultCollapsedPaths(get().expandedPaths) : new Set([""]),
+      selectedTreePath: keepCurrentProject ? get().selectedTreePath : null,
       openFiles: keepCurrentProject ? get().openFiles : [],
       activeFilePath: keepCurrentProject ? get().activeFilePath : null,
       activeFile: keepCurrentProject ? get().activeFile : null,
@@ -659,6 +665,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       contentSearchResults: [],
       searchLoading: false,
       expandedPaths: new Set([""]),
+      selectedTreePath: null,
       openFiles: [],
       activeFilePath: null,
       activeFile: null,
@@ -1002,8 +1009,70 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         path: match.path,
         lineNumber: match.lineNumber,
         lineText: match.lineText,
+        source: "search",
       },
     });
+  },
+
+  revealPath: async (path, options) => {
+    const project = get().project;
+    if (!project) return false;
+    const normalizedPath = path.replace(/\\/g, "/").replace(/^\/+|\/+$/gu, "");
+    if (!normalizedPath || normalizedPath.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+      return false;
+    }
+
+    const loadedDirs: Array<{ path: string; children: ProjectFileEntry[] }> = [];
+    let parentPath = "";
+    let target: ProjectFileEntry | null = null;
+    for (const segment of normalizedPath.split("/")) {
+      const children = get().remoteFileContext
+        ? await sshRemoteListDir(get().remoteFileContext!, parentPath)
+        : await listDir(project.path, parentPath);
+      loadedDirs.push({ path: parentPath, children });
+      const currentPath = parentPath ? `${parentPath}/${segment}` : segment;
+      target = children.find((entry) => entry.path === currentPath) ?? null;
+      if (!target) return false;
+      parentPath = currentPath;
+    }
+    if (!target) return false;
+
+    if (target.kind === "directory") {
+      const children = get().remoteFileContext
+        ? await sshRemoteListDir(get().remoteFileContext!, target.path)
+        : await listDir(project.path, target.path);
+      loadedDirs.push({ path: target.path, children });
+    }
+
+    set((state) => ({
+      tree: loadedDirs.reduce(
+        (tree, dir) => replaceChildrenKeepingLoadedSubtrees(tree, dir.path, dir.children),
+        state.tree
+      ),
+      expandedPaths: new Set([
+        ...state.expandedPaths,
+        ...loadedDirs.map((dir) => dir.path),
+      ]),
+      selectedTreePath: target.path,
+      searchQuery: "",
+      searchResults: [],
+      contentSearchResults: [],
+      searchLoading: false,
+    }));
+
+    if (target.kind === "directory") return true;
+    await get().openFile(target);
+    if (options?.lineNumber) {
+      set({
+        searchNavigationTarget: {
+          path: target.path,
+          lineNumber: options.lineNumber,
+          ...(options.columnNumber ? { columnNumber: options.columnNumber } : {}),
+          source: "terminal",
+        },
+      });
+    }
+    return true;
   },
 
   clearSearchNavigationTarget: () => {
