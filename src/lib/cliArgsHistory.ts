@@ -75,12 +75,14 @@ export function getCliArgsHistorySuggestions(
   history: unknown,
   cliTool: string,
   limit = CLI_ARGS_HISTORY_LIMIT,
+  query = "",
 ): CliArgsHistoryEntry[] {
   const normalizedTool = normalizeCliTool(cliTool);
+  const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedTool || limit <= 0) return [];
 
   return normalizeCliArgsHistory(history)
-    .filter((entry) => entry.cliTool === normalizedTool)
+    .filter((entry) => entry.cliTool === normalizedTool && (!normalizedQuery || entry.cliArgs.toLowerCase().includes(normalizedQuery)))
     .sort((left, right) =>
       right.count - left.count ||
       right.lastUsedAt - left.lastUsedAt ||

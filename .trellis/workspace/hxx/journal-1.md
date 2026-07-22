@@ -1351,3 +1351,36 @@ Completed S06-S10 with remote history/cache and resume, read-only file and Git p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 39: 统一 CLI-Manager 版本号为 1.3.1
+
+**Date**: 2026-07-22
+**Task**: 统一 CLI-Manager 版本号为 1.3.1
+**Branch**: `master`
+
+### Summary
+
+按版本更新指南统一 npm、Cargo 与 Tauri 的根版本元数据为 1.3.1，并通过 TypeScript、Cargo locked 检查及 GitNexus 变更检测。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `13825454` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

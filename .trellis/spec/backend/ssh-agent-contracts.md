@@ -183,7 +183,11 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 | Resume source JSONL or cwd is missing | `remote_session_source_missing` / `remote_session_cwd_unavailable`; create no PTY |
 | Another daemon consumer owns the same source-instance/session | `remote_session_active_elsewhere` |
 | Remote file root is not absolute/canonical or a relative path escapes through `..`/symlink | stable `remote_file_root_*` / `remote_file_path_*` error; no local fallback |
-| Remote file is binary or exceeds 8 MiB | `remote_file_binary` / `remote_file_too_large` |
+| Remote file is binary | `remote_file_binary` |
+| Remote text/other file exceeds 1 MiB | `remote_file_too_large` |
+| Remote image exceeds 5 MiB | `image_file_too_large` |
+| Remote raster image exceeds 12,000,000 pixels | `image_dimensions_too_large` |
+| Remote path has a known video extension | `video_preview_unsupported` |
 | Spool record is malformed or over 1 MiB | stable `hook_spool_record_*` error; preserve original spool |
 | Custom Hook config root is missing | `hook_config_root_missing` |
 | Deleted custom root has one valid matching Agent record during uninstall | use its canonical identity for no-op config cleanup and remove the record |
@@ -211,6 +215,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Good: the desktop disconnects, events spool under the bound Host/client namespace, and reconnect replays each event at most once before ACK deletion.
 - Good: four Host bridges are connected, a fifth waits without starting SSH, and closing one Host releases a permit for the waiting Host.
 - Good: an SSH project file panel reuses its Host bridge, lists only canonical-root descendants, skips symlinks, and reads bounded UTF-8 text or supported image data URLs.
+- Good: remote video, byte-size, and raster-pixel checks run before file reads and Base64 conversion; the desktop also prechecks directory metadata to avoid unnecessary RPCs.
+- Bad: relying only on WebView `<img>` sizing after a high-pixel image has already crossed the SSH bridge as Base64.
 - Good: an SSH terminal stats panel reuses one history consumer for incremental detail and catalog usage facts, while stale/offline failures preserve the last bounded snapshot without local path fallback.
 - Good: deleting a Host either clears project/integration references and deletes the Host together, or rolls the entire operation back.
 - Good: two different SSH Hosts save preferences concurrently; SQLite coordinates only their short write sections and no application-wide CRUD mutex serializes them.
@@ -243,7 +249,7 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Assert protocol minor 1 capability negotiation, bounded reader/response timeouts, global bridge/connect permits, retry jitter/reset classification, `bridge_already_active` takeover, heartbeat echo, cancellation bounds, and last-session shutdown.
 - Assert protocol minor 3 history capability negotiation, generation cursors, continuation identity, chunk ordering/size/deadline, detail LRU eviction, and consumer release.
 - Assert protocol minor 4 resume capability and protocol minor 5 remote-file capability, structured Claude/Codex args, source/cwd validation, ownership claim/release, and implicit SSH Config username handling.
-- Assert remote file root/path confinement, symlink escape rejection, binary/oversized refusal, directory/search/visited limits, image data URLs, and UI/store read-only routing.
+- Assert remote file root/path confinement, symlink escape rejection, binary refusal, 1 MiB text and 5 MiB image limits, the exact 12,000,000-pixel boundary, video refusal, directory/search/visited limits, image data URLs, and UI/store read-only routing.
 - Assert manifest tampering, duplicate/unknown targets, HTTP opt-in, query/fragment rejection, target selection, size/SHA-256 mismatch, and bounded downloads.
 - Assert install path quoting, strict operation markers/metadata, semantic version actions, lock conflicts, default/custom roots, corrupt/missing discovery recovery, promote rollback, distinct previous versions, and transactional uninstall.
 - Assert Claude/Codex exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, user-owned Codex feature/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.

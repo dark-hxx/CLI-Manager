@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/07-22-pty-daemon/prd.md", "reason": "要求与验收已明确，需要按文档顺序实施。"}
+{"file": ".trellis/tasks/07-22-pty-daemon/design.md", "reason": "记录连接生命周期日志与提示层的最小设计。"}
+{"file": ".trellis/tasks/07-22-pty-daemon/implement.md", "reason": "按最小步骤执行源码修改与验证。"}

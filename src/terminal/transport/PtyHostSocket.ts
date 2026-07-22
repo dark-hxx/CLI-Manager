@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { logInfo, logWarn } from "../../lib/logger";
 
 const BINARY_PROTOCOL_VERSION = 1;
 const BINARY_KIND_OUTPUT = 1;
@@ -33,6 +34,14 @@ interface PendingRequest {
   resolve: (frame: Record<string, unknown>) => void;
   reject: (error: Error) => void;
   timeoutId: number;
+}
+
+interface SocketDisconnectDetails {
+  cause: "connect-error" | "auth-timeout" | "auth-failed" | "error" | "close" | "heartbeat-timeout" | "parse-error";
+  authenticated: boolean;
+  code?: number | null;
+  reason?: string | null;
+  wasClean?: boolean | null;
 }
 
 export interface TerminalBinaryFrame {
@@ -428,6 +437,9 @@ export class PtyHostSocket {
       this.connectedFeatures = new Set(endpoint.features);
       this.nextRequestId = Math.max(this.nextRequestId, Date.now());
       await this.ensureLegacyListeners();
+      logInfo("PtyHost legacy transport active", this.lifecycleSnapshot({
+        features: [...this.connectedFeatures],
+      }));
       return;
     }
     if (
@@ -439,6 +451,15 @@ export class PtyHostSocket {
       || endpoint.binaryProtocolVersion !== BINARY_PROTOCOL_VERSION
       || !endpoint.features.includes(FEATURE_WS_BINARY_OUTPUT)
     ) {
+      logWarn("PtyHost WebSocket endpoint unavailable", {
+        endpointPresent: endpoint !== null,
+        transportMode: endpoint?.transportMode ?? null,
+        protocolVersion: endpoint?.protocolVersion ?? null,
+        binaryProtocolVersion: endpoint?.binaryProtocolVersion ?? null,
+        hasUrl: Boolean(endpoint?.url),
+        hasToken: Boolean(endpoint?.token),
+        features: endpoint?.features ?? [],
+      });
       throw new Error("PtyHost WebSocket endpoint unavailable");
     }
     this.connectedFeatures = new Set(endpoint.features);
@@ -455,7 +476,12 @@ export class PtyHostSocket {
       const authTimeoutId = window.setTimeout(() => {
         if (authSettled) return;
         authSettled = true;
-        reject(new Error("PtyHost authentication timed out"));
+        const error = new Error("PtyHost authentication timed out");
+        if (!authenticated) reject(error);
+        this.handleDisconnect(error, socket, {
+          cause: "auth-timeout",
+          authenticated,
+        });
         socket.close();
       }, AUTH_TIMEOUT_MS);
       const rejectAuth = (error: Error) => {
@@ -464,9 +490,9 @@ export class PtyHostSocket {
         window.clearTimeout(authTimeoutId);
         reject(error);
       };
-      const fail = (error: Error) => {
+      const fail = (error: Error, details: SocketDisconnectDetails) => {
         if (!authenticated) rejectAuth(error);
-        this.handleDisconnect(error, socket);
+        this.handleDisconnect(error, socket, details);
       };
       socket.onopen = () => {
         this.send({
@@ -484,11 +510,17 @@ export class PtyHostSocket {
               authSettled = true;
               window.clearTimeout(authTimeoutId);
               this.startHeartbeat();
+              logInfo("PtyHost websocket connected", this.lifecycleSnapshot({
+                features: [...this.connectedFeatures],
+              }));
               resolve();
               return;
             }
             if (frame.type === "auth_err") {
-              fail(new Error(String(frame.reason ?? "PtyHost authentication failed")));
+              fail(new Error(String(frame.reason ?? "PtyHost authentication failed")), {
+                cause: "auth-failed",
+                authenticated,
+              });
               socket.close();
               return;
             }
@@ -499,12 +531,24 @@ export class PtyHostSocket {
             this.handleBinaryFrame(event.data);
           }
         } catch (error) {
-          fail(error instanceof Error ? error : new Error(String(error)));
+          fail(error instanceof Error ? error : new Error(String(error)), {
+            cause: "parse-error",
+            authenticated,
+          });
           socket.close();
         }
       };
-      socket.onerror = () => fail(new Error("PtyHost WebSocket connection failed"));
-      socket.onclose = () => fail(new Error("PtyHost WebSocket disconnected"));
+      socket.onerror = () => fail(new Error("PtyHost WebSocket connection failed"), {
+        cause: "connect-error",
+        authenticated,
+      });
+      socket.onclose = (event) => fail(this.createDisconnectError(event), {
+        cause: "close",
+        authenticated,
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+      });
     });
   }
 
@@ -756,11 +800,26 @@ export class PtyHostSocket {
     });
   }
 
-  private handleDisconnect(error: Error, socket?: WebSocket): void {
+  private handleDisconnect(error: Error, socket?: WebSocket, details?: SocketDisconnectDetails): void {
     if (socket && this.socket !== socket) return;
     this.stopHeartbeat();
     this.socket = null;
+    const connectedFeatures = [...this.connectedFeatures];
     this.connectedFeatures.clear();
+    logWarn(
+      details?.cause === "heartbeat-timeout" ? "PtyHost heartbeat timed out" : "PtyHost websocket disconnected",
+      {
+        ...this.lifecycleSnapshot({
+          authenticated: details?.authenticated ?? false,
+          closeCause: details?.cause ?? "unknown",
+          closeCode: details?.code ?? null,
+          closeReason: details?.reason ?? null,
+          wasClean: details?.wasClean ?? null,
+          error: error.message,
+          features: connectedFeatures,
+        }),
+      },
+    );
     this.pendingRequests.forEach(({ reject, timeoutId }) => {
       window.clearTimeout(timeoutId);
       reject(error);
@@ -772,6 +831,10 @@ export class PtyHostSocket {
     });
     this.pendingCheckpoints.clear();
     if (this.attachedSessions.size > 0 && this.reconnectTimer === null) {
+      logInfo("PtyHost reconnect scheduled", this.lifecycleSnapshot({
+        cause: details?.cause ?? "unknown",
+        delayMs: 250,
+      }));
       this.reconnectTimer = window.setTimeout(() => {
         this.reconnectTimer = null;
         void this.reconnectAttachedSessions();
@@ -784,16 +847,33 @@ export class PtyHostSocket {
       (sessionId) => !this.closedSessions.has(sessionId),
     );
     if (reconnectSessions.length === 0) return;
+    logInfo("PtyHost reconnect attempt started", this.lifecycleSnapshot({
+      reconnectSessions: reconnectSessions.length,
+    }));
     try {
       await this.connect();
+      logInfo("PtyHost reconnect transport ready", this.lifecycleSnapshot({
+        reconnectSessions: reconnectSessions.length,
+      }));
       for (const sessionId of reconnectSessions) {
         if (this.closedSessions.has(sessionId)) continue;
         const previousSequence = this.latestCommittedSequence.get(sessionId) ?? 0;
         this.latestReceivedSequence.set(sessionId, previousSequence);
         await this.attach(sessionId);
       }
-    } catch {
+      logInfo("PtyHost reconnect attempt completed", this.lifecycleSnapshot({
+        reconnectSessions: reconnectSessions.length,
+      }));
+    } catch (error) {
+      logWarn("PtyHost reconnect attempt failed", this.lifecycleSnapshot({
+        reconnectSessions: reconnectSessions.length,
+        error: error instanceof Error ? error.message : String(error),
+      }));
       if (this.attachedSessions.size > 0 && this.reconnectTimer === null) {
+        logInfo("PtyHost reconnect retry scheduled", this.lifecycleSnapshot({
+          reconnectSessions: reconnectSessions.length,
+          delayMs: 1000,
+        }));
         this.reconnectTimer = window.setTimeout(() => {
           this.reconnectTimer = null;
           void this.reconnectAttachedSessions();
@@ -809,6 +889,11 @@ export class PtyHostSocket {
       const socket = this.socket;
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
       if (Date.now() - this.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+        const error = new Error(`PtyHost heartbeat timed out after ${HEARTBEAT_TIMEOUT_MS}ms`);
+        this.handleDisconnect(error, socket, {
+          cause: "heartbeat-timeout",
+          authenticated: true,
+        });
         socket.close();
         return;
       }
@@ -836,6 +921,28 @@ export class PtyHostSocket {
     this.latestReceivedSequence.delete(sessionId);
     this.latestCommittedSequence.delete(sessionId);
     this.cancelReconnectWhenIdle();
+  }
+
+  private lifecycleSnapshot(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      transportMode: this.transportMode,
+      attachedSessions: this.attachedSessions.size,
+      pendingRequests: this.pendingRequests.size,
+      pendingCheckpoints: this.pendingCheckpoints.size,
+      reconnectTimerActive: this.reconnectTimer !== null,
+      ...extra,
+    };
+  }
+
+  private createDisconnectError(event: CloseEvent): Error {
+    const details = [
+      `code=${event.code}`,
+      `wasClean=${event.wasClean}`,
+      event.reason ? `reason=${event.reason}` : null,
+    ]
+      .filter((item): item is string => item !== null)
+      .join(", ");
+    return new Error(details ? `PtyHost WebSocket disconnected (${details})` : "PtyHost WebSocket disconnected");
   }
 
   private cancelReconnectWhenIdle(): void {

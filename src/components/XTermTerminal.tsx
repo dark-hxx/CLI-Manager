@@ -29,6 +29,7 @@ import {
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { translateCurrent, useI18n } from "../lib/i18n";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
+import { canUseTerminalImageAddonWasm } from "../lib/terminalImageAddonSupport";
 import {
   findTerminalFileLinks,
   findTerminalRelativeFileLinks,
@@ -77,6 +78,7 @@ const IMAGE_ADDON_PIXEL_LIMIT = 4 * 1024 * 1024;
 const IMAGE_ADDON_SEQUENCE_LIMIT = 8 * 1024 * 1024;
 const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
 const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
+let terminalImageAddonFallbackLogged = false;
 // Minimum time the app must stay in the background before a foreground return
 // triggers a glyph-atlas rebuild. GPU sleep / lock screen (the corruption
 // trigger) implies a long absence; quick alt-tabs skip the re-rasterization.
@@ -615,8 +617,21 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     cleanupExpiredAttachmentsOnce(project?.path || session?.cwd || null);
   }, [sessionId]);
 
+  const getPtyWriteErrorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+  const isRecoverablePtyHostDisconnect = (message: string): boolean =>
+    message.startsWith("PtyHost WebSocket disconnected") || message.startsWith("PtyHost heartbeat timed out");
+
   const reportPtyWriteError = (stage: string, err: unknown) => {
-    toast.error("终端写入失败", { description: String(err) });
+    const message = getPtyWriteErrorMessage(err);
+    if (isRecoverablePtyHostDisconnect(message)) {
+      toast.warning(t("terminal.transport.connectionLostTitle"), {
+        description: t("terminal.transport.connectionLostDescription"),
+      });
+      logWarn("PTY write failed because transport disconnected", { sessionId, stage, err });
+      return;
+    }
+    toast.error(t("terminal.transport.writeFailed"), { description: message });
     logError("PTY write failed in XTermTerminal", { sessionId, stage, err });
   };
 
@@ -1045,13 +1060,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     baseDisposables.push(terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true));
 
     const fitAddon = new FitAddon();
-    const imageAddon = new ImageAddon({
-      enableSizeReports: false,
-      pixelLimit: IMAGE_ADDON_PIXEL_LIMIT,
-      storageLimit: IMAGE_ADDON_STORAGE_LIMIT_MB,
-      sixelSizeLimit: IMAGE_ADDON_SEQUENCE_LIMIT,
-      iipSizeLimit: IMAGE_ADDON_SEQUENCE_LIMIT,
-    });
     const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
     const serializeAddon = new SerializeAddon();
     const unicode11Addon = new Unicode11Addon();
@@ -1176,14 +1184,28 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     const initialWebglReady = syncWebglRenderer(terminal, baseTheme);
     if (initialWebglReady) {
-      try {
-        terminal.loadAddon(imageAddon);
-      } catch (err) {
-        imageAddon.dispose();
-        logWarn("Failed to load terminal image addon; continuing without terminal image support", {
-          sessionId,
-          err,
+      if (!canUseTerminalImageAddonWasm()) {
+        if (!terminalImageAddonFallbackLogged) {
+          terminalImageAddonFallbackLogged = true;
+          logWarn("Terminal image addon disabled because WebAssembly is blocked by the current WebView CSP");
+        }
+      } else {
+        const imageAddon = new ImageAddon({
+          enableSizeReports: false,
+          pixelLimit: IMAGE_ADDON_PIXEL_LIMIT,
+          storageLimit: IMAGE_ADDON_STORAGE_LIMIT_MB,
+          sixelSizeLimit: IMAGE_ADDON_SEQUENCE_LIMIT,
+          iipSizeLimit: IMAGE_ADDON_SEQUENCE_LIMIT,
         });
+        try {
+          terminal.loadAddon(imageAddon);
+        } catch (err) {
+          imageAddon.dispose();
+          logWarn("Failed to load terminal image addon; continuing without terminal image support", {
+            sessionId,
+            err,
+          });
+        }
       }
     }
 
