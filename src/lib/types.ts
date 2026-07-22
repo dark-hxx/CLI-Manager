@@ -25,6 +25,15 @@ export type SshAuthMode =
 export type SshJumpMode = "none" | "host" | "proxy_jump";
 
 export type SshProxyType = "none" | "http" | "socks5" | "proxy_command";
+export type SshToolSource = "claude" | "codex";
+export type SshToolIntegrationScopeKind = "hostPrimary" | "projectOverride" | "retainedRoot";
+export type SshToolIntegrationValidationState =
+  | "unvalidated"
+  | "validating"
+  | "valid"
+  | "invalid"
+  | "unbound";
+export type SshToolIntegrationCleanupState = "active" | "orphaned" | "cleanupAvailable" | "retained";
 
 export interface SshHostGroup {
   id: string;
@@ -92,6 +101,154 @@ export interface CreateSshHostInput {
 
 export type UpdateSshHostInput = Partial<CreateSshHostInput> & { sort_order?: number };
 
+export interface SshAgentInstallation {
+  host_id: string;
+  installation_id: string;
+  remote_machine_id: string;
+  agent_version: string;
+  protocol_version: string;
+  target: string;
+  install_path: string;
+  install_root: string;
+  source: string;
+  manifest_url: string;
+  artifact_sha256: string;
+  previous_version: string;
+  status: string;
+  checked_at: string;
+}
+
+export interface SshAgentInstallPreview {
+  action: "install" | "upgrade" | "reinstall" | "downgrade";
+  manifestUrl: string;
+  channel: string;
+  version: string;
+  protocolMin: number;
+  protocolMax: number;
+  target: string;
+  artifactUrl: string;
+  artifactSize: number;
+  artifactSha256: string;
+  installRoot: string;
+  installPath: string;
+  currentVersion: string;
+}
+
+export interface SshAgentOperationResult {
+  action: "installed" | "updated" | "rolledBack" | "uninstalled" | "purged";
+  installationId: string;
+  remoteMachineId: string;
+  agentVersion: string;
+  protocolVersion: string;
+  target: string;
+  installRoot: string;
+  installPath: string;
+  source: string;
+  manifestUrl: string;
+  artifactSha256: string;
+  previousVersion: string;
+}
+
+export interface SshAgentProbeResult {
+  status: "installed" | "notInstalled" | "incompatible" | "corrupt" | "unreachable" | "unsupported" | "authenticationRequired";
+  code: string;
+  installationId: string;
+  remoteMachineId: string;
+  installPath: string;
+  agentVersion: string;
+  protocolVersion: string;
+  target: string;
+  supported: boolean;
+  detail: string;
+}
+
+export type SshRemoteHookStatus = "notInstalled" | "partialInstalled" | "outdated" | "installed" | "conflict";
+
+export interface SshRemoteHookExpectedFile {
+  role: string;
+  canonicalPath: string;
+  fingerprint: string;
+}
+
+export interface SshRemoteHookConfigFile extends SshRemoteHookExpectedFile {
+  exists: boolean;
+}
+
+export interface SshRemoteHookConfigChange {
+  role: string;
+  canonicalPath: string;
+  beforeFingerprint: string;
+  afterFingerprint: string;
+  action: "unchanged" | "create" | "update" | "delete";
+}
+
+export interface SshRemoteHookInstallationFile {
+  role: string;
+  canonicalPath: string;
+  beforeFingerprint: string;
+  afterFingerprint: string;
+}
+
+export interface SshRemoteHookInstallationRecord {
+  source: SshToolSource;
+  installationId: string;
+  ownerId: string;
+  configuredConfigRoot: string;
+  canonicalConfigRoot: string;
+  configFiles: SshRemoteHookInstallationFile[];
+  managedEntries: number;
+  adapterVersion: number;
+  installedAt: number;
+  historySourceCandidate: {
+    source: SshToolSource;
+    canonicalConfigRoot: string;
+    configRootHash: string;
+  };
+}
+
+export interface SshRemoteHookConfigReport {
+  action: "inspect" | "previewInstall" | "previewUninstall" | "installed" | "uninstalled";
+  status: SshRemoteHookStatus;
+  source: SshToolSource;
+  installationId: string;
+  remoteMachineId: string;
+  configuredConfigRoot: string;
+  canonicalConfigRoot: string;
+  configRootHash: string;
+  configRootExists: boolean;
+  willCreateConfigRoot: boolean;
+  configFiles: SshRemoteHookConfigFile[];
+  managedEntries: number;
+  requiredEntries: number;
+  changes: SshRemoteHookConfigChange[];
+  installation: SshRemoteHookInstallationRecord | null;
+}
+
+export interface SshHostToolPreference {
+  host_id: string;
+  source: SshToolSource;
+  configured_root: string;
+  updated_at: string;
+}
+
+export interface SshAgentToolIntegration {
+  integration_id: string;
+  host_id: string | null;
+  installation_id: string;
+  remote_machine_id: string;
+  ssh_user: string;
+  source: SshToolSource;
+  scope_kind: SshToolIntegrationScopeKind;
+  configured_root: string;
+  canonical_root: string;
+  config_root_hash: string;
+  hook_record_json: string;
+  history_source_instance_id: string;
+  validation_state: SshToolIntegrationValidationState;
+  cleanup_state: SshToolIntegrationCleanupState;
+  checked_at: string;
+}
+
 export interface SshConfigImportHost {
   alias: string;
   sourceFile: string;
@@ -146,6 +303,7 @@ export interface Project {
   environment_type: ProjectEnvironmentType;
   ssh_host_id: string | null;
   remote_path: string;
+  cli_config_root: string;
   created_at: string;
   updated_at: string;
 }
@@ -167,6 +325,7 @@ export interface CreateProjectInput {
   environment_type?: ProjectEnvironmentType;
   ssh_host_id?: string | null;
   remote_path?: string;
+  cli_config_root?: string;
 }
 
 export interface UpdateProjectInput {
@@ -187,6 +346,7 @@ export interface UpdateProjectInput {
   environment_type?: ProjectEnvironmentType;
   ssh_host_id?: string | null;
   remote_path?: string;
+  cli_config_root?: string;
 }
 
 export type TerminalScope =
@@ -229,6 +389,19 @@ export interface SyncedHistoryPaneSession {
   updatedAt: number;
 }
 
+export type RemoteHandoffPhase = "pending" | "active" | "cancelling" | "recovery_failed";
+
+export interface RemoteHandoffSessionState {
+  phase: RemoteHandoffPhase;
+  cliSessionId: string;
+  projectName: string;
+  workDir: string;
+  providerId?: string;
+  providerName?: string;
+  platform?: "telegram" | "feishu" | "weixin" | "wecom";
+  startedAtMs?: number;
+}
+
 export interface TerminalSession {
   id: string;
   projectId?: string;
@@ -249,6 +422,10 @@ export interface TerminalSession {
   /** true 时启动命令由 XTermTerminal 在 initialTerminalOutput 写完后再发送。 */
   deferStartupUntilInitialOutput?: boolean;
   cliSessionId?: string;
+  remoteHistoryConsumerId?: string;
+  remoteHistorySourceInstanceId?: string;
+  /** 远程托管期间保留标签元数据，但本地不再持有 PTY。 */
+  remoteHandoff?: RemoteHandoffSessionState;
   /** CLI hook 上报的当前 effort，仅用于实时统计展示，不作为历史解析来源。 */
   cliReasoningEffort?: string;
   /** 会话类型；缺省视为 "pty"。"subagent-transcript" 为只读转录伪会话（无 PTY、不持久化）。 */
@@ -355,6 +532,29 @@ export type HistorySource = HistorySourceId;
 export type HistorySourceFilter = "all" | HistorySourceId;
 export type CcusageSource = "all" | "claude" | "codex";
 
+export interface HistoryRawPointer {
+  role: string;
+  kind: string;
+  rawKey: string;
+  lineIndex?: number | null;
+}
+
+export interface HistorySessionRef {
+  sourceId: HistorySource;
+  sourceInstanceId: string;
+  sourceSessionId: string;
+  transportKind: "local" | "wsl" | "ssh" | string;
+  rawPointers: HistoryRawPointer[];
+}
+
+export interface HistoryRemoteIdentity {
+  hostId?: string;
+  installationId?: string;
+  remoteMachineId?: string;
+  sshUser?: string;
+  configRootHash?: string;
+}
+
 export interface HistorySessionSummary {
   session_id: string;
   source: HistorySource;
@@ -366,6 +566,12 @@ export interface HistorySessionSummary {
   updated_at: number;
   message_count: number;
   branch?: string | null;
+  session_ref?: HistorySessionRef | null;
+  materialization_level?: "summary" | "detail" | "full" | string;
+  freshness_state?: "fresh" | "partial" | "stale" | "offline" | string;
+  as_of?: number | null;
+  remote_identity?: HistoryRemoteIdentity | null;
+  read_only?: boolean;
 }
 
 export interface HistoryMessage {
@@ -493,6 +699,47 @@ export interface HistorySearchHit {
   role: string;
   snippet: string;
   timestamp?: string | null;
+  session_ref?: HistorySessionRef | null;
+  read_only?: boolean;
+}
+
+export interface SshRemoteHistorySyncResult {
+  sourceInstanceId: string;
+  source: SshToolSource;
+  installationId: string;
+  remoteMachineId: string;
+  sshUser: string;
+  configuredConfigRoot: string;
+  canonicalConfigRoot: string;
+  configRootHash: string;
+  generation: number;
+  cursor: string;
+  hasMore: boolean;
+  totalSessions: number;
+  freshnessState: string;
+  asOf: number;
+  discoveryComplete: boolean;
+  partial: boolean;
+  sessions: unknown[];
+  tombstones: string[];
+  warnings: string[];
+}
+
+export interface SshRemoteResumePreflight {
+  source: SshToolSource;
+  sourceSessionId: string;
+  sourceInstanceId: string;
+  installationId: string;
+  remoteMachineId: string;
+  sshUser: string;
+  canonicalConfigRoot: string;
+  remoteCwd: string;
+  cliCommand: string;
+  resumeArgs: string[];
+  resumeCommand: string;
+  environmentOverrides: Record<string, string>;
+  parserVersion: number;
+  indexedAt: number;
 }
 
 export type HistoryIndexPhase = "idle" | "seeding" | "scanning" | "indexing" | "ready" | "error";

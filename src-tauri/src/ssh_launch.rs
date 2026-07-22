@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::ssh_transport::{
+    format_remote_home_path, posix_quote, validate_remote_home_path, SshOneShotOptions,
+    SshRemoteHomePathError, SshTransportLaunch, SshTransportSpec,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SshLaunchPlan {
@@ -29,166 +34,98 @@ pub struct SshLaunchPlan {
     pub server_alive_count_max: u32,
     pub remote_path: String,
     #[serde(default)]
+    pub client_instance_id: String,
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub bridge_epoch: String,
+    #[serde(default)]
+    pub agent_path: String,
+    #[serde(default)]
+    pub agent_installation_id: String,
+    #[serde(default)]
+    pub agent_remote_machine_id: String,
+    #[serde(default)]
+    pub tool_source: String,
+    #[serde(default)]
     pub environment_overrides: HashMap<String, String>,
     #[serde(default)]
     pub initialization_command: Option<String>,
     pub startup_command: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SshProcessLaunch {
-    pub executable: String,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
-}
+pub type SshProcessLaunch = SshTransportLaunch;
 
 impl SshLaunchPlan {
     pub fn build_process_launch(&self) -> Result<SshProcessLaunch, String> {
         self.validate()?;
-        let mut args = Vec::new();
-        if !self.config_file.trim().is_empty() {
-            args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
+        self.transport_spec()
+            .build_interactive_launch(self.remote_command())
+    }
+
+    pub(crate) fn build_agent_bridge_launch(&self) -> Result<SshProcessLaunch, String> {
+        self.validate()?;
+        if self.agent_path.is_empty() {
+            return Err("ssh_agent_identity_required".to_string());
         }
-        args.extend([
-            "-tt".to_string(),
-            "-o".to_string(),
-            format!("ConnectTimeout={}", self.connect_timeout_sec),
-            "-o".to_string(),
-            format!("ServerAliveInterval={}", self.server_alive_interval_sec),
-            "-o".to_string(),
-            format!("ServerAliveCountMax={}", self.server_alive_count_max),
-        ]);
-        if self.config_alias.trim().is_empty() {
-            args.extend(["-p".to_string(), self.port.to_string()]);
-        }
-        if self.auth_mode == "identity_file" && !self.identity_file.trim().is_empty() {
-            args.extend(["-i".to_string(), self.identity_file.trim().to_string()]);
-        }
-        match self.auth_mode.as_str() {
-            "agent" => args.extend([
-                "-o".to_string(),
-                "PubkeyAuthentication=yes".to_string(),
-                "-o".to_string(),
-                "PreferredAuthentications=publickey".to_string(),
-            ]),
-            "identity_file" => args.extend([
-                "-o".to_string(),
-                "IdentitiesOnly=yes".to_string(),
-                "-o".to_string(),
-                "PreferredAuthentications=publickey".to_string(),
-            ]),
-            "password_prompt" | "credential_ref" => args.extend([
-                "-o".to_string(),
-                "PubkeyAuthentication=no".to_string(),
-                "-o".to_string(),
-                "PasswordAuthentication=yes".to_string(),
-                "-o".to_string(),
-                "KbdInteractiveAuthentication=yes".to_string(),
-                "-o".to_string(),
-                "PreferredAuthentications=password,keyboard-interactive".to_string(),
-            ]),
-            "interactive" => args.extend([
-                "-o".to_string(),
-                "PubkeyAuthentication=no".to_string(),
-                "-o".to_string(),
-                "PasswordAuthentication=no".to_string(),
-                "-o".to_string(),
-                "KbdInteractiveAuthentication=yes".to_string(),
-                "-o".to_string(),
-                "PreferredAuthentications=keyboard-interactive".to_string(),
-            ]),
-            _ => {}
-        }
-        let proxy_command = crate::ssh_proxy::build_proxy_command(
-            &self.proxy_type,
-            &self.proxy_host,
-            self.proxy_port,
-            &self.proxy_command,
-        )?;
-        if proxy_command.is_empty() && !self.jump_target.trim().is_empty() {
-            args.extend(["-J".to_string(), self.jump_target.trim().to_string()]);
-        }
-        if !proxy_command.is_empty() {
-            args.extend(["-o".to_string(), format!("ProxyCommand={proxy_command}")]);
-        }
-        args.push(self.target());
-        args.push(self.remote_command());
-        let env = if self.auth_mode == "credential_ref" {
-            crate::ssh_askpass::prepare(&self.credential_ref)?
-        } else {
-            HashMap::new()
-        };
-        Ok(SshProcessLaunch {
-            executable: "ssh".to_string(),
-            args,
-            env,
-        })
+        self.transport_spec().build_one_shot_launch(
+            format!(
+                "exec {} bridge --stdio --protocol 1",
+                format_remote_home_path(&self.agent_path)
+            ),
+            SshOneShotOptions::default(),
+        )
     }
 
     fn validate(&self) -> Result<(), String> {
         if self.host_id.trim().is_empty() {
             return Err("ssh_host_not_found".to_string());
         }
-        if self.config_alias.trim().is_empty() && self.host.trim().is_empty() {
-            return Err("ssh_host_address_required".to_string());
-        }
-        if self.config_alias.trim().is_empty() && self.port == 0 {
-            return Err("ssh_host_port_invalid".to_string());
-        }
-        validate_config_file(&self.config_file)?;
-        if self.connect_timeout_sec == 0 || self.connect_timeout_sec > 300 {
-            return Err("ssh_connect_timeout_invalid".to_string());
-        }
-        if self.server_alive_count_max > 100 {
-            return Err("ssh_server_alive_count_invalid".to_string());
-        }
-        if !matches!(
-            self.auth_mode.as_str(),
-            "ssh_config"
-                | "agent"
-                | "identity_file"
-                | "password_prompt"
-                | "interactive"
-                | "credential_ref"
-        ) {
-            return Err("ssh_auth_mode_invalid".to_string());
-        }
-        if self.auth_mode == "identity_file" && self.identity_file.trim().is_empty() {
-            return Err("ssh_identity_file_required".to_string());
-        }
-        if self.auth_mode == "credential_ref" && self.credential_ref.trim().is_empty() {
-            return Err("ssh_credential_ref_required".to_string());
-        }
-        for value in [
-            &self.config_alias,
-            &self.config_file,
-            &self.host,
-            &self.username,
-            &self.identity_file,
-            &self.credential_ref,
-            &self.jump_target,
-            &self.proxy_type,
-            &self.proxy_host,
-            &self.proxy_command,
-        ] {
-            validate_single_line(value)?;
-        }
-        if contains_url_credentials(&self.proxy_command) {
-            return Err("ssh_proxy_credentials_forbidden".to_string());
-        }
-        crate::ssh_proxy::build_proxy_command(
-            &self.proxy_type,
-            &self.proxy_host,
-            self.proxy_port,
-            &self.proxy_command,
-        )?;
+        self.transport_spec().validate()?;
         validate_remote_path(&self.remote_path)?;
+        for value in [&self.client_instance_id, &self.bridge_epoch] {
+            if !value.is_empty() && uuid::Uuid::parse_str(value).is_err() {
+                return Err("ssh_hook_binding_invalid".to_string());
+            }
+        }
+        if self.project_id.contains(['\0', '\r', '\n', '/', '\\']) || self.project_id.len() > 256 {
+            return Err("ssh_hook_binding_invalid".to_string());
+        }
+        let agent_fields_present = [
+            !self.agent_path.is_empty(),
+            !self.agent_installation_id.is_empty(),
+            !self.agent_remote_machine_id.is_empty(),
+        ];
+        if agent_fields_present.iter().any(|value| *value)
+            && !agent_fields_present.iter().all(|value| *value)
+        {
+            return Err("ssh_agent_identity_required".to_string());
+        }
+        if !self.agent_path.is_empty() {
+            validate_remote_home_path(&self.agent_path)
+                .map_err(|_| "ssh_agent_path_invalid".to_string())?;
+            uuid::Uuid::parse_str(&self.agent_installation_id)
+                .map_err(|_| "ssh_agent_identity_required".to_string())?;
+            if self.agent_remote_machine_id.len() > 256
+                || self.agent_remote_machine_id.contains(['\0', '\r', '\n'])
+            {
+                return Err("ssh_agent_identity_required".to_string());
+            }
+        }
+        if !matches!(self.tool_source.as_str(), "" | "claude" | "codex") {
+            return Err("ssh_tool_source_invalid".to_string());
+        }
         if self
             .environment_overrides
             .keys()
             .any(|key| !is_valid_environment_key(key))
         {
             return Err("ssh_environment_key_invalid".to_string());
+        }
+        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
+            if let Some(value) = self.environment_overrides.get(key) {
+                validate_tool_config_root(value)?;
+            }
         }
         if self
             .environment_overrides
@@ -211,14 +148,24 @@ impl SshLaunchPlan {
         Ok(())
     }
 
-    fn target(&self) -> String {
-        if !self.config_alias.trim().is_empty() {
-            return self.config_alias.trim().to_string();
-        }
-        if self.username.trim().is_empty() {
-            self.host.trim().to_string()
-        } else {
-            format!("{}@{}", self.username.trim(), self.host.trim())
+    fn transport_spec(&self) -> SshTransportSpec {
+        SshTransportSpec {
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            config_alias: self.config_alias.clone(),
+            config_file: self.config_file.clone(),
+            auth_mode: self.auth_mode.clone(),
+            identity_file: self.identity_file.clone(),
+            credential_ref: self.credential_ref.clone(),
+            jump_target: self.jump_target.clone(),
+            proxy_type: self.proxy_type.clone(),
+            proxy_host: self.proxy_host.clone(),
+            proxy_port: self.proxy_port,
+            proxy_command: self.proxy_command.clone(),
+            connect_timeout_sec: self.connect_timeout_sec,
+            server_alive_interval_sec: self.server_alive_interval_sec,
+            server_alive_count_max: self.server_alive_count_max,
         }
     }
 
@@ -229,11 +176,14 @@ impl SshLaunchPlan {
         ];
         let mut environment: Vec<_> = self.environment_overrides.iter().collect();
         environment.sort_by(|left, right| left.0.cmp(right.0));
-        setup.extend(
-            environment
-                .into_iter()
-                .map(|(key, value)| format!("export {key}={}", posix_quote(value))),
-        );
+        setup.extend(environment.into_iter().map(|(key, value)| {
+            let formatted_value = if matches!(key.as_str(), "CLAUDE_CONFIG_DIR" | "CODEX_HOME") {
+                format_tool_config_root(value)
+            } else {
+                posix_quote(value)
+            };
+            format!("export {key}={formatted_value}")
+        }));
         let setup = setup.join(" && ");
         let mut shell_commands = Vec::new();
         if let Some(command) = self
@@ -265,28 +215,6 @@ impl SshLaunchPlan {
     }
 }
 
-fn validate_config_file(value: &str) -> Result<(), String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(());
-    }
-    let path = std::path::Path::new(trimmed);
-    if !path.is_absolute() {
-        return Err("ssh_config_file_invalid".to_string());
-    }
-    if !path.is_file() {
-        return Err("ssh_config_file_not_found".to_string());
-    }
-    Ok(())
-}
-
-fn validate_single_line(value: &str) -> Result<(), String> {
-    if value.contains(['\0', '\r', '\n']) {
-        return Err("ssh_launch_argument_invalid".to_string());
-    }
-    Ok(())
-}
-
 fn validate_remote_path(path: &str) -> Result<(), String> {
     let path = path.trim();
     if !path.starts_with('/') || path.contains(['\0', '\r', '\n']) {
@@ -298,26 +226,24 @@ fn validate_remote_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn posix_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
+fn validate_tool_config_root(path: &str) -> Result<(), String> {
+    match validate_remote_home_path(path) {
+        Ok(()) => Ok(()),
+        Err(SshRemoteHomePathError::Invalid) => Err("ssh_tool_config_root_invalid".to_string()),
+        Err(SshRemoteHomePathError::ParentTraversal) => {
+            Err("ssh_tool_config_root_parent_forbidden".to_string())
+        }
+    }
+}
+
+fn format_tool_config_root(path: &str) -> String {
+    format_remote_home_path(path)
 }
 
 fn is_valid_environment_key(key: &str) -> bool {
     let mut chars = key.chars();
     matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
         && chars.all(|ch| matches!(ch, '_' | 'A'..='Z' | 'a'..='z' | '0'..='9'))
-}
-
-fn contains_url_credentials(value: &str) -> bool {
-    value.split_whitespace().any(|token| {
-        let Some((_, remainder)) = token.split_once("://") else {
-            return false;
-        };
-        let authority = remainder.split('/').next().unwrap_or(remainder);
-        authority
-            .split_once('@')
-            .is_some_and(|(userinfo, _)| userinfo.contains(':'))
-    })
 }
 
 #[cfg(test)]
@@ -344,6 +270,13 @@ mod tests {
             server_alive_interval_sec: 30,
             server_alive_count_max: 3,
             remote_path: "/srv/project name/开发".into(),
+            client_instance_id: String::new(),
+            project_id: String::new(),
+            bridge_epoch: String::new(),
+            agent_path: String::new(),
+            agent_installation_id: String::new(),
+            agent_remote_machine_id: String::new(),
+            tool_source: String::new(),
             environment_overrides: [("APP_MODE".to_string(), "remote dev".to_string())].into(),
             initialization_command: None,
             startup_command: Some("printf '%s\\n' \"it's ready\"".into()),
@@ -418,6 +351,52 @@ mod tests {
         let mut value = plan();
         value.startup_command = None;
         assert_eq!(value.build_process_launch().unwrap().args.last().unwrap(), "cd -- '/srv/project name/开发' && printf '\\033]777;cli-manager-ssh=connected\\007' && export APP_MODE='remote dev' && exec \"${SHELL:-/bin/sh}\" -l");
+    }
+
+    #[test]
+    fn tool_config_roots_are_exported_with_safe_home_expansion() {
+        let mut value = plan();
+        value.environment_overrides = [
+            (
+                "CLAUDE_CONFIG_DIR".to_string(),
+                "~/claude state".to_string(),
+            ),
+            ("CODEX_HOME".to_string(), "/srv/codex state".to_string()),
+        ]
+        .into();
+        let command = value.build_process_launch().unwrap().args.pop().unwrap();
+        assert!(command.contains("export CLAUDE_CONFIG_DIR=\"${HOME}\"/'claude state'"));
+        assert!(command.contains("export CODEX_HOME='/srv/codex state'"));
+    }
+
+    #[test]
+    fn tool_config_root_accepts_home_itself() {
+        let mut value = plan();
+        value.environment_overrides = [("CODEX_HOME".to_string(), "~".to_string())].into();
+        let command = value.build_process_launch().unwrap().args.pop().unwrap();
+        assert!(command.contains("export CODEX_HOME=\"${HOME}\""));
+    }
+
+    #[test]
+    fn tool_config_root_rejects_traversal_and_shell_expansion() {
+        for invalid in [
+            "~/../secret",
+            "$HOME/.claude",
+            "~/bad`command",
+            "relative/path",
+            "~/bad\\path",
+            "~/bad\npath",
+            "~/bad\rpath",
+            "~/bad\0path",
+        ] {
+            let mut value = plan();
+            value.environment_overrides =
+                [("CLAUDE_CONFIG_DIR".to_string(), invalid.to_string())].into();
+            assert!(matches!(
+                value.build_process_launch().unwrap_err().as_str(),
+                "ssh_tool_config_root_invalid" | "ssh_tool_config_root_parent_forbidden"
+            ));
+        }
     }
 
     #[test]

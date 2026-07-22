@@ -12,6 +12,7 @@ const CODEX_CELL_HEIGHT = 208;
 const CODEX_COLUMNS = 8;
 const SPRITE_ALPHA_THRESHOLD = 4;
 const SPRITE_FIT_PADDING = 0.92;
+const MAX_SPRITE_BOUNDS_CACHE_ENTRIES = 128;
 
 interface SpriteContentBounds {
   x: number;
@@ -33,6 +34,14 @@ const FULL_SPRITE_BOUNDS: SpriteContentBounds = {
   height: CODEX_CELL_HEIGHT,
 };
 const spriteBoundsCache = new Map<string, SpriteContentBounds>();
+
+function cacheSpriteBounds(key: string, bounds: SpriteContentBounds): void {
+  if (!spriteBoundsCache.has(key) && spriteBoundsCache.size >= MAX_SPRITE_BOUNDS_CACHE_ENTRIES) {
+    const oldestKey = spriteBoundsCache.keys().next().value as string | undefined;
+    if (oldestKey) spriteBoundsCache.delete(oldestKey);
+  }
+  spriteBoundsCache.set(key, bounds);
+}
 
 export function calculateSpriteContentLayout(
   width: number,
@@ -90,6 +99,9 @@ function measureSpriteContentBounds(
     }
   } catch {
     return FULL_SPRITE_BOUNDS;
+  } finally {
+    canvas.width = 1;
+    canvas.height = 1;
   }
   if (maxX < minX || maxY < minY) return FULL_SPRITE_BOUNDS;
   return {
@@ -154,16 +166,18 @@ function CodexSpriteArtwork({
       return;
     }
     const measured = measureSpriteContentBounds(event.currentTarget, row, frames);
-    spriteBoundsCache.set(boundsKey, measured);
+    cacheSpriteBounds(boundsKey, measured);
     setContentBounds(measured);
   };
-  const spriteStyle = {
+  const frameStyle = {
     left: `${layout.left}px`,
     top: `${layout.top}px`,
-    backgroundImage: `url(${assetUrl})`,
-    backgroundPositionY: `${-row * CODEX_CELL_HEIGHT}px`,
-    backgroundSize: `${CODEX_CELL_WIDTH * CODEX_COLUMNS}px ${CODEX_CELL_HEIGHT * rows}px`,
     transform: `scale(${layout.scale})`,
+  } as CSSProperties;
+  const sheetStyle = {
+    top: `${-row * CODEX_CELL_HEIGHT}px`,
+    width: `${CODEX_CELL_WIDTH * CODEX_COLUMNS}px`,
+    height: `${CODEX_CELL_HEIGHT * rows}px`,
     "--pet-sprite-end-x": `${-frames * CODEX_CELL_WIDTH}px`,
     "--pet-sprite-frames": frames,
     "--pet-sprite-duration": `${Math.max(frames * 260, 1400)}ms`,
@@ -176,19 +190,18 @@ function CodexSpriteArtwork({
       role="img"
       aria-label={alt}
     >
-      <img
-        className="pet-artwork-sprite-probe"
-        src={assetUrl}
-        alt=""
-        aria-hidden="true"
-        onLoad={handleProbeLoad}
-        onError={onError}
-      />
-      <span
-        className={`pet-artwork-sprite ${animated && frames > 1 ? "is-animated" : ""}`}
-        style={spriteStyle}
-        aria-hidden="true"
-      />
+      <span className="pet-artwork-sprite-frame" style={frameStyle} aria-hidden="true">
+        <img
+          key={boundsKey}
+          className={`pet-artwork-sprite-sheet ${animated && frames > 1 ? "is-animated" : ""}`}
+          src={assetUrl}
+          alt=""
+          draggable={false}
+          style={sheetStyle}
+          onLoad={handleProbeLoad}
+          onError={onError}
+        />
+      </span>
     </span>
   );
 }

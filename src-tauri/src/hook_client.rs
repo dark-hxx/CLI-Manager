@@ -9,6 +9,7 @@ use std::net::TcpStream;
 use std::process::exit;
 use std::time::Duration;
 
+use cli_manager_hook_schema::{non_empty_trimmed, normalize_hook_input};
 use serde_json::{json, Value};
 
 /// `main` 在初始化 Tauri runtime 之前调用本函数并退出，因此这里
@@ -32,98 +33,10 @@ fn try_notify(source: &str, event: &str) -> Option<()> {
         return None;
     }
 
-    let tool_input = hook_input.get("tool_input");
-    let tool_response = hook_input
-        .get("tool_response")
-        .or_else(|| hook_input.get("tool_result"));
-    let message = first_string(
-        &hook_input,
-        &["message", "prompt", "notification", "reason"],
-    )
-    .or_else(|| {
-        tool_input.and_then(|value| first_string(value, &["prompt", "description", "task"]))
-    });
-    let session_id = hook_input
-        .get("session_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    // 子 Agent 事件（SubagentStart 等）字段；hook stdin 为 snake_case。
-    let agent_id = first_string(&hook_input, &["agent_id"])
-        .or_else(|| tool_input.and_then(|value| first_string(value, &["agent_id", "agentId"])))
-        .or_else(|| tool_response.and_then(|value| first_string(value, &["agent_id", "agentId"])));
-    let tool_use_id = first_string(&hook_input, &["tool_use_id", "toolUseId", "tool_id", "id"])
-        .or_else(|| {
-            tool_input.and_then(|value| first_string(value, &["tool_use_id", "toolUseId", "id"]))
-        });
-    let tool_name = first_string(&hook_input, &["tool_name", "toolName", "name"])
-        .or_else(|| {
-            tool_input.and_then(|value| first_string(value, &["tool_name", "toolName", "name"]))
-        })
-        .or_else(|| {
-            tool_response.and_then(|value| first_string(value, &["tool_name", "toolName", "name"]))
-        });
-    if matches!(event, "ToolStart" | "ToolStop")
-        && tool_name
-            .as_deref()
-            .is_some_and(|name| matches!(name, "Agent" | "Task"))
-    {
-        return None;
-    }
-    let mcp_server = tool_name
-        .as_deref()
-        .and_then(extract_mcp_server)
-        .or_else(|| first_string(&hook_input, &["mcp_server", "mcpServer", "server"]))
-        .or_else(|| {
-            tool_input.and_then(|value| first_string(value, &["mcp_server", "mcpServer", "server"]))
-        })
-        .or_else(|| {
-            tool_response
-                .and_then(|value| first_string(value, &["mcp_server", "mcpServer", "server"]))
-        });
-    let skill_name = tool_input
-        .and_then(|value| first_string(value, &["skill", "skill_name", "skillName"]))
-        .or_else(|| first_string(&hook_input, &["skill", "skill_name", "skillName"]));
-    let agent_type = first_string(&hook_input, &["agent_type"])
-        .or_else(|| {
-            tool_input.and_then(|value| {
-                first_string(
-                    value,
-                    &["agent_type", "agentType", "subagent_type", "subagentType"],
-                )
-            })
-        })
-        .or_else(|| {
-            tool_response.and_then(|value| {
-                first_string(
-                    value,
-                    &["agent_type", "agentType", "subagent_type", "subagentType"],
-                )
-            })
-        });
-    let agent_transcript_path = first_string(&hook_input, &["agent_transcript_path"])
-        .or_else(|| {
-            tool_input.and_then(|value| {
-                first_string(value, &["agent_transcript_path", "agentTranscriptPath"])
-            })
-        })
-        .or_else(|| {
-            tool_response.and_then(|value| {
-                first_string(value, &["agent_transcript_path", "agentTranscriptPath"])
-            })
-        })
-        .or_else(|| {
-            deep_first_string(
-                &hook_input,
-                &[
-                    "agent_transcript_path",
-                    "agentTranscriptPath",
-                    "child_transcript_path",
-                    "childTranscriptPath",
-                ],
-            )
-        });
-    let transcript_path = first_string(&hook_input, &["transcript_path"]);
-    let reasoning_effort = extract_reasoning_effort(&hook_input);
+    let normalized = normalize_hook_input(event, &hook_input)?;
+    let reasoning_effort = normalized
+        .reasoning_effort
+        .or_else(|| non_empty_env("CLAUDE_EFFORT").and_then(|value| non_empty_trimmed(&value)));
     let wsl_distro_name = non_empty_env("WSL_DISTRO_NAME");
     let cwd = env::current_dir()
         .ok()
@@ -135,18 +48,18 @@ fn try_notify(source: &str, event: &str) -> Option<()> {
         "source": source,
         "event": event,
         "title": title_for(source, event),
-        "message": message,
-        "sessionId": session_id,
+        "message": normalized.message,
+        "sessionId": normalized.session_id,
         "cwd": cwd,
         "timestamp": chrono::Utc::now().to_rfc3339(),
-        "agentId": agent_id,
-        "toolUseId": tool_use_id,
-        "toolName": tool_name,
-        "mcpServer": mcp_server,
-        "skillName": skill_name,
-        "agentType": agent_type,
-        "agentTranscriptPath": agent_transcript_path,
-        "transcriptPath": transcript_path,
+        "agentId": normalized.agent_id,
+        "toolUseId": normalized.tool_use_id,
+        "toolName": normalized.tool_name,
+        "mcpServer": normalized.mcp_server,
+        "skillName": normalized.skill_name,
+        "agentType": normalized.agent_type,
+        "agentTranscriptPath": normalized.agent_transcript_path,
+        "transcriptPath": normalized.transcript_path,
         "reasoningEffort": reasoning_effort,
         "wslDistroName": wsl_distro_name,
     });
@@ -192,61 +105,6 @@ fn should_suppress_codex_permission_request(source: &str, event: &str, hook_inpu
             Some("dontAsk" | "bypassPermissions")
         )
 }
-
-fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(Value::as_str).map(str::to_string))
-}
-
-fn deep_first_string(value: &Value, keys: &[&str]) -> Option<String> {
-    match value {
-        Value::Object(map) => {
-            if let Some(found) = keys
-                .iter()
-                .find_map(|key| map.get(*key).and_then(Value::as_str).map(str::to_string))
-            {
-                return Some(found);
-            }
-            map.values()
-                .find_map(|child| deep_first_string(child, keys))
-        }
-        Value::Array(items) => items
-            .iter()
-            .find_map(|child| deep_first_string(child, keys)),
-        _ => None,
-    }
-}
-
-fn extract_mcp_server(value: &str) -> Option<String> {
-    let rest = value.strip_prefix("mcp__")?;
-    let (server, _) = rest.split_once("__")?;
-    non_empty_trimmed(server)
-}
-
-fn extract_reasoning_effort(hook_input: &Value) -> Option<String> {
-    let candidates = [
-        hook_input.get("effort").and_then(Value::as_str),
-        hook_input
-            .get("effort")
-            .and_then(|value| value.get("level"))
-            .and_then(Value::as_str),
-        hook_input.get("reasoning_effort").and_then(Value::as_str),
-        hook_input.get("reasoningEffort").and_then(Value::as_str),
-        hook_input.get("effort_level").and_then(Value::as_str),
-        hook_input.get("effortLevel").and_then(Value::as_str),
-    ];
-    candidates
-        .into_iter()
-        .flatten()
-        .find_map(non_empty_trimmed)
-        .or_else(|| non_empty_env("CLAUDE_EFFORT").and_then(|value| non_empty_trimmed(&value)))
-}
-
-fn non_empty_trimmed(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
 /// 与旧 PowerShell 脚本保持一致的标题文案；前端在缺省时会自行兜底（App.tsx）。
 fn title_for(source: &str, event: &str) -> &'static str {
     match (source, event) {
@@ -256,6 +114,10 @@ fn title_for(source: &str, event: &str) -> &'static str {
         ("codex", "SubagentStart") => "Codex CLI subagent started",
         ("codex", "SubagentStop") => "Codex CLI subagent done",
         ("codex", _) => "Codex CLI needs attention", // PermissionRequest
+        ("pi", "SessionStart") => "Pi Agent session started",
+        ("pi", "UserPromptSubmit") => "Pi Agent running",
+        ("pi", "Stop") => "Pi Agent done",
+        ("pi", _) => "Pi Agent needs attention",
         (_, "SessionStart") => "Claude Code session started",
         (_, "UserPromptSubmit") => "Claude Code running",
         (_, "Stop") => "Claude Code done",
@@ -272,7 +134,7 @@ fn title_for(source: &str, event: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::should_suppress_codex_permission_request;
     use serde_json::json;
 
     #[test]
@@ -282,7 +144,10 @@ mod tests {
             "effort": { "level": " high " }
         });
 
-        assert_eq!(extract_reasoning_effort(&input).as_deref(), Some("high"));
+        assert_eq!(
+            cli_manager_hook_schema::extract_reasoning_effort(&input).as_deref(),
+            Some("high")
+        );
     }
 
     #[test]
@@ -292,16 +157,19 @@ mod tests {
             "reasoning_effort": "xhigh"
         });
 
-        assert_eq!(extract_reasoning_effort(&input).as_deref(), Some("xhigh"));
+        assert_eq!(
+            cli_manager_hook_schema::extract_reasoning_effort(&input).as_deref(),
+            Some("xhigh")
+        );
     }
 
     #[test]
     fn extract_mcp_server_reads_claude_tool_name() {
         assert_eq!(
-            extract_mcp_server("mcp__exa__web_search_exa").as_deref(),
+            cli_manager_hook_schema::extract_mcp_server("mcp__exa__web_search_exa").as_deref(),
             Some("exa")
         );
-        assert_eq!(extract_mcp_server("Read"), None);
+        assert_eq!(cli_manager_hook_schema::extract_mcp_server("Read"), None);
     }
 
     #[test]

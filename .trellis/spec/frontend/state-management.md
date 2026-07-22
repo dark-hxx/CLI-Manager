@@ -244,6 +244,12 @@ interface SettingsStore extends Settings {
 - Good: after update, old inline snapshots are migrated once for that app version and `cli-manager.db` no longer carries large `payload.patch` fields.
 - Base: already-checked installs on the same version start normally; cleanup is skipped by marker.
 - Bad: writing patch files into the current project repo, because AI Replay metadata would pollute user worktrees.
+
+### Scenario: SSH Hook events are not local Replay projects
+
+- Trigger: `recordCliHookEvent` receives a Hook payload with `environmentType = "ssh"`.
+- Remote `cwd` is an opaque display/reference value. Do not use it as `projectPath`, pass it to local Git snapshot commands, or route it through local file APIs.
+- Persist the event metadata and raw remote reference for Replay visibility, but force the session's local `projectPath` to `null` and skip automatic code snapshots. Local and WSL payloads keep the existing `cwd` and snapshot behavior.
 - Bad: deleting legacy inline `patch` before the patch file is written, because rollback/fork would lose the snapshot content.
 
 #### 6. Tests Required

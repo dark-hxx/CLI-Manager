@@ -1,12 +1,18 @@
 use crate::commands::model_pricing::{find_cached_model_pricing, CachedModelPricingLookup};
+use crate::daemon::client::DaemonBridge;
 use crate::shell_resolver::silent_command;
+use crate::ssh_launch::SshLaunchPlan;
+use crate::ssh_transport::posix_quote;
 use chrono::{DateTime, Datelike, SecondsFormat, Utc};
+use cli_manager_history_core::{
+    RemoteHistorySearchHit, RemoteHistorySessionDetail, RemoteHistorySyncResult,
+};
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, Row, SqliteConnection};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -391,6 +397,64 @@ static HISTORY_STATS_AGGREGATION_CACHE: OnceLock<Mutex<HistoryStatsAggregationCa
     OnceLock::new();
 static HISTORY_STATS_DAILY_INDEX_CACHE: OnceLock<Mutex<HistoryStatsDailyIndexCache>> =
     OnceLock::new();
+static REMOTE_HISTORY_DETAIL_CACHE: OnceLock<Mutex<RemoteHistoryDetailCache>> = OnceLock::new();
+
+const REMOTE_HISTORY_DETAIL_CACHE_MAX: usize = 20;
+const REMOTE_HISTORY_DETAIL_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct RemoteHistoryDetailCache {
+    entries: VecDeque<(String, Value, usize)>,
+    bytes: usize,
+}
+
+impl RemoteHistoryDetailCache {
+    fn get(&mut self, key: &str) -> Option<Value> {
+        let index = self.entries.iter().position(|entry| entry.0 == key)?;
+        let entry = self.entries.remove(index)?;
+        let value = entry.1.clone();
+        self.entries.push_back(entry);
+        Some(value)
+    }
+
+    fn insert(&mut self, key: String, value: Value) {
+        let size = serde_json::to_vec(&value).map_or(0, |bytes| bytes.len());
+        if size > REMOTE_HISTORY_DETAIL_CACHE_BYTES {
+            return;
+        }
+        if let Some(index) = self.entries.iter().position(|entry| entry.0 == key) {
+            if let Some(removed) = self.entries.remove(index) {
+                self.bytes = self.bytes.saturating_sub(removed.2);
+            }
+        }
+        while self.entries.len() >= REMOTE_HISTORY_DETAIL_CACHE_MAX
+            || self.bytes.saturating_add(size) > REMOTE_HISTORY_DETAIL_CACHE_BYTES
+        {
+            let Some(removed) = self.entries.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(removed.2);
+        }
+        self.bytes = self.bytes.saturating_add(size);
+        self.entries.push_back((key, value, size));
+    }
+
+    fn invalidate_instance(&mut self, source_instance_id: &str) {
+        let prefix = format!("{source_instance_id}:");
+        self.entries.retain(|(key, _, size)| {
+            if key.starts_with(&prefix) {
+                self.bytes = self.bytes.saturating_sub(*size);
+                false
+            } else {
+                true
+            }
+        });
+    }
+}
+
+fn remote_history_detail_cache() -> &'static Mutex<RemoteHistoryDetailCache> {
+    REMOTE_HISTORY_DETAIL_CACHE.get_or_init(|| Mutex::new(RemoteHistoryDetailCache::default()))
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1711,6 +1775,507 @@ pub async fn history_index_v2_deactivate_source_instance(
     instance_id: Option<String>,
 ) -> Result<HistoryIndexV2Status, String> {
     catalog::deactivate_v2_source_instance(source_id, instance_id).await
+}
+
+fn validate_remote_history_plan(plan: &SshLaunchPlan, source: &str) -> Result<(), String> {
+    if !matches!(source, "claude" | "codex")
+        || plan.host_id.trim().is_empty()
+        || plan.agent_path.trim().is_empty()
+        || plan.agent_installation_id.trim().is_empty()
+        || plan.agent_remote_machine_id.trim().is_empty()
+        || plan.client_instance_id.trim().is_empty()
+        || (!plan.tool_source.is_empty() && plan.tool_source != source)
+    {
+        return Err("history_remote_plan_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn remote_scope_payload(
+    source: &str,
+    configured_config_root: &str,
+    project_paths: Vec<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+) -> Value {
+    json!({
+        "source": source,
+        "configuredConfigRoot": configured_config_root,
+        "projectPaths": project_paths,
+        "cursor": cursor.unwrap_or_default(),
+        "limit": limit.unwrap_or(200).clamp(1, 1000),
+    })
+}
+
+fn remote_error_code(error: &str) -> &str {
+    error
+        .split([':', ' '])
+        .find(|value| !value.is_empty())
+        .unwrap_or("history_remote_unavailable")
+}
+
+fn validate_remote_history_sync_result(
+    plan: &SshLaunchPlan,
+    source: &str,
+    configured_config_root: &str,
+    expected_source_instance_id: Option<&str>,
+    result: &RemoteHistorySyncResult,
+) -> Result<(), String> {
+    if result.source != source
+        || result.installation_id != plan.agent_installation_id
+        || result.remote_machine_id != plan.agent_remote_machine_id
+        || result.configured_config_root != configured_config_root.trim()
+        || (!plan.username.trim().is_empty() && result.ssh_user != plan.username.trim())
+        || expected_source_instance_id
+            .filter(|value| !value.trim().is_empty())
+            .is_some_and(|expected| result.source_instance_id != expected)
+        || result.sessions.iter().any(|summary| {
+            summary.session_ref.source_instance_id != result.source_instance_id
+                || summary.session_ref.source_id != source
+                || summary.session_ref.transport_kind != "ssh"
+        })
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn history_remote_sync(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let host_id = ssh_launch.host_id.clone();
+    let payload = remote_scope_payload(
+        &source,
+        &configured_config_root,
+        project_paths,
+        cursor,
+        limit,
+    );
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let request_consumer_id = consumer_id.clone();
+    let request_plan = ssh_launch.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(
+            request_consumer_id,
+            request_plan,
+            "historySync".to_string(),
+            payload,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    let response = match response {
+        Ok(value) => value,
+        Err(error) => {
+            if let Some(instance_id) = source_instance_id.as_deref() {
+                let _ = catalog::mark_remote_stale(instance_id, remote_error_code(&error)).await;
+            }
+            return Err(error);
+        }
+    };
+    let result: RemoteHistorySyncResult = serde_json::from_value(response)
+        .map_err(|_| "history_remote_response_invalid".to_string())?;
+    validate_remote_history_sync_result(
+        &ssh_launch,
+        &source,
+        &configured_config_root,
+        source_instance_id.as_deref(),
+        &result,
+    )?;
+    catalog::apply_remote_sync(&host_id, &result).await?;
+    if let Ok(mut cache) = remote_history_detail_cache().lock() {
+        cache.invalidate_instance(&result.source_instance_id);
+    }
+    serde_json::to_value(result).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn history_remote_list_cached(
+    source_instance_id: String,
+    project_path: Option<String>,
+    query: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<Value>, String> {
+    catalog::list_remote_cached(
+        source_instance_id.trim(),
+        project_path.as_deref(),
+        query.as_deref(),
+        limit.unwrap_or(20).clamp(1, 1000),
+        offset.unwrap_or_default(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn history_remote_search(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<Value>, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let normalized_query = query.trim();
+    if normalized_query.chars().count() < 3 {
+        return Ok(Vec::new());
+    }
+    let payload = {
+        let mut payload =
+            remote_scope_payload(&source, &configured_config_root, project_paths, None, limit);
+        payload["query"] = Value::String(normalized_query.to_string());
+        payload
+    };
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(
+            consumer_id,
+            ssh_launch,
+            "historySearch".to_string(),
+            payload,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    let response = match response {
+        Ok(value) => value,
+        Err(error) => {
+            let _ =
+                catalog::mark_remote_stale(&source_instance_id, remote_error_code(&error)).await;
+            return Err(error);
+        }
+    };
+    let hits: Vec<RemoteHistorySearchHit> = serde_json::from_value(
+        response
+            .get("hits")
+            .cloned()
+            .ok_or_else(|| "history_remote_response_invalid".to_string())?,
+    )
+    .map_err(|_| "history_remote_response_invalid".to_string())?;
+    if hits.iter().any(|hit| {
+        hit.session_ref.source_instance_id != source_instance_id
+            || hit.session_ref.source_id != source
+            || hit.session_ref.transport_kind != "ssh"
+    }) {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    Ok(hits
+        .into_iter()
+        .map(|hit| {
+            json!({
+                "sessionId": hit.session_ref.source_session_id,
+                "source": hit.session_ref.source_id,
+                "projectKey": hit.project_key,
+                "title": hit.title,
+                "filePath": "",
+                "role": hit.role,
+                "snippet": hit.snippet,
+                "timestamp": hit.timestamp,
+                "sessionRef": hit.session_ref,
+                "readOnly": true,
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn history_remote_get_session(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: String,
+    source_session_id: String,
+) -> Result<Value, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let cache_key = format!("{}:{}", source_instance_id.trim(), source_session_id.trim());
+    if let Ok(mut cache) = remote_history_detail_cache().lock() {
+        if let Some(value) = cache.get(&cache_key) {
+            return Ok(value);
+        }
+    }
+    let payload = {
+        let mut payload = remote_scope_payload(
+            &source,
+            &configured_config_root,
+            project_paths,
+            None,
+            Some(1),
+        );
+        payload["sourceSessionId"] = Value::String(source_session_id.clone());
+        payload
+    };
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(consumer_id, ssh_launch, "historyGet".to_string(), payload)
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+    let response = match response {
+        Ok(value) => value,
+        Err(error) => {
+            let _ =
+                catalog::mark_remote_stale(&source_instance_id, remote_error_code(&error)).await;
+            return Err(error);
+        }
+    };
+    let detail: RemoteHistorySessionDetail = serde_json::from_value(response)
+        .map_err(|_| "history_remote_response_invalid".to_string())?;
+    if detail.summary.session_ref.source_instance_id != source_instance_id
+        || detail.summary.session_ref.source_session_id != source_session_id
+        || detail.summary.session_ref.source_id != source
+        || detail.summary.session_ref.transport_kind != "ssh"
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    let value = remote_detail_value(detail);
+    if let Ok(mut cache) = remote_history_detail_cache().lock() {
+        cache.insert(cache_key, value.clone());
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub async fn history_remote_resume_preflight(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    source: String,
+    configured_config_root: String,
+    project_paths: Vec<String>,
+    source_instance_id: String,
+    source_session_id: String,
+) -> Result<Value, String> {
+    let source = source.trim().to_lowercase();
+    validate_remote_history_plan(&ssh_launch, &source)?;
+    let expected_installation_id = ssh_launch.agent_installation_id.clone();
+    let expected_machine_id = ssh_launch.agent_remote_machine_id.clone();
+    let expected_ssh_user = ssh_launch.username.clone();
+    let source_session_id = source_session_id.trim().to_string();
+    if source_session_id.is_empty() || source_session_id.len() > 512 {
+        return Err("history_resume_session_id_invalid".to_string());
+    }
+    let mut payload = remote_scope_payload(
+        &source,
+        &configured_config_root,
+        project_paths,
+        None,
+        Some(1),
+    );
+    payload["sourceSessionId"] = Value::String(source_session_id.clone());
+    payload["expectedSourceInstanceId"] = Value::String(source_instance_id.clone());
+    payload["expectedRemoteMachineId"] = Value::String(ssh_launch.agent_remote_machine_id.clone());
+    payload["expectedSshUser"] = Value::String(ssh_launch.username.clone());
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    let mut response = tokio::task::spawn_blocking(move || {
+        client.ssh_agent_request(
+            consumer_id,
+            ssh_launch,
+            "historyResumePreflight".to_string(),
+            payload,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+    let object = response
+        .as_object()
+        .ok_or_else(|| "history_resume_response_invalid".to_string())?;
+    let string_field = |name: &str| {
+        object
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "history_resume_response_invalid".to_string())
+    };
+    if string_field("source")? != source
+        || string_field("sourceSessionId")? != source_session_id
+        || string_field("sourceInstanceId")? != source_instance_id
+        || string_field("installationId")? != expected_installation_id
+        || string_field("remoteMachineId")? != expected_machine_id
+        || (!expected_ssh_user.trim().is_empty() && string_field("sshUser")? != expected_ssh_user)
+    {
+        return Err("history_remote_identity_changed".to_string());
+    }
+    let remote_cwd = string_field("remoteCwd")?;
+    if !remote_cwd.starts_with('/')
+        || remote_cwd.contains(['\0', '\r', '\n', '\\'])
+        || remote_cwd.split('/').any(|part| part == "..")
+    {
+        return Err("history_resume_response_invalid".to_string());
+    }
+    let resume_args = object
+        .get("resumeArgs")
+        .and_then(Value::as_array)
+        .filter(|args| args.len() == 3)
+        .ok_or_else(|| "history_resume_response_invalid".to_string())?;
+    if resume_args.iter().any(|arg| {
+        arg.as_str().is_none_or(|value| {
+            value.is_empty() || value.contains(['\0', '\r', '\n', ';', '|', '&'])
+        })
+    }) {
+        return Err("history_resume_response_invalid".to_string());
+    }
+    let args = resume_args
+        .iter()
+        .map(|arg| arg.as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    let expected_prefix = if source == "claude" {
+        ["claude", "--resume"]
+    } else {
+        ["codex", "resume"]
+    };
+    if args[0] != expected_prefix[0]
+        || args[1] != expected_prefix[1]
+        || args[2] != source_session_id
+    {
+        return Err("history_resume_response_invalid".to_string());
+    }
+    response["resumeCommand"] = Value::String(
+        args.into_iter()
+            .map(posix_quote)
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    Ok(response)
+}
+
+#[tauri::command]
+pub fn history_remote_close(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    host_id: String,
+    consumer_id: String,
+) -> Result<(), String> {
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    client.ssh_agent_release(host_id, consumer_id)
+}
+
+fn remote_detail_value(detail: RemoteHistorySessionDetail) -> Value {
+    let summary = detail.summary;
+    let mut grouped = BTreeMap::<String, Vec<_>>::new();
+    for change in detail.file_changes {
+        grouped
+            .entry(change.file_path.clone())
+            .or_default()
+            .push(change);
+    }
+    let file_changes = grouped
+        .into_iter()
+        .map(|(file_path, operations)| {
+            let additions = operations.iter().map(|item| item.additions).sum::<u64>();
+            let deletions = operations.iter().map(|item| item.deletions).sum::<u64>();
+            let latest_message_index = operations.last().and_then(|item| item.message_index);
+            json!({
+                "filePath": file_path,
+                "status": "M",
+                "additions": additions,
+                "deletions": deletions,
+                "latestMessageIndex": latest_message_index,
+                "latestOperationGroupIndex": Value::Null,
+                "latestTimestamp": operations.last().and_then(|item| item.timestamp.clone()),
+                "operations": operations.into_iter().map(|item| json!({
+                    "source": summary.session_ref.source_id,
+                    "toolName": item.tool_name,
+                    "filePath": item.file_path,
+                    "oldText": item.old_text,
+                    "newText": item.new_text,
+                    "patch": item.patch,
+                    "additions": item.additions,
+                    "deletions": item.deletions,
+                    "messageIndex": item.message_index,
+                    "operationGroupIndex": Value::Null,
+                    "timestamp": item.timestamp,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let token_trend = summary
+        .usage_facts
+        .iter()
+        .map(|fact| {
+            json!({
+                "inputTokens": fact.usage.input_tokens,
+                "outputTokens": fact.usage.output_tokens,
+                "cacheReadTokens": fact.usage.cache_read_tokens,
+                "cacheCreationTokens": fact.usage.cache_creation_tokens,
+                "totalTokens": fact.usage.total(),
+                "model": fact.model,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "sessionId": summary.session_ref.source_session_id,
+        "source": summary.session_ref.source_id,
+        "projectKey": summary.project_key,
+        "title": summary.title,
+        "filePath": "",
+        "cwd": summary.cwd,
+        "createdAt": summary.created_at,
+        "updatedAt": summary.updated_at,
+        "messageCount": summary.message_count,
+        "branch": summary.branch,
+        "sessionRef": summary.session_ref,
+        "materializationLevel": "detail",
+        "freshnessState": "fresh",
+        "asOf": now_millis(),
+        "readOnly": true,
+        "usage": {
+            "inputTokens": summary.usage.input_tokens,
+            "outputTokens": summary.usage.output_tokens,
+            "cacheReadTokens": summary.usage.cache_read_tokens,
+            "cacheCreationTokens": summary.usage.cache_creation_tokens,
+            "totalCostUsd": 0,
+            "dominantModel": summary.dominant_model,
+            "currentModel": summary.current_model,
+            "tokenTrend": token_trend,
+            "toolCallCount": 0,
+            "mcpCalls": [],
+            "skillCalls": [],
+            "builtinCalls": [],
+        },
+        "toolEvents": [],
+        "fileChanges": file_changes,
+        "messages": detail.messages.into_iter().map(|message| json!({
+            "role": message.role,
+            "content": message.content,
+            "timestamp": message.timestamp,
+            "model": message.model,
+            "inputTokens": message.input_tokens,
+            "outputTokens": message.output_tokens,
+            "cacheReadTokens": message.cache_read_tokens,
+            "cacheCreationTokens": message.cache_creation_tokens,
+            "lineIndex": message.line_index,
+            "editable": false,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 #[tauri::command]
@@ -8421,8 +8986,11 @@ fn json_session_scan_result(
         .find_map(message_title_candidate);
     let model = messages
         .iter()
+        .rev()
         .filter_map(|message| message.model.clone())
         .find(|model| !is_synthetic_model(model));
+    // Pi/Grok 等 JSON 会话路径只解析消息行，会话级 usage 必须从消息 token 汇总。
+    let stats = session_stats_from_messages(&messages, model);
     (
         SessionSummaryScan {
             session_id: session_id
@@ -8434,7 +9002,7 @@ fn json_session_scan_result(
             first_message,
             branch: None,
         },
-        json_session_stats(model),
+        stats,
         if collect_messages {
             messages
         } else {
@@ -8443,12 +9011,97 @@ fn json_session_scan_result(
     )
 }
 
-fn json_session_stats(model: Option<String>) -> SessionStatsScan {
-    SessionStatsScan {
-        dominant_model: model.clone(),
-        current_model: model,
+fn session_stats_from_messages(
+    messages: &[HistoryMessage],
+    fallback_model: Option<String>,
+) -> SessionStatsScan {
+    let mut stats = SessionStatsScan {
+        dominant_model: fallback_model.clone(),
+        current_model: fallback_model.clone(),
         ..SessionStatsScan::default()
+    };
+    let mut model_hits: HashMap<String, usize> = HashMap::new();
+    let mut last_model = fallback_model;
+
+    for message in messages {
+        if let Some(model) = message
+            .model
+            .as_ref()
+            .filter(|model| !is_synthetic_model(model))
+        {
+            *model_hits.entry(model.clone()).or_insert(0) += 1;
+            last_model = Some(model.clone());
+        }
+
+        let usage = UsageTokenScan {
+            input_tokens: message.input_tokens.unwrap_or(0),
+            output_tokens: message.output_tokens.unwrap_or(0),
+            cache_read_tokens: message.cache_read_tokens.unwrap_or(0),
+            cache_creation_tokens: message.cache_creation_tokens.unwrap_or(0),
+            explicit_cost_usd: None,
+        };
+        if usage_total_tokens(usage) == 0 {
+            continue;
+        }
+
+        let attributed_model = message
+            .model
+            .clone()
+            .filter(|model| !is_synthetic_model(model))
+            .or_else(|| last_model.clone());
+        stats
+            .token_trend
+            .push(usage_trend_point(usage, attributed_model.clone()));
+
+        stats.input_tokens = stats.input_tokens.saturating_add(usage.input_tokens);
+        stats.output_tokens = stats.output_tokens.saturating_add(usage.output_tokens);
+        stats.cache_read_tokens = stats
+            .cache_read_tokens
+            .saturating_add(usage.cache_read_tokens);
+        stats.cache_creation_tokens = stats
+            .cache_creation_tokens
+            .saturating_add(usage.cache_creation_tokens);
+
+        let prompt_tokens = usage
+            .input_tokens
+            .saturating_add(usage.cache_read_tokens)
+            .saturating_add(usage.cache_creation_tokens);
+        if prompt_tokens > 0 {
+            stats.last_context_tokens = Some(prompt_tokens);
+        }
+
+        let cost = calculate_usage_cost(attributed_model.as_deref(), usage);
+        stats.total_cost_usd += cost.total_cost_usd;
+        stats.unpriced_tokens = stats.unpriced_tokens.saturating_add(cost.unpriced_tokens);
+
+        if let Some(model) = attributed_model {
+            let entry = stats.model_usage.entry(model).or_default();
+            entry.input_tokens = entry.input_tokens.saturating_add(usage.input_tokens);
+            entry.output_tokens = entry.output_tokens.saturating_add(usage.output_tokens);
+            entry.cache_read_tokens = entry
+                .cache_read_tokens
+                .saturating_add(usage.cache_read_tokens);
+            entry.cache_creation_tokens = entry
+                .cache_creation_tokens
+                .saturating_add(usage.cache_creation_tokens);
+            entry.total_cost_usd += cost.total_cost_usd;
+            entry.unpriced_tokens = entry.unpriced_tokens.saturating_add(cost.unpriced_tokens);
+        }
     }
+
+    if let Some(model) = model_hits
+        .into_iter()
+        .max_by(|(left_model, left_hits), (right_model, right_hits)| {
+            left_hits
+                .cmp(right_hits)
+                .then_with(|| right_model.cmp(left_model))
+        })
+        .map(|(model, _)| model)
+    {
+        stats.dominant_model = Some(model);
+    }
+    stats.current_model = last_model.or(stats.current_model);
+    stats
 }
 
 fn json_history_message(
@@ -10102,6 +10755,8 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
         &[
             "input_tokens",
             "inputTokens",
+            // Pi Agent: message.usage.input / output / cacheRead / cacheWrite
+            "input",
             "prompt_tokens",
             "promptTokens",
             "input_token_count",
@@ -10109,11 +10764,12 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
         ],
     )
     .unwrap_or(0);
-    let output = extract_u64_by_keys(
+    let mut output = extract_u64_by_keys(
         map,
         &[
             "output_tokens",
             "outputTokens",
+            "output",
             "completion_tokens",
             "completionTokens",
             "output_token_count",
@@ -10121,6 +10777,13 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
         ],
     )
     .unwrap_or(0);
+    // Pi 把 reasoning 单独记账；归入 output，避免实时统计少计思考 token。
+    let reasoning = extract_u64_by_keys(
+        map,
+        &["reasoning", "reasoning_tokens", "reasoningTokens", "thinking_tokens"],
+    )
+    .unwrap_or(0);
+    output = output.saturating_add(reasoning);
     let cache_read = extract_u64_by_keys(
         map,
         &[
@@ -10128,6 +10791,7 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
             "cacheReadTokens",
             "cache_read_input_tokens",
             "cacheReadInputTokens",
+            "cacheRead",
         ],
     )
     .unwrap_or(0);
@@ -10156,10 +10820,13 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
             "cacheCreationTokens",
             "cache_creation_input_tokens",
             "cacheCreationInputTokens",
+            "cacheWrite",
+            "cache_write_tokens",
+            "cacheWriteTokens",
         ],
     )
     .unwrap_or(0);
-    let explicit_cost_usd = extract_f64_by_keys(
+    let mut explicit_cost_usd = extract_f64_by_keys(
         map,
         &[
             "total_cost_usd",
@@ -10173,6 +10840,23 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
             "cost",
         ],
     );
+    // Pi usage.cost 是对象：{ input, output, cacheRead, cacheWrite, total }
+    if explicit_cost_usd.is_none() {
+        if let Some(cost_map) = map.get("cost").and_then(Value::as_object) {
+            explicit_cost_usd = extract_f64_by_keys(
+                cost_map,
+                &[
+                    "total",
+                    "total_cost_usd",
+                    "totalCostUsd",
+                    "totalCostUSD",
+                    "cost_usd",
+                    "costUsd",
+                    "costUSD",
+                ],
+            );
+        }
+    }
 
     if input == 0 && output == 0 && cache_read == 0 && cache_creation == 0 {
         if let Some(total) =
@@ -10642,53 +11326,12 @@ pub(crate) fn parse_message(value: &Value) -> Option<HistoryMessage> {
     }
     let timestamp = extract_timestamp(value);
 
-    // Extract token usage from the message
-    let usage = value
-        .get("usage")
-        .or_else(|| value.get("tokenCounts"))
-        .or_else(|| value.get("message").and_then(|m| m.get("usage")));
-    let input_tokens = usage
-        .and_then(|u| u.get("input_tokens"))
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            usage
-                .and_then(|u| u.get("inputTokens"))
-                .and_then(Value::as_u64)
-        });
-    let output_tokens = usage
-        .and_then(|u| u.get("output_tokens"))
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            usage
-                .and_then(|u| u.get("outputTokens"))
-                .and_then(Value::as_u64)
-        });
-    let cache_creation_tokens = usage
-        .and_then(|u| u.get("cache_creation_tokens"))
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            usage
-                .and_then(|u| u.get("cacheCreationTokens"))
-                .and_then(Value::as_u64)
-        })
-        .or_else(|| {
-            usage
-                .and_then(|u| u.get("cache_creation_input_tokens"))
-                .and_then(Value::as_u64)
-        });
-    let cache_read_tokens = usage
-        .and_then(|u| u.get("cache_read_tokens"))
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            usage
-                .and_then(|u| u.get("cacheReadTokens"))
-                .and_then(Value::as_u64)
-        })
-        .or_else(|| {
-            usage
-                .and_then(|u| u.get("cache_read_input_tokens"))
-                .and_then(Value::as_u64)
-        });
+    // 统一走 extract_usage_tokens：覆盖 Claude/Codex/Pi 等字段别名（含 Pi 的 input/output/cacheRead）。
+    let usage = extract_usage_tokens(value);
+    let input_tokens = positive_usage_token(usage.input_tokens);
+    let output_tokens = positive_usage_token(usage.output_tokens);
+    let cache_creation_tokens = positive_usage_token(usage.cache_creation_tokens);
+    let cache_read_tokens = positive_usage_token(usage.cache_read_tokens);
 
     Some(HistoryMessage {
         role,
@@ -11231,6 +11874,104 @@ mod tests {
             Ok(_) => panic!("expected error"),
             Err(err) => err,
         }
+    }
+
+    fn remote_history_plan() -> SshLaunchPlan {
+        SshLaunchPlan {
+            host_id: "host-1".to_string(),
+            host: "example.test".to_string(),
+            port: 22,
+            username: "dev".to_string(),
+            config_alias: String::new(),
+            config_file: String::new(),
+            auth_mode: "agent".to_string(),
+            identity_file: String::new(),
+            credential_ref: String::new(),
+            jump_target: String::new(),
+            proxy_type: String::new(),
+            proxy_host: String::new(),
+            proxy_port: 0,
+            proxy_command: String::new(),
+            connect_timeout_sec: 10,
+            server_alive_interval_sec: 15,
+            server_alive_count_max: 3,
+            remote_path: "/work/project".to_string(),
+            client_instance_id: "client-1".to_string(),
+            project_id: "project-1".to_string(),
+            bridge_epoch: "epoch-1".to_string(),
+            agent_path: "~/.local/bin/cli-manager-ssh-agent".to_string(),
+            agent_installation_id: "installation-1".to_string(),
+            agent_remote_machine_id: "machine-1".to_string(),
+            tool_source: "claude".to_string(),
+            environment_overrides: HashMap::new(),
+            initialization_command: None,
+            startup_command: None,
+        }
+    }
+
+    fn remote_sync_result() -> RemoteHistorySyncResult {
+        serde_json::from_value(json!({
+            "sourceInstanceId": "instance-1",
+            "source": "claude",
+            "installationId": "installation-1",
+            "remoteMachineId": "machine-1",
+            "sshUser": "dev",
+            "configuredConfigRoot": "~/.claude",
+            "canonicalConfigRoot": "/home/dev/.claude",
+            "configRootHash": "root-1",
+            "generation": 1,
+            "cursor": "1:0",
+            "hasMore": false,
+            "totalSessions": 0,
+            "freshnessState": "fresh",
+            "asOf": 1,
+            "discoveryComplete": true,
+            "partial": false,
+            "sessions": [],
+            "tombstones": [],
+            "warnings": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn remote_history_sync_rejects_identity_changes_between_pages() {
+        let plan = remote_history_plan();
+        let result = remote_sync_result();
+        validate_remote_history_sync_result(
+            &plan,
+            "claude",
+            "~/.claude",
+            Some("instance-1"),
+            &result,
+        )
+        .unwrap();
+        assert_eq!(
+            validate_remote_history_sync_result(
+                &plan,
+                "claude",
+                "~/.claude",
+                Some("instance-2"),
+                &result,
+            )
+            .unwrap_err(),
+            "history_remote_identity_changed"
+        );
+    }
+
+    #[test]
+    fn remote_history_detail_cache_evicts_lru_and_invalidates_instance() {
+        let mut cache = RemoteHistoryDetailCache::default();
+        for index in 0..REMOTE_HISTORY_DETAIL_CACHE_MAX {
+            cache.insert(format!("instance:{index}"), json!({ "index": index }));
+        }
+        assert!(cache.get("instance:0").is_some());
+        cache.insert("instance:next".to_string(), json!({ "index": "next" }));
+        assert!(cache.get("instance:1").is_none());
+        assert!(cache.get("instance:0").is_some());
+        cache.invalidate_instance("instance");
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.bytes, 0);
     }
 
     fn empty_usage() -> HistorySessionUsage {

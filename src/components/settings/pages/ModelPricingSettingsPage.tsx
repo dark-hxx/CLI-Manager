@@ -130,6 +130,18 @@ const modelPricingStyles = `
 .mp-segmented .mantine-SegmentedControl-label[data-active="true"] {
   color: var(--on-primary) !important;
 }
+/* 候选 Select 与「确认应用」同高、底边对齐（Select 有 label，按钮贴输入框底） */
+.mp-candidate-select .mantine-Input-input,
+.mp-candidate-select input,
+.mp-candidate-apply {
+  height: 36px !important;
+  min-height: 36px !important;
+}
+.mp-candidate-apply {
+  align-self: flex-end;
+  padding-inline: 14px;
+  line-height: 1;
+}
 `;
 
 const SOURCE_DOT: Record<string, string> = {
@@ -740,14 +752,21 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
                       </Group>
                       <Group gap="sm" align="flex-end" wrap="nowrap" className="min-w-0">
                         <Select
-                          className="min-w-0 flex-1"
+                          className="min-w-0 flex-1 mp-candidate-select"
+                          size="sm"
                           label={text("候选远程价格", "Candidate Remote Price")}
                           data={data}
                           value={candidateSelections[targetModel] ?? data[0]?.value ?? null}
                           allowDeselect={false}
                           onChange={(value) => value && setCandidateSelections((prev) => ({ ...prev, [targetModel]: value }))}
                         />
-                        <Button size="compact-sm" color="cliPrimary" leftSection={<CircleCheck size={14} />} className="mp-soft-button shrink-0" onClick={() => void handleApplyCandidate(targetModel, items)}>
+                        <Button
+                          size="sm"
+                          color="cliPrimary"
+                          leftSection={<CircleCheck size={14} />}
+                          className="mp-soft-button mp-candidate-apply shrink-0"
+                          onClick={() => void handleApplyCandidate(targetModel, items)}
+                        >
                           {text("确认应用", "Apply")}
                         </Button>
                       </Group>

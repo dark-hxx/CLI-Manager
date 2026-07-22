@@ -7,6 +7,7 @@ import { logWarn } from "../lib/logger";
 import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType } from "../lib/providerSwitching";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey } from "../lib/shell";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
+import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import type {
   Project, CreateProjectInput, UpdateProjectInput,
   Group, CreateGroupInput, TreeNode, WorktreeRecord,
@@ -360,6 +361,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       throw new Error("ssh_project_location_required");
     }
     const rawShell = input.shell?.trim() ?? "";
+    const cliConfigRoot = isSshProject ? input.cli_config_root?.trim() ?? "" : "";
+    const cliConfigRootError = validateSshToolConfigRoot(cliConfigRoot);
+    if (cliConfigRootError) throw new Error(cliConfigRootError);
     const shell = isSshProject ? "" :
       normalizeShellForOs(rawShell, os) ??
       (rawShell && !normalizeShellKey(rawShell)
@@ -384,6 +388,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       environment_type: input.environment_type ?? "local",
       ssh_host_id: isSshProject ? input.ssh_host_id ?? null : null,
       remote_path: isSshProject ? input.remote_path?.trim() ?? "" : "",
+      cli_config_root: cliConfigRoot,
       created_at: ts,
       updated_at: ts,
     };
@@ -392,9 +397,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
          id, name, path, group_name, group_id, sort_order,
          cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides,
          worktree_strategy, worktree_root, worktree_deps_prompt_enabled,
-         environment_type, ssh_host_id, remote_path, created_at, updated_at
+         environment_type, ssh_host_id, remote_path, cli_config_root, created_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
       [
         project.id,
         project.name,
@@ -414,6 +419,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project.environment_type,
         project.ssh_host_id,
         project.remote_path,
+        project.cli_config_root,
         project.created_at,
         project.updated_at,
       ]
@@ -430,8 +436,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     let idx = 1;
     const shouldCleanupCodexProfiles =
       input.provider_overrides !== undefined || input.cli_tool !== undefined;
+    const currentProject = get().projects.find((project) => project.id === id);
+    const nextEnvironmentType = input.environment_type ?? currentProject?.environment_type ?? "local";
+    const normalizedInput: UpdateProjectInput = { ...input };
+    if (input.cli_config_root !== undefined || nextEnvironmentType !== "ssh") {
+      const cliConfigRoot = nextEnvironmentType === "ssh" ? input.cli_config_root?.trim() ?? "" : "";
+      const cliConfigRootError = validateSshToolConfigRoot(cliConfigRoot);
+      if (cliConfigRootError) throw new Error(cliConfigRootError);
+      normalizedInput.cli_config_root = cliConfigRoot;
+    }
 
-    for (const [key, val] of Object.entries(input)) {
+    for (const [key, val] of Object.entries(normalizedInput)) {
       if (val !== undefined) {
         fields.push(`${key} = $${idx}`);
         values.push(val);

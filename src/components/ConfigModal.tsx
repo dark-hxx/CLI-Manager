@@ -6,6 +6,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import type { Project, Group, ProjectFileEntry, ProjectEnvironmentType, WorktreeIsolationStrategy } from "../lib/types";
 import { useSshHostStore } from "../stores/sshHostStore";
 import { buildSshConnectionSpec } from "../lib/ssh";
+import { DEFAULT_SSH_TOOL_CONFIG_ROOT, resolveSshToolSource, validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import { getOsPlatform, normalizeShellKey } from "../lib/shell";
 import { getConfigModalShellPrefill } from "../lib/configModalShellPrefill";
 import { CLI_TOOL_DESCRIPTORS } from "../lib/cliTools";
@@ -29,6 +30,11 @@ import { Button } from "./ui/button";
 import { toast } from "sonner";
 import { logError, logInfo, logWarn } from "../lib/logger";
 import { pickByLanguage, useI18n, type TranslationKey } from "../lib/i18n";
+import { ArrowUp, ChevronRight, FolderOpen } from "lucide-react";
+import {
+  getCliArgsHistorySuggestions,
+  type CliArgsHistoryEntry,
+} from "../lib/cliArgsHistory";
 
 interface Props {
   project?: Project;
@@ -99,6 +105,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const projectWorktreeConfigEnabled = useSettingsStore((s) => s.projectWorktreeConfigEnabled);
   const terminalShellProfiles = useSettingsStore((s) => s.terminalShellProfiles);
   const defaultShell = useSettingsStore((s) => s.defaultShell);
+  const cliArgsHistory = useSettingsStore((s) => s.cliArgsHistory);
+  const recordCliArgsHistory = useSettingsStore((s) => s.recordCliArgsHistory);
   const isEdit = !!project;
   const isClone = !!cloneFrom;
   const logInstanceIdRef = useRef(crypto.randomUUID().slice(0, 8));
@@ -116,6 +124,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const worktreeDepsPromptFieldId = useId();
   const sshHostFieldId = useId();
   const remotePathFieldId = useId();
+  const cliConfigRootFieldId = useId();
 
   const [osPlatform, setOsPlatform] = useState<OsPlatform>("windows");
 
@@ -129,7 +138,9 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   );
   const [sshHostId, setSshHostId] = useState(sourceProject?.ssh_host_id ?? "");
   const [remotePath, setRemotePath] = useState(sourceProject?.remote_path ?? "");
+  const [cliConfigRoot, setCliConfigRoot] = useState(sourceProject?.cli_config_root ?? "");
   const [remotePickerOpen, setRemotePickerOpen] = useState(false);
+  const [remotePickerTarget, setRemotePickerTarget] = useState<"projectPath" | "cliConfigRoot">("projectPath");
   const [remotePickerPath, setRemotePickerPath] = useState(sourceProject?.remote_path || "/");
   const [remoteDirectories, setRemoteDirectories] = useState<SshDirectoryEntry[]>([]);
   const [remotePickerLoading, setRemotePickerLoading] = useState(false);
@@ -159,6 +170,10 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [wslPickerEntries, setWslPickerEntries] = useState<ProjectFileEntry[]>([]);
   const [wslPickerLoading, setWslPickerLoading] = useState(false);
   const [wslPickerError, setWslPickerError] = useState("");
+  const cliArgsHistorySuggestions = useMemo(
+    () => getCliArgsHistorySuggestions(cliArgsHistory, cliTool),
+    [cliArgsHistory, cliTool]
+  );
 
   useEffect(() => {
     void fetchSshHosts();
@@ -351,8 +366,9 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
     }
   }, [describeRemotePathError, sshHostId, sshHosts, t]);
 
-  const openRemotePicker = () => {
-    const initialPath = remotePath.trim() || "/";
+  const openRemotePicker = (target: "projectPath" | "cliConfigRoot") => {
+    const initialPath = target === "projectPath" ? remotePath.trim() || "/" : cliConfigRoot.trim() || "/";
+    setRemotePickerTarget(target);
     setRemotePickerOpen(true);
     void loadRemoteDirectories(initialPath);
   };
@@ -412,6 +428,16 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
     const trimmedCliTool = cliTool.trim();
     const trimmedCliArgs = trimmedCliTool ? cliArgs.trim() : "";
     const trimmedStartupCmd = trimmedCliTool ? "" : startupCmd.trim();
+    const sshToolSource = projectType === "ssh" ? resolveSshToolSource(trimmedCliTool) : null;
+    const trimmedCliConfigRoot = sshToolSource ? cliConfigRoot.trim() : "";
+    const cliConfigRootError = validateSshToolConfigRoot(trimmedCliConfigRoot);
+    if (cliConfigRootError) {
+      const description = t(`configModal.ssh.${cliConfigRootError}` as TranslationKey);
+      setError(description);
+      toast.error(t("configModal.saveFailed"), { description });
+      setSubmitting(false);
+      return;
+    }
     try {
       const environmentType: ProjectEnvironmentType = projectType === "ssh"
         ? "ssh"
@@ -432,6 +458,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           environment_type: environmentType,
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
+          cli_config_root: trimmedCliConfigRoot,
         });
         toast.success(t("configModal.toast.updated"));
       } else {
@@ -450,7 +477,15 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           environment_type: environmentType,
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
+          cli_config_root: trimmedCliConfigRoot,
         });
+        if (!isClone && trimmedCliArgs) {
+          try {
+            await recordCliArgsHistory(trimmedCliTool, trimmedCliArgs);
+          } catch (historyError) {
+            logWarn("Failed to persist CLI arguments history", historyError);
+          }
+        }
         toast.success(t("configModal.toast.created"));
       }
       onClose();
@@ -641,7 +676,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                         placeholder="/home/dev/projects/my-app"
                         className="min-w-0 flex-1 text-sm"
                       />
-                      <Button type="button" variant="outline" size="sm" onClick={openRemotePicker} className="h-9 shrink-0 px-3">
+                      <Button type="button" variant="outline" size="sm" onClick={() => openRemotePicker("projectPath")} className="h-9 shrink-0 px-3">
                         {t("common.browse")}
                       </Button>
                       <Button type="button" variant="outline" size="sm" onClick={() => void checkRemotePath()} className="h-9 shrink-0 px-3">
@@ -682,12 +717,46 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
               </div>
 
               {cliTool.trim() !== "" && (
-                <Field
-                  label={t("configModal.cliArgs")}
-                  value={cliArgs}
-                  onChange={setCliArgs}
-                  placeholder="--permission-mode bypassPermissions"
-                />
+                !isEdit && !isClone ? (
+                  <CliArgsHistoryField
+                    label={t("configModal.cliArgs")}
+                    value={cliArgs}
+                    onChange={setCliArgs}
+                    suggestions={cliArgsHistorySuggestions}
+                    placeholder="--permission-mode bypassPermissions"
+                  />
+                ) : (
+                  <Field
+                    label={t("configModal.cliArgs")}
+                    value={cliArgs}
+                    onChange={setCliArgs}
+                    placeholder="--permission-mode bypassPermissions"
+                  />
+                )
+              )}
+
+              {projectType === "ssh" && resolveSshToolSource(cliTool) && (
+                <div>
+                  <label htmlFor={cliConfigRootFieldId} className="ui-config-form-label">
+                    {t("configModal.ssh.cliConfigRoot")}
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      id={cliConfigRootFieldId}
+                      value={cliConfigRoot}
+                      onChange={(event) => setCliConfigRoot(event.target.value)}
+                      placeholder={DEFAULT_SSH_TOOL_CONFIG_ROOT[resolveSshToolSource(cliTool)!]}
+                      className="min-w-0 flex-1 font-mono text-sm"
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={() => openRemotePicker("cliConfigRoot")} className="h-9 shrink-0 px-3">
+                      <FolderOpen className="h-4 w-4" />
+                      {t("common.browse")}
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-[11px] text-text-muted">
+                    {t("configModal.ssh.cliConfigRootDescription")}
+                  </p>
+                </div>
               )}
 
               {projectType === "local" && <div>
@@ -902,8 +971,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
       <Dialog open={remotePickerOpen} onOpenChange={setRemotePickerOpen}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[620px] overflow-hidden p-0">
           <div className="border-b border-border px-4 py-3">
-            <DialogTitle>{t("configModal.ssh.pickerTitle")}</DialogTitle>
-            <DialogDescription className="sr-only">{t("configModal.ssh.pickerDescription")}</DialogDescription>
+            <DialogTitle>{t(remotePickerTarget === "projectPath" ? "configModal.ssh.pickerTitle" : "configModal.ssh.configRootPickerTitle")}</DialogTitle>
+            <DialogDescription className="sr-only">{t(remotePickerTarget === "projectPath" ? "configModal.ssh.pickerDescription" : "configModal.ssh.configRootPickerDescription")}</DialogDescription>
           </div>
           <div className="space-y-3 p-4">
             <div className="flex gap-2">
@@ -914,12 +983,14 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                   const parent = remotePickerPath.replace(/\/+$/, "").split("/").slice(0, -1).join("/") || "/";
                   void loadRemoteDirectories(parent);
                 }}
+                title={t("common.parentDirectory")}
+                aria-label={t("common.parentDirectory")}
               >
-                ↑
+                <ArrowUp className="h-4 w-4" />
               </Button>
               <Input
                 value={remotePickerPath}
-                aria-label={t("configModal.ssh.remotePath")}
+                aria-label={t(remotePickerTarget === "projectPath" ? "configModal.ssh.remotePath" : "configModal.ssh.cliConfigRoot")}
                 placeholder="/"
                 onChange={(event) => {
                   setRemotePickerPath(event.target.value);
@@ -946,7 +1017,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                   onClick={() => setRemotePickerPath(entry.path)}
                   className="ui-focus-ring flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-text-primary transition-colors hover:bg-surface-container-highest"
                 >
-                  <span className="truncate">{entry.name}</span><span className="text-text-muted">›</span>
+                  <span className="truncate">{entry.name}</span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
                 </button>
               ))}
             </div>
@@ -956,8 +1028,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
             <Button
               type="button"
               onClick={() => {
-                setRemotePath(remotePickerPath.trim() || "/");
-                setRemotePathStatus(null);
+                if (remotePickerTarget === "projectPath") {
+                  setRemotePath(remotePickerPath.trim() || "/");
+                  setRemotePathStatus(null);
+                } else {
+                  setCliConfigRoot(remotePickerPath.trim() || "/");
+                }
                 setRemotePickerOpen(false);
               }}
             >
@@ -1277,6 +1353,147 @@ function GroupSelector({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CliArgsHistoryField({
+  label,
+  value,
+  onChange,
+  suggestions,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  suggestions: CliArgsHistoryEntry[];
+  placeholder?: string;
+}) {
+  const { t } = useI18n();
+  const inputId = useId();
+  const listboxId = useId();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    setActiveIndex(0);
+    if (suggestions.length === 0) setOpen(false);
+  }, [suggestions]);
+
+  const selectSuggestion = (suggestion: CliArgsHistoryEntry) => {
+    onChange(suggestion.cliArgs);
+    setOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const activeOptionId = open && suggestions[activeIndex]
+    ? `${listboxId}-option-${activeIndex}`
+    : undefined;
+
+  return (
+    <div className="relative" onBlur={(event) => {
+      const nextFocus = event.relatedTarget as Node | null;
+      if (!nextFocus || !event.currentTarget.contains(nextFocus)) setOpen(false);
+    }}>
+      <label htmlFor={inputId} className="ui-config-form-label">{label}</label>
+      <div className="relative">
+        <Input
+          id={inputId}
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value);
+            if (suggestions.length > 0) setOpen(true);
+          }}
+          onClick={() => suggestions.length > 0 && setOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" && suggestions.length > 0) {
+              event.preventDefault();
+              if (!open) {
+                setOpen(true);
+                setActiveIndex(0);
+              } else {
+                setActiveIndex((current) => (current + 1) % suggestions.length);
+              }
+            } else if (event.key === "ArrowUp" && suggestions.length > 0) {
+              event.preventDefault();
+              if (!open) {
+                setOpen(true);
+                setActiveIndex(suggestions.length - 1);
+              } else {
+                setActiveIndex((current) => (current - 1 + suggestions.length) % suggestions.length);
+              }
+            } else if (event.key === "Enter" && open && suggestions[activeIndex]) {
+              event.preventDefault();
+              selectSuggestion(suggestions[activeIndex]);
+            } else if (event.key === "Escape" && open) {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+            } else if (event.key === "Tab") {
+              setOpen(false);
+            }
+          }}
+          placeholder={placeholder}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={suggestions.length > 0 ? listboxId : undefined}
+          aria-activedescendant={activeOptionId}
+          className={`text-sm ${suggestions.length > 0 ? "pr-8" : ""}`}
+        />
+        {suggestions.length > 0 && (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setOpen((current) => !current);
+              inputRef.current?.focus();
+            }}
+            className="ui-focus-ring absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-text-muted outline-none transition-colors hover:bg-surface-container-highest hover:text-text-primary"
+          >
+            <ChevronDown
+              size={12}
+              strokeWidth={1.8}
+              className={`transition-transform ${open ? "rotate-180" : ""}`}
+            />
+          </button>
+        )}
+        {open && suggestions.length > 0 && (
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label={t("configModal.cliArgsHistory")}
+            className="ui-select-popover absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-border bg-surface-container-high py-1 text-xs shadow-lg"
+          >
+            {suggestions.map((suggestion, index) => (
+              <button
+                id={`${listboxId}-option-${index}`}
+                key={`${suggestion.cliTool}\u0000${suggestion.cliArgs}`}
+                type="button"
+                role="option"
+                aria-selected={value.trim() === suggestion.cliArgs}
+                data-active={activeIndex === index ? "true" : undefined}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => selectSuggestion(suggestion)}
+                className="flex w-[calc(100%-8px)] cursor-pointer items-center gap-3 outline-none hover:bg-surface-container-highest hover:text-text-primary data-[active=true]:bg-surface-container-highest data-[active=true]:text-text-primary"
+              >
+                <span className="min-w-0 flex-1 truncate text-left font-mono">{suggestion.cliArgs}</span>
+                <span className="shrink-0 text-text-muted">
+                  {t("configModal.cliArgsHistoryCount", { count: suggestion.count })}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

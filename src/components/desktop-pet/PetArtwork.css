@@ -18,36 +18,34 @@
   position: relative;
 }
 
-.pet-artwork-sprite-probe {
+.pet-artwork-sprite-frame {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.pet-artwork-sprite {
-  position: absolute;
-  display: block;
   width: 192px;
   height: 208px;
-  flex: none;
-  background-position-x: 0;
-  background-repeat: no-repeat;
-  image-rendering: pixelated;
+  overflow: hidden;
   transform-origin: 0 0;
   pointer-events: none;
 }
 
-.pet-artwork-sprite.is-animated {
+.pet-artwork-sprite-sheet {
+  position: absolute;
+  display: block;
+  left: 0;
+  max-width: none;
+  user-select: none;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.pet-artwork-sprite-sheet.is-animated {
   animation: pet-artwork-sprite-cycle var(--pet-sprite-duration) steps(var(--pet-sprite-frames)) infinite;
 }
 
 @keyframes pet-artwork-sprite-cycle {
-  from { background-position-x: 0; }
-  to { background-position-x: var(--pet-sprite-end-x); }
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(var(--pet-sprite-end-x), 0, 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pet-artwork-sprite.is-animated { animation: none; }
+  .pet-artwork-sprite-sheet.is-animated { animation: none; }
 }

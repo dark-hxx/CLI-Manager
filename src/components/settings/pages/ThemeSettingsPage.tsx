@@ -370,7 +370,8 @@ export function ThemeSettingsPage() {
           label: pickByLanguage(language, option.label, option.labelEn ?? option.label),
         })),
         systemFonts,
-        TERMINAL_FONT_FALLBACK
+        TERMINAL_FONT_FALLBACK,
+        normalizeTerminalFontFamily,
       ),
     [language, normalizedFontFamily, systemFonts]
   );

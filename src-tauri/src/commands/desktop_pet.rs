@@ -8,6 +8,8 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
+#[cfg(not(target_os = "windows"))]
+use tauri::PhysicalSize;
 use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, Runtime};
 use uuid::Uuid;
 use zip::ZipArchive;
@@ -16,6 +18,8 @@ const PET_SCHEMA_VERSION: u32 = 1;
 const PET_WINDOW_LABEL: &str = "desktop-pet";
 const PET_WINDOW_BASE_WIDTH: f64 = 190.0;
 const PET_WINDOW_BASE_HEIGHT: f64 = 210.0;
+const PET_WINDOW_MIN_SCALE: f64 = 0.4;
+const PET_WINDOW_MAX_SCALE: f64 = 1.5;
 const PET_WINDOW_MARGIN: i32 = 24;
 const MAX_CATALOG_ITEMS: usize = 200;
 const MAX_ARCHIVE_BYTES: usize = 25 * 1024 * 1024;
@@ -23,6 +27,10 @@ const MAX_EXTRACTED_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 40;
 const MAX_CODEX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_CODEX_SPRITESHEET_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_IMAGE_ASSET_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_SVG_ASSET_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_RASTER_DIMENSION: u32 = 4096;
+const MAX_RASTER_PIXELS: u64 = 16 * 1024 * 1024;
 const CODEX_PET_ENGINE: &str = "codex-sprite";
 const CODEX_PET_ID_PREFIX: &str = "codex.";
 const CODEX_SPRITE_CELL_WIDTH: u32 = 192;
@@ -161,6 +169,15 @@ pub struct DesktopPetWindowConfig {
     pub always_on_top: bool,
     pub scale: f64,
     pub position: Option<PetPosition>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopPetWindowBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 fn pets_root() -> Result<PathBuf, String> {
@@ -324,6 +341,50 @@ fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
         offset = data_end.checked_add(chunk_size % 2)?;
     }
     None
+}
+
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 24 || &bytes[0..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some((
+        u32::from_be_bytes(bytes[16..20].try_into().ok()?),
+        u32::from_be_bytes(bytes[20..24].try_into().ok()?),
+    ))
+}
+
+fn validate_image_asset(path: &Path, extension: &str) -> Result<(), String> {
+    let metadata =
+        fs::metadata(path).map_err(|err| format!("pet_manifest_asset_read_failed: {err}"))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_IMAGE_ASSET_BYTES {
+        return Err("pet_manifest_asset_size_invalid".to_string());
+    }
+    if extension == "svg" {
+        if metadata.len() > MAX_SVG_ASSET_BYTES {
+            return Err("pet_manifest_asset_size_invalid".to_string());
+        }
+        let text = fs::read_to_string(path).map_err(|err| format!("pet_svg_read_failed: {err}"))?;
+        return validate_svg(&text);
+    }
+
+    let bytes = fs::read(path).map_err(|err| format!("pet_manifest_asset_read_failed: {err}"))?;
+    let dimensions = match extension {
+        "png" => png_dimensions(&bytes),
+        "webp" => webp_dimensions(&bytes),
+        _ => None,
+    }
+    .ok_or_else(|| "pet_manifest_asset_format_invalid".to_string())?;
+    let pixels = u64::from(dimensions.0) * u64::from(dimensions.1);
+    if dimensions.0 == 0
+        || dimensions.1 == 0
+        || dimensions.0 > MAX_RASTER_DIMENSION
+        || dimensions.1 > MAX_RASTER_DIMENSION
+        || pixels > MAX_RASTER_PIXELS
+    {
+        return Err("pet_manifest_asset_dimensions_invalid".to_string());
+    }
+    Ok(())
 }
 
 fn codex_sprite_dimensions(sprite_version_number: u32) -> Option<(u32, u32)> {
@@ -504,19 +565,12 @@ fn validate_manifest(manifest: &PetManifest, base_dir: &Path) -> Result<(), Stri
             return Err("pet_manifest_asset_type_unsupported".to_string());
         }
         let absolute = base_dir.join(&relative);
-        if !absolute.is_file() {
-            return Err("pet_manifest_asset_missing".to_string());
-        }
-        if relative
+        let extension = relative
             .extension()
             .and_then(|value| value.to_str())
-            .map(|value| value.eq_ignore_ascii_case("svg"))
-            .unwrap_or(false)
-        {
-            let text = fs::read_to_string(&absolute)
-                .map_err(|err| format!("pet_svg_read_failed: {err}"))?;
-            validate_svg(&text)?;
-        }
+            .map(str::to_ascii_lowercase)
+            .ok_or_else(|| "pet_manifest_asset_type_unsupported".to_string())?;
+        validate_image_asset(&absolute, &extension)?;
     }
     Ok(())
 }
@@ -1087,7 +1141,7 @@ pub fn desktop_pet_uninstall(pet_id: String) -> Result<(), String> {
 }
 
 fn window_size(scale: f64) -> (f64, f64) {
-    let scale = scale.clamp(0.75, 1.5);
+    let scale = scale.clamp(PET_WINDOW_MIN_SCALE, PET_WINDOW_MAX_SCALE);
     (
         PET_WINDOW_BASE_WIDTH * scale,
         PET_WINDOW_BASE_HEIGHT * scale,
@@ -1151,6 +1205,73 @@ pub fn desktop_pet_window_sync(
         .map_err(|err| format!("pet_window_show_failed: {err}"))
 }
 
+fn validated_window_size(bounds: DesktopPetWindowBounds) -> Result<(i32, i32), String> {
+    let width = i32::try_from(bounds.width).map_err(|_| "pet_window_bounds_invalid".to_string())?;
+    let height =
+        i32::try_from(bounds.height).map_err(|_| "pet_window_bounds_invalid".to_string())?;
+    if width <= 0 || height <= 0 {
+        return Err("pet_window_bounds_invalid".to_string());
+    }
+    Ok((width, height))
+}
+
+#[cfg(target_os = "windows")]
+fn apply_window_bounds<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    bounds: DesktopPetWindowBounds,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+
+    let (width, height) = validated_window_size(bounds)?;
+    let hwnd = window
+        .hwnd()
+        .map_err(|err| format!("pet_window_handle_failed: {err}"))?;
+    let updated = unsafe {
+        SetWindowPos(
+            hwnd.0 as _,
+            std::ptr::null_mut(),
+            bounds.x,
+            bounds.y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        )
+    };
+    if updated == 0 {
+        Err(format!(
+            "pet_window_bounds_failed: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_window_bounds<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    bounds: DesktopPetWindowBounds,
+) -> Result<(), String> {
+    validated_window_size(bounds)?;
+    window
+        .set_size(PhysicalSize::new(bounds.width, bounds.height))
+        .map_err(|err| format!("pet_window_resize_failed: {err}"))?;
+    window
+        .set_position(PhysicalPosition::new(bounds.x, bounds.y))
+        .map_err(|err| format!("pet_window_position_failed: {err}"))
+}
+
+#[tauri::command]
+pub fn desktop_pet_window_set_bounds(
+    app: AppHandle,
+    bounds: DesktopPetWindowBounds,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
+        return Err("pet_window_missing".to_string());
+    };
+    apply_window_bounds(&window, bounds)
+}
+
 #[tauri::command]
 pub fn desktop_pet_window_reset_position(app: AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
@@ -1175,6 +1296,33 @@ mod tests {
     use super::*;
     use std::io::Write as _;
 
+    #[test]
+    fn desktop_pet_window_bounds_require_positive_i32_dimensions() {
+        assert_eq!(
+            validated_window_size(DesktopPetWindowBounds {
+                x: 0,
+                y: 0,
+                width: 640,
+                height: 480,
+            }),
+            Ok((640, 480))
+        );
+        assert!(validated_window_size(DesktopPetWindowBounds {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 480,
+        })
+        .is_err());
+        assert!(validated_window_size(DesktopPetWindowBounds {
+            x: 0,
+            y: 0,
+            width: i32::MAX as u32 + 1,
+            height: 480,
+        })
+        .is_err());
+    }
+
     fn fake_vp8x_webp(width: u32, height: u32) -> Vec<u8> {
         let mut payload = [0u8; 10];
         let width = width - 1;
@@ -1190,6 +1338,23 @@ mod tests {
         bytes
     }
 
+    #[test]
+    fn desktop_pet_window_size_supports_the_full_user_scale_range() {
+        assert_eq!(window_size(0.1), (76.0, 84.0));
+        assert_eq!(window_size(0.4), (76.0, 84.0));
+        assert_eq!(window_size(1.0), (190.0, 210.0));
+        assert_eq!(window_size(1.5), (285.0, 315.0));
+        assert_eq!(window_size(2.0), (285.0, 315.0));
+    }
+
+    fn fake_png(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = vec![0u8; 24];
+        bytes[0..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes[12..16].copy_from_slice(b"IHDR");
+        bytes[16..20].copy_from_slice(&width.to_be_bytes());
+        bytes[20..24].copy_from_slice(&height.to_be_bytes());
+        bytes
+    }
     fn codex_manifest(id: &str, sprite_version_number: u32) -> Vec<u8> {
         serde_json::to_vec_pretty(&serde_json::json!({
             "id": id,
@@ -1260,6 +1425,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn png_dimensions_reads_ihdr_dimensions() {
+        assert_eq!(png_dimensions(&fake_png(320, 240)), Some((320, 240)));
+        assert_eq!(png_dimensions(b"not a png"), None);
+    }
+
+    #[test]
+    fn image_asset_validation_bounds_raster_decode_size() {
+        let root = tempfile::tempdir().unwrap();
+        let image = root.path().join("pet.png");
+
+        fs::write(&image, fake_png(4096, 4096)).unwrap();
+        assert!(validate_image_asset(&image, "png").is_ok());
+
+        fs::write(&image, fake_png(4097, 1)).unwrap();
+        assert_eq!(
+            validate_image_asset(&image, "png").unwrap_err(),
+            "pet_manifest_asset_dimensions_invalid"
+        );
+
+        fs::write(&image, fake_png(4096, 4097)).unwrap();
+        assert_eq!(
+            validate_image_asset(&image, "png").unwrap_err(),
+            "pet_manifest_asset_dimensions_invalid"
+        );
+
+        fs::write(&image, b"invalid png").unwrap();
+        assert_eq!(
+            validate_image_asset(&image, "png").unwrap_err(),
+            "pet_manifest_asset_format_invalid"
+        );
+
+        let webp = root.path().join("pet.webp");
+        fs::write(&webp, b"invalid webp").unwrap();
+        assert_eq!(
+            validate_image_asset(&webp, "webp").unwrap_err(),
+            "pet_manifest_asset_format_invalid"
+        );
+    }
     #[test]
     fn codex_directory_scan_namespaces_and_marks_external_pets_read_only() {
         let root = tempfile::tempdir().unwrap();

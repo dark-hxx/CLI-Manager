@@ -318,6 +318,21 @@ fn parse_api_format(meta: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub(crate) fn validate_ccswitch_db_path(path: PathBuf) -> Result<PathBuf, String> {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("db") {
+        return Err("unsupported_format".to_string());
+    }
+    let exists = if crate::wsl::is_wsl_config_dir(&path.to_string_lossy()) {
+        crate::ccswitch_db::wsl_file_exists(&path)?
+    } else {
+        path.is_file()
+    };
+    if !exists {
+        return Err("db_not_found".to_string());
+    }
+    Ok(path)
+}
+
 pub(crate) fn resolve_db_path(
     app: &tauri::AppHandle,
     db_path: Option<String>,
@@ -334,18 +349,7 @@ pub(crate) fn resolve_db_path(
             .join(".cc-switch")
             .join("cc-switch.db"),
     };
-    if path.extension().and_then(|ext| ext.to_str()) != Some("db") {
-        return Err("unsupported_format".to_string());
-    }
-    let exists = if crate::wsl::is_wsl_config_dir(&path.to_string_lossy()) {
-        crate::ccswitch_db::wsl_file_exists(&path)?
-    } else {
-        path.is_file()
-    };
-    if !exists {
-        return Err("db_not_found".to_string());
-    }
-    Ok(path)
+    validate_ccswitch_db_path(path)
 }
 
 async fn open_db_readonly(path: &Path) -> Result<SqliteConnection, String> {
@@ -892,15 +896,15 @@ pub struct ClaudeProviderLaunchConfig {
     pub db_path: Option<String>,
 }
 
-struct CodexProviderRuntimeConfig {
+pub(crate) struct CodexProviderRuntimeConfig {
     provider_id: String,
     provider_name: String,
-    profile_name: String,
-    env_key: String,
-    secret_value: String,
-    base_url: String,
-    model: Option<String>,
-    wire_api: Option<String>,
+    pub(crate) profile_name: String,
+    pub(crate) env_key: String,
+    pub(crate) secret_value: String,
+    pub(crate) base_url: String,
+    pub(crate) model: Option<String>,
+    pub(crate) wire_api: Option<String>,
     profile_text: String,
 }
 
@@ -988,6 +992,14 @@ async fn load_merged_provider_settings(
     db_path: Option<String>,
 ) -> Result<(String, Value), String> {
     let path = resolve_db_path(app, db_path)?;
+    load_merged_provider_settings_from_path(&path, provider_id, app_type).await
+}
+
+async fn load_merged_provider_settings_from_path(
+    path: &Path,
+    provider_id: &str,
+    app_type: &str,
+) -> Result<(String, Value), String> {
     let prepared_path = crate::ccswitch_db::prepare_read_path(&path).await?;
     let mut conn = open_db_readonly(prepared_path.path()).await?;
     let row =
@@ -1726,6 +1738,18 @@ async fn load_codex_runtime_config(
     codex_runtime_from_provider(provider_id.trim().to_string(), name, settings_config)
 }
 
+pub(crate) async fn load_codex_runtime_config_from_path(
+    provider_id: &str,
+    db_path: &Path,
+) -> Result<CodexProviderRuntimeConfig, String> {
+    let database_path = validate_ccswitch_db_path(db_path.to_path_buf())?;
+    let (name, settings) =
+        load_merged_provider_settings_from_path(&database_path, provider_id, "codex").await?;
+    let settings_config = serde_json::to_string(&settings)
+        .map_err(|err| format!("provider_config_invalid: {err}"))?;
+    codex_runtime_from_provider(provider_id.trim().to_string(), name, settings_config)
+}
+
 /// 纯函数：解析 Codex 真实 home 目录。
 /// 有自定义目录（用户设置的 codexHookConfigDir）→ 用它；否则回退到 `<home>/.codex`。
 /// 方案A：profile 写进真实 codex home，与用户的 config.toml / auth.json 同处，
@@ -1760,6 +1784,13 @@ fn write_codex_profile(
     runtime: &CodexProviderRuntimeConfig,
 ) -> Result<(), String> {
     let codex_dir = resolve_codex_config_dir(app, codex_config_dir)?;
+    write_codex_profile_to_dir(&codex_dir, runtime)
+}
+
+pub(crate) fn write_codex_profile_to_dir(
+    codex_dir: &Path,
+    runtime: &CodexProviderRuntimeConfig,
+) -> Result<(), String> {
     fs::create_dir_all(&codex_dir).map_err(|err| format!("profile_write_failed: {err}"))?;
     let profile_path = codex_dir.join(format!("{}.config.toml", runtime.profile_name));
     let tmp_path = codex_dir.join(format!("{}.config.toml.tmp", runtime.profile_name));

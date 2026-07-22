@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-07-20
+- **Total Sessions**: 29
+- **Last Active**: 2026-07-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~926 | Active |
+| `journal-1.md` | ~992 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 29 | 2026-07-22 | CLI 启动参数历史与同步 | `79a6f9d` | `master` |
+| 28 | 2026-07-21 | 修复终端图片插件 WASM CSP 崩溃 | `b457aa9` | `master` |
 | 27 | 2026-07-20 | 修复 WSL Codex 子任务转录延迟 | `33679da` | `master` |
 | 26 | 2026-07-18 | 合并远程代码并解决冲突 | `41c1275` | `master` |
 | 25 | 2026-07-18 | 版本化备份恢复 | `13f6d3d` | `master` |

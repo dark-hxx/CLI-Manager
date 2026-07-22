@@ -57,3 +57,49 @@ Applies to `src/stores/syncStore.ts`, `src/lib/syncSettings.ts`, the backup sett
 - `cargo check --locked --manifest-path src-tauri/Cargo.toml`
 - `cargo test --manifest-path src-tauri/Cargo.toml`
 - Manual checks: create two snapshots without overwriting, auto-backup no-change skip, offline outbox retry, five-domain restore, rollback/undo, legacy ZIP import, Chinese/English UI, and 24-hour timestamps.
+
+## Scenario: CLI argument history preference sync
+
+### 1. Scope / Trigger
+
+- Applies when changing `Settings.cliArgsHistory`, its backup classification, or preference restore behavior.
+
+### 2. Signatures
+
+- `Settings.cliArgsHistory: CliArgsHistoryEntry[]`
+- `CliArgsHistoryEntry = { cliTool: string; cliArgs: string; count: number; lastUsedAt: number }`
+- `SETTING_BACKUP_POLICY.cliArgsHistory = "preferences"`
+
+### 3. Contracts
+
+- Preference snapshots include the complete normalized CLI argument history.
+- Restore replaces the local `cliArgsHistory` field when the snapshot contains it; counts from two devices are not merged.
+- Older snapshots without the field leave the current local history unchanged.
+
+### 4. Validation & Error Matrix
+
+- Missing field -> skip the key and preserve local history.
+- Malformed entries -> `normalizeCliArgsHistory` drops invalid rows and merges duplicate tool/argument pairs after load.
+- Valid field -> persist through `settingsStore.update`, then reload normalized settings state.
+
+### 5. Good / Base / Bad Cases
+
+- Good: upload device A history, restore preferences on device B, and receive the same counts and timestamps.
+- Base: restore a pre-feature snapshot without `cliArgsHistory`; device B keeps its local history.
+- Bad: add remote and local counts together on every restore, causing repeated restores to inflate usage.
+
+### 6. Tests Required
+
+- Unit: `SETTING_BACKUP_POLICY.cliArgsHistory` is `preferences` and `pickSyncableSettings` includes the field.
+- Unit: malformed and duplicate persisted entries normalize deterministically.
+- Type check: the exhaustive policy still covers every `Settings` key.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: history never reaches preference snapshots.
+cliArgsHistory: "excluded"
+
+// Correct: history follows the existing whole-field preference snapshot semantics.
+cliArgsHistory: "preferences"
+```

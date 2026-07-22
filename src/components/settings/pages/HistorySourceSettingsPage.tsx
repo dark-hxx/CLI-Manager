@@ -27,6 +27,7 @@ import {
 import { getLanguageLocale, pickByLanguage, useI18n } from "../../../lib/i18n";
 import { useHistorySourceSettingsStore } from "../../../stores/historySourceSettingsStore";
 import { VendorIcon, inferVendor } from "../../VendorIcon";
+import { useAppConfirm } from "../../ui/useAppConfirm";
 
 function capabilityColor(state: HistoryCapabilityState): string {
   if (state === "supported") return "green";
@@ -134,6 +135,7 @@ function validationMessage(code: string, text: (zh: string, en: string) => strin
 
 export function HistorySourceSettingsPage() {
   const { language, t } = useI18n();
+  const { confirm, confirmDialog } = useAppConfirm();
   const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const { loaded, settings, load, setSourceSettings, clearSource } = useHistorySourceSettingsStore();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -248,7 +250,12 @@ export function HistorySourceSettingsPage() {
       toast.error(t("historySources.backup.restorePathRequired"));
       return;
     }
-    if (!window.confirm(t("historySources.backup.restoreConfirm"))) return;
+    const confirmed = await confirm({
+      title: t("historySources.backup.restore"),
+      message: t("historySources.backup.restoreConfirm"),
+      danger: true,
+    });
+    if (!confirmed) return;
     try {
       setRestoreBusy(true);
       const plan = await invoke<HistoryBackupRecoveryPlan>("history_backup_execute_restore", {
@@ -657,6 +664,7 @@ export function HistorySourceSettingsPage() {
           );
         })}
       </SimpleGrid>
+      {confirmDialog}
     </Stack>
   );
 }

@@ -59,6 +59,44 @@
 - `npm run build` 通过；仅有既有的动态/静态混合导入和大 chunk 警告。
 - 本次未修改 cc-connect 源码、全局 npm 包或可执行文件，且未打包安装包。
 
+## cc-connect 可执行文件手动选择增量验证（2026-07-17）
+
+- 根因确认：Windows 文件对话框和 Rust `canonicalize()` 会返回 `\\?\` 扩展路径；后端此前把该路径直接写入 profile，而前端优先展示 profile，导致界面重新出现扩展前缀。
+- 根因确认：选择新程序此前只更新前端表单并禁用“重新检测”，没有把新路径提交给检测链路，因此仍显示旧程序的“已检测”状态。
+- profile 读取与保存现统一转换为普通用户路径；已有 `\\?\D:\...` 和 `\\?\UNC\...` 配置无需手工修改即可正常回显。
+- 新增只读的显式可执行文件检测 IPC；选择文件后立即校验文件、SHA-256 和版本，手动输入路径后也可点击“重新检测”。
+- 本机 `D:\nvm\nvmnew\v22.19.0\node_modules\cc-connect\bin\cc-connect.exe` 验证存在，版本为 `1.4.1`，SHA-256 为 `D3F7B0C673A4D5539A461639C98ECA054D18B1FA38FC1AFC6422A7BBF3A2B18D`。
+- `cargo test commands::cc_connect::tests --lib` 通过：24 项通过、0 项失败；新增覆盖扩展路径归一化和显式程序检测。
+- `cargo check` 通过。
+- cc-connect 设置页独立严格 TypeScript 检查通过。
+- 全量 `tsc --noEmit` 仍被上游 `a7e773d` 引用但未提交的 `src/lib/syncSettings.ts` 阻断，并伴随 `syncStore.ts` 的既有 TS2538；本次改动未新增 TypeScript 错误。
+- 未修改 cc-connect 源码、全局 npm 安装或用户配置文件；尚未打包和启动 Tauri 窗口手动验证。
+
+## cc-connect Telegram 任务排队增量验证（2026-07-17）
+
+- 日志确认 Telegram 已连接并能接收消息；无回复发生在消息进入 Codex app-server 后，后续消息因首个任务不结束而进入 cc-connect 队列。
+- 进程树确认 Codex 全局 `codebase-memory-mcp` 卡在 `git -C F:\test\work\amz\amazon rev-parse --git-dir`，任务尚未进入模型请求阶段。
+- 同一路径在未注入配置时触发 Git dubious ownership；通过 `GIT_CONFIG_COUNT/KEY/VALUE` 临时注入当前项目 `safe.directory` 后，命令在 1 秒内返回 `.git`。
+- 修复仅写入 CLI-Manager 启动的 cc-connect 子进程环境，并由 Codex/MCP 后代进程继承；不会执行 `git config --global`，也不会信任当前登记项目以外的目录。
+
+## cc-connect 项目 Provider、微信与企业微信增量验证（2026-07-18）
+
+- 根因结论：远程 Codex 的 Git 信任与 Provider 路由缺失发生在 CLI-Manager 启动 cc-connect 的进程边界，因此修复落在受管子进程环境和 Codex 启动包装层，而不是在 Telegram 消息或 cc-connect 响应层增加重试。
+- 远程 Codex 直接读取已登记项目的 `provider_overrides.codex.providerId`；项目默认 Agent 不是 Codex、但远程 Agent 手动选择 Codex 时，也会读取该项目的 Codex override 或当前全局 Codex Provider。
+- 复用 cc-switch 的 Provider 解析与真实 `CODEX_HOME` profile 写入逻辑；CLI-Manager 托管的 `codex` wrapper 强制在 `app-server` 前传入 `--profile`，密钥只进入受管进程环境，不写入 wrapper、TOML 或项目目录。
+- 微信个人号使用 cc-connect v1.4.1 原生 `type = "weixin"` ilink 通道，配置 Bearer Token、显式 `allow_from` 和按项目隔离的 `account_id`。
+- 企业微信使用 cc-connect v1.4.1 原生 `type = "wecom"` WebSocket 智能机器人通道，配置 `mode = "websocket"`、BotID、Secret 和显式 `allow_from`；不实现额外协议，也未修改 cc-connect 源码或全局安装。
+- 微信、企业微信凭据与 Telegram、飞书一致存入 Windows 凭据管理器；托管 TOML 仅保留环境变量占位符，Agent 子进程会清空平台凭据变量，避免密钥继续向下继承。
+- 场景检查覆盖：本地终端会话已打开/未打开、项目默认 Claude/远程选择 Codex、项目级/全局 Codex Provider、代理开/关、日志开/关、四种消息平台及凭据缺失阻断；多窗口、分屏、Worktree 与 hook 状态不参与该独立受管进程链路。
+- 触点清单已复核：`cc_connect.rs`（配置、凭据、项目快照、进程环境）、`ccswitch.rs`（Provider 解析/profile 写入）、`CcConnectSettingsPage.tsx`（真实设置入口）、`i18n.ts`（中英文）、cc-connect v1.4.1 `docs/weixin.md` / `docs/wecom.md` 与 `config.example.toml`（原生契约）；终端 PTY、daemon、Worktree 与 hook 调用链确认无业务改动。
+- `cargo check` 通过。
+- `cargo test commands::cc_connect::tests --lib` 通过：28 项通过、0 项失败。
+- `cargo test commands::ccswitch::tests --lib` 通过：33 项通过、0 项失败，确认抽出的 Provider 查询与 profile 写入入口未破坏现有切换逻辑。
+- 指定本机 cc-connect v1.4.1 可执行文件运行真实配置语法验证通过：Telegram、飞书、微信和企业微信四类托管 TOML 均通过 `cc-connect config format`。
+- `git diff --check` 通过，仅有工作区既有的 LF/CRLF 转换提示。
+- 全量 `tsc --noEmit` 仍被上游缺失的 `src/lib/syncSettings.ts` 和 `syncStore.ts` 既有 TS2538 阻断；本次新增设置页未产生新的 TypeScript 诊断。
+- 尚未使用真实微信 ilink Token 或企业微信 BotID/Secret 做账号链路验证；本次未打包、未 push。
+
 ## 桌面宠物首版验证（2026-07-16）
 
 - 已从最新主分支创建并在 feat/Desktop-pets 开发，功能提交为 feat: add downloadable desktop pets。
@@ -129,3 +167,301 @@
 - npm run build：通过，Vite 完成 6620 个模块转换；仅有既有的大 chunk 警告。
 - 190×210 固定窗口样式验证：8 个任务时菜单完整落在窗口内，任务区出现纵向滚动，项目名、会话名、状态和“当前”标记可见，底部三个操作按钮不被裁切。
 - 本次未打包；尚需在真实 Tauri 窗口手动覆盖同 Workspan、跨 Workspan、分屏深层会话、主窗口最小化/托盘及中英文切换。
+
+## cc-connect 微信扫码授权增量验证（2026-07-18）
+
+- 设置页微信平台新增“微信扫码授权”真实入口；点击后调用已校验的 cc-connect v1.4.1 原生 `weixin setup`，没有实现替代协议，也未修改 cc-connect 源码或全局安装。
+- 原生进程将二维码写入 CLI-Manager 专用临时目录；后端校验 PNG 签名与 2 MiB 上限后通过 Base64 IPC 返回，前端在固定 264×264 弹窗中展示并每 800 ms 轮询刷新。
+- 手机确认后，后端从临时 TOML 结构化读取 Token 与 `@im.wechat` 用户 ID，将已有显式允许用户去重合并，复用 profile 事务把 Token 写入 Windows 凭据管理器并重新生成仅含环境变量占位符的托管 TOML。
+- 原始 Token 不经过 WebView/IPC；成功、失败、取消、设置页卸载、应用退出以及下次应用启动均会清理临时配置、二维码和输出文件。
+- 同一时间只允许一个扫码授权进程；受管 cc-connect 运行或启动中时拒绝授权。Windows Job Object 与显式取消共同保证页面关闭和应用退出后不遗留子进程。
+- 授权继承远程连接的代理开关与手动/7890/10808 自动代理解析；代理关闭时继续清理继承代理环境。
+- 场景检查覆盖：未保存的新微信配置、已有允许用户重新授权、二维码生成中/等待确认/自动刷新、成功导入、原生进程失败、用户取消、设置页关闭、应用退出、代理开/关、cc-connect 运行中和重复点击。窗口焦点、分屏、Worktree 与 hook 状态不参与该独立设置流程。
+- `cargo check` 通过。
+- 指定本机 cc-connect v1.4.1 执行 `cargo test commands::cc_connect::tests --lib` 通过：30 项通过、0 项失败；真实 `config format` 同时验证普通四平台配置和扫码授权临时配置。
+- `.\\node_modules\\.bin\\tsc.cmd --noEmit` 通过。
+- `npm run build` 通过：Vite 完成 6621 个模块转换；仅保留既有的大 chunk 警告。
+- 尚未使用真实微信账号扫描二维码，避免未经确认操作外部账号；本次未打包、未 push。
+
+## cc-connect 远程 Codex app-server Provider 兼容修复（2026-07-18）
+
+### 根因与发现清单
+
+- 根因位于 CLI-Manager Provider 包装器与 Codex app-server 的进程参数边界：包装器无条件执行 `codex --profile <项目 Provider> app-server`，而本机 Codex CLI 0.144.5 明确拒绝 app-server 使用 `--profile`，进程立即退出，cc-connect 因此只得到 `initialize: EOF`。
+- 运行日志证明微信授权链路正常完成 `ilink ready-for-poll`、`platform ready`、`message received`；失败发生在消息进入 Codex 子进程后的 0.3~1 秒内，与微信 Token、允许用户和项目路径无关。
+- 已修改 `cc_connect.rs`：Provider 包装器、命令字符校验、真实包装器启动预检、Provider 密钥环境注入及对应测试。
+- 已修改 `ccswitch.rs`：仅将已解析的 base URL、model 与 wire API 以 crate 内只读字段提供给远程启动链路，不改变 Provider 解析、数据库或本地终端启动行为。
+- 已确认无需修改：cc-connect 源码/安装、微信扫码授权、四个平台协议配置、项目切换命令、Windows 凭据存储、Git safe.directory 和代理继承。
+
+### 修复与场景覆盖
+
+- app-server 不再使用 `--profile`；包装器改用 Codex CLI 支持的全局 `-c` 覆盖固定的 `cli_manager_remote` Provider，强制传入项目登记的 base URL、env key、wire API 和可选 model。
+- Provider 密钥仍只注入 cc-connect/Codex 子进程环境，不进入包装脚本、托管 TOML、日志或错误消息；包装器动态值拒绝控制字符及 Windows cmd 注入字符。
+- 启动 cc-connect 前使用同一包装器和同一 Provider 环境实际启动 `app-server --listen stdio://`，关闭探测 stdin 后校验退出码；不兼容时在设置启动阶段返回已脱敏的原始 stderr。
+- 平台场景：微信、Telegram、飞书、企业微信共用同一 Agent 启动链路；修复不依赖平台协议。
+- Provider 场景：项目显式 Provider、全局回退 Provider、带/不带 model、默认 responses wire API、切换项目后重启均使用当次数据库解析结果；无 Provider 的既有行为保持不变。
+- 会话场景：首次会话与恢复会话都由 cc-connect 启动同一 app-server；YOLO、代理、窗口焦点、分屏、Worktree 和 hook 状态不改变 Provider 参数生成。
+
+### 验证结果
+
+- 已用本机 Codex CLI 0.144.5 复现旧命令的明确错误：`--profile only applies to runtime commands ...`。
+- 已用同版本 Codex 验证等价的 `-c ... app-server --listen stdio://` 配置可正常启动并在 stdin 关闭后以 0 退出。
+- `cargo check`：通过。
+- `cargo test commands::cc_connect::tests --lib`：32 项通过、0 项失败，覆盖包装器参数顺序、无 model 分支、命令注入字符拒绝、启动错误与密钥脱敏。
+- `cargo test commands::ccswitch::tests --lib`：33 项通过、0 项失败。
+- `.\\node_modules\\.bin\\tsc.cmd --noEmit`：通过。
+- `npm run build`：通过，Vite 完成 6621 个模块转换；仅保留既有的大 chunk 警告。
+- `rustfmt --check --edition 2021 src/commands/cc_connect.rs src/commands/ccswitch.rs` 与 `git diff --check`：通过。
+- 尚未操作真实 Provider 发起模型请求，避免未经确认消耗外部账号额度；本次未打包、未 push。
+
+## Codex 会话远程托管验证（2026-07-19）
+
+### 功能与边界
+
+- 后端定向测试覆盖托管标识校验、通知身份字段、cc-connect 会话注入/清理、复用 ID 拒绝、Windows 项目哈希和四平台会话选择。
+- 前端候选会话只接受本地 Codex、有效 `cliSessionId`、登记项目与可信停止状态；托管锁会阻止关闭 Tab 和取消分屏，恢复失败会保留可重试蒙层。
+- 已确认 Telegram、飞书、微信、企业微信配置和授权入口在上游合并后仍存在；没有修改 cc-connect 源码。
+- 上游终端架构合并后，托管暂停/恢复已接入 `TerminalProcessManager`，源码扫描确认不存在旧 `pty_create`、`pty_close`、`pty_write` 或 PTY status event 监听残留。
+
+### 自动验证
+
+- `cargo test commands::cc_connect --lib`：38 项通过、0 项失败，覆盖 6 项托管测试以及微信/企业微信、Provider、代理、项目切换和可执行文件检测回归。
+- `cargo test commands::ccswitch --lib`：33 项通过、0 项失败。
+- `cargo check`：通过。
+- `.\node_modules\.bin\tsc.cmd --noEmit`：通过。
+- `npm run build`：通过，Vite 完成 6642 个模块转换；仅有既有的大 chunk 警告。
+- `node scripts/terminalProcessManager.test.mjs`：2 项通过。
+- `node scripts/ptyHostSocket.test.mjs`：7 项通过。
+- `node scripts/terminalReplay.test.mjs`：8 项通过。
+- `node scripts/fileExplorerIgnore.test.mjs`：9 项通过。
+- `git diff --check`：通过，仅有工作区既有的 LF/CRLF 转换提示。
+
+### 界面与入口回归
+
+- 通过浏览器 Tauri mock 验证中文桌宠纵向菜单、四会话向左扇形卡片、仅显示可托管会话的选择模式、活动托管锁标识及“暂停并取消托管”操作；长项目/会话名未与相邻控件重叠。
+- 点击桌宠候选卡片实际发出 `remote-handoff-start-request`，payload 为所选 `sessionId`；终端蒙层按钮实际发出 `remote-handoff-cancel-request`，确认不是无调用方的静态 UI。
+- 中文活动托管蒙层在 900×600 下无溢出；480×300 短 Pane 可滚动到底并完整显示取消按钮。
+- 英文 `recovery_failed` 蒙层正确显示恢复说明、长项目/工作目录/Provider 和“Retry Local Resume”，无控件重叠。
+- 上述桌宠与蒙层场景浏览器控制台均无 error/warn。
+
+### 未执行
+
+- 未通过真实 Telegram、飞书、微信或企业微信账号发送托管/取消通知；该操作会重启当前受管 cc-connect 并影响真实外部账号，需要单独的账号级冒烟确认。
+- 本次未生成安装包，也未 push。
+
+## 多平台托管与紧凑宠物菜单验证（2026-07-19）
+
+### 自动验证
+
+- cargo test commands::cc_connect：40 项通过、0 项失败，新增旧 profile 迁移和多平台 TOML 测试。
+- 设置 CLI_MANAGER_TEST_CC_CONNECT 指向本机官方 cc-connect v1.4.1 后，真实 config fmt 检查通过四平台同时启用的托管配置。
+- cargo check、TypeScript noEmit 与 npm run build 均通过；Vite 完成 6642 个模块转换，仅保留既有的大 chunk 警告。
+- git diff --check 通过，仅输出仓库既有的 LF/CRLF 转换提示。
+
+### 界面与边界
+
+- 临时静态渲染截图验证 156 px 纵向操作区、四个平台毛玻璃列表和 440 px 完整面板预算；平台卡片、状态、副标题和宠物锚点没有重叠，截图保留在 src-tauri/target/pet-menu-preview.png。
+- 平台不可用状态覆盖远程连接停止、凭据缺失、允许用户缺失、飞书无历史聊天和微信无上下文令牌；托管开始时后端再次校验，避免菜单快照过期导致错误接管。
+- 旧 profile.json 只自动启用原 current platform，其他平台凭据继续保留在 Windows Credential Manager；用户首次启用其他平台时需要补充该平台 allowFrom。
+
+### 未执行
+
+- 未启动或停止用户当前安装目录中的 CLI-Manager/cc-connect，也未向真实机器人发送消息。
+- 本次尚未生成 NSIS 安装包，也未 push。
+
+## 跨平台远程托管 Hook 通知验证（2026-07-19）
+
+### 功能与场景
+
+- 托管启动时仅向受管 cc-connect 进程注入 daemon Hook 地址、令牌和本地会话 ID；无托管记录时显式移除这些内部变量，避免普通远程连接串到旧会话。
+- daemon 独立维护任务状态和周期计时：UserPromptSubmit 开始监控，PermissionRequest 立即提醒，Stop/StopFailure 结束监控，缺少结束事件时按基础超时与用户提醒间隔进行状态未知提醒。
+- Telegram、飞书/Lark、微信和企业微信共用 handoff.json 中固化的 platformSessionKey 与 cc-connect send；只通知当前托管平台，不广播到其他已配置平台。
+- 事件必须同时匹配 source、localSessionId 和可用时的 cliSessionId；取消托管或切换平台会使旧投递任务在发送前失效。
+- 最小化、托盘和前端重连不参与调度；daemon Hook 缓存回放只恢复界面状态，不会重复远程发送。
+- Hook 未安装或 daemon 不可达时不会猜测任务运行状态；权限通知只提醒，实际批准/拒绝仍由 cc-connect 原机器人会话处理。
+
+### 自动验证
+
+- cargo test --lib：518 项通过、0 项失败、1 项按环境要求忽略。
+- cargo test commands::cc_connect --lib：45 项通过，覆盖四平台文案、会话双 ID 归属、权限去重、设置默认值/区间和 Hook 环境。
+- cargo test daemon::server --lib：10 项通过，Hook 状态、缓存、WebSocket 与 PTY daemon 回归通过。
+- .\node_modules\.bin\tsc.cmd --noEmit：通过。
+- npm run build：通过，Vite 完成 6642 个模块转换；仅保留既有的大 chunk 警告。
+- git diff --check：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- codebase-memory-mcp 已按最新工作区重建 moderate 索引并完成变更影响扫描。
+
+### 未执行
+
+- 未向真实 Telegram、飞书、微信或企业微信账号发送测试消息，避免影响用户当前机器人和外部账号。
+- 未启动、停止或替换用户安装目录中的 CLI-Manager/cc-connect；本次未生成安装包，也未 push。
+
+## 大型 Codex 会话远程恢复修复验证（2026-07-19）
+
+### 根因与触点
+
+- 根因位于 Codex app-server 到 cc-connect 的 JSONL 传输边界：原 Session ID 和 rollout 均正常，Codex 已恢复完整上下文，但单行 `thread/resume` 回复为 10,566,391 字节，超过 cc-connect 约 10 MB 的读取上限；随后 cc-connect 回退执行 `thread/start`，产生漂移 Session ID。
+- 新增 `codex_app_server_proxy.rs`，完整接收大回复后仅转发 cc-connect 实际消费的线程 ID、目录、模型与推理强度；代理不修改 Codex 内部已加载的历史上下文。
+- `cc_connect.rs` 只让包装器的 `app-server` 模式经过代理，并从 `handoff.json` 注入预期原 Session ID；其他 Codex 命令保持原行为。
+- `handoff_session.rs` 的异常取消只接受当前原 ID，或身份历史明确包含原 ID 的后继线程；没有增加删除 Codex Session/rollout 的代码。
+- 已确认无需修改 cc-connect 源码/安装、平台协议、Provider 配置、本地 Codex 恢复、前端入口和两个 Codex rollout 文件。
+
+### 自动与真实链路验证
+
+- `cargo test --lib`：561 项通过、0 项失败、1 项忽略。
+- `npm run build`：通过，Vite 完成 6668 个模块转换；仅保留既有的大 chunk 警告。
+- Rust 格式检查：通过。
+- 真实恢复原 Session `019f5e8b-2d11-76d1-89b4-a0c0ff20d111`：Codex 原始回复 10,566,391 字节，代理转交 176 字节，Session ID 保持原值，cwd/model/reasoning effort 正确。
+- codebase-memory 已用 moderate 模式刷新并完成变更影响检测；GitNexus MCP 未暴露，已用源码、`rg`、Git diff、测试和真实协议恢复结果补充复核。
+
+### 发布产物
+
+- NSIS：`src-tauri/target/release/bundle/nsis/CLI-Manager_1.2.10_x64-setup.exe`，SHA-256 `084E582847D63E0BE8F789B08120DFFDDC2C976BFC90EAE1546DE418E54C1C96`。
+- MSI：`src-tauri/target/release/bundle/msi/CLI-Manager_1.2.10_x64_en-US.msi`，SHA-256 `86A5756BB49D2793E21746B1D2F231BDBB9C1410F559DCDE3B8FF7D24EC8DB0F`。
+- Release EXE：SHA-256 `7F63FC46432115F1616B8B18D8083E5B89F13E41EE2382A79230DD6236A5C695`。
+- 当前异常托管在最终回复前继续运行；已要求延迟停止 cc-connect、移除 `s3` 和 handoff 记录，同时保留原 Session `019f5e8b-2d11-76d1-89b4-a0c0ff20d111` 与漂移 Session `019f7a9b-01c1-75e3-aa9c-0e59ca43a7ef` 的全部 Codex 文件。
+
+## 远程单轮任务时限可视化配置（2026-07-20）
+
+### 功能与兼容性
+
+- “设置 -> 远程连接”新增“单轮任务时间上限”分钟输入框，允许 `0~1440`；`0` 按 cc-connect v1.4.1 官方配置语义表示禁用绝对时限。
+- 保存后写入受管 `config.toml` 的顶层 `max_turn_time_mins`，Telegram、飞书、微信和企业微信共用该值；cc-connect 正在运行时沿用既有事务自动重启并生效。
+- 旧 `profile.json` 缺少字段时保持 CLI-Manager 原有的 15 分钟默认值，避免升级后行为突变；后端拒绝超过 1440 分钟的请求。
+- 新增中文、英文设置文案，英文继续使用 24 小时时间格式的全局规则。
+
+### 验证
+
+- `rustfmt --check --edition 2021 src\commands\cc_connect.rs`：通过。
+- `.\node_modules\.bin\tsc.cmd --noEmit`：通过。
+- `cargo test commands::cc_connect --lib`：49 项通过、0 项失败，覆盖旧配置默认值、`0/1440` 边界和 `1441` 拒绝路径。
+- `cargo test --lib`：562 项通过、0 项失败、1 项按环境要求忽略。
+- `npm run build`：通过，Vite 完成 6668 个模块转换；仅保留既有的大 chunk 警告。
+- 设置 `CLI_MANAGER_TEST_CC_CONNECT` 指向本机 cc-connect v1.4.1 后，受管配置通过真实 `config format` 校验；官方 `config example` 同时确认 `0` 表示禁用时限。
+- 未启动或停止用户安装目录中的 CLI-Manager/cc-connect，未向真实机器人发送消息；本次未生成安装包，也未 push。
+
+## WSL 桌面宠物内存增长根因修复（2026-07-20）
+
+### 根因陈述与发现清单
+
+- 根因位于 PTY 活动状态跨窗口传输与桌宠 WebView 渲染边界：WSL 持续输出会每秒刷新 `ptyOutputActivityAt`，旧协调器随每次快照变化重复跨窗口发送并重建事件监听；桌宠同时以隐藏探测图和 `background-position` 精灵动画持续解码/绘制透明 WebView，长期运行会放大 IPC 队列、React 重渲染和 WebView2/GPU 资源占用。
+- 已修改 `useDesktopPetCoordinator`：配置与快照按可见语义去重、单飞发送并合并最新状态，READY 才强制重发；事件监听改为稳定注册；相同 daemon 轮询结果复用旧数组；桌宠不可见时停止 daemon 轮询，并用一次性 TTL 刷新保证输出停止后从 working 正确回落。
+- 已修改 `desktopPet.ts` / `desktopPetTransport.ts`：快照推导支持显式时钟；working 状态的纯时间戳变化不再触发跨窗口投递，成功状态时间戳、目标顺序、状态、托管信息等可见变化仍会投递。
+- 已修改 `DesktopPetApp` / `desktopPet.css`：桌宠禁用、自动全屏隐藏、原生窗口隐藏或 document 不可见时暂停动画；隐藏操作先本地停画，避免等待 IPC 回环。
+- 已修改 `PetArtwork`：Codex Pets 精灵由双重的 probe 图片 + CSS background 改为单一 `<img>` 与 GPU transform 分帧；测量 canvas 用后释放 backing store，内容边界缓存限制为 128 条。
+- 已修改 `desktop_pet.rs`：image-v1 资源增加单文件、SVG、4096 单边和 16MP 解码尺寸上限，阻止小压缩包携带超大解码位图；PNG/WebP 头与尺寸异常会在安装/读取阶段拒绝。
+- 已确认无需修改：PTY 输出生产与每秒节流、TerminalStore 会话清理、桌宠原生窗口尺寸、cc-connect 源码/平台协议、远程托管菜单与取消流程。
+
+### 场景覆盖
+
+- 运行环境：本地 PowerShell/CMD/Pwsh、WSL/Bash 均走同一 PTY 活动去重链路；本机无 WSL，自动验证以持续更新时间戳模拟 WSL 高频状态。
+- 可见性：正常显示、主应用失焦、桌宠原生隐藏、设置禁用、终端全屏自动隐藏时均有明确发送/动画策略；重新显示通过配置变更或 READY 强制同步最新状态。
+- 会话：单会话、多会话、daemon-only、目标排序变化、attention/failed/done/success、working TTL 到期与远程托管状态都保留可见更新；success 的 3.5 秒展示时间戳未被去重。
+- 宠物格式：内置 SVG 猫、image-v1 PNG/WebP/SVG、Codex Pets V1/V2 精灵均保持入口；托管菜单、扇形会话卡片和打开主窗口调用链未改动。
+- 包来源：`%USERPROFILE%\.codex\pets` 外部只读包继续扫描；自行导入的 CLI-Manager 包在安装和后续读取时应用新增资源上限。
+
+### 验证结果
+
+- `.\node_modules\.bin\tsc.cmd --noEmit`：通过。
+- `node scripts/desktopPetTransport.test.mjs`：4 项通过，覆盖 working 时间戳去重、可见状态变化、success 时间戳和 daemon 数组复用。
+- `cargo test --manifest-path src-tauri/Cargo.toml desktop_pet`：11 项通过，覆盖 PNG 尺寸解析、4096 边界、超限像素及无效 PNG/WebP。
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过。
+- `npm run build`：通过，Vite 完成 6672 个模块转换。
+- 使用本机 `shinobu-q` 1536×2288 Codex Pets V2 资源执行同源浏览器视觉验证：working 第 7 行、6 帧 transform 动画裁剪、内容边界测量与自适应缩放正确。
+- `git diff --check`：通过，仅有仓库既有 LF/CRLF 转换提示。
+- GitNexus CLI 基线仍因本机缺少 `tree-sitter-kotlin` 且无可用索引而不可执行；已降级用 codebase-memory moderate 重建索引、调用链追踪、源码/rg/Git diff 与实际构建测试复核。高风险触点为 App 桌宠协调主流程、DesktopPetApp 渲染入口及宠物包安装/读取链路。
+
+### 限制与后续验证
+
+- 本机没有 WSL，无法原样复现用户报告的 10GB 峰值；本次修复切断了已定位的持续 IPC/渲染放大链并为资源解码建立上界，但发布前仍建议在反馈环境执行至少 2 小时 WSL 持续输出 soak test，分别记录桌宠 renderer、主 renderer 和 GPU 进程的 Private Working Set。
+- 本次未生成安装包、未启动或停止用户安装目录中的 CLI-Manager/cc-connect，也未 push。
+
+## 停止远程托管后重复 Resume 参数修复（2026-07-20）
+
+### 根因陈述与发现清单
+
+- 根因位于“项目持久化 CLI 参数 → 公共会话恢复命令”的数据边界：保存到侧栏的项目会把旧 Session 的 `resume` 片段写入 `cli_args`，而远程托管取消、工作区恢复和历史恢复又为目标 Session 构造新的 resume 命令；旧实现无条件继承 `cli_args`，因此一条命令中出现两个 Session ID。
+- 新增共享 `stripResumeCliArgs`，在 fresh resume 链路继承项目参数前移除 Codex/Claude 已有的 `resume <id>`、`resume --no-alt-screen <id>`、`resume --last`、`--resume <id>` 和 `--continue`，保留模型、沙箱、Provider 等普通参数。
+- `appendResumeCliArgs` 已接入共享清理，覆盖远程托管取消后的本地恢复、工作区恢复和历史会话恢复；`buildResumeCliArgs` 复用同一规则，避免重新保存侧栏会话时规则漂移。
+- 已确认无需修改：`terminalStore.resumeSessionFromRemoteHandoff`、`buildCliResumeStartupCommand`、`HistoryWorkspace` 调用入口、`resolveProjectStartupCommand` 的正常侧栏启动行为、Rust 托管后端、cc-connect 源码与平台协议。
+- GitNexus 工具在当前会话未暴露；已降级使用 codebase-memory 调用链追踪、契约、`rg`、源码和 Git diff。公共 `appendResumeCliArgs` 的影响分析为 CRITICAL，直接覆盖历史恢复和终端恢复主流程。
+
+### 场景覆盖
+
+- 多会话/不同 Session ID：新目标 ID 保留且只出现一次，项目中旧 ID 被移除；Provider profile 只追加一次。
+- 项目来源：普通项目参数、保存到侧栏的项目、重复保存的项目、Worktree 继承参数均走同一清理规则。
+- CLI/环境：Codex 与 Claude 均覆盖；PowerShell/CMD/Pwsh、WSL/Bash 的 shell 包装位于此纯参数处理之外，不改变去重结果。
+- 窗口焦点、分屏、最小化/托盘和 Hook 安装状态不参与命令构造，确认与本问题无关。
+
+### 验证结果
+
+- `node scripts/resumeCliArgs.test.mjs`：4 项通过，包含用户此次精确的 `fresh resume + cli_args 中旧 resume` 场景、两种 Codex 格式、Claude resume/continue、普通参数保留和 Provider 单次追加。
+- `.\node_modules\.bin\tsc.cmd --noEmit`：通过。
+- `npm run build`：通过，Vite 完成 6673 个模块转换。
+- `git diff --check`：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- 本次未生成安装包，未启动/停止用户安装目录中的 CLI-Manager 或 cc-connect，也未 push。
+
+## 桌宠悬停菜单、尺寸调节与右键漂移修复（2026-07-20）
+
+### 根因陈述与发现清单
+
+- 漂移根因位于桌宠原生窗口移动事件与前端拖动状态的边界：菜单展开/收起通过 SetWindowPos 改变窗口坐标并触发 onMoved，旧拖动标记尚未清理时会把展开窗口左上角误持久化为宠物位置；修复在程序化窗口调整入口终止拖动跟踪并过滤预期移动事件，而不是在位置回显处兜底。
+- 已修改 DesktopPetApp / desktopPet.css：宠物悬停 200ms 展开菜单、离开 350ms 延迟收起，保留右键备用入口；菜单内加入 40%～150%、5% 步进的尺寸滑条，并在拖出窗口时保持指针捕获和正确提交。
+- 已修改 desktopPetMenu：实时缩放以折叠宠物窗口的底部中心为锚点，并约束在当前显示器工作区；异步菜单窗口任务继续只应用最新状态。
+- 已修改 useDesktopPetCoordinator / desktopPet.ts：新增桌宠尺寸事件，尺寸与对应位置原子持久化；仅跳过桌宠已经应用的完全相同窗口配置，显示/隐藏或置顶状态并发变化仍会同步。
+- 已修改 settingsStore / DesktopPetSettingsPage：尺寸设置改为数值百分比，并兼容迁移旧 small/medium/large 配置到 80%/100%/125%；设置页同步提供相同范围的滑条。
+- 已修改 Rust 桌宠窗口尺寸边界：原生窗口最小缩放从 75% 放宽到 40%，最大值保持 150%；中英文文案同步更新。
+- 已确认无需修改：宠物资源格式与下载/导入链路、状态推导、扇形会话卡片、远程托管协议、cc-connect 源码及平台适配。
+
+### 场景覆盖
+
+- 菜单交互：悬停打开、从宠物移动到菜单或会话卡片、离开延迟关闭、右键开关、Esc/设置变更关闭、滑条拖动期间离开窗口。
+- 窗口状态：屏幕四角、负坐标副屏、100%/125%/150% DPI、程序化展开/收起、用户拖动、锁定位置和主应用失焦。
+- 尺寸与兼容：40%、100%、150% 边界、5% 步进、旧三档配置迁移、菜单实时预览、设置页持久化和重启回显。
+- 会话状态：无会话、单会话、多会话、远程托管平台/会话二级菜单均复用同一悬停窗口状态机；PTY、WSL、Worktree 和 Hook 数据链路未改变。
+
+### 验证结果
+
+- .\node_modules\.bin\tsc.cmd --noEmit：通过。
+- node scripts\desktopPetSize.test.mjs：3 项通过，覆盖旧配置迁移、范围/步进归一化及原生缩放换算。
+- node scripts\desktopPetMenuGeometry.test.mjs：11 项通过，覆盖多 DPI 四角定位、负坐标副屏、尺寸锚点和异步菜单竞态。
+- cargo test --manifest-path src-tauri\Cargo.toml desktop_pet_window：2 项通过，覆盖 40%～150% 原生窗口边界及非法尺寸。
+- cargo check --manifest-path src-tauri\Cargo.toml：通过。
+- rustfmt --edition 2021 --check src-tauri\src\commands\desktop_pet.rs：通过；全仓 cargo fmt -- --check 仍受本分支既有的其他 Rust 文件格式差异影响。
+- npm run build：通过，Vite 完成 6675 个模块转换。
+- git diff --check：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- GitNexus CLI 仍因本机缺少 tree-sitter-kotlin 无法执行；已降级为 codebase-memory moderate 重建索引、变更影响检测、rg、源码、Git diff 和构建测试复核。
+- 本次未生成安装包，未启动/停止用户安装目录中的 CLI-Manager 或 cc-connect，也未 push。
+
+## PR #160 审查意见修复与 V1.3.1 打包（2026-07-20）
+
+### 根因陈述与发现清单
+
+- 最终通知丢失的根因位于远程 Hook 事件状态机：超时提醒被错误建模为 Terminal，真实 Stop/StopFailure 因而被去重；修复将超时改为一次性“状态未知”提醒，仅真实完成/失败进入终态。
+- 取消后旧通知的根因位于 handoff 持久化身份与 cc-connect 发送重试边界：旧实现仅在进入 worker 时校验一次；修复将发送拆为单次尝试，并在每次尝试前校验本地 Session、CLI Session、平台、平台会话标识和 startedAt。
+- 凭据风险位于外部进程 stdout/stderr 到状态文件的持久化边界：旧清理仅去换行和截断；修复复用日志脱敏并收集平台凭据、Provider API Key、daemon Token 与敏感环境变量，状态文件只允许安全错误码，旧的不安全字段读取时会被替换。
+- Resume 重复的根因位于项目 CLI 参数到 fresh resume 命令的解析边界：旧逻辑假设 Session ID 紧跟子命令；修复按 Codex CLI 的带值选项、无值选项、选择参数和位置参数解析，删除旧 Session/Prompt 并保留模型、沙箱和 Provider 配置。
+- 已修改：cc-connect handoff 通知状态机与发送器、共享日志脱敏、Resume 参数清理与专项测试、npm/Cargo/Tauri 版本、CHANGELOG、PR CI。
+- 已确认无需修改：cc-connect 源码、消息平台协议、托管记录 Schema、桌宠托管入口、终端锁定蒙层、SQLite Schema 和用户安装目录中的运行进程。
+
+### 场景覆盖
+
+- 超时后真实完成、超时后真实失败、重复终止事件、进度/权限提醒关闭或启用均保留明确状态。
+- 通知首次成功、多次失败、重试期间取消、同一平台替换 handoff、切换平台/平台会话、记录读取失败均采用 fail-closed 校验。
+- Telegram、飞书、微信、企业微信凭据，Provider API Key 和 daemon Token 均覆盖精确值与 token/secret/api_key/authorization/bearer 模式脱敏。
+- Resume 覆盖 model、sandbox、config、profile、enable、all、include-non-interactive、no-alt-screen、旧 Session ID 与旧 Prompt 位于不同顺序。
+- 本次行为与窗口焦点、分屏、最小化、WSL、Worktree 和 Hook 是否安装无额外分支；这些状态继续通过原托管入口提供同一 handoff 身份。
+
+### 验证结果
+
+- cargo check：通过。
+- cargo test --lib：603 项通过、0 项失败、1 项因缺少指定 WSL 测试环境而忽略。
+- 前端 TypeScript noEmit 检查：通过。
+- resumeCliArgs.test.mjs：5 项通过。
+- desktopPetTransport.test.mjs：4 项通过。
+- desktopPetMenuGeometry.test.mjs：11 项通过。
+- desktopPetSize.test.mjs：3 项通过。
+- git diff --check：通过，仅有仓库既有 LF/CRLF 转换提示。
+- GitNexus 索引因 tree-sitter-kotlin 安装失败而不可用，codebase-memory transport 同时关闭；已降级使用契约、rg、源码、Git diff、全量 Rust 测试和生产构建复核。
+- 已同步并合并 origin/master 44f5695c，冲突仅为上游 1.3.0 与本分支 1.3.1 的五个版本字段，统一保留 1.3.1。
+- 使用 tauri.local.conf.json 关闭 updater artifacts，仅构建 NSIS；产物为 src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.1_x64-setup.exe，大小 19021755 字节，SHA-256 为 E13FCF061B1B2EFDB7FABBF63C6050F4F7781992DE23948C049F11FE0AE1A3B9。
+- 未构建 MSI、未生成更新签名、未复制到 F:\cli-manager、未停止用户安装目录中的服务，也未 push。

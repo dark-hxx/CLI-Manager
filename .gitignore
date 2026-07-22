@@ -34,11 +34,17 @@ data/
 
 # Tauri
 src-tauri/target/
+src-tauri/ssh-agent/target/
+src-tauri/history-core/target/
+src-tauri/history-core/Cargo.lock
+src-tauri/hook-schema/target/
+src-tauri/hook-schema/Cargo.lock
 server/target/
 apps/server/target/
 crates/web-protocol/target/
 crates/web-protocol/Cargo.lock
 apps/web/dist
+crates/web-protocol
 
 prototype/
 .cursor

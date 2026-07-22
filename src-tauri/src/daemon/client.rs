@@ -12,6 +12,7 @@ use super::protocol::{
     MAX_FRAME_BYTES,
 };
 use crate::pty::manager::PtyProcessStatus;
+use crate::ssh_launch::SshLaunchPlan;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -211,6 +212,12 @@ impl DaemonClient {
             DaemonFrame::HookReport { payload } => {
                 let _ = app_handle.emit("claude-hook-notification", payload);
             }
+            DaemonFrame::SshAgentHookGap { host_id, dropped } => {
+                let _ = app_handle.emit(
+                    "ssh-agent-hook-gap",
+                    serde_json::json!({ "hostId": host_id, "dropped": dropped }),
+                );
+            }
             DaemonFrame::CheckpointAccepted { .. } | DaemonFrame::CheckpointRejected { .. } => {}
             DaemonFrame::Pong { id }
             | DaemonFrame::Ok { id }
@@ -219,6 +226,7 @@ impl DaemonClient {
             | DaemonFrame::Sessions { id, .. }
             | DaemonFrame::Statuses { id, .. }
             | DaemonFrame::Reconciled { id, .. }
+            | DaemonFrame::SshAgentResponse { id, .. }
             | DaemonFrame::Attached { id, .. } => {
                 let sender = self.pending.lock().ok().and_then(|mut p| p.remove(&id));
                 if let Some(sender) = sender {
@@ -237,6 +245,15 @@ impl DaemonClient {
 
     /// 发请求并等待对应 id 的应答（超时/断连返回 Err）。
     pub fn request(&self, id: u64, frame: &ClientFrame) -> Result<DaemonFrame, String> {
+        self.request_with_timeout(id, frame, REQUEST_TIMEOUT)
+    }
+
+    fn request_with_timeout(
+        &self,
+        id: u64,
+        frame: &ClientFrame,
+        timeout: Duration,
+    ) -> Result<DaemonFrame, String> {
         if !self.is_connected() {
             return Err("daemon disconnected".to_string());
         }
@@ -257,7 +274,7 @@ impl DaemonClient {
                 })?;
         }
         let reply = rx
-            .recv_timeout(REQUEST_TIMEOUT)
+            .recv_timeout(timeout)
             .map_err(|err| format!("daemon reply timeout: {err}"));
         if reply.is_err() {
             if let Ok(mut pending) = self.pending.lock() {
@@ -322,6 +339,43 @@ impl DaemonClient {
     pub fn shutdown_if_idle(&self) -> Result<(), String> {
         let id = self.next_request_id();
         self.expect_ok(&ClientFrame::Shutdown { id }, id)
+    }
+
+    pub fn ssh_agent_request(
+        &self,
+        consumer_id: String,
+        ssh_launch: SshLaunchPlan,
+        request_kind: String,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let id = self.next_request_id();
+        match self.request_with_timeout(
+            id,
+            &ClientFrame::SshAgentRequest {
+                id,
+                consumer_id,
+                ssh_launch,
+                request_kind,
+                payload,
+            },
+            Duration::from_secs(75),
+        )? {
+            DaemonFrame::SshAgentResponse { payload, .. } => Ok(payload),
+            DaemonFrame::Err { message, .. } => Err(message),
+            other => Err(format!("daemon unexpected reply: {other:?}")),
+        }
+    }
+
+    pub fn ssh_agent_release(&self, host_id: String, consumer_id: String) -> Result<(), String> {
+        let id = self.next_request_id();
+        self.expect_ok(
+            &ClientFrame::SshAgentRelease {
+                id,
+                host_id,
+                consumer_id,
+            },
+            id,
+        )
     }
 }
 

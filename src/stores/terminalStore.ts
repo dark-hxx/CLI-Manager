@@ -2,7 +2,14 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import type { SubagentTranscriptSource, TerminalSession, Project, SshConnectionState, SshDisconnectReason } from "../lib/types";
+import type {
+  Project,
+  RemoteHandoffSessionState,
+  SshConnectionState,
+  SshDisconnectReason,
+  SubagentTranscriptSource,
+  TerminalSession,
+} from "../lib/types";
 import { debugConsoleWarn } from "../lib/debugConsole";
 import { sourceTool, type SyncedHistoryGroup } from "../lib/externalSessionGrouping";
 import { logError, logInfo, logWarn, recordCrashActivity } from "../lib/logger";
@@ -12,11 +19,20 @@ import { normalizeHexColor } from "../lib/terminalColor";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey, type OsPlatform, type ShellKey } from "../lib/shell";
-import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType, isExactCodexProject, parseProjectEnvVars } from "../lib/providerSwitching";
+import {
+  getClaudeProviderOverride,
+  getCodexProviderOverride,
+  getProviderSwitchAppType,
+  isExactCodexProject,
+  parseProjectEnvVars,
+  withCodexProviderOverride,
+} from "../lib/providerSwitching";
 import { useProjectStore } from "./projectStore";
 import { useSshHostStore } from "./sshHostStore";
+import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "../lib/ssh";
-import { appendSyncedHistoryContextArg } from "../lib/syncedHistoryContext";
+import { parseStoredSshHookReport, resolveSshToolSource } from "../lib/sshToolIntegration";
+import { getSshClientInstanceId } from "../lib/sshClientIdentity";
 import { translateCurrent } from "../lib/i18n";
 import { findProjectByPath, findWorktreeByPath, resolveProjectForProviderLaunch } from "../lib/terminalProject";
 import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
@@ -59,7 +75,7 @@ import {
 } from "./terminalWorkspan";
 
 export type SessionStatus = "running" | "exited" | "error";
-export type CliHookSource = "claude" | "codex";
+export type CliHookSource = "claude" | "codex" | "pi";
 export type CliHookEventName =
   | "SessionStart"
   | "UserPromptSubmit"
@@ -163,6 +179,13 @@ export interface CliHookPayload {
   transcriptPath?: string | null;
   reasoningEffort?: string | null;
   wslDistroName?: string | null;
+  environmentType?: "ssh" | null;
+  remoteHostId?: string | null;
+  remoteProjectId?: string | null;
+  remoteTranscriptRef?: string | null;
+  remoteAgentTranscriptRef?: string | null;
+  remoteEventId?: string | null;
+  remoteSequence?: number | null;
 }
 
 /** 子 Agent 转录面板的实时内容（按订阅 key=伪会话 id 存放）。 */
@@ -203,6 +226,7 @@ interface HookToolStatus {
 interface HookSettingsStatusPayload {
   claude: HookToolStatus;
   codex: HookToolStatus;
+  pi: HookToolStatus;
   claudeAutoRepaired?: boolean;
 }
 
@@ -229,7 +253,7 @@ interface TerminalStore {
   /** 仅运行态：XTerm 输出监听就绪后才可执行 daemon attach。 */
   daemonAttachPendingSessionIds: Set<string>;
   subagentTranscripts: Record<string, SubagentTranscriptContent>;
-  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string, sshHostId?: string) => Promise<string>;
+  createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string, sshHostId?: string, cliSessionId?: string, remoteHistoryConsumerId?: string, remoteHistorySourceInstanceId?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
   setWorkspanModeEnabled: (enabled: boolean) => void;
@@ -240,10 +264,17 @@ interface TerminalStore {
   updateSessionCwd: (sessionId: string, cwd: string) => void;
   updateSshConnectionState: (sessionId: string, connectionState: SshConnectionState, disconnectReason?: SshDisconnectReason) => void;
   updateSessionTerminalSnapshot: (sessionId: string, initialTerminalOutput: string) => void;
+  suspendSessionForRemoteHandoff: (sessionId: string, handoff: RemoteHandoffSessionState) => Promise<void>;
+  updateSessionRemoteHandoff: (sessionId: string, handoff: RemoteHandoffSessionState) => Promise<void>;
+  resumeSessionFromRemoteHandoff: (sessionId: string) => Promise<string>;
+  restorePersistedRemoteHandoffSessions: () => void;
   recordPtyOutputActivity: (sessionId: string) => void;
   markAttentionInputHandled: (sessionId: string) => void;
   handleCliHookEvent: (payload: CliHookPayload) => string | null;
   handleShellRuntimeEvent: (payload: ShellRuntimePayload) => string | null;
+  /** 终端侧栏实时统计刷新序号：Hook 绑定 sessionId / 回合结束时递增，面板立即重拉。 */
+  statsPanelRefreshSeq: number;
+  bumpStatsPanelRefresh: () => void;
   reorderSessions: (fromId: string, toId: string) => void;
   moveSessionToPane: (sessionId: string, targetPaneId: string, beforeSessionId?: string) => void;
   splitSessionToPaneEdge: (sessionId: string, targetPaneId: string, edge: TerminalPaneDropEdge) => void;
@@ -437,7 +468,9 @@ function isPersistableSession(session: TerminalSession | undefined): boolean {
 }
 
 function hasBackendPty(session: TerminalSession): boolean {
-  return session.kind !== "subagent-transcript" && session.kind !== "file-editor";
+  return !session.remoteHandoff
+    && session.kind !== "subagent-transcript"
+    && session.kind !== "file-editor";
 }
 
 function startPtyOrphanReconcileHeartbeat() {
@@ -1087,6 +1120,12 @@ export interface DetachedPtyLaunchResult {
   startupCmd?: string;
 }
 
+interface CodexProviderProfileResponse {
+  providerId: string;
+  providerName: string;
+  profileName: string;
+}
+
 function applySshExitState(session: TerminalSession, payload: PtyStatusPayload): TerminalSession {
   if (session.environmentType !== "ssh" || (payload.status !== "exited" && payload.status !== "error")) {
     return session;
@@ -1126,6 +1165,13 @@ function persistSshConnectionStateAfterPtyStatus(sessionId: string, payload: Pty
 interface SshLaunchPayload extends SshConnectionSpecPayload {
   hostId: string;
   remotePath: string;
+  clientInstanceId: string;
+  projectId: string;
+  bridgeEpoch: string;
+  agentPath: string;
+  agentInstallationId: string;
+  agentRemoteMachineId: string;
+  toolSource: "" | "claude" | "codex";
   environmentOverrides: Record<string, string>;
   initializationCommand: string | null;
   startupCommand: string | null;
@@ -1178,17 +1224,21 @@ function scheduleHookRunningTimeout(tabId: string, updatedAt: string) {
 
 async function shouldEnableHookEnv(): Promise<boolean> {
   const settings = useSettingsStore.getState();
-  if (!settings.claudeHookBridgeEnabled && !settings.codexHookBridgeEnabled) return false;
+  if (!settings.claudeHookBridgeEnabled && !settings.codexHookBridgeEnabled && !settings.piHookBridgeEnabled) {
+    return false;
+  }
   try {
     const status = await invoke<HookSettingsStatusPayload>("hook_settings_get_status", {
       selectedDir: settings.claudeHookConfigDir?.trim() || null,
       codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
+      piSelectedDir: settings.piHookConfigDir?.trim() || null,
       ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
       autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
     });
     return (
       (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
-      (settings.codexHookBridgeEnabled && status.codex.status === "installed")
+      (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
+      (settings.piHookBridgeEnabled && status.pi.status === "installed")
     );
   } catch (err) {
     logError("hook_settings_get_status failed while deciding terminal hook env", { err });
@@ -1257,7 +1307,9 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
   }
   if (requestedSshHostId) {
     const sshHostId = requestedSshHostId;
-    const remotePath = project?.environment_type === "ssh" ? project.remote_path.trim() : "/";
+    const remotePath = project?.environment_type === "ssh"
+      ? project.remote_path.trim()
+      : options.cwd?.trim() || "/";
     if (!sshHostId || !remotePath) throw new Error("ssh_project_configuration_invalid");
 
     const sshStore = useSshHostStore.getState();
@@ -1271,6 +1323,42 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
     const resolvedEnvironmentOverrides = options.envVars === undefined && project?.environment_type === "ssh"
       ? parseProjectEnvVars(project) ?? {}
       : options.envVars ?? {};
+    const toolSource = project?.environment_type === "ssh"
+      ? resolveSshToolSource(project.cli_tool)
+      : null;
+    let agentInstallation: ReturnType<typeof useSshAgentIntegrationStore.getState>["installations"][number] | undefined;
+    let hookBridgeEnabled = false;
+    if (toolSource) {
+      const integrationStore = useSshAgentIntegrationStore.getState();
+      if (!integrationStore.loaded) await integrationStore.fetchAll();
+      const integrationState = useSshAgentIntegrationStore.getState();
+      agentInstallation = integrationState.installations.find(
+        (candidate) => candidate.host_id === host.id && candidate.status === "installed",
+      );
+      const hostConfiguredRoot = integrationState.preferences.find(
+        (preference) => preference.host_id === host.id && preference.source === toolSource,
+      )?.configured_root.trim();
+      const effectiveConfigRoot = project?.cli_config_root.trim() || hostConfiguredRoot || "";
+      if (effectiveConfigRoot) {
+        const environmentKey = toolSource === "claude" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+        resolvedEnvironmentOverrides[environmentKey] = effectiveConfigRoot;
+      }
+      const hookIntegration = integrationState.integrations.find((candidate) => (
+        candidate.host_id === host.id
+        && candidate.source === toolSource
+        && candidate.configured_root === effectiveConfigRoot
+        && candidate.cleanup_state === "active"
+      ));
+      const hookReport = hookIntegration
+        ? parseStoredSshHookReport(hookIntegration.hook_record_json)
+        : null;
+      hookBridgeEnabled = Boolean(
+        agentInstallation
+        && hookReport?.status === "installed"
+        && hookReport.installationId === agentInstallation.installation_id
+        && hookReport.remoteMachineId === agentInstallation.remote_machine_id,
+      );
+    }
 
     return {
       shell: null,
@@ -1291,6 +1379,13 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
           ...buildSshConnectionSpec(host, hosts),
           hostId: host.id,
           remotePath,
+          clientInstanceId: getSshClientInstanceId(),
+          projectId: project?.id ?? "",
+          bridgeEpoch: crypto.randomUUID(),
+          agentPath: hookBridgeEnabled ? agentInstallation?.install_path ?? "" : "",
+          agentInstallationId: hookBridgeEnabled ? agentInstallation?.installation_id ?? "" : "",
+          agentRemoteMachineId: hookBridgeEnabled ? agentInstallation?.remote_machine_id ?? "" : "",
+          toolSource: hookBridgeEnabled ? toolSource ?? "" : "",
           environmentOverrides: resolvedEnvironmentOverrides,
           initializationCommand: host.startup_script.trim() || null,
           startupCommand: resolvedStartupCmd ?? null,
@@ -1338,6 +1433,14 @@ function isCliManagerSyncArtifactText(value: string): boolean {
   );
 }
 
+function releaseRemoteHistoryConsumer(session: TerminalSession | undefined): void {
+  if (!session?.sshHostId || !session.remoteHistoryConsumerId) return;
+  void invoke("history_remote_close", {
+    hostId: session.sshHostId,
+    consumerId: session.remoteHistoryConsumerId,
+  }).catch(() => undefined);
+}
+
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
@@ -1355,6 +1458,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   hiddenBackgroundSessionIds: new Set<string>(),
   daemonAttachPendingSessionIds: new Set<string>(),
   subagentTranscripts: {},
+  statsPanelRefreshSeq: 0,
+
+  bumpStatsPanelRefresh: () => set((state) => ({
+    statsPanelRefreshSeq: state.statsPanelRefreshSeq + 1,
+  })),
 
   updateSessionCwd: (sessionId, cwd) => set((state) => ({
     sessions: state.sessions.map((session) => (
@@ -1389,6 +1497,258 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     )),
   })),
 
+  suspendSessionForRemoteHandoff: async (sessionId, handoff) => {
+    const state = get();
+    const session = state.sessions.find((item) => item.id === sessionId);
+    if (!session || (session.kind ?? "pty") !== "pty") {
+      throw new Error("remote_handoff_session_missing");
+    }
+    if (session.remoteHandoff) {
+      await get().updateSessionRemoteHandoff(sessionId, handoff);
+      return;
+    }
+
+    set((current) => ({
+      sessions: current.sessions.map((item) => (
+        item.id === sessionId ? { ...item, remoteHandoff: handoff } : item
+      )),
+    }));
+    try {
+      await terminalProcessManager.close(sessionId);
+    } catch (error) {
+      set((current) => ({
+        sessions: current.sessions.map((item) => (
+          item.id === sessionId && item.remoteHandoff === handoff
+            ? { ...item, remoteHandoff: undefined }
+            : item
+        )),
+      }));
+      throw error;
+    }
+    state.statusListeners[sessionId]?.();
+    clearHookRunningTimeout(sessionId);
+
+    const nextSessions = get().sessions;
+    const sessionStatuses = { ...get().sessionStatuses, [sessionId]: "exited" as SessionStatus };
+    const statusListeners = { ...get().statusListeners };
+    const tabNotifications = { ...get().tabNotifications, [sessionId]: "none" as TabNotificationState };
+    const tabStatuses = { ...get().tabStatuses };
+    const tabStatusDetails = { ...get().tabStatusDetails };
+    const ptyOutputActivityAt = { ...get().ptyOutputActivityAt };
+    delete statusListeners[sessionId];
+    delete tabStatuses[sessionId];
+    delete tabStatusDetails[sessionId];
+    delete ptyOutputActivityAt[sessionId];
+    set({
+      sessions: nextSessions,
+      sessionStatuses,
+      statusListeners,
+      tabNotifications,
+      tabStatuses,
+      tabStatusDetails,
+      ptyOutputActivityAt,
+    });
+    await useSessionStore.getState().saveSessions(nextSessions);
+  },
+
+  updateSessionRemoteHandoff: async (sessionId, handoff) => {
+    const state = get();
+    if (!state.sessions.some((session) => session.id === sessionId)) return;
+    const sessions = state.sessions.map((session) => (
+      session.id === sessionId ? { ...session, remoteHandoff: handoff } : session
+    ));
+    set({ sessions });
+    await useSessionStore.getState().saveSessions(sessions);
+  },
+
+  resumeSessionFromRemoteHandoff: async (sessionId) => {
+    const state = get();
+    const lockedSession = state.sessions.find((session) => session.id === sessionId);
+    if (!lockedSession?.remoteHandoff) {
+      throw new Error("remote_handoff_session_missing");
+    }
+    const projectState = useProjectStore.getState();
+    const project = lockedSession.projectId
+      ? projectState.projects.find((item) => item.id === lockedSession.projectId)
+      : undefined;
+    if (!project) throw new Error("remote_handoff_project_missing");
+    if (
+      lockedSession.worktreeId
+      && !projectState.worktrees.some((worktree) => (
+        worktree.id === lockedSession.worktreeId
+        && worktree.project_id === project.id
+        && worktree.status === "active"
+      ))
+    ) {
+      throw new Error("remote_handoff_worktree_missing");
+    }
+
+    const os = await getOsPlatform();
+    const resolvedShell = resolveShellForPty(lockedSession.shell, true, os);
+    const shellKey = normalizeShellKey(resolvedShell) ?? null;
+    const providerProject = resolveProjectForProviderLaunch(
+      project,
+      projectState.worktrees,
+      lockedSession.worktreeId
+    );
+    const recordedProviderId = lockedSession.remoteHandoff.providerId?.trim() || null;
+    let resumeProject = providerProject;
+    let codexProvider = getCodexProviderLaunchConfig(
+      lockedSession.projectId,
+      lockedSession.startupCmd,
+      lockedSession.worktreeId
+    );
+    if (recordedProviderId) {
+      const settings = useSettingsStore.getState();
+      const prepared = await invoke<CodexProviderProfileResponse>(
+        "ccswitch_prepare_codex_provider",
+        {
+          providerId: recordedProviderId,
+          dbPath: settings.ccSwitchDbPath ?? undefined,
+          codexConfigDir: settings.codexHookConfigDir ?? undefined,
+        }
+      );
+      if (prepared.providerId.trim() !== recordedProviderId) {
+        throw new Error("remote_handoff_provider_mismatch");
+      }
+      resumeProject = {
+        ...providerProject,
+        startup_cmd: "",
+        cli_args: providerProject.startup_cmd.trim() ? "" : providerProject.cli_args,
+        provider_overrides: withCodexProviderOverride(providerProject.provider_overrides, {
+          providerId: prepared.providerId,
+          providerName: prepared.providerName,
+          profileName: prepared.profileName,
+        }),
+      };
+      codexProvider = {
+        providerId: recordedProviderId,
+        dbPath: settings.ccSwitchDbPath ?? undefined,
+        codexConfigDir: settings.codexHookConfigDir ?? undefined,
+      };
+    }
+    const resumeCommand = buildCliResumeStartupCommand(
+      "codex",
+      lockedSession.remoteHandoff.cliSessionId || lockedSession.cliSessionId,
+      resumeProject
+    );
+    const launchStartupCmd = prepareStartupCommandForPty(resumeCommand, shellKey);
+    const newSessionId = await terminalProcessManager.create({
+      cwd: lockedSession.remoteHandoff.workDir || lockedSession.cwd || null,
+      envVars: buildPtyEnvVars(lockedSession.envVars ?? null, resolvedShell),
+      shell: resolvedShell,
+      hookEnvEnabled: await shouldEnableHookEnv(),
+      claudeProvider: null,
+      codexProvider,
+      terminalColors: getCurrentTerminalColors(),
+      sshLaunch: null,
+    });
+    const replacement: TerminalSession = {
+      ...lockedSession,
+      id: newSessionId,
+      shell: resolvedShell,
+      remoteHandoff: undefined,
+      initialTerminalOutput: undefined,
+      deferStartupUntilInitialOutput: false,
+    };
+    const unlisten = await terminalProcessManager.subscribeStatus(newSessionId, (payload) => {
+      const status = payload.status as SessionStatus;
+      logTerminalExitStatus(replacement, payload);
+      useTerminalStore.setState((current) => ({
+        sessionStatuses: { ...current.sessionStatuses, [newSessionId]: status },
+      }));
+    }).catch(async (err) => {
+      await terminalProcessManager.close(newSessionId).catch(() => {});
+      throw err;
+    });
+
+    const current = get();
+    if (!current.sessions.some((session) => session.id === sessionId && session.remoteHandoff)) {
+      unlisten();
+      await terminalProcessManager.close(newSessionId).catch(() => {});
+      throw new Error("remote_handoff_session_changed");
+    }
+    const sessions = current.sessions.map((session) => (
+      session.id === sessionId ? replacement : session
+    ));
+    const sessionIdMap = Object.fromEntries(
+      current.sessions.map((session) => [session.id, session.id === sessionId ? newSessionId : session.id])
+    );
+    const workspans = restoreTerminalWorkspans(current.workspans, sessionIdMap);
+    const mirror = buildWorkspanMirror(workspans, current.activeWorkspanId);
+    const sessionStatuses = { ...current.sessionStatuses };
+    const statusListeners = { ...current.statusListeners };
+    const tabNotifications = { ...current.tabNotifications };
+    const tabStatuses = { ...current.tabStatuses };
+    const tabStatusDetails = { ...current.tabStatusDetails };
+    const ptyOutputActivityAt = { ...current.ptyOutputActivityAt };
+    delete sessionStatuses[sessionId];
+    delete statusListeners[sessionId];
+    delete tabNotifications[sessionId];
+    delete tabStatuses[sessionId];
+    delete tabStatusDetails[sessionId];
+    delete ptyOutputActivityAt[sessionId];
+    sessionStatuses[newSessionId] = "running";
+    statusListeners[newSessionId] = unlisten;
+    set({
+      sessions,
+      ...mirror,
+      sessionStatuses,
+      statusListeners,
+      tabNotifications,
+      tabStatuses,
+      tabStatusDetails,
+      ptyOutputActivityAt,
+    });
+    try {
+      await useSessionStore.getState().saveSessions(sessions);
+      await useSessionStore.getState().saveActiveSessionId(mirror.activeSessionId);
+      await useSessionStore.getState().saveWorkspans(workspans, mirror.activeWorkspanId, sessions);
+    } catch (err) {
+      logError("Failed to persist resumed remote handoff session", { sessionId, newSessionId, err });
+    }
+
+    if (launchStartupCmd) {
+      setTimeout(() => {
+        terminalProcessManager.write(
+          newSessionId,
+          formatStartupInputForPty(launchStartupCmd, shellKey),
+        ).catch((err) => {
+          logError("Failed to resume remotely handed-off Codex session", {
+            sessionId: newSessionId,
+            err,
+          });
+        });
+      }, 500);
+    }
+    return newSessionId;
+  },
+
+  restorePersistedRemoteHandoffSessions: () => {
+    const persisted = useSessionStore
+      .getState()
+      .sessions
+      .filter((session) => Boolean(session.remoteHandoff));
+    if (persisted.length === 0) return;
+    const state = get();
+    const openIds = new Set(state.sessions.map((session) => session.id));
+    const missing = persisted.filter((session) => !openIds.has(session.id));
+    if (missing.length === 0) return;
+
+    const sessions = [...state.sessions, ...missing];
+    let workspans = [...state.workspans];
+    for (const session of missing) {
+      workspans.push(createTerminalWorkspan(createWorkspanId(), createPaneId(), session.id));
+    }
+    const activeWorkspanId = state.activeWorkspanId
+      ?? workspans[workspans.length - 1]?.id
+      ?? null;
+    const mirror = buildWorkspanMirror(workspans, activeWorkspanId);
+    const sessionStatuses = { ...state.sessionStatuses };
+    for (const session of missing) sessionStatuses[session.id] = "exited";
+    set({ sessions, ...mirror, sessionStatuses });
+  },
+
   recordPtyOutputActivity: (sessionId) => {
     const now = Date.now();
     const previous = get().ptyOutputActivityAt[sessionId] ?? 0;
@@ -1401,7 +1761,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }));
   },
 
-  createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId, sshHostId) => {
+  createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId, worktreeId, sshHostId, cliSessionId, remoteHistoryConsumerId, remoteHistorySourceInstanceId) => {
     const os = await getOsPlatform();
     let launch: ResolvedPtyLaunch;
     let sessionId: string;
@@ -1442,6 +1802,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       sshHostId: launch.sshHostId,
       remotePath: launch.remotePath,
       connectionState: launch.environmentType === "ssh" ? "connecting" : undefined,
+      cliSessionId: cliSessionId?.trim() || undefined,
+      remoteHistoryConsumerId: remoteHistoryConsumerId?.trim() || undefined,
+      remoteHistorySourceInstanceId: remoteHistorySourceInstanceId?.trim() || undefined,
     };
 
     const unlisten = await terminalProcessManager.subscribeStatus(sessionId, (payload) => {
@@ -1452,6 +1815,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         sessionStatuses: { ...state.sessionStatuses, [sessionId]: status },
       }));
       persistSshConnectionStateAfterPtyStatus(sessionId, payload);
+      if (
+        (status === "exited" || status === "error")
+      ) {
+        releaseRemoteHistoryConsumer(session);
+      }
     });
 
     const state = get();
@@ -1514,6 +1882,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const state = get();
     const ptySessionIds = [id];
     const closingSession = state.sessions.find((s) => s.id === id);
+    if (
+      closingSession?.remoteHandoff
+      && closingSession.remoteHandoff.phase !== "recovery_failed"
+    ) {
+      toast.warning(translateCurrent("remoteHandoff.toast.lockedSession"));
+      return;
+    }
     const isTranscript = closingSession?.kind === "subagent-transcript";
     const isFileEditor = closingSession?.kind === "file-editor";
     const closeTimer = subagentCloseTimers.get(id);
@@ -1593,6 +1968,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         await useSessionStore.getState().saveSplits(persistedSplits);
       }
     } finally {
+      releaseRemoteHistoryConsumer(closingSession);
       if (isFileEditor) {
         return;
       }
@@ -1696,23 +2072,37 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     if (!get().sessions.some((session) => session.id === tabId)) return null;
     const cliSessionId = payload.sessionId?.trim();
     const cliReasoningEffort = payload.reasoningEffort?.trim();
+    let boundNewCliSessionId = false;
     if ((cliSessionId || cliReasoningEffort) && get().sessions.some((session) => session.id === rawTabId)) {
       set((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === rawTabId
-            ? {
-                ...session,
-                ...(cliSessionId && session.cliSessionId !== cliSessionId ? { cliSessionId } : {}),
-                ...(cliReasoningEffort && session.cliReasoningEffort !== cliReasoningEffort
-                  ? { cliReasoningEffort }
-                  : {}),
-              }
-            : session
-        ),
+        sessions: state.sessions.map((session) => {
+          if (session.id !== rawTabId) return session;
+          const nextCliSessionId =
+            cliSessionId && session.cliSessionId !== cliSessionId ? cliSessionId : session.cliSessionId;
+          if (cliSessionId && session.cliSessionId !== cliSessionId) {
+            boundNewCliSessionId = true;
+          }
+          return {
+            ...session,
+            ...(nextCliSessionId !== session.cliSessionId ? { cliSessionId: nextCliSessionId } : {}),
+            ...(cliReasoningEffort && session.cliReasoningEffort !== cliReasoningEffort
+              ? { cliReasoningEffort }
+              : {}),
+          };
+        }),
       }));
     }
     const updatedAt = payload.timestamp ?? new Date().toISOString();
     const status = mapCliHookEvent(payload.event);
+    // SessionStart 绑定 id、回合结束/失败时立刻踢侧栏重拉用量，避免等 10s 轮询才「闪一下」出来。
+    if (
+      boundNewCliSessionId ||
+      payload.event === "Stop" ||
+      payload.event === "StopFailure" ||
+      payload.event === "UserPromptSubmit"
+    ) {
+      set((state) => ({ statsPanelRefreshSeq: state.statsPanelRefreshSeq + 1 }));
+    }
     if (!status) return tabId;
     // 乱序防御：各 hook 事件由独立进程上报，到达顺序不保证；丢弃比已记录
     // 状态更旧的事件（如 Stop 之后才迟到的 UserPromptSubmit）。
@@ -2019,7 +2409,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const latestSession = sortedSessions[0];
     const cwd = latestSession?.cwd || group.cwd || project?.path;
     const shell = project?.shell && project.shell !== "powershell" ? project.shell : undefined;
-    const startupCmd = await appendSyncedHistoryContextArg(sourceTool(firstSession.source), sourceTool(firstSession.source), group, shell);
+    const startupCmd = sourceTool(firstSession.source);
     const envVars = project ? parseProjectEnvVars(project) : undefined;
     const launch = await createDetachedPtyProcess({
       projectId: project?.id,
@@ -2102,6 +2492,18 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const behavior = useSettingsStore.getState().unsplitBehavior;
     const result = unsplitPaneLeaf(owner.paneTree, pane.id, behavior);
     const closedSessionIds = result.closedSessionIds;
+    if (
+      closedSessionIds.some((closedSessionId) => (
+        state.sessions.some((session) => (
+          session.id === closedSessionId
+          && Boolean(session.remoteHandoff)
+          && session.remoteHandoff?.phase !== "recovery_failed"
+        ))
+      ))
+    ) {
+      toast.warning(translateCurrent("remoteHandoff.toast.lockedSession"));
+      return;
+    }
     const transcriptClosedIds = new Set(
       state.sessions
         .filter((s) => closedSessionIds.includes(s.id) && s.kind === "subagent-transcript")
@@ -2260,6 +2662,21 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         continue;
       }
 
+      if (ps.remoteHandoff) {
+        if (ps.projectId && !projectMap.has(ps.projectId)) {
+          skippedSessions.push(ps.title ?? ("会话 " + (i + 1)));
+          continue;
+        }
+        newIdMap[ps.id] = ps.id;
+        restoredSessions.push({
+          ...ps,
+          kind: undefined,
+          deferStartupUntilInitialOutput: false,
+        });
+        restoredStatuses[ps.id] = "exited";
+        continue;
+      }
+
       // daemon 会话仍存活时先恢复 UI 元数据。实际 attach 等 XTerm 输出监听就绪后执行。
       const daemonSession = daemonSessionsById.get(ps.id);
       if (daemonSession) {
@@ -2283,11 +2700,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
               // 仅保留给 Tab 厂商识别；daemon attach 不会重新执行该命令。
               startupCmd: ps.startupCmd,
               cliSessionId: ps.cliSessionId,
+              remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
+              remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
               deferStartupUntilInitialOutput: false,
             };
             const unlisten = await terminalProcessManager.subscribeStatus(ps.id, (payload) => {
               const status = payload.status as SessionStatus;
               logTerminalExitStatus(attachedSession, payload);
+              if (status !== "running") releaseRemoteHistoryConsumer(attachedSession);
               useTerminalStore.setState((state) => {
                 const sessionStatuses = { ...state.sessionStatuses, [ps.id]: status };
                 if (status === "running") return { sessionStatuses };
@@ -2311,6 +2731,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
             restoredListeners[ps.id] = unlisten;
             daemonAttachPendingSessionIds.add(ps.id);
             restoredTabState = buildTabStatusUpdate(restoredTabState, ps.id, "hook", taskStatus, taskUpdatedAt);
+            if (!daemonSession.alive) releaseRemoteHistoryConsumer(attachedSession);
             continue;
         } catch (err) {
           logError("daemon attach failed, falling back to recreate", { sessionId: ps.id, err });
@@ -2405,6 +2826,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         disconnectReason: undefined,
         // 保留 cliSessionId：hook 上报会用它绑定实时统计；下次落盘也需要它继续 resume。
         cliSessionId: ps.cliSessionId,
+        remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
+        remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
         initialTerminalOutput,
         deferStartupUntilInitialOutput,
       };
@@ -2419,6 +2842,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
             sessionStatuses: { ...state.sessionStatuses, [newSessionId]: status },
           }));
           persistSshConnectionStateAfterPtyStatus(newSessionId, payload);
+          if (status === "exited" || status === "error") {
+            releaseRemoteHistoryConsumer(restoredSession);
+          }
         });
       } catch (err) {
         logError("Failed to register status listener", { sessionId: newSessionId, err });
@@ -2544,10 +2970,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       // 元数据用于 Tab 厂商识别；daemon attach 不会重新执行该命令。
       startupCmd: persisted?.startupCmd,
       cliSessionId: persisted?.cliSessionId,
+      remoteHistoryConsumerId: persisted?.remoteHistoryConsumerId,
+      remoteHistorySourceInstanceId: persisted?.remoteHistorySourceInstanceId,
       deferStartupUntilInitialOutput: false,
     };
     const unlisten = await terminalProcessManager.subscribeStatus(sessionId, (payload) => {
       const status = payload.status as SessionStatus;
+      if (status !== "running") releaseRemoteHistoryConsumer(session);
       useTerminalStore.setState((state) => {
         const sessionStatuses = { ...state.sessionStatuses, [sessionId]: status };
         if (status === "running") return { sessionStatuses };
@@ -2577,6 +3006,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       taskStatus,
       taskUpdatedAt
     );
+    if (!daemonSession.alive) releaseRemoteHistoryConsumer(session);
     set({
       sessions: nextSessions,
       ...mirror,

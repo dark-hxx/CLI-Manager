@@ -424,10 +424,6 @@ function sourceCliTool(source: ExternalSessionSource): string {
   return source === "codex" ? "codex" : "claude";
 }
 
-function samePath(a: string, b: string): boolean {
-  return normalizePathForKey(a) === normalizePathForKey(b);
-}
-
 async function ensureExternalSessionGroup(name: string) {
   const trimmed = name.trim();
   const existing = useProjectStore
@@ -466,22 +462,6 @@ async function ensureProjectsForExternalSessionGroups(
     const existingProject = existingProjectId
       ? projects.find((project) => project.id === existingProjectId)
       : null;
-
-    if (
-      existingProject
-      && existingProject.group_id === null
-      && samePath(existingProject.path, group.cwd)
-      && existingProject.cli_tool.trim().toLowerCase() === cliTool
-      && existingProject.name === group.name
-    ) {
-      const externalGroup = await ensureExternalSessionGroup(group.name);
-      await useProjectStore.getState().updateProject(existingProject.id, {
-        name: sourceName,
-        group_id: externalGroup.id,
-      });
-      projects = useProjectStore.getState().projects;
-      continue;
-    }
 
     if (existingProject && matchesProjectSource(existingProject, group.source)) continue;
 
@@ -643,10 +623,16 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
     const acceptedKeys = normalizeStringList(await s.get("acceptedKeys"));
     const syncedSessions = normalizeSyncedSessions(await s.get("syncedSessions"));
     let ignoredKeys = normalizeStringList(await s.get("ignoredKeys"));
-    const ignoredProjectKeys = normalizeStringList(await s.get("ignoredProjectKeys"));
+    const storedIgnoredProjectKeys = normalizeStringList(await s.get("ignoredProjectKeys"));
     const initialSyncPromptHandled = Boolean(await s.get("initialSyncPromptHandled"));
+    const ignoredProjectKeys = uniqueStrings([
+      ...storedIgnoredProjectKeys,
+      ...groupProjectCandidates(syncedSessions, [], syncedSessions).map((project) => project.key),
+    ]);
     if (schemaVersion < STORE_SCHEMA_VERSION) {
       ignoredKeys = [];
+    }
+    if (schemaVersion < STORE_SCHEMA_VERSION || ignoredProjectKeys.length !== storedIgnoredProjectKeys.length) {
       await persistState(acceptedKeys, ignoredKeys, ignoredProjectKeys, syncedSessions, initialSyncPromptHandled);
     }
     set({
@@ -751,6 +737,8 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
   },
 
   syncProjectCandidates: async (keys, shell) => {
+    if (get().syncingProjects) return;
+
     const selectedKeys = new Set(keys.map((key) => key.trim()).filter(Boolean));
     const selectedProjects = get().projectCandidates.filter((project) => selectedKeys.has(project.key));
     const candidates = selectedProjects.flatMap((project) => project.sessions);
@@ -773,10 +761,15 @@ export const useExternalSessionSyncStore = create<ExternalSessionSyncStore>((set
         ...candidateKeys,
       ]);
       const nextIgnored = get().ignoredKeys.filter((key) => !candidateKeys.includes(key));
+      const nextIgnoredProjects = uniqueStrings([
+        ...get().ignoredProjectKeys,
+        ...selectedProjects.map((project) => project.key),
+      ]);
       const nextSessions = upsertManySyncedSessions(get().syncedSessions, candidates);
       set({
         acceptedKeys: nextAccepted,
         ignoredKeys: nextIgnored,
+        ignoredProjectKeys: nextIgnoredProjects,
         pendingKeys: get().pendingKeys.filter((key) => !candidateKeys.includes(key)),
         syncedSessions: nextSessions,
         initialSyncPromptHandled: nextInitialHandled,

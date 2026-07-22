@@ -23,6 +23,23 @@ import {
   sanitizeThirdPartyHookTargets,
   type ThirdPartyHookTarget,
 } from "../lib/thirdPartyNotifications";
+import {
+  DESKTOP_PET_SIZE_DEFAULT_PERCENT,
+  normalizeDesktopPetSizePercent,
+  type DesktopPetSizePercent,
+} from "../lib/desktopPetSize";
+import {
+  normalizeCliArgsHistory,
+  recordCliArgsUsage,
+  type CliArgsHistoryEntry,
+} from "../lib/cliArgsHistory";
+
+export {
+  DESKTOP_PET_SIZE_DEFAULT_PERCENT,
+  DESKTOP_PET_SIZE_MAX_PERCENT,
+  DESKTOP_PET_SIZE_MIN_PERCENT,
+  DESKTOP_PET_SIZE_STEP_PERCENT,
+} from "../lib/desktopPetSize";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type LightThemePalette =
@@ -93,7 +110,7 @@ export type TerminalPanelWidthKey = "merged" | "stats" | "git" | "replay" | "fil
 export type TerminalPanelWidthSettings = Record<TerminalPanelWidthKey, number>;
 export type TerminalSettingsSectionKey = "behavior" | "shells" | "themes" | "background";
 export type TerminalSettingsSectionsExpanded = Record<TerminalSettingsSectionKey, boolean>;
-export type HookSettingsSectionKey = "toast" | "notifications" | "claude" | "codex";
+export type HookSettingsSectionKey = "toast" | "notifications" | "claude" | "codex" | "pi";
 export type HookSettingsSectionsExpanded = Record<HookSettingsSectionKey, boolean>;
 export const UI_FONT_SIZE_MIN = 11;
 export const UI_FONT_SIZE_MAX = 18;
@@ -130,12 +147,14 @@ export const HOOK_SETTINGS_SECTION_KEYS: readonly HookSettingsSectionKey[] = [
   "notifications",
   "claude",
   "codex",
+  "pi",
 ];
 export const HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT: HookSettingsSectionsExpanded = {
   toast: false,
   notifications: false,
   claude: false,
   codex: false,
+  pi: false,
 };
 export type ShortcutAction =
   | "newTerminal"
@@ -154,7 +173,7 @@ export type UnsplitBehavior = "merge" | "close";
 export type FileExplorerIgnoredPaths = Record<string, string[]>;
 export type LanguagePreference = "auto" | "zh-CN" | "zh-TW" | "en-US";
 export type BatchLaunchPaneDirection = "vertical" | "horizontal";
-export type DesktopPetSize = "small" | "medium" | "large";
+export type DesktopPetSize = DesktopPetSizePercent;
 export const DESKTOP_PET_WORK_BOUNCE_MIN_PX = 0;
 export const DESKTOP_PET_WORK_BOUNCE_MAX_PX = 5;
 
@@ -366,12 +385,14 @@ export interface Settings {
   terminalInputSuggestionCustomPrompt: string;
   terminalInputSuggestionUsage: TerminalInputSuggestionUsageStats;
   terminalInputSuggestionLastTest: TerminalInputSuggestionModelTestResult | null;
+  cliArgsHistory: CliArgsHistoryEntry[];
   hookPopupNotificationsEnabled: boolean;
   hookPopupAutoCloseEnabled: boolean;
   hookPopupAutoCloseSeconds: number;
   hookSubagentSplitViewEnabled: boolean;
   claudeHookBridgeEnabled: boolean;
   codexHookBridgeEnabled: boolean;
+  piHookBridgeEnabled: boolean;
   systemNotificationsEnabled: boolean;
   suppressSystemNotificationsWhenFocused: boolean;
   systemNotificationEvents: Record<HookEventType, boolean>;
@@ -379,10 +400,16 @@ export interface Settings {
   hookSettingsSectionsExpanded: HookSettingsSectionsExpanded;
   thirdPartyHookNotificationsEnabled: boolean;
   thirdPartyHookTargets: ThirdPartyHookTarget[];
+  remoteHandoffNotificationsEnabled: boolean;
+  remoteHandoffCompletionNotificationsEnabled: boolean;
+  remoteHandoffPermissionNotificationsEnabled: boolean;
+  remoteHandoffProgressNotificationsEnabled: boolean;
+  remoteHandoffProgressIntervalMinutes: number;
   claudeHookConfigDir: string | null;
   claudeHookAutoRepairKnownInstalled: boolean;
   claudeHookAutoRepairNoticeShown: boolean;
   codexHookConfigDir: string | null;
+  piHookConfigDir: string | null;
   /** cc-switch 数据库路径；null 表示使用默认路径 ~/.cc-switch/cc-switch.db */
   ccSwitchDbPath: string | null;
   /** Git 变更树分组模式：directory（按目录树） / module（按顶层目录模块） */
@@ -407,6 +434,7 @@ interface SettingsStore extends Settings {
   load: () => Promise<void>;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => Promise<void>;
   recordTerminalInputSuggestionUsage: (event: TerminalInputSuggestionAiAttempt | { accepted: true }) => void;
+  recordCliArgsHistory: (cliTool: string, cliArgs: string) => Promise<void>;
   setTheme: (mode: ThemeMode) => Promise<void>;
   setTerminalThemeMode: (mode: TerminalThemeMode) => Promise<void>;
   syncSystemTheme: () => void;
@@ -519,12 +547,14 @@ const DEFAULTS: Settings = {
   terminalInputSuggestionCustomPrompt: "",
   terminalInputSuggestionUsage: { ...DEFAULT_TERMINAL_INPUT_SUGGESTION_USAGE },
   terminalInputSuggestionLastTest: null,
+  cliArgsHistory: [],
   hookPopupNotificationsEnabled: true,
   hookPopupAutoCloseEnabled: true,
   hookPopupAutoCloseSeconds: 60,
   hookSubagentSplitViewEnabled: true,
   claudeHookBridgeEnabled: true,
   codexHookBridgeEnabled: true,
+  piHookBridgeEnabled: true,
   systemNotificationsEnabled: true,
   suppressSystemNotificationsWhenFocused: true,
   systemNotificationEvents: {
@@ -538,10 +568,16 @@ const DEFAULTS: Settings = {
   hookSettingsSectionsExpanded: { ...HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT },
   thirdPartyHookNotificationsEnabled: true,
   thirdPartyHookTargets: [],
+  remoteHandoffNotificationsEnabled: true,
+  remoteHandoffCompletionNotificationsEnabled: true,
+  remoteHandoffPermissionNotificationsEnabled: true,
+  remoteHandoffProgressNotificationsEnabled: true,
+  remoteHandoffProgressIntervalMinutes: 5,
   claudeHookConfigDir: null,
   claudeHookAutoRepairKnownInstalled: false,
   claudeHookAutoRepairNoticeShown: false,
   codexHookConfigDir: null,
+  piHookConfigDir: null,
   ccSwitchDbPath: null,
   gitGroupBy: "directory",
   confirmBeforeClosingTerminalTab: false,
@@ -555,7 +591,7 @@ const DEFAULTS: Settings = {
     enabled: false,
     petId: BUILTIN_DESKTOP_PET_ID,
     alwaysOnTop: true,
-    size: "medium",
+    size: DESKTOP_PET_SIZE_DEFAULT_PERCENT,
     workingBounceEnabled: false,
     workingBounceDistancePx: 5,
     showStatus: true,
@@ -994,9 +1030,7 @@ export function migrateDesktopPetSettings(value: unknown): DesktopPetSettings {
   const petId = typeof raw.petId === "string" && raw.petId.trim() && raw.petId.length <= 80
     ? raw.petId.trim()
     : defaults.petId;
-  const size: DesktopPetSize = raw.size === "small" || raw.size === "medium" || raw.size === "large"
-    ? raw.size
-    : defaults.size;
+  const size = normalizeDesktopPetSizePercent(raw.size, defaults.size);
   const workingBounceDistancePx = Math.round(clampNumber(
     raw.workingBounceDistancePx,
     DESKTOP_PET_WORK_BOUNCE_MIN_PX,
@@ -1290,6 +1324,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         : DEFAULTS.terminalInputSuggestionCustomPrompt;
     entries.terminalInputSuggestionUsage = migrateTerminalInputSuggestionUsage(entries.terminalInputSuggestionUsage);
     entries.terminalInputSuggestionLastTest = migrateTerminalInputSuggestionLastTest(entries.terminalInputSuggestionLastTest);
+    entries.cliArgsHistory = normalizeCliArgsHistory(entries.cliArgsHistory);
 
     entries.hookPopupNotificationsEnabled =
       typeof entries.hookPopupNotificationsEnabled === "boolean"
@@ -1317,6 +1352,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.codexHookBridgeEnabled === "boolean"
         ? entries.codexHookBridgeEnabled
         : DEFAULTS.codexHookBridgeEnabled;
+    entries.piHookBridgeEnabled =
+      typeof entries.piHookBridgeEnabled === "boolean"
+        ? entries.piHookBridgeEnabled
+        : DEFAULTS.piHookBridgeEnabled;
     entries.systemNotificationsEnabled =
       typeof entries.systemNotificationsEnabled === "boolean"
         ? entries.systemNotificationsEnabled
@@ -1332,6 +1371,27 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         ? entries.thirdPartyHookNotificationsEnabled
         : DEFAULTS.thirdPartyHookNotificationsEnabled;
     entries.thirdPartyHookTargets = sanitizeThirdPartyHookTargets(entries.thirdPartyHookTargets);
+    entries.remoteHandoffNotificationsEnabled =
+      typeof entries.remoteHandoffNotificationsEnabled === "boolean"
+        ? entries.remoteHandoffNotificationsEnabled
+        : DEFAULTS.remoteHandoffNotificationsEnabled;
+    entries.remoteHandoffCompletionNotificationsEnabled =
+      typeof entries.remoteHandoffCompletionNotificationsEnabled === "boolean"
+        ? entries.remoteHandoffCompletionNotificationsEnabled
+        : DEFAULTS.remoteHandoffCompletionNotificationsEnabled;
+    entries.remoteHandoffPermissionNotificationsEnabled =
+      typeof entries.remoteHandoffPermissionNotificationsEnabled === "boolean"
+        ? entries.remoteHandoffPermissionNotificationsEnabled
+        : DEFAULTS.remoteHandoffPermissionNotificationsEnabled;
+    entries.remoteHandoffProgressNotificationsEnabled =
+      typeof entries.remoteHandoffProgressNotificationsEnabled === "boolean"
+        ? entries.remoteHandoffProgressNotificationsEnabled
+        : DEFAULTS.remoteHandoffProgressNotificationsEnabled;
+    entries.remoteHandoffProgressIntervalMinutes =
+      typeof entries.remoteHandoffProgressIntervalMinutes === "number"
+        && Number.isFinite(entries.remoteHandoffProgressIntervalMinutes)
+        ? Math.min(60, Math.max(1, Math.round(entries.remoteHandoffProgressIntervalMinutes)))
+        : DEFAULTS.remoteHandoffProgressIntervalMinutes;
     entries.claudeHookConfigDir =
       typeof entries.claudeHookConfigDir === "string" && entries.claudeHookConfigDir.trim()
         ? entries.claudeHookConfigDir
@@ -1347,6 +1407,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.codexHookConfigDir =
       typeof entries.codexHookConfigDir === "string" && entries.codexHookConfigDir.trim()
         ? entries.codexHookConfigDir
+        : null;
+    entries.piHookConfigDir =
+      typeof entries.piHookConfigDir === "string" && entries.piHookConfigDir.trim()
+        ? entries.piHookConfigDir
         : null;
     entries.ccSwitchDbPath =
       typeof entries.ccSwitchDbPath === "string" && entries.ccSwitchDbPath.trim()
@@ -1456,6 +1520,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         .then((s) => s.set("terminalInputSuggestionUsage", get().terminalInputSuggestionUsage))
         .catch(() => {});
     }, TERMINAL_INPUT_SUGGESTION_USAGE_SAVE_DELAY_MS);
+  },
+
+  recordCliArgsHistory: async (cliTool, cliArgs) => {
+    const next = recordCliArgsUsage(get().cliArgsHistory, cliTool, cliArgs);
+    const s = await getStore();
+    await s.set("cliArgsHistory", next);
+    set({ cliArgsHistory: next });
   },
 
   setTheme: async (mode) => {

@@ -85,7 +85,9 @@ fn calculate_usage_cost(model: Option<&str>, usage: UsageTokenScan) -> UsageStat
 - Once the DB-backed table is loaded and pushed, the model-price cache is authoritative. If a model is missing from the loaded table, cost calculation must return unpriced tokens, not fall back to stale hardcoded defaults for that model.
 - Hardcoded prices are seed data only: when `model_prices` is empty, insert default rows with `source='builtin'`. Runtime cost calculation must not maintain a second hardcoded pricing table.
 - Remote sync is advisory. `model_prices_sync` fetches LiteLLM and OpenRouter, parses remote rows, matches targets, and returns matched/candidate/unmatched results. The command does **not** write SQLite; the frontend writes accepted prices and then pushes the cache.
-- Auto-apply sync matches only when confidence is deterministic (exact or case-insensitive identity after normalization). Tail, alnum, and Levenshtein similarity matches must be presented as candidates for user confirmation.
+- Auto-apply sync matches only when confidence is deterministic (exact, case-insensitive, or full normalized identity). Tail, alnum, base-prefix, and fuzzy similarity matches must be presented as candidates for user confirmation.
+- Base-prefix matching: after dash-token split of normalized tails, if the shorter token sequence has ≥2 tokens and is a continuous prefix of the longer one (e.g. local `grok-4.5-build-free` vs remote `grok-4.5` / `xai/grok-4.5`), surface it as a candidate with score `0.90 + 0.05 * (short/long)`. Never auto-apply base-prefix hits.
+- Fuzzy scoring mixes token containment (shared tokens / shorter side), character Levenshtein similarity, and character Jaccard, with threshold `MIN_CANDIDATE_SCORE = 0.70`. Pure character-only scoring must not discard clear base-model candidates that only differ by marketing/build suffixes.
 - Model context limits for UI display use a shared frontend resolver: exact log value first, then model metadata cached in `model_prices.raw_json`, then local model-name rules, then unknown. Do not add a database migration only for context-window metadata unless a future feature needs querying/sorting by that field.
 - Context metadata parsing is field-whitelisted. LiteLLM rows may use `max_input_tokens`, `context_window`, or `max_tokens`; OpenRouter rows may use `context_length`. If a LiteLLM row has tiered pricing keys like `input_cost_per_token_above_272k_tokens`, use that lowest `above_<N>k_tokens` cutoff as the standard context display limit before `max_input_tokens`. Unknown/missing fields are ignored instead of guessed.
 - `ccusage` reports keep using the external ccusage tool's own cost fields. Do not override ccusage costs with the local `model_prices` table unless a future task explicitly changes that contract.
@@ -129,8 +131,9 @@ fn calculate_usage_cost(model: Option<&str>, usage: UsageTokenScan) -> UsageStat
   - Verify `resolveContextLimit(model, exactLimit)` prefers exact values, then cached metadata from `raw_json`, then local model-name rules, then `null`.
 - Rust checks:
   - `cd src-tauri && cargo check` must pass after changing command signatures or history pricing.
-  - Unit tests (when added) should assert exact/case-insensitive matches auto-apply while tail/Levenshtein matches remain candidates.
+  - Unit tests (when added) should assert exact/case-insensitive matches auto-apply while tail/alnum/base-prefix/fuzzy matches remain candidates.
   - Unit tests should assert missing/unavailable model pricing returns `unpriced_tokens` instead of fallback cost.
+  - Unit tests should assert `grok-4.5-build-free` ranks remote `grok-4.5` as a base-prefix candidate (score ≥ 0.70, not auto-apply).
 - Manual UI checks:
   - Open Settings → 模型价格, identify local models, sync prices, edit/delete a row, and confirm a candidate.
   - Open history stats after an edit and confirm cost changes consistently with terminal realtime estimate.

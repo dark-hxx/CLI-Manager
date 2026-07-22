@@ -4,11 +4,12 @@ import { toast } from "sonner";
 import { ActionIcon, Badge, Box, Button, Card, Divider, Group, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X, Activity, Bell, ShieldAlert, ToggleRight, AlertTriangle, BellOff, XCircle, Layers } from "lucide-react";
 import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "@/stores/settingsStore";
+import { getErrorMessage, getPiHookErrorMessage } from "@/lib/hookErrors";
 import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 import { ThirdPartyNotificationSection } from "../ThirdPartyNotificationSection";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
-type HookTool = "claude" | "codex";
+type HookTool = "claude" | "codex" | "pi";
 type HookModule = "sessionStart" | "running" | "attention" | "stop" | "failure" | "subagent" | "hooksFeature";
 
 interface ToolHookSettingsStatus {
@@ -31,6 +32,7 @@ interface ToolHookSettingsStatus {
 interface HookSettingsStatus {
   claude: ToolHookSettingsStatus;
   codex: ToolHookSettingsStatus;
+  pi: ToolHookSettingsStatus;
   ccSwitch: CcSwitchHookProtectionStatus;
   claudeAutoRepaired: boolean;
 }
@@ -89,10 +91,6 @@ function pickText(language: AppLanguage, zh: string, en: string) {
 
 function formatPath(value: string | null, language: AppLanguage): string {
   return value && value.trim() ? value : pickText(language, "未选择", "Not selected");
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function formatCcSwitchMessage(message: string | null, language: AppLanguage): string | null {
@@ -501,18 +499,22 @@ export function HookSettingsPage() {
   const text = (zh: string, en: string) => pickText(language, zh, en);
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
+  const piHookConfigDir = useSettingsStore((s) => s.piHookConfigDir);
   const [status, setStatus] = useState<HookSettingsStatus | null>(null);
   const [selectedDir, setSelectedDir] = useState<string | null>(claudeHookConfigDir);
   const [codexSelectedDir, setCodexSelectedDir] = useState<string | null>(codexHookConfigDir);
+  const [piSelectedDir, setPiSelectedDir] = useState<string | null>(piHookConfigDir);
   const [loading, setLoading] = useState(false);
   const [claudeWorking, setClaudeWorking] = useState(false);
   const [codexWorking, setCodexWorking] = useState(false);
+  const [piWorking, setPiWorking] = useState(false);
   const hookPopupNotificationsEnabled = useSettingsStore((s) => s.hookPopupNotificationsEnabled);
   const hookPopupAutoCloseEnabled = useSettingsStore((s) => s.hookPopupAutoCloseEnabled);
   const hookPopupAutoCloseSeconds = useSettingsStore((s) => s.hookPopupAutoCloseSeconds);
   const hookSubagentSplitViewEnabled = useSettingsStore((s) => s.hookSubagentSplitViewEnabled);
   const claudeHookBridgeEnabled = useSettingsStore((s) => s.claudeHookBridgeEnabled);
   const codexHookBridgeEnabled = useSettingsStore((s) => s.codexHookBridgeEnabled);
+  const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
   const systemNotificationsEnabled = useSettingsStore((s) => s.systemNotificationsEnabled);
   const suppressSystemNotificationsWhenFocused = useSettingsStore((s) => s.suppressSystemNotificationsWhenFocused);
   const systemNotificationEvents = useSettingsStore((s) => s.systemNotificationEvents);
@@ -526,6 +528,8 @@ export function HookSettingsPage() {
   const [claudeInfoOpen, setClaudeInfoOpen] = useState(false);
   const [codexPathsOpen, setCodexPathsOpen] = useState(false);
   const [codexInfoOpen, setCodexInfoOpen] = useState(false);
+  const [piPathsOpen, setPiPathsOpen] = useState(false);
+  const [piInfoOpen, setPiInfoOpen] = useState(false);
 
   const toggleHookSection = (key: HookSettingsSectionKey) => {
     const current = useSettingsStore.getState().hookSettingsSectionsExpanded;
@@ -547,15 +551,25 @@ export function HookSettingsPage() {
     setCodexSelectedDir(codexHookConfigDir);
   }, [codexHookConfigDir]);
 
+  useEffect(() => {
+    setPiSelectedDir(piHookConfigDir);
+  }, [piHookConfigDir]);
+
   const selectedDirArg = useMemo(() => selectedDir ?? undefined, [selectedDir]);
   const codexSelectedDirArg = useMemo(() => codexSelectedDir ?? undefined, [codexSelectedDir]);
+  const piSelectedDirArg = useMemo(() => piSelectedDir ?? undefined, [piSelectedDir]);
 
-  const refreshStatus = async (dir = selectedDirArg, codexDir = codexSelectedDirArg) => {
+  const refreshStatus = async (
+    dir = selectedDirArg,
+    codexDir = codexSelectedDirArg,
+    piDir = piSelectedDirArg,
+  ) => {
     setLoading(true);
     try {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_get_status", {
         selectedDir: dir,
         codexSelectedDir: codexDir,
+        piSelectedDir: piDir,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         autoRepair: claudeHookBridgeEnabled && claudeHookAutoRepairKnownInstalled,
       });
@@ -570,6 +584,12 @@ export function HookSettingsPage() {
         setCodexSelectedDir(nextStatus.codex.configDir);
         if (useSettingsStore.getState().codexHookConfigDir !== nextStatus.codex.configDir) {
           await updateSetting("codexHookConfigDir", nextStatus.codex.configDir);
+        }
+      }
+      if (nextStatus.pi.configDir) {
+        setPiSelectedDir(nextStatus.pi.configDir);
+        if (useSettingsStore.getState().piHookConfigDir !== nextStatus.pi.configDir) {
+          await updateSetting("piHookConfigDir", nextStatus.pi.configDir);
         }
       }
       if (nextStatus.claudeAutoRepaired && !claudeHookAutoRepairNoticeShown) {
@@ -597,7 +617,7 @@ export function HookSettingsPage() {
       if (!dir) return;
       setSelectedDir(dir);
       await updateSetting("claudeHookConfigDir", dir);
-      await refreshStatus(dir, codexSelectedDirArg);
+      await refreshStatus(dir, codexSelectedDirArg, piSelectedDirArg);
     } catch (error) {
       toast.error(text("选择目录失败", "Failed to choose directory"), { description: getErrorMessage(error) });
     }
@@ -611,7 +631,7 @@ export function HookSettingsPage() {
       if (!dir) return;
       setCodexSelectedDir(dir);
       await updateSetting("codexHookConfigDir", dir);
-      await refreshStatus(selectedDirArg, dir);
+      await refreshStatus(selectedDirArg, dir, piSelectedDirArg);
     } catch (error) {
       toast.error(text("选择 Codex 目录失败", "Failed to choose Codex directory"), { description: getErrorMessage(error) });
     }
@@ -623,14 +643,21 @@ export function HookSettingsPage() {
     const dir = raw.trim() || null;
     setSelectedDir(dir);
     await updateSetting("claudeHookConfigDir", dir);
-    await refreshStatus(dir ?? undefined, codexSelectedDirArg);
+    await refreshStatus(dir ?? undefined, codexSelectedDirArg, piSelectedDirArg);
   };
 
   const handleManualCodexDirCommit = async (raw: string) => {
     const dir = raw.trim() || null;
     setCodexSelectedDir(dir);
     await updateSetting("codexHookConfigDir", dir);
-    await refreshStatus(selectedDirArg, dir ?? undefined);
+    await refreshStatus(selectedDirArg, dir ?? undefined, piSelectedDirArg);
+  };
+
+  const handleManualPiDirCommit = async (raw: string) => {
+    const dir = raw.trim() || null;
+    setPiSelectedDir(dir);
+    await updateSetting("piHookConfigDir", dir);
+    await refreshStatus(selectedDirArg, codexSelectedDirArg, dir ?? undefined);
   };
 
   const handleClaudeInstall = async () => {
@@ -639,6 +666,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -661,6 +689,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -681,10 +710,12 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install_codex", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
       if (nextStatus.codex.configDir) setCodexSelectedDir(nextStatus.codex.configDir);
+      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
       toast.success(text("Codex Hook 已安装", "Codex Hook installed"), {
         description: getCcSwitchProtectionDescription(nextStatus.ccSwitch, language),
       });
@@ -701,10 +732,12 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall_codex", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
       if (nextStatus.codex.configDir) setCodexSelectedDir(nextStatus.codex.configDir);
+      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
       toast.success(text("Codex Hook 已删除", "Codex Hook removed"));
     } catch (error) {
       toast.error(text("删除 Codex Hook 失败", "Failed to remove Codex Hook"), { description: getErrorMessage(error) });
@@ -713,10 +746,65 @@ export function HookSettingsPage() {
     }
   };
 
+  const handleSelectPiDir = async () => {
+    try {
+      const dir = await invoke<string | null>("hook_settings_select_dir", {
+        title: text("选择 Pi 配置目录", "Choose Pi config directory"),
+      });
+      if (!dir) return;
+      setPiSelectedDir(dir);
+      await updateSetting("piHookConfigDir", dir);
+      await refreshStatus(selectedDirArg, codexSelectedDirArg, dir);
+    } catch (error) {
+      toast.error(text("选择 Pi 目录失败", "Failed to choose Pi directory"), { description: getErrorMessage(error) });
+    }
+  };
+
+  const handlePiInstall = async () => {
+    setPiWorking(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install_pi", {
+        selectedDir: selectedDirArg,
+        codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      setStatus(nextStatus);
+      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
+      toast.success(text("Pi Hook 已安装", "Pi Hook installed"));
+    } catch (error) {
+      toast.error(text("安装 Pi Hook 失败", "Failed to install Pi Hook"), {
+        description: getPiHookErrorMessage(error, t),
+      });
+    } finally {
+      setPiWorking(false);
+    }
+  };
+
+  const handlePiUninstall = async () => {
+    setPiWorking(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall_pi", {
+        selectedDir: selectedDirArg,
+        codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      setStatus(nextStatus);
+      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
+      toast.success(text("Pi Hook 已删除", "Pi Hook removed"));
+    } catch (error) {
+      toast.error(text("删除 Pi Hook 失败", "Failed to remove Pi Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setPiWorking(false);
+    }
+  };
+
   const syncStatusAfterMutation = (nextStatus: HookSettingsStatus) => {
     setStatus(nextStatus);
     if (nextStatus.claude.configDir) setSelectedDir(nextStatus.claude.configDir);
     if (nextStatus.codex.configDir) setCodexSelectedDir(nextStatus.codex.configDir);
+    if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
   };
 
   const handleModuleToggle = async (
@@ -728,15 +816,19 @@ export function HookSettingsPage() {
     const command =
       tool === "claude"
         ? (installed ? "hook_settings_uninstall" : "hook_settings_install")
-        : (installed ? "hook_settings_uninstall_codex" : "hook_settings_install_codex");
-    const setWorking = tool === "claude" ? setClaudeWorking : setCodexWorking;
-    const toolLabel = tool === "claude" ? "Claude" : "Codex";
+        : tool === "codex"
+          ? (installed ? "hook_settings_uninstall_codex" : "hook_settings_install_codex")
+          : (installed ? "hook_settings_uninstall_pi" : "hook_settings_install_pi");
+    const setWorking =
+      tool === "claude" ? setClaudeWorking : tool === "codex" ? setCodexWorking : setPiWorking;
+    const toolLabel = tool === "claude" ? "Claude" : tool === "codex" ? "Codex" : "Pi";
 
     setWorking(true);
     try {
       const nextStatus = await invoke<HookSettingsStatus>(command, {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         module,
       });
@@ -757,7 +849,7 @@ export function HookSettingsPage() {
           tool: toolLabel,
           module: moduleLabel,
         }),
-        { description: getErrorMessage(error) }
+        { description: tool === "pi" ? getPiHookErrorMessage(error, t) : getErrorMessage(error) }
       );
     } finally {
       setWorking(false);
@@ -776,9 +868,11 @@ export function HookSettingsPage() {
 
   const claude = status?.claude;
   const codex = status?.codex;
+  const pi = status?.pi;
   const ccSwitchProtection = status?.ccSwitch ?? null;
   const claudeStatus = claude?.status ?? "directoryMissing";
   const codexStatus = codex?.status ?? "directoryMissing";
+  const piStatus = pi?.status ?? "directoryMissing";
   const claudeSessionStartInstalled = Boolean(claude?.attentionScriptInstalled && claude.sessionStartHookInstalled);
   const claudeRunningInstalled = Boolean(claude?.attentionScriptInstalled && claude.runningHookInstalled);
   const claudeAttentionInstalled = Boolean(claude?.attentionScriptInstalled && claude.attentionHookInstalled);
@@ -792,8 +886,12 @@ export function HookSettingsPage() {
   // Codex — 拆分为独立事件
   const codexStopInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
   const codexSubagentInstalled = Boolean(codex?.subagentStartHookInstalled);
+  const piSessionStartInstalled = Boolean(pi?.attentionScriptInstalled && pi.sessionStartHookInstalled);
+  const piRunningInstalled = Boolean(pi?.attentionScriptInstalled && pi.runningHookInstalled);
+  const piStopInstalled = Boolean(pi?.finishedScriptInstalled && pi.stopHookInstalled);
   const claudeToolLabel = "Claude";
   const codexToolLabel = "Codex";
+  const piToolLabel = "Pi";
   const claudeSessionStartLabel = text("会话启动", "Session Start");
   const claudeRunningLabel = text("运行中", "Running");
   const claudeAttentionLabel = text("待审批", "Awaiting Approval");
@@ -806,6 +904,9 @@ export function HookSettingsPage() {
   const codexStopLabel = text("完成", "Completed");
   const codexSubagentLabel = text("子 Agent", "Subagent");
   const codexHooksFeatureLabel = text("Hooks 功能", "Hooks Feature");
+  const piSessionStartLabel = text("会话启动", "Session Start");
+  const piRunningLabel = text("运行中", "Running");
+  const piStopLabel = text("任务完成", "Task Completed");
   const buildModuleActionLabel = (toolLabel: string, moduleLabel: string, installed: boolean) =>
     t(installed ? "settings.hooks.card.clickToUninstall" : "settings.hooks.card.clickToInstall", {
       tool: toolLabel,
@@ -825,7 +926,7 @@ export function HookSettingsPage() {
     <Stack gap="lg">
       <CollapsibleHookSection
         title={text("Hook 通知弹框", "Hook Toast Notifications")}
-        description={text("控制 Claude Code 和 Codex CLI Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。", "Controls top-right toast cards for Claude Code and Codex CLI Hook events. Terminal tab dots are not affected.")}
+        description={text("控制 Claude Code、Codex CLI 和 Pi Agent Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。", "Controls top-right toast cards for Claude Code, Codex CLI, and Pi Agent Hook events. Terminal tab dots are not affected.")}
         open={hookSettingsSectionsExpanded.toast}
         onToggle={() => toggleHookSection("toast")}
       >
@@ -965,7 +1066,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("claude", "sessionStart", claudeSessionStartInstalled, claudeSessionStartLabel)}
-              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(claudeToolLabel, claudeSessionStartLabel, claudeSessionStartInstalled)}
             />
             <HookCard
@@ -976,7 +1077,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("claude", "running", claudeRunningInstalled, claudeRunningLabel)}
-              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(claudeToolLabel, claudeRunningLabel, claudeRunningInstalled)}
             />
             <HookCard
@@ -987,7 +1088,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["Notification"], !notifyState(["Notification"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("claude", "attention", claudeAttentionInstalled, claudeAttentionLabel)}
-              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(claudeToolLabel, claudeAttentionLabel, claudeAttentionInstalled)}
             />
             <HookCard
@@ -998,7 +1099,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("claude", "stop", claudeStopInstalled, claudeStopLabel)}
-              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(claudeToolLabel, claudeStopLabel, claudeStopInstalled)}
             />
             <HookCard
@@ -1009,7 +1110,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("claude", "failure", claudeFailureInstalled, claudeFailureLabel)}
-              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(claudeToolLabel, claudeFailureLabel, claudeFailureInstalled)}
             />
             <HookCard
@@ -1017,7 +1118,7 @@ export function HookSettingsPage() {
               label={claudeSubagentLabel}
               checked={claudeSubagentInstalled}
               onClick={() => void handleModuleToggle("claude", "subagent", claudeSubagentInstalled, claudeSubagentLabel)}
-              disabled={loading || claudeWorking || codexWorking || claudeStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(claudeToolLabel, claudeSubagentLabel, claudeSubagentInstalled)}
             />
           </SimpleGrid>
@@ -1114,11 +1215,11 @@ export function HookSettingsPage() {
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleManualClaudeDirCommit(e.currentTarget.value);
             }}
-            disabled={loading || claudeWorking || codexWorking}
+            disabled={loading || claudeWorking || codexWorking || piWorking}
           />
 
           <Group gap="xs">
-            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectDir} disabled={loading || claudeWorking || codexWorking}>
+            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectDir} disabled={loading || claudeWorking || codexWorking || piWorking}>
               {text("选择 Claude 目录", "Choose Claude Directory")}
             </Button>
             <Button color="cliPrimary" size="xs" onClick={handleClaudeInstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
@@ -1127,7 +1228,7 @@ export function HookSettingsPage() {
             <Button variant="light" color="red" size="xs" onClick={handleClaudeUninstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
               {text("删除 Claude Hook", "Remove Claude Hook")}
             </Button>
-            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking}>
+            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking || piWorking}>
               {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
             </Button>
               </Group>
@@ -1164,7 +1265,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("codex", "sessionStart", codexSessionStartInstalled, codexSessionStartLabel)}
-              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(codexToolLabel, codexSessionStartLabel, codexSessionStartInstalled)}
             />
             <HookCard
@@ -1175,7 +1276,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("codex", "running", codexRunningInstalled, codexRunningLabel)}
-              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(codexToolLabel, codexRunningLabel, codexRunningInstalled)}
             />
             <HookCard
@@ -1186,7 +1287,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["PermissionRequest"], !notifyState(["PermissionRequest"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("codex", "attention", codexAttentionInstalled, codexAttentionLabel)}
-              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(codexToolLabel, codexAttentionLabel, codexAttentionInstalled)}
             />
             <HookCard
@@ -1197,7 +1298,7 @@ export function HookSettingsPage() {
               onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
               notifyDisabled={!systemNotificationsEnabled}
               onClick={() => void handleModuleToggle("codex", "stop", codexStopInstalled, codexStopLabel)}
-              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(codexToolLabel, codexStopLabel, codexStopInstalled)}
             />
             <HookCard
@@ -1205,7 +1306,7 @@ export function HookSettingsPage() {
               label={codexSubagentLabel}
               checked={codexSubagentInstalled}
               onClick={() => void handleModuleToggle("codex", "subagent", codexSubagentInstalled, codexSubagentLabel)}
-              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(codexToolLabel, codexSubagentLabel, codexSubagentInstalled)}
             />
             <HookCard
@@ -1213,7 +1314,7 @@ export function HookSettingsPage() {
               label={codexHooksFeatureLabel}
               checked={Boolean(codex?.hooksFeatureInstalled)}
               onClick={() => void handleModuleToggle("codex", "hooksFeature", Boolean(codex?.hooksFeatureInstalled), codexHooksFeatureLabel)}
-              disabled={loading || claudeWorking || codexWorking || codexStatus === "directoryMissing"}
+              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
               actionLabel={buildModuleActionLabel(codexToolLabel, codexHooksFeatureLabel, Boolean(codex?.hooksFeatureInstalled))}
             />
           </SimpleGrid>
@@ -1316,11 +1417,11 @@ export function HookSettingsPage() {
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleManualCodexDirCommit(e.currentTarget.value);
             }}
-            disabled={loading || claudeWorking || codexWorking}
+            disabled={loading || claudeWorking || codexWorking || piWorking}
           />
 
           <Group gap="xs">
-            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectCodexDir} disabled={loading || claudeWorking || codexWorking}>
+            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectCodexDir} disabled={loading || claudeWorking || codexWorking || piWorking}>
               {text("选择 Codex 目录", "Choose Codex Directory")}
             </Button>
             <Button color="cliPrimary" size="xs" onClick={handleCodexInstall} disabled={loading || codexWorking || codexStatus === "directoryMissing"}>
@@ -1329,10 +1430,183 @@ export function HookSettingsPage() {
             <Button variant="light" color="red" size="xs" onClick={handleCodexUninstall} disabled={loading || codexWorking || codexStatus === "directoryMissing"}>
               {text("删除 Codex Hook", "Remove Codex Hook")}
             </Button>
-            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking}>
+            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking || piWorking}>
               {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
             </Button>
               </Group>
+            </>
+          )}
+        </Stack>
+      </CollapsibleHookSection>
+
+
+      <CollapsibleHookSection
+        title={text("Pi Agent Hook 桥接", "Pi Agent Hook Bridge")}
+        description={text("通过 Pi Extension 上报会话启动、运行中与完成状态，绑定 sessionId 以支持实时统计。", "Reports session start, running, and completion through a Pi Extension, binding sessionId for live stats.")}
+        open={hookSettingsSectionsExpanded.pi}
+        onToggle={() => toggleHookSection("pi")}
+        collapsible={piHookBridgeEnabled}
+        action={(
+          <Switch
+            color="cliPrimary"
+            checked={piHookBridgeEnabled}
+            onChange={(event) => void updateSetting("piHookBridgeEnabled", event.currentTarget.checked)}
+            aria-label={t("settings.hooks.bridge.enabled")}
+          />
+        )}
+        right={piHookBridgeEnabled ? <StatusPill status={piStatus} /> : undefined}
+      >
+        <Stack gap="lg">
+          {piHookBridgeEnabled && (
+            <>
+              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
+            <HookCard
+              icon={<Play />}
+              label={piSessionStartLabel}
+              checked={piSessionStartInstalled}
+              notifyEnabled={notifyState(["SessionStart"])}
+              onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
+              notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("pi", "sessionStart", piSessionStartInstalled, piSessionStartLabel)}
+              disabled={loading || claudeWorking || codexWorking || piWorking || piStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(piToolLabel, piSessionStartLabel, piSessionStartInstalled)}
+            />
+            <HookCard
+              icon={<Activity />}
+              label={piRunningLabel}
+              checked={piRunningInstalled}
+              notifyEnabled={notifyState(["UserPromptSubmit"])}
+              onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
+              notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("pi", "running", piRunningInstalled, piRunningLabel)}
+              disabled={loading || claudeWorking || codexWorking || piWorking || piStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(piToolLabel, piRunningLabel, piRunningInstalled)}
+            />
+            <HookCard
+              icon={<CheckCircle />}
+              label={piStopLabel}
+              checked={piStopInstalled}
+              notifyEnabled={notifyState(["Stop"])}
+              onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
+              notifyDisabled={!systemNotificationsEnabled}
+              onClick={() => void handleModuleToggle("pi", "stop", piStopInstalled, piStopLabel)}
+              disabled={loading || claudeWorking || codexWorking || piWorking || piStatus === "directoryMissing"}
+              actionLabel={buildModuleActionLabel(piToolLabel, piStopLabel, piStopInstalled)}
+            />
+          </SimpleGrid>
+
+          <Group gap="xs">
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              onClick={() => setPiPathsOpen(!piPathsOpen)}
+              leftSection={piPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            >
+              {text("查看配置路径", "View Config Paths")}
+            </Button>
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              onClick={() => setPiInfoOpen(!piInfoOpen)}
+              leftSection={<HelpCircle size={14} />}
+            >
+              {text("安装说明", "Install Notes")}
+            </Button>
+          </Group>
+
+          {piPathsOpen && (
+            <Card className="bg-surface-container-low/50" p="sm" radius="lg">
+              <Stack gap="xs">
+                <PathRow label={text("Pi 配置目录", "Pi Config Directory")} value={pi?.configDir ?? piSelectedDir} />
+                <PathRow label={text("extensions 目录", "extensions Directory")} value={pi?.hooksDir ?? null} />
+                <PathRow label="cli-manager-hook.ts" value={pi?.configPath ?? null} />
+              </Stack>
+            </Card>
+          )}
+
+          {piInfoOpen && (
+            <Card className="bg-surface-container-low/50" p="md" radius="lg">
+              <Stack gap="md">
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box style={{ color: "var(--success)", marginTop: 2 }}>
+                    <Check size={18} />
+                  </Box>
+                  <Stack gap={4}>
+                    <Text size="xs" fw={500} c="var(--on-surface)">
+                      {text("安装内容", "Installed Content")}
+                    </Text>
+                    <Stack gap={2}>
+                      <Group gap="xs">
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
+                          {text("~/.pi/agent/extensions/cli-manager-hook.ts", "~/.pi/agent/extensions/cli-manager-hook.ts")}
+                        </Text>
+                      </Group>
+                      <Group gap="xs">
+                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
+                        <Text size="xs" c="var(--on-surface-variant)">
+                          {text("监听 session_start / agent_start / agent_settled 并上报 CLI-Manager", "Listens to session_start / agent_start / agent_settled and reports to CLI-Manager")}
+                        </Text>
+                      </Group>
+                    </Stack>
+                  </Stack>
+                </Group>
+
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box style={{ color: "var(--warning)", marginTop: 2 }}>
+                    <AlertTriangle size={18} />
+                  </Box>
+                  <Stack gap={4}>
+                    <Text size="xs" fw={500} c="var(--on-surface)">
+                      {text("注意事项", "Notes")}
+                    </Text>
+                    <Stack gap={2}>
+                      <Text size="xs" c="var(--on-surface-variant)">
+                        {text("• Pi 使用 Extension 机制，不是 Claude/Codex 的 shell hook 命令", "• Pi uses the Extension mechanism, not Claude/Codex shell hook commands")}
+                      </Text>
+                      <Text size="xs" c="var(--on-surface-variant)">
+                        {text("• 安装后新开的 Pi 会话会自动加载；已运行会话可执行 ", "• Newly started Pi sessions load it automatically; for existing sessions run ")}
+                        <span className="font-mono">/reload</span>
+                      </Text>
+                      <Text size="xs" c="var(--on-surface-variant)">
+                        {text("• 实时统计依赖 PTY 注入的 CLI_MANAGER_* 环境变量与 sessionId 绑定", "• Live stats require PTY-injected CLI_MANAGER_* env vars and sessionId binding")}
+                      </Text>
+                    </Stack>
+                  </Stack>
+                </Group>
+              </Stack>
+            </Card>
+          )}
+
+          <TextInput
+            size="xs"
+            label={text("Pi 配置目录（可手动粘贴，默认 ~/.pi/agent）", "Pi config directory (manual paste supported, default ~/.pi/agent)")}
+            placeholder={text("C:\\Users\\你\\.pi\\agent", "C:\\Users\\you\\.pi\\agent")}
+            value={piSelectedDir ?? ""}
+            onChange={(e) => setPiSelectedDir(e.currentTarget.value || null)}
+            onBlur={(e) => void handleManualPiDirCommit(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void handleManualPiDirCommit(e.currentTarget.value);
+            }}
+            disabled={loading || claudeWorking || codexWorking || piWorking}
+          />
+
+          <Group gap="xs">
+            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectPiDir} disabled={loading || claudeWorking || codexWorking || piWorking}>
+              {text("选择 Pi 目录", "Choose Pi Directory")}
+            </Button>
+            <Button color="cliPrimary" size="xs" onClick={handlePiInstall} disabled={loading || piWorking || piStatus === "directoryMissing"}>
+              {piWorking ? text("处理中...", "Processing...") : text("安装 Pi Hook", "Install Pi Hook")}
+            </Button>
+            <Button variant="light" color="red" size="xs" onClick={handlePiUninstall} disabled={loading || piWorking || piStatus === "directoryMissing"}>
+              {text("删除 Pi Hook", "Remove Pi Hook")}
+            </Button>
+            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking || piWorking}>
+              {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
+            </Button>
+          </Group>
             </>
           )}
         </Stack>

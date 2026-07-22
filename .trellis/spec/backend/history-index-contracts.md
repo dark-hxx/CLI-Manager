@@ -69,3 +69,27 @@ for entry in refresh_history_index(&roots) {
 let hits = catalog::search_sessions(&roots, &query, source, project_path, limit).await?;
 catalog::ensure_refresh(app, roots, false, false).await?;
 ```
+
+## Scenario: Scoped SSH Remote History
+
+### 1. Scope / Trigger
+
+- Trigger: changing SSH Agent history discovery/parsing, remote bridge history RPCs, catalog sync, or remote list/search/detail routing.
+- Goal: expose project-scoped remote Claude/Codex history without copying the remote history tree or treating POSIX paths as desktop-local paths.
+
+### 2. Contracts
+
+- Remote `sourceInstanceId` is stable for `(remoteMachineId, sshUser, source, canonicalConfigRootHash)` and does not include `hostId`, project ID, client ID, or replaceable Agent installation ID.
+- The Agent owns one rebuildable index per `(source, configRootHash)`. Writers use an Agent-side cross-process lock whose directory, permissions, and owner record are acquired transactionally; readers reuse the published generation.
+- JSONL indexing is append-aware and handles truncate, same-size rewrite, rotation, partial tails, tombstones, and project-scope expansion. A record larger than the 8 MiB read window is skipped with bounded cursor progress until its newline.
+- Agent cursors are `generation:offset`. A generation mismatch resets pagination to offset zero; desktop fetches 21 summaries to display 20 and requests the next Agent page only from load-more.
+- The existing `history-catalog.db` stores remote summaries, usage facts, freshness, cursor, and identity. Summary materialization must remove persisted messages, tool events, file changes, and corresponding FTS rows.
+- Full remote detail is online-only and lives in a bounded in-memory LRU. Offline behavior guarantees cached list/summary/usage only, with explicit stale/disconnected state.
+- Protocol minor 3 advertises `historyDetailChunks`: payload chunks are at most 256 KiB inside the existing 1 MiB frame, aggregate detail is at most 64 MiB, and desktop validates request ID, order, total, size, and one end-to-end deadline.
+- Remote history is read-only. Remote refs and paths never enter local/WSL file, Git, provider, edit, delete, snapshot, or resume APIs.
+
+### 3. Tests Required
+
+- Agent: append/partial/truncate/rewrite, project scope, tombstones, stable identity, lock cleanup/recovery, oversized-record progress, cursor reset, and full history suite.
+- Desktop: strict remote identity/continuation validation, numeric overflow, summary-only cleanup, pagination, detail chunk validation/deadline, LRU eviction, bridge consumer lifetime, and catalog tests.
+- Frontend: TypeScript check plus manual rapid project/filter switching to confirm stale list/search/detail requests cannot replace the current SSH context.

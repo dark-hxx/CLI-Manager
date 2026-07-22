@@ -1213,3 +1213,141 @@ Replaced the custom file-tree ignore parser with ignore@7.0.6, reloaded project-
 ### Next Steps
 
 - None - task complete
+
+
+## Session 35: Complete SSH Agent history, files, Git, and stats
+
+**Date**: 2026-07-21
+**Task**: Complete SSH Agent history, files, Git, and stats
+**Branch**: `feat/ssh-agent`
+
+### Summary
+
+Completed S06-S10 with remote history/cache and resume, read-only file and Git panels, remote terminal statistics, security boundaries, acceptance evidence, and full quality gates.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `34ba3f89` | (see git log) |
+| `3ab7a1bc` | (see git log) |
+| `25d00552` | (see git log) |
+| `cd618d4f` | (see git log) |
+| `72814943` | (see git log) |
+| `c14c5bdb` | (see git log) |
+| `a934ab8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 36: 移除历史上下文注入并修复同步与字体状态
+
+**Date**: 2026-07-21
+**Task**: 移除历史上下文注入并修复同步与字体状态
+**Branch**: `master`
+
+### Summary
+
+删除 Claude/Codex 历史上下文文件创建与注入；同步完成项目自动加入忽略列表并防止同步重入；统一终端字体规范化以兼容所有字体；更新 V1.3.0 文档与回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `627f85ea` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 37: 修复 Windows PTY 环境与 daemon 退出
+
+**Date**: 2026-07-21
+**Task**: 修复 Windows PTY 环境与 daemon 退出
+**Branch**: `master`
+
+### Summary
+
+刷新新建 Windows PTY 的用户环境并合并 daemon 临时 PATH；修正 daemon 会话查询和退出清理语义，补充退出编排测试、V1.3.0 变更说明及 PTY daemon 契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `15d5fb84` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 38: 修复终端 Tab 切换自动聚焦
+
+**Date**: 2026-07-21
+**Task**: 修复终端 Tab 切换自动聚焦
+**Branch**: `master`
+
+### Summary
+
+修复 XTermTerminal 在渐进可见性恢复期间过早聚焦的问题；恢复遮罩解除后下一动画帧重新聚焦活动终端，补充前端焦点契约与 V1.3.0 Changelog。npx tsc --noEmit 和相关终端测试通过；完整终端测试仅有既有 terminalCursorMovement 缺失文件失败。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27b71e60` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

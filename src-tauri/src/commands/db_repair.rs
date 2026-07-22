@@ -6,6 +6,10 @@ use crate::{
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_SQL,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION,
+    MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION, MIGRATION_CREATE_SSH_HOSTS_SQL,
+    MIGRATION_CREATE_SSH_HOSTS_VERSION,
+    MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+    MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -57,6 +61,36 @@ const WORKTREE_COLUMNS: [&str; 10] = [
     "created_at",
     "updated_at",
 ];
+const SSH_PROJECT_COLUMNS: [&str; 3] = ["environment_type", "ssh_host_id", "remote_path"];
+const SSH_HOST_COLUMNS: [&str; 25] = [
+    "id",
+    "name",
+    "group_name",
+    "host",
+    "port",
+    "username",
+    "config_alias",
+    "auth_mode",
+    "identity_file",
+    "credential_ref",
+    "jump_mode",
+    "jump_host_id",
+    "proxy_type",
+    "proxy_host",
+    "proxy_port",
+    "proxy_command",
+    "connect_timeout_sec",
+    "server_alive_interval_sec",
+    "server_alive_count_max",
+    "terminal_encoding",
+    "startup_script",
+    "notes",
+    "sort_order",
+    "created_at",
+    "updated_at",
+];
+const SSH_HOST_GROUP_COLUMNS: [&str; 5] =
+    ["id", "name", "parent_id", "sort_order", "created_at"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MigrationRow {
@@ -84,6 +118,8 @@ struct SchemaFeatures {
     favorite_snapshots: SchemaState,
     cli_args: SchemaState,
     worktree_isolation: SchemaState,
+    ssh_hosts: SchemaState,
+    ssh_host_groups: SchemaState,
 }
 
 #[derive(Debug, Serialize)]
@@ -682,6 +718,28 @@ fn expected_migrations_for_features(
         SchemaState::Partial => return Err("migration_repair_partial_worktree_schema".to_string()),
     }
 
+    match features.ssh_hosts {
+        SchemaState::Complete => expected.push(ExpectedMigration {
+            version: MIGRATION_CREATE_SSH_HOSTS_VERSION,
+            description: MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
+            sql: MIGRATION_CREATE_SSH_HOSTS_SQL,
+        }),
+        SchemaState::Absent => {}
+        SchemaState::Partial => return Err("migration_repair_partial_ssh_host_schema".to_string()),
+    }
+
+    match features.ssh_host_groups {
+        SchemaState::Complete => expected.push(ExpectedMigration {
+            version: MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
+            description: MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION,
+            sql: MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+        }),
+        SchemaState::Absent => {}
+        SchemaState::Partial => {
+            return Err("migration_repair_partial_ssh_group_schema".to_string())
+        }
+    }
+
     expected.sort_by_key(|migration| migration.version);
     Ok(expected)
 }
@@ -706,11 +764,13 @@ async fn read_known_migration_rows(
 ) -> Result<Vec<MigrationRow>, String> {
     let rows = sqlx::query(
         "SELECT version, description, checksum FROM _sqlx_migrations
-         WHERE version BETWEEN ?1 AND ?2
+         WHERE version BETWEEN ?1 AND ?2 OR version IN (?3, ?4)
          ORDER BY version",
     )
     .bind(KNOWN_DRIFT_START_VERSION)
     .bind(KNOWN_DRIFT_END_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOSTS_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION)
     .fetch_all(&mut *conn)
     .await
     .map_err(|err| format!("migration_repair_query_failed: {err}"))?;
@@ -757,9 +817,14 @@ async fn rewrite_known_migration_rows_in_transaction(
     conn: &mut SqliteConnection,
     expected: &[ExpectedMigration],
 ) -> Result<(), String> {
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version BETWEEN ?1 AND ?2")
+    sqlx::query(
+        "DELETE FROM _sqlx_migrations
+         WHERE version BETWEEN ?1 AND ?2 OR version IN (?3, ?4)",
+    )
         .bind(KNOWN_DRIFT_START_VERSION)
         .bind(KNOWN_DRIFT_END_VERSION)
+        .bind(MIGRATION_CREATE_SSH_HOSTS_VERSION)
+        .bind(MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION)
         .execute(&mut *conn)
         .await
         .map_err(|err| format!("migration_repair_delete_failed: {err}"))?;
@@ -785,6 +850,8 @@ async fn detect_schema_features(conn: &mut SqliteConnection) -> Result<SchemaFea
     let projects_columns = table_columns(conn, "projects").await?;
     let favorite_columns = table_columns(conn, "session_favorite_snapshots").await?;
     let worktree_columns = table_columns(conn, "worktrees").await?;
+    let ssh_host_columns = table_columns(conn, "ssh_hosts").await?;
+    let ssh_group_columns = table_columns(conn, "ssh_host_groups").await?;
 
     Ok(SchemaFeatures {
         favorite_snapshots: classify_table_schema(&favorite_columns, &FAVORITE_SNAPSHOT_COLUMNS),
@@ -794,6 +861,8 @@ async fn detect_schema_features(conn: &mut SqliteConnection) -> Result<SchemaFea
             SchemaState::Absent
         },
         worktree_isolation: classify_worktree_schema(&projects_columns, &worktree_columns),
+        ssh_hosts: classify_ssh_host_schema(&projects_columns, &ssh_host_columns),
+        ssh_host_groups: classify_ssh_group_schema(&ssh_host_columns, &ssh_group_columns),
     })
 }
 
@@ -826,6 +895,40 @@ fn classify_worktree_schema(
     }
 }
 
+fn classify_ssh_group_schema(
+    ssh_host_columns: &HashSet<String>,
+    ssh_group_columns: &HashSet<String>,
+) -> SchemaState {
+    let has_group_id = ssh_host_columns.contains("group_id");
+    let has_group_table = !ssh_group_columns.is_empty();
+
+    if !has_group_id && !has_group_table {
+        return SchemaState::Absent;
+    }
+    if has_group_id && has_columns(ssh_group_columns, &SSH_HOST_GROUP_COLUMNS) {
+        SchemaState::Complete
+    } else {
+        SchemaState::Partial
+    }
+}
+
+fn classify_ssh_host_schema(
+    projects_columns: &HashSet<String>,
+    ssh_host_columns: &HashSet<String>,
+) -> SchemaState {
+    let has_project_columns = has_columns(projects_columns, &SSH_PROJECT_COLUMNS);
+    let has_ssh_host_table = !ssh_host_columns.is_empty();
+
+    if !has_project_columns && !has_ssh_host_table {
+        return SchemaState::Absent;
+    }
+    if has_project_columns && has_columns(ssh_host_columns, &SSH_HOST_COLUMNS) {
+        SchemaState::Complete
+    } else {
+        SchemaState::Partial
+    }
+}
+
 fn has_columns(columns: &HashSet<String>, required: &[&str]) -> bool {
     required.iter().all(|column| columns.contains(*column))
 }
@@ -852,6 +955,8 @@ async fn table_columns(
         "projects" => "PRAGMA table_info(projects)",
         "session_favorite_snapshots" => "PRAGMA table_info(session_favorite_snapshots)",
         "worktrees" => "PRAGMA table_info(worktrees)",
+        "ssh_hosts" => "PRAGMA table_info(ssh_hosts)",
+        "ssh_host_groups" => "PRAGMA table_info(ssh_host_groups)",
         _ => return Err("migration_repair_unsupported_table".to_string()),
     };
     let rows = sqlx::query(query)
@@ -880,6 +985,8 @@ mod tests {
             favorite_snapshots: SchemaState::Complete,
             cli_args: SchemaState::Complete,
             worktree_isolation: SchemaState::Complete,
+            ssh_hosts: SchemaState::Complete,
+            ssh_host_groups: SchemaState::Complete,
         };
 
         let expected = expected_migrations_for_features(&features).unwrap();
@@ -890,7 +997,9 @@ mod tests {
             vec![
                 MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION,
                 MIGRATION_ADD_CLI_ARGS_VERSION,
-                MIGRATION_ADD_WORKTREE_ISOLATION_VERSION
+                MIGRATION_ADD_WORKTREE_ISOLATION_VERSION,
+                MIGRATION_CREATE_SSH_HOSTS_VERSION,
+                MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
             ]
         );
     }
@@ -901,6 +1010,8 @@ mod tests {
             favorite_snapshots: SchemaState::Absent,
             cli_args: SchemaState::Complete,
             worktree_isolation: SchemaState::Partial,
+            ssh_hosts: SchemaState::Absent,
+            ssh_host_groups: SchemaState::Absent,
         };
 
         assert_eq!(
@@ -948,6 +1059,8 @@ mod tests {
                     favorite_snapshots: SchemaState::Complete,
                     cli_args: SchemaState::Complete,
                     worktree_isolation: SchemaState::Complete,
+                    ssh_hosts: SchemaState::Absent,
+                    ssh_host_groups: SchemaState::Absent,
                 })
                 .unwrap()
             )
@@ -986,6 +1099,76 @@ mod tests {
                 checksum: migration_checksum(MIGRATION_ADD_CLI_ARGS_SQL),
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn marks_frontend_created_ssh_group_schema_as_migrated() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        conn.execute(
+            "CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL
+            )",
+        )
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        conn.execute(
+            "CREATE TABLE ssh_host_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id TEXT REFERENCES ssh_host_groups(id) ON DELETE SET NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "ALTER TABLE ssh_hosts
+             ADD COLUMN group_id TEXT REFERENCES ssh_host_groups(id) ON DELETE SET NULL",
+        )
+        .await
+        .unwrap();
+        insert_migration_row(
+            &mut conn,
+            MIGRATION_CREATE_SSH_HOSTS_VERSION,
+            MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
+            "legacy migration 20 sql",
+        )
+        .await;
+
+        let result = repair_known_migration_drift(&mut conn).await.unwrap();
+        let rows = read_known_migration_rows(&mut conn).await.unwrap();
+
+        assert!(result.repaired);
+        assert_eq!(
+            rows,
+            vec![
+                MigrationRow {
+                    version: MIGRATION_CREATE_SSH_HOSTS_VERSION,
+                    description: MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION.to_string(),
+                    checksum: migration_checksum(MIGRATION_CREATE_SSH_HOSTS_SQL),
+                },
+                MigrationRow {
+                    version: MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
+                    description: MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION.to_string(),
+                    checksum: migration_checksum(MIGRATION_CREATE_SSH_HOST_GROUPS_SQL),
+                },
+            ]
+        );
+
+        sqlx::raw_sql(crate::MIGRATION_ADD_SSH_CONFIG_FILE_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let columns = table_columns(&mut conn, "ssh_hosts").await.unwrap();
+        assert!(columns.contains("config_file"));
     }
 
     #[tokio::test]

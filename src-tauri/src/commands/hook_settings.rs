@@ -43,12 +43,20 @@ const CODEX_HOOK_EVENTS: [&str; 6] = [
 ];
 const CLAUDE_LEGACY_SCRIPTS: [&str; 2] = [CLAUDE_APPROVAL_SCRIPT_NAME, CLAUDE_FINISHED_SCRIPT_NAME];
 const CODEX_LEGACY_SCRIPTS: [&str; 2] = [CODEX_ATTENTION_SCRIPT_NAME, CODEX_FINISHED_SCRIPT_NAME];
+const PI_EXTENSION_DIR_NAME: &str = "extensions";
+const PI_EXTENSION_FILE_NAME: &str = "cli-manager-hook.ts";
+const PI_EXTENSION_MARKER: &str = "__CLI_MANAGER_PI_HOOK__";
+const PI_MODULE_SESSION_START: &str = "CLI_MANAGER_MODULE:sessionStart";
+const PI_MODULE_RUNNING: &str = "CLI_MANAGER_MODULE:running";
+const PI_MODULE_STOP: &str = "CLI_MANAGER_MODULE:stop";
+const PI_EXTENSION_CONFLICT_ERROR: &str = "pi_extension_conflict";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookSettingsStatus {
     claude: ToolHookSettingsStatus,
     codex: ToolHookSettingsStatus,
+    pi: ToolHookSettingsStatus,
     cc_switch: CcSwitchHookProtectionStatus,
     claude_auto_repaired: bool,
 }
@@ -133,16 +141,25 @@ enum CodexHookModule {
     HooksFeature,
 }
 
+#[derive(Clone, Copy)]
+enum PiHookModule {
+    SessionStart,
+    Running,
+    Stop,
+}
+
 #[tauri::command]
 pub async fn hook_settings_get_status(
     app: AppHandle,
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     auto_repair: Option<bool>,
 ) -> Result<HookSettingsStatus, String> {
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
     let mut claude_auto_repaired = false;
 
     if auto_repair.unwrap_or(false) {
@@ -165,6 +182,7 @@ pub async fn hook_settings_get_status(
 
     let claude = build_claude_status(claude_dir.clone())?;
     let codex = build_codex_status(codex_dir.clone())?;
+    let pi = build_pi_status(pi_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -178,6 +196,7 @@ pub async fn hook_settings_get_status(
     Ok(HookSettingsStatus {
         claude,
         codex,
+        pi,
         cc_switch,
         claude_auto_repaired,
     })
@@ -188,6 +207,7 @@ pub async fn hook_settings_install(
     app: AppHandle,
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -195,6 +215,7 @@ pub async fn hook_settings_install(
     let claude_dir = resolve_claude_dir(selected_dir, true)?
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
     let requested_module = parse_claude_hook_module(module)?;
     if let Some(module) = requested_module {
         install_claude_hook_module(&claude_dir, module)?;
@@ -237,6 +258,7 @@ pub async fn hook_settings_install(
         }
     }
     let codex = build_codex_status(codex_dir.clone())?;
+    let pi = build_pi_status(pi_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -249,6 +271,7 @@ pub async fn hook_settings_install(
     Ok(HookSettingsStatus {
         claude,
         codex,
+        pi,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -259,6 +282,7 @@ pub async fn hook_settings_uninstall(
     app: AppHandle,
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -266,6 +290,7 @@ pub async fn hook_settings_uninstall(
     let claude_dir = resolve_claude_dir(selected_dir, true)?
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
     let requested_module = parse_claude_hook_module(module)?;
     if let Some(module) = requested_module {
         uninstall_claude_hook_module(&claude_dir, module)?;
@@ -295,6 +320,7 @@ pub async fn hook_settings_uninstall(
         }
     }
     let codex = build_codex_status(codex_dir.clone())?;
+    let pi = build_pi_status(pi_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -307,6 +333,7 @@ pub async fn hook_settings_uninstall(
     Ok(HookSettingsStatus {
         claude,
         codex,
+        pi,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -317,6 +344,7 @@ pub async fn hook_settings_install_codex(
     app: AppHandle,
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -324,6 +352,7 @@ pub async fn hook_settings_install_codex(
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?
         .ok_or_else(|| "请先选择 Codex 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
     let requested_module = parse_codex_hook_module(module)?;
     if let Some(module) = requested_module {
         install_codex_hook_module(&codex_dir, module)?;
@@ -366,6 +395,7 @@ pub async fn hook_settings_install_codex(
         }
     }
     let claude = build_claude_status(claude_dir.clone())?;
+    let pi = build_pi_status(pi_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -378,6 +408,7 @@ pub async fn hook_settings_install_codex(
     Ok(HookSettingsStatus {
         claude,
         codex,
+        pi,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -388,6 +419,7 @@ pub async fn hook_settings_uninstall_codex(
     app: AppHandle,
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -395,6 +427,7 @@ pub async fn hook_settings_uninstall_codex(
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?
         .ok_or_else(|| "未找到 Codex 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
     let requested_module = parse_codex_hook_module(module)?;
     if let Some(module) = requested_module {
         uninstall_codex_hook_module(&codex_dir, module)?;
@@ -424,6 +457,7 @@ pub async fn hook_settings_uninstall_codex(
             .await;
         }
     }
+    let pi = build_pi_status(pi_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -436,6 +470,87 @@ pub async fn hook_settings_uninstall_codex(
     Ok(HookSettingsStatus {
         claude,
         codex,
+        pi,
+        cc_switch,
+        claude_auto_repaired: false,
+    })
+}
+
+#[tauri::command]
+pub async fn hook_settings_install_pi(
+    app: AppHandle,
+    selected_dir: Option<String>,
+    codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
+    cc_switch_db_path: Option<String>,
+    module: Option<String>,
+) -> Result<HookSettingsStatus, String> {
+    let pi_dir = resolve_pi_dir(pi_selected_dir, true)?
+        .ok_or_else(|| "请先选择 Pi 配置目录".to_string())?;
+    let claude_dir = resolve_claude_dir(selected_dir, false)?;
+    let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let requested_module = parse_pi_hook_module(module)?;
+    if let Some(module) = requested_module {
+        install_pi_hook_module(&pi_dir, module)?;
+    } else {
+        install_pi_hooks(&pi_dir)?;
+    }
+    let claude = build_claude_status(claude_dir.clone())?;
+    let codex = build_codex_status(codex_dir.clone())?;
+    let pi = build_pi_status(Some(pi_dir.clone()))?;
+    let cc_switch = inspect_ccswitch_hook_protection(
+        &app,
+        cc_switch_db_path,
+        claude_dir.as_deref(),
+        codex_dir.as_deref(),
+        &claude,
+        &codex,
+    )
+    .await;
+    Ok(HookSettingsStatus {
+        claude,
+        codex,
+        pi,
+        cc_switch,
+        claude_auto_repaired: false,
+    })
+}
+
+#[tauri::command]
+pub async fn hook_settings_uninstall_pi(
+    app: AppHandle,
+    selected_dir: Option<String>,
+    codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
+    cc_switch_db_path: Option<String>,
+    module: Option<String>,
+) -> Result<HookSettingsStatus, String> {
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?
+        .ok_or_else(|| "未找到 Pi 配置目录".to_string())?;
+    let claude_dir = resolve_claude_dir(selected_dir, false)?;
+    let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let requested_module = parse_pi_hook_module(module)?;
+    if let Some(module) = requested_module {
+        uninstall_pi_hook_module(&pi_dir, module)?;
+    } else {
+        uninstall_pi_hooks(&pi_dir)?;
+    }
+    let claude = build_claude_status(claude_dir.clone())?;
+    let codex = build_codex_status(codex_dir.clone())?;
+    let pi = build_pi_status(Some(pi_dir.clone()))?;
+    let cc_switch = inspect_ccswitch_hook_protection(
+        &app,
+        cc_switch_db_path,
+        claude_dir.as_deref(),
+        codex_dir.as_deref(),
+        &claude,
+        &codex,
+    )
+    .await;
+    Ok(HookSettingsStatus {
+        claude,
+        codex,
+        pi,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -600,6 +715,12 @@ const ALL_CODEX_HOOK_COMMAND_MODULES: [CodexHookModule; 5] = [
     CodexHookModule::Subagent,
 ];
 
+const ALL_PI_HOOK_MODULES: [PiHookModule; 3] = [
+    PiHookModule::SessionStart,
+    PiHookModule::Running,
+    PiHookModule::Stop,
+];
+
 fn parse_claude_hook_module(module: Option<String>) -> Result<Option<ClaudeHookModule>, String> {
     module
         .map(|value| match value.as_str() {
@@ -626,6 +747,17 @@ fn parse_codex_hook_module(module: Option<String>) -> Result<Option<CodexHookMod
             "hooksFeature" => Ok(CodexHookModule::HooksFeature),
             "failure" => Err("Codex 不支持 failure 模块".to_string()),
             other => Err(format!("未知的 Codex Hook 模块: {other}")),
+        })
+        .transpose()
+}
+
+fn parse_pi_hook_module(module: Option<String>) -> Result<Option<PiHookModule>, String> {
+    module
+        .map(|value| match value.as_str() {
+            "sessionStart" => Ok(PiHookModule::SessionStart),
+            "running" => Ok(PiHookModule::Running),
+            "stop" => Ok(PiHookModule::Stop),
+            other => Err(format!("未知的 Pi Hook 模块: {other}")),
         })
         .transpose()
 }
@@ -2185,6 +2317,318 @@ fn disable_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&config_path)))
 }
 
+
+fn resolve_pi_dir(
+    selected_dir: Option<String>,
+    create_if_missing: bool,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(dir) = selected_dir.and_then(|value| normalize_selected_dir(&value)) {
+        if dir.is_dir() {
+            return Ok(Some(dir));
+        }
+        if create_if_missing {
+            fs::create_dir_all(&dir).map_err(|e| format!("创建 Pi 配置目录失败: {e}"))?;
+            return Ok(Some(dir));
+        }
+        return Err("选择的 Pi 配置目录不存在".to_string());
+    }
+
+    let Some(home_dir) = home_dir() else {
+        return Ok(None);
+    };
+    let default_dir = home_dir.join(".pi").join("agent");
+    if default_dir.is_dir() {
+        Ok(Some(default_dir))
+    } else if create_if_missing {
+        fs::create_dir_all(&default_dir).map_err(|e| format!("创建 Pi 配置目录失败: {e}"))?;
+        Ok(Some(default_dir))
+    } else {
+        Ok(None)
+    }
+}
+
+fn pi_extension_path(pi_dir: &Path) -> PathBuf {
+    pi_dir.join(PI_EXTENSION_DIR_NAME).join(PI_EXTENSION_FILE_NAME)
+}
+
+fn pi_module_marker(module: PiHookModule) -> &'static str {
+    match module {
+        PiHookModule::SessionStart => PI_MODULE_SESSION_START,
+        PiHookModule::Running => PI_MODULE_RUNNING,
+        PiHookModule::Stop => PI_MODULE_STOP,
+    }
+}
+
+fn pi_extension_source(modules: &[PiHookModule]) -> String {
+    let session_start = modules
+        .iter()
+        .any(|module| matches!(module, PiHookModule::SessionStart));
+    let running = modules
+        .iter()
+        .any(|module| matches!(module, PiHookModule::Running));
+    let stop = modules
+        .iter()
+        .any(|module| matches!(module, PiHookModule::Stop));
+
+    let mut source = format!(
+        r#"// {marker}
+// Managed by CLI-Manager. Do not edit manually; reinstall from Hook settings.
+// Bridges Pi Agent lifecycle events into CLI-Manager tab notifications / live stats.
+
+import type {{ ExtensionAPI }} from "@earendil-works/pi-coding-agent";
+
+const MARKER = "{marker}";
+const ENABLED = {{
+  sessionStart: {session_start},
+  running: {running},
+  stop: {stop},
+}};
+
+type NotifyEvent = "SessionStart" | "UserPromptSubmit" | "Stop";
+
+function nonEmpty(value: string | undefined | null): string | null {{
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}}
+
+async function postHookEvent(event: NotifyEvent, sessionId: string | null, message?: string | null) {{
+  const tabId = nonEmpty(process.env.CLI_MANAGER_TAB_ID);
+  const port = nonEmpty(process.env.CLI_MANAGER_NOTIFY_PORT);
+  const token = nonEmpty(process.env.CLI_MANAGER_NOTIFY_TOKEN);
+  if (!tabId || !port || !token) return;
+
+  const payload = {{
+    tabId,
+    source: "pi",
+    event,
+    title: titleFor(event),
+    message: message ?? null,
+    sessionId,
+    cwd: process.cwd(),
+    timestamp: new Date().toISOString(),
+  }};
+
+  try {{
+    await fetch(`http://127.0.0.1:${{port}}/api/claude-hook`, {{
+      method: "POST",
+      headers: {{
+        Authorization: `Bearer ${{token}}`,
+        "Content-Type": "application/json",
+      }},
+      body: JSON.stringify(payload),
+    }});
+  }} catch {{
+    // Hook bridge failures must never interrupt Pi.
+  }}
+}}
+
+function titleFor(event: NotifyEvent): string {{
+  switch (event) {{
+    case "SessionStart":
+      return "Pi Agent session started";
+    case "UserPromptSubmit":
+      return "Pi Agent running";
+    case "Stop":
+      return "Pi Agent done";
+  }}
+}}
+
+function readSessionId(ctx: {{ sessionManager?: {{ getSessionId?: () => string | undefined }} }}): string | null {{
+  try {{
+    return nonEmpty(ctx.sessionManager?.getSessionId?.() ?? null);
+  }} catch {{
+    return null;
+  }}
+}}
+
+export default function (pi: ExtensionAPI) {{
+  if (ENABLED.sessionStart) {{
+    pi.on("session_start", async (_event, ctx) => {{
+      await postHookEvent("SessionStart", readSessionId(ctx));
+    }});
+  }}
+
+  if (ENABLED.running) {{
+    pi.on("agent_start", async (_event, ctx) => {{
+      await postHookEvent("UserPromptSubmit", readSessionId(ctx));
+    }});
+  }}
+
+  if (ENABLED.stop) {{
+    pi.on("agent_settled", async (_event, ctx) => {{
+      await postHookEvent("Stop", readSessionId(ctx));
+    }});
+  }}
+
+  void MARKER;
+}}
+"#,
+        marker = PI_EXTENSION_MARKER,
+        session_start = if session_start { "true" } else { "false" },
+        running = if running { "true" } else { "false" },
+        stop = if stop { "true" } else { "false" },
+    );
+
+    for module in modules {
+        source.push_str(&format!("// {}\n", pi_module_marker(*module)));
+    }
+    source
+}
+
+fn read_pi_modules(content: &str) -> Vec<PiHookModule> {
+    let mut modules = Vec::new();
+    if content.contains(PI_MODULE_SESSION_START) || content.contains("sessionStart: true") {
+        modules.push(PiHookModule::SessionStart);
+    }
+    if content.contains(PI_MODULE_RUNNING) || content.contains("running: true") {
+        modules.push(PiHookModule::Running);
+    }
+    if content.contains(PI_MODULE_STOP) || content.contains("stop: true") {
+        modules.push(PiHookModule::Stop);
+    }
+    if modules.is_empty()
+        && content.contains(PI_EXTENSION_MARKER)
+        && content.contains(r#"source: "pi""#)
+    {
+        modules.extend_from_slice(&ALL_PI_HOOK_MODULES);
+    }
+    modules
+}
+
+fn install_pi_hooks(pi_dir: &Path) -> Result<(), String> {
+    install_pi_modules(pi_dir, &ALL_PI_HOOK_MODULES)
+}
+
+fn install_pi_hook_module(pi_dir: &Path, module: PiHookModule) -> Result<(), String> {
+    let path = pi_extension_path(pi_dir);
+    let mut modules = if path.is_file() {
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("读取 {} 失败: {e}", path_to_string(&path)))?;
+        read_pi_modules(&content)
+    } else {
+        Vec::new()
+    };
+    if !modules
+        .iter()
+        .any(|item| std::mem::discriminant(item) == std::mem::discriminant(&module))
+    {
+        modules.push(module);
+    }
+    install_pi_modules(pi_dir, &modules)
+}
+
+fn uninstall_pi_hooks(pi_dir: &Path) -> Result<(), String> {
+    let path = pi_extension_path(pi_dir);
+    if path.is_file() {
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("读取 {} 失败: {e}", path_to_string(&path)))?;
+        if content.contains(PI_EXTENSION_MARKER) {
+            fs::remove_file(&path)
+                .map_err(|e| format!("删除 {} 失败: {e}", path_to_string(&path)))?;
+        }
+    }
+    Ok(())
+}
+
+fn uninstall_pi_hook_module(pi_dir: &Path, module: PiHookModule) -> Result<(), String> {
+    let path = pi_extension_path(pi_dir);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("读取 {} 失败: {e}", path_to_string(&path)))?;
+    if !content.contains(PI_EXTENSION_MARKER) {
+        return Ok(());
+    }
+    let modules: Vec<PiHookModule> = read_pi_modules(&content)
+        .into_iter()
+        .filter(|item| std::mem::discriminant(item) != std::mem::discriminant(&module))
+        .collect();
+    if modules.is_empty() {
+        fs::remove_file(&path).map_err(|e| format!("删除 {} 失败: {e}", path_to_string(&path)))?;
+        return Ok(());
+    }
+    install_pi_modules(pi_dir, &modules)
+}
+
+fn install_pi_modules(pi_dir: &Path, modules: &[PiHookModule]) -> Result<(), String> {
+    if modules.is_empty() {
+        return uninstall_pi_hooks(pi_dir);
+    }
+    let extensions_dir = pi_dir.join(PI_EXTENSION_DIR_NAME);
+    fs::create_dir_all(&extensions_dir)
+        .map_err(|e| format!("创建 {} 失败: {e}", path_to_string(&extensions_dir)))?;
+    let path = pi_extension_path(pi_dir);
+    ensure_pi_extension_writable(&path)?;
+    let source = pi_extension_source(modules);
+    fs::write(&path, source).map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&path)))?;
+    Ok(())
+}
+
+fn ensure_pi_extension_writable(path: &Path) -> Result<(), String> {
+    match fs::read_to_string(path) {
+        Ok(content) if !content.contains(PI_EXTENSION_MARKER) => {
+            Err(PI_EXTENSION_CONFLICT_ERROR.to_string())
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("读取 {} 失败: {error}", path_to_string(path))),
+    }
+}
+
+fn build_pi_status(pi_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, String> {
+    let Some(pi_dir) = pi_dir else {
+        return missing_status();
+    };
+
+    let extension_path = pi_extension_path(&pi_dir);
+    let hooks_dir = pi_dir.join(PI_EXTENSION_DIR_NAME);
+    let content = if extension_path.is_file() {
+        fs::read_to_string(&extension_path)
+            .map_err(|e| format!("读取 {} 失败: {e}", path_to_string(&extension_path)))?
+    } else {
+        String::new()
+    };
+    let owned = content.contains(PI_EXTENSION_MARKER);
+    let modules = if owned {
+        read_pi_modules(&content)
+    } else {
+        Vec::new()
+    };
+    let session_start = modules
+        .iter()
+        .any(|module| matches!(module, PiHookModule::SessionStart));
+    let running = modules
+        .iter()
+        .any(|module| matches!(module, PiHookModule::Running));
+    let stop = modules
+        .iter()
+        .any(|module| matches!(module, PiHookModule::Stop));
+
+    let checks = ToolChecks {
+        attention_script_installed: owned,
+        finished_script_installed: owned,
+        session_start_hook_installed: session_start,
+        running_hook_installed: running,
+        attention_hook_installed: false,
+        attention_hook_required: false,
+        stop_hook_installed: stop,
+        failure_hook_installed: false,
+        failure_hook_required: false,
+        subagent_start_hook_installed: false,
+        subagent_start_hook_required: false,
+        hooks_feature_installed: true,
+    };
+
+    Ok(status_from_checks(
+        Some(pi_dir),
+        Some(hooks_dir),
+        Some(extension_path),
+        None,
+        checks,
+    ))
+}
+
 fn resolve_claude_dir(
     selected_dir: Option<String>,
     require_existing: bool,
@@ -2285,6 +2729,7 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
         session_start_hook_installed: registered("SessionStart"),
         running_hook_installed: registered("UserPromptSubmit"),
         attention_hook_installed: registered("Notification"),
+        attention_hook_required: true,
         stop_hook_installed: registered("Stop"),
         failure_hook_installed: registered("StopFailure"),
         failure_hook_required: true,
@@ -2352,6 +2797,7 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
         session_start_hook_installed: registered("SessionStart"),
         running_hook_installed: registered("UserPromptSubmit"),
         attention_hook_installed: registered("PermissionRequest"),
+        attention_hook_required: true,
         stop_hook_installed: registered("Stop"),
         failure_hook_installed: false,
         failure_hook_required: false,
@@ -2375,6 +2821,7 @@ struct ToolChecks {
     session_start_hook_installed: bool,
     running_hook_installed: bool,
     attention_hook_installed: bool,
+    attention_hook_required: bool,
     stop_hook_installed: bool,
     failure_hook_installed: bool,
     failure_hook_required: bool,
@@ -2412,10 +2859,12 @@ fn status_from_checks(
     let mut values = vec![
         checks.session_start_hook_installed,
         checks.running_hook_installed,
-        checks.attention_hook_installed,
         checks.stop_hook_installed,
         checks.hooks_feature_installed,
     ];
+    if checks.attention_hook_required {
+        values.push(checks.attention_hook_installed);
+    }
     if checks.failure_hook_required {
         values.push(checks.failure_hook_installed);
     }
@@ -3412,6 +3861,62 @@ model_instructions_file = "./instruction.md"
             "'/Users/me/CLI-Manager'\\''s/cli-manager' __hook --source claude --event Stop"
         );
     }
+    #[tokio::test]
+    async fn install_then_uninstall_pi_extension() {
+        let tmp = TempDir::new().unwrap();
+        let pi_dir = tmp.path().join("pi-agent");
+        fs::create_dir_all(&pi_dir).unwrap();
+
+        install_pi_hooks(&pi_dir).unwrap();
+        let status = build_pi_status(Some(pi_dir.clone())).unwrap();
+        assert!(matches!(status.status, HookInstallStatus::Installed));
+        assert!(status.session_start_hook_installed);
+        assert!(status.running_hook_installed);
+        assert!(status.stop_hook_installed);
+        let extension = fs::read_to_string(pi_extension_path(&pi_dir)).unwrap();
+        assert!(extension.contains(PI_EXTENSION_MARKER));
+        assert!(extension.contains(r#"source: "pi""#));
+        assert!(extension.contains("session_start"));
+        assert!(extension.contains("agent_start"));
+        assert!(extension.contains("agent_settled"));
+        assert!(!extension.contains("before_agent_start"));
+
+        uninstall_pi_hooks(&pi_dir).unwrap();
+        let after = build_pi_status(Some(pi_dir.clone())).unwrap();
+        assert!(matches!(after.status, HookInstallStatus::NotInstalled));
+        assert!(!pi_extension_path(&pi_dir).is_file());
+    }
+
+    #[tokio::test]
+    async fn install_pi_single_module_only_enables_requested_event() {
+        let tmp = TempDir::new().unwrap();
+        let pi_dir = tmp.path().join("pi-agent");
+        fs::create_dir_all(&pi_dir).unwrap();
+
+        install_pi_hook_module(&pi_dir, PiHookModule::SessionStart).unwrap();
+        let status = build_pi_status(Some(pi_dir.clone())).unwrap();
+        assert!(matches!(status.status, HookInstallStatus::PartialInstalled));
+        assert!(status.session_start_hook_installed);
+        assert!(!status.running_hook_installed);
+        assert!(!status.stop_hook_installed);
+    }
+
+    #[test]
+    fn install_pi_preserves_unmanaged_extension() {
+        let tmp = TempDir::new().unwrap();
+        let pi_dir = tmp.path().join("pi-agent");
+        let extensions_dir = pi_dir.join(PI_EXTENSION_DIR_NAME);
+        fs::create_dir_all(&extensions_dir).unwrap();
+        let extension_path = pi_extension_path(&pi_dir);
+        let user_content = "export default function userExtension() {}\n";
+        fs::write(&extension_path, user_content).unwrap();
+
+        let error = install_pi_hooks(&pi_dir).unwrap_err();
+
+        assert_eq!(error, PI_EXTENSION_CONFLICT_ERROR);
+        assert_eq!(fs::read_to_string(extension_path).unwrap(), user_content);
+    }
+
 
     #[cfg(windows)]
     #[test]

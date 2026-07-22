@@ -3,6 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { debugConsoleLog, debugConsoleWarn } from "../lib/debugConsole";
 import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy, GitBranchInfo } from "../lib/types";
 import { useSettingsStore } from "./settingsStore";
+import {
+  sshRemoteGitBranchStatus,
+  sshRemoteGitBranches,
+  sshRemoteGitChanges,
+  sshRemoteGitListRepositories,
+  type SshRemoteGitContext,
+} from "../lib/sshRemoteGit";
 
 type GitStatusFilter = "all" | "M" | "A" | "D" | "U";
 
@@ -25,6 +32,8 @@ function isUntracked(status: string): boolean {
 }
 
 interface GitStore {
+  remoteContext: SshRemoteGitContext | null;
+  asOf: number | null;
   changes: GitFileChange[];
   tree: GitTreeNode[];
   untrackedTree: GitTreeNode[];
@@ -51,6 +60,7 @@ interface GitStore {
   repositories: GitRepoInfo[];
   /** 当前激活的子仓库绝对路径；null 表示项目根仓库。 */
   activeRepoPath: string | null;
+  setRemoteContext: (context: SshRemoteGitContext | null) => void;
 
   fetchChanges: (projectPath: string, silent?: boolean) => Promise<void>;
   fetchBranchStatus: (projectPath: string) => Promise<void>;
@@ -223,6 +233,10 @@ function effectiveRepoPath(): string | null {
   return activeRepoPath ?? currentProjectPath;
 }
 
+function assertGitWritable(): void {
+  if (useGitStore.getState().remoteContext) throw new Error("remote_git_read_only");
+}
+
 function invokeGitChanges(projectPath: string): Promise<GitFileChange[]> {
   const existing = inFlightChangeRequests.get(projectPath);
   if (existing) return existing;
@@ -263,6 +277,8 @@ function invokeGitBranches(projectPath: string): Promise<GitBranchInfo[]> {
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
+  remoteContext: null,
+  asOf: null,
   changes: [],
   tree: [],
   untrackedTree: [],
@@ -285,6 +301,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   statusFilter: "all",
   repositories: [],
   activeRepoPath: null,
+  setRemoteContext: (remoteContext) => set({ remoteContext }),
 
   fetchChanges: async (projectPath: string, silent = false) => {
     // 项目切换：清空子仓库激活态与列表，避免带着上个项目的 activeRepoPath 查错仓库。
@@ -298,12 +315,14 @@ export const useGitStore = create<GitStore>((set, get) => ({
       set({ loading: true, error: null, currentProjectPath: projectPath, ...switchPatch });
     }
 
-    const repoPath = get().activeRepoPath ?? projectPath;
+    const remoteContext = get().remoteContext;
+    const repoPath = get().activeRepoPath ?? (remoteContext ? "" : projectPath);
     try {
-      const changes = await invokeGitChanges(repoPath);
+      const remoteSnapshot = remoteContext ? await sshRemoteGitChanges(remoteContext, repoPath) : null;
+      const changes = remoteSnapshot?.value ?? await invokeGitChanges(repoPath);
       if (get().currentProjectPath !== projectPath) return;
       // 等待期间切换了子仓库 → 丢弃过期结果（新一轮 fetchChanges 已在路上）。
-      if ((get().activeRepoPath ?? projectPath) !== repoPath) return;
+      if ((get().activeRepoPath ?? (remoteContext ? "" : projectPath)) !== repoPath) return;
 
       // 应用筛选并拆分已跟踪 / 未跟踪两棵树，使用当前分组模式
       const { statusFilter } = get();
@@ -317,13 +336,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
       const addedNow = new Set(changes.filter((c) => c.status === "A").map((c) => c.path));
       const prevDeselected = get().deselectedAdded;
       const deselectedAdded = new Set([...prevDeselected].filter((p) => addedNow.has(p)));
-      set({ changes, tree, untrackedTree, selectedUntracked, deselectedAdded, loading: false });
+      set({ changes, tree, untrackedTree, selectedUntracked, deselectedAdded, loading: false, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 获取 Git 变更失败:`, err);
       // silent 失败（轮询）不清空已有数据、不弹错，避免打扰；仅非静默时显式报错。
       if (get().currentProjectPath !== projectPath) return;
-      if ((get().activeRepoPath ?? projectPath) !== repoPath) return;
+      if ((get().activeRepoPath ?? (remoteContext ? "" : projectPath)) !== repoPath) return;
       if (silent) {
         set({ loading: false });
       } else {
@@ -338,33 +357,37 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   fetchBranchStatus: async (projectPath: string) => {
-    const repoPath = get().activeRepoPath ?? projectPath;
+    const remoteContext = get().remoteContext;
+    const repoPath = get().activeRepoPath ?? (remoteContext ? "" : projectPath);
     try {
-      const branchStatus = await invokeGitBranchStatus(repoPath);
+      const remoteSnapshot = remoteContext ? await sshRemoteGitBranchStatus(remoteContext, repoPath) : null;
+      const branchStatus = remoteSnapshot?.value ?? await invokeGitBranchStatus(repoPath);
       // 仅当仍是当前项目且生效仓库未变时写入，避免切换项目/子仓库时的竞态覆盖。
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? projectPath) === repoPath) {
-        set({ branchStatus });
+      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
+        set({ branchStatus, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
       }
     } catch (err) {
       debugConsoleWarn(`[GitStore] 获取分支状态失败:`, err);
       // 与成功路径同守卫：stale 请求（项目/子仓库已切换）失败时不得清掉新仓库的有效状态。
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? projectPath) === repoPath) {
+      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
         set({ branchStatus: null });
       }
     }
   },
 
   fetchBranches: async (projectPath: string, silent = false) => {
-    const repoPath = get().activeRepoPath ?? projectPath;
+    const remoteContext = get().remoteContext;
+    const repoPath = get().activeRepoPath ?? (remoteContext ? "" : projectPath);
     if (!silent) set({ branchLoading: true, error: null });
     try {
-      const branches = await invokeGitBranches(repoPath);
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? projectPath) === repoPath) {
-        set({ branches, branchLoading: false });
+      const remoteSnapshot = remoteContext ? await sshRemoteGitBranches(remoteContext, repoPath) : null;
+      const branches = remoteSnapshot?.value ?? await invokeGitBranches(repoPath);
+      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
+        set({ branches, branchLoading: false, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
       }
     } catch (err) {
       debugConsoleWarn(`[GitStore] 获取分支列表失败:`, err);
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? projectPath) === repoPath) {
+      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
         set({ branches: [], branchLoading: false });
       }
     }
@@ -376,14 +399,21 @@ export const useGitStore = create<GitStore>((set, get) => ({
       set({ repositories: [], activeRepoPath: null });
     }
     try {
-      const repositories = await invoke<GitRepoInfo[]>("git_list_repositories", { projectPath });
+      const remoteSnapshot = get().remoteContext ? await sshRemoteGitListRepositories(get().remoteContext!) : null;
+      const repositories = remoteSnapshot
+        ? remoteSnapshot.value.map((repo) => ({
+            relativePath: repo.relativePath,
+            absolutePath: repo.repoId,
+            branch: repo.branch,
+          }))
+        : await invoke<GitRepoInfo[]>("git_list_repositories", { projectPath });
       // 竞态守卫：仅当仍是当前项目时写入（面板总是先 fetchChanges 再 fetchRepositories）。
       if (get().currentProjectPath !== projectPath) return;
       const { activeRepoPath } = get();
       // 激活的子仓库已不在列表（被删除等）→ 回落到根仓库。
       const activeStillExists =
         activeRepoPath === null || repositories.some((repo) => repo.absolutePath === activeRepoPath);
-      set(activeStillExists ? { repositories } : { repositories, activeRepoPath: null });
+      set(activeStillExists ? { repositories, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) } : { repositories, activeRepoPath: null, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
     } catch (err) {
       debugConsoleWarn(`[GitStore] 枚举 Git 仓库失败:`, err);
       if (get().currentProjectPath === projectPath) {
@@ -405,6 +435,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   discardFile: async (filePath: string, status: string) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     set({ discarding: true, error: null });
@@ -422,6 +453,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   discardAll: async () => {
+    assertGitWritable();
     const { currentProjectPath, changes } = get();
     if (!currentProjectPath) return;
     // 仅回滚已跟踪改动，排除未跟踪文件（U/??）。
@@ -448,6 +480,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   deleteUntrackedPaths: async (paths: string[]) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     const repoPath = effectiveRepoPath();
     if (!currentProjectPath || !repoPath || paths.length === 0) return;
@@ -473,6 +506,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   revertHunk: async (diffText: string, hunkIndex: number) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     set({ discarding: true, error: null });
@@ -490,6 +524,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   revertLines: async (diffText, selectedLines) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     set({ discarding: true, error: null });
@@ -507,6 +542,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   stageFile: async (filePath: string) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
@@ -521,6 +557,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   unstageFile: async (filePath: string) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
@@ -535,6 +572,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   stageAll: async () => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
@@ -549,6 +587,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   stagePaths: async (paths: string[]) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath || paths.length === 0) return;
     try {
@@ -563,6 +602,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   unstagePaths: async (paths: string[]) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath || paths.length === 0) return;
     try {
@@ -577,6 +617,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   unstageAll: async () => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
@@ -635,6 +676,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   commit: async (message: string) => {
+    assertGitWritable();
     const { currentProjectPath, selectedUntracked, deselectedAdded, changes } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ committing: true, error: null });
@@ -679,6 +721,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   push: async () => {
+    assertGitWritable();
     const { currentProjectPath, branchStatus } = get();
     if (!currentProjectPath) throw new Error("no_project");
     // 无 upstream 时建立跟踪：push -u origin <branch>。
@@ -707,6 +750,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   fetchRemote: async () => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ fetching: true, error: null });
@@ -728,6 +772,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   checkoutBranch: async (branch: string, remote: boolean) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ checkingOutBranch: true, error: null });
@@ -756,6 +801,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   smartCheckoutBranch: async (branch: string, remote: boolean) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ checkingOutBranch: true, error: null });
@@ -784,6 +830,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   createBranch: async (branch: string) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ creatingBranch: true, error: null });
@@ -808,6 +855,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   pull: async (strategy) => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ pulling: true, error: null });
@@ -831,6 +879,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   pullAbort: async () => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ pulling: true, error: null });
@@ -849,6 +898,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   rebaseContinue: async () => {
+    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ pulling: true, error: null });
@@ -926,6 +976,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
       statusFilter: "all",
       repositories: [],
       activeRepoPath: null,
+      remoteContext: null,
+      asOf: null,
     });
   },
 }));

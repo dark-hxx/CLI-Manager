@@ -224,6 +224,9 @@ enum MatchKind {
     Normalized,
     ReasoningVariant,
     Alnum,
+    /// Shorter model id is a continuous dash-token prefix of the longer one
+    /// (e.g. `grok-4.5` vs `grok-4.5-build-free`). Candidate only, never auto-apply.
+    BasePrefix,
     Fuzzy,
 }
 
@@ -399,12 +402,14 @@ fn rank_candidates(target: &str, remotes: &[RemoteModelPrice]) -> Vec<RankedRemo
     let target_base_norm = strip_reasoning_effort_suffix(&target_norm);
     let target_tail = canonical_tail(target);
     let target_alnum = normalized_alnum(&target_tail);
+    let target_tokens = model_tokens(&target_tail);
     let mut ranked = Vec::new();
 
     for remote in remotes {
         let remote_norm = normalize_for_compare(&remote.model);
         let remote_tail = canonical_tail(&remote.model);
         let remote_alnum = normalized_alnum(&remote_tail);
+        let remote_tokens = model_tokens(&remote_tail);
 
         let (score, kind) = if target.trim() == remote.model.trim() {
             (1.0, MatchKind::Exact)
@@ -418,11 +423,14 @@ fn rank_candidates(target: &str, remotes: &[RemoteModelPrice]) -> Vec<RankedRemo
             (0.98, MatchKind::Tail)
         } else if !target_alnum.is_empty() && target_alnum == remote_alnum {
             (0.96, MatchKind::Alnum)
+        } else if let Some(prefix_score) = token_prefix_base_score(&target_tokens, &remote_tokens) {
+            (prefix_score, MatchKind::BasePrefix)
         } else {
             let jaccard_score = jaccard(&target_alnum, &remote_alnum);
             let levenshtein_score = levenshtein_similarity(&target_alnum, &remote_alnum);
+            let token_score = token_containment(&target_tokens, &remote_tokens);
             (
-                (jaccard_score * 0.45) + (levenshtein_score * 0.55),
+                (token_score * 0.55) + (levenshtein_score * 0.25) + (jaccard_score * 0.20),
                 MatchKind::Fuzzy,
             )
         };
@@ -570,6 +578,59 @@ fn normalized_alnum(model: &str) -> String {
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
         .collect()
+}
+
+/// Split a normalized model tail into dash tokens, dropping empties.
+fn model_tokens(model: &str) -> Vec<String> {
+    model
+        .split('-')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_string())
+        .collect()
+}
+
+/// When one side is a continuous dash-token prefix of the other (e.g. `grok-4-5`
+/// vs `grok-4-5-build-free`), score as a base-model candidate. Requires at least
+/// 2 shared tokens to avoid over-broad single-token hits like `gpt` vs anything.
+fn token_prefix_base_score(a: &[String], b: &[String]) -> Option<f64> {
+    if a.is_empty() || b.is_empty() || a == b {
+        return None;
+    }
+    let (shorter, longer) = if a.len() <= b.len() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    if shorter.len() < 2 {
+        return None;
+    }
+    if longer.len() <= shorter.len() {
+        return None;
+    }
+    if longer[..shorter.len()] != *shorter {
+        return None;
+    }
+    let ratio = shorter.len() as f64 / longer.len() as f64;
+    Some(0.90 + 0.05 * ratio)
+}
+
+/// Fraction of the shorter token sequence that also appears in the longer one.
+fn token_containment(a: &[String], b: &[String]) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let (shorter, longer) = if a.len() <= b.len() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let longer_set: HashSet<&str> = longer.iter().map(String::as_str).collect();
+    let hits = shorter
+        .iter()
+        .filter(|token| longer_set.contains(token.as_str()))
+        .count();
+    hits as f64 / shorter.len() as f64
 }
 
 fn strip_reasoning_effort_suffix(model: &str) -> Option<&str> {
@@ -771,6 +832,45 @@ mod tests {
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].kind, MatchKind::Alnum);
         assert!(!is_auto_match_kind(ranked[0].kind));
+    }
+
+    #[test]
+    fn base_prefix_match_surfaces_grok_build_free_candidate() {
+        let remotes = vec![
+            remote_price("xai/grok-4.5", "litellm"),
+            remote_price("unrelated/other-model", "openrouter"),
+        ];
+        let ranked = rank_candidates("grok-4.5-build-free", &remotes);
+
+        assert!(!ranked.is_empty());
+        assert_eq!(ranked[0].kind, MatchKind::BasePrefix);
+        assert!(ranked[0].score >= MIN_CANDIDATE_SCORE);
+        assert!(!is_auto_match_kind(ranked[0].kind));
+        assert_eq!(ranked[0].remote.source_model_id, "xai/grok-4.5");
+        assert!(ranked.iter().all(|item| item.remote.model != "unrelated/other-model"));
+    }
+
+    #[test]
+    fn base_prefix_requires_at_least_two_tokens() {
+        let remotes = vec![remote_price("provider/gpt-extra-suffix", "litellm")];
+        // single shared token "gpt" must not become a base-prefix hit
+        let ranked = rank_candidates("gpt", &remotes);
+        assert!(ranked
+            .iter()
+            .all(|item| item.kind != MatchKind::BasePrefix));
+    }
+
+    #[test]
+    fn token_containment_scores_shared_tokens_against_shorter_side() {
+        let a = model_tokens("grok-4-5-build-free");
+        let b = model_tokens("grok-4-5");
+        assert!((token_containment(&a, &b) - 1.0).abs() < 1e-9);
+
+        // Shared tokens exist but not as a continuous prefix of either side.
+        let c = model_tokens("claude-4-sonnet");
+        let d = model_tokens("claude-sonnet-4-5");
+        assert!((token_containment(&c, &d) - 1.0).abs() < 1e-9);
+        assert!(token_prefix_base_score(&c, &d).is_none());
     }
 
     #[test]

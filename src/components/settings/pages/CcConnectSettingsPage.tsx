@@ -6,9 +6,13 @@ import {
   Badge,
   Button,
   Card,
+  Center,
   Checkbox,
   Drawer,
   Group,
+  Loader,
+  Modal,
+  NumberInput,
   PasswordInput,
   Select,
   SimpleGrid,
@@ -21,11 +25,13 @@ import {
 import {
   AlertTriangle,
   ChevronRight,
+  BellRing,
   Copy,
   ExternalLink,
   FolderSearch,
   MonitorSmartphone,
   Play,
+  QrCode,
   RefreshCw,
   RotateCw,
   Save,
@@ -37,12 +43,19 @@ import { toast } from "sonner";
  import { getLanguageLocale, useI18n, type AppLanguage, type TranslationKey } from "../../../lib/i18n";
  import type { WebDeviceStatus } from "../../../lib/webDevice";
 import { useProjectStore } from "../../../stores/projectStore";
+import { useSettingsStore } from "../../../stores/settingsStore";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { WebDeviceSettingsSection } from "../WebDeviceSettingsSection";
 
 type AgentKind = "claude" | "codex";
-type PlatformKind = "telegram" | "feishu";
+type PlatformKind = "telegram" | "feishu" | "weixin" | "wecom";
 type ReplyLanguage = "zh" | "en";
+
+interface CcConnectPlatformProfile {
+  platform: PlatformKind;
+  enabled: boolean;
+  allowFrom: string;
+}
 
 interface CcConnectProfile {
   autoStart: boolean;
@@ -53,11 +66,21 @@ interface CcConnectProfile {
   agent: AgentKind;
   platform: PlatformKind;
   allowFrom: string;
+  platforms: CcConnectPlatformProfile[];
   yoloEnabled: boolean;
+  maxTurnTimeMins: number;
   proxyEnabled: boolean;
   proxyUrl: string | null;
   loggingEnabled: boolean;
   language: ReplyLanguage;
+  ccSwitchDbPath: string | null;
+  codexConfigDir: string | null;
+}
+
+interface CcConnectPlatformStatus {
+  platform: PlatformKind;
+  enabled: boolean;
+  credentialsReady: boolean;
 }
 
 interface CcConnectStatus {
@@ -73,6 +96,7 @@ interface CcConnectStatus {
   profile: CcConnectProfile | null;
   configExists: boolean;
   credentialsReady: boolean;
+  platformStatuses: CcConnectPlatformStatus[];
   ready: boolean;
   blockers: string[];
   warnings: string[];
@@ -82,6 +106,60 @@ interface CcConnectStatus {
   startedAtMs: number | null;
   lastExitCode: number | null;
   lastExitAtMs: number | null;
+}
+
+interface CcConnectHandoffNotificationStatus {
+  lastAttemptAtMs: number | null;
+  lastSuccessAtMs: number | null;
+  lastEvent: string | null;
+  lastPlatform: PlatformKind | null;
+  lastError: string | null;
+}
+
+type HookInstallStatus =
+  | "directoryMissing"
+  | "notInstalled"
+  | "partialInstalled"
+  | "installed";
+
+interface HookMonitoringStatus {
+  codex: {
+    status: HookInstallStatus;
+  };
+}
+
+const PLATFORM_KINDS: PlatformKind[] = ["telegram", "feishu", "weixin", "wecom"];
+
+function withPlatformProfiles(profile: CcConnectProfile): CcConnectProfile {
+  const rawPlatforms = profile.platforms ?? [];
+  const configured = new Map(rawPlatforms.map((item) => [item.platform, item]));
+  if (rawPlatforms.length === 0) {
+    configured.set(profile.platform, {
+      platform: profile.platform,
+      enabled: true,
+      allowFrom: profile.allowFrom,
+    });
+  }
+  const platforms = PLATFORM_KINDS.map((platform) => configured.get(platform) ?? {
+    platform,
+    enabled: false,
+    allowFrom: "",
+  });
+  return {
+    ...profile,
+    maxTurnTimeMins: profile.maxTurnTimeMins ?? 15,
+    platforms,
+    allowFrom: platforms.find((item) => item.platform === profile.platform)?.allowFrom ?? "",
+  };
+}
+
+interface CcConnectExecutableStatus {
+  installed: boolean;
+  executablePath: string;
+  version: string | null;
+  sha256: string | null;
+  compatible: boolean;
+  detectionError: string | null;
 }
 
 interface CcConnectLogLine {
@@ -106,17 +184,26 @@ const EMPTY_PROFILE: CcConnectProfile = {
   agent: "claude",
   platform: "telegram",
   allowFrom: "",
+  platforms: PLATFORM_KINDS.map((platform) => ({
+    platform,
+    enabled: platform === "telegram",
+    allowFrom: "",
+  })),
   yoloEnabled: false,
+  maxTurnTimeMins: 15,
   proxyEnabled: true,
   proxyUrl: null,
   loggingEnabled: false,
   language: "zh",
+  ccSwitchDbPath: null,
+  codexConfigDir: null,
 };
 
 const BLOCKER_KEYS: Record<string, TranslationKey> = {
   profile_missing: "settings.ccConnect.blocker.profileMissing",
   project_missing: "settings.ccConnect.blocker.projectMissing",
   project_path_missing: "settings.ccConnect.blocker.projectPathMissing",
+  platform_missing: "settings.ccConnect.blocker.platformMissing",
   allowlist_invalid: "settings.ccConnect.blocker.allowlistInvalid",
   proxy_invalid: "settings.ccConnect.blocker.proxyInvalid",
   credentials_missing: "settings.ccConnect.blocker.credentialsMissing",
@@ -136,6 +223,23 @@ const WARNING_KEYS: Record<string, TranslationKey> = {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+type WeixinAuthorizationPhase = "preparing" | "starting" | "waiting" | "completed" | "failed" | "cancelled";
+
+interface CcConnectWeixinAuthorizationStatus {
+  phase: WeixinAuthorizationPhase;
+  qrDataUrl: string | null;
+  error: string | null;
+  allowFrom: string | null;
+  profile: CcConnectProfile | null;
+  startedAtMs: number | null;
+}
+
+function normalizeWindowsExtendedPath(value: string) {
+  return value
+    .replace(/^\\\\\?\\UNC\\/i, "\\\\")
+    .replace(/^\\\\\?\\/, "");
 }
 
 function formatTimestamp(value: number | null, language: AppLanguage) {
@@ -160,7 +264,29 @@ export function CcConnectSettingsPage() {
   );
   const projectsLoaded = useProjectStore((state) => state.loaded);
   const fetchProjects = useProjectStore((state) => state.fetchAll);
+  const ccSwitchDbPath = useSettingsStore((state) => state.ccSwitchDbPath);
+  const codexConfigDir = useSettingsStore((state) => state.codexHookConfigDir);
+  const codexHookBridgeEnabled = useSettingsStore((state) => state.codexHookBridgeEnabled);
+  const remoteHandoffNotificationsEnabled = useSettingsStore(
+    (state) => state.remoteHandoffNotificationsEnabled
+  );
+  const remoteHandoffCompletionNotificationsEnabled = useSettingsStore(
+    (state) => state.remoteHandoffCompletionNotificationsEnabled
+  );
+  const remoteHandoffPermissionNotificationsEnabled = useSettingsStore(
+    (state) => state.remoteHandoffPermissionNotificationsEnabled
+  );
+  const remoteHandoffProgressNotificationsEnabled = useSettingsStore(
+    (state) => state.remoteHandoffProgressNotificationsEnabled
+  );
+  const remoteHandoffProgressIntervalMinutes = useSettingsStore(
+    (state) => state.remoteHandoffProgressIntervalMinutes
+  );
+  const updateSetting = useSettingsStore((state) => state.update);
   const [status, setStatus] = useState<CcConnectStatus | null>(null);
+  const [handoffNotificationStatus, setHandoffNotificationStatus] =
+    useState<CcConnectHandoffNotificationStatus | null>(null);
+  const [codexHookStatus, setCodexHookStatus] = useState<HookInstallStatus | null>(null);
   const [profile, setProfile] = useState<CcConnectProfile>(() => ({
     ...EMPTY_PROFILE,
     language: language === "en-US" ? "en" : "zh",
@@ -168,37 +294,69 @@ export function CcConnectSettingsPage() {
   const [telegramToken, setTelegramToken] = useState("");
   const [feishuAppId, setFeishuAppId] = useState("");
   const [feishuAppSecret, setFeishuAppSecret] = useState("");
+  const [weixinToken, setWeixinToken] = useState("");
+  const [wecomBotId, setWecomBotId] = useState("");
+  const [wecomBotSecret, setWecomBotSecret] = useState("");
   const [logs, setLogs] = useState<CcConnectLogLine[]>([]);
   const [working, setWorking] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [executableDirty, setExecutableDirty] = useState(false);
+  const [executableChecking, setExecutableChecking] = useState(false);
+  const [executableInspection, setExecutableInspection] = useState<CcConnectExecutableStatus | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [yoloConfirmOpen, setYoloConfirmOpen] = useState(false);
   const [activeConnection, setActiveConnection] = useState<"cc-connect" | "web-device" | null>(null);
   const [webDeviceStatus, setWebDeviceStatus] = useState<WebDeviceStatus | null>(null);
+  const [weixinAuthorizationOpen, setWeixinAuthorizationOpen] = useState(false);
+  const [weixinAuthorization, setWeixinAuthorization] = useState<CcConnectWeixinAuthorizationStatus | null>(null);
   const logCursorRef = useRef(0);
   const statusRequestRef = useRef(0);
+  const executableInspectionRequestRef = useRef(0);
+  const executableCheckingRef = useRef(false);
   const statusInFlightRef = useRef(false);
   const logInFlightRef = useRef(false);
   const formTouchedRef = useRef(false);
   const workingRef = useRef<string | null>(null);
+  const weixinAuthorizationActiveRef = useRef(false);
 
   const hydrateProfile = useCallback((next: CcConnectStatus) => {
-    if (next.profile) setProfile(next.profile);
+    if (next.profile) setProfile(withPlatformProfiles(next.profile));
+    executableInspectionRequestRef.current += 1;
+    executableCheckingRef.current = false;
+    setExecutableInspection(null);
+    setExecutableChecking(false);
     formTouchedRef.current = false;
     setDirty(false);
     setExecutableDirty(false);
   }, []);
 
+  const persistNotificationSetting = useCallback((operation: Promise<void>) => {
+    void operation.catch((error) => {
+      toast.error(t("settings.ccConnect.notifications.updateFailed"), {
+        description: errorMessage(error),
+      });
+    });
+  }, [t]);
+
   const refreshStatus = useCallback(async (force = false, hydrate = false, silent = false) => {
-    if (statusInFlightRef.current || workingRef.current) return;
+    if (statusInFlightRef.current || workingRef.current || executableCheckingRef.current) return;
     statusInFlightRef.current = true;
     const requestId = ++statusRequestRef.current;
     try {
-      const next = await invoke<CcConnectStatus>("cc_connect_get_status", { refreshDetection: force });
+      const [next, nextNotificationStatus] = await Promise.all([
+        invoke<CcConnectStatus>("cc_connect_get_status", { refreshDetection: force }),
+        invoke<CcConnectHandoffNotificationStatus>(
+          "cc_connect_handoff_notification_status"
+        ).catch(() => null),
+      ]);
       if (requestId !== statusRequestRef.current) return;
       setStatus(next);
-      if (hydrate && !formTouchedRef.current) hydrateProfile(next);
+      if (nextNotificationStatus) {
+        setHandoffNotificationStatus(nextNotificationStatus);
+      }
+      if (hydrate && !formTouchedRef.current && !executableCheckingRef.current) {
+        hydrateProfile(next);
+      }
     } catch (error) {
       if (!silent && requestId === statusRequestRef.current) {
         toast.error(t("settings.ccConnect.toast.loadFailed"), { description: errorMessage(error) });
@@ -233,6 +391,33 @@ export function CcConnectSettingsPage() {
   useEffect(() => {
     if (!projectsLoaded) void fetchProjects();
   }, [fetchProjects, projectsLoaded]);
+
+  useEffect(() => {
+    let disposed = false;
+    if (!codexHookBridgeEnabled) {
+      setCodexHookStatus(null);
+      return;
+    }
+    const refreshHookStatus = async () => {
+      try {
+        const next = await invoke<HookMonitoringStatus>("hook_settings_get_status", {
+          selectedDir: undefined,
+          codexSelectedDir: codexConfigDir ?? undefined,
+          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+          autoRepair: false,
+        });
+        if (!disposed) setCodexHookStatus(next.codex.status);
+      } catch {
+        if (!disposed) setCodexHookStatus(null);
+      }
+    };
+    void refreshHookStatus();
+    const timer = window.setInterval(() => void refreshHookStatus(), 30_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [ccSwitchDbPath, codexConfigDir, codexHookBridgeEnabled]);
 
   useEffect(() => {
     void refreshStatus(true, true);
@@ -276,6 +461,85 @@ export function CcConnectSettingsPage() {
     setDirty(true);
   };
 
+  const selectedPlatformProfile = profile.platforms.find(
+    (item) => item.platform === profile.platform
+  ) ?? {
+    platform: profile.platform,
+    enabled: false,
+    allowFrom: "",
+  };
+
+  const selectPlatform = (platform: PlatformKind) => {
+    setProfile((current) => {
+      const normalized = withPlatformProfiles(current);
+      const selected = normalized.platforms.find((item) => item.platform === platform);
+      return {
+        ...normalized,
+        platform,
+        allowFrom: selected?.allowFrom ?? "",
+      };
+    });
+    formTouchedRef.current = true;
+    setDirty(true);
+  };
+
+  const updateSelectedPlatform = (
+    patch: Partial<Pick<CcConnectPlatformProfile, "enabled" | "allowFrom">>
+  ) => {
+    setProfile((current) => {
+      const normalized = withPlatformProfiles(current);
+      const platforms = normalized.platforms.map((item) => (
+        item.platform === normalized.platform ? { ...item, ...patch } : item
+      ));
+      return {
+        ...normalized,
+        platforms,
+        allowFrom: platforms.find(
+          (item) => item.platform === normalized.platform
+        )?.allowFrom ?? "",
+      };
+    });
+    formTouchedRef.current = true;
+    setDirty(true);
+  };
+
+  const updateExecutablePath = (value: string | null) => {
+    updateProfile("executablePath", value ? normalizeWindowsExtendedPath(value) : null);
+    executableInspectionRequestRef.current += 1;
+    executableCheckingRef.current = false;
+    setExecutableInspection(null);
+    setExecutableChecking(false);
+    setExecutableDirty(true);
+  };
+
+  const inspectExecutable = useCallback(async (executablePath: string | null, silent = false) => {
+    const candidate = executablePath?.trim();
+    if (!candidate) return;
+    const requestId = ++executableInspectionRequestRef.current;
+    executableCheckingRef.current = true;
+    setExecutableChecking(true);
+    try {
+      const next = await invoke<CcConnectExecutableStatus>("cc_connect_inspect_executable", {
+        executablePath: candidate,
+      });
+      if (requestId !== executableInspectionRequestRef.current) return;
+      setExecutableInspection(next);
+      setProfile((current) => ({ ...current, executablePath: next.executablePath }));
+      setExecutableDirty(false);
+    } catch (error) {
+      if (!silent && requestId === executableInspectionRequestRef.current) {
+        toast.error(t("settings.ccConnect.toast.selectExecutableFailed"), {
+          description: errorMessage(error),
+        });
+      }
+    } finally {
+      if (requestId === executableInspectionRequestRef.current) {
+        executableCheckingRef.current = false;
+        setExecutableChecking(false);
+      }
+    }
+  }, [t]);
+
   const requestYoloChange = (enabled: boolean) => {
     if (!enabled) {
       updateProfile("yoloEnabled", false);
@@ -313,12 +577,24 @@ export function CcConnectSettingsPage() {
         filters: [{ name: "cc-connect", extensions: ["exe"] }],
       });
       if (typeof selected === "string") {
-        updateProfile("executablePath", selected);
-        setExecutableDirty(true);
+        updateExecutablePath(selected);
+        await inspectExecutable(selected);
       }
     } catch (error) {
       toast.error(t("settings.ccConnect.toast.selectExecutableFailed"), { description: errorMessage(error) });
     }
+  };
+
+  const rescanExecutable = async () => {
+    const candidate = profile.executablePath?.trim();
+    if (candidate) {
+      await inspectExecutable(candidate);
+      return;
+    }
+    executableInspectionRequestRef.current += 1;
+    setExecutableInspection(null);
+    setExecutableDirty(false);
+    await refreshStatus(true, false, false);
   };
 
   const saveProfile = async () => {
@@ -338,10 +614,15 @@ export function CcConnectSettingsPage() {
             ...profile,
             projectName: currentProject.name,
             projectPath: currentProject.path,
+            ccSwitchDbPath,
+            codexConfigDir,
           },
           telegramToken: telegramToken.trim() || null,
           feishuAppId: feishuAppId.trim() || null,
           feishuAppSecret: feishuAppSecret.trim() || null,
+          weixinToken: weixinToken.trim() || null,
+          wecomBotId: wecomBotId.trim() || null,
+          wecomBotSecret: wecomBotSecret.trim() || null,
         },
       });
       setStatus(next);
@@ -349,6 +630,9 @@ export function CcConnectSettingsPage() {
       setTelegramToken("");
       setFeishuAppId("");
       setFeishuAppSecret("");
+      setWeixinToken("");
+      setWecomBotId("");
+      setWecomBotSecret("");
       toast.success(t("settings.ccConnect.toast.saveSuccess"));
     } catch (error) {
       toast.error(t("settings.ccConnect.toast.saveFailed"), { description: errorMessage(error) });
@@ -386,6 +670,9 @@ export function CcConnectSettingsPage() {
       setTelegramToken("");
       setFeishuAppId("");
       setFeishuAppSecret("");
+      setWeixinToken("");
+      setWecomBotId("");
+      setWecomBotSecret("");
       toast.success(t("settings.ccConnect.toast.clearSuccess"));
     } catch (error) {
       toast.error(t("settings.ccConnect.toast.clearFailed"), { description: errorMessage(error) });
@@ -393,6 +680,157 @@ export function CcConnectSettingsPage() {
       setWorkingState(null);
     }
   };
+
+  const startWeixinAuthorization = async () => {
+    if (workingRef.current || status?.starting || status?.running) return;
+    const currentProject = projects.find((project) => project.id === profile.projectId);
+    if (!currentProject) {
+      toast.error(t("settings.ccConnect.weixinAuthStartFailed"), {
+        description: t("settings.ccConnect.blocker.projectMissing"),
+      });
+      return;
+    }
+    setWorkingState("weixin-authorize");
+    weixinAuthorizationActiveRef.current = true;
+    setWeixinAuthorizationOpen(true);
+    setWeixinAuthorization({
+      phase: "preparing",
+      qrDataUrl: null,
+      error: null,
+      allowFrom: null,
+      profile: null,
+      startedAtMs: null,
+    });
+    try {
+      const next = await invoke<CcConnectWeixinAuthorizationStatus>(
+        "cc_connect_weixin_authorization_start",
+        {
+          request: {
+            profile: {
+              ...profile,
+              projectName: currentProject.name,
+              projectPath: currentProject.path,
+              ccSwitchDbPath,
+              codexConfigDir,
+            },
+          },
+        },
+      );
+      if (!weixinAuthorizationActiveRef.current) return;
+      setWeixinAuthorization(next);
+    } catch (error) {
+      if (!weixinAuthorizationActiveRef.current) return;
+      await invoke("cc_connect_weixin_authorization_cancel").catch(() => undefined);
+      weixinAuthorizationActiveRef.current = false;
+      setWorkingState(null);
+      const message = errorMessage(error);
+      setWeixinAuthorization((current) => ({
+        phase: "failed",
+        qrDataUrl: current?.qrDataUrl ?? null,
+        error: message,
+        allowFrom: null,
+        profile: null,
+        startedAtMs: current?.startedAtMs ?? null,
+      }));
+      toast.error(t("settings.ccConnect.weixinAuthStartFailed"), { description: message });
+    }
+  };
+
+  const cancelWeixinAuthorization = async () => {
+    const active = weixinAuthorization?.phase === "preparing"
+      || weixinAuthorization?.phase === "starting"
+      || weixinAuthorization?.phase === "waiting";
+    try {
+      if (active) await invoke("cc_connect_weixin_authorization_cancel");
+    } catch (error) {
+      toast.error(t("settings.ccConnect.weixinAuthCancelFailed"), { description: errorMessage(error) });
+    } finally {
+      weixinAuthorizationActiveRef.current = false;
+      setWorkingState(null);
+      setWeixinAuthorizationOpen(false);
+      setWeixinAuthorization(null);
+    }
+  };
+
+  useEffect(() => {
+    const active = weixinAuthorization?.phase === "starting" || weixinAuthorization?.phase === "waiting";
+    if (!weixinAuthorizationOpen || !active) return;
+    let disposed = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      try {
+        const next = await invoke<CcConnectWeixinAuthorizationStatus>(
+          "cc_connect_weixin_authorization_status",
+        );
+        if (disposed) return;
+        if (next.phase === "completed") {
+          weixinAuthorizationActiveRef.current = false;
+          setWorkingState(null);
+          if (next.profile) {
+            setProfile(withPlatformProfiles(next.profile));
+            formTouchedRef.current = false;
+            setDirty(false);
+          }
+          setWeixinToken("");
+          try {
+            const nextStatus = await invoke<CcConnectStatus>("cc_connect_get_status", {
+              refreshDetection: false,
+            });
+            if (disposed) return;
+            setStatus(nextStatus);
+            hydrateProfile(nextStatus);
+          } catch {
+            // The authorization result already contains the persisted profile.
+          }
+          if (disposed) return;
+          setWeixinAuthorization(next);
+          toast.success(t("settings.ccConnect.weixinAuthSuccess"));
+        } else if (next.phase === "failed") {
+          setWeixinAuthorization(next);
+          weixinAuthorizationActiveRef.current = false;
+          setWorkingState(null);
+          toast.error(t("settings.ccConnect.weixinAuthFailed"), {
+            description: next.error ?? undefined,
+          });
+        } else {
+          setWeixinAuthorization(next);
+        }
+      } catch (error) {
+        if (!disposed) {
+          await invoke("cc_connect_weixin_authorization_cancel").catch(() => undefined);
+          if (disposed) return;
+          weixinAuthorizationActiveRef.current = false;
+          setWorkingState(null);
+          const message = errorMessage(error);
+          setWeixinAuthorization((current) => ({
+            phase: "failed",
+            qrDataUrl: current?.qrDataUrl ?? null,
+            error: message,
+            allowFrom: null,
+            profile: null,
+            startedAtMs: current?.startedAtMs ?? null,
+          }));
+          toast.error(t("settings.ccConnect.weixinAuthFailed"), { description: message });
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 800);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [hydrateProfile, t, weixinAuthorization?.phase, weixinAuthorizationOpen]);
+
+  useEffect(() => () => {
+    if (weixinAuthorizationActiveRef.current) {
+      void invoke("cc_connect_weixin_authorization_cancel").catch(() => undefined);
+    }
+  }, []);
 
   const copyLogs = async () => {
     try {
@@ -417,12 +855,17 @@ export function CcConnectSettingsPage() {
     return key ? t(key) : code;
   };
 
-  const credentialInputPending = profile.platform === "telegram"
-    ? telegramToken.trim().length > 0
-    : feishuAppId.trim().length > 0 || feishuAppSecret.trim().length > 0;
+  const credentialInputPending = {
+    telegram: telegramToken.trim().length > 0,
+    feishu: feishuAppId.trim().length > 0 || feishuAppSecret.trim().length > 0,
+    weixin: weixinToken.trim().length > 0,
+    wecom: wecomBotId.trim().length > 0 || wecomBotSecret.trim().length > 0,
+  }[profile.platform];
+  const currentPlatformStatus = (status?.platformStatuses ?? []).find(
+    (item) => item.platform === profile.platform
+  );
   const credentialStored = !credentialInputPending
-    && status?.profile?.platform === profile.platform
-    && status.credentialsReady;
+    && Boolean(currentPlatformStatus?.credentialsReady);
   const currentProject = projects.find((project) => project.id === profile.projectId);
   const normalizeProjectPath = (value: string) => value
     .replace(/^\\\\\?\\UNC\\/i, "\\\\")
@@ -435,7 +878,13 @@ export function CcConnectSettingsPage() {
       && currentProject.name === profile.projectName
       && normalizeProjectPath(currentProject.path) === normalizeProjectPath(profile.projectPath),
   );
-  const busy = working !== null || Boolean(status?.starting);
+  const displayedExecutable = executableInspection ?? (!executableDirty ? status : null);
+  const displayedDetectionError = executableInspection?.detectionError
+    ?? (!executableDirty ? status?.detectionError : null);
+  const busy = working !== null || executableChecking || Boolean(status?.starting);
+  const weixinAuthorizationActive = weixinAuthorization?.phase === "preparing"
+    || weixinAuthorization?.phase === "starting"
+    || weixinAuthorization?.phase === "waiting";
   const processLabel = status?.starting
     ? t("settings.ccConnect.starting")
     : status?.running
@@ -451,6 +900,30 @@ export function CcConnectSettingsPage() {
     : webDeviceStatus?.configured
       ? { label: t("settings.remoteConnections.status.configured"), color: "blue" }
       : { label: t("settings.remoteConnections.status.unconfigured"), color: "gray" };
+  const platformOptions = [
+    { value: "telegram", label: t("settings.ccConnect.platformTelegram") },
+    { value: "feishu", label: t("settings.ccConnect.platformFeishu") },
+    { value: "weixin", label: t("settings.ccConnect.platformWeixin") },
+    { value: "wecom", label: t("settings.ccConnect.platformWecom") },
+  ];
+  const allowFromHelpKey = ({
+    telegram: "settings.ccConnect.allowFromTelegramHelp",
+    feishu: "settings.ccConnect.allowFromFeishuHelp",
+    weixin: "settings.ccConnect.allowFromWeixinHelp",
+    wecom: "settings.ccConnect.allowFromWecomHelp",
+  } satisfies Record<PlatformKind, TranslationKey>)[profile.platform];
+  const notificationEventKey = handoffNotificationStatus?.lastEvent
+    ? ({
+        progress: "settings.ccConnect.notifications.eventProgress",
+        permission: "settings.ccConnect.notifications.eventPermission",
+        completed: "settings.ccConnect.notifications.eventCompleted",
+        failed: "settings.ccConnect.notifications.eventFailed",
+        timed_out: "settings.ccConnect.notifications.eventTimedOut",
+      } satisfies Record<string, TranslationKey>)[handoffNotificationStatus.lastEvent]
+    : undefined;
+  const notificationPlatform = handoffNotificationStatus?.lastPlatform
+    ? platformOptions.find((option) => option.value === handoffNotificationStatus.lastPlatform)?.label
+    : null;
 
   return (
     <>
@@ -529,18 +1002,18 @@ export function CcConnectSettingsPage() {
             <Text mt={6} size="xs" c="var(--text-muted)">{t("settings.ccConnect.overview.description")}</Text>
           </div>
           <Group gap="xs">
-            <Badge color={!status ? "gray" : status.installed ? "green" : "gray"} variant="light">
-              {!status
+            <Badge color={displayedExecutable?.installed ? "green" : "gray"} variant="light">
+              {executableChecking
                 ? t("settings.ccConnect.detecting")
-                : status.installed
+                : displayedExecutable?.installed
                   ? t("settings.ccConnect.installed")
                   : t("settings.ccConnect.notInstalled")}
             </Badge>
-            {executableDirty ? (
+            {executableDirty && !executableChecking ? (
               <Badge color="yellow" variant="light">{t("settings.ccConnect.executableUnverified")}</Badge>
-            ) : status?.installed && (
-              <Badge color={status.compatible ? "green" : "red"} variant="light">
-                {status.compatible ? t("settings.ccConnect.compatible") : t("settings.ccConnect.incompatible")}
+            ) : !executableChecking && displayedExecutable?.installed && (
+              <Badge color={displayedExecutable.compatible ? "green" : "red"} variant="light">
+                {displayedExecutable.compatible ? t("settings.ccConnect.compatible") : t("settings.ccConnect.incompatible")}
               </Badge>
             )}
           </Group>
@@ -550,8 +1023,7 @@ export function CcConnectSettingsPage() {
             label={t("settings.ccConnect.executablePath")}
             value={profile.executablePath ?? status?.executablePath ?? ""}
             onChange={(event) => {
-              updateProfile("executablePath", event.currentTarget.value || null);
-              setExecutableDirty(true);
+              updateExecutablePath(event.currentTarget.value || null);
             }}
             rightSection={<FolderSearch size={16} />}
           />
@@ -560,17 +1032,122 @@ export function CcConnectSettingsPage() {
               <Button size="xs" variant="default" disabled={busy} onClick={() => void chooseExecutable()} leftSection={<FolderSearch size={14} />}>
                 {t("settings.ccConnect.chooseExecutable")}
               </Button>
-              <Button size="xs" variant="subtle" disabled={busy || executableDirty} onClick={() => void refreshStatus(true, false, false)} leftSection={<RefreshCw size={14} />}>
+              <Button size="xs" variant="subtle" disabled={busy} onClick={() => void rescanExecutable()} leftSection={<RefreshCw size={14} />}>
                 {t("settings.ccConnect.rescan")}
               </Button>
             </Group>
           </Stack>
         </SimpleGrid>
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="sm" spacing="sm">
-          <Text size="xs" c="var(--text-muted)">{t("settings.ccConnect.version")}: {executableDirty ? "—" : status?.version ?? "—"}</Text>
-          <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.ccConnect.sha256")}: {executableDirty ? "—" : status?.sha256 ?? "—"}</Text>
+          <Text size="xs" c="var(--text-muted)">{t("settings.ccConnect.version")}: {executableChecking ? "—" : displayedExecutable?.version ?? "—"}</Text>
+          <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.ccConnect.sha256")}: {executableChecking ? "—" : displayedExecutable?.sha256 ?? "—"}</Text>
         </SimpleGrid>
-        {status?.detectionError && <Text mt="xs" size="xs" c="red">{status.detectionError}</Text>}
+        {displayedDetectionError && <Text mt="xs" size="xs" c="red">{displayedDetectionError}</Text>}
+      </Card>
+
+      <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Group gap="xs">
+              <BellRing size={18} />
+              <Text fw={700}>{t("settings.ccConnect.notifications.title")}</Text>
+            </Group>
+            <Text mt={4} size="xs" c="var(--text-muted)">
+              {t("settings.ccConnect.notifications.description")}
+            </Text>
+          </div>
+          <Group gap="xs" wrap="wrap" justify="flex-end">
+            <Badge
+              color={!codexHookBridgeEnabled ? "gray" : codexHookStatus === "installed" ? "green" : "yellow"}
+              variant="light"
+            >
+              {!codexHookBridgeEnabled
+                ? t("settings.ccConnect.notifications.hookDisabled")
+                : codexHookStatus === "installed"
+                  ? t("settings.ccConnect.notifications.hookReady")
+                  : t("settings.ccConnect.notifications.hookUnavailable")}
+            </Badge>
+            <Badge
+              color={handoffNotificationStatus?.lastError ? "red" : handoffNotificationStatus?.lastSuccessAtMs ? "green" : "gray"}
+              variant="light"
+            >
+              {handoffNotificationStatus?.lastError
+                ? t("settings.ccConnect.notifications.lastFailed")
+                : handoffNotificationStatus?.lastSuccessAtMs
+                  ? t("settings.ccConnect.notifications.lastSucceeded")
+                  : t("settings.ccConnect.notifications.noDelivery")}
+            </Badge>
+          </Group>
+        </Group>
+        <Switch
+          mt="md"
+          checked={remoteHandoffNotificationsEnabled}
+          onChange={(event) => persistNotificationSetting(updateSetting(
+            "remoteHandoffNotificationsEnabled",
+            event.currentTarget.checked
+          ))}
+          label={t("settings.ccConnect.notifications.enabled")}
+          description={t("settings.ccConnect.notifications.enabledDescription")}
+        />
+        <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
+          <Checkbox
+            checked={remoteHandoffCompletionNotificationsEnabled}
+            disabled={!remoteHandoffNotificationsEnabled}
+            onChange={(event) => persistNotificationSetting(updateSetting(
+              "remoteHandoffCompletionNotificationsEnabled",
+              event.currentTarget.checked
+            ))}
+            label={t("settings.ccConnect.notifications.completion")}
+          />
+          <Checkbox
+            checked={remoteHandoffPermissionNotificationsEnabled}
+            disabled={!remoteHandoffNotificationsEnabled}
+            onChange={(event) => persistNotificationSetting(updateSetting(
+              "remoteHandoffPermissionNotificationsEnabled",
+              event.currentTarget.checked
+            ))}
+            label={t("settings.ccConnect.notifications.permission")}
+          />
+          <Checkbox
+            checked={remoteHandoffProgressNotificationsEnabled}
+            disabled={!remoteHandoffNotificationsEnabled}
+            onChange={(event) => persistNotificationSetting(updateSetting(
+              "remoteHandoffProgressNotificationsEnabled",
+              event.currentTarget.checked
+            ))}
+            label={t("settings.ccConnect.notifications.progress")}
+          />
+          <NumberInput
+            value={remoteHandoffProgressIntervalMinutes}
+            min={1}
+            max={60}
+            step={1}
+            allowDecimal={false}
+            clampBehavior="strict"
+            disabled={!remoteHandoffNotificationsEnabled || !remoteHandoffProgressNotificationsEnabled}
+            label={t("settings.ccConnect.notifications.interval")}
+            suffix={t("settings.ccConnect.notifications.intervalSuffix")}
+            onChange={(value) => {
+              const next = typeof value === "number" && Number.isFinite(value)
+                ? Math.min(60, Math.max(1, Math.round(value)))
+                : 5;
+              persistNotificationSetting(
+                updateSetting("remoteHandoffProgressIntervalMinutes", next)
+              );
+            }}
+          />
+        </SimpleGrid>
+        <Text mt="sm" size="xs" c="var(--text-muted)">
+          {t("settings.ccConnect.notifications.routeDescription")}
+        </Text>
+        {handoffNotificationStatus?.lastAttemptAtMs ? (
+          <Text mt="xs" size="xs" c={handoffNotificationStatus.lastError ? "red" : "var(--text-muted)"} style={{ overflowWrap: "anywhere" }}>
+            {t("settings.ccConnect.notifications.lastDelivery")}: {formatTimestamp(handoffNotificationStatus.lastAttemptAtMs, language)}
+            {notificationPlatform ? ` · ${notificationPlatform}` : ""}
+            {notificationEventKey ? ` · ${t(notificationEventKey)}` : ""}
+            {handoffNotificationStatus.lastError ? ` · ${handoffNotificationStatus.lastError}` : ""}
+          </Text>
+        ) : null}
       </Card>
 
       <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
@@ -579,15 +1156,32 @@ export function CcConnectSettingsPage() {
         <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
           <Select label={t("settings.ccConnect.project")} placeholder={t("settings.ccConnect.projectPlaceholder")} nothingFoundMessage={t("settings.ccConnect.projectEmpty")} data={projectOptions} value={profile.projectId || null} onChange={selectProject} searchable />
           <Select label={t("settings.ccConnect.agent")} data={[{ value: "claude", label: "Claude Code" }, { value: "codex", label: "Codex" }]} value={profile.agent} onChange={(value) => value && updateProfile("agent", value as AgentKind)} />
-          <Select label={t("settings.ccConnect.platform")} data={[{ value: "telegram", label: t("settings.ccConnect.platformTelegram") }, { value: "feishu", label: t("settings.ccConnect.platformFeishu") }]} value={profile.platform} onChange={(value) => value && updateProfile("platform", value as PlatformKind)} />
+          <Select
+            label={t("settings.ccConnect.platform")}
+            data={platformOptions}
+            value={profile.platform}
+            onChange={(value) => value && selectPlatform(value as PlatformKind)}
+          />
           <Select label={t("settings.ccConnect.language")} data={[{ value: "zh", label: t("settings.ccConnect.languageZh") }, { value: "en", label: t("settings.ccConnect.languageEn") }]} value={profile.language} onChange={(value) => value && updateProfile("language", value as ReplyLanguage)} />
         </SimpleGrid>
+        <Switch
+          mt="sm"
+          checked={selectedPlatformProfile.enabled}
+          onChange={(event) => updateSelectedPlatform({
+            enabled: event.currentTarget.checked,
+          })}
+          label={t("settings.ccConnect.platformEnabled")}
+          description={t("settings.ccConnect.platformEnabledDescription")}
+          aria-label={t("settings.ccConnect.platformEnabled")}
+        />
         <TextInput
           mt="sm"
           label={t("settings.ccConnect.allowFrom")}
-          description={profile.platform === "telegram" ? t("settings.ccConnect.allowFromTelegramHelp") : t("settings.ccConnect.allowFromFeishuHelp")}
-          value={profile.allowFrom}
-          onChange={(event) => updateProfile("allowFrom", event.currentTarget.value)}
+          description={t(allowFromHelpKey)}
+          value={selectedPlatformProfile.allowFrom}
+          onChange={(event) => updateSelectedPlatform({
+            allowFrom: event.currentTarget.value,
+          })}
         />
         <Switch
           mt="md"
@@ -597,6 +1191,24 @@ export function CcConnectSettingsPage() {
           label={t("settings.ccConnect.yoloEnabled")}
           description={t("settings.ccConnect.yoloEnabledDescription")}
           aria-label={t("settings.ccConnect.yoloEnabled")}
+        />
+        <NumberInput
+          mt="sm"
+          value={profile.maxTurnTimeMins}
+          min={0}
+          max={1440}
+          step={5}
+          allowDecimal={false}
+          clampBehavior="strict"
+          label={t("settings.ccConnect.maxTurnTime")}
+          description={t("settings.ccConnect.maxTurnTimeDescription")}
+          suffix={t("settings.ccConnect.maxTurnTimeSuffix")}
+          onChange={(value) => {
+            const next = typeof value === "number" && Number.isFinite(value)
+              ? Math.min(1440, Math.max(0, Math.round(value)))
+              : 15;
+            updateProfile("maxTurnTimeMins", next);
+          }}
         />
         <Checkbox
           mt="sm"
@@ -646,7 +1258,7 @@ export function CcConnectSettingsPage() {
             formTouchedRef.current = true;
             setDirty(true);
           }} />
-        ) : (
+        ) : profile.platform === "feishu" ? (
           <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
             <PasswordInput label={t("settings.ccConnect.feishuAppId")} value={feishuAppId} onChange={(event) => {
               setFeishuAppId(event.currentTarget.value);
@@ -659,12 +1271,50 @@ export function CcConnectSettingsPage() {
               setDirty(true);
             }} />
           </SimpleGrid>
+        ) : profile.platform === "weixin" ? (
+          <Stack mt="md" gap="xs">
+            <PasswordInput
+              label={t("settings.ccConnect.weixinToken")}
+              description={t("settings.ccConnect.weixinTokenHelp")}
+              value={weixinToken}
+              onChange={(event) => {
+                setWeixinToken(event.currentTarget.value);
+                formTouchedRef.current = true;
+                setDirty(true);
+              }}
+            />
+            <Group justify="flex-start">
+              <Button
+                size="xs"
+                variant="default"
+                leftSection={<QrCode size={15} />}
+                loading={working === "weixin-authorize"}
+                disabled={busy || !!status?.running || !currentProject || executableDirty || !displayedExecutable?.compatible}
+                onClick={() => void startWeixinAuthorization()}
+              >
+                {t("settings.ccConnect.weixinAuthorize")}
+              </Button>
+            </Group>
+          </Stack>
+        ) : (
+          <SimpleGrid cols={{ base: 1, md: 2 }} mt="md" spacing="sm">
+            <TextInput label={t("settings.ccConnect.wecomBotId")} value={wecomBotId} onChange={(event) => {
+              setWecomBotId(event.currentTarget.value);
+              formTouchedRef.current = true;
+              setDirty(true);
+            }} />
+            <PasswordInput label={t("settings.ccConnect.wecomBotSecret")} value={wecomBotSecret} onChange={(event) => {
+              setWecomBotSecret(event.currentTarget.value);
+              formTouchedRef.current = true;
+              setDirty(true);
+            }} />
+          </SimpleGrid>
         )}
         <Group mt="md" justify="flex-end">
           <Button size="xs" variant="light" color="red" leftSection={<Trash2 size={14} />} disabled={!!status?.running || busy} loading={working === "clear"} onClick={() => setClearConfirmOpen(true)}>
             {t("settings.ccConnect.clearCredentials")}
           </Button>
-          <Button size="xs" color="cliPrimary" leftSection={<Save size={14} />} disabled={!!status?.running || busy} loading={working === "save"} onClick={() => void saveProfile()}>
+          <Button size="xs" color="cliPrimary" leftSection={<Save size={14} />} disabled={busy} loading={working === "save"} onClick={() => void saveProfile()}>
             {t("settings.ccConnect.save")}
           </Button>
         </Group>
@@ -722,6 +1372,79 @@ export function CcConnectSettingsPage() {
       </Card>}
         </Stack>
       </Drawer>
+      <Modal
+        opened={weixinAuthorizationOpen}
+        onClose={() => void cancelWeixinAuthorization()}
+        title={t("settings.ccConnect.weixinAuthTitle")}
+        centered
+        size="sm"
+        zIndex={90}
+        closeOnClickOutside={!weixinAuthorizationActive}
+        closeOnEscape={!weixinAuthorizationActive}
+        withCloseButton={!weixinAuthorizationActive}
+      >
+        <Stack gap="md" align="stretch">
+          <Center
+            w={264}
+            h={264}
+            mx="auto"
+            style={{
+              background: weixinAuthorization?.qrDataUrl ? "#ffffff" : "var(--surface-container-low)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+            }}
+          >
+            {weixinAuthorization?.qrDataUrl ? (
+              <img
+                src={weixinAuthorization.qrDataUrl}
+                alt={t("settings.ccConnect.weixinAuthQrAlt")}
+                width={240}
+                height={240}
+                style={{ display: "block", objectFit: "contain" }}
+              />
+            ) : weixinAuthorization?.phase === "completed" ? (
+              <Stack gap="xs" align="center" px="md">
+                <QrCode size={36} color="var(--primary)" />
+                <Text fw={700} ta="center">{t("settings.ccConnect.weixinAuthSuccess")}</Text>
+              </Stack>
+            ) : weixinAuthorization?.phase === "failed" ? (
+              <Stack gap="xs" align="center" px="md">
+                <AlertTriangle size={36} color="var(--danger)" />
+                <Text fw={700} ta="center">{t("settings.ccConnect.weixinAuthFailed")}</Text>
+              </Stack>
+            ) : (
+              <Stack gap="sm" align="center" px="md">
+                <Loader size="sm" />
+                <Text size="sm" ta="center">{t("settings.ccConnect.weixinAuthPreparing")}</Text>
+              </Stack>
+            )}
+          </Center>
+          {weixinAuthorization?.qrDataUrl && (
+            <Text size="sm" ta="center">{t("settings.ccConnect.weixinAuthScanHint")}</Text>
+          )}
+          {weixinAuthorization?.phase === "completed" && (
+            <Text size="sm" ta="center" c="var(--text-muted)">
+              {t("settings.ccConnect.weixinAuthSuccessDescription")}
+            </Text>
+          )}
+          {weixinAuthorization?.phase === "failed" && weixinAuthorization.error && (
+            <Text size="xs" c="red" style={{ overflowWrap: "anywhere" }}>
+              {weixinAuthorization.error}
+            </Text>
+          )}
+          <Group justify="flex-end">
+            {weixinAuthorizationActive ? (
+              <Button variant="light" color="red" onClick={() => void cancelWeixinAuthorization()}>
+                {t("settings.ccConnect.weixinAuthCancel")}
+              </Button>
+            ) : (
+              <Button variant="default" onClick={() => void cancelWeixinAuthorization()}>
+                {t("common.close")}
+              </Button>
+            )}
+          </Group>
+        </Stack>
+      </Modal>
       <ConfirmDialog
         open={yoloConfirmOpen}
         title={t("settings.ccConnect.yoloConfirmTitle")}

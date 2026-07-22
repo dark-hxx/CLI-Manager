@@ -38,6 +38,7 @@ interface TerminalSidePanelProps {
   visibleTabs: readonly TerminalSidePanelTab[];
   activeSessionId: string | null;
   projectPath: string | null;
+  projectId?: string | null;
   filesTabDisabled?: boolean;
   systemResourcesEnabled?: boolean;
   filesPanelContent?: ReactNode;
@@ -243,6 +244,7 @@ export function TerminalSidePanel({
   visibleTabs,
   activeSessionId,
   projectPath,
+  projectId,
   filesTabDisabled = false,
   systemResourcesEnabled = false,
   filesPanelContent = null,
@@ -375,7 +377,7 @@ export function TerminalSidePanel({
         )}
         {gitEnabled && activeTab === "git" && (
           <Suspense fallback={null}>
-            <GitChangesPanel open={open} projectPath={projectPath} visible embedded />
+            <GitChangesPanel open={open} projectPath={projectPath} projectId={projectId} visible embedded />
           </Suspense>
         )}
         {filesEnabled && activeTab === "files" ? filesPanelContent : null}

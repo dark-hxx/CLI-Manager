@@ -1,7 +1,47 @@
-import type { Project, TerminalSession } from "./types";
-import { convertChineseForLanguage, isEnglishLanguage, resolveLanguagePreference, type AppLanguage } from "./i18n";
-import type { TabNotificationState, TabStatusDetails } from "../stores/terminalStore";
+import type {
+  Project,
+  RemoteHandoffPhase,
+  TerminalSession,
+  WorktreeRecord,
+} from "./types";
+import {
+  getRemoteHandoffEligibility,
+  type CcConnectHandoffInfo,
+  type CcConnectHandoffPlatformTarget,
+} from "./remoteHandoff";
+import {
+  convertChineseForLanguage,
+  isEnglishLanguage,
+  resolveLanguagePreference,
+  type AppLanguage,
+} from "./i18n";
+import type {
+  SessionStatus,
+  TabNotificationState,
+  TabStatusDetails,
+} from "../stores/terminalStore";
 import type { DesktopPetSettings, LanguagePreference } from "../stores/settingsStore";
+import { desktopPetScaleFromPercent } from "./desktopPetSize";
+
+export {
+  calculateDesktopPetMenuWindowGeometry,
+  resizeDesktopPetCollapsedWindowBounds,
+  createLatestAsyncTaskRunner,
+  type DesktopPetMenuHorizontalPlacement,
+  type DesktopPetMenuVerticalPlacement,
+  type DesktopPetMenuWindowGeometry,
+  type DesktopPetWindowRect,
+  type LatestAsyncTaskContext,
+  type LatestAsyncTaskRunner,
+} from "./desktopPetMenu";
+export {
+  DESKTOP_PET_SIZE_DEFAULT_PERCENT,
+  DESKTOP_PET_SIZE_MAX_PERCENT,
+  DESKTOP_PET_SIZE_MIN_PERCENT,
+  DESKTOP_PET_SIZE_STEP_PERCENT,
+  normalizeDesktopPetSizePercent,
+  stepDesktopPetSizePercent,
+} from "./desktopPetSize";
 
 export const DESKTOP_PET_WINDOW_LABEL = "desktop-pet";
 export const DESKTOP_PET_CONFIG_EVENT = "desktop-pet-config";
@@ -11,6 +51,9 @@ export const DESKTOP_PET_OPEN_TARGET_EVENT = "desktop-pet-open-target";
 export const DESKTOP_PET_OPEN_SETTINGS_EVENT = "desktop-pet-open-settings";
 export const DESKTOP_PET_CLOSE_MENU_EVENT = "desktop-pet-close-menu";
 export const DESKTOP_PET_POSITION_EVENT = "desktop-pet-position";
+export const DESKTOP_PET_SIZE_CHANGE_EVENT = "desktop-pet-size-change";
+export const DESKTOP_PET_HANDOFF_START_EVENT = "remote-handoff-start-request";
+export const DESKTOP_PET_HANDOFF_CANCEL_EVENT = "remote-handoff-cancel-request";
 
 export type DesktopPetMood = "idle" | "working" | "waiting" | "success" | "error" | "sleeping";
 
@@ -85,6 +128,9 @@ export interface DesktopPetTarget {
   status: TabNotificationState;
   active: boolean;
   updatedAt: number;
+  handoffEligible: boolean;
+  handedOff: boolean;
+  handoffPhase: RemoteHandoffPhase | null;
 }
 
 export interface DesktopPetSnapshot {
@@ -97,14 +143,19 @@ export interface DesktopPetSnapshot {
   attentionCount: number;
   updatedAt: number;
   targets: DesktopPetTarget[];
+  handoff: CcConnectHandoffInfo | null;
+  handoffPlatforms: CcConnectHandoffPlatformTarget[];
+  handoffBusy: boolean;
 }
 
 export interface DesktopPetConfigPayload {
   language: AppLanguage;
+  visible: boolean;
   settings: DesktopPetSettings;
   labels: {
     openMain: string;
     openSettings: string;
+    size: string;
     hide: string;
     idle: string;
     working: string;
@@ -116,6 +167,27 @@ export interface DesktopPetConfigPayload {
     taskList: string;
     currentTask: string;
     unnamedTask: string;
+    openCurrent: string;
+    remoteHandoff: string;
+    cancelHandoff: string;
+    handoffPlatforms: string;
+    handoffSessions: string;
+    handoffBack: string;
+    platformReady: string;
+    platformNotRunning: string;
+    platformCredentialsMissing: string;
+    platformUserMissing: string;
+    platformSessionMissing: string;
+    platformUnavailable: string;
+    platformTelegram: string;
+    platformFeishu: string;
+    platformWeixin: string;
+    platformWecom: string;
+    handoffPending: string;
+    handoffCancelling: string;
+    handedOff: string;
+    handoffRecoveryFailed: string;
+    noHandoffSessions: string;
   };
 }
 
@@ -124,114 +196,17 @@ export interface DesktopPetPositionPayload {
   y: number;
 }
 
+export interface DesktopPetSizeChangePayload extends DesktopPetPositionPayload {
+  size: number;
+}
+
 export interface DesktopPetOpenTargetPayload {
   sessionId: string | null;
   daemonOnly: boolean;
 }
 
-export interface DesktopPetWindowRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface DesktopPetMenuWindowGeometry {
-  logicalWidth: number;
-  logicalHeight: number;
-  x: number;
-  y: number;
-  anchorWidth: number;
-  anchorHeight: number;
-  panelWidth: number;
-  targetListHeight: number;
-}
-
-const DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH = 306;
-const DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH = 214;
-const DESKTOP_PET_MENU_CARD_HEIGHT = 58;
-const DESKTOP_PET_MENU_CARD_STEP = 43;
-const DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS = 5;
-const DESKTOP_PET_MENU_VERTICAL_CHROME = 64;
 export const DESKTOP_PET_OUTPUT_ACTIVITY_TTL_MS = 6000;
 const DESKTOP_PET_OUTPUT_ACTIVITY_FINAL_GRACE_MS = 1200;
-
-function clampWindowCoordinate(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
-}
-
-export function calculateDesktopPetMenuWindowGeometry(
-  collapsed: DesktopPetWindowRect,
-  scaleFactor: number,
-  targetCount: number,
-  workArea?: DesktopPetWindowRect | null
-): DesktopPetMenuWindowGeometry {
-  const safeScaleFactor = Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1;
-  const anchorWidth = collapsed.width / safeScaleFactor;
-  const anchorHeight = collapsed.height / safeScaleFactor;
-  const visibleTargets = Math.min(
-    Math.max(0, Math.floor(targetCount)),
-    DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS
-  );
-  const requestedTargetListHeight = visibleTargets > 0
-    ? DESKTOP_PET_MENU_CARD_HEIGHT + (visibleTargets - 1) * DESKTOP_PET_MENU_CARD_STEP
-    : 0;
-  const requestedPanelWidth = visibleTargets > 0
-    ? DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH
-    : DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH;
-  let logicalWidth = anchorWidth + requestedPanelWidth;
-  let logicalHeight = Math.max(
-    anchorHeight,
-    requestedTargetListHeight > 0
-      ? requestedTargetListHeight + DESKTOP_PET_MENU_VERTICAL_CHROME
-      : anchorHeight
-  );
-  if (workArea) {
-    logicalWidth = Math.min(logicalWidth, workArea.width / safeScaleFactor);
-    logicalHeight = Math.min(logicalHeight, workArea.height / safeScaleFactor);
-  }
-  const panelWidth = Math.max(0, logicalWidth - anchorWidth);
-  const targetListHeight = Math.min(
-    requestedTargetListHeight,
-    Math.max(0, logicalHeight - DESKTOP_PET_MENU_VERTICAL_CHROME)
-  );
-  const physicalWidth = Math.round(logicalWidth * safeScaleFactor);
-  const physicalHeight = Math.round(logicalHeight * safeScaleFactor);
-  const desiredX = collapsed.x - Math.max(0, physicalWidth - collapsed.width);
-  const desiredY = collapsed.y - Math.max(0, physicalHeight - collapsed.height);
-
-  if (!workArea) {
-    return {
-      logicalWidth,
-      logicalHeight,
-      x: desiredX,
-      y: desiredY,
-      anchorWidth,
-      anchorHeight,
-      panelWidth,
-      targetListHeight,
-    };
-  }
-
-  return {
-    logicalWidth,
-    logicalHeight,
-    x: clampWindowCoordinate(
-      desiredX,
-      workArea.x,
-      workArea.x + workArea.width - physicalWidth
-    ),
-    y: clampWindowCoordinate(
-      desiredY,
-      workArea.y,
-      workArea.y + workArea.height - physicalHeight
-    ),
-    anchorWidth,
-    anchorHeight,
-    panelWidth,
-    targetListHeight,
-  };
-}
 
 const STATUS_PRIORITY: Record<TabNotificationState, number> = {
   none: 0,
@@ -313,10 +288,15 @@ interface DeriveDesktopPetSnapshotInput {
   persistedSessions: TerminalSession[];
   activeSessionId: string | null;
   tabNotifications: Record<string, TabNotificationState>;
+  sessionStatuses: Record<string, SessionStatus>;
   tabStatusDetails: Record<string, TabStatusDetails>;
   ptyOutputActivityAt: Record<string, number>;
   projects: Project[];
+  worktrees: WorktreeRecord[];
   backgroundTasks: BackgroundPetTask[];
+  activeHandoff: CcConnectHandoffInfo | null;
+  handoffBusy: boolean;
+  now?: number;
 }
 
 function compareDesktopPetTargets(left: DesktopPetTarget, right: DesktopPetTarget): number {
@@ -326,7 +306,12 @@ function compareDesktopPetTargets(left: DesktopPetTarget, right: DesktopPetTarge
   return right.updatedAt - left.updatedAt;
 }
 
-function snapshotFromTargets(targets: DesktopPetTarget[], now: number): DesktopPetSnapshot {
+function snapshotFromTargets(
+  targets: DesktopPetTarget[],
+  now: number,
+  handoff: CcConnectHandoffInfo | null,
+  handoffBusy: boolean
+): DesktopPetSnapshot {
   if (targets.length === 0) {
     return {
       mood: "sleeping",
@@ -338,6 +323,9 @@ function snapshotFromTargets(targets: DesktopPetTarget[], now: number): DesktopP
       attentionCount: 0,
       updatedAt: now,
       targets: [],
+      handoff,
+      handoffPlatforms: [],
+      handoffBusy,
     };
   }
 
@@ -353,14 +341,18 @@ function snapshotFromTargets(targets: DesktopPetTarget[], now: number): DesktopP
     attentionCount: candidates.filter((candidate) => candidate.status === "attention").length,
     updatedAt: selected.updatedAt || now,
     targets: candidates,
+    handoff,
+    handoffPlatforms: [],
+    handoffBusy,
   };
 }
 
 export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): DesktopPetSnapshot {
-  const now = Date.now();
+  const now = input.now ?? Date.now();
   const openPtySessions = input.sessions.filter((session) => !session.kind || session.kind === "pty");
   const openIds = new Set(openPtySessions.map((session) => session.id));
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
+  const worktreeById = new Map(input.worktrees.map((worktree) => [worktree.id, worktree]));
   const persistedById = new Map(input.persistedSessions.map((session) => [session.id, session]));
   const backgroundById = new Map(input.backgroundTasks.map((task) => [task.sessionId, task]));
   const candidates: DesktopPetTarget[] = openPtySessions.map((session) => {
@@ -373,6 +365,17 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
       now
     );
     const project = session.projectId ? projectById.get(session.projectId) : undefined;
+    const handoffPhase = session.remoteHandoff?.phase
+      ?? (input.activeHandoff?.localSessionId === session.id ? "active" : null);
+    const handedOff = handoffPhase !== null && handoffPhase !== "recovery_failed";
+    const eligibility = getRemoteHandoffEligibility({
+      session,
+      project,
+      worktree: session.worktreeId ? worktreeById.get(session.worktreeId) ?? null : null,
+      notification: status,
+      processStatus: input.sessionStatuses[session.id],
+      activeHandoff: input.activeHandoff,
+    });
     return {
       sessionId: session.id,
       daemonOnly: false,
@@ -381,6 +384,9 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
       sessionTitle: session.title || null,
       projectName: project?.name ?? null,
       active: session.id === input.activeSessionId,
+      handoffEligible: eligibility.eligible,
+      handedOff,
+      handoffPhase,
     };
   });
   for (const task of input.backgroundTasks) {
@@ -395,16 +401,34 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
       sessionTitle: persisted?.title || task.cwd || null,
       projectName: project?.name ?? null,
       active: false,
+      handoffEligible: false,
+      handedOff: false,
+      handoffPhase: null,
+    });
+  }
+  if (
+    input.activeHandoff
+    && !candidates.some((candidate) => candidate.sessionId === input.activeHandoff?.localSessionId)
+  ) {
+    candidates.push({
+      sessionId: input.activeHandoff.localSessionId,
+      daemonOnly: false,
+      status: "none",
+      updatedAt: input.activeHandoff.startedAtMs,
+      sessionTitle: null,
+      projectName: input.activeHandoff.projectName,
+      active: false,
+      handoffEligible: false,
+      handedOff: true,
+      handoffPhase: "active",
     });
   }
 
-  return snapshotFromTargets(candidates, now);
+  return snapshotFromTargets(candidates, now, input.activeHandoff, input.handoffBusy);
 }
 
 export function desktopPetScale(size: DesktopPetSettings["size"]): number {
-  if (size === "small") return 0.8;
-  if (size === "large") return 1.25;
-  return 1;
+  return desktopPetScaleFromPercent(size);
 }
 
 export function localizedPetText(text: PetLocalizedText, language: LanguagePreference): string {

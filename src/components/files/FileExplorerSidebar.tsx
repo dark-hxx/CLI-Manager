@@ -397,6 +397,7 @@ function FileNode({
   autoCollapseGroups,
   menuPortalContainer,
   showRelativePath = false,
+  readOnly = false,
 }: {
   entry: ProjectFileEntry;
   depth: number;
@@ -422,6 +423,7 @@ function FileNode({
   autoCollapseGroups: AutoCollapseGroupState;
   menuPortalContainer: HTMLDivElement | null;
   showRelativePath?: boolean;
+  readOnly?: boolean;
 }) {
   const { t } = useI18n();
   const project = useFileExplorerStore((s) => s.project);
@@ -432,7 +434,9 @@ function FileNode({
   const setClipboard = useFileExplorerStore((s) => s.setClipboard);
   const pasteInto = useFileExplorerStore((s) => s.pasteInto);
   const clipboard = useFileExplorerStore((s) => s.clipboard);
-  const activePath = useFileExplorerStore((s) => s.activeFile?.path ?? null);
+  const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
+  const activeFilePath = useFileExplorerStore((s) => s.activeFile?.path ?? null);
+  const activePath = selectedTreePath ?? activeFilePath;
   const isDir = entry.kind === "directory";
   const { suffixParts, leaf: displayEntry, chainPaths } = isDir
     ? collectCompactDirectoryChain(entry)
@@ -497,6 +501,7 @@ function FileNode({
       onFilePointerCancel={onFilePointerCancel}
       autoCollapseGroups={autoCollapseGroups}
       menuPortalContainer={menuPortalContainer}
+      readOnly={readOnly}
       renderAutoCollapsedGroup={false}
     />
   ) : null;
@@ -507,6 +512,7 @@ function FileNode({
         <div
           className="ui-file-tooltip ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
           data-selected={activePath === displayEntry.path ? "true" : "false"}
+          data-file-tree-path={displayEntry.path}
           style={{ paddingLeft }}
           data-tooltip={displayEntry.path}
         >
@@ -536,6 +542,7 @@ function FileNode({
             tabIndex={0}
             className="ui-file-tooltip ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
             data-selected={activePath === displayEntry.path ? "true" : "false"}
+            data-file-tree-path={displayEntry.path}
             data-file-drop-target-path={displayEntry.kind === "directory" ? displayEntry.path : parentPath(displayEntry.path)}
             draggable={false}
             style={{ paddingLeft }}
@@ -549,11 +556,11 @@ function FileNode({
               if (isDir) toggleDirectory();
               else onOpenFile(displayEntry);
             }}
-            onDragStart={(event) => onFileDragStart(event, displayEntry)}
-            onDrag={onFileDrag}
-            onDragEnd={onFileDragEnd}
-            onDragOver={(event) => onFileDragOver(event, displayEntry)}
-            onDrop={(event) => onFileDrop(event, displayEntry)}
+            onDragStart={readOnly ? undefined : (event) => onFileDragStart(event, displayEntry)}
+            onDrag={readOnly ? undefined : onFileDrag}
+            onDragEnd={readOnly ? undefined : onFileDragEnd}
+            onDragOver={readOnly ? undefined : (event) => onFileDragOver(event, displayEntry)}
+            onDrop={readOnly ? undefined : (event) => onFileDrop(event, displayEntry)}
             onPointerDown={(event) => onFilePointerDown(event, displayEntry)}
             onPointerMove={onFilePointerMove}
             onPointerUp={onFilePointerUp}
@@ -593,7 +600,7 @@ function FileNode({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
-          {isDir && (
+          {!readOnly && isDir && (
             <>
               <ContextMenuItem onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
                 <File size={13} /> {t("files.menu.newFile")}
@@ -624,17 +631,17 @@ function FileNode({
               <FileCode size={13} /> {t("files.menu.openDiff")}
             </ContextMenuItem>
           )}
-          <ContextMenuItem onSelect={() => onInput({ kind: "rename", path: displayEntry.path, currentName: displayEntry.name })}>
+          {!readOnly && <ContextMenuItem onSelect={() => onInput({ kind: "rename", path: displayEntry.path, currentName: displayEntry.name })}>
             <Pencil size={13} /> {t("files.menu.rename")}
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => setClipboard({ mode: "copy", path: displayEntry.path, name: displayEntry.name })}>
+          </ContextMenuItem>}
+          {!readOnly && <ContextMenuItem onSelect={() => setClipboard({ mode: "copy", path: displayEntry.path, name: displayEntry.name })}>
             <Copy size={13} /> {t("files.menu.copy")}
-          </ContextMenuItem>
+          </ContextMenuItem>}
           {project && (
             <>
-              <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, displayEntry.path, t)}>
+              {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, displayEntry.path, t)}>
                 <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
-              </ContextMenuItem>
+              </ContextMenuItem>}
               <ContextMenuSeparator />
               <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(displayEntry.path, displayEntry.kind), t("files.toast.aiPathCopied"))}>
                 <Copy size={13} /> {t("files.menu.copyAiPath")}
@@ -646,10 +653,10 @@ function FileNode({
               )}
             </>
           )}
-          <ContextMenuSeparator />
+          {!readOnly && <><ContextMenuSeparator />
           <ContextMenuItem danger onSelect={() => onConfirm({ kind: "delete", path: displayEntry.path, name: displayEntry.name })}>
             <Trash2 size={13} /> {t("files.menu.delete")}
-          </ContextMenuItem>
+          </ContextMenuItem></>}
         </ContextMenuContent>
       </ContextMenu>
       {childRows}
@@ -683,6 +690,7 @@ function FileTreeRows({
   autoCollapseGroups,
   menuPortalContainer,
   renderAutoCollapsedGroup,
+  readOnly = false,
 }: {
   entries: ProjectFileEntry[];
   parentPath: string;
@@ -709,6 +717,7 @@ function FileTreeRows({
   autoCollapseGroups: AutoCollapseGroupState;
   menuPortalContainer: HTMLDivElement | null;
   renderAutoCollapsedGroup: boolean;
+  readOnly?: boolean;
 }) {
   const { normalEntries, collapsedEntries } = renderAutoCollapsedGroup
     ? splitAutoCollapsedEntries(entries, autoCollapseGroups.ignoredPaths, autoCollapseGroups.ignoreMatcher)
@@ -743,6 +752,7 @@ function FileTreeRows({
           onFilePointerCancel={onFilePointerCancel}
           autoCollapseGroups={autoCollapseGroups}
           menuPortalContainer={menuPortalContainer}
+          readOnly={readOnly}
         />
       ))}
       {collapsedEntries.length > 0 && (
@@ -779,6 +789,7 @@ function FileTreeRows({
               onFilePointerCancel={onFilePointerCancel}
               autoCollapseGroups={autoCollapseGroups}
               menuPortalContainer={menuPortalContainer}
+              readOnly={readOnly}
               showRelativePath
             />
           ))}
@@ -792,7 +803,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const { t } = useI18n();
   const [menuPortalContainer, setMenuPortalContainer] = useState<HTMLDivElement | null>(null);
   const project = useFileExplorerStore((s) => s.project);
+  const readOnly = project?.environment_type === "ssh";
   const tree = useFileExplorerStore((s) => s.tree);
+  const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
   const searchMode = useFileExplorerStore((s) => s.searchMode);
   const searchQuery = useFileExplorerStore((s) => s.searchQuery);
   const searchResults = useFileExplorerStore((s) => s.searchResults);
@@ -856,7 +869,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   // Issue #147：优先读取项目根 .gitignore；不存在则回退内置默认规则
   useEffect(() => {
-    if (!project?.path) {
+    if (readOnly || !project?.path) {
       setProjectGitIgnoreMatcher(null);
       setGitIgnoreLoadState("missing");
       return;
@@ -880,14 +893,14 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     return () => {
       cancelled = true;
     };
-  }, [project?.path, gitIgnoreCaseInsensitive, gitIgnoreRefreshSeq]);
+  }, [project?.path, readOnly, gitIgnoreCaseInsensitive, gitIgnoreRefreshSeq]);
 
   useEffect(() => {
     if (searchQuery.trim()) setSearchControlsVisible(true);
   }, [searchQuery]);
 
   useEffect(() => {
-    if (!project?.path) return;
+    if (!project?.path || readOnly) return;
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -964,9 +977,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       document.removeEventListener("visibilitychange", onVisibility);
       void invoke("file_watch_stop", { projectPath: project.path }).catch(() => {});
     };
-  }, [project?.path, refreshVisibleState]);
+  }, [project?.path, readOnly, refreshVisibleState]);
 
   const hasSearchQuery = Boolean(searchQuery.trim());
+
   const visibleRows = hasSearchQuery && searchMode === "files" ? searchResults : tree;
   const gitChangeByPath = useMemo(() => new Map(gitChanges.map((change) => [change.path, change])), [gitChanges]);
   const dirtyFilePathList = useMemo(
@@ -1027,6 +1041,34 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     }
     return createDefaultIgnoreMatcher(gitIgnoreCaseInsensitive);
   }, [gitIgnoreCaseInsensitive, gitIgnoreLoadState, projectGitIgnoreMatcher]);
+
+  useEffect(() => {
+    if (!selectedTreePath) return;
+    const rootPath = selectedTreePath.split("/")[0];
+    const rootEntry = tree.find((entry) => entry.path === rootPath);
+    if (
+      rootEntry?.kind !== "directory"
+      || !(
+        isDefaultCollapsedDirectoryName(rootEntry.name)
+        || ignoredPaths.has(rootEntry.path)
+        || ignoreMatcher.ignores(rootEntry.path, true)
+      )
+    ) {
+      return;
+    }
+    setExpandedAutoCollapseGroups((current) => {
+      if (current.has("")) return current;
+      return new Set([...current, ""]);
+    });
+  }, [ignoreMatcher, ignoredPaths, selectedTreePath, tree]);
+
+  useEffect(() => {
+    if (!selectedTreePath) return;
+    const escapedPath = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(selectedTreePath)
+      : selectedTreePath.replace(/(["\\])/gu, "\\$1");
+    document.querySelector<HTMLElement>(`[data-file-tree-path="${escapedPath}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [expandedAutoCollapseGroups, selectedTreePath, tree]);
 
   const autoCollapseGroups = useMemo<AutoCollapseGroupState>(() => ({
     expandedGroupPaths: expandedAutoCollapseGroups,
@@ -1429,9 +1471,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
-          <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, match.path, t)}>
+          {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, match.path, t)}>
             <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
-          </ContextMenuItem>
+          </ContextMenuItem>}
           <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(match.path, "file"), t("files.toast.aiPathCopied"))}>
             <Copy size={13} /> {t("files.menu.copyAiPath")}
           </ContextMenuItem>
@@ -1522,9 +1564,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
-          <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, entry.path, t)}>
-            <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
-          </ContextMenuItem>
+        {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, entry.path, t)}>
+          <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
+        </ContextMenuItem>}
           <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(entry.path, entry.kind), t("files.toast.aiPathCopied"))}>
             <Copy size={13} /> {t("files.menu.copyAiPath")}
           </ContextMenuItem>
@@ -1602,6 +1644,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         onFilePointerCancel={handleFilePointerCancel}
         autoCollapseGroups={autoCollapseGroups}
         menuPortalContainer={menuPortalContainer}
+        readOnly={readOnly}
         renderAutoCollapsedGroup
       />
     ) : (
@@ -1627,7 +1670,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const closeLabel = mode === "panel" ? t("files.closePanel") : t("files.backToProjects");
   const searchLabel = searchMode === "content" ? t("files.searchCodePlaceholder") : t("files.searchPlaceholder");
   const searchToggleLabel = searchControlsVisible ? t("files.hideSearch") : searchLabel;
-  const displayPathName = getDisplayPathName(project.path);
+  const displayPathName = getDisplayPathName(readOnly ? project.remote_path : project.path);
   const panelStyle = mode === "panel"
     ? ({
         "--surface-container": TERM.card,
@@ -1674,10 +1717,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       )}
       <div className="shrink-0 border-b border-border px-2 py-2">
         <div className="mb-2 flex items-center gap-2">
-          <span className="flex shrink-0 cursor-pointer" onDoubleClick={openProjectRootFolder}>
+          <span className="flex shrink-0" onDoubleClick={readOnly ? undefined : openProjectRootFolder}>
             <Folder size={15} className="ui-file-explorer-root-icon" />
           </span>
-          <div className="ui-file-tooltip min-w-0 flex-1 cursor-pointer" data-tooltip={project.path} onDoubleClick={openProjectRootFolder}>
+          <div className="ui-file-tooltip min-w-0 flex-1" data-tooltip={readOnly ? project.remote_path : project.path} onDoubleClick={readOnly ? undefined : openProjectRootFolder}>
             <div className="ui-file-explorer-title truncate text-xs font-semibold">{project.name}</div>
             <div className="ui-file-explorer-subtitle truncate text-[10px]">{displayPathName}</div>
           </div>
@@ -1732,7 +1775,8 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             </div>
           </>
         )}
-        {clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{clipboard.name}</div>}
+        {readOnly && <div className="mt-1 text-[10px] text-text-muted">{t("files.readOnly")}</div>}
+        {!readOnly && clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{clipboard.name}</div>}
       </div>
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -1748,19 +1792,19 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
-          <ContextMenuItem onSelect={() => openInput({ kind: "create-file", parentPath: "" })}>
+          {!readOnly && <ContextMenuItem onSelect={() => openInput({ kind: "create-file", parentPath: "" })}>
             <File size={13} /> {t("files.menu.newFile")}
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => openInput({ kind: "create-dir", parentPath: "" })}>
+          </ContextMenuItem>}
+          {!readOnly && <ContextMenuItem onSelect={() => openInput({ kind: "create-dir", parentPath: "" })}>
             <FolderPlus size={13} /> {t("files.menu.newFolder")}
-          </ContextMenuItem>
-          <ContextMenuItem disabled={!clipboard} onSelect={() => void pasteIntoTarget("")}>
+          </ContextMenuItem>}
+          {!readOnly && <ContextMenuItem disabled={!clipboard} onSelect={() => void pasteIntoTarget("")}>
             <Copy size={13} /> {t("files.menu.paste")}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onSelect={openProjectRootFolder}>
+          </ContextMenuItem>}
+          {!readOnly && <ContextMenuSeparator />}
+          {!readOnly && <ContextMenuItem onSelect={openProjectRootFolder}>
             <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
-          </ContextMenuItem>
+          </ContextMenuItem>}
           <ContextMenuItem onSelect={copyRootAiPath}>
             <Copy size={13} /> {t("files.menu.copyAiPath")}
           </ContextMenuItem>

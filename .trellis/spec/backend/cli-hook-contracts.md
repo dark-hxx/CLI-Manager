@@ -419,11 +419,8 @@ interface HookSettingsStatus {
 
 - Frontend must pass `ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined`; `null`/missing means platform default `~/.cc-switch/cc-switch.db`.
 - Backend must reuse the cc-switch DB resolver: explicit custom paths are validated and never silently replaced by defaults.
-- cc-switch common config means the app-level shared snippet stored in the cc-switch SQLite `settings` table as `common_config_claude` (JSON) or `common_config_codex` (TOML). cc-switch merges that snippet into every provider whose metadata enables "Apply Common Config" when switching providers.
-- User-triggered Hook writes must update the local CLI config first, then best-effort write cc-switch common config automatically. If cc-switch is missing, invalid, or unavailable, the local config write is the fallback and still succeeds.
 - Installing Claude Hook writes normal Claude `settings.json` hooks first, then best-effort merges the same CLI-Manager-owned hook commands into `settings.common_config_claude`.
 - Installing Codex Hook writes normal Codex `hooks.json` commands and `config.toml` feature flags first, then best-effort merges the TOML `[features].hooks = true` flag plus any current CLI-Manager-owned Codex `[hooks.state.*]` trust blocks into `settings.common_config_codex`. Codex hook commands remain in `hooks.json`; `common_config_codex` is not JSON.
-- Only CLI-Manager-owned shared Hook state belongs in common config. Never write provider secrets, model-provider routing, base URLs, project-local hook files, or user-owned hook trust into cc-switch common config.
 - Hook settings UI shows the cc-switch protection card once, above system notification settings. Do not duplicate it in both Claude and Codex sections.
 - Claude common-config merge may remove/replace only CLI-Manager-owned hook commands (`__hook` marker or known legacy scripts); it must preserve non-hook fields and non-CLI-Manager hook entries. Codex common-config merge may only add or replace the TOML `features.hooks` flag and marker-owned `[hooks.state.*]` trust blocks for the current user-level Codex `hooks.json`; it must preserve other TOML fields and unrelated hook state.
 - `settings.value` is nullable in cc-switch DBs. A `NULL` value for `common_config_<tool>` is treated as missing config, not as `db_query_failed`.
@@ -493,4 +490,173 @@ let db = PathBuf::from(r"C:\Users\Admini\.cc-switch\cc-switch.db");
 
 ```rust
 let path = resolve_ccswitch_db_path_for_hook(&app, cc_switch_db_path, &claude_dir)?;
+```
+
+## Scenario: SSH Agent Hook Lifecycle And Delivery
+
+### 1. Scope / Trigger
+
+- Trigger: an SSH Host explicitly installs Claude/Codex Hook entries through `cli-manager-ssh-agent`, or a bound remote CLI emits one of those events.
+- Applies to: `hook-schema`, Agent `hook_config`/`hook_runtime`/bridge protocol, SSH launch binding, daemon event validation, `ClaudeHookPayload`, and SSH CLI Integration UI/storage.
+
+### 2. Signatures
+
+```text
+ssh_agent_hook_inspect(configuredConfigRoot, source, Agent identity) -> HookConfigReport
+ssh_agent_hook_preview(..., action=install|uninstall, expectedCanonicalRoot?) -> HookConfigReport
+ssh_agent_hook_apply(..., expectedCanonicalRoot?, expectedFiles[]) -> HookConfigReport
+
+cli-manager-ssh-agent hook --source <source> --event <event>
+  --managed-by cli-manager-ssh-agent --installation-id <uuid>
+```
+
+Reserved launch environment: `CLI_MANAGER_SSH_HOST_ID`, `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`, `CLI_MANAGER_PROJECT_ID`, `CLI_MANAGER_TAB_ID`, and `CLI_MANAGER_BRIDGE_EPOCH`.
+
+### 3. Contracts
+
+- Remote Hook installation is explicit per Host/tool/config root. Page open, Host save, Agent probe, Agent install, and config-root browsing do not write Hook configuration.
+- Agent reports and desktop persistence use the canonical config root plus actual config file paths/fingerprints. Agent binary/install paths are never treated as Hook or history roots.
+- Re-inspection preserves the prior validated installation record for the same canonical root, while explicit uninstall clears it. Multiple Host/project references to one canonical root mirror one physical Hook status.
+- Ownership requires the exact stable Agent command, source/event, `--managed-by cli-manager-ssh-agent`, and current installation UUID. Substring matching is forbidden.
+- Missing standard defaults may be created only by confirmed Hook install. Missing custom roots are rejected. Root or config-file symlinks remain links; a target change after preview aborts the transaction.
+- A custom root deleted after installation remains missing for install/inspect. Uninstall alone may recover one exact Agent-owned canonical record to clear stale ownership without recreating the directory. Any UI uninstall based on a stored Hook report supplies the prior canonical identity, so a configured-root symlink retargeted from A to B can clean only A through an exact unique Agent record; a direct request without an expected identity follows B. Missing, ambiguous, or invalid records fail closed.
+- Config merging preserves unrelated entries and unknown events. Duplicate exact entries are normalized in place. User-owned Codex `features.hooks = true` remains enabled after uninstall.
+- Remote runtime requires all reserved binding variables. Ordinary SSH/IDE/tmux launches and other desktop clients are no-op and produce no spool record.
+- A remote SSH PTY receives the Agent bridge identity only when its effective Host/source/configured root is recorded as `installed` and still matches the current Agent installation/machine identity. Installing Agent without Hook does not add a background SSH connection.
+- Hook stdin is bounded; shared normalization feeds local and remote paths. Remote spool removes prompt/message before persistence.
+- Daemon validates Host/client/project/Tab/epoch/installation/source against a live PTY before routing. Remote transcript refs stay in `remoteTranscriptRef` fields and never enter local transcript/file commands.
+- Delivery is at least once from Agent to daemon, then deduplicated by event id. Spool uses monotonic sequence, ACK deletion, TTL/count/byte limits, and sequenced gap warnings.
+- The reusable bridge is protocol `1.1`: bounded preamble/response deadlines, 10-second heartbeat, global four-bridge/two-reconnect gates, bounded cancellation/backpressure, takeover retry, and streaming spool read/ACK apply before Hook delivery.
+- `ClaudeHookPayload::to_notification_job` must clear SSH cwd. Third-party notifications never receive remote cwd, transcript refs, Host/project/session/Tab identity, or prompt text.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Missing/invalid reserved binding | successful Hook no-op |
+| Source/event/installation/owner invalid | Hook runtime error is swallowed by CLI; no spool write |
+| Config changed after preview | `hook_config_changed` |
+| Root/config symlink target changed | `hook_config_root_changed` |
+| Foreign CLI-Manager marker/placement | `hook_config_owner_conflict` |
+| Stale spool lock | remove only after dead PID/age check and retry |
+| Spool limit/TTL removes events | insert `gap` with dropped count and sequence |
+| Event does not match a live daemon binding | reject without frontend/third-party delivery |
+
+### 5. Good/Base/Bad Cases
+
+- Good: one Host has Claude default root and a Codex project override; both Hooks install independently and share the Host bridge without cross-routing events.
+- Base: Agent is installed but Hook is not; remote terminal behavior is unchanged and live Hook status is unavailable.
+- Base: bridge is offline; Hook appends to its Host/client/installation spool and exits promptly, then reconnect replays and ACKs it.
+- Bad: rewrite all `hooks` arrays, infer ownership from an Agent-name substring, broadcast to every client, interpret a remote transcript ref as a local path, or include remote cwd in third-party notification data.
+
+### 6. Tests Required
+
+- Agent tests: exact merge/uninstall, duplicates, unknown events, malformed JSON/TOML, Codex feature/comment ownership, default/custom roots, symlink target changes, fingerprints, journal rollback, binding no-op, stdin bound, message redaction, stale lock, meta rebuild, spool limits/gap, and ACK.
+- Desktop Rust tests: strict report validation, reserved env overwrite, session binding rejection, bridge full-spool dedup including gap replay, remote payload validation, and third-party cwd redaction.
+- Frontend/type tests: per-tool Host roots, grouped project overrides, retained-root cleanup, preview confirmation, canonical paths, bilingual states, and remote transcript local-API refusal.
+- Run Agent host tests, Linux x64/arm64 all-target checks, desktop Rust tests, TypeScript, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+if command.contains("cli-manager-ssh-agent") {
+    remove_hook(command);
+}
+```
+
+#### Correct
+
+```rust
+if command == expected_command(source, event, installation_id) && matcher == expected_matcher {
+    remove_hook(command);
+}
+```
+
+Exact ownership prevents upgrades or uninstalls from deleting third-party and other-installation entries.
+
+## Scenario: Pi Agent Extension Hook Bridge
+
+### 1. Scope / Trigger
+
+- Trigger: Pi Agent uses auto-discovered TypeScript Extensions instead of Claude/Codex shell hook configuration.
+- Applies to: Hook settings commands, generated extension ownership, install status, PTY callback environment enablement, local Hook payload validation, and realtime stats session binding.
+
+### 2. Signatures
+
+```text
+hook_settings_install_pi({ selectedDir, codexSelectedDir, piSelectedDir, ccSwitchDbPath, module? })
+hook_settings_uninstall_pi({ selectedDir, codexSelectedDir, piSelectedDir, ccSwitchDbPath, module? })
+
+Pi extension path: ~/.pi/agent/extensions/cli-manager-hook.ts
+Pi source: pi
+Pi events: SessionStart | UserPromptSubmit | Stop
+Stable conflict error: pi_extension_conflict
+```
+
+### 3. Contracts
+
+- The generated extension is owned only when its content contains `PI_EXTENSION_MARKER`.
+- Install and per-module install may create a missing file or rewrite a marker-owned file; they must not rewrite an existing unowned file.
+- Uninstall may remove only a marker-owned file.
+- Required Pi modules are session start, running, stop, and the built-in Extension loading mechanism. Pi has no attention, failure, or sub-agent module requirement.
+- Full Pi installation reports `installed`; any non-empty strict subset reports `partialInstalled`; no modules reports `notInstalled`.
+- `session_start` maps to one `SessionStart`, `agent_start` maps to one `UserPromptSubmit`, and `agent_settled` maps to one `Stop`. Do not also map `before_agent_start` to `UserPromptSubmit`, because one Pi run emits both lifecycle events.
+- The extension reads `CLI_MANAGER_TAB_ID`, `CLI_MANAGER_NOTIFY_PORT`, and `CLI_MANAGER_NOTIFY_TOKEN` from its PTY environment and silently skips reporting if any are missing.
+- New user-visible Pi errors must pass through the frontend language selector in every install consumer, including Hook settings and sidebar repair; `zh-TW` uses the existing OpenCC conversion path.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Extension file is missing | Create the managed extension. |
+| Extension file contains the ownership marker | Reinstall or update selected modules. |
+| Extension file exists without the ownership marker | Return `pi_extension_conflict`; preserve exact content. |
+| Selected Pi directory is missing during install | Create it. |
+| Selected Pi directory is missing during status/uninstall | Return the existing directory-missing behavior; do not invent installed state. |
+| Hook callback environment is incomplete | Extension returns without throwing or interrupting Pi. |
+| Full three-module install | Return `installed`, allowing PTY callback environment injection. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a Pi-only user installs all modules, the shared Hook environment is injected, `SessionStart` binds the Pi session id, and realtime stats load.
+- Good: a user already has an unrelated `cli-manager-hook.ts`; install fails with a localized conflict message and preserves the file byte-for-byte.
+- Base: only session-start is enabled; status is `partialInstalled` and the module UI reflects that subset.
+- Bad: reuse Claude/Codex required-module assumptions for Pi and require an attention hook that Pi does not provide.
+- Bad: listen to both `before_agent_start` and `agent_start` for the same running event; this duplicates replay and notification traffic.
+
+### 6. Tests Required
+
+- Rust: full install reports `HookInstallStatus::Installed`, contains `session_start`, `agent_start`, and `agent_settled`, and does not contain `before_agent_start`.
+- Rust: one selected module reports `HookInstallStatus::PartialInstalled`.
+- Rust: install against an unowned same-name extension returns `pi_extension_conflict` and preserves exact content.
+- Rust: install then uninstall removes the marker-owned extension.
+- TypeScript: type-check after frontend status or localized error handling changes.
+- Manual: verify Hook settings in `zh-CN`, `zh-TW`, and `en-US`, then start one Pi run and confirm exactly one running transition.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// A single universal required-module list makes Pi permanently partial.
+let required = [session_start, running, attention, stop, feature];
+```
+
+```typescript
+pi.on("before_agent_start", reportRunning);
+pi.on("agent_start", reportRunning);
+```
+
+#### Correct
+
+```rust
+if checks.attention_hook_required {
+    values.push(checks.attention_hook_installed);
+}
+```
+
+```typescript
+pi.on("agent_start", reportRunning);
 ```

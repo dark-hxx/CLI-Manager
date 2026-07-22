@@ -1,3 +1,7 @@
+use crate::codex_app_server_proxy::{
+    CODEX_LAUNCHER_ENV, EXPECTED_SESSION_ID_ENV, HELPER_SUBCOMMAND as CODEX_PROXY_SUBCOMMAND,
+    PROXY_EXECUTABLE_ENV,
+};
 use crate::shell_resolver::{output_with_timeout, silent_command};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -15,11 +19,22 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
+pub(crate) mod handoff;
+pub(crate) mod handoff_notification;
+mod handoff_session;
+
 const PROFILE_FILE_NAME: &str = "profile.json";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const PROJECT_LIST_FILE_NAME: &str = "cli-manager-projects.txt";
 const PROJECT_SWITCH_SCRIPT_FILE_NAME: &str = "cli-manager-switch.ps1";
 const LOG_FILE_NAME: &str = "cc-connect.log";
+const WEIXIN_AUTH_DIR_NAME: &str = "weixin-authorization";
+const WEIXIN_AUTH_CONFIG_FILE_NAME: &str = "setup.toml";
+const WEIXIN_AUTH_QR_FILE_NAME: &str = "qr.png";
+const WEIXIN_AUTH_STDOUT_FILE_NAME: &str = "stdout.log";
+const WEIXIN_AUTH_STDERR_FILE_NAME: &str = "stderr.log";
+const WEIXIN_AUTH_TIMEOUT_SECS: u64 = 480;
+const MAX_WEIXIN_AUTH_QR_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_LOG_LINES: usize = 1_000;
 const DEFAULT_LOG_PAGE_SIZE: usize = 200;
 const MAX_LOG_PAGE_SIZE: usize = 500;
@@ -28,6 +43,8 @@ const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 const CONFIG_FORMAT_TIMEOUT: Duration = Duration::from_secs(8);
 const CODEX_APP_SERVER_PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 const LOCAL_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
+const DEFAULT_MAX_TURN_TIME_MINS: u32 = 15;
+const MAX_TURN_TIME_MINS: u32 = 24 * 60;
 const LOCAL_PROXY_PORTS: [u16; 2] = [7890, 10808];
 const REMOTE_SWITCH_ARG_PREFIX: &str = "--cc-connect-switch=";
 const REMOTE_SWITCH_RESTART_DELAY: Duration = Duration::from_secs(5);
@@ -42,9 +59,20 @@ const PROXY_ENV_KEYS: [&str; 6] = [
 const TELEGRAM_TOKEN_ACCOUNT: &str = "cc-connect-telegram-token";
 const FEISHU_APP_ID_ACCOUNT: &str = "cc-connect-feishu-app-id";
 const FEISHU_APP_SECRET_ACCOUNT: &str = "cc-connect-feishu-app-secret";
+const WEIXIN_TOKEN_ACCOUNT: &str = "cc-connect-weixin-token";
+const WECOM_BOT_ID_ACCOUNT: &str = "cc-connect-wecom-bot-id";
+const WECOM_BOT_SECRET_ACCOUNT: &str = "cc-connect-wecom-bot-secret";
 const TELEGRAM_TOKEN_ENV: &str = "CLI_MANAGER_CC_TELEGRAM_TOKEN";
 const FEISHU_APP_ID_ENV: &str = "CLI_MANAGER_CC_FEISHU_APP_ID";
 const FEISHU_APP_SECRET_ENV: &str = "CLI_MANAGER_CC_FEISHU_APP_SECRET";
+const WEIXIN_TOKEN_ENV: &str = "CLI_MANAGER_CC_WEIXIN_TOKEN";
+const WECOM_BOT_ID_ENV: &str = "CLI_MANAGER_CC_WECOM_BOT_ID";
+const WECOM_BOT_SECRET_ENV: &str = "CLI_MANAGER_CC_WECOM_BOT_SECRET";
+const CODEX_BASE_URL_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_BASE_URL_OVERRIDE";
+const CODEX_ENV_KEY_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_ENV_KEY_OVERRIDE";
+const CODEX_MODEL_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_MODEL_OVERRIDE";
+const CODEX_WIRE_API_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_WIRE_API_OVERRIDE";
+const CODEX_REMOTE_PROVIDER_NAME: &str = "cli_manager_remote";
 // Official v1.4.1 executable digests from the upstream release checksums.txt.
 // Hash before executing --version so an arbitrary PATH candidate cannot run during detection.
 const VERIFIED_V1_4_1_BINARY_SHA256: &[&str] = &[
@@ -96,11 +124,32 @@ impl CcConnectAgent {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum CcConnectPlatform {
     Telegram,
     Feishu,
+    Weixin,
+    Wecom,
+}
+
+const CC_CONNECT_PLATFORMS: [CcConnectPlatform; 4] = [
+    CcConnectPlatform::Telegram,
+    CcConnectPlatform::Feishu,
+    CcConnectPlatform::Weixin,
+    CcConnectPlatform::Wecom,
+];
+
+fn default_cc_connect_platform() -> CcConnectPlatform {
+    CcConnectPlatform::Telegram
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectPlatformProfile {
+    pub platform: CcConnectPlatform,
+    pub enabled: bool,
+    pub allow_from: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -119,20 +168,34 @@ pub struct CcConnectProfile {
     pub project_name: String,
     pub project_path: String,
     pub agent: CcConnectAgent,
+    #[serde(default = "default_cc_connect_platform")]
     pub platform: CcConnectPlatform,
+    #[serde(default)]
     pub allow_from: String,
     #[serde(default)]
+    pub platforms: Vec<CcConnectPlatformProfile>,
+    #[serde(default)]
     pub yolo_enabled: bool,
+    #[serde(default = "default_max_turn_time_mins")]
+    pub max_turn_time_mins: u32,
     #[serde(default = "default_true")]
     pub proxy_enabled: bool,
     pub proxy_url: Option<String>,
     #[serde(default)]
     pub logging_enabled: bool,
     pub language: CcConnectLanguage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cc_switch_db_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_max_turn_time_mins() -> u32 {
+    DEFAULT_MAX_TURN_TIME_MINS
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +205,9 @@ pub struct CcConnectSaveProfileRequest {
     pub telegram_token: Option<String>,
     pub feishu_app_id: Option<String>,
     pub feishu_app_secret: Option<String>,
+    pub weixin_token: Option<String>,
+    pub wecom_bot_id: Option<String>,
+    pub wecom_bot_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -159,6 +225,7 @@ pub struct CcConnectStatus {
     pub profile: Option<CcConnectProfile>,
     pub config_exists: bool,
     pub credentials_ready: bool,
+    pub platform_statuses: Vec<CcConnectPlatformStatus>,
     pub ready: bool,
     pub blockers: Vec<String>,
     pub warnings: Vec<String>,
@@ -168,6 +235,25 @@ pub struct CcConnectStatus {
     pub started_at_ms: Option<i64>,
     pub last_exit_code: Option<i32>,
     pub last_exit_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectPlatformStatus {
+    pub platform: CcConnectPlatform,
+    pub enabled: bool,
+    pub credentials_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectExecutableStatus {
+    pub installed: bool,
+    pub executable_path: String,
+    pub version: Option<String>,
+    pub sha256: Option<String>,
+    pub compatible: bool,
+    pub detection_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -185,6 +271,33 @@ pub struct CcConnectLogPage {
     pub lines: Vec<CcConnectLogLine>,
     pub next_seq: u64,
     pub log_path: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CcConnectWeixinAuthorizationPhase {
+    Starting,
+    Waiting,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectWeixinAuthorizationStatus {
+    pub phase: CcConnectWeixinAuthorizationPhase,
+    pub qr_data_url: Option<String>,
+    pub error: Option<String>,
+    pub allow_from: Option<String>,
+    pub profile: Option<CcConnectProfile>,
+    pub started_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectWeixinAuthorizeRequest {
+    pub profile: CcConnectProfile,
 }
 
 #[derive(Debug, Clone)]
@@ -206,6 +319,23 @@ struct ManagedProcess {
     #[cfg(target_os = "windows")]
     job: ChildJob,
     started_at_ms: i64,
+}
+
+struct WeixinAuthorizationProcess {
+    child: Child,
+    profile: CcConnectProfile,
+    config_path: PathBuf,
+    qr_path: PathBuf,
+    stdout_path: PathBuf,
+    stderr_path: PathBuf,
+    #[cfg(target_os = "windows")]
+    job: ChildJob,
+    started_at_ms: i64,
+}
+
+enum WeixinAuthorizationState {
+    Running(WeixinAuthorizationProcess),
+    Finished(CcConnectWeixinAuthorizationStatus),
 }
 
 #[derive(Default)]
@@ -264,10 +394,15 @@ pub struct CcConnectManager {
     log_writer: SharedLogWriter,
     detection: Arc<Mutex<Option<DetectionCache>>>,
     codex_app_server_check: Arc<Mutex<Option<Result<(), String>>>>,
+    weixin_authorization: Arc<Mutex<Option<WeixinAuthorizationState>>>,
 }
 
 impl Default for CcConnectManager {
     fn default() -> Self {
+        #[cfg(not(test))]
+        if let Ok((config, qr, stdout, stderr)) = weixin_authorization_paths() {
+            cleanup_weixin_authorization_files([&config, &qr, &stdout, &stderr]);
+        }
         Self {
             operation: Arc::new(Mutex::new(())),
             process: Arc::new(Mutex::new(ProcessState::default())),
@@ -275,6 +410,7 @@ impl Default for CcConnectManager {
             log_writer: Arc::new(Mutex::new(None)),
             detection: Arc::new(Mutex::new(None)),
             codex_app_server_check: Arc::new(Mutex::new(None)),
+            weixin_authorization: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -335,6 +471,41 @@ impl CcConnectManager {
             });
         }
         result
+    }
+
+    fn inspect_executable(&self, explicit_path: &str) -> CcConnectExecutableStatus {
+        let requested_path = explicit_path.trim();
+        let executable_path =
+            normalize_executable_path_value(Some(requested_path)).unwrap_or_default();
+        if requested_path.is_empty() {
+            return CcConnectExecutableStatus {
+                installed: false,
+                executable_path,
+                version: None,
+                sha256: None,
+                compatible: false,
+                detection_error: Some("cc-connect executable path is required".to_string()),
+            };
+        }
+
+        match self.detect(Some(requested_path), true) {
+            Ok(binary) => CcConnectExecutableStatus {
+                installed: true,
+                executable_path: user_path_string(&binary.path),
+                version: binary.version,
+                sha256: Some(binary.sha256),
+                compatible: binary.compatible,
+                detection_error: None,
+            },
+            Err(err) => CcConnectExecutableStatus {
+                installed: false,
+                executable_path,
+                version: None,
+                sha256: None,
+                compatible: false,
+                detection_error: Some(err),
+            },
+        }
     }
 
     fn check_codex_app_server(&self, refresh: bool) -> Result<(), String> {
@@ -431,6 +602,73 @@ fn data_dir() -> Result<PathBuf, String> {
 fn log_path() -> Result<PathBuf, String> {
     Ok(crate::app_paths::logs_dir()?.join(LOG_FILE_NAME))
 }
+
+fn weixin_authorization_dir() -> Result<PathBuf, String> {
+    Ok(remote_manager_dir()?.join(WEIXIN_AUTH_DIR_NAME))
+}
+
+fn weixin_authorization_paths() -> Result<(PathBuf, PathBuf, PathBuf, PathBuf), String> {
+    let dir = weixin_authorization_dir()?;
+    Ok((
+        dir.join(WEIXIN_AUTH_CONFIG_FILE_NAME),
+        dir.join(WEIXIN_AUTH_QR_FILE_NAME),
+        dir.join(WEIXIN_AUTH_STDOUT_FILE_NAME),
+        dir.join(WEIXIN_AUTH_STDERR_FILE_NAME),
+    ))
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("remove {} failed: {err}", path.display())),
+    }
+}
+
+fn cleanup_weixin_authorization_files(paths: [&Path; 4]) {
+    for path in paths {
+        let _ = remove_file_if_exists(path);
+    }
+}
+
+fn weixin_authorization_qr_data_url(path: &Path) -> Result<Option<String>, String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("inspect Weixin authorization QR failed: {err}")),
+    };
+    if metadata.len() == 0 || metadata.len() > MAX_WEIXIN_AUTH_QR_BYTES {
+        return Ok(None);
+    }
+    let bytes =
+        fs::read(path).map_err(|err| format!("read Weixin authorization QR failed: {err}"))?;
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "data:image/png;base64,{}",
+        BASE64_STANDARD.encode(bytes)
+    )))
+}
+
+fn weixin_authorization_error_detail(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let lines = raw
+        .lines()
+        .rev()
+        .filter_map(|line| {
+            let line = redact_log_line(line.trim(), &[]);
+            (!line.is_empty()).then_some(line)
+        })
+        .take(4)
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.into_iter().rev().collect::<Vec<_>>().join(" | "))
+    }
+}
+
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
@@ -750,6 +988,8 @@ struct RegisteredProject {
     path: String,
     agent: CcConnectAgent,
     group_path: Vec<RegisteredGroupSegment>,
+    provider_id: Option<String>,
+    codex_provider_id: Option<String>,
     provider_name: Option<String>,
     provider_is_global: bool,
 }
@@ -781,18 +1021,30 @@ struct RegisteredProjectRow {
 
 #[derive(Debug, Default)]
 struct ProviderCatalog {
-    current_by_app: BTreeMap<String, String>,
+    current_by_app: BTreeMap<String, ProviderCatalogEntry>,
     names_by_app_and_id: BTreeMap<(String, String), String>,
 }
 
-fn build_managed_config(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderCatalogEntry {
+    id: String,
+    name: String,
+}
+
+fn platform_type(platform: CcConnectPlatform) -> &'static str {
+    match platform {
+        CcConnectPlatform::Telegram => "telegram",
+        CcConnectPlatform::Feishu => "feishu",
+        CcConnectPlatform::Weixin => "weixin",
+        CcConnectPlatform::Wecom => "wecom",
+    }
+}
+
+fn build_managed_platform(
     profile: &CcConnectProfile,
-    project_list_path: &Path,
-    project_switch_script_path: &Path,
-) -> Result<ManagedConfig, String> {
-    let allow_from = normalize_allow_from(profile.platform, &profile.allow_from)?;
-    let (commands, aliases) =
-        build_remote_project_commands(profile, project_list_path, project_switch_script_path)?;
+    platform_profile: &CcConnectPlatformProfile,
+) -> Result<(ManagedPlatform, String), String> {
+    let allow_from = normalize_allow_from(platform_profile.platform, &platform_profile.allow_from)?;
     let mut options = BTreeMap::new();
     options.insert(
         "allow_from".to_string(),
@@ -803,7 +1055,7 @@ fn build_managed_config(
         "share_session_in_channel".to_string(),
         toml::Value::Boolean(false),
     );
-    match profile.platform {
+    match platform_profile.platform {
         CcConnectPlatform::Telegram => {
             options.insert(
                 "token".to_string(),
@@ -828,7 +1080,64 @@ fn build_managed_config(
             options.insert("thread_isolation".to_string(), toml::Value::Boolean(false));
             options.insert("reply_to_trigger".to_string(), toml::Value::Boolean(true));
         }
+        CcConnectPlatform::Weixin => {
+            options.insert(
+                "token".to_string(),
+                toml::Value::String(format!("${{{}}}", WEIXIN_TOKEN_ENV)),
+            );
+            options.insert(
+                "account_id".to_string(),
+                toml::Value::String(profile.project_id.clone()),
+            );
+        }
+        CcConnectPlatform::Wecom => {
+            options.insert(
+                "mode".to_string(),
+                toml::Value::String("websocket".to_string()),
+            );
+            options.insert(
+                "bot_id".to_string(),
+                toml::Value::String(format!("${{{}}}", WECOM_BOT_ID_ENV)),
+            );
+            options.insert(
+                "bot_secret".to_string(),
+                toml::Value::String(format!("${{{}}}", WECOM_BOT_SECRET_ENV)),
+            );
+        }
     }
+    Ok((
+        ManagedPlatform {
+            kind: platform_type(platform_profile.platform).to_string(),
+            options,
+        },
+        allow_from,
+    ))
+}
+
+fn build_managed_config(
+    profile: &CcConnectProfile,
+    project_list_path: &Path,
+    project_switch_script_path: &Path,
+) -> Result<ManagedConfig, String> {
+    let configured_platforms = enabled_platforms(profile);
+    if configured_platforms.is_empty() {
+        return Err("at least one messaging platform must be enabled".to_string());
+    }
+    let mut platforms = Vec::with_capacity(configured_platforms.len());
+    let mut admin_users = Vec::new();
+    let mut seen_admin_users = HashSet::new();
+    for platform_profile in &configured_platforms {
+        let (platform, allow_from) = build_managed_platform(profile, platform_profile)?;
+        for user in allow_from.split(',') {
+            if seen_admin_users.insert(user.to_string()) {
+                admin_users.push(user.to_string());
+            }
+        }
+        platforms.push(platform);
+    }
+    let admin_from = admin_users.join(",");
+    let (commands, aliases) =
+        build_remote_project_commands(profile, project_list_path, project_switch_script_path)?;
     Ok(ManagedConfig {
         data_dir: config_path_value(&data_dir()?),
         language: match profile.language {
@@ -836,7 +1145,7 @@ fn build_managed_config(
             CcConnectLanguage::En => "en",
         }
         .to_string(),
-        max_turn_time_mins: 15,
+        max_turn_time_mins: profile.max_turn_time_mins,
         queue: ManagedQueueConfig { max_depth: 2 },
         rate_limit: ManagedRateLimitConfig {
             max_messages: 10,
@@ -854,7 +1163,7 @@ fn build_managed_config(
             name: profile.project_name.clone(),
             // Exec-backed CLI-Manager commands require cc-connect admin status.
             // Every other privileged built-in remains disabled below.
-            admin_from: allow_from,
+            admin_from,
             // Preserve basic session controls while blocking commands that can
             // change authorization, persistence, providers, workspaces, or files.
             disabled_commands: [
@@ -909,21 +1218,137 @@ fn build_managed_config(
                         (TELEGRAM_TOKEN_ENV.to_string(), String::new()),
                         (FEISHU_APP_ID_ENV.to_string(), String::new()),
                         (FEISHU_APP_SECRET_ENV.to_string(), String::new()),
+                        (WEIXIN_TOKEN_ENV.to_string(), String::new()),
+                        (WECOM_BOT_ID_ENV.to_string(), String::new()),
+                        (WECOM_BOT_SECRET_ENV.to_string(), String::new()),
                     ]
                     .into_iter()
                     .collect(),
                 },
             },
-            platforms: vec![ManagedPlatform {
-                kind: match profile.platform {
-                    CcConnectPlatform::Telegram => "telegram",
-                    CcConnectPlatform::Feishu => "feishu",
-                }
-                .to_string(),
-                options,
-            }],
+            platforms,
         }],
     })
+}
+
+fn build_weixin_authorization_config(profile: &CcConnectProfile) -> Result<String, String> {
+    let dir = weixin_authorization_dir()?;
+    let mut authorization_profile = profile.clone();
+    hydrate_profile_platforms(&mut authorization_profile);
+    authorization_profile.platform = CcConnectPlatform::Weixin;
+    for item in &mut authorization_profile.platforms {
+        item.enabled = item.platform == CcConnectPlatform::Weixin;
+    }
+    authorization_profile.allow_from = authorization_profile
+        .platforms
+        .iter()
+        .find(|item| item.platform == CcConnectPlatform::Weixin)
+        .map(|item| item.allow_from.clone())
+        .unwrap_or_default();
+    let mut config = build_managed_config(
+        &authorization_profile,
+        &dir.join(PROJECT_LIST_FILE_NAME),
+        &dir.join(PROJECT_SWITCH_SCRIPT_FILE_NAME),
+    )?;
+    let platform = config
+        .projects
+        .first_mut()
+        .and_then(|project| {
+            project
+                .platforms
+                .iter_mut()
+                .find(|platform| platform.kind == "weixin")
+        })
+        .ok_or_else(|| "Weixin authorization platform is missing".to_string())?;
+    platform
+        .options
+        .insert("token".to_string(), toml::Value::String(String::new()));
+    platform
+        .options
+        .insert("allow_from".to_string(), toml::Value::String(String::new()));
+    toml::to_string_pretty(&config)
+        .map_err(|err| format!("serialize Weixin authorization config failed: {err}"))
+}
+
+#[derive(Debug)]
+struct WeixinAuthorizationResult {
+    token: String,
+    allow_from: String,
+}
+
+fn parse_weixin_authorization_result(
+    path: &Path,
+    project_name: &str,
+) -> Result<WeixinAuthorizationResult, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|err| format!("read Weixin authorization result failed: {err}"))?;
+    let root: toml::Value = toml::from_str(&raw)
+        .map_err(|err| format!("parse Weixin authorization result failed: {err}"))?;
+    let projects = root
+        .get("projects")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "Weixin authorization result has no projects".to_string())?;
+    let project = projects
+        .iter()
+        .find(|project| {
+            project
+                .get("name")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|name| name == project_name)
+        })
+        .ok_or_else(|| "Weixin authorization project is missing".to_string())?;
+    let platform = project
+        .get("platforms")
+        .and_then(toml::Value::as_array)
+        .and_then(|platforms| {
+            platforms.iter().find(|platform| {
+                platform
+                    .get("type")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("weixin"))
+            })
+        })
+        .ok_or_else(|| "Weixin authorization platform is missing".to_string())?;
+    let options = platform
+        .get("options")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "Weixin authorization options are missing".to_string())?;
+    let token = options
+        .get("token")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Weixin authorization token is missing".to_string())?
+        .to_string();
+    let allow_from = options
+        .get("allow_from")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default();
+    let allow_from = normalize_allow_from(CcConnectPlatform::Weixin, allow_from)
+        .map_err(|_| "Weixin authorization user ID is missing".to_string())?;
+    Ok(WeixinAuthorizationResult { token, allow_from })
+}
+
+fn merge_weixin_allow_from(existing: &str, scanned: &str) -> Result<String, String> {
+    let mut seen = HashSet::new();
+    let mut values = Vec::new();
+    for source in [existing, scanned] {
+        let normalized = if source.trim().is_empty() {
+            continue;
+        } else {
+            normalize_allow_from(CcConnectPlatform::Weixin, source)?
+        };
+        for value in normalized.split(',') {
+            if seen.insert(value.to_string()) {
+                values.push(value.to_string());
+            }
+        }
+    }
+    if values.is_empty() {
+        Err("Weixin authorization user ID is missing".to_string())
+    } else {
+        Ok(values.join(","))
+    }
 }
 
 fn build_remote_project_commands(
@@ -1258,6 +1683,12 @@ fn user_path_string(path: &Path) -> String {
     value
 }
 
+fn normalize_executable_path_value(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| user_path_string(Path::new(value)))
+}
+
 fn config_path_value(path: &Path) -> String {
     user_path_string(path).replace('\\', "/")
 }
@@ -1342,7 +1773,7 @@ fn write_managed_config(profile: &CcConnectProfile) -> Result<PathBuf, String> {
     let path = config_path()?;
     let list_path = project_list_path()?;
     let switch_script_path = project_switch_script_path()?;
-    let registered_projects = load_registered_projects()?;
+    let registered_projects = load_registered_projects(Some(profile))?;
     let cli_manager_executable = std::env::current_exe()
         .map_err(|err| format!("resolve CLI-Manager executable failed: {err}"))?;
     let payload = toml::to_string_pretty(&build_managed_config(
@@ -1402,9 +1833,11 @@ fn load_profile() -> Result<Option<CcConnectProfile>, String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(format!("read cc-connect profile failed: {err}")),
     };
-    serde_json::from_str(&raw)
-        .map(Some)
-        .map_err(|err| format!("parse cc-connect profile failed: {err}"))
+    let mut profile: CcConnectProfile = serde_json::from_str(&raw)
+        .map_err(|err| format!("parse cc-connect profile failed: {err}"))?;
+    profile.executable_path = normalize_executable_path_value(profile.executable_path.as_deref());
+    hydrate_profile_platforms(&mut profile);
+    Ok(Some(profile))
 }
 
 fn persist_profile(profile: &CcConnectProfile) -> Result<(), String> {
@@ -1418,10 +1851,99 @@ fn persist_profile(profile: &CcConnectProfile) -> Result<(), String> {
     write_file_atomically(&path, payload.as_bytes(), "cc-connect profile")
 }
 
+fn profile_platforms(profile: &CcConnectProfile) -> Vec<CcConnectPlatformProfile> {
+    if profile.platforms.is_empty() {
+        return vec![CcConnectPlatformProfile {
+            platform: profile.platform,
+            enabled: true,
+            allow_from: profile.allow_from.clone(),
+        }];
+    }
+    profile.platforms.clone()
+}
+
+fn hydrate_profile_platforms(profile: &mut CcConnectProfile) {
+    let legacy_platform = profile.platform;
+    let legacy_allow_from = profile.allow_from.clone();
+    let had_platforms = !profile.platforms.is_empty();
+    let mut configured = BTreeMap::new();
+    for platform in profile.platforms.drain(..) {
+        configured.entry(platform.platform).or_insert(platform);
+    }
+    if !had_platforms {
+        configured.insert(
+            legacy_platform,
+            CcConnectPlatformProfile {
+                platform: legacy_platform,
+                enabled: true,
+                allow_from: legacy_allow_from,
+            },
+        );
+    }
+    profile.platforms = CC_CONNECT_PLATFORMS
+        .into_iter()
+        .map(|platform| {
+            configured
+                .remove(&platform)
+                .unwrap_or(CcConnectPlatformProfile {
+                    platform,
+                    enabled: false,
+                    allow_from: String::new(),
+                })
+        })
+        .collect();
+    profile.allow_from = profile
+        .platforms
+        .iter()
+        .find(|item| item.platform == profile.platform)
+        .map(|item| item.allow_from.clone())
+        .unwrap_or_default();
+}
+
+fn enabled_platforms(profile: &CcConnectProfile) -> Vec<CcConnectPlatformProfile> {
+    profile_platforms(profile)
+        .into_iter()
+        .filter(|item| item.enabled)
+        .collect()
+}
+
+fn platform_profile(
+    profile: &CcConnectProfile,
+    platform: CcConnectPlatform,
+) -> Option<CcConnectPlatformProfile> {
+    profile_platforms(profile)
+        .into_iter()
+        .find(|item| item.platform == platform)
+}
+
+fn set_platform_allow_from(
+    profile: &mut CcConnectProfile,
+    platform: CcConnectPlatform,
+    allow_from: String,
+) {
+    hydrate_profile_platforms(profile);
+    if let Some(item) = profile
+        .platforms
+        .iter_mut()
+        .find(|item| item.platform == platform)
+    {
+        item.allow_from = allow_from.clone();
+    }
+    if profile.platform == platform {
+        profile.allow_from = allow_from;
+    }
+}
+
 fn normalize_profile(
     manager: &CcConnectManager,
     mut profile: CcConnectProfile,
 ) -> Result<CcConnectProfile, String> {
+    hydrate_profile_platforms(&mut profile);
+    if profile.max_turn_time_mins > MAX_TURN_TIME_MINS {
+        return Err(format!(
+            "max_turn_time_mins must be between 0 and {MAX_TURN_TIME_MINS}"
+        ));
+    }
     profile.project_id = profile.project_id.trim().to_string();
     profile.project_name = profile.project_name.trim().to_string();
     profile.project_path = profile.project_path.trim().to_string();
@@ -1437,20 +1959,53 @@ fn normalize_profile(
             .canonicalize()
             .map_err(|err| format!("canonicalize project path failed: {err}"))?,
     );
-    validate_registered_project(&profile)?;
-    profile.allow_from = normalize_allow_from(profile.platform, &profile.allow_from)?;
-    if profile.proxy_enabled {
-        profile.proxy_url = normalize_proxy_url(profile.proxy_url.as_deref())?;
-    }
-    profile.executable_path = profile
-        .executable_path
+    profile.cc_switch_db_path = profile
+        .cc_switch_db_path
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+        .map(PathBuf::from)
+        .map(crate::commands::ccswitch::validate_ccswitch_db_path)
+        .transpose()?
+        .map(|path| user_path_string(&path));
+    profile.codex_config_dir = profile
+        .codex_config_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|path| {
+            if !path.is_absolute() {
+                return Err("codex_config_dir_invalid".to_string());
+            }
+            Ok(user_path_string(&path))
+        })
+        .transpose()?;
+    validate_registered_project(&profile)?;
+    let mut enabled_count = 0usize;
+    for item in &mut profile.platforms {
+        item.allow_from = item.allow_from.trim().to_string();
+        if item.enabled {
+            enabled_count += 1;
+            item.allow_from = normalize_allow_from(item.platform, &item.allow_from)?;
+        }
+    }
+    if enabled_count == 0 {
+        return Err("at least one messaging platform must be enabled".to_string());
+    }
+    profile.allow_from = profile
+        .platforms
+        .iter()
+        .find(|item| item.platform == profile.platform)
+        .map(|item| item.allow_from.clone())
+        .unwrap_or_default();
+    if profile.proxy_enabled {
+        profile.proxy_url = normalize_proxy_url(profile.proxy_url.as_deref())?;
+    }
+    profile.executable_path = normalize_executable_path_value(profile.executable_path.as_deref());
     if let Some(explicit_path) = profile.executable_path.as_deref() {
         let binary = manager.detect(Some(explicit_path), true)?;
-        profile.executable_path = Some(path_string(&binary.path));
+        profile.executable_path = Some(user_path_string(&binary.path));
     }
     Ok(profile)
 }
@@ -1486,6 +2041,12 @@ fn normalize_allow_from(platform: CcConnectPlatform, raw: &str) -> Result<String
         let valid = match platform {
             CcConnectPlatform::Telegram => value.chars().all(|ch| ch.is_ascii_digit()),
             CcConnectPlatform::Feishu => value.starts_with("ou_") && value.len() > 3,
+            CcConnectPlatform::Weixin => {
+                value.ends_with("@im.wechat") && value.len() > "@im.wechat".len()
+            }
+            CcConnectPlatform::Wecom => {
+                value.len() <= 256 && !value.chars().any(char::is_whitespace)
+            }
         };
         if !valid {
             return Err(match platform {
@@ -1494,6 +2055,12 @@ fn normalize_allow_from(platform: CcConnectPlatform, raw: &str) -> Result<String
                 }
                 CcConnectPlatform::Feishu => {
                     "Feishu allow_from must contain ou_ open IDs".to_string()
+                }
+                CcConnectPlatform::Weixin => {
+                    "Weixin allow_from must contain user IDs ending in @im.wechat".to_string()
+                }
+                CcConnectPlatform::Wecom => {
+                    "WeCom allow_from must contain explicit user IDs".to_string()
                 }
             });
         }
@@ -1516,7 +2083,13 @@ fn profile_issue_codes(profile: &CcConnectProfile) -> Vec<String> {
     if !path.is_absolute() || !path.is_dir() {
         issues.push("project_path_missing".to_string());
     }
-    if normalize_allow_from(profile.platform, &profile.allow_from).is_err() {
+    let enabled = enabled_platforms(profile);
+    if enabled.is_empty() {
+        issues.push("platform_missing".to_string());
+    } else if enabled
+        .iter()
+        .any(|item| normalize_allow_from(item.platform, &item.allow_from).is_err())
+    {
         issues.push("allowlist_invalid".to_string());
     }
     if profile.proxy_enabled && normalize_proxy_url(profile.proxy_url.as_deref()).is_err() {
@@ -1525,15 +2098,283 @@ fn profile_issue_codes(profile: &CcConnectProfile) -> Vec<String> {
     issues
 }
 
-fn default_cc_switch_db_path() -> Option<PathBuf> {
-    let home = env::var_os("USERPROFILE")
+fn user_home_dir() -> Option<PathBuf> {
+    env::var_os("USERPROFILE")
         .filter(|value| !value.is_empty())
-        .or_else(|| env::var_os("HOME").filter(|value| !value.is_empty()))?;
-    Some(PathBuf::from(home).join(".cc-switch").join("cc-switch.db"))
+        .or_else(|| env::var_os("HOME").filter(|value| !value.is_empty()))
+        .map(PathBuf::from)
 }
 
-async fn load_provider_catalog() -> ProviderCatalog {
-    let Some(database_path) = default_cc_switch_db_path().filter(|path| path.is_file()) else {
+fn default_cc_switch_db_path() -> Option<PathBuf> {
+    Some(user_home_dir()?.join(".cc-switch").join("cc-switch.db"))
+}
+
+fn configured_cc_switch_db_path(profile: Option<&CcConnectProfile>) -> Option<PathBuf> {
+    profile
+        .and_then(|profile| profile.cc_switch_db_path.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(default_cc_switch_db_path)
+}
+
+struct RemoteCodexLaunch {
+    wrapper_dir: PathBuf,
+    launcher: PathBuf,
+    proxy_executable: PathBuf,
+    expected_session_id: Option<String>,
+    codex_home: PathBuf,
+    base_url_override: String,
+    env_key_override: String,
+    model_override: Option<String>,
+    wire_api_override: String,
+    env_key: String,
+    secret: String,
+}
+
+fn codex_config_dir(profile: &CcConnectProfile) -> Result<PathBuf, String> {
+    profile
+        .codex_config_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| user_home_dir().map(|home| home.join(".codex")))
+        .ok_or_else(|| "home_dir_unavailable".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_codex_launcher(wrapper_dir: &Path) -> Result<PathBuf, String> {
+    let path_value = env::var_os("PATH").ok_or_else(|| "codex PATH is unavailable".to_string())?;
+    for directory in env::split_paths(&path_value) {
+        if directory == wrapper_dir {
+            continue;
+        }
+        for file_name in ["codex.exe", "codex.cmd", "codex.bat", "codex.com"] {
+            let candidate = directory.join(file_name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err("Codex launcher was not found in PATH".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_codex_launcher(_wrapper_dir: &Path) -> Result<PathBuf, String> {
+    Ok(PathBuf::from("codex"))
+}
+
+fn codex_profile_wrapper_payload() -> String {
+    #[cfg(target_os = "windows")]
+    let payload = format!(
+        "@echo off\r\nsetlocal\r\nif /I \"%~1\"==\"app-server\" (\r\n  if defined {CODEX_MODEL_OVERRIDE_ENV} (\r\n    \"%{PROXY_EXECUTABLE_ENV}%\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" -c \"%{CODEX_MODEL_OVERRIDE_ENV}%\" %*\r\n  ) else (\r\n    \"%{PROXY_EXECUTABLE_ENV}%\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" %*\r\n  )\r\n) else (\r\n  if defined {CODEX_MODEL_OVERRIDE_ENV} (\r\n    call \"%{CODEX_LAUNCHER_ENV}%\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" -c \"%{CODEX_MODEL_OVERRIDE_ENV}%\" %*\r\n  ) else (\r\n    call \"%{CODEX_LAUNCHER_ENV}%\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" %*\r\n  )\r\n)\r\nexit /b %errorlevel%\r\n"
+    );
+    #[cfg(not(target_os = "windows"))]
+    let payload = format!(
+        "#!/bin/sh\nif [ \"${{1:-}}\" = \"app-server\" ]; then\n  if [ -n \"${{{CODEX_MODEL_OVERRIDE_ENV}:-}}\" ]; then\n    exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_OVERRIDE_ENV}\" \"$@\"\n  else\n    exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" \"$@\"\n  fi\nfi\nif [ -n \"${{{CODEX_MODEL_OVERRIDE_ENV}:-}}\" ]; then\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_OVERRIDE_ENV}\" \"$@\"\nelse\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" \"$@\"\nfi\n"
+    );
+    payload
+}
+
+fn codex_wrapper_override(key: &str, value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("Codex {key} is empty"));
+    }
+    if value
+        .chars()
+        .any(|ch| ch.is_control() || matches!(ch, '"' | '%' | '!' | '^' | '&' | '|' | '<' | '>'))
+    {
+        return Err(format!(
+            "Codex {key} contains unsupported command characters"
+        ));
+    }
+    Ok(format!("{key}={value}"))
+}
+
+fn codex_base_url_override(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    let url =
+        reqwest::Url::parse(value).map_err(|_| "Codex Provider base URL is invalid".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("Codex Provider base URL must use HTTP or HTTPS".to_string());
+    }
+    codex_wrapper_override(
+        &format!("model_providers.{CODEX_REMOTE_PROVIDER_NAME}.base_url"),
+        value,
+    )
+}
+
+fn codex_env_key_override(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    let mut chars = value.chars();
+    if !chars
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return Err("Codex Provider environment key is invalid".to_string());
+    }
+    codex_wrapper_override(
+        &format!("model_providers.{CODEX_REMOTE_PROVIDER_NAME}.env_key"),
+        value,
+    )
+}
+
+fn codex_wire_api_override(value: Option<&str>) -> Result<String, String> {
+    let value = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("responses");
+    codex_wrapper_override(
+        &format!("model_providers.{CODEX_REMOTE_PROVIDER_NAME}.wire_api"),
+        value,
+    )
+}
+
+fn codex_model_override(value: Option<&str>) -> Result<Option<String>, String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| codex_wrapper_override("model", value))
+        .transpose()
+}
+
+fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
+    let wrapper_dir = remote_manager_dir()?.join("bin");
+    fs::create_dir_all(&wrapper_dir)
+        .map_err(|err| format!("create Codex wrapper directory failed: {err}"))?;
+    #[cfg(target_os = "windows")]
+    let wrapper_path = wrapper_dir.join("codex.cmd");
+    #[cfg(not(target_os = "windows"))]
+    let wrapper_path = wrapper_dir.join("codex");
+    let payload = codex_profile_wrapper_payload();
+    write_file_atomically_if_changed(&wrapper_path, payload.as_bytes(), "Codex profile wrapper")?;
+    Ok(wrapper_path)
+}
+
+fn prepare_remote_codex_launch(
+    profile: &CcConnectProfile,
+    project: &RegisteredProject,
+) -> Result<Option<RemoteCodexLaunch>, String> {
+    if profile.agent != CcConnectAgent::Codex {
+        return Ok(None);
+    }
+    let Some(provider_id) = project.codex_provider_id.as_deref() else {
+        return Ok(None);
+    };
+    let database_path = configured_cc_switch_db_path(Some(profile))
+        .ok_or_else(|| "home_dir_unavailable".to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("create provider query runtime failed: {err}"))?
+        .block_on(
+            crate::commands::ccswitch::load_codex_runtime_config_from_path(
+                provider_id,
+                &database_path,
+            ),
+        )?;
+    let codex_home = codex_config_dir(profile)?;
+    let wrapper_path = write_codex_profile_wrapper()?;
+    let wrapper_dir = wrapper_path
+        .parent()
+        .ok_or_else(|| "Codex wrapper directory is missing".to_string())?
+        .to_path_buf();
+    let launcher = resolve_codex_launcher(&wrapper_dir)?;
+    let proxy_executable = env::current_exe()
+        .map_err(|err| format!("resolve Codex app-server proxy failed: {err}"))?;
+    let expected_session_id =
+        handoff_session::load_handoff_record()?.map(|record| record.cli_session_id);
+    Ok(Some(RemoteCodexLaunch {
+        wrapper_dir,
+        launcher,
+        proxy_executable,
+        expected_session_id,
+        codex_home,
+        base_url_override: codex_base_url_override(&runtime.base_url)?,
+        env_key_override: codex_env_key_override(&runtime.env_key)?,
+        model_override: codex_model_override(runtime.model.as_deref())?,
+        wire_api_override: codex_wire_api_override(runtime.wire_api.as_deref())?,
+        env_key: runtime.env_key,
+        secret: runtime.secret_value,
+    }))
+}
+
+fn apply_remote_codex_launch_environment(
+    command: &mut Command,
+    launch: &RemoteCodexLaunch,
+) -> Result<(), String> {
+    let mut paths = vec![launch.wrapper_dir.clone()];
+    if let Some(path_value) = env::var_os("PATH") {
+        paths.extend(env::split_paths(&path_value));
+    }
+    let path_value =
+        env::join_paths(paths).map_err(|err| format!("build Codex wrapper PATH failed: {err}"))?;
+    command
+        .env("PATH", path_value)
+        .env(CODEX_LAUNCHER_ENV, &launch.launcher)
+        .env(PROXY_EXECUTABLE_ENV, &launch.proxy_executable)
+        .env(CODEX_BASE_URL_OVERRIDE_ENV, &launch.base_url_override)
+        .env(CODEX_ENV_KEY_OVERRIDE_ENV, &launch.env_key_override)
+        .env(CODEX_WIRE_API_OVERRIDE_ENV, &launch.wire_api_override)
+        .env("CODEX_HOME", &launch.codex_home);
+    match launch.expected_session_id.as_ref() {
+        Some(session_id) => {
+            command.env(EXPECTED_SESSION_ID_ENV, session_id);
+        }
+        None => {
+            command.env_remove(EXPECTED_SESSION_ID_ENV);
+        }
+    }
+    match launch.model_override.as_ref() {
+        Some(model_override) => {
+            command.env(CODEX_MODEL_OVERRIDE_ENV, model_override);
+        }
+        None => {
+            command.env_remove(CODEX_MODEL_OVERRIDE_ENV);
+        }
+    }
+    Ok(())
+}
+
+fn probe_remote_codex_app_server(launch: &RemoteCodexLaunch) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = silent_command("cmd.exe");
+        command
+            .args(["/d", "/c"])
+            .arg(launch.wrapper_dir.join("codex.cmd"));
+        command
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut command = silent_command(&path_string(&launch.wrapper_dir.join("codex")));
+    command.args(["app-server", "--listen", "stdio://"]);
+    command.env(&launch.env_key, &launch.secret);
+    apply_remote_codex_launch_environment(&mut command, launch)?;
+    let output = output_with_timeout(command, CODEX_APP_SERVER_PROBE_TIMEOUT)
+        .map_err(|err| format!("Codex Provider app-server probe failed: {err}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = redact_log_line(
+        &output_text(&output.stdout, &output.stderr),
+        std::slice::from_ref(&launch.secret),
+    );
+    Err(format!(
+        "Codex Provider app-server probe exited with {}: {}",
+        output.status,
+        if detail.is_empty() {
+            "no diagnostic output"
+        } else {
+            &detail
+        }
+    ))
+}
+
+async fn load_provider_catalog(database_path: Option<&Path>) -> ProviderCatalog {
+    let Some(database_path) = database_path.filter(|path| path.is_file()) else {
         return ProviderCatalog::default();
     };
     let options = SqliteConnectOptions::new()
@@ -1574,7 +2415,13 @@ async fn load_provider_catalog() -> ProviderCatalog {
             .names_by_app_and_id
             .insert((app_type.clone(), id.trim().to_string()), name.clone());
         if is_current {
-            catalog.current_by_app.entry(app_type).or_insert(name);
+            catalog
+                .current_by_app
+                .entry(app_type)
+                .or_insert(ProviderCatalogEntry {
+                    id: id.trim().to_string(),
+                    name,
+                });
         }
     }
     catalog
@@ -1584,7 +2431,7 @@ fn project_provider(
     agent: CcConnectAgent,
     provider_overrides: &str,
     catalog: &ProviderCatalog,
-) -> (Option<String>, bool) {
+) -> (Option<String>, Option<String>, bool) {
     let app_type = match agent {
         CcConnectAgent::Claude => "claude",
         CcConnectAgent::Codex => "codex",
@@ -1611,12 +2458,15 @@ fn project_provider(
                         .cloned()
                 })
                 .unwrap_or_else(|| provider_id.to_string());
-            Some(provider_name)
+            Some((provider_id.to_string(), provider_name))
         });
-    if let Some(provider_name) = project_override {
-        return (Some(provider_name), false);
+    if let Some((provider_id, provider_name)) = project_override {
+        return (Some(provider_id), Some(provider_name), false);
     }
-    (catalog.current_by_app.get(app_type).cloned(), true)
+    match catalog.current_by_app.get(app_type) {
+        Some(provider) => (Some(provider.id.clone()), Some(provider.name.clone()), true),
+        None => (None, None, true),
+    }
 }
 
 fn compare_display_names(left: &str, right: &str) -> std::cmp::Ordering {
@@ -1652,14 +2502,21 @@ fn registered_project_from_row(
     group_path: &[RegisteredGroupSegment],
     catalog: &ProviderCatalog,
 ) -> RegisteredProject {
-    let (provider_name, provider_is_global) =
+    let (provider_id, provider_name, provider_is_global) =
         project_provider(row.agent, &row.provider_overrides, catalog);
+    let codex_provider_id = if row.agent == CcConnectAgent::Codex {
+        provider_id.clone()
+    } else {
+        project_provider(CcConnectAgent::Codex, &row.provider_overrides, catalog).0
+    };
     RegisteredProject {
         id: row.id.clone(),
         name: row.name.clone(),
         path: row.path.clone(),
         agent: row.agent,
         group_path: group_path.to_vec(),
+        provider_id,
+        codex_provider_id,
         provider_name,
         provider_is_global,
     }
@@ -1835,8 +2692,11 @@ fn order_registered_projects(
     output
 }
 
-fn load_registered_projects() -> Result<Vec<RegisteredProject>, String> {
+fn load_registered_projects(
+    profile: Option<&CcConnectProfile>,
+) -> Result<Vec<RegisteredProject>, String> {
     let database_path = crate::app_paths::db_path()?;
+    let provider_database_path = configured_cc_switch_db_path(profile);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1914,7 +2774,7 @@ fn load_registered_projects() -> Result<Vec<RegisteredProject>, String> {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let provider_catalog = load_provider_catalog().await;
+        let provider_catalog = load_provider_catalog(provider_database_path.as_deref()).await;
         Ok(order_registered_projects(
             groups,
             projects,
@@ -1923,18 +2783,21 @@ fn load_registered_projects() -> Result<Vec<RegisteredProject>, String> {
     })
 }
 
-fn registered_project_by_token(token: &str) -> Result<RegisteredProject, String> {
+fn registered_project_by_token(
+    profile: &CcConnectProfile,
+    token: &str,
+) -> Result<RegisteredProject, String> {
     if !is_switch_identifier(token) {
         return Err("invalid CLI-Manager project switch token".to_string());
     }
-    load_registered_projects()?
+    load_registered_projects(Some(profile))?
         .into_iter()
         .find(|project| project_switch_token(&project.id).eq_ignore_ascii_case(token))
         .ok_or_else(|| "the selected project is no longer registered in CLI-Manager".to_string())
 }
 
-fn validate_registered_project(profile: &CcConnectProfile) -> Result<(), String> {
-    let project = load_registered_projects()?
+fn validate_registered_project(profile: &CcConnectProfile) -> Result<RegisteredProject, String> {
+    let project = load_registered_projects(Some(profile))?
         .into_iter()
         .find(|project| project.id == profile.project_id)
         .ok_or_else(|| "selected project is no longer registered in CLI-Manager".to_string())?;
@@ -1949,7 +2812,7 @@ fn validate_registered_project(profile: &CcConnectProfile) -> Result<(), String>
             "remote profile is stale; save it again from the current project list".to_string(),
         );
     }
-    Ok(())
+    Ok(project)
 }
 
 #[cfg(target_os = "windows")]
@@ -1987,34 +2850,23 @@ fn delete_credential(_account: &str) -> Result<(), String> {
 }
 
 fn save_request_credentials(request: &CcConnectSaveProfileRequest) -> Result<(), String> {
-    match request.profile.platform {
-        CcConnectPlatform::Telegram => {
-            if let Some(value) = request
-                .telegram_token
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                set_credential(TELEGRAM_TOKEN_ACCOUNT, value)?;
-            }
-        }
-        CcConnectPlatform::Feishu => {
-            if let Some(value) = request
-                .feishu_app_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                set_credential(FEISHU_APP_ID_ACCOUNT, value)?;
-            }
-            if let Some(value) = request
-                .feishu_app_secret
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                set_credential(FEISHU_APP_SECRET_ACCOUNT, value)?;
-            }
+    let credentials = [
+        (TELEGRAM_TOKEN_ACCOUNT, request.telegram_token.as_deref()),
+        (FEISHU_APP_ID_ACCOUNT, request.feishu_app_id.as_deref()),
+        (
+            FEISHU_APP_SECRET_ACCOUNT,
+            request.feishu_app_secret.as_deref(),
+        ),
+        (WEIXIN_TOKEN_ACCOUNT, request.weixin_token.as_deref()),
+        (WECOM_BOT_ID_ACCOUNT, request.wecom_bot_id.as_deref()),
+        (
+            WECOM_BOT_SECRET_ACCOUNT,
+            request.wecom_bot_secret.as_deref(),
+        ),
+    ];
+    for (account, value) in credentials {
+        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+            set_credential(account, value)?;
         }
     }
     Ok(())
@@ -2028,6 +2880,14 @@ fn credentials_ready(platform: CcConnectPlatform) -> Result<bool, String> {
         CcConnectPlatform::Feishu => {
             get_credential(FEISHU_APP_ID_ACCOUNT)?.is_some_and(|value| !value.trim().is_empty())
                 && get_credential(FEISHU_APP_SECRET_ACCOUNT)?
+                    .is_some_and(|value| !value.trim().is_empty())
+        }
+        CcConnectPlatform::Weixin => {
+            get_credential(WEIXIN_TOKEN_ACCOUNT)?.is_some_and(|value| !value.trim().is_empty())
+        }
+        CcConnectPlatform::Wecom => {
+            get_credential(WECOM_BOT_ID_ACCOUNT)?.is_some_and(|value| !value.trim().is_empty())
+                && get_credential(WECOM_BOT_SECRET_ACCOUNT)?
                     .is_some_and(|value| !value.trim().is_empty())
         }
     })
@@ -2061,7 +2921,77 @@ fn credential_environment(
                 vec![app_id, app_secret],
             ))
         }
+        CcConnectPlatform::Weixin => {
+            let token = get_credential(WEIXIN_TOKEN_ACCOUNT)?
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Weixin token is missing".to_string())?;
+            Ok((
+                vec![(WEIXIN_TOKEN_ENV.to_string(), token.clone())],
+                vec![token],
+            ))
+        }
+        CcConnectPlatform::Wecom => {
+            let bot_id = get_credential(WECOM_BOT_ID_ACCOUNT)?
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "WeCom bot ID is missing".to_string())?;
+            let bot_secret = get_credential(WECOM_BOT_SECRET_ACCOUNT)?
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "WeCom bot secret is missing".to_string())?;
+            Ok((
+                vec![
+                    (WECOM_BOT_ID_ENV.to_string(), bot_id.clone()),
+                    (WECOM_BOT_SECRET_ENV.to_string(), bot_secret.clone()),
+                ],
+                vec![bot_id, bot_secret],
+            ))
+        }
     }
+}
+
+fn credentials_ready_for_profile(profile: &CcConnectProfile) -> Result<bool, String> {
+    let enabled = enabled_platforms(profile);
+    if enabled.is_empty() {
+        return Ok(false);
+    }
+    for item in enabled {
+        if !credentials_ready(item.platform)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn credential_environment_for_profile(
+    profile: &CcConnectProfile,
+) -> Result<(Vec<(String, String)>, Vec<String>), String> {
+    let enabled = enabled_platforms(profile);
+    if enabled.is_empty() {
+        return Err("at least one messaging platform must be enabled".to_string());
+    }
+    let mut environment = Vec::new();
+    let mut secrets = Vec::new();
+    for item in enabled {
+        let (mut platform_environment, mut platform_secrets) =
+            credential_environment(item.platform)?;
+        environment.append(&mut platform_environment);
+        secrets.append(&mut platform_secrets);
+    }
+    Ok((environment, secrets))
+}
+
+fn platform_statuses(profile: Option<&CcConnectProfile>) -> Vec<CcConnectPlatformStatus> {
+    let configured = profile.map(profile_platforms).unwrap_or_default();
+    CC_CONNECT_PLATFORMS
+        .into_iter()
+        .map(|platform| CcConnectPlatformStatus {
+            platform,
+            enabled: configured
+                .iter()
+                .find(|item| item.platform == platform)
+                .is_some_and(|item| item.enabled),
+            credentials_ready: credentials_ready(platform).unwrap_or(false),
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2150,6 +3080,34 @@ fn apply_proxy_environment(
     }
 }
 
+fn git_safe_directory_environment(
+    project_path: &Path,
+    inherited_count: Option<&str>,
+) -> Vec<(String, String)> {
+    let index = inherited_count
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value < 1_024)
+        .unwrap_or(0);
+    vec![
+        ("GIT_CONFIG_COUNT".to_string(), (index + 1).to_string()),
+        (
+            format!("GIT_CONFIG_KEY_{index}"),
+            "safe.directory".to_string(),
+        ),
+        (
+            format!("GIT_CONFIG_VALUE_{index}"),
+            config_path_value(project_path),
+        ),
+    ]
+}
+
+fn apply_git_safe_directory_environment(command: &mut Command, project_path: &Path) {
+    let inherited_count = env::var("GIT_CONFIG_COUNT").ok();
+    for (key, value) in git_safe_directory_environment(project_path, inherited_count.as_deref()) {
+        command.env(key, value);
+    }
+}
+
 struct CredentialSnapshot {
     entries: Vec<(&'static str, Option<String>)>,
 }
@@ -2161,10 +3119,17 @@ impl CredentialSnapshot {
             Some(CcConnectPlatform::Feishu) => {
                 vec![FEISHU_APP_ID_ACCOUNT, FEISHU_APP_SECRET_ACCOUNT]
             }
+            Some(CcConnectPlatform::Weixin) => vec![WEIXIN_TOKEN_ACCOUNT],
+            Some(CcConnectPlatform::Wecom) => {
+                vec![WECOM_BOT_ID_ACCOUNT, WECOM_BOT_SECRET_ACCOUNT]
+            }
             None => vec![
                 TELEGRAM_TOKEN_ACCOUNT,
                 FEISHU_APP_ID_ACCOUNT,
                 FEISHU_APP_SECRET_ACCOUNT,
+                WEIXIN_TOKEN_ACCOUNT,
+                WECOM_BOT_ID_ACCOUNT,
+                WECOM_BOT_SECRET_ACCOUNT,
             ],
         };
         let mut entries = Vec::with_capacity(accounts.len());
@@ -2243,20 +3208,24 @@ impl CcConnectManager {
             .operation
             .lock()
             .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        self.save_profile_locked(request)
+    }
+
+    fn save_profile_locked(&self, request: CcConnectSaveProfileRequest) -> Result<(), String> {
+        handoff::ensure_handoff_inactive()?;
         self.refresh_process_state();
-        {
+        let was_running = {
             let state = self
                 .process
                 .lock()
                 .map_err(|_| "cc-connect process lock poisoned".to_string())?;
-            if state.process.is_some() || state.starting {
-                return Err(
-                    "stop cc-connect before changing its profile or credentials".to_string()
-                );
+            if state.starting {
+                return Err("cc-connect is still starting; retry shortly".to_string());
             }
-        }
+            state.process.is_some()
+        };
         let profile = normalize_profile(self, request.profile.clone())?;
-        let credential_snapshot = CredentialSnapshot::capture(Some(request.profile.platform))?;
+        let credential_snapshot = CredentialSnapshot::capture(None)?;
         let config_snapshot = FileSnapshot::capture(config_path()?, "cc-connect config")?;
         let project_list_snapshot =
             FileSnapshot::capture(project_list_path()?, "CLI-Manager project list")?;
@@ -2265,11 +3234,22 @@ impl CcConnectManager {
             "CLI-Manager project switch script",
         )?;
         let profile_snapshot = FileSnapshot::capture(profile_path()?, "cc-connect profile")?;
-        if let Err(save_error) = (|| {
+        if was_running {
+            self.stop_inner()?;
+        }
+        let save_result = (|| {
             save_request_credentials(&request)?;
             write_managed_config(&profile)?;
-            persist_profile(&profile)
-        })() {
+            persist_profile(&profile)?;
+            if let Ok(mut cache) = self.detection.lock() {
+                *cache = None;
+            }
+            if was_running {
+                self.start_inner()?;
+            }
+            Ok::<_, String>(())
+        })();
+        if let Err(save_error) = save_result {
             let mut rollback_errors = Vec::new();
             if let Err(err) = profile_snapshot.restore() {
                 rollback_errors.push(err);
@@ -2286,6 +3266,15 @@ impl CcConnectManager {
             if let Err(err) = credential_snapshot.restore() {
                 rollback_errors.push(err);
             }
+            if let Ok(mut cache) = self.detection.lock() {
+                *cache = None;
+            }
+            if was_running {
+                if let Err(err) = self.start_inner() {
+                    rollback_errors
+                        .push(format!("restart previous cc-connect profile failed: {err}"));
+                }
+            }
             if rollback_errors.is_empty() {
                 return Err(save_error);
             }
@@ -2294,14 +3283,364 @@ impl CcConnectManager {
                 rollback_errors.join("; ")
             ));
         }
-        if let Ok(mut cache) = self.detection.lock() {
-            *cache = None;
-        }
         self.append_system_log(format!(
-            "cc-connect profile saved for project '{}' ({:?})",
-            profile.project_name, profile.platform
+            "cc-connect profile saved for project '{}' ({} platforms)",
+            profile.project_name,
+            enabled_platforms(&profile).len()
         ));
         Ok(())
+    }
+
+    fn start_weixin_authorization(
+        &self,
+        request: CcConnectWeixinAuthorizeRequest,
+    ) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        self.refresh_process_state();
+        {
+            let state = self
+                .process
+                .lock()
+                .map_err(|_| "cc-connect process lock poisoned".to_string())?;
+            if state.process.is_some() || state.starting {
+                return Err("stop cc-connect before authorizing Weixin".to_string());
+            }
+        }
+        {
+            let authorization = self
+                .weixin_authorization
+                .lock()
+                .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+            if matches!(
+                authorization.as_ref(),
+                Some(WeixinAuthorizationState::Running(_))
+            ) {
+                return Err("Weixin authorization is already running".to_string());
+            }
+        }
+
+        let mut profile = request.profile;
+        if profile.platform != CcConnectPlatform::Weixin {
+            return Err("select the Weixin platform before authorization".to_string());
+        }
+        hydrate_profile_platforms(&mut profile);
+        let existing_allow_from = platform_profile(&profile, CcConnectPlatform::Weixin)
+            .map(|item| item.allow_from)
+            .unwrap_or_default();
+        let existing_allow_from = if existing_allow_from.trim().is_empty() {
+            String::new()
+        } else {
+            normalize_allow_from(CcConnectPlatform::Weixin, &existing_allow_from)?
+        };
+        if let Some(item) = profile
+            .platforms
+            .iter_mut()
+            .find(|item| item.platform == CcConnectPlatform::Weixin)
+        {
+            item.enabled = true;
+        }
+        set_platform_allow_from(
+            &mut profile,
+            CcConnectPlatform::Weixin,
+            if existing_allow_from.is_empty() {
+                "authorization-pending@im.wechat".to_string()
+            } else {
+                existing_allow_from.clone()
+            },
+        );
+        let mut profile = normalize_profile(self, profile)?;
+        set_platform_allow_from(&mut profile, CcConnectPlatform::Weixin, existing_allow_from);
+
+        let binary = self.detect(profile.executable_path.as_deref(), true)?;
+        if !binary.compatible {
+            return Err(format!(
+                "cc-connect {} is not the verified v1.4.1 build",
+                binary.version.as_deref().unwrap_or("binary")
+            ));
+        }
+        let (config_path, qr_path, stdout_path, stderr_path) = weixin_authorization_paths()?;
+        let auth_dir = config_path
+            .parent()
+            .ok_or_else(|| "Weixin authorization directory is missing".to_string())?;
+        fs::create_dir_all(auth_dir)
+            .map_err(|err| format!("create Weixin authorization directory failed: {err}"))?;
+        cleanup_weixin_authorization_files([&config_path, &qr_path, &stdout_path, &stderr_path]);
+
+        let mut setup_profile = profile.clone();
+        set_platform_allow_from(
+            &mut setup_profile,
+            CcConnectPlatform::Weixin,
+            "authorization-pending@im.wechat".to_string(),
+        );
+        let config = build_weixin_authorization_config(&setup_profile)?;
+        write_file_atomically(
+            &config_path,
+            config.as_bytes(),
+            "Weixin authorization config",
+        )?;
+        let stdout = File::create(&stdout_path)
+            .map_err(|err| format!("create Weixin authorization output failed: {err}"))?;
+        let stderr = File::create(&stderr_path)
+            .map_err(|err| format!("create Weixin authorization error output failed: {err}"))?;
+        let proxy = resolve_proxy_url_if_enabled(
+            profile.proxy_enabled,
+            profile.proxy_url.as_deref(),
+            &LOCAL_PROXY_PORTS,
+        )?;
+        let mut command = silent_command(&path_string(&binary.path));
+        command
+            .arg("weixin")
+            .arg("setup")
+            .arg("--config")
+            .arg(&config_path)
+            .arg("--project")
+            .arg(&profile.project_name)
+            .arg("--platform-index")
+            .arg("1")
+            .arg("--timeout")
+            .arg(WEIXIN_AUTH_TIMEOUT_SECS.to_string())
+            .arg("--qr-image")
+            .arg(&qr_path)
+            .arg("--set-allow-from-empty")
+            .current_dir(&profile.project_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        apply_proxy_environment(&mut command, profile.proxy_enabled, proxy.as_ref());
+        let mut child = command
+            .spawn()
+            .map_err(|err| format!("start Weixin authorization failed: {err}"))?;
+        #[cfg(target_os = "windows")]
+        let job = match ChildJob::assign(&child) {
+            Ok(job) => job,
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                cleanup_weixin_authorization_files([
+                    &config_path,
+                    &qr_path,
+                    &stdout_path,
+                    &stderr_path,
+                ]);
+                return Err(err);
+            }
+        };
+        let started_at_ms = now_millis();
+        let process = WeixinAuthorizationProcess {
+            child,
+            profile,
+            config_path,
+            qr_path,
+            stdout_path,
+            stderr_path,
+            #[cfg(target_os = "windows")]
+            job,
+            started_at_ms,
+        };
+        let status = CcConnectWeixinAuthorizationStatus {
+            phase: CcConnectWeixinAuthorizationPhase::Starting,
+            qr_data_url: None,
+            error: None,
+            allow_from: None,
+            profile: None,
+            started_at_ms: Some(started_at_ms),
+        };
+        let mut authorization = self
+            .weixin_authorization
+            .lock()
+            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+        *authorization = Some(WeixinAuthorizationState::Running(process));
+        Ok(status)
+    }
+
+    fn finish_weixin_authorization(
+        &self,
+        process: WeixinAuthorizationProcess,
+    ) -> CcConnectWeixinAuthorizationStatus {
+        let result = (|| {
+            let authorization = parse_weixin_authorization_result(
+                &process.config_path,
+                &process.profile.project_name,
+            )?;
+            let existing_allow_from = platform_profile(&process.profile, CcConnectPlatform::Weixin)
+                .map(|item| item.allow_from)
+                .unwrap_or_default();
+            let allow_from =
+                merge_weixin_allow_from(&existing_allow_from, &authorization.allow_from)?;
+            let mut profile = process.profile.clone();
+            set_platform_allow_from(&mut profile, CcConnectPlatform::Weixin, allow_from.clone());
+            self.save_profile_locked(CcConnectSaveProfileRequest {
+                profile: profile.clone(),
+                telegram_token: None,
+                feishu_app_id: None,
+                feishu_app_secret: None,
+                weixin_token: Some(authorization.token),
+                wecom_bot_id: None,
+                wecom_bot_secret: None,
+            })?;
+            Ok::<_, String>((profile, allow_from))
+        })();
+        cleanup_weixin_authorization_files([
+            &process.config_path,
+            &process.qr_path,
+            &process.stdout_path,
+            &process.stderr_path,
+        ]);
+        match result {
+            Ok((profile, allow_from)) => CcConnectWeixinAuthorizationStatus {
+                phase: CcConnectWeixinAuthorizationPhase::Completed,
+                qr_data_url: None,
+                error: None,
+                allow_from: Some(allow_from),
+                profile: Some(profile),
+                started_at_ms: Some(process.started_at_ms),
+            },
+            Err(error) => CcConnectWeixinAuthorizationStatus {
+                phase: CcConnectWeixinAuthorizationPhase::Failed,
+                qr_data_url: None,
+                error: Some(error),
+                allow_from: None,
+                profile: None,
+                started_at_ms: Some(process.started_at_ms),
+            },
+        }
+    }
+
+    fn failed_weixin_authorization(
+        &self,
+        process: WeixinAuthorizationProcess,
+        error: String,
+    ) -> CcConnectWeixinAuthorizationStatus {
+        let detail = weixin_authorization_error_detail(&process.stderr_path);
+        cleanup_weixin_authorization_files([
+            &process.config_path,
+            &process.qr_path,
+            &process.stdout_path,
+            &process.stderr_path,
+        ]);
+        CcConnectWeixinAuthorizationStatus {
+            phase: CcConnectWeixinAuthorizationPhase::Failed,
+            qr_data_url: None,
+            error: Some(match detail {
+                Some(detail) => format!("{error}: {detail}"),
+                None => error,
+            }),
+            allow_from: None,
+            profile: None,
+            started_at_ms: Some(process.started_at_ms),
+        }
+    }
+
+    fn weixin_authorization_status(&self) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        let mut authorization = self
+            .weixin_authorization
+            .lock()
+            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+        let state = authorization
+            .as_mut()
+            .ok_or_else(|| "Weixin authorization has not been started".to_string())?;
+        match state {
+            WeixinAuthorizationState::Finished(status) => Ok(status.clone()),
+            WeixinAuthorizationState::Running(process) => {
+                let qr_data_url =
+                    weixin_authorization_qr_data_url(&process.qr_path).unwrap_or(None);
+                match process.child.try_wait() {
+                    Ok(None) => Ok(CcConnectWeixinAuthorizationStatus {
+                        phase: if qr_data_url.is_some() {
+                            CcConnectWeixinAuthorizationPhase::Waiting
+                        } else {
+                            CcConnectWeixinAuthorizationPhase::Starting
+                        },
+                        qr_data_url,
+                        error: None,
+                        allow_from: None,
+                        profile: None,
+                        started_at_ms: Some(process.started_at_ms),
+                    }),
+                    exit_result => {
+                        let state = authorization
+                            .take()
+                            .ok_or_else(|| "Weixin authorization state is missing".to_string())?;
+                        let WeixinAuthorizationState::Running(mut process) = state else {
+                            return Err("Weixin authorization state is invalid".to_string());
+                        };
+                        drop(authorization);
+                        let status = match exit_result {
+                            Ok(Some(exit)) if exit.success() => {
+                                self.finish_weixin_authorization(process)
+                            }
+                            Ok(Some(exit)) => self.failed_weixin_authorization(
+                                process,
+                                format!("Weixin authorization exited with code {:?}", exit.code()),
+                            ),
+                            Ok(None) => unreachable!(),
+                            Err(err) => {
+                                #[cfg(target_os = "windows")]
+                                process.job.terminate();
+                                let _ = process.child.kill();
+                                let _ = process.child.wait();
+                                self.failed_weixin_authorization(
+                                    process,
+                                    format!("inspect Weixin authorization failed: {err}"),
+                                )
+                            }
+                        };
+                        let mut authorization = self
+                            .weixin_authorization
+                            .lock()
+                            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+                        *authorization = Some(WeixinAuthorizationState::Finished(status.clone()));
+                        Ok(status)
+                    }
+                }
+            }
+        }
+    }
+
+    fn cancel_weixin_authorization(&self) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+        let _operation = self
+            .operation
+            .lock()
+            .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        let mut authorization = self
+            .weixin_authorization
+            .lock()
+            .map_err(|_| "Weixin authorization lock poisoned".to_string())?;
+        let state = authorization.take();
+        let started_at_ms = match state {
+            Some(WeixinAuthorizationState::Running(mut process)) => {
+                #[cfg(target_os = "windows")]
+                process.job.terminate();
+                let _ = process.child.kill();
+                let _ = process.child.wait();
+                cleanup_weixin_authorization_files([
+                    &process.config_path,
+                    &process.qr_path,
+                    &process.stdout_path,
+                    &process.stderr_path,
+                ]);
+                Some(process.started_at_ms)
+            }
+            Some(WeixinAuthorizationState::Finished(status)) => status.started_at_ms,
+            None => None,
+        };
+        let status = CcConnectWeixinAuthorizationStatus {
+            phase: CcConnectWeixinAuthorizationPhase::Cancelled,
+            qr_data_url: None,
+            error: None,
+            allow_from: None,
+            profile: None,
+            started_at_ms,
+        };
+        *authorization = Some(WeixinAuthorizationState::Finished(status.clone()));
+        Ok(status)
     }
 
     fn switch_project_from_remote(&self, token: &str) -> Result<RemoteSwitchOutcome, String> {
@@ -2309,10 +3648,11 @@ impl CcConnectManager {
             .operation
             .lock()
             .map_err(|_| "cc-connect operation lock poisoned".to_string())?;
+        handoff::ensure_handoff_inactive()?;
         self.refresh_process_state();
         let mut profile =
             load_profile()?.ok_or_else(|| "cc-connect profile is not configured".to_string())?;
-        let project = registered_project_by_token(token)?;
+        let project = registered_project_by_token(&profile, token)?;
         let already_current = project.id == profile.project_id;
         let restart_required = {
             let state = self
@@ -2409,10 +3749,18 @@ impl CcConnectManager {
                     delete_credential(FEISHU_APP_ID_ACCOUNT)?;
                     delete_credential(FEISHU_APP_SECRET_ACCOUNT)?;
                 }
+                Some(CcConnectPlatform::Weixin) => delete_credential(WEIXIN_TOKEN_ACCOUNT)?,
+                Some(CcConnectPlatform::Wecom) => {
+                    delete_credential(WECOM_BOT_ID_ACCOUNT)?;
+                    delete_credential(WECOM_BOT_SECRET_ACCOUNT)?;
+                }
                 None => {
                     delete_credential(TELEGRAM_TOKEN_ACCOUNT)?;
                     delete_credential(FEISHU_APP_ID_ACCOUNT)?;
                     delete_credential(FEISHU_APP_SECRET_ACCOUNT)?;
+                    delete_credential(WEIXIN_TOKEN_ACCOUNT)?;
+                    delete_credential(WECOM_BOT_ID_ACCOUNT)?;
+                    delete_credential(WECOM_BOT_SECRET_ACCOUNT)?;
                 }
             }
             Ok(())
@@ -2464,12 +3812,13 @@ impl CcConnectManager {
             blockers.push("config_missing".to_string());
         }
         let (credentials_ready, credential_error) = match profile.as_ref() {
-            Some(profile) => match credentials_ready(profile.platform) {
+            Some(profile) => match credentials_ready_for_profile(profile) {
                 Ok(ready) => (ready, None),
                 Err(err) => (false, Some(err)),
             },
             None => (false, None),
         };
+        let platform_statuses = platform_statuses(profile.as_ref());
         if profile.is_some() && !credentials_ready {
             blockers.push(if credential_error.is_some() {
                 "credential_store_error".to_string()
@@ -2538,6 +3887,7 @@ impl CcConnectManager {
             profile,
             config_exists,
             credentials_ready,
+            platform_statuses,
             ready: blockers.is_empty(),
             blockers,
             warnings,
@@ -2595,20 +3945,25 @@ impl CcConnectManager {
     }
 
     fn prepare_process(&self) -> Result<ManagedProcess, String> {
-        let profile =
+        let base_profile =
             load_profile()?.ok_or_else(|| "cc-connect profile is not configured".to_string())?;
-        let issues = profile_issue_codes(&profile);
+        let issues = profile_issue_codes(&base_profile);
         if !issues.is_empty() {
             return Err(format!(
                 "cc-connect profile is invalid: {}",
                 issues.join(", ")
             ));
         }
-        validate_registered_project(&profile)?;
+        let (profile, project) = handoff::effective_target_for_process(base_profile)?;
         if profile.agent == CcConnectAgent::Codex {
             self.check_codex_app_server(true).map_err(|err| {
                 format!("Codex interactive approval backend is unavailable: {err}")
             })?;
+        }
+        let codex_launch = prepare_remote_codex_launch(&profile, &project)?;
+        if let Some(launch) = codex_launch.as_ref() {
+            probe_remote_codex_app_server(launch)
+                .map_err(|err| format!("Codex project Provider backend is unavailable: {err}"))?;
         }
         let binary = self.detect(profile.executable_path.as_deref(), true)?;
         if !binary.compatible {
@@ -2619,7 +3974,11 @@ impl CcConnectManager {
         }
         let config_path = write_managed_config(&profile)?;
         format_and_check_config_syntax(&binary.path, &config_path)?;
-        let (environment, secrets) = credential_environment(profile.platform)?;
+        let (mut environment, mut secrets) = credential_environment_for_profile(&profile)?;
+        if let Some(launch) = codex_launch.as_ref() {
+            environment.push((launch.env_key.clone(), launch.secret.clone()));
+            secrets.push(launch.secret.clone());
+        }
         let proxy = resolve_proxy_url_if_enabled(
             profile.proxy_enabled,
             profile.proxy_url.as_deref(),
@@ -2658,7 +4017,14 @@ impl CcConnectManager {
         for (key, value) in environment {
             command.env(key, value);
         }
+        if let Some(launch) = codex_launch.as_ref() {
+            apply_remote_codex_launch_environment(&mut command, launch)?;
+        }
+        apply_git_safe_directory_environment(&mut command, Path::new(&profile.project_path));
         apply_proxy_environment(&mut command, profile.proxy_enabled, proxy.as_ref());
+        // cc-connect app-server children merge the managed process environment,
+        // so the existing Hook executable can report remote task state to the daemon.
+        handoff_notification::apply_hook_environment(&mut command);
         let mut child = command
             .spawn()
             .map_err(|err| format!("spawn cc-connect failed: {err}"))?;
@@ -2797,6 +4163,9 @@ impl CcConnectManager {
     }
 
     pub fn shutdown(&self) {
+        if let Err(err) = self.cancel_weixin_authorization() {
+            log::warn!("Weixin authorization shutdown cleanup failed: {err}");
+        }
         if let Err(err) = self.stop() {
             log::warn!("cc-connect shutdown cleanup failed: {err}");
         }
@@ -2971,7 +4340,7 @@ fn push_log_line(
     }
 }
 
-fn redact_log_line(raw: &str, secrets: &[String]) -> String {
+pub(crate) fn redact_log_line(raw: &str, secrets: &[String]) -> String {
     let mut value = raw.to_string();
     for secret in secrets.iter().filter(|secret| secret.len() >= 4) {
         value = value.replace(secret, "[REDACTED]");
@@ -2984,6 +4353,7 @@ fn redact_log_line(raw: &str, secrets: &[String]) -> String {
         "api_key",
         "api key",
         "authorization",
+        "bearer ",
     ]
     .iter()
     .any(|keyword| lower.contains(keyword))
@@ -3066,6 +4436,16 @@ pub async fn cc_connect_get_status(
         .map_err(|err| format!("cc-connect status task failed: {err}"))?
 }
 #[tauri::command]
+pub async fn cc_connect_inspect_executable(
+    manager: State<'_, CcConnectManager>,
+    executable_path: String,
+) -> Result<CcConnectExecutableStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.inspect_executable(&executable_path))
+        .await
+        .map_err(|err| format!("cc-connect executable inspection task failed: {err}"))
+}
+#[tauri::command]
 pub async fn cc_connect_save_profile(
     manager: State<'_, CcConnectManager>,
     request: CcConnectSaveProfileRequest,
@@ -3091,6 +4471,38 @@ pub async fn cc_connect_clear_credentials(
     .await
     .map_err(|err| format!("cc-connect credential task failed: {err}"))?
 }
+
+#[tauri::command]
+pub async fn cc_connect_weixin_authorization_start(
+    manager: State<'_, CcConnectManager>,
+    request: CcConnectWeixinAuthorizeRequest,
+) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.start_weixin_authorization(request))
+        .await
+        .map_err(|err| format!("Weixin authorization start task failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn cc_connect_weixin_authorization_status(
+    manager: State<'_, CcConnectManager>,
+) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.weixin_authorization_status())
+        .await
+        .map_err(|err| format!("Weixin authorization status task failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn cc_connect_weixin_authorization_cancel(
+    manager: State<'_, CcConnectManager>,
+) -> Result<CcConnectWeixinAuthorizationStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.cancel_weixin_authorization())
+        .await
+        .map_err(|err| format!("Weixin authorization cancel task failed: {err}"))?
+}
+
 #[tauri::command]
 pub async fn cc_connect_start(
     manager: State<'_, CcConnectManager>,
@@ -3154,11 +4566,15 @@ mod tests {
             agent: CcConnectAgent::Claude,
             platform: CcConnectPlatform::Telegram,
             allow_from: "123456789".to_string(),
+            platforms: Vec::new(),
             yolo_enabled: false,
+            max_turn_time_mins: DEFAULT_MAX_TURN_TIME_MINS,
             proxy_enabled: true,
             proxy_url: None,
             logging_enabled: false,
             language: CcConnectLanguage::Zh,
+            cc_switch_db_path: None,
+            codex_config_dir: None,
         }
     }
 
@@ -3169,6 +4585,8 @@ mod tests {
             path: path_string(project_path),
             agent: CcConnectAgent::Claude,
             group_path: Vec::new(),
+            provider_id: None,
+            codex_provider_id: None,
             provider_name: None,
             provider_is_global: true,
         }
@@ -3246,6 +4664,16 @@ mod tests {
             normalize_allow_from(CcConnectPlatform::Feishu, "ou_owner").unwrap(),
             "ou_owner"
         );
+        assert_eq!(
+            normalize_allow_from(CcConnectPlatform::Weixin, "owner@im.wechat").unwrap(),
+            "owner@im.wechat"
+        );
+        assert!(normalize_allow_from(CcConnectPlatform::Weixin, "owner").is_err());
+        assert_eq!(
+            normalize_allow_from(CcConnectPlatform::Wecom, "zhangsan, lisi").unwrap(),
+            "zhangsan,lisi"
+        );
+        assert!(normalize_allow_from(CcConnectPlatform::Wecom, "*").is_err());
     }
 
     #[test]
@@ -3255,6 +4683,49 @@ mod tests {
         value.as_object_mut().unwrap().remove("yoloEnabled");
         let profile: CcConnectProfile = serde_json::from_value(value).unwrap();
         assert!(!profile.yolo_enabled);
+    }
+
+    #[test]
+    fn profile_without_max_turn_time_defaults_to_fifteen_minutes() {
+        let project = tempfile::tempdir().unwrap();
+        let mut value = serde_json::to_value(sample_profile(project.path())).unwrap();
+        value.as_object_mut().unwrap().remove("maxTurnTimeMins");
+
+        let profile: CcConnectProfile = serde_json::from_value(value).unwrap();
+
+        assert_eq!(profile.max_turn_time_mins, DEFAULT_MAX_TURN_TIME_MINS);
+    }
+
+    #[test]
+    fn managed_config_preserves_supported_turn_time_boundaries() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+
+        for expected in [0, MAX_TURN_TIME_MINS] {
+            profile.max_turn_time_mins = expected;
+            let config = build_managed_config(
+                &profile,
+                Path::new(r"C:\Users\test\cli-manager-projects.txt"),
+                Path::new(r"C:\Users\test\cli-manager-switch.ps1"),
+            )
+            .unwrap();
+
+            assert_eq!(config.max_turn_time_mins, expected);
+        }
+    }
+
+    #[test]
+    fn profile_rejects_turn_time_above_maximum_before_io() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.max_turn_time_mins = MAX_TURN_TIME_MINS + 1;
+
+        let error = normalize_profile(&CcConnectManager::new(), profile).unwrap_err();
+
+        assert_eq!(
+            error,
+            format!("max_turn_time_mins must be between 0 and {MAX_TURN_TIME_MINS}")
+        );
     }
 
     #[test]
@@ -3317,10 +4788,17 @@ mod tests {
         object.remove("proxyEnabled");
         object.remove("proxyUrl");
         object.remove("loggingEnabled");
-        let profile: CcConnectProfile = serde_json::from_value(value).unwrap();
+        object.remove("platforms");
+        let mut profile: CcConnectProfile = serde_json::from_value(value).unwrap();
         assert!(profile.proxy_enabled);
         assert_eq!(profile.proxy_url, None);
         assert!(!profile.logging_enabled);
+        hydrate_profile_platforms(&mut profile);
+        assert_eq!(enabled_platforms(&profile).len(), 1);
+        assert_eq!(
+            enabled_platforms(&profile)[0].platform,
+            CcConnectPlatform::Telegram
+        );
     }
     #[test]
     fn proxy_environment_covers_common_case_variants() {
@@ -3390,12 +4868,37 @@ mod tests {
             .iter()
             .any(|code| code == "proxy_invalid"));
     }
+    #[test]
+    fn git_safe_directory_is_scoped_to_the_registered_project() {
+        let environment =
+            git_safe_directory_environment(Path::new(r"\\?\F:\test\work\amz\amazon"), Some("2"))
+                .into_iter()
+                .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            environment.get("GIT_CONFIG_COUNT").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            environment.get("GIT_CONFIG_KEY_2").map(String::as_str),
+            Some("safe.directory")
+        );
+        assert_eq!(
+            environment.get("GIT_CONFIG_VALUE_2").map(String::as_str),
+            Some("F:/test/work/amz/amazon")
+        );
+        assert!(!environment.contains_key("GIT_CONFIG_KEY_0"));
+    }
     #[cfg(target_os = "windows")]
     #[test]
     fn config_paths_strip_windows_extended_prefixes() {
         assert_eq!(
             user_path_string(Path::new(r"\\?\D:\npm\cc-connect.exe")),
             r"D:\npm\cc-connect.exe"
+        );
+        assert_eq!(
+            normalize_executable_path_value(Some(r"  \\?\D:\npm\cc-connect.exe  ")),
+            Some(r"D:\npm\cc-connect.exe".to_string())
         );
         assert_eq!(
             config_path_value(Path::new(r"\\?\F:\test\work")),
@@ -3410,10 +4913,31 @@ mod tests {
             "F:/test/work"
         );
     }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn explicit_executable_inspection_returns_a_user_path_and_digest() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("cc-connect.exe");
+        fs::write(&executable, b"not an official cc-connect binary").unwrap();
+
+        let status = CcConnectManager::new().inspect_executable(&path_string(&executable));
+
+        assert!(status.installed);
+        assert!(!status.compatible);
+        assert_eq!(status.version, None);
+        assert_eq!(status.sha256, Some(sha256_file(&executable).unwrap()));
+        assert_eq!(
+            status.executable_path,
+            user_path_string(&executable.canonicalize().unwrap())
+        );
+        assert!(!status.executable_path.starts_with(r"\\?\"));
+        assert_eq!(status.detection_error, None);
+    }
     #[test]
     fn managed_config_is_safe() {
         let project = tempfile::tempdir().unwrap();
-        let profile = sample_profile(project.path());
+        let mut profile = sample_profile(project.path());
+        profile.max_turn_time_mins = 60;
         let raw = toml::to_string(
             &build_managed_config(
                 &profile,
@@ -3425,6 +4949,7 @@ mod tests {
         .unwrap();
         let value = toml::from_str::<toml::Value>(&raw).unwrap();
         assert_eq!(value["management"]["enabled"].as_bool(), Some(false));
+        assert_eq!(value["max_turn_time_mins"].as_integer(), Some(60));
         assert_eq!(value["bridge"]["enabled"].as_bool(), Some(false));
         assert_eq!(value["webhook"]["enabled"].as_bool(), Some(false));
         assert_eq!(
@@ -3469,6 +4994,340 @@ mod tests {
         assert!(switch_exec.contains("$raw=@'\n{{args:}}\n'@"));
         assert!(switch_exec.contains("ToBase64String"));
         assert!(!switch_exec.contains(&path_string(project.path())));
+    }
+
+    #[test]
+    fn legacy_profile_migrates_to_a_single_enabled_platform() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+
+        hydrate_profile_platforms(&mut profile);
+
+        assert_eq!(profile.platforms.len(), CC_CONNECT_PLATFORMS.len());
+        assert_eq!(
+            enabled_platforms(&profile),
+            vec![CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Telegram,
+                enabled: true,
+                allow_from: "123456789".to_string(),
+            }]
+        );
+        assert_eq!(profile.allow_from, "123456789");
+    }
+
+    #[test]
+    fn managed_config_keeps_multiple_enabled_platforms_online() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.platforms = vec![
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Telegram,
+                enabled: true,
+                allow_from: "123456789".to_string(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Weixin,
+                enabled: true,
+                allow_from: "owner@im.wechat".to_string(),
+            },
+        ];
+        let config = build_managed_config(
+            &profile,
+            Path::new(r"C:Users	estcli-manager-projects.txt"),
+            Path::new(r"C:Users	estcli-manager-switch.ps1"),
+        )
+        .unwrap();
+        let value = toml::from_str::<toml::Value>(&toml::to_string(&config).unwrap()).unwrap();
+        let platforms = value["projects"][0]["platforms"].as_array().unwrap();
+
+        assert_eq!(platforms.len(), 2);
+        assert_eq!(platforms[0]["type"].as_str(), Some("telegram"));
+        assert_eq!(platforms[1]["type"].as_str(), Some("weixin"));
+        assert_eq!(
+            value["projects"][0]["admin_from"].as_str(),
+            Some("123456789,owner@im.wechat")
+        );
+    }
+
+    #[test]
+    fn managed_config_uses_cc_connect_native_weixin_and_wecom_platforms() {
+        let project = tempfile::tempdir().unwrap();
+        let render = |profile: &CcConnectProfile| {
+            let config = build_managed_config(
+                profile,
+                Path::new(r"C:\Users\test\cli-manager-projects.txt"),
+                Path::new(r"C:\Users\test\cli-manager-switch.ps1"),
+            )
+            .unwrap();
+            toml::from_str::<toml::Value>(&toml::to_string(&config).unwrap()).unwrap()
+        };
+
+        let mut profile = sample_profile(project.path());
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.allow_from = "owner@im.wechat".to_string();
+        let weixin = render(&profile);
+        assert_eq!(
+            weixin["projects"][0]["platforms"][0]["type"].as_str(),
+            Some("weixin")
+        );
+        assert_eq!(
+            weixin["projects"][0]["platforms"][0]["options"]["token"].as_str(),
+            Some("${CLI_MANAGER_CC_WEIXIN_TOKEN}")
+        );
+        assert_eq!(
+            weixin["projects"][0]["platforms"][0]["options"]["account_id"].as_str(),
+            Some("project-1")
+        );
+
+        profile.platform = CcConnectPlatform::Wecom;
+        profile.allow_from = "zhangsan".to_string();
+        let wecom = render(&profile);
+        let options = &wecom["projects"][0]["platforms"][0]["options"];
+        assert_eq!(
+            wecom["projects"][0]["platforms"][0]["type"].as_str(),
+            Some("wecom")
+        );
+        assert_eq!(options["mode"].as_str(), Some("websocket"));
+        assert_eq!(
+            options["bot_id"].as_str(),
+            Some("${CLI_MANAGER_CC_WECOM_BOT_ID}")
+        );
+        assert_eq!(
+            options["bot_secret"].as_str(),
+            Some("${CLI_MANAGER_CC_WECOM_BOT_SECRET}")
+        );
+    }
+
+    #[test]
+    fn weixin_authorization_config_is_native_and_contains_no_credential() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.allow_from = "authorization-pending@im.wechat".to_string();
+
+        let raw = build_weixin_authorization_config(&profile).unwrap();
+        let config: toml::Value = toml::from_str(&raw).unwrap();
+        let options = &config["projects"][0]["platforms"][0]["options"];
+        assert_eq!(
+            config["projects"][0]["platforms"][0]["type"].as_str(),
+            Some("weixin")
+        );
+        assert_eq!(options["token"].as_str(), Some(""));
+        assert_eq!(options["allow_from"].as_str(), Some(""));
+        assert!(!raw.contains(&format!("${{{WEIXIN_TOKEN_ENV}}}")));
+    }
+
+    #[test]
+    fn weixin_authorization_result_is_parsed_and_allowlist_is_merged() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("setup.toml");
+        fs::write(
+            &config_path,
+            r#"
+[[projects]]
+name = "amazon"
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "test-ilink-token"
+allow_from = "owner@im.wechat"
+"#,
+        )
+        .unwrap();
+
+        let result = parse_weixin_authorization_result(&config_path, "amazon").unwrap();
+        assert_eq!(result.token, "test-ilink-token");
+        assert_eq!(result.allow_from, "owner@im.wechat");
+        assert_eq!(
+            merge_weixin_allow_from("teammate@im.wechat", &result.allow_from).unwrap(),
+            "teammate@im.wechat,owner@im.wechat"
+        );
+
+        fs::write(
+            &config_path,
+            r#"
+[[projects]]
+name = "amazon"
+[[projects.platforms]]
+type = "weixin"
+[projects.platforms.options]
+token = "must-not-leak"
+allow_from = ""
+"#,
+        )
+        .unwrap();
+        let error = parse_weixin_authorization_result(&config_path, "amazon").unwrap_err();
+        assert_eq!(error, "Weixin authorization user ID is missing");
+        assert!(!error.contains("must-not-leak"));
+    }
+
+    #[test]
+    fn codex_wrapper_forces_the_registered_provider_without_embedding_secrets() {
+        let payload = codex_profile_wrapper_payload();
+        assert!(!payload.contains("--profile"));
+        assert!(payload.contains("model_provider=cli_manager_remote"));
+        assert!(payload.contains(CODEX_LAUNCHER_ENV));
+        assert!(payload.contains(PROXY_EXECUTABLE_ENV));
+        assert!(payload.contains(CODEX_PROXY_SUBCOMMAND));
+        assert!(payload.contains(CODEX_BASE_URL_OVERRIDE_ENV));
+        assert!(payload.contains(CODEX_ENV_KEY_OVERRIDE_ENV));
+        assert!(payload.contains(CODEX_MODEL_OVERRIDE_ENV));
+        assert!(payload.contains(CODEX_WIRE_API_OVERRIDE_ENV));
+        assert!(!payload.contains("sk-provider-secret"));
+
+        let mut command = Command::new("cc-connect");
+        let launch = RemoteCodexLaunch {
+            wrapper_dir: PathBuf::from(r"C:\Users\test\.cli-manager\remote-manager\bin"),
+            launcher: PathBuf::from(r"D:\npm\codex.cmd"),
+            proxy_executable: PathBuf::from(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
+            expected_session_id: Some("thread-original".to_string()),
+            codex_home: PathBuf::from(r"C:\Users\test\.codex"),
+            base_url_override:
+                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
+                    .to_string(),
+            env_key_override:
+                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
+                    .to_string(),
+            model_override: Some("model=gpt-5.4".to_string()),
+            wire_api_override: "model_providers.cli_manager_remote.wire_api=responses".to_string(),
+            env_key: "CLI_MANAGER_CODEX_PROVIDER_API_KEY".to_string(),
+            secret: "sk-provider-secret".to_string(),
+        };
+        apply_remote_codex_launch_environment(&mut command, &launch).unwrap();
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            environment.get(CODEX_BASE_URL_OVERRIDE_ENV),
+            Some(&Some(
+                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
+                    .to_string()
+            ))
+        );
+        assert_eq!(
+            environment.get(CODEX_MODEL_OVERRIDE_ENV),
+            Some(&Some("model=gpt-5.4".to_string()))
+        );
+        assert_eq!(
+            environment.get("CODEX_HOME"),
+            Some(&Some(r"C:\Users\test\.codex".to_string()))
+        );
+        assert_eq!(
+            environment.get(EXPECTED_SESSION_ID_ENV),
+            Some(&Some("thread-original".to_string()))
+        );
+        assert!(!environment
+            .values()
+            .flatten()
+            .any(|value| value == "sk-provider-secret"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn codex_wrapper_places_supported_overrides_before_the_app_server_subcommand() {
+        let directory = tempfile::tempdir().unwrap();
+        let launcher = directory.path().join("real-codex.cmd");
+        let wrapper = directory.path().join("codex.cmd");
+        let arguments = directory.path().join("arguments.txt");
+        fs::write(
+            &launcher,
+            "@echo off\r\n> \"%CLI_MANAGER_TEST_CODEX_ARGS%\" echo %*\r\n",
+        )
+        .unwrap();
+        fs::write(&wrapper, codex_profile_wrapper_payload()).unwrap();
+
+        let status = Command::new("cmd.exe")
+            .args(["/d", "/c"])
+            .arg(&wrapper)
+            .args(["app-server", "--listen", "stdio://"])
+            .env(CODEX_LAUNCHER_ENV, &launcher)
+            .env(PROXY_EXECUTABLE_ENV, &launcher)
+            .env(
+                CODEX_BASE_URL_OVERRIDE_ENV,
+                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1",
+            )
+            .env(
+                CODEX_ENV_KEY_OVERRIDE_ENV,
+                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY",
+            )
+            .env(CODEX_MODEL_OVERRIDE_ENV, "model=gpt-5.4")
+            .env(
+                CODEX_WIRE_API_OVERRIDE_ENV,
+                "model_providers.cli_manager_remote.wire_api=responses",
+            )
+            .env("CLI_MANAGER_TEST_CODEX_ARGS", &arguments)
+            .status()
+            .unwrap();
+
+        assert!(status.success());
+        assert_eq!(
+            fs::read_to_string(arguments).unwrap().trim(),
+            "__codex_app_server_proxy -c \"model_provider=cli_manager_remote\" -c \"model_providers.cli_manager_remote.name=CLI-Manager remote\" -c \"model_providers.cli_manager_remote.base_url=https://provider.example.com/v1\" -c \"model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY\" -c \"model_providers.cli_manager_remote.wire_api=responses\" -c \"model=gpt-5.4\" app-server --listen stdio://"
+        );
+    }
+
+    #[test]
+    fn codex_app_server_overrides_reject_command_injection_characters() {
+        assert_eq!(
+            codex_base_url_override("https://provider.example.com/v1").unwrap(),
+            "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
+        );
+        assert!(codex_base_url_override("https://provider.example.com/v1?x=1&whoami").is_err());
+        assert!(codex_base_url_override("file:///tmp/provider").is_err());
+        assert!(codex_env_key_override("OPENAI_API_KEY").is_ok());
+        assert!(codex_env_key_override("OPENAI_API_KEY & whoami").is_err());
+        assert_eq!(
+            codex_wire_api_override(None).unwrap(),
+            "model_providers.cli_manager_remote.wire_api=responses"
+        );
+        assert_eq!(codex_model_override(None).unwrap(), None);
+        assert!(codex_model_override(Some("gpt-5.4\" & whoami")).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn codex_provider_probe_reports_startup_errors_without_leaking_secrets() {
+        let directory = tempfile::tempdir().unwrap();
+        let launcher = directory.path().join("real-codex.cmd");
+        let wrapper_dir = directory.path().join("bin");
+        let wrapper = wrapper_dir.join("codex.cmd");
+        fs::create_dir_all(&wrapper_dir).unwrap();
+        fs::write(
+            &launcher,
+            "@echo off\r\n>&2 echo provider startup rejected %CLI_MANAGER_CODEX_PROVIDER_API_KEY%\r\nexit /b 9\r\n",
+        )
+        .unwrap();
+        fs::write(&wrapper, codex_profile_wrapper_payload()).unwrap();
+        let launch = RemoteCodexLaunch {
+            wrapper_dir,
+            proxy_executable: launcher.clone(),
+            launcher,
+            expected_session_id: None,
+            codex_home: directory.path().join("codex-home"),
+            base_url_override:
+                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
+                    .to_string(),
+            env_key_override:
+                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
+                    .to_string(),
+            model_override: None,
+            wire_api_override: "model_providers.cli_manager_remote.wire_api=responses".to_string(),
+            env_key: "CLI_MANAGER_CODEX_PROVIDER_API_KEY".to_string(),
+            secret: "sk-provider-secret".to_string(),
+        };
+
+        let error = probe_remote_codex_app_server(&launch).unwrap_err();
+        assert!(error.contains("provider startup rejected"));
+        assert!(!error.contains("sk-provider-secret"));
+        assert!(error.contains("[REDACTED]"));
     }
 
     #[test]
@@ -3634,9 +5493,13 @@ mod tests {
     #[test]
     fn project_provider_prefers_project_override_and_resolves_global_names() {
         let mut catalog = ProviderCatalog::default();
-        catalog
-            .current_by_app
-            .insert("claude".to_string(), "anyRouter-fable5".to_string());
+        catalog.current_by_app.insert(
+            "claude".to_string(),
+            ProviderCatalogEntry {
+                id: "provider-global-claude".to_string(),
+                name: "anyRouter-fable5".to_string(),
+            },
+        );
         catalog.names_by_app_and_id.insert(
             ("codex".to_string(), "provider-codex".to_string()),
             "Amz项目".to_string(),
@@ -3644,7 +5507,11 @@ mod tests {
 
         assert_eq!(
             project_provider(CcConnectAgent::Claude, "{}", &catalog),
-            (Some("anyRouter-fable5".to_string()), true)
+            (
+                Some("provider-global-claude".to_string()),
+                Some("anyRouter-fable5".to_string()),
+                true
+            )
         );
         assert_eq!(
             project_provider(
@@ -3652,7 +5519,11 @@ mod tests {
                 r#"{"claude":{"providerId":"provider-claude","providerName":"muyuan"}}"#,
                 &catalog,
             ),
-            (Some("muyuan".to_string()), false)
+            (
+                Some("provider-claude".to_string()),
+                Some("muyuan".to_string()),
+                false
+            )
         );
         assert_eq!(
             project_provider(
@@ -3660,11 +5531,15 @@ mod tests {
                 r#"{"codex":{"providerId":"provider-codex","providerName":null}}"#,
                 &catalog,
             ),
-            (Some("Amz项目".to_string()), false)
+            (
+                Some("provider-codex".to_string()),
+                Some("Amz项目".to_string()),
+                false
+            )
         );
         assert_eq!(
             project_provider(CcConnectAgent::Codex, "not-json", &catalog),
-            (None, true)
+            (None, None, true)
         );
     }
 
@@ -3756,14 +5631,62 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let mut profile = sample_profile(project.path());
         profile.agent = CcConnectAgent::Codex;
+        let config_path = project.path().join("config.toml");
+        for (platform, allow_from) in [
+            (CcConnectPlatform::Telegram, "123456789"),
+            (CcConnectPlatform::Feishu, "ou_owner"),
+            (CcConnectPlatform::Weixin, "owner@im.wechat"),
+            (CcConnectPlatform::Wecom, "zhangsan"),
+        ] {
+            profile.platform = platform;
+            profile.allow_from = allow_from.to_string();
+            let config = build_managed_config(
+                &profile,
+                Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-projects.txt"),
+                Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-switch.ps1"),
+            )
+            .unwrap();
+            fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+            format_and_check_config_syntax(Path::new(&binary), &config_path).unwrap();
+        }
+        profile.platforms = vec![
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Telegram,
+                enabled: true,
+                allow_from: "123456789".to_string(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Feishu,
+                enabled: true,
+                allow_from: "ou_owner".to_string(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Weixin,
+                enabled: true,
+                allow_from: "owner@im.wechat".to_string(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Wecom,
+                enabled: true,
+                allow_from: "zhangsan".to_string(),
+            },
+        ];
         let config = build_managed_config(
             &profile,
-            Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-projects.txt"),
-            Path::new(r"C:\Users\test\AppData\Local\CLI-Manager\cli-manager-switch.ps1"),
+            Path::new(r"C:Users	estAppDataLocalCLI-Managercli-manager-projects.txt"),
+            Path::new(r"C:Users	estAppDataLocalCLI-Managercli-manager-switch.ps1"),
         )
         .unwrap();
-        let config_path = project.path().join("config.toml");
         fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+        format_and_check_config_syntax(Path::new(&binary), &config_path).unwrap();
+        profile.platforms.clear();
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.allow_from = "authorization-pending@im.wechat".to_string();
+        fs::write(
+            &config_path,
+            build_weixin_authorization_config(&profile).unwrap(),
+        )
+        .unwrap();
         format_and_check_config_syntax(Path::new(&binary), &config_path).unwrap();
     }
     #[cfg(target_os = "windows")]

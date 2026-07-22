@@ -6,6 +6,7 @@ import { getCliManagerDataPaths } from "../lib/appPaths";
 import { batchInsert, getDb } from "../lib/db";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../lib/shell";
 import { singleFlight } from "../lib/singleFlight";
+import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import { pickSyncableSettings, SYNCABLE_SETTING_KEYS, type SyncableSettingKey } from "../lib/syncSettings";
 import { sanitizeThirdPartyHookTargets } from "../lib/thirdPartyNotifications";
 import { useModelPricingStore } from "./modelPricingStore";
@@ -112,7 +113,7 @@ interface BackupStore {
 }
 
 const ALL_DOMAINS: BackupDomain[] = ["workspace", "preferences", "model_prices", "notifications", "statusline"];
-const PROJECT_SELECT = "SELECT id, name, path, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, remote_path, created_at, updated_at FROM projects ORDER BY sort_order";
+const PROJECT_SELECT = "SELECT id, name, path, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, remote_path, cli_config_root, created_at, updated_at FROM projects ORDER BY sort_order";
 const GROUP_SELECT = "SELECT id, name, parent_id, sort_order, created_at FROM groups ORDER BY sort_order";
 const TEMPLATE_SELECT = "SELECT id, project_id, name, command, description, sort_order FROM command_templates ORDER BY sort_order";
 const WORKTREE_SELECT = "SELECT id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at FROM worktrees WHERE status = 'active' ORDER BY created_at DESC";
@@ -297,7 +298,7 @@ async function replaceWorkspace(db: Awaited<ReturnType<typeof getDb>>, workspace
   await batchInsert(
     db,
     "projects",
-    ["id", "name", "path", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "created_at", "updated_at"],
+    ["id", "name", "path", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "cli_config_root", "created_at", "updated_at"],
     projects,
     (item) => {
       const environmentType = item.environment_type === "ssh" ? "ssh" : item.environment_type === "wsl" ? "wsl" : "local";
@@ -307,6 +308,10 @@ async function replaceWorkspace(db: Awaited<ReturnType<typeof getDb>>, workspace
         ? ""
         : normalizeShellForOs(rawShell, os)
           ?? (rawShell && !(os !== "windows" && isWindowsOnlyShellKey(rawShell)) ? rawShell : platformDefaultShell);
+      const rawCliConfigRoot = isSshProject && typeof item.cli_config_root === "string"
+        ? item.cli_config_root.trim()
+        : "";
+      const cliConfigRoot = validateSshToolConfigRoot(rawCliConfigRoot) ? "" : rawCliConfigRoot;
       return [
         item.id, item.name, isSshProject ? "" : item.path,
         typeof item.group_id === "string" && groupIds.has(item.group_id) ? item.group_id : null,
@@ -315,6 +320,7 @@ async function replaceWorkspace(db: Awaited<ReturnType<typeof getDb>>, workspace
         isSshProject ? "disabled" : normalizeWorktreeStrategy(item.worktree_strategy),
         isSshProject ? "" : item.worktree_root ?? "", isSshProject ? 0 : integerOr(item.worktree_deps_prompt_enabled, 0),
         environmentType, null, isSshProject && typeof item.remote_path === "string" ? item.remote_path : "",
+        cliConfigRoot,
         item.created_at ?? now, item.updated_at ?? now,
       ];
     },

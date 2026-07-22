@@ -286,6 +286,7 @@ function buildPromptSessionTitle(message: string | null | undefined): string | n
 function buildSourceSessionTitle(source: string | null | undefined): string {
   if (source === "codex") return translateCurrent("aiReplay.source.codex");
   if (source === "claude") return translateCurrent("aiReplay.source.claude");
+  if (source === "pi") return translateCurrent("aiReplay.source.pi");
   return translateCurrent("aiReplay.source.default");
 }
 
@@ -768,7 +769,9 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
         ? buildPromptSessionTitle(payload.message) ?? existing?.title ?? buildSourceSessionTitle(source)
         : existing?.title ?? buildSourceSessionTitle(source);
       const cliSessionId = trimOptional(payload.sessionId) ?? existing?.cliSessionId ?? null;
-      const projectPath = trimOptional(payload.cwd) ?? existing?.projectPath ?? null;
+      const projectPath = payload.environmentType === "ssh"
+        ? null
+        : trimOptional(payload.cwd) ?? existing?.projectPath ?? null;
       const rawPayload = payload as unknown as Record<string, unknown>;
       const rawPayloadBytes = stringByteLength(JSON.stringify(rawPayload));
       const willCaptureSnapshot = Boolean(projectPath && shouldCaptureSnapshot(payload.event));

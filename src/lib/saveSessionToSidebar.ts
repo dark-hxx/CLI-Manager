@@ -1,5 +1,6 @@
 import type { CreateProjectInput, Project, TerminalSession } from "./types";
 import { detectCliResumeKind } from "../stores/terminalStore";
+import { stripResumeCliArgs } from "./resumeCliArgs";
 
 /**
  * Validate a CLI session id per resolveResumeCommand contract in
@@ -11,20 +12,6 @@ function normalizeSessionId(sessionId: string): string | null {
   if (!trimmed) return null;
   if (/\s/.test(trimmed) || /[\r\n]/.test(trimmed)) return null;
   return trimmed;
-}
-
-/**
- * Remove any previously appended resume fragment from a cli_args string so
- * that re-saving a saved session does not double-append. Handles both the
- * claude form (`--resume <id>`) and the codex form (`resume --no-alt-screen
- * <id>`). Any leading whitespace attached to the fragment is consumed as
- * well so the returned value has no orphan spaces.
- */
-function stripResumeFragments(cliArgs: string): string {
-  return cliArgs
-    .replace(/\s*resume\s+--no-alt-screen\s+\S+/g, "")
-    .replace(/\s*--resume\s+\S+/g, "")
-    .trim();
 }
 
 // WSL wrapper detection: matches `wsl` or `wsl.exe` as its own token at the
@@ -74,7 +61,7 @@ export function buildResumeCliArgs(
 ): string | null {
   const id = normalizeSessionId(sessionId);
   if (!id) return null;
-  const base = stripResumeFragments(sourceCliArgs ?? "");
+  const base = stripResumeCliArgs(sourceCliArgs);
   const suffix = kind === "codex" ? ` resume --no-alt-screen ${id}` : ` --resume ${id}`;
   return `${base}${suffix}`;
 }

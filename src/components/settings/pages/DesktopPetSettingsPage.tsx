@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   Group,
-  SegmentedControl,
   SimpleGrid,
   Skeleton,
   Slider,
@@ -42,11 +41,13 @@ import { formatFileSize } from "../../../lib/utils";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
 import {
   BUILTIN_DESKTOP_PET_ID,
+  DESKTOP_PET_SIZE_MAX_PERCENT,
+  DESKTOP_PET_SIZE_MIN_PERCENT,
+  DESKTOP_PET_SIZE_STEP_PERCENT,
   DESKTOP_PET_WORK_BOUNCE_MAX_PX,
   DESKTOP_PET_WORK_BOUNCE_MIN_PX,
   useSettingsStore,
   type DesktopPetSettings,
-  type DesktopPetSize,
 } from "../../../stores/settingsStore";
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -378,6 +379,7 @@ export function DesktopPetSettingsPage() {
   const [importing, setImporting] = useState(false);
   const [busyPetId, setBusyPetId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [sizeDraft, setSizeDraft] = useState(desktopPet.size);
   const [workingBounceDistanceDraft, setWorkingBounceDistanceDraft] = useState(
     desktopPet.workingBounceDistancePx
   );
@@ -386,6 +388,10 @@ export function DesktopPetSettingsPage() {
     const current = useSettingsStore.getState().desktopPet;
     await updateSetting("desktopPet", { ...current, ...delta });
   }, [updateSetting]);
+
+  useEffect(() => {
+    setSizeDraft(desktopPet.size);
+  }, [desktopPet.size]);
 
   useEffect(() => {
     setWorkingBounceDistanceDraft(desktopPet.workingBounceDistancePx);
@@ -398,6 +404,15 @@ export function DesktopPetSettingsPage() {
     ));
     setWorkingBounceDistanceDraft(next);
     void patch({ workingBounceDistancePx: next });
+  }, [patch]);
+
+  const commitSize = useCallback((value: number) => {
+    const next = Math.round(
+      Math.min(DESKTOP_PET_SIZE_MAX_PERCENT, Math.max(DESKTOP_PET_SIZE_MIN_PERCENT, value))
+      / DESKTOP_PET_SIZE_STEP_PERCENT
+    ) * DESKTOP_PET_SIZE_STEP_PERCENT;
+    setSizeDraft(next);
+    void patch({ size: next });
   }, [patch]);
 
   const loadPets = useCallback(async (refresh = false) => {
@@ -572,10 +587,6 @@ export function DesktopPetSettingsPage() {
     }
   };
 
-  const setSize = (value: string) => {
-    void patch({ size: value as DesktopPetSize });
-  };
-
   const catalogSourceKey: TranslationKey = catalog?.source === "remote"
     ? "desktopPet.settings.sourceRemote"
     : catalog?.source === "bundled"
@@ -650,25 +661,43 @@ export function DesktopPetSettingsPage() {
             </Alert>
           ) : null}
 
-          <Group justify="space-between" align="center" gap="md" wrap="wrap">
-            <Box>
-              <Text size="sm" fw={500} c="var(--on-surface)">
-                {t("desktopPet.settings.size")}
+          <Stack gap={8}>
+            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+              <Box className="min-w-0 flex-1">
+                <Text size="sm" fw={500} c="var(--on-surface)">
+                  {t("desktopPet.settings.size")}
+                </Text>
+                <Text mt={2} size="xs" c="var(--on-surface-variant)">
+                  {t("desktopPet.settings.sizeDescription")}
+                </Text>
+              </Box>
+              <Text
+                size="xs"
+                ff="var(--font-ui-mono)"
+                c="var(--on-surface)"
+                className="tabular-nums"
+              >
+                {sizeDraft}%
               </Text>
-              <Text mt={2} size="xs" c="var(--on-surface-variant)">
-                {t("desktopPet.settings.sizeDescription")}
-              </Text>
-            </Box>
-            <SegmentedControl
-              value={desktopPet.size}
-              onChange={setSize}
-              data={[
-                { value: "small", label: t("desktopPet.settings.sizeSmall") },
-                { value: "medium", label: t("desktopPet.settings.sizeMedium") },
-                { value: "large", label: t("desktopPet.settings.sizeLarge") },
+            </Group>
+            <Slider
+              min={DESKTOP_PET_SIZE_MIN_PERCENT}
+              max={DESKTOP_PET_SIZE_MAX_PERCENT}
+              step={DESKTOP_PET_SIZE_STEP_PERCENT}
+              value={sizeDraft}
+              onChange={setSizeDraft}
+              onChangeEnd={commitSize}
+              label={(value) => `${value}%`}
+              color="cliPrimary"
+              aria-label={t("desktopPet.settings.size")}
+              marks={[
+                { value: 40, label: "40%" },
+                { value: 100, label: "100%" },
+                { value: 150, label: "150%" },
               ]}
+              mb="lg"
             />
-          </Group>
+          </Stack>
         </Stack>
       </section>
 
@@ -803,7 +832,9 @@ export function DesktopPetSettingsPage() {
               {t("desktopPet.settings.storageDescription", {
                 managedPath: "~/.cli-manager/pets",
                 codexPath: "~/.codex/pets",
-                downloadUrl: "https://codex-pets.net/",
+                downloadUrl1: "https://codex-pets.net/",
+                downloadUrl2: "https://petdex.dev/",
+                downloadUrl3: "https://codexpets.net/",
               })}
             </Text>
           </Alert>

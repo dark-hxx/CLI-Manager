@@ -4,12 +4,13 @@ import { toast } from "sonner";
 import { BarChart3, Settings } from "../icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../SettingsModal";
+import { getErrorMessage, getPiHookErrorMessage } from "../../lib/hookErrors";
 import { useSettingsStore, type SidebarToolbarVisibilitySettings } from "../../stores/settingsStore";
 import { useI18n } from "../../lib/i18n";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
 type HookLightStatus = "missing" | "partial" | "installed";
-type HookTool = "claude" | "codex";
+type HookTool = "claude" | "codex" | "pi";
 
 interface ToolHookSettingsStatus {
   configDir: string | null;
@@ -19,6 +20,7 @@ interface ToolHookSettingsStatus {
 interface HookSettingsStatus {
   claude: ToolHookSettingsStatus;
   codex: ToolHookSettingsStatus;
+  pi: ToolHookSettingsStatus;
   claudeAutoRepaired?: boolean;
 }
 
@@ -34,16 +36,12 @@ function trimDir(value: string | null): string | null {
   return trimmed ? trimmed : null;
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function getApplicableTools(
   status: HookSettingsStatus | null,
   enabledTools: Record<HookTool, boolean>
 ): HookTool[] {
   if (!status) return [];
-  return (["claude", "codex"] as const).filter(
+  return (["claude", "codex", "pi"] as const).filter(
     (tool) => enabledTools[tool] && Boolean(status[tool].configDir)
   );
 }
@@ -65,9 +63,11 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   const { t } = useI18n();
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
+  const piHookConfigDir = useSettingsStore((s) => s.piHookConfigDir);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const claudeHookBridgeEnabled = useSettingsStore((s) => s.claudeHookBridgeEnabled);
   const codexHookBridgeEnabled = useSettingsStore((s) => s.codexHookBridgeEnabled);
+  const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
   const claudeHookAutoRepairKnownInstalled = useSettingsStore((s) => s.claudeHookAutoRepairKnownInstalled);
   const claudeHookAutoRepairNoticeShown = useSettingsStore((s) => s.claudeHookAutoRepairNoticeShown);
   const updateSetting = useSettingsStore((s) => s.update);
@@ -77,11 +77,16 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
 
   const selectedDir = useMemo(() => trimDir(claudeHookConfigDir), [claudeHookConfigDir]);
   const codexSelectedDir = useMemo(() => trimDir(codexHookConfigDir), [codexHookConfigDir]);
+  const piSelectedDir = useMemo(() => trimDir(piHookConfigDir), [piHookConfigDir]);
   const enabledTools = useMemo<Record<HookTool, boolean>>(
-    () => ({ claude: claudeHookBridgeEnabled, codex: codexHookBridgeEnabled }),
-    [claudeHookBridgeEnabled, codexHookBridgeEnabled]
+    () => ({
+      claude: claudeHookBridgeEnabled,
+      codex: codexHookBridgeEnabled,
+      pi: piHookBridgeEnabled,
+    }),
+    [claudeHookBridgeEnabled, codexHookBridgeEnabled, piHookBridgeEnabled]
   );
-  const allBridgesDisabled = !claudeHookBridgeEnabled && !codexHookBridgeEnabled;
+  const allBridgesDisabled = !claudeHookBridgeEnabled && !codexHookBridgeEnabled && !piHookBridgeEnabled;
   const lightStatus = getHookLightStatus(status, enabledTools);
 
   const refreshStatus = useCallback(async () => {
@@ -90,6 +95,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_get_status", {
         selectedDir,
         codexSelectedDir,
+        piSelectedDir,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         autoRepair: claudeHookBridgeEnabled && claudeHookAutoRepairKnownInstalled,
       });
@@ -111,6 +117,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
     claudeHookAutoRepairKnownInstalled,
     claudeHookAutoRepairNoticeShown,
     codexSelectedDir,
+    piSelectedDir,
     selectedDir,
     updateSetting,
   ]);
@@ -133,11 +140,13 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
         await invoke<HookSettingsStatus>("hook_settings_uninstall", {
           selectedDir,
           codexSelectedDir,
+          piSelectedDir,
           ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         });
         await invoke<HookSettingsStatus>("hook_settings_install", {
           selectedDir,
           codexSelectedDir,
+          piSelectedDir,
           ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         });
         await updateSetting("claudeHookAutoRepairKnownInstalled", true);
@@ -147,18 +156,34 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
         await invoke<HookSettingsStatus>("hook_settings_uninstall_codex", {
           selectedDir,
           codexSelectedDir,
+          piSelectedDir,
           ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         });
         await invoke<HookSettingsStatus>("hook_settings_install_codex", {
           selectedDir,
           codexSelectedDir,
+          piSelectedDir,
+          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+        });
+      }
+      if (tools.includes("pi")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_pi", {
+          selectedDir,
+          codexSelectedDir,
+          piSelectedDir,
+          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+        });
+        await invoke<HookSettingsStatus>("hook_settings_install_pi", {
+          selectedDir,
+          codexSelectedDir,
+          piSelectedDir,
           ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         });
       }
       await refreshStatus();
       toast.success(t("sidebar.hook.reinstalled"));
     } catch (error) {
-      toast.error(t("sidebar.hook.reinstallFailed"), { description: getErrorMessage(error) });
+      toast.error(t("sidebar.hook.reinstallFailed"), { description: getPiHookErrorMessage(error, t) });
       await refreshStatus();
     } finally {
       setWorking(false);

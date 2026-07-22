@@ -106,7 +106,7 @@ function normalizeFontFamilyKey(fontFamily: string) {
 }
 
 export function withFontFallback(family: string, fallback: string) {
-  return normalizeFontFamilyStack(family, fallback);
+  return normalizeFontFamilyStack(toCssFontFamilyName(family), fallback);
 }
 
 export function normalizeFontFamilyStack(fontFamily: string, fallback = "") {
@@ -130,19 +130,20 @@ export function mergeFontFamilyOptions(
   currentValue: string,
   builtinOptions: readonly FontFamilyOption[],
   systemFonts: readonly SystemFontFamily[],
-  fallback: string
+  fallback: string,
+  normalizeValue: (value: string) => string = normalizeFontFamilyStack,
 ): FontFamilyOption[] {
   const options: FontFamilyOption[] = [];
   const seen = new Set<string>();
-  const normalizedCurrentValue = normalizeFontFamilyStack(currentValue);
+  const normalizedCurrentValue = normalizeValue(currentValue);
   const builtinFontOptions = builtinOptions.map((option) => ({
     ...option,
-    value: normalizeFontFamilyStack(option.value),
+    value: normalizeValue(option.value),
   }));
   const systemOptions = systemFonts
     .map((font) => font.family.trim())
     .filter(Boolean)
-    .map((family) => ({ value: withFontFallback(family, fallback), label: family }));
+    .map((family) => ({ value: normalizeValue(withFontFallback(family, fallback)), label: family }));
   const availableValues = new Set(
     [...builtinFontOptions, ...systemOptions].map((option) => normalizeFontFamilyKey(option.value))
   );

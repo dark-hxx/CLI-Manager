@@ -28,7 +28,6 @@ import { shouldSidebarBootstrapProjects } from "../../lib/projectLoadPolicy";
 import { getProviderSwitchAppType, parseProjectEnvVars } from "../../lib/providerSwitching";
 import { isSameProjectFileContext, projectWithWorktreePath, projectWithWorktreeProviderOverrides } from "../../lib/terminalProject";
 import { ALL_TERMINALS_SCOPE, collectProjectIdsForGroup, sessionMatchesTerminalScope } from "../../lib/terminalScope";
-import { appendSyncedHistoryContextArg } from "../../lib/syncedHistoryContext";
 import { projectSupportsCapability, type ProjectCapability } from "../../lib/projectCapabilities";
 import { TreeContext, worktreeListCollapseId, type TreeActions } from "./TreeContext";
 import { Portal } from "../ui/Portal";
@@ -146,30 +145,6 @@ function getSyncedSessionKeysForProject(
   return groupSyncedExternalSessions(syncedSessions, [project])
     .byProjectId.get(project.id)
     ?.flatMap((group) => group.sessions.map((session) => session.key)) ?? [];
-}
-
-function getSyncedHistoryGroupForProject(
-  project: Project,
-  syncedSessions: ReturnType<typeof useExternalSessionSyncStore.getState>["syncedSessions"]
-) {
-  const source = getProviderSwitchAppType(project);
-  if (!source) return null;
-  return groupSyncedExternalSessions(syncedSessions, [project])
-    .byProjectId.get(project.id)
-    ?.find((group) => group.sessions[0]?.source === source) ?? null;
-}
-
-async function buildSyncedAwareProjectSplitOptions(project: Project): Promise<SplitTerminalOptions> {
-  const options = buildProjectSplitOptions(project);
-  const source = getProviderSwitchAppType(project) ?? undefined;
-  const syncedGroup = getSyncedHistoryGroupForProject(
-    project,
-    useExternalSessionSyncStore.getState().syncedSessions
-  );
-  return {
-    ...options,
-    startupCmd: await appendSyncedHistoryContextArg(source, options.startupCmd, syncedGroup, options.shell),
-  };
 }
 
 function filterTreeForOpenTerminals(
@@ -1003,20 +978,11 @@ export function Sidebar({
       rejectUnsupportedCapability(unsupported, "externalTerminal");
       return;
     }
-    const launchItems = await Promise.all(items.map(async (project) => {
-      const source = getProviderSwitchAppType(project) ?? undefined;
-      const startupCmd = await appendSyncedHistoryContextArg(
-        source,
-        resolveProjectStartupCommand(project, { includeCodexProviderProfile: false }),
-        getSyncedHistoryGroupForProject(project, useExternalSessionSyncStore.getState().syncedSessions),
-        project.shell || undefined
-      );
-      return {
-        cwd: project.path,
-        title: project.name,
-        startupCmd,
-        shell: project.shell || undefined,
-      };
+    const launchItems = items.map((project) => ({
+      cwd: project.path,
+      title: project.name,
+      startupCmd: resolveProjectStartupCommand(project, { includeCodexProviderProfile: false }),
+      shell: project.shell || undefined,
     }));
     await openWindowsTerminal(
       launchItems
@@ -1025,7 +991,7 @@ export function Sidebar({
   }, [closeHistory, rejectUnsupportedCapability]);
 
   const openProjectDirect = async (project: Project, targetPaneId?: string) => {
-    const options = await buildSyncedAwareProjectSplitOptions(project);
+    const options = buildProjectSplitOptions(project);
     await createSession(
       options.projectId,
       options.cwd,
@@ -1047,7 +1013,7 @@ export function Sidebar({
   const openWorktreeSession = async (project: Project, worktree: WorktreeRecord, targetPaneId?: string, startupCmd?: string, title?: string) => {
     if (rejectMissingWorktree(worktree)) return false;
     const projectOptions = projectWithWorktreeProviderOverrides(project, worktree);
-    const options = await buildSyncedAwareProjectSplitOptions(projectOptions);
+    const options = buildProjectSplitOptions(projectOptions);
     await createSession(
       options.projectId,
       worktree.path,
@@ -1114,7 +1080,7 @@ export function Sidebar({
   const createAndSplitWorktree = async (project: Project, direction: TerminalPaneSplitDirection, taskName?: string) => {
     if (!activeSessionId) return;
     const worktree = await createWorktreeForProject(project, taskName);
-    const options = await buildSyncedAwareProjectSplitOptions(project);
+    const options = buildProjectSplitOptions(project);
     await splitTerminal(activeSessionId, direction, {
       ...options,
       cwd: worktree.path,
@@ -1207,7 +1173,7 @@ export function Sidebar({
     async (project: Project, direction: TerminalPaneSplitDirection) => {
       if (!activeSessionId || compactMode || useExternalTerminal) return;
       const splitDirect = async () => {
-        await splitTerminal(activeSessionId, direction, await buildSyncedAwareProjectSplitOptions(project));
+        await splitTerminal(activeSessionId, direction, buildProjectSplitOptions(project));
         closeHistory();
       };
 
@@ -1387,6 +1353,7 @@ export function Sidebar({
       void openHistory({
         sourceFilter: resolveHistorySourceFilter(project.cli_tool),
         projectPath: project.path,
+        projectId: project.id,
       }).then(() => {
         triggerGlobalSearchFocus();
       }).catch((err) => {
@@ -1400,6 +1367,7 @@ export function Sidebar({
       void openHistory({
         sourceFilter: resolveHistorySourceFilter(project.cli_tool),
         projectPath: project.path,
+        projectId: project.id,
         scopedProjectPath: worktree.path,
       }).then(() => {
         triggerGlobalSearchFocus();
@@ -2636,8 +2604,7 @@ export function Sidebar({
               className="ui-worktree-prompt-action ui-worktree-prompt-action-neutral"
               onClick={() => {
                 if (worktreePrompt?.direction && activeSessionId) {
-                  void buildSyncedAwareProjectSplitOptions(worktreePrompt.project)
-                    .then((options) => splitTerminal(activeSessionId, worktreePrompt.direction!, options))
+                  void splitTerminal(activeSessionId, worktreePrompt.direction!, buildProjectSplitOptions(worktreePrompt.project))
                     .then(() => closeHistory());
                 } else if (worktreePrompt) {
                   void openProjectDirect(worktreePrompt.project, worktreePrompt.targetPaneId);

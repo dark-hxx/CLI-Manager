@@ -3,6 +3,9 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if cli_manager_lib::codex_app_server_proxy::is_helper_request(&args) {
+        cli_manager_lib::codex_app_server_proxy::run_helper_and_exit(&args);
+    }
     if cli_manager_lib::ssh_proxy::is_helper_request(&args) {
         cli_manager_lib::ssh_proxy::run_helper_and_exit(&args);
     }

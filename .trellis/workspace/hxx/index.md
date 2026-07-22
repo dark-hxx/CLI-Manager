@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 34
-- **Last Active**: 2026-07-20
+- **Total Sessions**: 38
+- **Last Active**: 2026-07-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1215 | Active |
+| `journal-1.md` | ~1353 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-07-21 | 修复终端 Tab 切换自动聚焦 | `27b71e60` | `master` |
+| 37 | 2026-07-21 | 修复 Windows PTY 环境与 daemon 退出 | `15d5fb84` | `master` |
+| 36 | 2026-07-21 | 移除历史上下文注入并修复同步与字体状态 | `627f85ea` | `master` |
+| 35 | 2026-07-21 | Complete SSH Agent history, files, Git, and stats | `34ba3f89`, `3ab7a1bc`, `25d00552`, `cd618d4f`, `72814943`, `c14c5bdb`, `a934ab8` | `feat/ssh-agent` |
 | 34 | 2026-07-20 | 完成 SSH Config 导入与主题适配 | `64dd055` | `master` |
 | 35 | 2026-07-18 | Repair PR 156 Gitignore semantics | `c1c21c3` | `fix-pr-156` |
 | 34 | 2026-07-18 | Repair PR 155 Worktree stats rollup | `a922f2b` | `fix-pr-155` |

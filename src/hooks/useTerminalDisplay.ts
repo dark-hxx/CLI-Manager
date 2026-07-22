@@ -219,7 +219,6 @@ export function useTerminalDisplay({
 
   const handleTerminalWriteCommitted = (terminal: Terminal) => {
     afterTerminalWriteRef.current?.(terminal);
-    resizeRenderBarrierRef.current?.handleWriteCommitted(terminal);
   };
 
   const enqueueActiveWrite = (text: string, onCommitted?: () => void) => {

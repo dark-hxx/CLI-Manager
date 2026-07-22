@@ -238,7 +238,10 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "Pi",
         aliases: &[],
         location: SESSION_ROOT,
-        capabilities: NATIVE_READONLY_FILE,
+        capabilities: CapabilitySpec {
+            realtime_stats: "supported",
+            ..NATIVE_READONLY_FILE
+        },
         default_leaf: ".pi",
     },
     SourceSpec {

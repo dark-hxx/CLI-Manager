@@ -802,16 +802,18 @@ export function SessionDetailPane({
                 <Copy size={11} />
                 {t("history.detail.copyId")}
               </button>
-              <button
-                onClick={openSessionFile}
-                aria-label={t("history.detail.openFile")}
-                className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
-                style={{ color: "var(--primary)" }}
-                title={t("history.detail.openFileTitle")}
-              >
-                <FolderOpen size={11} />
-                {t("history.detail.openFile")}
-              </button>
+              {activeView.session_ref?.transportKind !== "ssh" && (
+                <button
+                  onClick={openSessionFile}
+                  aria-label={t("history.detail.openFile")}
+                  className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+                  style={{ color: "var(--primary)" }}
+                  title={t("history.detail.openFileTitle")}
+                >
+                  <FolderOpen size={11} />
+                  {t("history.detail.openFile")}
+                </button>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">

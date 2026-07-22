@@ -27,6 +27,7 @@
   - shell 会话：贴回 `initialTerminalOutput`（shell 不清屏，历史可见）。
 - `restoreSessions` 重建 session 时**必须保留 `cliSessionId`**——漏掉会导致落盘时 id 丢失、下次恢复只能走兜底。
 - resume 命令必须经 `prepareStartupCommandForPty` + `formatStartupInputForPty` 包装，禁止裸写。
+- `appendResumeCliArgs` 在继承项目普通 CLI 参数前必须移除 `cli_args` 中已有的 `resume <id>`、`resume --no-alt-screen <id>`、`--resume <id>`、`--continue` 等会话选择片段；新命令中的目标 Session ID 只能出现一次，Provider 参数仍须保留并去重。
 - 持续保存：定时节流 10s(`SNAPSHOT_THROTTLE_MS`)，脏检测跳过无新输出的终端，单终端尾部限行 `SNAPSHOT_MAX_LINES=2000`，仅有真实 PTY 会话时启动定时器。正常退出且明确丢弃会话时，`flushTerminalSnapshotsNow()` 必须在 `TerminalProcessManager.closeAll()` 之前强制落盘最终画面。
 - 启动问询：有可恢复真实 PTY 会话 → 弹窗询问；无 → 静默进入不弹窗。拒绝 → `sessionStore.clear()` 只清工作区快照，**不碰 SQLite `session_meta`**。
 - 环境隔离：Tauri `cfg(dev)` 必须选择 `sessions.dev.json`；安装包继续使用 `sessions.json`。开发版不得读取、迁移或清理安装版会话快照。
@@ -56,6 +57,7 @@
 ### 6. Tests Required
 
 - `npx tsc --noEmit`（前端唯一静态校验）。
+- `node scripts/resumeCliArgs.test.mjs`（恢复参数去重、普通参数保留、Provider 参数单次追加）。
 - Rust：会话文件名选择测试必须断言安装环境为 `sessions.json`、开发环境为 `sessions.dev.json`。
 - 手动：codex/claude 会话关闭重开走 resume、历史不被清屏覆盖、可继续；shell 会话贴回历史；无会话不弹窗；拒绝后再启动不再询问同批旧标签且 `session_meta` 不受影响；强杀后恢复到 ≤10s 前快照。
 - 手动：分别运行安装版与 `tauri dev`，确认两边的恢复提示和清理操作互不影响；关闭恢复开关后重启确认不再提示。
