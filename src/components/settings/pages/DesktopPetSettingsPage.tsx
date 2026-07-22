@@ -715,6 +715,20 @@ export function DesktopPetSettingsPage() {
             ariaLabel={t("desktopPet.settings.alwaysOnTop")}
             onChange={(checked) => void patch({ alwaysOnTop: checked })}
           />
+          <ToggleRow
+            title={t("desktopPet.settings.showActionMenu")}
+            description={t("desktopPet.settings.showActionMenuDescription")}
+            checked={desktopPet.showActionMenu}
+            ariaLabel={t("desktopPet.settings.showActionMenu")}
+            onChange={(checked) => void patch({ showActionMenu: checked })}
+          />
+          <ToggleRow
+            title={t("desktopPet.settings.openOnHover")}
+            description={t("desktopPet.settings.openOnHoverDescription")}
+            checked={desktopPet.openOnHover}
+            ariaLabel={t("desktopPet.settings.openOnHover")}
+            onChange={(checked) => void patch({ openOnHover: checked })}
+          />
           <Stack gap={8}>
             <ToggleRow
               title={t("desktopPet.settings.workingBounce")}

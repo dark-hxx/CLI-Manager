@@ -40,6 +40,8 @@ import {
   DESKTOP_PET_SIZE_MAX_PERCENT,
   DESKTOP_PET_SIZE_MIN_PERCENT,
   DESKTOP_PET_SIZE_STEP_PERCENT,
+  DESKTOP_PET_MENU_MAX_VISIBLE_PLATFORMS,
+  DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS,
   calculateDesktopPetMenuWindowGeometry,
   createLatestAsyncTaskRunner,
   desktopPetScale,
@@ -118,6 +120,8 @@ const DEFAULT_CONFIG: DesktopPetConfigPayload = {
     petId: BUILTIN_DESKTOP_PET_ID,
     alwaysOnTop: true,
     size: 100,
+    showActionMenu: true,
+    openOnHover: true,
     workingBounceEnabled: false,
     workingBounceDistancePx: 5,
     showStatus: true,
@@ -239,6 +243,8 @@ interface DesktopPetMenuWindowRequest {
   petScale: number;
   secondaryItemCount: number;
   secondaryHeaderHeight: number;
+  showActionMenu: boolean;
+  maxVisibleItems: number;
 }
 
 const DESKTOP_PET_HOVER_OPEN_DELAY_MS = 200;
@@ -259,8 +265,8 @@ function setDesktopPetWindowBounds(bounds: DesktopPetWindowRect): Promise<void> 
   return invoke("desktop_pet_window_set_bounds", { bounds });
 }
 
-function targetFanStyle(index: number, count: number): CSSProperties {
-  const visibleCount = Math.min(Math.max(count, 1), 5);
+function targetFanStyle(index: number, count: number, maxVisibleItems: number): CSSProperties {
+  const visibleCount = Math.min(Math.max(count, 1), Math.max(1, maxVisibleItems));
   const slot = Math.min(index, visibleCount - 1);
   const center = (visibleCount - 1) / 2;
   const normalized = center <= 0 ? 0 : (slot - center) / center;
@@ -294,6 +300,11 @@ export default function DesktopPetApp() {
     ? handoffPlatforms.length
     : menuTargets.length;
   const secondaryHeaderHeight = targetMode === "open" ? 0 : 34;
+  const maxVisibleSecondaryItems = targetMode === "platforms"
+    ? DESKTOP_PET_MENU_MAX_VISIBLE_PLATFORMS
+    : DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS;
+  const secondaryListScrollable = secondaryItemCount > maxVisibleSecondaryItems;
+  const canOpenMenu = config.settings.showActionMenu || snapshot.targets.length > 0;
   const effectiveSize = previewSize ?? config.settings.size;
   const petScale = desktopPetScale(config.settings.size);
   const moveTimerRef = useRef<number | null>(null);
@@ -392,7 +403,11 @@ export default function DesktopPetApp() {
               collapsed.scaleFactor,
               request.secondaryItemCount,
               collapsed.workArea,
-              request.secondaryHeaderHeight
+              request.secondaryHeaderHeight,
+              {
+                showActionMenu: request.showActionMenu,
+                maxVisibleItems: request.maxVisibleItems,
+              }
             );
             if (!context.isLatest()) return;
 
@@ -520,8 +535,17 @@ export default function DesktopPetApp() {
       petScale,
       secondaryItemCount,
       secondaryHeaderHeight,
+      showActionMenu: config.settings.showActionMenu,
+      maxVisibleItems: maxVisibleSecondaryItems,
     });
-  }, [menuOpen, petScale, secondaryHeaderHeight, secondaryItemCount]);
+  }, [
+    config.settings.showActionMenu,
+    maxVisibleSecondaryItems,
+    menuOpen,
+    petScale,
+    secondaryHeaderHeight,
+    secondaryItemCount,
+  ]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -539,6 +563,27 @@ export default function DesktopPetApp() {
       closeMenuRef.current(true);
     }
   }, [config.settings.enabled]);
+
+  useEffect(() => {
+    if (config.settings.openOnHover || hoverOpenTimerRef.current === null) return;
+    window.clearTimeout(hoverOpenTimerRef.current);
+    hoverOpenTimerRef.current = null;
+  }, [config.settings.openOnHover]);
+
+  useEffect(() => {
+    if (config.settings.showActionMenu) return;
+    if (targetMode !== "open") {
+      setTargetMode("open");
+      setSelectedPlatform(null);
+    }
+    if (snapshot.targets.length === 0) {
+      if (hoverOpenTimerRef.current !== null) {
+        window.clearTimeout(hoverOpenTimerRef.current);
+        hoverOpenTimerRef.current = null;
+      }
+      if (menuOpen) closeMenuRef.current(true);
+    }
+  }, [config.settings.showActionMenu, menuOpen, snapshot.targets.length, targetMode]);
 
   useEffect(() => {
     if (targetMode === "platforms" && handoffPlatforms.length === 0) {
@@ -710,7 +755,9 @@ export default function DesktopPetApp() {
   const scheduleHoverOpen = () => {
     clearHoverCloseTimer();
     if (
-      hoverSuppressedUntilLeaveRef.current
+      !config.settings.openOnHover
+      || !canOpenMenu
+      || hoverSuppressedUntilLeaveRef.current
       || menuOpenRef.current
       || userDraggingRef.current
       || sizeAdjustingRef.current
@@ -721,7 +768,9 @@ export default function DesktopPetApp() {
     hoverOpenTimerRef.current = window.setTimeout(() => {
       hoverOpenTimerRef.current = null;
       if (
-        hoverSuppressedUntilLeaveRef.current
+        !config.settings.openOnHover
+        || !canOpenMenu
+        || hoverSuppressedUntilLeaveRef.current
         || menuOpenRef.current
         || userDraggingRef.current
         || sizeAdjustingRef.current
@@ -850,6 +899,7 @@ export default function DesktopPetApp() {
       data-menu-open={menuGeometry ? "true" : undefined}
       data-menu-horizontal={menuGeometry?.horizontalPlacement}
       data-menu-vertical={menuGeometry?.verticalPlacement}
+      data-show-action-menu={config.settings.showActionMenu ? "true" : "false"}
       data-rendering-active={renderingActive ? "true" : "false"}
       style={rootStyle}
       onPointerEnter={clearHoverCloseTimer}
@@ -866,7 +916,7 @@ export default function DesktopPetApp() {
         clearHoverCloseTimer();
         if (menuOpen) {
           closeMenu(true);
-        } else {
+        } else if (canOpenMenu) {
           hoverSuppressedUntilLeaveRef.current = false;
           setTargetMode("open");
           setSelectedPlatform(null);
@@ -925,7 +975,10 @@ export default function DesktopPetApp() {
           }
         >
           {targetMode === "platforms" && handoffPlatforms.length > 0 ? (
-            <div className="desktop-pet-target-list desktop-pet-platform-list">
+            <div
+              className="desktop-pet-target-list desktop-pet-platform-list"
+              data-scrollable={secondaryListScrollable || undefined}
+            >
               <div className="desktop-pet-secondary-header">
                 <button
                   type="button"
@@ -952,7 +1005,11 @@ export default function DesktopPetApp() {
                     className="desktop-pet-platform"
                     data-ready={platform.ready || undefined}
                     disabled={!platform.ready}
-                    style={targetFanStyle(index, handoffPlatforms.length)}
+                    style={targetFanStyle(
+                      index,
+                      handoffPlatforms.length,
+                      DESKTOP_PET_MENU_MAX_VISIBLE_PLATFORMS
+                    )}
                     onClick={() => selectHandoffPlatform(platform)}
                     title={[name, status].join(" · ")}
                   >
@@ -966,7 +1023,11 @@ export default function DesktopPetApp() {
                 );
               })}
             </div>
-          ) : menuTargets.length > 0 ? <div className="desktop-pet-target-list">
+          ) : menuTargets.length > 0 ? (
+            <div
+              className="desktop-pet-target-list"
+              data-scrollable={secondaryListScrollable || undefined}
+            >
             {targetMode === "handoff" ? (
               <div className="desktop-pet-secondary-header">
                 <button
@@ -1009,7 +1070,11 @@ export default function DesktopPetApp() {
                     target.handoffPhase === "recovery_failed" || undefined
                   }
                   aria-current={target.active ? "true" : undefined}
-                  style={targetFanStyle(index, menuTargets.length)}
+                  style={targetFanStyle(
+                    index,
+                    menuTargets.length,
+                    DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS
+                  )}
                   onClick={() => (
                     targetMode === "handoff" ? requestHandoff(target) : openTarget(target)
                   )}
@@ -1033,7 +1098,9 @@ export default function DesktopPetApp() {
                 </button>
               );
             })}
-          </div> : null}
+            </div>
+          ) : null}
+          {config.settings.showActionMenu ? (
           <div className="desktop-pet-menu-actions">
             <button
               type="button"
@@ -1158,6 +1225,7 @@ export default function DesktopPetApp() {
               <span>{labels.hide}</span>
             </button>
           </div>
+          ) : null}
         </div>
       ) : null}
     </main>

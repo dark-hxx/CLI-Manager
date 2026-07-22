@@ -98,6 +98,56 @@ test("actions-only menus also flip away from the top-left edge", () => {
   assert.equal(geometry.verticalPlacement, "below");
   assertGeometryWithinWorkArea(geometry, collapsed, workArea, 1);
 });
+
+test("task card viewport is capped at three visible cards", () => {
+  const collapsed = { x: 900, y: 600, width: 190, height: 210 };
+  const threeTargets = menu.calculateDesktopPetMenuWindowGeometry(collapsed, 1, 3);
+  const manyTargets = menu.calculateDesktopPetMenuWindowGeometry(collapsed, 1, 12);
+  assert.equal(manyTargets.targetListHeight, threeTargets.targetListHeight);
+});
+
+test("task-only menus remove the quick-action gap and empty menus stay collapsed", () => {
+  const collapsed = { x: 900, y: 600, width: 190, height: 210 };
+  const fullMenu = menu.calculateDesktopPetMenuWindowGeometry(collapsed, 1, 3);
+  const taskOnly = menu.calculateDesktopPetMenuWindowGeometry(
+    collapsed,
+    1,
+    3,
+    null,
+    0,
+    { showActionMenu: false }
+  );
+  const empty = menu.calculateDesktopPetMenuWindowGeometry(
+    collapsed,
+    1,
+    0,
+    null,
+    0,
+    { showActionMenu: false }
+  );
+  assert.ok(taskOnly.panelWidth < fullMenu.panelWidth);
+  assert.equal(taskOnly.panelWidth, 280);
+  assert.equal(empty.panelWidth, 0);
+  assert.deepEqual(
+    { width: empty.physicalWidth, height: empty.physicalHeight },
+    { width: collapsed.width, height: collapsed.height }
+  );
+});
+
+test("platform selection can retain five visible entries", () => {
+  const collapsed = { x: 900, y: 600, width: 190, height: 210 };
+  const taskList = menu.calculateDesktopPetMenuWindowGeometry(collapsed, 1, 5, null, 34);
+  const platformList = menu.calculateDesktopPetMenuWindowGeometry(
+    collapsed,
+    1,
+    5,
+    null,
+    34,
+    { maxVisibleItems: 5 }
+  );
+  assert.ok(platformList.targetListHeight > taskList.targetListHeight);
+});
+
 test("negative-coordinate monitor work areas remain supported", () => {
   const scaleFactor = 1.25;
   const workArea = { x: -2560, y: -180, width: 2560, height: 1440 };
@@ -123,7 +173,8 @@ test("menu space is compressed on the larger side without moving the pet", () =>
     scaleFactor,
     5,
     workArea,
-    34
+    34,
+    { maxVisibleItems: 5 }
   );
   assert.equal(geometry.horizontalPlacement, "right");
   assert.equal(geometry.verticalPlacement, "above");

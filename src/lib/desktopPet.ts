@@ -25,10 +25,13 @@ import { desktopPetScaleFromPercent } from "./desktopPetSize";
 
 export {
   calculateDesktopPetMenuWindowGeometry,
+  DESKTOP_PET_MENU_MAX_VISIBLE_PLATFORMS,
+  DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS,
   resizeDesktopPetCollapsedWindowBounds,
   createLatestAsyncTaskRunner,
   type DesktopPetMenuHorizontalPlacement,
   type DesktopPetMenuVerticalPlacement,
+  type DesktopPetMenuWindowOptions,
   type DesktopPetMenuWindowGeometry,
   type DesktopPetWindowRect,
   type LatestAsyncTaskContext,

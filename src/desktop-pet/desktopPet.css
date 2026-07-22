@@ -224,18 +224,36 @@
   overflow-y: auto;
   padding: 0 10px 0 28px;
   scroll-padding: 0;
-  scrollbar-color: rgb(109 226 169 / 36%) transparent;
+  scrollbar-color: rgb(109 226 169 / 32%) transparent;
   scrollbar-width: thin;
+  overscroll-behavior: contain;
   pointer-events: auto;
 }
 
-.desktop-pet-target-list::-webkit-scrollbar { width: 4px; }
+.desktop-pet-target-list[data-scrollable="true"] { scrollbar-gutter: stable; }
+
+.desktop-pet-target-list::-webkit-scrollbar {
+  width: 4px;
+  background: transparent;
+}
 .desktop-pet-target-list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .desktop-pet-target-list::-webkit-scrollbar-thumb {
+  min-height: 24px;
   border-radius: 999px;
-  background: rgb(109 226 169 / 34%);
+  background: rgb(109 226 169 / 30%);
 }
-.desktop-pet-target-list::-webkit-scrollbar-track { background: transparent; }
+.desktop-pet-target-list::-webkit-scrollbar-thumb:hover {
+  background: rgb(109 226 169 / 48%);
+}
+.desktop-pet-target-list::-webkit-scrollbar-track,
+.desktop-pet-target-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.desktop-pet-root[data-show-action-menu="false"] .desktop-pet-target-list {
+  right: calc(var(--pet-anchor-width) - 20px);
+  width: min(260px, max(132px, calc(var(--pet-menu-panel-width) - 20px)));
+}
 
 .desktop-pet-secondary-header {
   display: flex;
@@ -654,6 +672,10 @@
   left: calc(var(--pet-anchor-width) + 128px);
   align-items: flex-start;
   padding: 0 28px 0 10px;
+}
+
+.desktop-pet-root[data-menu-horizontal="right"][data-show-action-menu="false"] .desktop-pet-target-list {
+  left: calc(var(--pet-anchor-width) - 20px);
 }
 
 .desktop-pet-root[data-menu-horizontal="right"] .desktop-pet-platform,

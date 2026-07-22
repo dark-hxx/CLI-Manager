@@ -465,3 +465,22 @@
 - 已同步并合并 origin/master 44f5695c，冲突仅为上游 1.3.0 与本分支 1.3.1 的五个版本字段，统一保留 1.3.1。
 - 使用 tauri.local.conf.json 关闭 updater artifacts，仅构建 NSIS；产物为 src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.1_x64-setup.exe，大小 19021755 字节，SHA-256 为 E13FCF061B1B2EFDB7FABBF63C6050F4F7781992DE23948C049F11FE0AE1A3B9。
 - 未构建 MSI、未生成更新签名、未复制到 F:\cli-manager、未停止用户安装目录中的服务，也未 push。
+
+## 桌宠菜单可配置与三卡滚动（2026-07-22）
+
+### 功能与兼容性
+
+- “设置 -> 桌面宠物 -> 显示与交互”新增“显示快捷操作菜单”和“悬停自动展开”两个开关；旧配置缺少字段时均默认开启，保持升级前行为。
+- 快捷操作关闭后只保留任务卡片，窗口几何同步缩窄并把卡片贴近宠物，不留下原操作菜单占用的空白；没有任务时右键和悬停均不展开空窗口。
+- 悬停自动展开关闭后仅右键可展开；双击当前会话、任务卡片点击、拖动、Esc 和离开窗口关闭逻辑保持不变。
+- 普通任务与托管会话列表最多显示三张卡片，第四张起使用透明轨道、半透明绿色滑块的纵向滚动条；远程平台选择列表继续最多显示五项。
+- 触点覆盖：settingsStore 默认值/迁移、桌宠设置真实入口、中英文文案、配置事件传输、DesktopPetApp 交互、窗口几何、卡片 CSS 和几何测试；Rust、PTY、Hook、远程托管协议及 cc-connect 均未修改。
+
+### 验证
+
+- 前端 TypeScript noEmit 检查：通过。
+- desktopPetMenuGeometry.test.mjs：14 项通过，新增覆盖三卡高度上限、任务单栏缩窄、空菜单不扩窗和平台五项兼容。
+- Node.js 22 环境下 npm run build：通过，Vite 完成 6678 个模块转换。
+- git diff --check：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- GitNexus CLI 本轮无法在时限内启动，已降级使用 codebase-memory、源码引用、rg、Git diff、几何测试和生产构建复核。
+- 本次未生成安装包，未启动或停止用户安装目录中的 CLI-Manager，也未 push。

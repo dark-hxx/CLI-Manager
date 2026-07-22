@@ -25,12 +25,19 @@ export interface DesktopPetMenuWindowGeometry {
   verticalPlacement: DesktopPetMenuVerticalPlacement;
 }
 
+export interface DesktopPetMenuWindowOptions {
+  showActionMenu?: boolean;
+  maxVisibleItems?: number;
+}
+
 const DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH = 440;
+const DESKTOP_PET_MENU_TARGET_ONLY_EXTRA_WIDTH = 280;
 const DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH = 190;
 const DESKTOP_PET_MENU_CARD_HEIGHT = 58;
 const DESKTOP_PET_MENU_CARD_STEP = 54;
 const DESKTOP_PET_MENU_CARD_BREATHING_ROOM = 12;
-const DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS = 5;
+export const DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS = 3;
+export const DESKTOP_PET_MENU_MAX_VISIBLE_PLATFORMS = 5;
 const DESKTOP_PET_MENU_VERTICAL_CHROME = 28;
 const DESKTOP_PET_WINDOW_BASE_WIDTH = 190;
 const DESKTOP_PET_WINDOW_BASE_HEIGHT = 210;
@@ -97,7 +104,8 @@ export function calculateDesktopPetMenuWindowGeometry(
   scaleFactor: number,
   targetCount: number,
   workArea?: DesktopPetWindowRect | null,
-  secondaryHeaderHeight = 0
+  secondaryHeaderHeight = 0,
+  options: DesktopPetMenuWindowOptions = {}
 ): DesktopPetMenuWindowGeometry {
   const safeScaleFactor = Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1;
   const collapsedX = finiteInteger(collapsed.x, 0);
@@ -106,9 +114,18 @@ export function calculateDesktopPetMenuWindowGeometry(
   const collapsedHeight = Math.max(1, finiteInteger(collapsed.height, 1));
   const anchorWidth = collapsedWidth / safeScaleFactor;
   const anchorHeight = collapsedHeight / safeScaleFactor;
+  const showActionMenu = options.showActionMenu !== false;
+  const requestedMaxVisibleItems =
+    typeof options.maxVisibleItems === "number" && Number.isFinite(options.maxVisibleItems)
+      ? options.maxVisibleItems
+      : DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS;
+  const maxVisibleItems = Math.max(
+    1,
+    Math.floor(requestedMaxVisibleItems)
+  );
   const visibleTargets = Math.min(
     Math.max(0, Math.floor(Number.isFinite(targetCount) ? targetCount : 0)),
-    DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS
+    maxVisibleItems
   );
   const requestedTargetListHeight = visibleTargets > 0
     ? DESKTOP_PET_MENU_CARD_HEIGHT
@@ -117,15 +134,22 @@ export function calculateDesktopPetMenuWindowGeometry(
       + Math.max(0, Number.isFinite(secondaryHeaderHeight) ? secondaryHeaderHeight : 0)
     : 0;
   const requestedPanelWidth = visibleTargets > 0
-    ? DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH
-    : DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH;
-  const requestedLogicalHeight = Math.max(
-    anchorHeight,
-    224,
-    requestedTargetListHeight > 0
-      ? requestedTargetListHeight + DESKTOP_PET_MENU_VERTICAL_CHROME
-      : anchorHeight
-  );
+    ? showActionMenu
+      ? DESKTOP_PET_MENU_TARGET_EXTRA_WIDTH
+      : DESKTOP_PET_MENU_TARGET_ONLY_EXTRA_WIDTH
+    : showActionMenu
+      ? DESKTOP_PET_MENU_ACTIONS_EXTRA_WIDTH
+      : 0;
+  const hasMenuContent = showActionMenu || visibleTargets > 0;
+  const requestedLogicalHeight = hasMenuContent
+    ? Math.max(
+        anchorHeight,
+        showActionMenu ? 224 : anchorHeight,
+        requestedTargetListHeight > 0
+          ? requestedTargetListHeight + DESKTOP_PET_MENU_VERTICAL_CHROME
+          : anchorHeight
+      )
+    : anchorHeight;
   const requestedPanelPhysical = Math.max(0, Math.round(requestedPanelWidth * safeScaleFactor));
   const requestedVerticalExtraPhysical = Math.max(
     0,

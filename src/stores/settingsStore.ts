@@ -182,6 +182,8 @@ export interface DesktopPetSettings {
   petId: string;
   alwaysOnTop: boolean;
   size: DesktopPetSize;
+  showActionMenu: boolean;
+  openOnHover: boolean;
   workingBounceEnabled: boolean;
   workingBounceDistancePx: number;
   showStatus: boolean;
@@ -584,6 +586,8 @@ const DEFAULTS: Settings = {
     petId: BUILTIN_DESKTOP_PET_ID,
     alwaysOnTop: true,
     size: DESKTOP_PET_SIZE_DEFAULT_PERCENT,
+    showActionMenu: true,
+    openOnHover: true,
     workingBounceEnabled: false,
     workingBounceDistancePx: 5,
     showStatus: true,
@@ -1034,6 +1038,9 @@ export function migrateDesktopPetSettings(value: unknown): DesktopPetSettings {
     petId,
     alwaysOnTop: typeof raw.alwaysOnTop === "boolean" ? raw.alwaysOnTop : defaults.alwaysOnTop,
     size,
+    showActionMenu:
+      typeof raw.showActionMenu === "boolean" ? raw.showActionMenu : defaults.showActionMenu,
+    openOnHover: typeof raw.openOnHover === "boolean" ? raw.openOnHover : defaults.openOnHover,
     workingBounceEnabled:
       typeof raw.workingBounceEnabled === "boolean"
         ? raw.workingBounceEnabled
