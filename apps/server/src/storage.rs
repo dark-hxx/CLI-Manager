@@ -4,11 +4,17 @@ use cli_manager_web_protocol::{
     HistorySessionSummary, OperationError, OperationStatus, OperationView, UserView,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use std::time::Duration;
 use uuid::Uuid;
+
+const KNOWN_MIGRATIONS: &[(i64, &[u8])] = &[
+    (1, include_bytes!("../migrations/0001_initial.sql")),
+    (2, include_bytes!("../migrations/0002_device_identity.sql")),
+];
 
 #[derive(Debug, Clone)]
 pub struct AuthUser {
@@ -52,6 +58,7 @@ impl Storage {
             .max_connections(5)
             .connect_with(options)
             .await?;
+        repair_migration_line_endings(&pool).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Ok(Self { pool })
     }
@@ -802,6 +809,64 @@ impl Storage {
     }
 }
 
+async fn repair_migration_line_endings(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !table_exists {
+        return Ok(());
+    }
+
+    for (version, migration) in KNOWN_MIGRATIONS {
+        let Some(checksum) = sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT checksum FROM _sqlx_migrations WHERE version = ?1 AND success = TRUE",
+        )
+        .bind(version)
+        .fetch_optional(pool)
+        .await?
+        else {
+            continue;
+        };
+
+        let current_checksum = Sha384::digest(migration).to_vec();
+        if checksum == current_checksum {
+            continue;
+        }
+
+        let alternate = alternate_line_endings(migration);
+        if checksum != Sha384::digest(&alternate).to_vec() {
+            continue;
+        }
+
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2")
+            .bind(current_checksum)
+            .bind(version)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+fn alternate_line_endings(bytes: &[u8]) -> Vec<u8> {
+    if bytes.windows(2).any(|pair| pair == b"\r\n") {
+        bytes
+            .split(|byte| *byte == b'\r')
+            .flat_map(|part| part.iter().copied())
+            .collect()
+    } else {
+        let mut alternate = Vec::with_capacity(bytes.len());
+        for byte in bytes {
+            if *byte == b'\n' {
+                alternate.push(b'\r');
+            }
+            alternate.push(*byte);
+        }
+        alternate
+    }
+}
+
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -892,6 +957,46 @@ fn valid_operation_transition(current: &OperationStatus, next: &OperationStatus)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_line_endings_are_reversible() {
+        let lf = b"SELECT 1;\nSELECT 2;\n";
+        let crlf = b"SELECT 1;\r\nSELECT 2;\r\n";
+        assert_eq!(alternate_line_endings(lf), crlf);
+        assert_eq!(alternate_line_endings(crlf), lf);
+    }
+
+    #[tokio::test]
+    async fn known_migration_line_ending_drift_is_repaired() {
+        let storage = Storage::open_memory().await.unwrap();
+        let alternate_checksum = Sha384::digest(alternate_line_endings(KNOWN_MIGRATIONS[1].1));
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = 2")
+            .bind(alternate_checksum.to_vec())
+            .execute(storage.pool())
+            .await
+            .unwrap();
+
+        repair_migration_line_endings(storage.pool()).await.unwrap();
+        sqlx::migrate!("./migrations")
+            .run(storage.pool())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unknown_migration_drift_is_not_repaired() {
+        let storage = Storage::open_memory().await.unwrap();
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 2")
+            .execute(storage.pool())
+            .await
+            .unwrap();
+
+        repair_migration_line_endings(storage.pool()).await.unwrap();
+        assert!(matches!(
+            sqlx::migrate!("./migrations").run(storage.pool()).await,
+            Err(sqlx::migrate::MigrateError::VersionMismatch(2))
+        ));
+    }
 
     #[tokio::test]
     async fn operation_never_reaches_success_without_device_update() {

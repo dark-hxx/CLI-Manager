@@ -45,6 +45,7 @@
 ### SQLite
 
 - Migration owner: `apps/server/migrations/`.
+- Migration SQL files must use LF. Before SQLx validation, startup may rewrite an applied migration checksum only when it exactly matches the same embedded SQL with the alternate LF/CRLF representation; any other checksum mismatch must remain an error.
 - Required uniqueness: browser token hash, pairing code hash, `(device_id, stream)` cursor, `(user_id, idempotency_key)` operation, browser event sequence.
 - Startup must mark persisted devices offline before accepting new connections.
 
@@ -136,6 +137,8 @@ non-terminal -> canceled | timed_out
 | Canonical `cwd` escapes the registered native/WSL root | Reject before operation execution |
 | Remote plaintext device URL | Reject profile/start; only loopback may use `ws://` |
 | Invalid state jump | `invalid_operation_transition` |
+| Applied migration checksum differs only by LF/CRLF | Rewrite to the embedded migration checksum, then run normal SQLx validation |
+| Applied migration checksum differs by SQL content | Preserve SQLx `VersionMismatch`; never auto-repair |
 | Unknown `/api/*` path | JSON 404; never SPA `index.html` |
 
 ## 5. Good / Base / Bad Cases
@@ -144,6 +147,7 @@ non-terminal -> canceled | timed_out
 - Good: online operation stays submitted until desktop accepted/running/final frames arrive.
 - Base: dispatch races with a disconnect; operation becomes `waiting_device` and is resent after device reconnect.
 - Base: service restarts; cached history remains readable, all devices start offline, and no Redis state is required.
+- Base: a Windows checkout changes an applied migration from LF to CRLF; startup repairs only that byte-level line-ending drift and continues.
 - Base: the window is hidden while the Rust worker remains connected; queued operations are delivered when the WebView bridge is ready.
 - Base: the renderer reloads after an operation reached accepted/running; the server resends it and desktop reports `operation_interrupted` instead of executing it again.
 - Base: 129+ operations arrive; the first queue remains bounded, ACKs still drain, and deferred operations are recovered on reconnect.
@@ -152,6 +156,7 @@ non-terminal -> canceled | timed_out
 - Bad: trust browser `cwd/sessionId`, build a resume command before validation, or store `deviceToken` in frontend state.
 - Bad: allow `submitted -> succeeded`, trust browser-provided success, or serve SPA HTML for an unknown API route.
 - Bad: treat `payload.confirmed` as authorization, expose native paths/SSH stderr in results, or remove a local operation before its server ACK.
+- Bad: overwrite `_sqlx_migrations.checksum` for an unknown mismatch or rerun an already-applied migration.
 
 ## 6. Tests Required
 
@@ -164,6 +169,7 @@ non-terminal -> canceled | timed_out
   - full history snapshot replacement.
   - newer device connection generation replacing the old one.
   - health, protected route, and JSON API fallback routing.
+  - known LF/CRLF migration checksum drift is repaired while unknown drift remains `VersionMismatch`.
 - `cargo test --manifest-path crates/web-protocol/Cargo.toml` to lock camelCase fields, snake_case statuses, and dotted browser event names.
 - `npm run web:typecheck` and `npm run web:build`.
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --check`, `cargo check --manifest-path src-tauri/Cargo.toml`, and `cargo test --manifest-path src-tauri/Cargo.toml web_device` with assertions for URL TLS policy, profile/token serialization, queue bounds/deduplication, profile replacement, and native path boundary rejection.
@@ -188,6 +194,12 @@ createSession(undefined, payload.cwd, command);
 ```
 
 ### Correct
+
+```rust
+// Correct: repair only an exact alternate-line-ending checksum, then let SQLx validate normally.
+repair_migration_line_endings(&pool).await?;
+sqlx::migrate!("./migrations").run(&pool).await?;
+```
 
 ```rust
 let owner = storage.device_user_id(device_id).await?;
