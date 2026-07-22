@@ -1486,9 +1486,6 @@ function CliArgsHistoryField({
                 className="flex w-[calc(100%-8px)] cursor-pointer items-center gap-3 outline-none hover:bg-surface-container-highest hover:text-text-primary data-[active=true]:bg-surface-container-highest data-[active=true]:text-text-primary"
               >
                 <span className="min-w-0 flex-1 truncate text-left font-mono">{suggestion.cliArgs}</span>
-                <span className="shrink-0 text-text-muted">
-                  {t("configModal.cliArgsHistoryCount", { count: suggestion.count })}
-                </span>
               </button>
             ))}
           </div>
