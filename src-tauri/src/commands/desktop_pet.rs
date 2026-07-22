@@ -1275,7 +1275,7 @@ pub fn desktop_pet_window_set_bounds(
 #[tauri::command]
 pub fn desktop_pet_window_reset_position(app: AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
-        return Ok(());
+        return Err("pet_window_missing".to_string());
     };
     place_default(&window);
     Ok(())

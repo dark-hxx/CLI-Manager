@@ -9,6 +9,10 @@ const terminalSource = readFileSync(
   new URL("../src/components/XTermTerminal.tsx", import.meta.url),
   "utf8",
 );
+const supportSource = readFileSync(
+  new URL("../src/lib/terminalImageAddonSupport.ts", import.meta.url),
+  "utf8",
+);
 
 test("Tauri CSP permits WebAssembly without enabling general unsafe eval", () => {
   const csp = tauriConfig.app.security.csp;
@@ -17,10 +21,13 @@ test("Tauri CSP permits WebAssembly without enabling general unsafe eval", () =>
   assert.doesNotMatch(csp, /(?:^|\s)'unsafe-eval'(?:\s|;|$)/);
 });
 
-test("terminal image addon failure falls back without aborting terminal setup", () => {
+test("terminal image addon probes the actual WebAssembly CSP gate before loading", () => {
+  assert.match(supportSource, /new WebAssembly\.Module\(MINIMAL_WASM_MODULE\)/);
+  assert.match(supportSource, /catch \{\s*cachedWasmSupport = false;/);
+  assert.match(terminalSource, /if \(!canUseTerminalImageAddonWasm\(\)\) \{/);
   assert.match(
     terminalSource,
-    /if \(initialWebglReady\) \{\s*try \{\s*terminal\.loadAddon\(imageAddon\);\s*\} catch \(err\) \{[\s\S]*?imageAddon\.dispose\(\);[\s\S]*?logWarn\("Failed to load terminal image addon; continuing without terminal image support"/,
+    /if \(initialWebglReady\) \{[\s\S]*?if \(!canUseTerminalImageAddonWasm\(\)\) \{[\s\S]*?\} else \{[\s\S]*?terminal\.loadAddon\(imageAddon\);/,
   );
   assert.match(terminalSource, /terminalRef\.current = terminal;/);
 });
