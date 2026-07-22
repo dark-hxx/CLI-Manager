@@ -2242,7 +2242,6 @@ export function TerminalTabs({
       tree: s.tree,
     }))
   );
-  const updateProject = useProjectStore((s) => s.updateProject);
   const worktrees = useWorktreeStore((s) => s.worktrees);
   const checkWorktreeDeps = useWorktreeStore((s) => s.checkDeps);
   const dismissWorktreeDepsPrompt = useWorktreeStore((s) => s.dismissDepsPrompt);
@@ -3787,17 +3786,8 @@ export function TerminalTabs({
     toolbarSensors,
   ]);
 
-  const renameOpenProjectTabs = useCallback(
-    (projectId: string, title: string) => {
-      sessions
-        .filter((session) => session.projectId === projectId && !session.worktreeId && (session.kind ?? "pty") === "pty")
-        .forEach((session) => renameSession(session.id, title));
-    },
-    [renameSession, sessions]
-  );
-
   const handleSubmitTabEdit = useCallback(
-    async (sessionId: string, title: string) => {
+    (sessionId: string, title: string) => {
       const trimmed = title.trim();
       const session = sessions.find((item) => item.id === sessionId);
       if (!session || !trimmed) {
@@ -3805,22 +3795,10 @@ export function TerminalTabs({
         return;
       }
 
-      if (session.projectId && !session.worktreeId && (session.kind ?? "pty") === "pty") {
-        try {
-          await updateProject(session.projectId, { name: trimmed });
-          renameOpenProjectTabs(session.projectId, trimmed);
-        } catch (err) {
-          toast.error(t("terminal.tab.renameFailed"), { description: String(err) });
-        } finally {
-          setEditingSessionId(null);
-        }
-        return;
-      }
-
       renameSession(sessionId, trimmed);
       setEditingSessionId(null);
     },
-    [renameOpenProjectTabs, renameSession, sessions, t, updateProject]
+    [renameSession, sessions]
   );
 
   const handlePaneSubmitEdit = useCallback((sessionId: string, title: string) => {
