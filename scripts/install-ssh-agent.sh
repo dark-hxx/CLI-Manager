@@ -26,8 +26,8 @@ log() {
 usage() {
   cat <<'EOF'
 Usage: install-ssh-agent.sh [options]
-  --manifest-url URL   Signed release manifest; defaults to the latest release
-  --version VERSION    Use the manifest from release VVERSION
+  --manifest-url URL   Signed release manifest; defaults to the latest desktop release
+  --version VERSION    Use the manifest from release ssh-agent-vVERSION
   --channel CHANNEL    Require a matching manifest channel
   --install-dir PATH   Custom absolute Agent install root
   --allow-http         Permit a signed manifest and artifact over HTTP
@@ -101,7 +101,11 @@ command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v minisign >/dev/null 2>&1 || fail "minisign is required to verify the signed manifest"
 if [ -z "$manifest_url" ]; then
   if [ -n "$requested_version" ]; then
-    manifest_url="https://github.com/$REPOSITORY/releases/download/V$requested_version/ssh-agent-release-manifest.json"
+    case "$requested_version" in
+      1.3.0) release_tag="V$requested_version" ;;
+      *) release_tag="ssh-agent-v$requested_version" ;;
+    esac
+    manifest_url="https://github.com/$REPOSITORY/releases/download/$release_tag/ssh-agent-release-manifest.json"
   else
     manifest_url="https://github.com/$REPOSITORY/releases/latest/download/ssh-agent-release-manifest.json"
   fi

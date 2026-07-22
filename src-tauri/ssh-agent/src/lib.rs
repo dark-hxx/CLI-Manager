@@ -9,10 +9,7 @@ pub mod protocol;
 
 use serde::Serialize;
 
-pub const AGENT_VERSION: &str = match option_env!("CLI_MANAGER_SSH_AGENT_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
-};
+pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PROTOCOL_MAJOR: u16 = 1;
 pub const PROTOCOL_MINOR: u16 = 6;
 

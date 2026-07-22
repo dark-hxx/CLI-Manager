@@ -10,6 +10,7 @@ on:
       - ".github/scripts/build-ssh-agent-release.mjs"
       - ".github/scripts/test-install-ssh-agent.sh"
       - ".github/workflows/ssh-agent-check.yml"
+      - ".github/workflows/ssh-agent-release.yml"
   push:
     branches:
       - master
@@ -22,6 +23,7 @@ on:
       - ".github/scripts/build-ssh-agent-release.mjs"
       - ".github/scripts/test-install-ssh-agent.sh"
       - ".github/workflows/ssh-agent-check.yml"
+      - ".github/workflows/ssh-agent-release.yml"
 
 jobs:
   test:
@@ -35,8 +37,9 @@ jobs:
           cargo build --manifest-path src-tauri/ssh-agent/Cargo.toml
           sh -n scripts/install-ssh-agent.sh
           sh .github/scripts/test-install-ssh-agent.sh
+          AGENT_VERSION="$(cargo metadata --no-deps --format-version 1 --manifest-path src-tauri/ssh-agent/Cargo.toml | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk).on("end", () => { const pkg = JSON.parse(input).packages.find(item => item.name === "cli-manager-ssh-agent"); if (!pkg) process.exit(1); process.stdout.write(pkg.version); });')"
           node .github/scripts/build-ssh-agent-release.mjs \
-            0.1.0 V0.1.0 \
+            "$AGENT_VERSION" "ssh-agent-v$AGENT_VERSION" \
             src-tauri/ssh-agent/target/release-test \
             src-tauri/ssh-agent/target/debug/cli-manager-ssh-agent \
             src-tauri/ssh-agent/target/debug/cli-manager-ssh-agent

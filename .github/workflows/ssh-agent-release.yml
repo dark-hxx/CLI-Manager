@@ -1,0 +1,137 @@
+name: SSH Agent Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "ssh-agent-v*"
+
+concurrency:
+  group: ssh-agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          npm ci
+
+      - name: Resolve and validate version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(cargo metadata --no-deps --format-version 1 --manifest-path src-tauri/ssh-agent/Cargo.toml | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk).on("end", () => { const pkg = JSON.parse(input).packages.find(item => item.name === "cli-manager-ssh-agent"); if (!pkg) process.exit(1); process.stdout.write(pkg.version); });')"
+          TAG="ssh-agent-v$VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && [[ "$GITHUB_REF_NAME" != "$TAG" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match Agent version $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Test SSH Agent and installer
+        run: |
+          cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml
+          sh -n scripts/install-ssh-agent.sh
+          sh .github/scripts/test-install-ssh-agent.sh
+
+      - name: Build Linux SSH Agent artifacts
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target x86_64-unknown-linux-gnu
+          cargo build --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target aarch64-unknown-linux-gnu
+
+      - name: Build signed release manifest
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node .github/scripts/build-ssh-agent-release.mjs \
+            "${{ steps.version.outputs.version }}" \
+            "${{ steps.version.outputs.tag }}" \
+            dist/ssh-agent \
+            src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
+            src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
+          npx tauri signer sign dist/ssh-agent/ssh-agent-release-manifest.json
+          cp scripts/install-ssh-agent.sh dist/ssh-agent/install-ssh-agent.sh
+
+      - name: Upload SSH Agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-agent-${{ steps.version.outputs.version }}
+          path: dist/ssh-agent/*
+          if-no-files-found: error
+
+      - name: Record desktop latest release
+        if: startsWith(github.ref, 'refs/tags/')
+        id: desktop_latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish SSH Agent prerelease
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: CLI-Manager SSH Agent v${{ steps.version.outputs.version }}
+          prerelease: true
+          make_latest: false
+          generate_release_notes: true
+          files: |
+            dist/ssh-agent/cli-manager-ssh-agent-linux-x86_64
+            dist/ssh-agent/cli-manager-ssh-agent-linux-aarch64
+            dist/ssh-agent/ssh-agent-release-manifest.json
+            dist/ssh-agent/ssh-agent-release-manifest.json.sig
+            dist/ssh-agent/install-ssh-agent.sh
+
+      - name: Verify prerelease and assets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_DESKTOP_LATEST: ${{ steps.desktop_latest.outputs.tag }}
+        shell: bash
+        run: |
+          test "$(gh release view "${{ steps.version.outputs.tag }}" --json isPrerelease --jq .isPrerelease)" = "true"
+          assets="$(gh release view "${{ steps.version.outputs.tag }}" --json assets --jq '.assets[].name')"
+          for required in \
+            cli-manager-ssh-agent-linux-x86_64 \
+            cli-manager-ssh-agent-linux-aarch64 \
+            ssh-agent-release-manifest.json \
+            ssh-agent-release-manifest.json.sig \
+            install-ssh-agent.sh
+          do
+            printf '%s\n' "$assets" | grep -Fxq "$required" || {
+              echo "Missing required SSH Agent release asset: $required" >&2
+              exit 1
+            }
+          done
+          ACTUAL_DESKTOP_LATEST="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          test "$ACTUAL_DESKTOP_LATEST" = "$EXPECTED_DESKTOP_LATEST" || {
+            echo "SSH Agent prerelease changed the desktop latest release" >&2
+            exit 1
+          }

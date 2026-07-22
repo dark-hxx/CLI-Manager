@@ -31,6 +31,7 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
+[ -z "${DOWNLOAD_LOG:-}" ] || printf '%s\n' "$url" >> "$DOWNLOAD_LOG"
 case "$url" in
   *.json.sig) cp "$FIXTURE_SIGNATURE" "$output" ;;
   *.json) cp "$FIXTURE_MANIFEST" "$output" ;;
@@ -46,7 +47,7 @@ EOF
 
 cat > "$bin/jq" <<'EOF'
 #!/bin/sh
-printf '1\ttemp\t1.2.3\t1\t1\t%s\t%s\t%s\n' "$ARTIFACT_URL" "$ARTIFACT_SIZE" "$ARTIFACT_SHA256"
+printf '1\ttemp\t%s\t1\t1\t%s\t%s\t%s\n' "${MANIFEST_VERSION:-1.2.3}" "$ARTIFACT_URL" "$ARTIFACT_SIZE" "$ARTIFACT_SHA256"
 EOF
 
 cat > "$bin/uname" <<'EOF'
@@ -62,6 +63,7 @@ export FIXTURE_ARTIFACT="$tmp/artifact"
 export ARTIFACT_SIZE="$size"
 export ARTIFACT_SHA256="$sha"
 export RESULT_FILE="$tmp/result.txt"
+export DOWNLOAD_LOG="$tmp/downloads.txt"
 export TMPDIR="$tmp/installer-tmp"
 mkdir -p "$TMPDIR"
 
@@ -69,6 +71,14 @@ ARTIFACT_URL="https://mirror/agent"
 export ARTIFACT_URL
 dry_run=$(sh "$root/scripts/install-ssh-agent.sh" --manifest-url https://mirror/manifest.json --dry-run --json)
 case "$dry_run" in *'"action":"dryRun"'*'"target":"linux-x86_64"'*) ;; *) exit 1 ;; esac
+
+: > "$DOWNLOAD_LOG"
+MANIFEST_VERSION=1.2.3 sh "$root/scripts/install-ssh-agent.sh" --version 1.2.3 --dry-run >/dev/null
+grep -F "https://github.com/dark-hxx/CLI-Manager/releases/download/ssh-agent-v1.2.3/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
+
+: > "$DOWNLOAD_LOG"
+MANIFEST_VERSION=1.3.0 sh "$root/scripts/install-ssh-agent.sh" --version 1.3.0 --dry-run >/dev/null
+grep -F "https://github.com/dark-hxx/CLI-Manager/releases/download/V1.3.0/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
 
 if sh "$root/scripts/install-ssh-agent.sh" --manifest-url http://mirror/manifest.json --dry-run >/dev/null 2>&1; then
   exit 1

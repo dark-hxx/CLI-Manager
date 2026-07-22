@@ -6,6 +6,23 @@ Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport 
 
 The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and one reusable daemon-owned protocol `1.6` bridge per active SSH Host. Protocol 1.5 file RPCs and protocol 1.6 Git RPCs are read-only; realtime/historical stats remain separate stages.
 
+### Agent Release Identity
+
+- The Agent product version is `src-tauri/ssh-agent/Cargo.toml` `[package].version`; its Cargo
+  lockfile package entry and `AGENT_VERSION` must resolve to the same value. It is independent
+  from the desktop app version and from the bridge protocol version.
+- The independent Agent release tag is exactly `ssh-agent-v<agent-version>`. Its signed manifest
+  must carry that Agent version and point only to assets on that same tag.
+- Independent Agent releases are GitHub prereleases with `make_latest: false`. The desktop
+  updater endpoint `releases/latest/download/latest.json` remains owned by stable desktop
+  releases tagged `V<desktop-version>`.
+- Stable desktop releases bundle the signed Agent manifest, signature, and Linux x64/arm64
+  binaries. Desktop installation uses that bundle first; only a completely absent bundle falls
+  back to the stable desktop Release network manifest.
+- The shell installer uses `ssh-agent-v<version>` for explicit versions, except legacy `1.3.0`,
+  which resolves to its original `V1.3.0` desktop Release. An unavailable GitHub network cannot
+  be repaired by the remote installer; the bundled desktop installation remains the offline path.
+
 ## 2. Signatures
 
 ### Shared transport
@@ -145,6 +162,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 | OS/architecture is outside Linux x64/arm64 | status `unsupported`, code `unsupported_target` |
 | Supported target has no usable HOME/XDG layout | status `corrupt`, code `home_directory_unavailable` |
 | Manifest signature, schema, protocol, URL, target, size, or SHA-256 is invalid | reject before upload |
+| Agent manifest version differs from Agent Cargo package version or an Agent Tag differs from `ssh-agent-v<version>` | fail the release workflow |
+| Independent Agent prerelease changes GitHub desktop latest Release | fail the release workflow |
 | Concurrent install/upgrade holds the lock | `agent_install_locked` |
 | Incoming semantic version is lower without explicit approval | `agent_downgrade_forbidden` |
 | Existing launcher is not owned by CLI-Manager | `agent_launcher_conflict` |

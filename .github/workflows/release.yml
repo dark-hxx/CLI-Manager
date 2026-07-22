@@ -29,11 +29,11 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           npm ci
 
-      - name: Extract version from tag
-        id: version
+      - name: Extract SSH Agent version
+        id: agent_version
         shell: bash
         run: |
-          VERSION="${GITHUB_REF#refs/tags/V}"
+          VERSION="$(cargo metadata --no-deps --format-version 1 --manifest-path src-tauri/ssh-agent/Cargo.toml | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk).on("end", () => { const pkg = JSON.parse(input).packages.find(item => item.name === "cli-manager-ssh-agent"); if (!pkg) process.exit(1); process.stdout.write(pkg.version); });')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Test SSH Agent
@@ -43,7 +43,6 @@ jobs:
 
       - name: Build Linux SSH Agent artifacts
         env:
-          CLI_MANAGER_SSH_AGENT_VERSION: ${{ steps.version.outputs.version }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
           cargo build --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target x86_64-unknown-linux-gnu
@@ -56,7 +55,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           node .github/scripts/build-ssh-agent-release.mjs \
-            "${{ steps.version.outputs.version }}" \
+            "${{ steps.agent_version.outputs.version }}" \
             "${{ github.ref_name }}" \
             dist/ssh-agent \
             src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
@@ -123,6 +122,7 @@ jobs:
         shell: bash
         run: |
           for required in \
+            latest.json \
             cli-manager-ssh-agent-linux-x86_64 \
             cli-manager-ssh-agent-linux-aarch64 \
             ssh-agent-release-manifest.json \
@@ -234,4 +234,4 @@ jobs:
               exit 1
             }
           done
-          gh release edit "${GITHUB_REF_NAME}" --draft=false
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest

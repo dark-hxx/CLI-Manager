@@ -8,6 +8,41 @@
 - User asks to bump the app version, for example `0.1.5` -> `0.1.6`.
 - Tauri bundle metadata, npm metadata, or Rust package metadata must stay aligned.
 
+## SSH Agent Versioning
+
+The SSH Agent has an independent product version. Do not change it as part of a desktop
+version bump unless the Agent itself changes.
+
+| Item | Source of truth | Release tag |
+|------|-----------------|-------------|
+| CLI-Manager desktop | app version sources listed below | `V<desktop-version>` |
+| SSH Agent | `src-tauri/ssh-agent/Cargo.toml` `[package].version` | `ssh-agent-v<agent-version>` |
+
+- The Agent version must increase monotonically from the published `1.3.0` baseline. The
+  first independent Agent release is `1.3.1`.
+- `src-tauri/ssh-agent/Cargo.lock` must be refreshed with the same Agent package version.
+- Never set `CLI_MANAGER_SSH_AGENT_VERSION`; Cargo package metadata is the only Agent version
+  source for the binary, manifest, installer downgrade check, and install directory.
+- A desktop release continues to build and bundle the Agent resources from that Cargo version.
+  It may also attach those signed resources to its own desktop Release as the default online
+  fallback, but it does not create a new Agent version.
+- The independent Agent Release must be a GitHub prerelease with `make_latest: false`. It must
+  never take over `releases/latest`, which is reserved for the stable desktop updater.
+- `scripts/install-ssh-agent.sh --version X.Y.Z` resolves
+  `ssh-agent-vX.Y.Z`; `1.3.0` remains mapped to legacy `V1.3.0`. Without `--version`, the
+  installer uses the current stable desktop Release and the desktop app prefers its bundled
+  Agent before attempting any network download.
+
+### SSH Agent Release Acceptance
+
+- [ ] Push the exact `ssh-agent-v<version>` tag or use manual dispatch for a build-only artifact.
+- [ ] The independent Release is marked prerelease and has `make_latest: false`.
+- [ ] It contains both Linux binaries, `ssh-agent-release-manifest.json`, its `.sig`, and
+  `install-ssh-agent.sh`.
+- [ ] The manifest version equals `src-tauri/ssh-agent/Cargo.toml` and its URLs use the Agent Tag.
+- [ ] A desktop release still contains `latest.json`, updater signatures, and the bundled Agent
+  manifest/signature/binaries before it is published.
+
 ## Version Sources to Update
 
 | File | Field | Notes |
@@ -63,6 +98,8 @@ Before tagging a release that should be installable through the in-app updater:
 - [ ] Keep `bundle.createUpdaterArtifacts = true` so release artifacts include updater metadata.
 - [ ] Do not commit the private key or paste it into config/docs.
 - [ ] After release, verify GitHub Release contains `latest.json` and signature-backed updater assets.
+- [ ] Verify the desktop Release also contains the signed SSH Agent manifest and both supported
+  Linux Agent binaries before marking it stable.
 - [ ] Remember that existing versions without updater support cannot auto-install the first updater-enabled release; users must install that one manually.
 
 ## Local Unsigned Smoke Build
