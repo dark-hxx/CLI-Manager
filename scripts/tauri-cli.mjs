@@ -19,6 +19,24 @@ function commandArgsContainConfig(argsToCheck) {
   );
 }
 
+function commandOptionValue(argsToCheck, option) {
+  for (let index = 0; index < argsToCheck.length; index += 1) {
+    const arg = argsToCheck[index];
+    if (arg === "--") break;
+    if (arg === option) return argsToCheck[index + 1] ?? null;
+    if (arg.startsWith(`${option}=`)) return arg.slice(option.length + 1);
+  }
+  return null;
+}
+
+function commandArgsContain(argsToCheck, option) {
+  for (const arg of argsToCheck) {
+    if (arg === "--") break;
+    if (arg === option) return true;
+  }
+  return false;
+}
+
 function withDevConfig(argsToRun) {
   if (argsToRun[0] !== "dev" || commandArgsContainConfig(argsToRun)) {
     return argsToRun;
@@ -70,24 +88,68 @@ function devSpawnEnv(argsToRun) {
 
 const tauriArgs = resolveConfigPaths(withDevConfig(args));
 
-let child;
-try {
-  child = spawn("tauri", tauriArgs, {
-    cwd: tauriRoot,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-    env: devSpawnEnv(tauriArgs),
+function buildWindowsDevProxy(argsToRun) {
+  if (process.platform !== "win32" || argsToRun[0] !== "dev") {
+    return Promise.resolve(0);
+  }
+
+  const cargoArgs = [
+    "build",
+    "--locked",
+    "--manifest-path",
+    path.join(tauriRoot, "Cargo.toml"),
+    "--bin",
+    "cli-manager-codex-proxy",
+  ];
+  const target = commandOptionValue(argsToRun, "--target")
+    ?? commandOptionValue(argsToRun, "-t");
+  if (target) cargoArgs.push("--target", target);
+  if (commandArgsContain(argsToRun, "--release")) cargoArgs.push("--release");
+
+  return new Promise((resolve) => {
+    const child = spawn("cargo", cargoArgs, {
+      cwd: tauriRoot,
+      stdio: "inherit",
+      shell: true,
+      env: devSpawnEnv(argsToRun),
+    });
+    child.on("error", (error) => {
+      console.error(`Failed to build Codex app-server proxy: ${error.message}`);
+      resolve(1);
+    });
+    child.on("exit", (code) => resolve(code ?? 1));
   });
-} catch (error) {
-  console.error(`Failed to start Tauri CLI: ${error.message}`);
-  process.exit(1);
 }
 
-child.on("error", (error) => {
-  console.error(`Failed to start Tauri CLI: ${error.message}`);
-  process.exit(1);
-});
+async function main() {
+  const proxyBuildCode = await buildWindowsDevProxy(tauriArgs);
+  if (proxyBuildCode !== 0) {
+    process.exitCode = proxyBuildCode;
+    return;
+  }
 
-child.on("exit", (code) => {
-  process.exit(code ?? 1);
-});
+  let child;
+  try {
+    child = spawn("tauri", tauriArgs, {
+      cwd: tauriRoot,
+      stdio: "inherit",
+      shell: process.platform === "win32",
+      env: devSpawnEnv(tauriArgs),
+    });
+  } catch (error) {
+    console.error(`Failed to start Tauri CLI: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  child.on("error", (error) => {
+    console.error(`Failed to start Tauri CLI: ${error.message}`);
+    process.exitCode = 1;
+  });
+
+  child.on("exit", (code) => {
+    process.exitCode = code ?? 1;
+  });
+}
+
+void main();

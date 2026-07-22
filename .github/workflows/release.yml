@@ -52,6 +52,10 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: npm run test:codex-proxy:e2e
 
+      - name: Test Tauri dev proxy preparation
+        if: matrix.platform == 'windows-latest'
+        run: npm run test:tauri-dev-proxy
+
       - name: Extract version from tag
         id: version
         shell: bash

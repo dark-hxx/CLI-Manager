@@ -14,6 +14,7 @@
 - **远程 Codex 托管启动链路**：Windows 改用随应用打包的 GUI 子系统原生代理启动 Codex app-server，避免连接、对话和停止托管时弹出命令窗口；恢复会话时严格校验目标 Session，并压缩超过 cc-connect 扫描上限的恢复响应。项目登记的 Provider 配置会强制注入远程 Codex，API Key 仅通过子进程环境变量传递，不进入命令行参数或日志。
 - **macOS Universal 辅助程序打包**：Universal 构建会同时合并 `cli-manager-daemon` 与 `cli-manager-codex-proxy` 的 Apple Silicon、Intel 产物，避免新增代理程序后 Universal 应用缺少对应架构二进制。
 - **跨平台 Tauri 构建配置**：`macos-private-api` 仅在 macOS 目标启用，Windows/Linux 的直接 Cargo 检查与 Codex proxy 端到端构建不再因 macOS 专属 feature 和平台配置不一致而中断。
+- **Windows Tauri 开发启动**：`npm run tauri dev` 会先构建随远程 Codex 托管使用的原生 app-server proxy，并继承指定的 Rust target，避免开发版运行时缺少同目录代理程序。
 - **SSH 显式地址直连**：未配置跳板机的手工地址连接不再读取无关的用户 `~/.ssh/config`，避免该文件 ACL/语法异常时在密码、Agent、私钥或交互认证前阻断连接；SSH Config 别名、跳板路由与用户明确选择的自定义配置文件继续按原逻辑生效。
 - 修复在终端 Tab 右键重命名普通项目 Tab 时，误把项目名称和同项目所有已打开 Tab 一起改名的问题；现在 Tab 重命名只作用于当前终端会话。
 - 修复旧版历史索引数据库升级时，在补充 `scope_kind` 等字段之前提前创建依赖索引，导致刷新报错且会话无法打开的问题；现有索引数据会原地升级，无需用户手工删除缓存。

@@ -542,6 +542,32 @@
 - `cargo check --locked --manifest-path src-tauri/Cargo.toml`：通过。
 - `git diff --check`：通过。
 
+## PR #165 Windows Tauri 开发代理准备（2026-07-22）
+
+### 根因与发现清单
+
+- 根因位于 Windows 开发启动器与 Cargo 多二进制产物的边界：`src-tauri/Cargo.toml` 的 `default-run = "cli-manager"` 只构建主程序，而远程 Codex 托管在运行时从主程序同目录读取 `cli-manager-codex-proxy.exe`；因此直接执行 `npm run tauri dev` 会在首次远程托管时报告代理缺失。修复落在开发启动入口，在 Tauri 启动前构建实际被消费的 proxy，而不在运行时报错处增加回退或复制逻辑。
+- 已修改：`scripts/tauri-cli.mjs` 在 Windows `dev` 入口执行锁定的 proxy Cargo build，转发 `--target`/`-t` 与 `--release`；新增黑盒脚本测试、npm 命令与 Windows release CI 门。
+- 已复核但未修改：`commands/cc_connect.rs::write_codex_profile_wrapper` 继续严格要求同目录 proxy，`src-tauri/Cargo.toml` 的默认运行目标保持主程序，生产打包、macOS/Linux 代理路径与 app-server 协议均不变。
+- GitNexus MCP 与本地 runner 不可用；按项目降级规则使用启动契约、`rg` 交叉引用、`cc_connect.rs` 消费端、Cargo 清单和 Git diff 进行发现与影响核对。
+
+### 场景覆盖
+
+- Windows 默认开发目标：先生成默认 debug proxy，再启动 Tauri。
+- Windows 交叉目标：`--target`、`--target=<triple>`、`-t` 与 `-t=<triple>` 都归一化为 proxy Cargo 的 `--target`，确保 proxy 与主程序落在同一目标目录。
+- Windows release 开发配置：`dev --release` 同步构建 release proxy，避免主程序与 proxy 分落 `target/release`、`target/debug`。
+- 失败边界：proxy 构建退出非零时将其状态返回，Tauri 不会启动，也不会把缺失推迟到远程托管运行时。
+- 平台和命令边界：非 Windows、`build` 和其他非 `dev` 子命令不触发开发 proxy 预构建；已有 dev config 注入和 WebView2 开发环境保持原行为。
+- 窗口焦点、分屏、托盘、WSL、Worktree 与 Hook 安装状态不参与本启动产物选择，确认无关。
+
+### 验证结果
+
+- `npm run test:tauri-dev-proxy`：通过，8 组黑盒检查覆盖分离/内联的长短 target、release profile 与 `--` 参数边界、Cargo 先于 Tauri、构建失败阻断启动，以及非 dev 命令不预构建。
+- `node --check scripts/tauri-cli.mjs` 与 `node --check scripts/tauriCliDevProxy.test.mjs`：通过。
+- `node scripts/verify-macos-window-controls.mjs`：通过。
+- `git diff --check`：通过。
+- 未启动桌面应用，未生成安装包；本轮仅验证启动器分支与脚本语法，未重复执行此前已通过的真实 proxy E2E 和 Cargo 检查。
+
 ## SSH 显式地址直连被默认 Config 权限阻断修复（2026-07-22）
 
 ### 根因陈述与发现清单
