@@ -617,8 +617,21 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     cleanupExpiredAttachmentsOnce(project?.path || session?.cwd || null);
   }, [sessionId]);
 
+  const getPtyWriteErrorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+  const isRecoverablePtyHostDisconnect = (message: string): boolean =>
+    message.startsWith("PtyHost WebSocket disconnected") || message.startsWith("PtyHost heartbeat timed out");
+
   const reportPtyWriteError = (stage: string, err: unknown) => {
-    toast.error("终端写入失败", { description: String(err) });
+    const message = getPtyWriteErrorMessage(err);
+    if (isRecoverablePtyHostDisconnect(message)) {
+      toast.warning(t("terminal.transport.connectionLostTitle"), {
+        description: t("terminal.transport.connectionLostDescription"),
+      });
+      logWarn("PTY write failed because transport disconnected", { sessionId, stage, err });
+      return;
+    }
+    toast.error(t("terminal.transport.writeFailed"), { description: message });
     logError("PTY write failed in XTermTerminal", { sessionId, stage, err });
   };
 
