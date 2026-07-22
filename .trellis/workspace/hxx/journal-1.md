@@ -1384,3 +1384,36 @@ Completed S06-S10 with remote history/cache and resume, read-only file and Git p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: 修复 PR #165 跨平台 Tauri Feature 配置
+
+**Date**: 2026-07-22
+**Task**: 修复 PR #165 跨平台 Tauri Feature 配置
+**Branch**: `pr-165-targeted-tauri-feature`
+
+### Summary
+
+将 macos-private-api 限定到 macOS Cargo target，恢复 Windows proxy E2E 与直接 Cargo 检查；同步发布契约、CHANGELOG 和验证记录。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c723c3c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
