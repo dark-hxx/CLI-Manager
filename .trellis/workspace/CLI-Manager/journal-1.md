@@ -1023,3 +1023,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: 修复 Web Server 迁移校验漂移
+
+**Date**: 2026-07-22
+**Task**: 修复 Web Server 迁移校验漂移
+**Branch**: `feat/web-management-capabilities`
+
+### Summary
+
+修复 SQLx 因迁移文件 LF/CRLF 差异导致的 VersionMismatch，固定迁移换行规则并补充回归测试与后端契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2663048e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
