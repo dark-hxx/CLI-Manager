@@ -484,3 +484,34 @@
 - git diff --check：通过，仅输出仓库既有的 LF/CRLF 转换提示。
 - GitNexus CLI 本轮无法在时限内启动，已降级使用 codebase-memory、源码引用、rg、Git diff、几何测试和生产构建复核。
 - 本次未生成安装包，未启动或停止用户安装目录中的 CLI-Manager，也未 push。
+
+## PR #165 审查意见修复（2026-07-22）
+
+### 根因与发现清单
+
+- macOS Universal 缺失代理的根因位于 Tauri 打包前置脚本：Cargo 会把 `src/bin` 中的辅助程序作为各平台 bin 目标构建，但旧脚本只对 `cli-manager-daemon` 执行 `lipo`，新增 `cli-manager-codex-proxy` 后没有生成 Universal 产物。修复在统一辅助程序合并入口同时处理 daemon 和 proxy，并在任一架构产物缺失或 `lipo` 失败时给出具体二进制名称。
+- 测试缺口位于单元测试与真实进程边界之间：原测试只能证明参数构造和文件复制，不能证明 GUI 子系统 proxy 能实际启动 CMD/EXE launcher、转发 JSONL、传递 Provider 环境和退出码。新增 Windows E2E 编译并启动真实 `cli-manager-codex-proxy.exe`，假 Codex 仅用于观测真实代理产生的子进程行为。
+- 文档偏差位于“第三方 cc-connect 源码”和“CLI-Manager 内部 cc-connect 集成”的表述边界；CHANGELOG 与功能清单现明确前者未修改，后者包含代理准备、Provider 注入和启动环境调整。
+- 已修改：`scripts/prepare-bundle-binaries.mjs`、新增 `scripts/codexAppServerProxy.e2e.test.mjs`、`package.json`、Windows release CI、CHANGELOG、功能清单与本验证记录。
+- 已复核但未修改：`src-tauri/src/bin/cli-manager-codex-proxy.rs`、`codex_app_server_proxy.rs`、`commands/cc_connect.rs`、Cargo bin 自动发现和 `tauri.conf.json` 的 `beforeBundleCommand` 接入；远程运行链保持原样。
+- GitNexus CLI 因其安装包缺少 `tree-sitter-kotlin` 无法重建索引；已降级为 codebase-memory moderate 重建索引、调用链风险追踪、源码/rg 和 Git diff。代理进程运行链被标记为 CRITICAL，因此本次只增加黑盒验证，不改其运行符号。
+
+### 场景覆盖
+
+- Windows launcher：覆盖 `.cmd` 与 `.exe` 两条真实 `Command` 分支、stdin/stdout JSONL 转发和非零退出码透传。
+- Provider：覆盖未登记 Provider 的参数原样传递，以及登记 Provider 后 Base URL、env key、wire API、模型的 `-c` 注入；API Key 只在子进程环境变量中可见，不出现在参数、stdout 或 stderr。
+- Windows 控制台：解析真实 proxy 的 PE Header，断言 `Subsystem == 2`（Windows GUI），避免 proxy 自身分配控制台；CMD/EXE 子进程继续由现有 `silent_command` 隐藏。
+- macOS：Universal debug/release 按 Tauri 环境选择 profile，同时要求 ARM64、x64 的 daemon 和 proxy 均存在后逐一合并；非 macOS 或非 Universal 构建继续立即跳过。当前 Windows 主机无法实际执行 Apple `lipo`，最终由 macOS CI/打包环境验证。
+- 窗口焦点、分屏、托盘、WSL、Worktree 与 Hook 安装状态不参与辅助二进制合并或代理进程协议，确认与本次改动无关。
+
+### 验证结果
+
+- `npm run test:codex-proxy:e2e`：通过，3 组检查覆盖真实 proxy 构建、PE GUI 子系统、EXE/CMD launcher、Provider 环境、密钥不进入参数/输出、JSONL 转发及退出码。
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`：通过。
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml`：687 项通过、1 项因缺少 WSL 测试环境忽略；`install_then_uninstall_pi_extension` 失败。该测试对应的 `hook_settings.rs` 与 `origin/master` 完全一致，单独复跑仍失败，确认不是本次打包、代理或文档变更引入，按连续失败规则不继续重复执行。
+- `node scripts/desktopPetMenuGeometry.test.mjs`：14 项通过；`desktopPetSize.test.mjs`：4 项通过；`desktopPetTransport.test.mjs`：4 项通过。
+- `./node_modules/.bin/tsc.cmd --noEmit`：通过。
+- `npm run build`：通过，Vite 完成 6688 个模块转换。
+- `node --check`：新增 E2E 与 Universal 打包脚本语法检查通过。
+- `git diff --check`：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- 本次未生成安装包，未启动或停止用户安装目录中的 CLI-Manager/cc-connect，也未修改第三方 cc-connect 源码或二进制。

@@ -48,6 +48,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test Codex app-server proxy
+        if: matrix.platform == 'windows-latest'
+        run: npm run test:codex-proxy:e2e
+
       - name: Extract version from tag
         id: version
         shell: bash
