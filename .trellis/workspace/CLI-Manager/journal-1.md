@@ -957,3 +957,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: CLI 启动参数历史与同步
+
+**Date**: 2026-07-22
+**Task**: CLI 启动参数历史与同步
+**Branch**: `master`
+
+### Summary
+
+为新建项目增加按 CLI 工具统计、按次数和最近使用时间排序的 CLI 参数历史下拉，仅展示前 10 条；历史随偏好设置快照同步，并补充测试、国际化、功能清单和同步契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `79a6f9d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
