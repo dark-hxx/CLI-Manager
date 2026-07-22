@@ -29,7 +29,15 @@ import {
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { translateCurrent, useI18n } from "../lib/i18n";
 import { normalizeTerminalFontFamily } from "../lib/terminalFontFamily";
-import { findTerminalFileLinks, resolveTerminalFileSystemPath } from "../lib/terminalFileLinks";
+import {
+  findTerminalFileLinks,
+  findTerminalRelativeFileLinks,
+  normalizeTerminalRelativePath,
+  resolveTerminalFileSystemPath,
+  terminalStringRangeToBufferColumns,
+  type TerminalFileLinkMatch,
+} from "../lib/terminalFileLinks";
+import { requestTerminalFileNavigation } from "../lib/terminalFileNavigation";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
@@ -154,7 +162,7 @@ const getTerminalRenderedCellSize = (terminal: Terminal, terminalContainer: HTML
   };
 };
 
-type TerminalLinkIconKind = "link" | "file" | "directory";
+type TerminalLinkIconKind = "link" | "file" | "directory" | "relative-file" | "relative-directory";
 type TerminalPathKind = "file" | "directory" | "missing";
 
 interface TerminalLinkHoverIcon extends IDisposable {
@@ -300,9 +308,14 @@ const getTerminalFileLinkContext = (sessionId: string, rawPath: string) => {
   const currentRootPath = currentWorktree?.path ?? currentProject?.path ?? session?.cwd ?? null;
   return {
     supportsFiles: projectSupportsCapability(currentProject, "files"),
+    rootPath: currentRootPath,
     systemPath: resolveTerminalFileSystemPath(rawPath, currentRootPath),
   };
 };
+
+const resolveRelativeTerminalSystemPath = (rootPath: string, relativePath: string) => (
+  `${rootPath.replace(/[\\/]+$/u, "")}\\${relativePath.replace(/\//g, "\\")}`
+);
 
 const openTerminalFilePath = async (sessionId: string, rawPath: string) => {
   const context = getTerminalFileLinkContext(sessionId, rawPath);
@@ -318,6 +331,29 @@ const openTerminalFilePath = async (sessionId: string, rawPath: string) => {
     logError("Failed to open terminal file", { sessionId, path: context.systemPath, err });
     toast.error(translateCurrent("files.toast.openFileFailed"), { description: String(err) });
   });
+};
+
+const openTerminalRelativeFilePath = async (sessionId: string, match: TerminalFileLinkMatch) => {
+  if (!useSettingsStore.getState().terminalToolbarVisibility.files) return;
+  const context = getTerminalFileLinkContext(sessionId, match.path);
+  const relativePath = normalizeTerminalRelativePath(match.path);
+  if (!context.supportsFiles || !context.rootPath || !relativePath) return;
+
+  try {
+    const kind = await invoke<TerminalPathKind>("file_get_path_kind", {
+      path: resolveRelativeTerminalSystemPath(context.rootPath, relativePath),
+    });
+    if (kind !== "file" && kind !== "directory") return;
+    requestTerminalFileNavigation({
+      sessionId,
+      path: relativePath,
+      kind,
+      ...(match.lineNumber ? { lineNumber: match.lineNumber } : {}),
+      ...(match.columnNumber ? { columnNumber: match.columnNumber } : {}),
+    });
+  } catch {
+    // 路径不存在、权限不足或会话已关闭时不产生终端噪声。
+  }
 };
 
 const serializeBufferPlainText = (terminal: Terminal) => {
@@ -863,7 +899,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
   // Focus follows the single globally active tab. Keyboard, cursor and IME stay
   // bound to this; a visible-but-unfocused split pane renders but never steals
-  // focus.
+  // focus. Visibility restoration temporarily hides the xterm container, so
+  // wait for that mask to clear before focusing the helper textarea.
   useEffect(() => {
     isActiveRef.current = isActive;
     const terminal = terminalRef.current;
@@ -872,17 +909,19 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       terminal.blur();
       return;
     }
+    if (visibilityRestorePending) return;
     const focusRaf = window.requestAnimationFrame(() => {
       if (
         terminalRef.current === terminal
         && isActiveRef.current
         && isVisibleRef.current
+        && !visibilityRestorePendingRef.current
       ) {
         terminal.focus();
       }
     });
     return () => window.cancelAnimationFrame(focusRaf);
-  }, [isActive, isVisible]);
+  }, [isActive, isVisible, visibilityRestorePending]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -907,19 +946,22 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       fileHoverGeneration += 1;
       linkHoverIcon?.showViewportRange("link", range);
     };
-    const showFileLinkIcon = (rawPath: string, range: IBufferRange) => {
+    const showFileLinkIcon = (match: TerminalFileLinkMatch, range: IBufferRange) => {
       const generation = ++fileHoverGeneration;
-      const context = getTerminalFileLinkContext(sessionId, rawPath);
-      if (!context.supportsFiles || !context.systemPath) {
+      const context = getTerminalFileLinkContext(sessionId, match.path);
+      const relativePath = match.kind === "relative" ? normalizeTerminalRelativePath(match.path) : null;
+      const systemPath = match.kind === "relative"
+        ? (context.rootPath && relativePath ? resolveRelativeTerminalSystemPath(context.rootPath, relativePath) : null)
+        : context.systemPath;
+      if (!context.supportsFiles || !systemPath || (match.kind === "relative" && !useSettingsStore.getState().terminalToolbarVisibility.files)) {
         linkHoverIcon?.hide();
         return;
       }
-      const systemPath = context.systemPath;
 
       const showKind = (kind: TerminalPathKind) => {
         if (generation !== fileHoverGeneration) return;
         if (kind === "file" || kind === "directory") {
-          linkHoverIcon?.showBufferRange(kind, range);
+          linkHoverIcon?.showBufferRange(match.kind === "relative" ? `relative-${kind}` : kind, range);
         } else {
           linkHoverIcon?.hide();
         }
@@ -1029,24 +1071,64 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           callback(undefined);
           return;
         }
-        const line = terminal.buffer.active.getLine(bufferLineNumber - 1)?.translateToString(true) ?? "";
-        const links: ILink[] = findTerminalFileLinks(line).map((match) => {
+        const bufferLine = terminal.buffer.active.getLine(bufferLineNumber - 1);
+        const line = bufferLine?.translateToString(true) ?? "";
+        const absoluteLinks = findTerminalFileLinks(line);
+        const relativeLinks = useSettingsStore.getState().terminalToolbarVisibility.files
+          ? findTerminalRelativeFileLinks(line)
+          : [];
+        const buildLinks = (matches: TerminalFileLinkMatch[]): ILink[] => matches.flatMap((match) => {
+          if (!bufferLine) return [];
+          const columns = terminalStringRangeToBufferColumns(bufferLine, match.startIndex, match.endIndex);
+          if (!columns) return [];
           const range: IBufferRange = {
-            start: { x: match.startIndex + 1, y: bufferLineNumber },
-            end: { x: match.endIndex, y: bufferLineNumber },
+            start: { x: columns.startColumn + 1, y: bufferLineNumber },
+            end: { x: columns.endColumn, y: bufferLineNumber },
           };
-          return {
+          return [{
             range,
             text: match.text,
             activate: (event) => {
-              if (shouldActivateTerminalLink(event)) void openTerminalFilePath(sessionId, match.text);
+              if (!shouldActivateTerminalLink(event)) return;
+              if (match.kind === "relative") {
+                void openTerminalRelativeFilePath(sessionId, match);
+              } else {
+                void openTerminalFilePath(sessionId, match.path);
+              }
             },
-            hover: () => showFileLinkIcon(match.text, range),
+            hover: () => showFileLinkIcon(match, range),
             leave: hideLinkHoverIcon,
             decorations: { pointerCursor: true, underline: true },
-          };
+          }];
         });
-        callback(links.length > 0 ? links : undefined);
+        if (relativeLinks.length === 0) {
+          const links = buildLinks(absoluteLinks);
+          callback(links.length > 0 ? links : undefined);
+          return;
+        }
+
+        void Promise.all(relativeLinks.map(async (match) => {
+          const context = getTerminalFileLinkContext(sessionId, match.path);
+          const relativePath = normalizeTerminalRelativePath(match.path);
+          if (!context.supportsFiles || !context.rootPath || !relativePath) return null;
+          const systemPath = resolveRelativeTerminalSystemPath(context.rootPath, relativePath);
+          const cachedKind = pathKindCache.get(systemPath);
+          if (cachedKind === "file" || cachedKind === "directory") return match;
+          try {
+            const kind = await invoke<TerminalPathKind>("file_get_path_kind", { path: systemPath });
+            if (kind !== "file" && kind !== "directory") return null;
+            pathKindCache.set(systemPath, kind);
+            return match;
+          } catch {
+            return null;
+          }
+        })).then((resolvedRelativeLinks) => {
+          const links = buildLinks([
+            ...absoluteLinks,
+            ...resolvedRelativeLinks.filter((match): match is TerminalFileLinkMatch => match !== null),
+          ]);
+          callback(links.length > 0 ? links : undefined);
+        });
       },
     }));
     terminal.loadAddon(fitAddon);
@@ -1093,7 +1175,17 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     baseDisposables.push(searchAddon.onDidChangeResults(handleSearchResults));
 
     const initialWebglReady = syncWebglRenderer(terminal, baseTheme);
-    if (initialWebglReady) terminal.loadAddon(imageAddon);
+    if (initialWebglReady) {
+      try {
+        terminal.loadAddon(imageAddon);
+      } catch (err) {
+        imageAddon.dispose();
+        logWarn("Failed to load terminal image addon; continuing without terminal image support", {
+          sessionId,
+          err,
+        });
+      }
+    }
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;

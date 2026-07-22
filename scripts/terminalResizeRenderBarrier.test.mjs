@@ -25,6 +25,7 @@ writeFileSync(modulePath, transpiled, "utf8");
 
 const {
   hasVisibleTerminalFrameContent,
+  resolveTerminalResizeCaptureElements,
   TerminalResizeRenderBarrier,
 } = await import(pathToFileURL(modulePath).href);
 
@@ -44,10 +45,39 @@ test("frames containing terminal glyph contrast are accepted", () => {
   ])), true);
 });
 
+test("capture geometry uses the xterm screen while canvas lookup can fall back to the root", () => {
+  const terminalCanvas = { classList: { contains: () => false } };
+  const overviewRuler = {
+    classList: { contains: (name) => name === "xterm-decoration-overview-ruler" },
+  };
+  const screen = { querySelectorAll: () => [] };
+  const root = {
+    querySelector: (selector) => selector === ".xterm-screen" ? screen : null,
+    querySelectorAll: () => [terminalCanvas, overviewRuler],
+  };
+
+  assert.deepEqual(
+    resolveTerminalResizeCaptureElements({ element: root }),
+    { screen, canvases: [terminalCanvas] },
+  );
+});
+
+test("the public xterm screen is preferred over the terminal root", () => {
+  const screenCanvas = { classList: { contains: () => false } };
+  const screen = { querySelectorAll: () => [screenCanvas] };
+  const root = {
+    querySelector: () => ({ querySelectorAll: () => [] }),
+    querySelectorAll: () => [],
+  };
+
+  assert.deepEqual(
+    resolveTerminalResizeCaptureElements({ element: root, screenElement: screen }),
+    { screen, canvases: [screenCanvas] },
+  );
+});
+
 function createHarness() {
-  let nextTimerId = 1;
   let nextFrameId = 1;
-  const timers = new Map();
   const frames = new Map();
   const calls = [];
   const terminal = {};
@@ -55,15 +85,8 @@ function createHarness() {
   const barrier = new TerminalResizeRenderBarrier({
     createFrame: () => ({
       syncBounds: () => calls.push("sync"),
-      refresh: () => calls.push("refresh"),
       dispose: () => calls.push("dispose"),
     }),
-    requestTimer: (callback, delayMs) => {
-      const id = nextTimerId++;
-      timers.set(id, { callback, delayMs });
-      return id;
-    },
-    cancelTimer: (id) => timers.delete(id),
     requestFrame: (callback) => {
       const id = nextFrameId++;
       frames.set(id, callback);
@@ -76,39 +99,36 @@ function createHarness() {
     frames.clear();
     pending.forEach((callback) => callback(0));
   };
-  return { barrier, terminal, container, timers, frames, calls, flushFrame };
+  return { barrier, terminal, container, frames, calls, flushFrame };
 }
 
-test("continuous container resize keeps one stable frame and resets settle timing", () => {
+test("container resize clips one stable frame without delaying the live reveal", () => {
   const harness = createHarness();
   assert.equal(harness.barrier.begin(harness.terminal, harness.container), true);
   assert.deepEqual(harness.calls, ["sync"]);
-  assert.equal(harness.timers.size, 1);
+  assert.equal(harness.frames.size, 1);
 
   harness.barrier.noteContainerResize();
   assert.deepEqual(harness.calls, ["sync", "sync"]);
-  assert.equal(harness.timers.size, 1);
+  assert.equal(harness.frames.size, 1);
 });
 
-test("PTY writes refresh the visible snapshot without revealing the corrupt frame", () => {
+test("a newer terminal resize restarts the two-frame corruption guard", () => {
   const harness = createHarness();
   harness.barrier.begin(harness.terminal, harness.container);
-  harness.barrier.handleWriteCommitted(harness.terminal);
+  assert.equal(harness.frames.size, 1);
 
+  harness.barrier.begin(harness.terminal, harness.container);
+  assert.equal(harness.frames.size, 1);
   harness.flushFrame();
-  harness.flushFrame();
-  assert.deepEqual(harness.calls, ["sync", "refresh"]);
+  assert.deepEqual(harness.calls, ["sync", "sync"]);
 });
 
-test("settled resize refreshes once more before revealing the terminal", () => {
+test("each guarded resize reveals the live terminal after two animation frames", () => {
   const harness = createHarness();
   harness.barrier.begin(harness.terminal, harness.container);
-  const [{ callback, delayMs }] = harness.timers.values();
-  assert.equal(delayMs, 72);
-  harness.timers.clear();
-  callback();
 
   harness.flushFrame();
   harness.flushFrame();
-  assert.deepEqual(harness.calls, ["sync", "refresh", "dispose"]);
+  assert.deepEqual(harness.calls, ["sync", "dispose"]);
 });

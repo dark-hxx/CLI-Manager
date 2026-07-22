@@ -104,7 +104,99 @@ jobs:
             ## 变更日志
 
             ${{ steps.changelog.outputs.content }}
-          releaseDraft: false
+          # Keep the release out of `releases/latest` until the required SSH Agent assets exist.
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+  ssh-agent:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          npm ci
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/V}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test SSH Agent
+        run: |
+          cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml
+          sh .github/scripts/test-install-ssh-agent.sh
+
+      - name: Build Linux SSH Agent artifacts
+        env:
+          CLI_MANAGER_SSH_AGENT_VERSION: ${{ steps.version.outputs.version }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target x86_64-unknown-linux-gnu
+          cargo build --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target aarch64-unknown-linux-gnu
+
+      - name: Build signed release manifest
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node .github/scripts/build-ssh-agent-release.mjs \
+            "${{ steps.version.outputs.version }}" \
+            "${{ github.ref_name }}" \
+            dist/ssh-agent \
+            src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
+            src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
+          npx tauri signer sign dist/ssh-agent/ssh-agent-release-manifest.json
+          cp scripts/install-ssh-agent.sh dist/ssh-agent/install-ssh-agent.sh
+
+      - name: Upload SSH Agent release files
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/ssh-agent/cli-manager-ssh-agent-linux-x86_64
+            dist/ssh-agent/cli-manager-ssh-agent-linux-aarch64
+            dist/ssh-agent/ssh-agent-release-manifest.json
+            dist/ssh-agent/ssh-agent-release-manifest.json.sig
+            dist/ssh-agent/install-ssh-agent.sh
+
+      - name: Verify assets and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          assets=$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')
+          for required in \
+            cli-manager-ssh-agent-linux-x86_64 \
+            cli-manager-ssh-agent-linux-aarch64 \
+            ssh-agent-release-manifest.json \
+            ssh-agent-release-manifest.json.sig \
+            install-ssh-agent.sh
+          do
+            printf '%s\n' "$assets" | grep -Fxq "$required" || {
+              echo "Missing required SSH Agent release asset: $required" >&2
+              exit 1
+            }
+          done
+          gh release edit "${GITHUB_REF_NAME}" --draft=false

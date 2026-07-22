@@ -298,7 +298,15 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     const model = editor.getModel();
     const lineNumber = Math.min(Math.max(searchNavigationTarget.lineNumber, 1), model?.getLineCount() ?? 1);
     const line = model?.getLineContent(lineNumber) ?? "";
-    const column = findSearchColumn(line, searchQuery, searchNavigationTarget.lineText);
+    const requestedColumn = searchNavigationTarget.columnNumber;
+    const column = requestedColumn
+      ? {
+          start: Math.min(Math.max(requestedColumn, 1), Math.max(line.length + 1, 1)),
+          end: Math.min(Math.max(requestedColumn + 1, 1), Math.max(line.length + 1, 1)),
+        }
+      : searchNavigationTarget.source === "search"
+        ? findSearchColumn(line, searchQuery, searchNavigationTarget.lineText ?? "")
+        : { start: 1, end: Math.max(line.length + 1, 1) };
 
     clearSearchDecorations(editor, searchDecorationIdsRef);
     searchDecorationIdsRef.current = editor.deltaDecorations([], [
@@ -334,7 +342,7 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     });
     editor.revealLineInCenter(lineNumber);
     editor.focus();
-    openFindWidget(editor, searchQuery);
+    if (searchNavigationTarget.source === "search") openFindWidget(editor, searchQuery);
     clearSearchNavigationTarget();
   }, [clearSearchNavigationTarget, editorReadyNonce, previewMode, searchNavigationTarget, searchQuery, visibleFile]);
 

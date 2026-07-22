@@ -1,5 +1,30 @@
 # History Session Contracts
 
+## Scenario: SSH Remote History Workspace
+
+### 1. Scope / Trigger
+
+- Trigger: opening History for an SSH project, changing remote pagination/search/detail behavior, or changing offline cache state.
+
+### 2. Contracts
+
+- SSH projects reuse the existing history workspace and source IDs (`claude` / `codex`); they do not introduce `ssh-claude` or `ssh-codex`.
+- The project supplies one Host/source/config-root/project-path context. Lists use cached catalog summaries first, then the Agent bridge; the first fetch requests 21 rows and displays 20.
+- Load-more consumes cached rows first and only then advances the Agent `generation:offset` cursor. A generation change reloads from the first page instead of appending incompatible offsets.
+- Remote search requires the existing three-character minimum. Online search uses the Agent index; failure falls back only to cached summary matching and marks freshness stale/error.
+- Full messages, tool calls, sub-Agent records, and Diff are fetched on demand and retained only in the backend LRU. Offline detail is unavailable unless a separate explicit favorite snapshot exists.
+- Remote sessions are read-only: edit/delete are rejected, and remote paths never route to local file/Git/provider commands.
+- Resume first checks current SSH tabs by Host/source-instance/session identity. Otherwise it runs Agent preflight, offers only same-Host/source/config-root SSH projects, or an explicit original-remote-location option when no project matches.
+- The resume command is returned by Rust after validating structured Agent args; the WebView never interpolates a session ID into shell syntax. Project startup commands are replaced, normal project environment plus canonical `CLAUDE_CONFIG_DIR`/`CODEX_HOME` are retained, and provider overrides remain disabled.
+- Open/list/load-more/search/detail requests are generation-guarded. Results from a previous SSH project, filter, query, or selected session must not overwrite the current consumer, and stale `finally` handlers must not clear current loading state.
+
+### 3. Tests Required
+
+- Run `npx tsc --noEmit`.
+- Manually switch rapidly between two SSH projects and between sessions while list/search/detail requests are in flight; only the latest context may render.
+- Verify exact project resume, multiple same-Host project selection, original remote location, current-client Tab jump, active-elsewhere refusal, missing source/cwd, custom config root, and Hook-not-installed behavior.
+- Disconnect after a successful sync and verify cached summaries remain visible with stale/offline state while uncached detail stays unavailable.
+
 ## Scenario: Favorite Session Snapshots
 
 ### 1. Scope / Trigger

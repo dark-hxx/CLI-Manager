@@ -4,7 +4,10 @@ import { listen } from "@tauri-apps/api/event";
 import { getDb } from "../lib/db";
 import { createPerfMarker, logInfo, logWarn } from "../lib/logger";
 import { normalizeHistoryProjectPaths } from "../lib/historyProjectPaths";
+import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../lib/sshAgentHistory";
 import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs, getHistoryPathArgsSync } from "../lib/historyPathArgs";
+import { useProjectStore } from "./projectStore";
+import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import type {
   HistoryBackupStatus,
   HistoryEditAuditEntry,
@@ -16,6 +19,7 @@ import type {
   HistorySearchHit,
   HistorySessionDetail,
   HistorySessionSummary,
+  HistorySessionRef,
   HistorySessionView,
   HistoryStatsDailySeriesItem,
   HistoryStatsHeatmapDay,
@@ -33,6 +37,7 @@ import type {
   HistorySourceFilter,
   SessionFavoriteSnapshot,
   SessionMeta,
+  SshRemoteHistorySyncResult,
 } from "../lib/types";
 
 type SessionMetaMap = Record<string, SessionMeta>;
@@ -46,6 +51,8 @@ interface MetaPatchInput {
 interface OpenHistoryOptions {
   sourceFilter?: HistorySourceFilter;
   projectPath?: string | null;
+  /** 左侧/入口选中的具体项目 id；仅用于 UI 高亮，会话过滤仍按 path。 */
+  projectId?: string | null;
   scopedProjectPath?: string | null;
 }
 
@@ -64,6 +71,8 @@ interface HistoryStore {
   statsCacheKey: string | null;
   sourceFilter: HistorySourceFilter;
   projectPathFilter: string | null;
+  /** 项目树高亮用；null 时回退到 path 匹配。 */
+  projectIdFilter: string | null;
   scopedProjectPathFilter: string | null;
   sessions: HistorySessionView[];
   hasMoreSessions: boolean;
@@ -83,12 +92,13 @@ interface HistoryStore {
   focusGlobalSearchSeq: number;
   focusSessionSearchSeq: number;
   indexStatus: HistoryIndexStatus;
+  remoteContext: SshAgentHistoryContext | null;
   ensureMetaTable: () => Promise<void>;
   openHistory: (options?: OpenHistoryOptions) => Promise<void>;
-  closeHistory: () => void;
+  closeHistory: (options?: { preserveRemoteConsumer?: boolean }) => void;
   toggleHistory: () => Promise<void>;
   setSourceFilter: (filter: HistorySourceFilter) => Promise<void>;
-  setProjectPathFilter: (projectPath: string | null) => Promise<void>;
+  setProjectPathFilter: (projectPath: string | null, projectId?: string | null) => Promise<void>;
   loadSessions: () => Promise<void>;
   loadMoreSessions: () => Promise<void>;
   loadIndexStatus: () => Promise<void>;
@@ -168,6 +178,13 @@ function effectiveProjectPathFilter(state: Pick<HistoryStore, "projectPathFilter
   return state.scopedProjectPathFilter ?? state.projectPathFilter;
 }
 
+function remoteSourceMatchesFilter(
+  context: SshAgentHistoryContext,
+  filter: HistorySourceFilter,
+): boolean {
+  return filter === "all" || filter === context.source;
+}
+
 const statsCache = new Map<string, StatsCacheEntry>();
 const statsProjectOptionsCache = new Map<string, StatsProjectOptionsCacheEntry>();
 let statsRequestSeq = 0;
@@ -240,8 +257,38 @@ function normalizeRole(raw: unknown): string {
   return value;
 }
 
+function normalizeSessionRef(raw: unknown): HistorySessionRef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Record<string, unknown>;
+  const sourceId = asString(rec.sourceId ?? rec.source_id) as HistorySource;
+  const sourceInstanceId = asString(rec.sourceInstanceId ?? rec.source_instance_id);
+  const sourceSessionId = asString(rec.sourceSessionId ?? rec.source_session_id);
+  const transportKind = asString(rec.transportKind ?? rec.transport_kind);
+  if (!sourceId || !sourceInstanceId || !sourceSessionId || !transportKind) return null;
+  const pointersRaw = rec.rawPointers ?? rec.raw_pointers;
+  const rawPointers = Array.isArray(pointersRaw) ? pointersRaw : [];
+  return {
+    sourceId,
+    sourceInstanceId,
+    sourceSessionId,
+    transportKind,
+    rawPointers: rawPointers.map((item) => {
+      const pointer = (item ?? {}) as Record<string, unknown>;
+      return {
+        role: asString(pointer.role),
+        kind: asString(pointer.kind),
+        rawKey: asString(pointer.rawKey ?? pointer.raw_key),
+        lineIndex: pointer.lineIndex == null && pointer.line_index == null
+          ? null
+          : asNumber(pointer.lineIndex ?? pointer.line_index),
+      };
+    }).filter((pointer) => pointer.rawKey.length > 0),
+  };
+}
+
 function normalizeSummary(raw: unknown): HistorySessionSummary {
   const rec = (raw ?? {}) as Record<string, unknown>;
+  const remoteIdentityRaw = rec.remote_identity ?? rec.remoteIdentity;
   return {
     session_id: asString(rec.session_id ?? rec.sessionId),
     source: asString(rec.source) as HistorySource,
@@ -253,6 +300,14 @@ function normalizeSummary(raw: unknown): HistorySessionSummary {
     updated_at: asNumber(rec.updated_at ?? rec.updatedAt),
     message_count: asNumber(rec.message_count ?? rec.messageCount),
     branch: asString(rec.branch || "") || null,
+    session_ref: normalizeSessionRef(rec.session_ref ?? rec.sessionRef),
+    materialization_level: asString(rec.materialization_level ?? rec.materializationLevel) || undefined,
+    freshness_state: asString(rec.freshness_state ?? rec.freshnessState) || undefined,
+    as_of: rec.as_of == null && rec.asOf == null ? null : asNumber(rec.as_of ?? rec.asOf),
+    remote_identity: remoteIdentityRaw && typeof remoteIdentityRaw === "object"
+      ? remoteIdentityRaw as HistorySessionSummary["remote_identity"]
+      : null,
+    read_only: rec.read_only === true || rec.readOnly === true,
   };
 }
 
@@ -431,6 +486,8 @@ function normalizeHit(raw: unknown): HistorySearchHit {
     role: asString(rec.role),
     snippet: asString(rec.snippet),
     timestamp: asString(rec.timestamp ?? "") || null,
+    session_ref: normalizeSessionRef(rec.session_ref ?? rec.sessionRef),
+    read_only: rec.read_only === true || rec.readOnly === true,
   };
 }
 
@@ -907,13 +964,64 @@ export async function fetchTodayProjectStatsMerged(
   return fetchTodayProjectStats(projectKey, source, null, uniquePaths);
 }
 
+export async function fetchRemoteLatestProjectSessionDetail(
+  context: SshAgentHistoryContext,
+  prev?: { filePath: string; updatedAt: number },
+  cliSessionId?: string | null,
+): Promise<{ context: SshAgentHistoryContext; result: HistorySessionDetail | "unchanged" | null }> {
+  const synced = await syncRemoteHistoryContext(context, { limit: SESSION_PAGE_FETCH_LIMIT });
+  if (!synced.sourceInstanceId) return { context: synced, result: null };
+  const summariesRaw = await invoke<unknown[]>("history_remote_list_cached", {
+    sourceInstanceId: synced.sourceInstanceId,
+    projectPath: synced.projectPaths[0] ?? null,
+    query: null,
+    limit: SESSION_PAGE_FETCH_LIMIT,
+    offset: 0,
+  });
+  const summaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
+  const requestedSessionId = cliSessionId?.trim() || null;
+  const summary = requestedSessionId
+    ? summaries.find((item) => item.session_id === requestedSessionId) ?? null
+    : summaries[0] ?? null;
+  if (!summary) return { context: synced, result: null };
+  if (prev && summary.file_path === prev.filePath && summary.updated_at === prev.updatedAt) {
+    return { context: synced, result: "unchanged" };
+  }
+  const detailRaw = await invoke<unknown>("history_remote_get_session", {
+    consumerId: synced.consumerId,
+    sshLaunch: synced.launch,
+    source: synced.source,
+    configuredConfigRoot: synced.configuredConfigRoot,
+    projectPaths: synced.projectPaths,
+    sourceInstanceId: synced.sourceInstanceId,
+    sourceSessionId: summary.session_id,
+  });
+  return { context: synced, result: normalizeDetail(detailRaw) };
+}
+
 function getHistoryPathCacheKey(): string {
   const { claudeConfigDir, codexConfigDir } = getHistoryPathArgsSync();
   return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}`;
 }
 
-function makeSessionKey(source: HistorySource, sessionId: string, filePath: string): string {
+function makeSessionKey(
+  source: HistorySource,
+  sessionId: string,
+  filePath: string,
+  sessionRef?: HistorySessionRef | null,
+): string {
+  if (sessionRef?.transportKind === "ssh") {
+    return `history:${sessionRef.sourceId}:${sessionRef.sourceInstanceId}:${sessionRef.sourceSessionId}`;
+  }
   return `${source}:${sessionId}:${filePath}`;
+}
+
+function summarySessionKey(summary: HistorySessionSummary): string {
+  return makeSessionKey(summary.source, summary.session_id, summary.file_path, summary.session_ref);
+}
+
+function hitSessionKey(hit: HistorySearchHit): string {
+  return makeSessionKey(hit.source, hit.session_id, hit.file_path, hit.session_ref);
 }
 
 function claudeProjectKeyFromPath(path: string): string {
@@ -987,7 +1095,7 @@ function toView(summary: HistorySessionSummary, meta?: SessionMeta): HistorySess
   const displayTitle = alias.trim() || summary.title;
   return {
     ...summary,
-    sessionKey: makeSessionKey(summary.source, summary.session_id, summary.file_path),
+    sessionKey: summarySessionKey(summary),
     alias,
     starred,
     tags,
@@ -1009,11 +1117,13 @@ function applyMeta(summaries: HistorySessionSummary[], metaMap: SessionMetaMap):
   }
 
   const views = summaries.map((summary) => {
-    const key = makeSessionKey(summary.source, summary.session_id, summary.file_path);
+    const key = summarySessionKey(summary);
     const source = summary.source.toLowerCase();
     const meta =
       metaMap[key] ??
-      metaBySourceSession.get(`${source}:${summary.session_id}`) ??
+      (summary.session_ref?.transportKind === "ssh"
+        ? undefined
+        : metaBySourceSession.get(`${source}:${summary.session_id}`)) ??
       metaBySourcePath.get(`${source}:${normalizeMetaPath(summary.file_path)}`);
     return toView(summary, meta);
   });
@@ -1041,6 +1151,12 @@ function viewToSummary(view: HistorySessionView): HistorySessionSummary {
     updated_at: view.updated_at,
     message_count: view.message_count,
     branch: view.branch,
+    session_ref: view.session_ref,
+    materialization_level: view.materialization_level,
+    freshness_state: view.freshness_state,
+    as_of: view.as_of,
+    remote_identity: view.remote_identity,
+    read_only: view.read_only,
   };
 }
 
@@ -1057,6 +1173,13 @@ async function readMetaMap(): Promise<SessionMetaMap> {
 }
 
 function snapshotToSummary(snapshot: SessionFavoriteSnapshot): HistorySessionSummary {
+  let sessionRef: HistorySessionRef | null = null;
+  try {
+    const detail = JSON.parse(snapshot.detail_json) as Record<string, unknown>;
+    sessionRef = normalizeSessionRef(detail.session_ref ?? detail.sessionRef);
+  } catch {
+    sessionRef = null;
+  }
   return {
     session_id: snapshot.session_id,
     source: snapshot.source,
@@ -1067,6 +1190,9 @@ function snapshotToSummary(snapshot: SessionFavoriteSnapshot): HistorySessionSum
     updated_at: snapshot.updated_at,
     message_count: snapshot.message_count,
     branch: snapshot.branch ?? null,
+    session_ref: sessionRef,
+    materialization_level: sessionRef?.transportKind === "ssh" ? "detail" : undefined,
+    read_only: sessionRef?.transportKind === "ssh",
   };
 }
 
@@ -1326,6 +1452,9 @@ function requireActiveEditContext(sessionKey: string): {
     // 快照兜底会话没有可写的源文件
     throw new Error("favorite_snapshot_readonly");
   }
+  if (target.session_ref?.transportKind === "ssh" || target.read_only || active.read_only) {
+    throw new Error("history_remote_read_only");
+  }
   return { target, active };
 }
 
@@ -1344,13 +1473,18 @@ async function loadDetailForSnapshot(sessionKey: string, session: HistorySession
   if (useHistoryStore.getState().activeSessionKey === sessionKey && active) {
     return active;
   }
-  const detailRaw = await invoke<unknown>("history_get_session", {
+  if (session.session_ref?.transportKind === "ssh") {
+    await useHistoryStore.getState().openSession(sessionKey);
+    const remoteDetail = useHistoryStore.getState().activeSession;
+    if (!remoteDetail) throw new Error("history_remote_online_required");
+    return remoteDetail;
+  }
+  return normalizeDetail(await invoke<unknown>("history_get_session", {
     filePath: session.file_path,
     ...(await getHistoryPathArgs()),
     source: session.source,
     projectKey: session.project_key,
-  });
-  return normalizeDetail(detailRaw);
+  }));
 }
 
 async function applyFavoriteSnapshots(
@@ -1362,7 +1496,7 @@ async function applyFavoriteSnapshots(
 ): Promise<HistorySessionView[]> {
   const summaryMap = new Map<string, HistorySessionSummary>();
   for (const summary of summaries) {
-    summaryMap.set(makeSessionKey(summary.source, summary.session_id, summary.file_path), summary);
+    summaryMap.set(summarySessionKey(summary), summary);
   }
   const sourceKeys = sourceSessionKeys ?? new Set(summaryMap.keys());
 
@@ -1382,8 +1516,16 @@ async function applyFavoriteSnapshots(
 }
 
 let globalSearchRequestSeq = 0;
+let historyOpenRequestSeq = 0;
+let sessionListRequestSeq = 0;
+let sessionDetailRequestSeq = 0;
 let historyIndexListenerPromise: Promise<void> | null = null;
 let historyIndexReadyRefreshTimer: number | null = null;
+
+function isCurrentSessionListRequest(requestSeq: number, remoteConsumerId: string | null): boolean {
+  if (requestSeq !== sessionListRequestSeq) return false;
+  return (useHistoryStore.getState().remoteContext?.consumerId ?? null) === remoteConsumerId;
+}
 
 function ensureHistoryIndexListener(): Promise<void> {
   if (historyIndexListenerPromise) return historyIndexListenerPromise;
@@ -1420,6 +1562,35 @@ function ensureHistoryIndexListener(): Promise<void> {
   return historyIndexListenerPromise;
 }
 
+async function syncRemoteHistoryContext(
+  context: SshAgentHistoryContext,
+  options: { reset?: boolean; limit?: number } = {},
+): Promise<SshAgentHistoryContext> {
+  const result = await invoke<SshRemoteHistorySyncResult>("history_remote_sync", {
+    consumerId: context.consumerId,
+    sshLaunch: context.launch,
+    source: context.source,
+    configuredConfigRoot: context.configuredConfigRoot,
+    projectPaths: context.projectPaths,
+    sourceInstanceId: context.sourceInstanceId || null,
+    cursor: options.reset ? null : context.cursor || null,
+    limit: options.limit ?? SESSION_PAGE_FETCH_LIMIT,
+  });
+  await useSshAgentIntegrationStore.getState().recordHistorySource(
+    context.hostId,
+    context.configuredConfigRoot,
+    result,
+    context.scopeKind,
+  );
+  return {
+    ...context,
+    sourceInstanceId: result.sourceInstanceId,
+    cursor: result.cursor,
+    generation: result.generation,
+    hasMore: result.hasMore,
+  };
+}
+
 export const useHistoryStore = create<HistoryStore>((set, get) => ({
   isOpen: false,
   loadingSessions: false,
@@ -1435,6 +1606,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   statsCacheKey: null,
   sourceFilter: "all",
   projectPathFilter: null,
+  projectIdFilter: null,
   scopedProjectPathFilter: null,
   sessions: [],
   hasMoreSessions: false,
@@ -1454,6 +1626,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   focusGlobalSearchSeq: 0,
   focusSessionSearchSeq: 0,
   indexStatus: { ...DEFAULT_HISTORY_INDEX_STATUS },
+  remoteContext: null,
 
   ensureMetaTable: async () => {
     if (historyMetaReady) return;
@@ -1534,17 +1707,40 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   openHistory: async (options) => {
+    const openRequestSeq = ++historyOpenRequestSeq;
+    globalSearchRequestSeq += 1;
+    const isCurrentOpenRequest = () => openRequestSeq === historyOpenRequestSeq;
     const nextSourceFilter = options?.sourceFilter ?? get().sourceFilter;
     const nextProjectPathFilter = options?.projectPath?.trim() || null;
+    const nextProjectIdFilter = nextProjectPathFilter
+      ? (options?.projectId?.trim() || null)
+      : null;
     const nextScopedProjectPathFilter = options?.scopedProjectPath?.trim() || null;
+    const project = options?.projectId
+      ? useProjectStore.getState().projects.find((item) => item.id === options.projectId)
+      : undefined;
+    const nextRemoteContext = project?.environment_type === "ssh"
+      ? await buildSshAgentHistoryContext(project)
+      : null;
+    if (!isCurrentOpenRequest()) return;
+    const previousRemoteContext = get().remoteContext;
+    if (previousRemoteContext && previousRemoteContext.consumerId !== nextRemoteContext?.consumerId) {
+      void invoke("history_remote_close", {
+        hostId: previousRemoteContext.hostId,
+        consumerId: previousRemoteContext.consumerId,
+      }).catch(() => undefined);
+    }
     const filterChanged =
       nextSourceFilter !== get().sourceFilter ||
       nextProjectPathFilter !== get().projectPathFilter ||
-      nextScopedProjectPathFilter !== get().scopedProjectPathFilter;
+      nextProjectIdFilter !== get().projectIdFilter ||
+      nextScopedProjectPathFilter !== get().scopedProjectPathFilter ||
+      nextRemoteContext?.consumerId !== previousRemoteContext?.consumerId;
     const hasSessions = get().sessions.length > 0;
     const stopPerf = createPerfMarker("history.open", {
       sourceFilter: nextSourceFilter,
       projectPathFilter: nextProjectPathFilter ?? "__all__",
+      projectIdFilter: nextProjectIdFilter ?? "__none__",
       scopedProjectPathFilter: nextScopedProjectPathFilter ?? "__none__",
       fromCache: hasSessions && !filterChanged,
     });
@@ -1552,11 +1748,59 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       isOpen: true,
       sourceFilter: nextSourceFilter,
       projectPathFilter: nextProjectPathFilter,
+      projectIdFilter: nextProjectIdFilter,
       scopedProjectPathFilter: nextScopedProjectPathFilter,
+      remoteContext: nextRemoteContext,
     });
     try {
+      if (nextRemoteContext) {
+        if (nextRemoteContext.sourceInstanceId) {
+          await get().loadSessions();
+          if (!isCurrentOpenRequest()) return;
+        }
+        try {
+          const synced = await syncRemoteHistoryContext(nextRemoteContext);
+          if (!isCurrentOpenRequest()) {
+            if (get().remoteContext?.consumerId !== nextRemoteContext.consumerId) {
+              void invoke("history_remote_close", {
+                hostId: nextRemoteContext.hostId,
+                consumerId: nextRemoteContext.consumerId,
+              }).catch(() => undefined);
+            }
+            return;
+          }
+          set({
+            remoteContext: synced,
+            indexStatus: {
+              rootsKey: synced.sourceInstanceId,
+              phase: "ready",
+              indexedFiles: 0,
+              totalFiles: 0,
+              generation: synced.generation,
+              partial: false,
+              lastCompletedAt: Date.now(),
+              error: null,
+            },
+          });
+          await get().loadSessions();
+        } catch (error) {
+          if (!isCurrentOpenRequest()) return;
+          set((state) => ({
+            indexStatus: {
+              ...state.indexStatus,
+              rootsKey: nextRemoteContext.sourceInstanceId,
+              phase: "error",
+              partial: true,
+              error: String(error),
+            },
+          }));
+          if (!nextRemoteContext.sourceInstanceId) throw error;
+        }
+        return;
+      }
       await ensureHistoryIndexListener();
       await get().loadIndexStatus();
+      if (!isCurrentOpenRequest()) return;
       if (!hasSessions || filterChanged || get().sessionsIndexGeneration !== get().indexStatus.generation) {
         await get().loadSessions();
       }
@@ -1565,8 +1809,24 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
   },
 
-  closeHistory: () => {
-    set({ isOpen: false });
+  closeHistory: (options) => {
+    historyOpenRequestSeq += 1;
+    sessionListRequestSeq += 1;
+    sessionDetailRequestSeq += 1;
+    globalSearchRequestSeq += 1;
+    const remoteContext = get().remoteContext;
+    if (remoteContext && !options?.preserveRemoteConsumer) {
+      void invoke("history_remote_close", {
+        hostId: remoteContext.hostId,
+        consumerId: remoteContext.consumerId,
+      }).catch(() => undefined);
+    }
+    set({
+      isOpen: false,
+      remoteContext: null,
+      loadingSessions: false,
+      loadingMoreSessions: false,
+    });
   },
 
   toggleHistory: async () => {
@@ -1578,6 +1838,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   setSourceFilter: async (filter) => {
+    globalSearchRequestSeq += 1;
     set({ sourceFilter: filter });
     await get().loadSessions();
     if (!get().globalQuery.trim()) {
@@ -1585,8 +1846,14 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
   },
 
-  setProjectPathFilter: async (projectPath) => {
-    set({ projectPathFilter: projectPath?.trim() || null, scopedProjectPathFilter: null });
+  setProjectPathFilter: async (projectPath, projectId) => {
+    globalSearchRequestSeq += 1;
+    const nextProjectPath = projectPath?.trim() || null;
+    set({
+      projectPathFilter: nextProjectPath,
+      projectIdFilter: nextProjectPath ? (projectId?.trim() || null) : null,
+      scopedProjectPathFilter: null,
+    });
     await get().loadSessions();
     if (!get().globalQuery.trim()) {
       set({ searchHits: [] });
@@ -1594,6 +1861,10 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   loadSessions: async () => {
+    const requestSeq = ++sessionListRequestSeq;
+    const remoteContext = get().remoteContext;
+    const remoteConsumerId = remoteContext?.consumerId ?? null;
+    const sourceFilter = get().sourceFilter;
     const projectPath = effectiveProjectPathFilter(get());
     const stopPerf = createPerfMarker("history.sessions.load", {
       sourceFilter: get().sourceFilter,
@@ -1603,20 +1874,30 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     set({ loadingSessions: true, loadingMoreSessions: false, hasMoreSessions: false, sessionListOffset: 0 });
     try {
       await get().ensureMetaTable();
-      const source = normalizeSourceFilter(get().sourceFilter);
-      const historyPathArgs = await getHistoryPathArgs();
-      const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
-        source,
-        ...historyPathArgs,
-        projectPath,
-        query: null,
-        limit: SESSION_PAGE_FETCH_LIMIT,
-        offset: 0,
-      });
+      const source = normalizeSourceFilter(sourceFilter);
+      const summariesRaw = remoteContext
+        ? remoteSourceMatchesFilter(remoteContext, sourceFilter) && remoteContext.sourceInstanceId
+          ? await invoke<unknown[]>("history_remote_list_cached", {
+            sourceInstanceId: remoteContext.sourceInstanceId,
+            projectPath,
+            query: null,
+            limit: SESSION_PAGE_FETCH_LIMIT,
+            offset: 0,
+          })
+          : []
+        : await invoke<unknown[]>("history_list_sessions", {
+          source,
+          ...(await getHistoryPathArgs()),
+          projectPath,
+          query: null,
+          limit: SESSION_PAGE_FETCH_LIMIT,
+          offset: 0,
+        });
       const allSummaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
       const summaries = allSummaries.slice(0, SESSION_PAGE_SIZE);
       const metaMap = await readMetaMap();
-      const sessions = await applyFavoriteSnapshots(summaries, metaMap, get().sourceFilter, projectPath);
+      const sessions = await applyFavoriteSnapshots(summaries, metaMap, sourceFilter, projectPath);
+      if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       const activeSessionKey = get().activeSessionKey;
       const activeExists = activeSessionKey
         ? sessions.some((item) => item.sessionKey === activeSessionKey)
@@ -1633,7 +1914,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         focusedMessageIndex: null,
       });
     } finally {
-      set({ loadingSessions: false });
+      if (isCurrentSessionListRequest(requestSeq, remoteConsumerId)) {
+        set({ loadingSessions: false });
+      }
       stopPerf({
         sessionCount: get().sessions.length,
         activeSessionKey: get().activeSessionKey,
@@ -1644,6 +1927,10 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
   loadMoreSessions: async () => {
     if (get().loadingSessions || get().loadingMoreSessions || !get().hasMoreSessions) return;
+    const requestSeq = ++sessionListRequestSeq;
+    const initialRemoteContext = get().remoteContext;
+    const remoteConsumerId = initialRemoteContext?.consumerId ?? null;
+    const sourceFilter = get().sourceFilter;
     const offset = get().sessionListOffset;
     const projectPath = effectiveProjectPathFilter(get());
     const stopPerf = createPerfMarker("history.sessions.load", {
@@ -1656,16 +1943,53 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     set({ loadingMoreSessions: true });
     try {
       await get().ensureMetaTable();
-      const source = normalizeSourceFilter(get().sourceFilter);
-      const historyPathArgs = await getHistoryPathArgs();
-      const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
-        source,
-        ...historyPathArgs,
-        projectPath,
-        query: null,
-        limit: SESSION_PAGE_FETCH_LIMIT,
-        offset,
-      });
+      const source = normalizeSourceFilter(sourceFilter);
+      let remoteContext = initialRemoteContext;
+      if (
+        remoteContext
+        && remoteSourceMatchesFilter(remoteContext, sourceFilter)
+        && remoteContext.hasMore
+      ) {
+        try {
+          const previousGeneration = remoteContext.generation;
+          const synced = await syncRemoteHistoryContext(remoteContext);
+          if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
+          remoteContext = synced;
+          set({ remoteContext: synced });
+          if (previousGeneration > 0 && synced.generation !== previousGeneration) {
+            await get().loadSessions();
+            return;
+          }
+        } catch (error) {
+          if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
+          set((state) => ({
+            indexStatus: {
+              ...state.indexStatus,
+              phase: "error",
+              partial: true,
+              error: String(error),
+            },
+          }));
+        }
+      }
+      const summariesRaw = remoteContext
+        ? remoteSourceMatchesFilter(remoteContext, sourceFilter) && remoteContext.sourceInstanceId
+          ? await invoke<unknown[]>("history_remote_list_cached", {
+            sourceInstanceId: remoteContext.sourceInstanceId,
+            projectPath,
+            query: null,
+            limit: SESSION_PAGE_FETCH_LIMIT,
+            offset,
+          })
+          : []
+        : await invoke<unknown[]>("history_list_sessions", {
+          source,
+          ...(await getHistoryPathArgs()),
+          projectPath,
+          query: null,
+          limit: SESSION_PAGE_FETCH_LIMIT,
+          offset,
+        });
       const allSummaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
       const nextSummaries = allSummaries.slice(0, SESSION_PAGE_SIZE);
       const summaryMap = new Map<string, HistorySessionSummary>();
@@ -1677,19 +2001,22 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         }
       }
       for (const summary of nextSummaries) {
-        const key = makeSessionKey(summary.source, summary.session_id, summary.file_path);
+        const key = summarySessionKey(summary);
         summaryMap.set(key, summary);
         sourceSessionKeys.add(key);
       }
       const metaMap = get().metaMap;
-      const sessions = await applyFavoriteSnapshots(Array.from(summaryMap.values()), metaMap, get().sourceFilter, projectPath, sourceSessionKeys);
+      const sessions = await applyFavoriteSnapshots(Array.from(summaryMap.values()), metaMap, sourceFilter, projectPath, sourceSessionKeys);
+      if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       set({
         sessions,
         hasMoreSessions: allSummaries.length > SESSION_PAGE_SIZE,
         sessionListOffset: offset + nextSummaries.length,
       });
     } finally {
-      set({ loadingMoreSessions: false });
+      if (isCurrentSessionListRequest(requestSeq, remoteConsumerId)) {
+        set({ loadingMoreSessions: false });
+      }
       stopPerf({
         sessionCount: get().sessions.length,
         hasMoreSessions: get().hasMoreSessions,
@@ -1698,6 +2025,18 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   loadIndexStatus: async () => {
+    const remoteContext = get().remoteContext;
+    if (remoteContext) {
+      set((state) => ({
+        indexStatus: {
+          ...state.indexStatus,
+          rootsKey: remoteContext.sourceInstanceId,
+          phase: state.indexStatus.error ? "error" : "ready",
+          partial: Boolean(state.indexStatus.error),
+        },
+      }));
+      return;
+    }
     try {
       const raw = await invoke<unknown>("history_get_index_status", await getHistoryPathArgs());
       set({ indexStatus: normalizeIndexStatus(raw) });
@@ -1715,6 +2054,28 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   refreshIndex: async () => {
+    const remoteContext = get().remoteContext;
+    if (remoteContext) {
+      const synced = await syncRemoteHistoryContext(remoteContext, { reset: true });
+      set({
+        remoteContext: synced,
+        indexStatus: {
+          rootsKey: synced.sourceInstanceId,
+          phase: "ready",
+          indexedFiles: 0,
+          totalFiles: 0,
+          generation: synced.generation,
+          partial: false,
+          lastCompletedAt: Date.now(),
+          error: null,
+        },
+      });
+      await get().loadSessions();
+      if ([...get().globalQuery.trim()].length >= MIN_GLOBAL_SEARCH_CHARS) {
+        await get().runGlobalSearch(get().globalQuery);
+      }
+      return;
+    }
     await ensureHistoryIndexListener();
     const raw = await invoke<unknown>("history_refresh_index", {
       ...(await getHistoryPathArgs()),
@@ -1734,11 +2095,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
   addConvertedSession: (summary) => {
     const normalized = normalizeSummary(summary);
-    const sessionKey = makeSessionKey(
-      normalized.source,
-      normalized.session_id,
-      normalized.file_path
-    );
+    const sessionKey = summarySessionKey(normalized);
     const nextView = toView(normalized, get().metaMap[sessionKey]);
     set((state) => ({
       sessions: sortSessionViews([
@@ -1756,6 +2113,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   openSession: async (sessionKey) => {
+    const requestSeq = ++sessionDetailRequestSeq;
     const stopPerf = createPerfMarker("history.session.detail", { sessionKey });
     const target = get().sessions.find((item) => item.sessionKey === sessionKey);
     if (!target) {
@@ -1765,22 +2123,35 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     set({ activeSessionKey: sessionKey, loadingSessionDetail: true, focusedMessageIndex: null });
     try {
       try {
-        const detailRaw = await invoke<unknown>("history_get_session", {
-          filePath: target.file_path,
-          ...(await getHistoryPathArgs()),
-          source: target.source,
-          projectKey: target.project_key,
-        });
+        const remoteContext = get().remoteContext;
+        const detailRaw = target.session_ref?.transportKind === "ssh"
+          ? remoteContext && remoteContext.sourceInstanceId === target.session_ref.sourceInstanceId
+            ? await invoke<unknown>("history_remote_get_session", {
+              consumerId: remoteContext.consumerId,
+              sshLaunch: remoteContext.launch,
+              source: remoteContext.source,
+              configuredConfigRoot: remoteContext.configuredConfigRoot,
+              projectPaths: remoteContext.projectPaths,
+              sourceInstanceId: target.session_ref.sourceInstanceId,
+              sourceSessionId: target.session_ref.sourceSessionId,
+            })
+            : await Promise.reject(new Error("history_remote_online_required"))
+          : await invoke<unknown>("history_get_session", {
+            filePath: target.file_path,
+            ...(await getHistoryPathArgs()),
+            source: target.source,
+            projectKey: target.project_key,
+          });
         const detail = normalizeDetail(detailRaw);
-        set({ activeSession: detail });
+        if (requestSeq === sessionDetailRequestSeq) set({ activeSession: detail });
       } catch (err) {
         const snapshot = await readFavoriteSnapshotDetail(sessionKey);
         if (!snapshot) throw err;
         logWarn("history.favoriteSnapshot.fallback", { sessionKey, error: String(err) });
-        set({ activeSession: snapshot });
+        if (requestSeq === sessionDetailRequestSeq) set({ activeSession: snapshot });
       }
     } finally {
-      set({ loadingSessionDetail: false });
+      if (requestSeq === sessionDetailRequestSeq) set({ loadingSessionDetail: false });
       stopPerf({
         messageCount: get().activeSession?.messages.length ?? 0,
       });
@@ -1788,19 +2159,34 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   openSearchHit: async (hit) => {
-    const sessionKey = makeSessionKey(hit.source, hit.session_id, hit.file_path);
+    const requestSeq = ++sessionDetailRequestSeq;
+    const sessionKey = hitSessionKey(hit);
     const stopPerf = createPerfMarker("history.session.detail", { sessionKey, fromSearch: true });
     set({ activeSessionKey: sessionKey, loadingSessionDetail: true, focusedMessageIndex: null });
     try {
-      const detailRaw = await invoke<unknown>("history_get_session", {
-        filePath: hit.file_path,
-        ...(await getHistoryPathArgs()),
-        source: hit.source,
-        projectKey: hit.project_key,
-      });
+      const remoteContext = get().remoteContext;
+      const detailRaw = hit.session_ref?.transportKind === "ssh"
+        ? remoteContext && remoteContext.sourceInstanceId === hit.session_ref.sourceInstanceId
+          ? await invoke<unknown>("history_remote_get_session", {
+            consumerId: remoteContext.consumerId,
+            sshLaunch: remoteContext.launch,
+            source: remoteContext.source,
+            configuredConfigRoot: remoteContext.configuredConfigRoot,
+            projectPaths: remoteContext.projectPaths,
+            sourceInstanceId: hit.session_ref.sourceInstanceId,
+            sourceSessionId: hit.session_ref.sourceSessionId,
+          })
+          : await Promise.reject(new Error("history_remote_online_required"))
+        : await invoke<unknown>("history_get_session", {
+          filePath: hit.file_path,
+          ...(await getHistoryPathArgs()),
+          source: hit.source,
+          projectKey: hit.project_key,
+        });
       const detail = normalizeDetail(detailRaw);
       const exists = get().sessions.some((item) => item.sessionKey === sessionKey);
       if (exists) {
+        if (requestSeq !== sessionDetailRequestSeq) return;
         set({ activeSession: detail });
         return;
       }
@@ -1815,15 +2201,22 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         updated_at: detail.updated_at,
         message_count: detail.message_count,
         branch: detail.branch,
+        session_ref: hit.session_ref,
+        materialization_level: detail.materialization_level,
+        freshness_state: detail.freshness_state,
+        as_of: detail.as_of,
+        remote_identity: detail.remote_identity,
+        read_only: hit.read_only,
       };
       const metaMap = get().metaMap;
       const summaries = [...get().sessions.map((item) => viewToSummary(item)), summary];
+      if (requestSeq !== sessionDetailRequestSeq) return;
       set({
         activeSession: detail,
         sessions: applyMeta(summaries, metaMap),
       });
     } finally {
-      set({ loadingSessionDetail: false });
+      if (requestSeq === sessionDetailRequestSeq) set({ loadingSessionDetail: false });
       stopPerf({
         messageCount: get().activeSession?.messages.length ?? 0,
       });
@@ -1833,6 +2226,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   deleteSession: async (sessionKey) => {
     const target = get().sessions.find((item) => item.sessionKey === sessionKey);
     if (!target) return;
+    if (target.session_ref?.transportKind === "ssh" || target.read_only) {
+      throw new Error("history_remote_read_only");
+    }
 
     if (!target.favoriteSnapshot) {
       await invoke("history_delete_session", {
@@ -1857,7 +2253,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       metaMap,
       activeSessionKey: nextActiveKey,
       activeSession: activeWasDeleted ? null : get().activeSession,
-      searchHits: get().searchHits.filter((hit) => makeSessionKey(hit.source, hit.session_id, hit.file_path) !== sessionKey),
+      searchHits: get().searchHits.filter((hit) => hitSessionKey(hit) !== sessionKey),
       focusedMessageIndex: null,
     });
     if (nextActiveKey && activeWasDeleted) {
@@ -1866,6 +2262,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   },
 
   setGlobalQuery: (query) => {
+    globalSearchRequestSeq += 1;
     set({ globalQuery: query });
   },
 
@@ -1886,13 +2283,65 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     set({ searching: true });
     try {
       const source = normalizeSourceFilter(get().sourceFilter);
-      const hitsRaw = await invoke<unknown[]>("history_search", {
-        query: normalized,
-        source,
-        ...(await getHistoryPathArgs()),
-        projectPath: effectiveProjectPathFilter(get()),
-        limit: DEFAULT_SEARCH_LIMIT,
-      });
+      const remoteContext = get().remoteContext;
+      let hitsRaw: unknown[];
+      if (remoteContext) {
+        if (!remoteContext.sourceInstanceId || !remoteSourceMatchesFilter(remoteContext, get().sourceFilter)) {
+          hitsRaw = [];
+        } else {
+          try {
+            hitsRaw = await invoke<unknown[]>("history_remote_search", {
+              consumerId: remoteContext.consumerId,
+              sshLaunch: remoteContext.launch,
+              source: remoteContext.source,
+              configuredConfigRoot: remoteContext.configuredConfigRoot,
+              projectPaths: remoteContext.projectPaths,
+              sourceInstanceId: remoteContext.sourceInstanceId,
+              query: normalized,
+              limit: DEFAULT_SEARCH_LIMIT,
+            });
+          } catch (error) {
+            const cached = await invoke<unknown[]>("history_remote_list_cached", {
+              sourceInstanceId: remoteContext.sourceInstanceId,
+              projectPath: effectiveProjectPathFilter(get()),
+              query: normalized,
+              limit: DEFAULT_SEARCH_LIMIT,
+              offset: 0,
+            });
+            hitsRaw = cached.map((item) => {
+              const summary = normalizeSummary(item);
+              return {
+                sessionId: summary.session_id,
+                source: summary.source,
+                projectKey: summary.project_key,
+                title: summary.title,
+                filePath: "",
+                role: "cachedSummary",
+                snippet: summary.title,
+                timestamp: null,
+                sessionRef: summary.session_ref,
+                readOnly: true,
+              };
+            });
+            set((state) => ({
+              indexStatus: {
+                ...state.indexStatus,
+                phase: "error",
+                partial: true,
+                error: String(error),
+              },
+            }));
+          }
+        }
+      } else {
+        hitsRaw = await invoke<unknown[]>("history_search", {
+          query: normalized,
+          source,
+          ...(await getHistoryPathArgs()),
+          projectPath: effectiveProjectPathFilter(get()),
+          limit: DEFAULT_SEARCH_LIMIT,
+        });
+      }
       const hits = (hitsRaw ?? []).map((item) => normalizeHit(item));
       if (requestSeq === globalSearchRequestSeq) {
         set({ searchHits: hits });

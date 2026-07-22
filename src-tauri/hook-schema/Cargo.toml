@@ -1,0 +1,10 @@
+[package]
+name = "cli-manager-hook-schema"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Shared Claude and Codex Hook stdin normalization for CLI-Manager"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,0 +1,26 @@
+[package]
+name = "cli-manager-ssh-agent"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Remote SSH integration agent for CLI-Manager"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+cli-manager-hook-schema = { path = "../hook-schema" }
+cli-manager-history-core = { path = "../history-core" }
+libc = "0.2"
+semver = "1"
+sha2 = "0.10"
+toml_edit = "0.25.4"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

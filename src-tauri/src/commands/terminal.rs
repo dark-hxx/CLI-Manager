@@ -17,6 +17,21 @@ use uuid::Uuid;
 const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
 const DAEMON_READY_WAIT_INTERVAL: Duration = Duration::from_millis(100);
 
+fn provider_launch_configs(
+    is_ssh: bool,
+    claude: Option<ClaudeProviderLaunchConfig>,
+    codex: Option<CodexProviderLaunchConfig>,
+) -> (
+    Option<ClaudeProviderLaunchConfig>,
+    Option<CodexProviderLaunchConfig>,
+) {
+    if is_ssh {
+        (None, None)
+    } else {
+        (claude, codex)
+    }
+}
+
 async fn wait_for_daemon(daemon_bridge: &DaemonBridge) -> Option<Arc<DaemonClient>> {
     for attempt in 0..DAEMON_READY_WAIT_ATTEMPTS {
         if let Some(client) = daemon_bridge.get() {
@@ -43,10 +58,46 @@ pub async fn pty_prepare_create(
 ) -> Result<PreparedPtyCreate, String> {
     let session_id = Uuid::new_v4().to_string();
     let mut env_vars = env_vars.unwrap_or_default();
+    let (claude_provider, codex_provider) =
+        provider_launch_configs(ssh_launch.is_some(), claude_provider, codex_provider);
     refresh_claude_provider_launch_settings(&app_handle, claude_provider).await?;
     apply_codex_provider_launch_env(&app_handle, codex_provider, shell.as_deref(), &mut env_vars)
         .await?;
     env_vars.insert("CLI_MANAGER_TAB_ID".to_string(), session_id.clone());
+    let mut ssh_launch = ssh_launch;
+    if let Some(plan) = ssh_launch.as_mut() {
+        for key in [
+            "CLI_MANAGER_SSH_HOST_ID",
+            "CLI_MANAGER_SSH_CLIENT_INSTANCE_ID",
+            "CLI_MANAGER_PROJECT_ID",
+            "CLI_MANAGER_TAB_ID",
+            "CLI_MANAGER_BRIDGE_EPOCH",
+        ] {
+            plan.environment_overrides.remove(key);
+        }
+        plan.environment_overrides
+            .insert("CLI_MANAGER_SSH_HOST_ID".to_string(), plan.host_id.clone());
+        plan.environment_overrides
+            .insert("CLI_MANAGER_TAB_ID".to_string(), session_id.clone());
+        if !plan.client_instance_id.is_empty() {
+            plan.environment_overrides.insert(
+                "CLI_MANAGER_SSH_CLIENT_INSTANCE_ID".to_string(),
+                plan.client_instance_id.clone(),
+            );
+        }
+        if !plan.project_id.is_empty() {
+            plan.environment_overrides.insert(
+                "CLI_MANAGER_PROJECT_ID".to_string(),
+                plan.project_id.clone(),
+            );
+        }
+        if !plan.bridge_epoch.is_empty() {
+            plan.environment_overrides.insert(
+                "CLI_MANAGER_BRIDGE_EPOCH".to_string(),
+                plan.bridge_epoch.clone(),
+            );
+        }
+    }
 
     // Hook 上报指向 daemon 的稳定端口，确保 app 重启后仍然有效。
     let daemon_client = wait_for_daemon(&daemon_bridge)
@@ -201,6 +252,8 @@ fn client_frame_id(frame: &ClientFrame) -> Option<u64> {
         | ClientFrame::Detach { id }
         | ClientFrame::Reconcile { id, .. }
         | ClientFrame::Status { id }
+        | ClientFrame::SshAgentRequest { id, .. }
+        | ClientFrame::SshAgentRelease { id, .. }
         | ClientFrame::Shutdown { id } => Some(*id),
     }
 }
@@ -266,4 +319,40 @@ pub async fn pty_daemon_sessions(
         alive_count
     );
     Ok(sessions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{provider_launch_configs, ClaudeProviderLaunchConfig, CodexProviderLaunchConfig};
+
+    fn configs() -> (
+        Option<ClaudeProviderLaunchConfig>,
+        Option<CodexProviderLaunchConfig>,
+    ) {
+        (
+            Some(ClaudeProviderLaunchConfig {
+                project_id: "project".to_string(),
+                provider_id: "claude-provider".to_string(),
+                db_path: Some("provider.db".to_string()),
+            }),
+            Some(CodexProviderLaunchConfig {
+                provider_id: "codex-provider".to_string(),
+                db_path: Some("provider.db".to_string()),
+                codex_config_dir: Some("codex".to_string()),
+            }),
+        )
+    }
+
+    #[test]
+    fn ssh_launch_discards_provider_configs() {
+        let (claude, codex) = configs();
+        let (claude, codex) = provider_launch_configs(true, claude, codex);
+        assert!(claude.is_none());
+        assert!(codex.is_none());
+
+        let (claude, codex) = configs();
+        let (claude, codex) = provider_launch_configs(false, claude, codex);
+        assert!(claude.is_some());
+        assert!(codex.is_some());
+    }
 }

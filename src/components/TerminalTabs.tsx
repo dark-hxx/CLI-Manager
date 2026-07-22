@@ -102,6 +102,10 @@ import {
   resolveProjectForSessionFileContext,
 } from "../lib/terminalProject";
 import { ALL_TERMINALS_SCOPE, collectProjectIdsForGroup, sessionMatchesTerminalScope } from "../lib/terminalScope";
+import {
+  TERMINAL_FILE_NAVIGATION_REQUEST_EVENT,
+  type TerminalFileNavigationRequest,
+} from "../lib/terminalFileNavigation";
 
 const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
@@ -2263,6 +2267,8 @@ export function TerminalTabs({
   const updateSettings = useSettingsStore((s) => s.update);
   const openFileProject = useFileExplorerStore((s) => s.openProject);
   const fileProject = useFileExplorerStore((s) => s.project);
+  const revealFilePath = useFileExplorerStore((s) => s.revealPath);
+  const openFileEditorPane = useTerminalStore((s) => s.openFileEditorPane);
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
   const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || t("common.none");
   const historyOpen = useHistoryStore((s) => s.isOpen);
@@ -2438,6 +2444,7 @@ export function TerminalTabs({
   const panelSessionId = panelSession?.id ?? null;
   const panelProject = panelSession?.projectId ? projectById.get(panelSession.projectId) ?? null : null;
   const panelCapabilities = resolveProjectCapabilities(panelProject);
+  const panelGitSupported = panelCapabilities.git || panelProject?.environment_type === "ssh";
   const activeWorktree = useMemo(
     () => findWorktreeForSession(activeSession, sessions, worktrees),
     [activeSession, sessions, worktrees]
@@ -2643,13 +2650,13 @@ export function TerminalTabs({
   );
   const visibleSidePanelTabs = useMemo(
     () => TERMINAL_SIDE_PANEL_TAB_ORDER.filter((tab) => {
-      if (tab === "git") return terminalToolbarVisibility.gitChanges && panelCapabilities.git;
+      if (tab === "git") return terminalToolbarVisibility.gitChanges && panelGitSupported;
       if (tab === "stats") return terminalToolbarVisibility.stats && panelCapabilities.statistics;
       if (tab === "replay") return terminalToolbarVisibility.replay && panelCapabilities.history;
       if (tab === "files") return terminalToolbarVisibility.files && panelCapabilities.files;
       return terminalToolbarVisibility[tab];
     }),
-    [panelCapabilities.files, panelCapabilities.git, panelCapabilities.history, panelCapabilities.statistics, terminalToolbarVisibility]
+    [panelCapabilities.files, panelCapabilities.history, panelCapabilities.statistics, panelGitSupported, terminalToolbarVisibility]
   );
   const historyActive = historyOpen && activeWorkspaceTab === "history";
   const statsPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "stats" : statsOpen;
@@ -2846,6 +2853,7 @@ export function TerminalTabs({
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project.cli_tool),
       projectPath: project.path,
+      projectId: project.id,
       scopedProjectPath: worktree.path,
     });
   }, [openHistory, rejectMissingWorktree, terminalSidePanelSingleOpen]);
@@ -3070,7 +3078,7 @@ export function TerminalTabs({
       return;
     }
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
-    if (rejectUnsupportedCapability(project, "git")) return;
+    if (project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
     if (sidePanelMerged) {
       if (terminalSidePanelSingleOpen) {
         closeHistory();
@@ -3152,15 +3160,9 @@ export function TerminalTabs({
     setFilesOpen(false);
   }, [sidePanelMerged, sidePanelTab]);
 
-  const handleToggleFilesPanel = useCallback(async () => {
-    if (filesPanelActive) {
-      closeFilesPanel();
-      return;
-    }
-    if (!filePanelProject) return;
-    if (rejectUnsupportedCapability(filePanelProject, "files")) return;
-    const allowed = await syncFilePanelProject(filePanelProject);
-    if (!allowed) return;
+  const openFilesPanelForProject = useCallback(async (project: Project): Promise<boolean> => {
+    const allowed = await syncFilePanelProject(project);
+    if (!allowed) return false;
     if (terminalSidePanelSingleOpen) {
       closeHistory();
       setActiveWorkspaceTab("terminal");
@@ -3168,16 +3170,50 @@ export function TerminalTabs({
     if (sidePanelMerged) {
       setSidePanelTab("files");
       setSidePanelOpen(true);
-    } else {
-      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
-        setStatsOpen(false);
-        setGitOpen(false);
-        setReplayOpen(false);
-        setSystemResourcesOpen(false);
-      }
-      setFilesOpen(true);
+      return true;
     }
-  }, [closeFilesPanel, closeHistory, filePanelProject, filesPanelActive, rejectUnsupportedCapability, sidePanelMerged, syncFilePanelProject, terminalSidePanelSingleOpen]);
+    if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
+      setStatsOpen(false);
+      setGitOpen(false);
+      setReplayOpen(false);
+      setSystemResourcesOpen(false);
+    }
+    setFilesOpen(true);
+    return true;
+  }, [closeHistory, sidePanelMerged, syncFilePanelProject, terminalSidePanelSingleOpen]);
+
+  const handleToggleFilesPanel = useCallback(async () => {
+    if (filesPanelActive) {
+      closeFilesPanel();
+      return;
+    }
+    if (!filePanelProject) return;
+    void openFilesPanelForProject(filePanelProject);
+  }, [closeFilesPanel, filePanelProject, filesPanelActive, openFilesPanelForProject]);
+
+  useEffect(() => {
+    const handleTerminalFileNavigation = (event: Event) => {
+      const request = (event as CustomEvent<TerminalFileNavigationRequest>).detail;
+      const sourceSession = sessions.find((session) => session.id === request.sessionId) ?? null;
+      const project = resolveProjectForSessionFileContext(sourceSession, sessions, projects, projectById, worktrees);
+      if (!project) return;
+      void openFilesPanelForProject(project).then(async (opened) => {
+        if (!opened) return;
+        try {
+          const revealed = await revealFilePath(request.path, {
+            ...(request.lineNumber ? { lineNumber: request.lineNumber } : {}),
+            ...(request.columnNumber ? { columnNumber: request.columnNumber } : {}),
+          });
+          if (revealed && request.kind === "file") openFileEditorPane(project);
+        } catch (err) {
+          logError("Failed to reveal terminal relative path", { request, err });
+          toast.error(t("files.toast.openFileFailed"), { description: String(err) });
+        }
+      });
+    };
+    window.addEventListener(TERMINAL_FILE_NAVIGATION_REQUEST_EVENT, handleTerminalFileNavigation);
+    return () => window.removeEventListener(TERMINAL_FILE_NAVIGATION_REQUEST_EVENT, handleTerminalFileNavigation);
+  }, [openFileEditorPane, openFilesPanelForProject, projectById, projects, revealFilePath, sessions, t, worktrees]);
 
   const handleSidePanelTabChange = useCallback((tab: TerminalSidePanelTab) => {
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
@@ -3196,7 +3232,7 @@ export function TerminalTabs({
       });
       return;
     }
-    if (tab === "git" && rejectUnsupportedCapability(project, "git")) return;
+    if (tab === "git" && project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
     if (tab === "replay" && rejectUnsupportedCapability(project, "history")) return;
     setSidePanelTab(tab);
   }, [ensureStatsPanelAllowed, filePanelProject, panelSession, projectById, rejectUnsupportedCapability, syncFilePanelProject]);
@@ -3279,6 +3315,7 @@ export function TerminalTabs({
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project?.cli_tool),
       projectPath: project?.path ?? activeSession?.cwd ?? null,
+      projectId: project?.id ?? null,
       scopedProjectPath: activeWorktree?.path ?? null,
     });
   }, [activeSession, activeWorktree?.path, closeHistory, historyOpen, openHistory, projects, rejectUnsupportedCapability, terminalSidePanelSingleOpen]);
@@ -4278,6 +4315,7 @@ export function TerminalTabs({
               visibleTabs={visibleSidePanelTabs}
               activeSessionId={panelSessionId}
               projectPath={sidePanelProjectPath}
+              projectId={panelSession?.projectId}
               filesTabDisabled={!filePanelProject}
               systemResourcesEnabled
               filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
@@ -4297,7 +4335,7 @@ export function TerminalTabs({
                   </Suspense>
                 </ResizableTerminalPanelFrame>
               )}
-              {gitOpen && panelCapabilities.git && (
+              {gitOpen && panelGitSupported && (
                 <ResizableTerminalPanelFrame
                   widthKey="git"
                   defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.git}
@@ -4305,7 +4343,7 @@ export function TerminalTabs({
                   resizeTitle={t("terminal.panel.resizeGitTitle")}
                 >
                   <Suspense fallback={null}>
-                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} embedded />
+                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} projectId={panelSession?.projectId} embedded />
                   </Suspense>
                 </ResizableTerminalPanelFrame>
               )}

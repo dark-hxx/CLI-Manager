@@ -1,4 +1,5 @@
 use super::*;
+use cli_manager_history_core::RemoteHistorySyncResult;
 use log::{debug, warn};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteRow, SqliteSynchronous};
 use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
@@ -12,7 +13,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 const CATALOG_DB_FILE: &str = "history-catalog.db";
 const CATALOG_PARSER_VERSION: i64 = 1;
-const HISTORY_INDEX_SCHEMA_VERSION: i64 = 2;
+const HISTORY_INDEX_SCHEMA_VERSION: i64 = 3;
 const HISTORY_INDEX_MODEL_VERSION: i64 = 1;
 const CATALOG_REFRESH_TTL_MS: i64 = 10_000;
 const CATALOG_SEARCH_MIN_CHARS: usize = 3;
@@ -213,14 +214,22 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             locations_json TEXT NOT NULL,
             settings_hash TEXT NOT NULL,
             activation_state TEXT NOT NULL DEFAULT 'pending',
+            scope_kind TEXT NOT NULL DEFAULT 'configured',
+            scope_key TEXT NOT NULL DEFAULT 'desktop',
+            transport_kind TEXT NOT NULL DEFAULT 'local',
+            materialization_level TEXT NOT NULL DEFAULT 'full',
+            freshness_state TEXT NOT NULL DEFAULT 'fresh',
+            as_of INTEGER,
+            remote_identity_json TEXT,
+            sync_cursor_json TEXT,
             discovered INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         )",
         "CREATE INDEX IF NOT EXISTS idx_history_source_instances_source
             ON history_source_instances(source_id, activation_state)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_history_source_instances_one_active
-            ON history_source_instances(source_id)
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_history_source_instances_active_scope
+            ON history_source_instances(source_id, scope_kind, scope_key)
             WHERE activation_state = 'active'",
         "CREATE TABLE IF NOT EXISTS history_sessions (
             id INTEGER PRIMARY KEY,
@@ -260,6 +269,10 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             parser_version INTEGER NOT NULL,
             model_version INTEGER NOT NULL,
             parse_status TEXT NOT NULL,
+            materialization_level TEXT NOT NULL DEFAULT 'full',
+            freshness_state TEXT NOT NULL DEFAULT 'fresh',
+            as_of INTEGER,
+            tombstoned_at INTEGER,
             completeness_json TEXT,
             raw_pointers_json TEXT,
             source_extension_json TEXT,
@@ -480,6 +493,62 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             .await
             .map_err(|err| err.to_string())?;
     }
+    for (table, column, definition) in [
+        (
+            "history_source_instances",
+            "scope_kind",
+            "TEXT NOT NULL DEFAULT 'configured'",
+        ),
+        (
+            "history_source_instances",
+            "scope_key",
+            "TEXT NOT NULL DEFAULT 'desktop'",
+        ),
+        (
+            "history_source_instances",
+            "transport_kind",
+            "TEXT NOT NULL DEFAULT 'local'",
+        ),
+        (
+            "history_source_instances",
+            "materialization_level",
+            "TEXT NOT NULL DEFAULT 'full'",
+        ),
+        (
+            "history_source_instances",
+            "freshness_state",
+            "TEXT NOT NULL DEFAULT 'fresh'",
+        ),
+        ("history_source_instances", "as_of", "INTEGER"),
+        ("history_source_instances", "remote_identity_json", "TEXT"),
+        ("history_source_instances", "sync_cursor_json", "TEXT"),
+        (
+            "history_sessions",
+            "materialization_level",
+            "TEXT NOT NULL DEFAULT 'full'",
+        ),
+        (
+            "history_sessions",
+            "freshness_state",
+            "TEXT NOT NULL DEFAULT 'fresh'",
+        ),
+        ("history_sessions", "as_of", "INTEGER"),
+        ("history_sessions", "tombstoned_at", "INTEGER"),
+    ] {
+        ensure_column(conn, table, column, definition).await?;
+    }
+    sqlx::query("DROP INDEX IF EXISTS idx_history_source_instances_one_active")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_history_source_instances_active_scope
+         ON history_source_instances(source_id, scope_kind, scope_key)
+         WHERE activation_state = 'active'",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
     sqlx::query(&format!(
         "PRAGMA user_version = {HISTORY_INDEX_SCHEMA_VERSION}"
     ))
@@ -505,6 +574,31 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
         .await
         .map_err(|err| err.to_string())?;
     }
+    Ok(())
+}
+
+async fn ensure_column(
+    conn: &mut SqliteConnection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    if rows.iter().any(|row| {
+        row.try_get::<String, _>("name")
+            .is_ok_and(|name| name == column)
+    }) {
+        return Ok(());
+    }
+    sqlx::query(&format!(
+        "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+    ))
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -614,7 +708,8 @@ pub(super) async fn upsert_v2_source_instance(
     sqlx::query(
         "UPDATE history_source_instances
          SET activation_state = 'inactive', updated_at = ?1
-         WHERE source_id = ?2 AND activation_state = 'active' AND id <> ?3",
+         WHERE source_id = ?2 AND scope_kind = 'configured' AND scope_key = 'desktop'
+           AND activation_state = 'active' AND id <> ?3",
     )
     .bind(now)
     .bind(&input.source_id)
@@ -626,9 +721,13 @@ pub(super) async fn upsert_v2_source_instance(
         "INSERT INTO history_source_instances(
             id, source_id, environment_kind, environment_key, storage_kind,
             display_name, locations_json, settings_hash, activation_state,
-            discovered, created_at, updated_at
+            scope_kind, scope_key, transport_kind, materialization_level,
+            freshness_state, discovered, created_at, updated_at
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?10, ?10
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active',
+            'configured', 'desktop',
+            CASE WHEN ?3 = 'wsl' THEN 'wsl' ELSE 'local' END,
+            'full', 'fresh', ?9, ?10, ?10
          )
          ON CONFLICT(id) DO UPDATE SET
             source_id = excluded.source_id,
@@ -639,6 +738,14 @@ pub(super) async fn upsert_v2_source_instance(
             locations_json = excluded.locations_json,
             settings_hash = excluded.settings_hash,
             activation_state = 'active',
+            scope_kind = 'configured',
+            scope_key = 'desktop',
+            transport_kind = CASE
+                WHEN excluded.environment_kind = 'wsl' THEN 'wsl'
+                ELSE 'local'
+            END,
+            materialization_level = 'full',
+            freshness_state = 'fresh',
             discovered = excluded.discovered,
             updated_at = excluded.updated_at",
     )
@@ -677,7 +784,7 @@ pub(super) async fn deactivate_v2_source_instance(
         sqlx::query(
             "UPDATE history_source_instances
              SET activation_state = 'inactive', updated_at = ?1
-             WHERE source_id = ?2 AND id = ?3",
+             WHERE source_id = ?2 AND id = ?3 AND scope_kind = 'configured'",
         )
         .bind(now)
         .bind(source_id)
@@ -689,7 +796,8 @@ pub(super) async fn deactivate_v2_source_instance(
         sqlx::query(
             "UPDATE history_source_instances
              SET activation_state = 'inactive', updated_at = ?1
-             WHERE source_id = ?2 AND activation_state = 'active'",
+             WHERE source_id = ?2 AND scope_kind = 'configured'
+               AND scope_key = 'desktop' AND activation_state = 'active'",
         )
         .bind(now)
         .bind(source_id)
@@ -2109,6 +2217,563 @@ fn parse_catalog_batch(batch: Vec<CatalogFile>) -> Vec<CatalogDocument> {
     results.into_inner().unwrap_or_default()
 }
 
+pub(super) async fn apply_remote_sync(
+    host_id: &str,
+    result: &RemoteHistorySyncResult,
+) -> Result<(), String> {
+    let mut conn = open_catalog().await?;
+    apply_remote_sync_with_conn(&mut conn, host_id, result).await
+}
+
+fn remote_catalog_i64<T: TryInto<i64>>(value: T) -> Result<i64, String> {
+    value
+        .try_into()
+        .map_err(|_| "history_remote_numeric_overflow".to_string())
+}
+
+async fn apply_remote_sync_with_conn(
+    conn: &mut SqliteConnection,
+    host_id: &str,
+    result: &RemoteHistorySyncResult,
+) -> Result<(), String> {
+    if host_id.trim().is_empty()
+        || !matches!(result.source.as_str(), "claude" | "codex")
+        || result.source_instance_id.trim().is_empty()
+        || result.remote_machine_id.trim().is_empty()
+        || result.ssh_user.trim().is_empty()
+        || result.config_root_hash.trim().is_empty()
+    {
+        return Err("history_remote_identity_invalid".to_string());
+    }
+    if !result.discovery_complete && !result.tombstones.is_empty() {
+        return Err("history_remote_tombstone_without_discovery".to_string());
+    }
+    let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
+    let scope_key = format!(
+        "{}:{}:{}",
+        result.remote_machine_id, result.ssh_user, result.config_root_hash
+    );
+    if let Some(row) = sqlx::query(
+        "SELECT source_id, scope_kind, scope_key, transport_kind, remote_identity_json
+         FROM history_source_instances WHERE id = ?1",
+    )
+    .bind(&result.source_instance_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?
+    {
+        let identity = row
+            .try_get::<Option<String>, _>("remote_identity_json")
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok());
+        if row.try_get::<String, _>("source_id").ok().as_deref() != Some(result.source.as_str())
+            || row.try_get::<String, _>("scope_kind").ok().as_deref() != Some("ssh")
+            || row.try_get::<String, _>("scope_key").ok().as_deref() != Some(scope_key.as_str())
+            || row.try_get::<String, _>("transport_kind").ok().as_deref() != Some("ssh")
+            || identity
+                .as_ref()
+                .and_then(|value| value.get("installationId"))
+                .and_then(Value::as_str)
+                != Some(result.installation_id.as_str())
+            || identity
+                .as_ref()
+                .and_then(|value| value.get("remoteMachineId"))
+                .and_then(Value::as_str)
+                != Some(result.remote_machine_id.as_str())
+            || identity
+                .as_ref()
+                .and_then(|value| value.get("sshUser"))
+                .and_then(Value::as_str)
+                != Some(result.ssh_user.as_str())
+            || identity
+                .as_ref()
+                .and_then(|value| value.get("configRootHash"))
+                .and_then(Value::as_str)
+                != Some(result.config_root_hash.as_str())
+        {
+            return Err("history_remote_identity_changed".to_string());
+        }
+    }
+    let locations_json = serde_json::to_string(&json!({
+        "configuredConfigRoot": result.configured_config_root,
+        "canonicalConfigRoot": result.canonical_config_root,
+    }))
+    .map_err(|err| err.to_string())?;
+    let remote_identity = json!({
+        "hostId": host_id,
+        "installationId": result.installation_id,
+        "remoteMachineId": result.remote_machine_id,
+        "sshUser": result.ssh_user,
+        "configRootHash": result.config_root_hash,
+    });
+    let remote_identity_json =
+        serde_json::to_string(&remote_identity).map_err(|err| err.to_string())?;
+    if let Some(row) = sqlx::query(
+        "SELECT source_id, scope_kind, scope_key, transport_kind, remote_identity_json
+         FROM history_source_instances WHERE id = ?1",
+    )
+    .bind(&result.source_instance_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?
+    {
+        let existing_identity = row
+            .try_get::<Option<String>, _>("remote_identity_json")
+            .map_err(|err| err.to_string())?
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok());
+        let identity_matches = existing_identity.as_ref().is_some_and(|identity| {
+            [
+                "installationId",
+                "remoteMachineId",
+                "sshUser",
+                "configRootHash",
+            ]
+            .into_iter()
+            .all(|key| identity.get(key) == remote_identity.get(key))
+        });
+        if row.try_get::<String, _>("source_id").ok().as_deref() != Some(result.source.as_str())
+            || row.try_get::<String, _>("scope_kind").ok().as_deref() != Some("ssh")
+            || row.try_get::<String, _>("scope_key").ok().as_deref() != Some(scope_key.as_str())
+            || row.try_get::<String, _>("transport_kind").ok().as_deref() != Some("ssh")
+            || !identity_matches
+        {
+            return Err("history_remote_identity_changed".to_string());
+        }
+    }
+    sqlx::query(
+        "UPDATE history_source_instances
+         SET activation_state = 'inactive', updated_at = ?1
+         WHERE source_id = ?2 AND scope_kind = 'ssh' AND scope_key = ?3
+           AND activation_state = 'active' AND id <> ?4",
+    )
+    .bind(result.as_of)
+    .bind(&result.source)
+    .bind(&scope_key)
+    .bind(&result.source_instance_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    sqlx::query(
+        "INSERT INTO history_source_instances(
+            id, source_id, environment_kind, environment_key, storage_kind,
+            display_name, locations_json, settings_hash, activation_state,
+            scope_kind, scope_key, transport_kind, materialization_level,
+            freshness_state, as_of, remote_identity_json, sync_cursor_json,
+            discovered, created_at, updated_at
+         ) VALUES (
+            ?1, ?2, 'ssh', ?3, 'file', ?4, ?5, ?6, 'active',
+            'ssh', ?7, 'ssh', 'summary', ?8, ?9, ?10, ?11, 1, ?9, ?9
+         )
+         ON CONFLICT(id) DO UPDATE SET
+            source_id = excluded.source_id,
+            environment_kind = excluded.environment_kind,
+            environment_key = excluded.environment_key,
+            storage_kind = excluded.storage_kind,
+            display_name = excluded.display_name,
+            locations_json = excluded.locations_json,
+            settings_hash = excluded.settings_hash,
+            activation_state = 'active',
+            scope_kind = excluded.scope_kind,
+            scope_key = excluded.scope_key,
+            transport_kind = excluded.transport_kind,
+            materialization_level = excluded.materialization_level,
+            freshness_state = excluded.freshness_state,
+            as_of = excluded.as_of,
+            remote_identity_json = excluded.remote_identity_json,
+            sync_cursor_json = excluded.sync_cursor_json,
+            discovered = 1,
+            updated_at = excluded.updated_at",
+    )
+    .bind(&result.source_instance_id)
+    .bind(&result.source)
+    .bind(format!("{}:{}", result.remote_machine_id, result.ssh_user))
+    .bind(format!("{} @ {}", result.source, result.ssh_user))
+    .bind(locations_json)
+    .bind(&result.config_root_hash)
+    .bind(&scope_key)
+    .bind(&result.freshness_state)
+    .bind(result.as_of)
+    .bind(remote_identity_json)
+    .bind(&result.cursor)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    for summary in &result.sessions {
+        if summary.session_ref.source_id != result.source
+            || summary.session_ref.source_instance_id != result.source_instance_id
+            || summary.session_ref.source_session_id.trim().is_empty()
+            || summary.session_ref.transport_kind != "ssh"
+            || summary.index_generation != result.generation
+            || summary
+                .session_ref
+                .raw_pointers
+                .iter()
+                .any(|pointer| pointer.raw_key.is_empty())
+        {
+            return Err("history_remote_session_ref_invalid".to_string());
+        }
+        let raw_pointers_json = serde_json::to_string(&summary.session_ref.raw_pointers)
+            .map_err(|err| err.to_string())?;
+        let completeness_json = serde_json::to_string(&json!({
+            "summary": true,
+            "messages": false,
+            "diff": false,
+            "onlineRequired": true,
+        }))
+        .map_err(|err| err.to_string())?;
+        let source_extension_json = serde_json::to_string(&json!({
+            "hostId": host_id,
+            "transportKind": "ssh",
+        }))
+        .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "INSERT INTO history_sessions(
+                source_instance_id, source_session_id, storage_kind,
+                project_key, cwd, cwd_normalized, title, branch, lifecycle_state,
+                created_at, updated_at, message_count,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                dominant_model, current_model, fingerprint_kind, fingerprint_value,
+                parser_version, model_version, parse_status, materialization_level,
+                freshness_state, as_of, tombstoned_at, completeness_json,
+                raw_pointers_json, source_extension_json, last_seen_generation, indexed_at
+             ) VALUES (
+                ?1, ?2, 'remote', ?3, ?4, ?5, ?6, ?7, 'active',
+                ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                'remoteGeneration', ?17, ?18, 1, 'ok', 'summary', ?19, ?20, NULL,
+                ?21, ?22, ?23, ?24, ?20
+             )
+             ON CONFLICT(source_instance_id, source_session_id) DO UPDATE SET
+                storage_kind = 'remote',
+                primary_path = NULL,
+                database_path = NULL,
+                raw_key = NULL,
+                project_key = excluded.project_key,
+                cwd = excluded.cwd,
+                cwd_normalized = excluded.cwd_normalized,
+                title = excluded.title,
+                branch = excluded.branch,
+                lifecycle_state = 'active',
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                message_count = excluded.message_count,
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                cache_read_tokens = excluded.cache_read_tokens,
+                cache_creation_tokens = excluded.cache_creation_tokens,
+                dominant_model = excluded.dominant_model,
+                current_model = excluded.current_model,
+                fingerprint_kind = excluded.fingerprint_kind,
+                fingerprint_value = excluded.fingerprint_value,
+                parser_version = excluded.parser_version,
+                model_version = excluded.model_version,
+                parse_status = 'ok',
+                materialization_level = 'summary',
+                freshness_state = excluded.freshness_state,
+                as_of = excluded.as_of,
+                tombstoned_at = NULL,
+                completeness_json = excluded.completeness_json,
+                raw_pointers_json = excluded.raw_pointers_json,
+                source_extension_json = excluded.source_extension_json,
+                last_seen_generation = excluded.last_seen_generation,
+                indexed_at = excluded.indexed_at",
+        )
+        .bind(&result.source_instance_id)
+        .bind(&summary.session_ref.source_session_id)
+        .bind(&summary.project_key)
+        .bind(summary.cwd.as_deref())
+        .bind(summary.cwd.as_deref().map(normalize_history_path))
+        .bind(&summary.title)
+        .bind(summary.branch.as_deref())
+        .bind(summary.created_at)
+        .bind(summary.updated_at)
+        .bind(remote_catalog_i64(summary.message_count)?)
+        .bind(remote_catalog_i64(summary.usage.input_tokens)?)
+        .bind(remote_catalog_i64(summary.usage.output_tokens)?)
+        .bind(remote_catalog_i64(summary.usage.cache_read_tokens)?)
+        .bind(remote_catalog_i64(summary.usage.cache_creation_tokens)?)
+        .bind(summary.dominant_model.as_deref())
+        .bind(summary.current_model.as_deref())
+        .bind(format!(
+            "{}:{}",
+            summary.index_generation, summary.session_ref.source_session_id
+        ))
+        .bind(remote_catalog_i64(summary.parser_version)?)
+        .bind(&result.freshness_state)
+        .bind(result.as_of)
+        .bind(completeness_json)
+        .bind(raw_pointers_json)
+        .bind(source_extension_json)
+        .bind(remote_catalog_i64(summary.index_generation)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        let session_row_id: i64 = sqlx::query_scalar(
+            "SELECT id FROM history_sessions
+             WHERE source_instance_id = ?1 AND source_session_id = ?2",
+        )
+        .bind(&result.source_instance_id)
+        .bind(&summary.session_ref.source_session_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        for table in [
+            "history_tool_events",
+            "history_file_changes",
+            "history_messages",
+            "history_usage_events",
+        ] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE session_id = ?1"))
+                .bind(session_row_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        for fact in &summary.usage_facts {
+            sqlx::query(
+                "INSERT INTO history_usage_events(
+                    session_id, event_index, timestamp_ms, model,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, cost_usd, raw_pointers_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, NULL)",
+            )
+            .bind(session_row_id)
+            .bind(remote_catalog_i64(fact.event_index)?)
+            .bind(fact.timestamp_ms)
+            .bind(fact.model.as_deref())
+            .bind(remote_catalog_i64(fact.usage.input_tokens)?)
+            .bind(remote_catalog_i64(fact.usage.output_tokens)?)
+            .bind(remote_catalog_i64(fact.usage.cache_read_tokens)?)
+            .bind(remote_catalog_i64(fact.usage.cache_creation_tokens)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        }
+    }
+
+    if result.discovery_complete {
+        for source_session_id in &result.tombstones {
+            sqlx::query(
+                "UPDATE history_sessions
+                 SET lifecycle_state = 'deleted', parse_status = 'tombstone',
+                     tombstoned_at = ?1, freshness_state = ?2, as_of = ?1,
+                     last_seen_generation = ?3, indexed_at = ?1
+                 WHERE source_instance_id = ?4 AND source_session_id = ?5",
+            )
+            .bind(result.as_of)
+            .bind(&result.freshness_state)
+            .bind(remote_catalog_i64(result.generation)?)
+            .bind(&result.source_instance_id)
+            .bind(source_session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        }
+    }
+    sqlx::query(
+        "INSERT INTO history_source_state(
+            source_instance_id, phase, generation, parser_version, settings_hash,
+            discovered_sessions, indexed_sessions, failed_sessions,
+            last_started_at, last_completed_at, last_success_at, error_code, error_detail
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 0, ?7, ?7, ?8, NULL, NULL)
+         ON CONFLICT(source_instance_id) DO UPDATE SET
+            phase = excluded.phase,
+            generation = excluded.generation,
+            parser_version = excluded.parser_version,
+            settings_hash = excluded.settings_hash,
+            discovered_sessions = excluded.discovered_sessions,
+            indexed_sessions = excluded.indexed_sessions,
+            failed_sessions = 0,
+            last_completed_at = excluded.last_completed_at,
+            last_success_at = excluded.last_success_at,
+            error_code = NULL,
+            error_detail = NULL",
+    )
+    .bind(&result.source_instance_id)
+    .bind(if result.partial { "partial" } else { "ready" })
+    .bind(remote_catalog_i64(result.generation)?)
+    .bind(CATALOG_PARSER_VERSION)
+    .bind(&result.config_root_hash)
+    .bind(remote_catalog_i64(result.total_sessions)?)
+    .bind(result.as_of)
+    .bind((!result.partial).then_some(result.as_of))
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    tx.commit().await.map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_remote_stale(
+    source_instance_id: &str,
+    error_code: &str,
+) -> Result<(), String> {
+    if source_instance_id.trim().is_empty() {
+        return Ok(());
+    }
+    let mut conn = open_catalog().await?;
+    let now = now_millis();
+    let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
+    sqlx::query(
+        "UPDATE history_source_instances
+         SET freshness_state = 'stale', updated_at = ?1
+         WHERE id = ?2 AND transport_kind = 'ssh'",
+    )
+    .bind(now)
+    .bind(source_instance_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    sqlx::query(
+        "UPDATE history_sessions
+         SET freshness_state = 'stale'
+         WHERE source_instance_id = ?1 AND lifecycle_state = 'active'",
+    )
+    .bind(source_instance_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    sqlx::query(
+        "UPDATE history_source_state
+         SET phase = 'stale', error_code = ?1, error_detail = NULL
+         WHERE source_instance_id = ?2",
+    )
+    .bind(error_code)
+    .bind(source_instance_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    tx.commit().await.map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn list_remote_cached(
+    source_instance_id: &str,
+    project_path: Option<&str>,
+    query: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<Value>, String> {
+    let mut conn = open_catalog().await?;
+    let rows = sqlx::query(
+        "SELECT hs.source_session_id, i.source_id, hs.project_key, hs.cwd, hs.title,
+                hs.branch, hs.created_at, hs.updated_at, hs.message_count,
+                hs.input_tokens, hs.output_tokens, hs.cache_read_tokens,
+                hs.cache_creation_tokens, hs.dominant_model, hs.current_model,
+                hs.parser_version, hs.last_seen_generation, hs.raw_pointers_json,
+                hs.materialization_level, hs.freshness_state,
+                COALESCE(hs.as_of, i.as_of) AS as_of, i.remote_identity_json
+         FROM history_sessions hs
+         JOIN history_source_instances i ON i.id = hs.source_instance_id
+         WHERE hs.source_instance_id = ?1 AND i.activation_state = 'active'
+           AND i.transport_kind = 'ssh' AND hs.lifecycle_state = 'active'
+           AND hs.parse_status = 'ok'
+         ORDER BY hs.updated_at DESC, hs.source_session_id ASC",
+    )
+    .bind(source_instance_id)
+    .fetch_all(&mut conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    let normalized_project = project_path.map(normalize_history_path);
+    let normalized_query = query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase);
+    let mut values = Vec::new();
+    for row in rows {
+        let cwd = row
+            .try_get::<Option<String>, _>("cwd")
+            .map_err(|err| err.to_string())?;
+        let project_key: String = row.try_get("project_key").map_err(|err| err.to_string())?;
+        if normalized_project.as_ref().is_some_and(|project| {
+            let cwd_matches = cwd.as_deref().is_some_and(|cwd| {
+                let cwd = normalize_history_path(cwd);
+                cwd == *project || cwd.starts_with(&format!("{project}/"))
+            });
+            !cwd_matches
+                && !claude_project_key_from_path(project).eq_ignore_ascii_case(&project_key)
+        }) {
+            continue;
+        }
+        let source_session_id: String = row
+            .try_get("source_session_id")
+            .map_err(|err| err.to_string())?;
+        let source_id: String = row.try_get("source_id").map_err(|err| err.to_string())?;
+        let title: String = row.try_get("title").map_err(|err| err.to_string())?;
+        let branch: Option<String> = row.try_get("branch").map_err(|err| err.to_string())?;
+        if normalized_query.as_ref().is_some_and(|query| {
+            ![
+                source_session_id.as_str(),
+                source_id.as_str(),
+                project_key.as_str(),
+                title.as_str(),
+                branch.as_deref().unwrap_or_default(),
+                cwd.as_deref().unwrap_or_default(),
+            ]
+            .iter()
+            .any(|value| value.to_lowercase().contains(query))
+        }) {
+            continue;
+        }
+        if values.len() < offset {
+            values.push(Value::Null);
+            continue;
+        }
+        let raw_pointers = row
+            .try_get::<Option<String>, _>("raw_pointers_json")
+            .map_err(|err| err.to_string())?
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .unwrap_or_else(|| json!([]));
+        let remote_identity = row
+            .try_get::<Option<String>, _>("remote_identity_json")
+            .map_err(|err| err.to_string())?
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .unwrap_or_else(|| json!({}));
+        values.push(json!({
+            "sessionId": source_session_id,
+            "source": source_id,
+            "projectKey": project_key,
+            "title": title,
+            "filePath": "",
+            "cwd": cwd,
+            "createdAt": row.try_get::<i64, _>("created_at").map_err(|err| err.to_string())?,
+            "updatedAt": row.try_get::<i64, _>("updated_at").map_err(|err| err.to_string())?,
+            "messageCount": row.try_get::<i64, _>("message_count").map_err(|err| err.to_string())?,
+            "branch": branch,
+            "sessionRef": {
+                "sourceId": source_id,
+                "sourceInstanceId": source_instance_id,
+                "sourceSessionId": source_session_id,
+                "transportKind": "ssh",
+                "rawPointers": raw_pointers,
+            },
+            "usage": {
+                "inputTokens": row.try_get::<i64, _>("input_tokens").map_err(|err| err.to_string())?,
+                "outputTokens": row.try_get::<i64, _>("output_tokens").map_err(|err| err.to_string())?,
+                "cacheReadTokens": row.try_get::<i64, _>("cache_read_tokens").map_err(|err| err.to_string())?,
+                "cacheCreationTokens": row.try_get::<i64, _>("cache_creation_tokens").map_err(|err| err.to_string())?,
+                "dominantModel": row.try_get::<Option<String>, _>("dominant_model").map_err(|err| err.to_string())?,
+                "currentModel": row.try_get::<Option<String>, _>("current_model").map_err(|err| err.to_string())?,
+            },
+            "parserVersion": row.try_get::<i64, _>("parser_version").map_err(|err| err.to_string())?,
+            "indexGeneration": row.try_get::<i64, _>("last_seen_generation").map_err(|err| err.to_string())?,
+            "materializationLevel": row.try_get::<String, _>("materialization_level").map_err(|err| err.to_string())?,
+            "freshnessState": row.try_get::<String, _>("freshness_state").map_err(|err| err.to_string())?,
+            "asOf": row.try_get::<Option<i64>, _>("as_of").map_err(|err| err.to_string())?,
+            "remoteIdentity": remote_identity,
+            "readOnly": true,
+        }));
+        if values.iter().filter(|value| !value.is_null()).count() >= limit {
+            break;
+        }
+    }
+    Ok(values
+        .into_iter()
+        .filter(|value| !value.is_null())
+        .collect())
+}
+
 fn opencode_catalog_document(parsed: OpenCodeParsedSession) -> CatalogDocument {
     CatalogDocument {
         file_ref: parsed.file_ref,
@@ -3053,6 +3718,72 @@ pub(super) async fn ensure_refresh(
 mod tests {
     use super::*;
 
+    fn remote_sync_result() -> RemoteHistorySyncResult {
+        serde_json::from_value(json!({
+            "sourceInstanceId": "remote-instance",
+            "source": "claude",
+            "installationId": "installation-1",
+            "remoteMachineId": "machine-1",
+            "sshUser": "dev",
+            "configuredConfigRoot": "$HOME/.claude",
+            "canonicalConfigRoot": "/home/dev/.claude",
+            "configRootHash": "root-hash",
+            "generation": 1,
+            "cursor": "1:1",
+            "hasMore": false,
+            "totalSessions": 1,
+            "freshnessState": "fresh",
+            "asOf": 100,
+            "discoveryComplete": true,
+            "partial": false,
+            "sessions": [{
+                "sessionRef": {
+                    "sourceId": "claude",
+                    "sourceInstanceId": "remote-instance",
+                    "sourceSessionId": "session-1",
+                    "transportKind": "ssh",
+                    "rawPointers": [{
+                        "role": "transcript",
+                        "kind": "claude-jsonl",
+                        "rawKey": "projects/session-1.jsonl"
+                    }]
+                },
+                "projectKey": "project",
+                "cwd": "/home/dev/project",
+                "title": "Remote session",
+                "branch": null,
+                "createdAt": 10,
+                "updatedAt": 20,
+                "messageCount": 2,
+                "dominantModel": "claude-sonnet",
+                "currentModel": "claude-sonnet",
+                "usage": {
+                    "inputTokens": 10,
+                    "outputTokens": 5,
+                    "cacheReadTokens": 2,
+                    "cacheCreationTokens": 1
+                },
+                "usageFacts": [{
+                    "eventIndex": 0,
+                    "timestampMs": 20,
+                    "model": "claude-sonnet",
+                    "usage": {
+                        "inputTokens": 10,
+                        "outputTokens": 5,
+                        "cacheReadTokens": 2,
+                        "cacheCreationTokens": 1
+                    }
+                }],
+                "parserVersion": 1,
+                "indexGeneration": 1,
+                "materializationLevel": "summary"
+            }],
+            "tombstones": [],
+            "warnings": []
+        }))
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn catalog_refresh_lock_serializes_all_roots() {
         let first_refresh = catalog_refresh_lock().lock().await;
@@ -3207,6 +3938,138 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(fts_hits, 1);
+    }
+
+    #[tokio::test]
+    async fn source_activation_scope_allows_local_and_multiple_ssh_instances() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        for (id, environment_kind, scope_kind, scope_key, transport_kind) in [
+            ("claude-local", "windows", "configured", "desktop", "local"),
+            ("claude-ssh-a", "ssh", "ssh", "machine-a:user:root", "ssh"),
+            ("claude-ssh-b", "ssh", "ssh", "machine-b:user:root", "ssh"),
+        ] {
+            sqlx::query(
+                "INSERT INTO history_source_instances(
+                    id, source_id, environment_kind, environment_key, storage_kind,
+                    locations_json, settings_hash, activation_state,
+                    scope_kind, scope_key, transport_kind,
+                    created_at, updated_at
+                 ) VALUES (?1, 'claude', ?2, ?1, 'file', '{}', ?1, 'active', ?3, ?4, ?5, 1, 1)",
+            )
+            .bind(id)
+            .bind(environment_kind)
+            .bind(scope_kind)
+            .bind(scope_key)
+            .bind(transport_kind)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        }
+        let active: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM history_source_instances
+             WHERE source_id = 'claude' AND activation_state = 'active'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(active, 3);
+
+        let duplicate = sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state,
+                scope_kind, scope_key, transport_kind,
+                created_at, updated_at
+             ) VALUES ('claude-ssh-a-duplicate', 'claude', 'ssh', 'duplicate', 'file',
+                '{}', 'duplicate', 'active', 'ssh', 'machine-a:user:root', 'ssh', 1, 1)",
+        )
+        .execute(&mut conn)
+        .await;
+        assert!(duplicate.is_err());
+    }
+
+    #[tokio::test]
+    async fn remote_sync_rejects_existing_source_instance_identity_change() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let result = remote_sync_result();
+        apply_remote_sync_with_conn(&mut conn, "host-1", &result)
+            .await
+            .unwrap();
+        apply_remote_sync_with_conn(&mut conn, "host-2", &result)
+            .await
+            .unwrap();
+
+        let mut changed = result;
+        changed.remote_machine_id = "machine-2".to_string();
+        assert_eq!(
+            apply_remote_sync_with_conn(&mut conn, "host-3", &changed)
+                .await
+                .unwrap_err(),
+            "history_remote_identity_changed"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_summary_sync_removes_persisted_message_and_fts_rows() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let result = remote_sync_result();
+        apply_remote_sync_with_conn(&mut conn, "host-1", &result)
+            .await
+            .unwrap();
+        let session_id: i64 = sqlx::query_scalar(
+            "SELECT id FROM history_sessions
+             WHERE source_instance_id = 'remote-instance' AND source_session_id = 'session-1'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO history_messages(session_id, message_index, role, display_content)
+             VALUES (?1, 0, 'user', 'must not persist')",
+        )
+        .bind(session_id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        apply_remote_sync_with_conn(&mut conn, "host-1", &result)
+            .await
+            .unwrap();
+        let messages: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM history_messages WHERE session_id = ?1")
+                .bind(session_id)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        let fts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history_messages_fts")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        let usage: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history_usage_events")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!((messages, fts, usage), (0, 0, 1));
+    }
+
+    #[tokio::test]
+    async fn remote_sync_rejects_total_session_count_overflow() {
+        if usize::BITS <= 63 {
+            return;
+        }
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let mut result = remote_sync_result();
+        result.total_sessions = usize::MAX;
+        assert_eq!(
+            apply_remote_sync_with_conn(&mut conn, "host-1", &result)
+                .await
+                .unwrap_err(),
+            "history_remote_numeric_overflow"
+        );
     }
 
     #[tokio::test]

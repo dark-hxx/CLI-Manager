@@ -1,6 +1,14 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { useTerminalStore } from "../stores/terminalStore";
 import { clampSplitRatio, type TerminalPaneLeaf, type TerminalPaneNode, type TerminalPaneSplit } from "../stores/terminalPaneTree";
+import {
+  alignTerminalSplitRootRect,
+  buildTerminalSplitLayout,
+  observeTerminalSplitPixelRatio,
+  type TerminalSplitDragPreview,
+  type TerminalSplitPixelGrid,
+  type TerminalSplitRect,
+} from "../terminal/browser/TerminalSplitLayout";
 
 interface Props {
   /** Stable source tree whose leaves stay mounted for the whole terminal session. */
@@ -11,70 +19,12 @@ interface Props {
   fullscreenLeafId?: string | null;
 }
 
-interface Rect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
+interface SplitLayoutMetrics {
+  rect: TerminalSplitRect;
+  pixelGrid: TerminalSplitPixelGrid;
 }
 
-interface LeafLayout {
-  leaf: TerminalPaneLeaf;
-  rect: Rect;
-}
-
-interface DividerLayout {
-  split: TerminalPaneSplit;
-  rect: Rect;
-  splitRect: Rect;
-}
-
-interface SplitLayout {
-  leaves: LeafLayout[];
-  dividers: DividerLayout[];
-}
-
-const DIVIDER_SIZE = 4;
-interface DragPreviewState {
-  splitId: string;
-  ratio: number;
-}
-
-function clampSize(value: number): number {
-  return Math.max(0, value);
-}
-
-function buildSplitLayout(node: TerminalPaneNode, rect: Rect, dragPreview: DragPreviewState | null): SplitLayout {
-  if (node.type === "leaf") {
-    return { leaves: [{ leaf: node, rect }], dividers: [] };
-  }
-
-  const isHorizontal = node.direction === "horizontal";
-  const totalLength = isHorizontal ? rect.width : rect.height;
-  const ratio = dragPreview?.splitId === node.id ? dragPreview.ratio : node.ratio;
-  const firstLength = clampSize(totalLength * ratio - DIVIDER_SIZE / 2);
-  const secondLength = clampSize(totalLength - firstLength - DIVIDER_SIZE);
-
-  const firstRect: Rect = isHorizontal
-    ? { left: rect.left, top: rect.top, width: firstLength, height: rect.height }
-    : { left: rect.left, top: rect.top, width: rect.width, height: firstLength };
-  const dividerRect: Rect = isHorizontal
-    ? { left: rect.left + firstLength, top: rect.top, width: DIVIDER_SIZE, height: rect.height }
-    : { left: rect.left, top: rect.top + firstLength, width: rect.width, height: DIVIDER_SIZE };
-  const secondRect: Rect = isHorizontal
-    ? { left: dividerRect.left + DIVIDER_SIZE, top: rect.top, width: secondLength, height: rect.height }
-    : { left: rect.left, top: dividerRect.top + DIVIDER_SIZE, width: rect.width, height: secondLength };
-
-  const firstLayout = buildSplitLayout(node.first, firstRect, dragPreview);
-  const secondLayout = buildSplitLayout(node.second, secondRect, dragPreview);
-
-  return {
-    leaves: [...firstLayout.leaves, ...secondLayout.leaves],
-    dividers: [{ split: node, rect: dividerRect, splitRect: rect }, ...firstLayout.dividers, ...secondLayout.dividers],
-  };
-}
-
-function rectStyle(rect: Rect): CSSProperties {
+function rectStyle(rect: TerminalSplitRect): CSSProperties {
   return {
     left: rect.left,
     top: rect.top,
@@ -86,37 +36,65 @@ function rectStyle(rect: Rect): CSSProperties {
 export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullscreenLeafId }: Props) {
   const setSplitRatio = useTerminalStore((s) => s.setSplitRatio);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerRect, setContainerRect] = useState<Rect>({ left: 0, top: 0, width: 0, height: 0 });
-  const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
+  const [layoutMetrics, setLayoutMetrics] = useState<SplitLayoutMetrics>({
+    rect: { left: 0, top: 0, width: 0, height: 0 },
+    pixelGrid: { originLeft: 0, originTop: 0, devicePixelRatio: 1 },
+  });
+  const [dragPreview, setDragPreview] = useState<TerminalSplitDragPreview | null>(null);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const updateContainerRect = (width: number, height: number) => {
-      setContainerRect((current) => {
-        if (current.width === width && current.height === height) return current;
-        return { left: 0, top: 0, width, height };
+    const updateLayoutMetrics = () => {
+      const bounds = container.getBoundingClientRect();
+      const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+      const rect = alignTerminalSplitRootRect(bounds, devicePixelRatio);
+      const pixelGrid = {
+        originLeft: bounds.left,
+        originTop: bounds.top,
+        devicePixelRatio,
+      };
+      setLayoutMetrics((current) => {
+        if (
+          current.rect.left === rect.left
+          && current.rect.top === rect.top
+          && current.rect.width === rect.width
+          && current.rect.height === rect.height
+          && current.pixelGrid.originLeft === pixelGrid.originLeft
+          && current.pixelGrid.originTop === pixelGrid.originTop
+          && current.pixelGrid.devicePixelRatio === pixelGrid.devicePixelRatio
+        ) {
+          return current;
+        }
+        return { rect, pixelGrid };
       });
     };
 
-    const initialRect = container.getBoundingClientRect();
-    updateContainerRect(initialRect.width, initialRect.height);
+    updateLayoutMetrics();
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      updateContainerRect(entry.contentRect.width, entry.contentRect.height);
-    });
+    const resizeObserver = new ResizeObserver(updateLayoutMetrics);
+    const stopObservingPixelRatio = observeTerminalSplitPixelRatio(window, updateLayoutMetrics);
 
     resizeObserver.observe(container);
-    return () => resizeObserver.disconnect();
+    window.addEventListener("resize", updateLayoutMetrics);
+    return () => {
+      resizeObserver.disconnect();
+      stopObservingPixelRatio();
+      window.removeEventListener("resize", updateLayoutMetrics);
+    };
   }, []);
 
-  const layout = useMemo(() => buildSplitLayout(node, containerRect, dragPreview), [containerRect, dragPreview, node]);
+  const { rect: containerRect, pixelGrid } = layoutMetrics;
+  const layout = useMemo(
+    () => buildTerminalSplitLayout(node, containerRect, dragPreview, pixelGrid),
+    [containerRect, dragPreview, node, pixelGrid],
+  );
   const visibleLayout = useMemo(
-    () => visibleNode ? buildSplitLayout(visibleNode, containerRect, dragPreview) : { leaves: [], dividers: [] },
-    [containerRect, dragPreview, visibleNode]
+    () => visibleNode
+      ? buildTerminalSplitLayout(visibleNode, containerRect, dragPreview, pixelGrid)
+      : { leaves: [], dividers: [] },
+    [containerRect, dragPreview, pixelGrid, visibleNode]
   );
   const visibleLeafLayouts = useMemo(
     () => new Map(visibleLayout.leaves.map((leafLayout) => [leafLayout.leaf.id, leafLayout])),
@@ -125,11 +103,11 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
   const fullscreenLeaf = fullscreenLeafId
     ? visibleLayout.leaves.find(({ leaf }) => leaf.id === fullscreenLeafId)
     : null;
-  const fullscreenRect: Rect = { left: 0, top: 0, width: containerRect.width, height: containerRect.height };
+  const fullscreenRect = containerRect;
   const isDraggingDivider = dragPreview !== null;
 
   const handleDragStart = useCallback(
-    (split: TerminalPaneSplit, splitRect: Rect, e: MouseEvent) => {
+    (split: TerminalPaneSplit, splitRect: TerminalSplitRect, e: MouseEvent) => {
       e.preventDefault();
       const container = containerRef.current;
       if (!container) return;

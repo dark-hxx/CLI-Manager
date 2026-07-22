@@ -1353,6 +1353,7 @@ export function Sidebar({
       void openHistory({
         sourceFilter: resolveHistorySourceFilter(project.cli_tool),
         projectPath: project.path,
+        projectId: project.id,
       }).then(() => {
         triggerGlobalSearchFocus();
       }).catch((err) => {
@@ -1366,6 +1367,7 @@ export function Sidebar({
       void openHistory({
         sourceFilter: resolveHistorySourceFilter(project.cli_tool),
         projectPath: project.path,
+        projectId: project.id,
         scopedProjectPath: worktree.path,
       }).then(() => {
         triggerGlobalSearchFocus();

@@ -15,7 +15,8 @@
 - A remounted Display receives all uncommitted frames again. Commit callbacks from an older attachment generation are ignored.
 - Closing the last attached session cancels any scheduled reconnect; a delayed reconnect callback must return without opening a socket when no non-tombstoned sessions remain.
 - No component or store may call `listen("pty-output-...")` or invoke `pty_write/pty_resize/pty_close` directly.
-- Large-buffer horizontal resize uses a leading + trailing latest-wins cadence capped at 34ms; vertical resize remains immediate. Consecutive `ResizeObserver` frames replace only the pending fit RAF and must not cancel that horizontal cadence. macOS/Linux enable xterm cursor-line reflow so a rapid shrink does not expose the old-width cursor row while waiting for the PTY application's `SIGWINCH` redraw; Windows keeps the existing ConPTY compatibility policy. Every visible horizontal shrink must also keep a pixel copy of the last stable xterm canvas above the hidden live canvas, stretch that copy with every observed container size, refresh it after committed PTY writes, and reveal the live renderer only after 72ms of resize stability plus two animation frames. WebGL must preserve its drawing buffer for this copy, and the barrier must validate that a captured frame contains visible pixels before hiding the live canvas; a failed/empty capture leaves the live renderer visible. Refreshes render into a staging canvas first so an invalid later capture cannot erase the last good frame. This barrier starts immediately before `Terminal.resize()`, never during the throttle wait, so it hides only xterm/WebGL's corrupt intermediate reflow frame without freezing the whole drag. Before a normal-buffer column change, if the user is above the live bottom, register a temporary marker at `viewportY`; after `Terminal.resize()` wait two animation frames for xterm's queued render and DOM viewport synchronization, then scroll to the marker's updated line and dispose it. A synchronous `scrollToLine()` is forbidden because the old DOM scroll height clamps the target before xterm's queued viewport sync. Cancel and dispose a pending marker on a newer resize or terminal detach. Do not force bottom-following or alternate-buffer terminals. Visibility restore fits immediately and forces a full refresh only when natural rendering does not complete within two frames or the renderer was rebuilt.
+- Large-buffer horizontal resize uses a leading + trailing latest-wins cadence capped at 34ms; vertical resize remains immediate. Consecutive `ResizeObserver` frames replace only the pending fit RAF and must not cancel that horizontal cadence. macOS/Linux enable xterm cursor-line reflow so a rapid shrink does not expose the old-width cursor row while waiting for the PTY application's `SIGWINCH` redraw; Windows keeps the existing ConPTY compatibility policy. Shrink and grow must both expose xterm's live resize as soon as its queued render is ready. Immediately before each visible horizontal shrink, keep a pixel copy of the last stable `.xterm-screen` above the hidden live screen, but display that copy at its original CSS size inside an overflow-clipped viewport; never stretch the bitmap or hold it for the whole drag. Reveal the live renderer after two animation frames, and restart only this two-frame guard if another `Terminal.resize()` arrives first. `ResizeObserver` events that occur while waiting for the next throttled terminal resize may update the clip bounds but must not delay the reveal. WebGL must preserve its drawing buffer for this copy, and the barrier must validate that a captured frame contains visible pixels before hiding the live screen; a failed/empty capture leaves the live renderer visible. Capture geometry and visibility belong to `.xterm-screen`; root-level canvas lookup is only a compatibility fallback and must exclude the overview ruler. This barrier starts immediately before `Terminal.resize()`, never during the throttle wait, so it hides only xterm/WebGL's corrupt intermediate reflow frame without freezing the whole drag. Before a normal-buffer column change, if the user is above the live bottom, register a temporary marker at `viewportY`; after `Terminal.resize()` wait two animation frames for xterm's queued render and DOM viewport synchronization, then scroll to the marker's updated line and dispose it. A synchronous `scrollToLine()` is forbidden because the old DOM scroll height clamps the target before xterm's queued viewport sync. Cancel and dispose a pending marker on a newer resize or terminal detach. Do not force bottom-following or alternate-buffer terminals. Visibility restore fits immediately and forces a full refresh only when natural rendering does not complete within two frames or the renderer was rebuilt.
+- Split-pane leaf and divider bounds must align to the current display's physical pixel grid using the split root's global origin and `window.devicePixelRatio`. Arbitrary persisted/drag-preview ratios, fractional container bounds, nested splits, and fullscreen leaves must not place an xterm canvas at a fractional device-pixel origin. Snap divider start/end boundaries and derive the second pane from the remaining aligned space so the layout has no gap or overlap. Refresh the grid metrics on container resize and window changes, and use a resolution media query that rebinds itself whenever DPR changes so moving an unchanged-size window among 1080p, 2K fractional-scaling (including DPR 1.25/1.5), and Retina displays cannot retain the previous screen's pixel grid.
 
 **Wrong**:
 
@@ -33,7 +34,7 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 });
 ```
 
-**Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalResizeDebouncer.test.mjs scripts/terminalResizeRenderBarrier.test.mjs scripts/terminalReflowPolicy.test.mjs`; manually verify background output, reconnect replay, rapid split/fullscreen shrink, transparent terminal backgrounds, IME, WebGL fallback, and no duplicate output after daemon reconnect.
+**Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalResizeDebouncer.test.mjs scripts/terminalResizeRenderBarrier.test.mjs scripts/terminalSplitLayout.test.mjs scripts/terminalReflowPolicy.test.mjs`; manually verify background output, reconnect replay, rapid split/fullscreen shrink, equal text sharpness across adjacent panes, transparent terminal backgrounds, IME, WebGL fallback, and no duplicate output after daemon reconnect.
 
 ### Convention: OSC color-query normalization has no frontend PTY side effects
 
@@ -332,6 +333,71 @@ terminalRef.current = null;
 
 **Tests**: Run `npx tsc --noEmit`. Manually enable low memory mode, switch away from a terminal for more than 10 seconds, verify the session keeps running, then switch back and confirm the current viewport repaints without restarting the shell or losing scrollback.
 
+## Scenario: Terminal image addon WebAssembly compatibility
+
+### 1. Scope / Trigger
+
+- Applies whenever `@xterm/addon-image` is loaded in the Tauri WebView.
+- The addon creates WebAssembly decoders during activation, so CSP and addon loading are one compatibility boundary.
+
+### 2. Signatures
+
+- CSP: `app.security.csp` in `src-tauri/tauri.conf.json`.
+- Addon activation: `terminal.loadAddon(imageAddon)` in `XTermTerminal`.
+
+### 3. Contracts
+
+- `script-src` must include `'wasm-unsafe-eval'` and must not add the broader `'unsafe-eval'`.
+- Image-addon activation failure must dispose the partially registered addon, log a warning, and continue terminal initialization.
+- Successful activation preserves existing SIXEL, IIP, and Kitty image support.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| WebAssembly allowed and addon activates | Keep terminal image support enabled |
+| CSP or WebView rejects WebAssembly | Warn and continue without terminal image support |
+| WebGL is unavailable or disabled | Keep the existing path that does not load the image addon |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a supported WebView loads WebGL and `ImageAddon`; image protocols remain available.
+- Base: WebGL is disabled by theme, transparency, settings, or platform policy; the default renderer remains usable.
+- Bad: `terminal.loadAddon(imageAddon)` throws and aborts the React terminal initialization effect.
+
+### 6. Tests Required
+
+- `node --test scripts/terminalImageAddonCsp.test.mjs`: assert the CSP token and local fallback guard.
+- `npx tsc --noEmit`: assert the terminal initialization path remains type-safe.
+- Manual Windows check: create a terminal on a WebView2 runtime that previously rejected WASM and confirm the terminal opens; image support may degrade, but the terminal must remain usable.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+terminal.loadAddon(imageAddon);
+```
+
+```json
+"script-src 'self' 'unsafe-eval'"
+```
+
+#### Correct
+
+```tsx
+try {
+  terminal.loadAddon(imageAddon);
+} catch (err) {
+  imageAddon.dispose();
+  logWarn("Failed to load terminal image addon; continuing without terminal image support", { sessionId, err });
+}
+```
+
+```json
+"script-src 'self' 'wasm-unsafe-eval'"
+```
+
 ### Convention: Terminal display state stays in the Display controller
 
 **What**: `useTerminalDisplay` owns renderer state and output-direction state: `WebglAddon`, fit/viewport scheduling, active write queue, inactive output buffer, and the `pty-output-{sessionId}` listener. `XTermTerminal` only orchestrates the terminal instance and passes narrow ref/callback contracts into the hook.
@@ -365,7 +431,7 @@ const detachPtyOutput = display.attachPtyOutput();
 
 ### Convention: Terminal focus requires active and visible layout state
 
-**What**: `XTermTerminal` may focus xterm only when the session is both globally active and currently visible. On Tab, Workspan, history-workspace, or split-pane transitions, defer `terminal.focus()` to the next animation frame after `display:block` layout takes effect.
+**What**: `XTermTerminal` may focus xterm only when the session is globally active, currently visible, and no visibility-restore mask is pending. On Tab, Workspan, history-workspace, or split-pane transitions, wait for the progressive restore mask to clear, then defer `terminal.focus()` to the next animation frame.
 
 **Why**: `isActive` can update before pane/workspan visibility. Synchronous focus against a hidden xterm helper textarea is lost when layout finishes, forcing the user to click again; focusing every visible split would instead steal input from the globally active pane.
 
@@ -373,11 +439,13 @@ const detachPtyOutput = display.attachPtyOutput();
 
 - Depend on both `isActive` and `isVisible`.
 - Blur when either value is false.
+- Include `visibilityRestorePending` in the focus effect dependencies so clearing the restore mask schedules a new focus attempt.
 - Re-check `terminalRef`, `isActiveRef`, and `isVisibleRef` inside the animation-frame callback.
+- Re-check `visibilityRestorePendingRef` inside the animation-frame callback so an older frame cannot focus a terminal that has entered another restore cycle.
 - Cancel the pending frame during effect cleanup.
 - A visible but inactive split pane renders live output but never takes keyboard or IME focus.
 
-**Tests**: Switch by mouse, keyboard, Workspan, and split pane; return from history and fullscreen; type immediately without clicking and confirm input reaches only the active visible terminal.
+**Tests**: Switch by mouse, keyboard, Workspan, and split pane; return from history and fullscreen; verify focus is applied only after the visibility-restore mask clears, then type immediately without clicking and confirm input reaches only the active visible terminal.
 
 ### Convention: Async terminal suggestions are scoped to one input attachment
 

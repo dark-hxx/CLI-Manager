@@ -15,6 +15,14 @@ import { logError, recordCrashActivity } from "../lib/logger";
 import { translateCurrent } from "../lib/i18n";
 import { isSameProjectFileContext } from "../lib/terminalProject";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
+import {
+  buildSshRemoteFileContext,
+  remoteEntryToSearchMatch,
+  sshRemoteListDir,
+  sshRemoteReadFile,
+  sshRemoteSearch,
+  type SshRemoteFileContext,
+} from "../lib/sshRemoteFiles";
 
 type ClipboardMode = "copy" | "move";
 type FileEntryKind = "file" | "directory";
@@ -75,11 +83,14 @@ interface ActiveProjectDiff {
 interface FileSearchNavigationTarget {
   path: string;
   lineNumber: number;
-  lineText: string;
+  lineText?: string;
+  columnNumber?: number;
+  source: "search" | "terminal";
 }
 
 interface FileExplorerStore {
   project: Project | null;
+  remoteFileContext: SshRemoteFileContext | null;
   tree: ProjectFileEntry[];
   searchMode: ProjectFileSearchMode;
   searchQuery: string;
@@ -87,6 +98,7 @@ interface FileExplorerStore {
   contentSearchResults: ProjectFileContentMatch[];
   searchLoading: boolean;
   expandedPaths: Set<string>;
+  selectedTreePath: string | null;
   loading: boolean;
   openFiles: ActiveProjectFile[];
   activeFilePath: string | null;
@@ -111,6 +123,7 @@ interface FileExplorerStore {
   setSearchQuery: (query: string) => Promise<void>;
   openFile: (entry: ProjectFileEntry) => Promise<void>;
   openFileAtSearchMatch: (match: ProjectFileContentMatch) => Promise<void>;
+  revealPath: (path: string, options?: { lineNumber?: number; columnNumber?: number }) => Promise<boolean>;
   clearSearchNavigationTarget: () => void;
   setActiveFilePath: (path: string) => void;
   closeFile: (path: string) => void;
@@ -412,9 +425,19 @@ async function listDir(rootPath: string, path: string): Promise<ProjectFileEntry
 
 async function loadProjectFile(
   project: Project,
-  entry: Pick<ProjectFileEntry, "path" | "name" | "sizeBytes" | "modifiedMs">
+  entry: Pick<ProjectFileEntry, "path" | "name" | "sizeBytes" | "modifiedMs">,
+  remoteContext?: SshRemoteFileContext | null,
 ): Promise<{ file: ActiveProjectFile; errorMessage?: string }> {
   try {
+    if (remoteContext) {
+      const remote = await sshRemoteReadFile(remoteContext, entry.path);
+      if (remote.previewKind === "image") {
+        const match = remote.content.match(/^data:([^;]+);base64,(.*)$/s);
+        if (!match) throw new Error("remote_file_image_invalid");
+        return { file: { path: entry.path, name: entry.name, previewKind: "image", content: "", savedContent: "", image: { dataBase64: match[2], mimeType: match[1], sizeBytes: remote.sizeBytes }, encoding: null, hasBom: false, sizeBytes: remote.sizeBytes, modifiedMs: remote.modifiedMs } };
+      }
+      return { file: { path: entry.path, name: entry.name, previewKind: isMarkdown(entry.path) ? "markdown" : "text", content: remote.content, savedContent: remote.content, image: null, encoding: "utf-8", hasBom: false, sizeBytes: remote.sizeBytes, modifiedMs: remote.modifiedMs } };
+    }
     if (isImage(entry.path)) {
       const image = await invoke<ProjectImageFilePayload>("file_read_image", {
         rootPath: project.path,
@@ -569,6 +592,7 @@ function mergePendingRefreshPaths(changedPaths?: string[]): void {
 
 export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   project: null,
+  remoteFileContext: null,
   tree: [],
   searchMode: "files",
   searchQuery: "",
@@ -576,6 +600,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   contentSearchResults: [],
   searchLoading: false,
   expandedPaths: new Set([""]),
+  selectedTreePath: null,
   loading: false,
   openFiles: [],
   activeFilePath: null,
@@ -595,6 +620,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     const keepCurrentProject = isSameProjectFileContext(current, project);
     set({
       project,
+      remoteFileContext: null,
       loading: true,
       searchMode: "files",
       searchQuery: "",
@@ -602,6 +628,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       contentSearchResults: [],
       searchLoading: false,
       expandedPaths: keepCurrentProject ? pruneDefaultCollapsedPaths(get().expandedPaths) : new Set([""]),
+      selectedTreePath: keepCurrentProject ? get().selectedTreePath : null,
       openFiles: keepCurrentProject ? get().openFiles : [],
       activeFilePath: keepCurrentProject ? get().activeFilePath : null,
       activeFile: keepCurrentProject ? get().activeFile : null,
@@ -613,11 +640,13 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       clipboard: keepCurrentProject ? get().clipboard : null,
     });
     try {
+      const remoteContext = project.environment_type === "ssh" ? await buildSshRemoteFileContext(project) : null;
       const [tree, gitChanges] = await Promise.all([
-        listDir(project.path, ""),
-        fetchGitChanges(project.path),
+        remoteContext ? sshRemoteListDir(remoteContext) : listDir(project.path, ""),
+        remoteContext ? Promise.resolve([]) : fetchGitChanges(project.path),
       ]);
-      set({ tree, gitChanges, loading: false });
+      if (get().project?.id !== project.id) return;
+      set({ tree, gitChanges, remoteFileContext: remoteContext, loading: false });
     } catch (err) {
       logError("Failed to open project files", err);
       toast.error("文件列表加载失败", { description: String(err) });
@@ -628,6 +657,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   closeProject: () => {
     set({
       project: null,
+      remoteFileContext: null,
       tree: [],
       searchMode: "files",
       searchQuery: "",
@@ -635,6 +665,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       contentSearchResults: [],
       searchLoading: false,
       expandedPaths: new Set([""]),
+      selectedTreePath: null,
       openFiles: [],
       activeFilePath: null,
       activeFile: null,
@@ -693,7 +724,9 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         try {
           return {
             path,
-            children: await listDir(project.path, path),
+            children: get().remoteFileContext
+              ? await sshRemoteListDir(get().remoteFileContext!, path)
+              : await listDir(project.path, path),
           };
         } catch (err) {
           if (path === "") throw err;
@@ -767,7 +800,12 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   refreshGitChanges: async () => {
     const project = get().project;
-    if (!project) return;
+    if (!project || project.environment_type === "ssh") {
+      if (project?.environment_type === "ssh") {
+        set({ gitChanges: [], openDiffs: [], activeDiff: null, activeDiffPath: null });
+      }
+      return;
+    }
     const gitChanges = await fetchGitChanges(project.path);
     const changeByPath = new Map(gitChanges.map((change) => [change.path, change]));
     const openDiffs = get().openDiffs
@@ -786,7 +824,9 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   loadDir: async (path) => {
     const project = get().project;
     if (!project) return;
-    const children = await listDir(project.path, path);
+    const children = get().remoteFileContext
+      ? await sshRemoteListDir(get().remoteFileContext!, path)
+      : await listDir(project.path, path);
     set((state) => ({ tree: replaceChildren(state.tree, path, children) }));
   },
 
@@ -810,7 +850,9 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     let currentPath = path;
 
     while (true) {
-      const children = await listDir(project.path, currentPath);
+      const children = get().remoteFileContext
+        ? await sshRemoteListDir(get().remoteFileContext!, currentPath)
+        : await listDir(project.path, currentPath);
       loadedDirs.push({ path: currentPath, children });
 
       if (
@@ -892,19 +934,17 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
         try {
           if (mode === "files") {
-            const results = await invoke<ProjectFileEntry[]>("file_search", {
-              rootPath: project.path,
-              query,
-            });
+            const results = get().remoteFileContext
+              ? await sshRemoteSearch(get().remoteFileContext!, query)
+              : await invoke<ProjectFileEntry[]>("file_search", { rootPath: project.path, query });
             if (!isLatest()) return;
             set({ searchResults: results.map(normalizeEntry), searchLoading: false });
             return;
           }
 
-          const results = await invoke<ProjectFileContentMatch[]>("file_search_content", {
-            rootPath: project.path,
-            query,
-          });
+          const results = get().remoteFileContext
+            ? (await sshRemoteSearch(get().remoteFileContext!, query, true)).map(remoteEntryToSearchMatch)
+            : await invoke<ProjectFileContentMatch[]>("file_search_content", { rootPath: project.path, query });
           if (!isLatest()) return;
           set({ contentSearchResults: results, searchLoading: false });
         } catch (err) {
@@ -939,7 +979,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
     set({ loading: true });
     try {
-      const { file, errorMessage } = await loadProjectFile(project, entry);
+      const { file, errorMessage } = await loadProjectFile(project, entry, get().remoteFileContext);
       set({
         loading: false,
         openFiles: [...get().openFiles, file],
@@ -969,8 +1009,70 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         path: match.path,
         lineNumber: match.lineNumber,
         lineText: match.lineText,
+        source: "search",
       },
     });
+  },
+
+  revealPath: async (path, options) => {
+    const project = get().project;
+    if (!project) return false;
+    const normalizedPath = path.replace(/\\/g, "/").replace(/^\/+|\/+$/gu, "");
+    if (!normalizedPath || normalizedPath.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+      return false;
+    }
+
+    const loadedDirs: Array<{ path: string; children: ProjectFileEntry[] }> = [];
+    let parentPath = "";
+    let target: ProjectFileEntry | null = null;
+    for (const segment of normalizedPath.split("/")) {
+      const children = get().remoteFileContext
+        ? await sshRemoteListDir(get().remoteFileContext!, parentPath)
+        : await listDir(project.path, parentPath);
+      loadedDirs.push({ path: parentPath, children });
+      const currentPath = parentPath ? `${parentPath}/${segment}` : segment;
+      target = children.find((entry) => entry.path === currentPath) ?? null;
+      if (!target) return false;
+      parentPath = currentPath;
+    }
+    if (!target) return false;
+
+    if (target.kind === "directory") {
+      const children = get().remoteFileContext
+        ? await sshRemoteListDir(get().remoteFileContext!, target.path)
+        : await listDir(project.path, target.path);
+      loadedDirs.push({ path: target.path, children });
+    }
+
+    set((state) => ({
+      tree: loadedDirs.reduce(
+        (tree, dir) => replaceChildrenKeepingLoadedSubtrees(tree, dir.path, dir.children),
+        state.tree
+      ),
+      expandedPaths: new Set([
+        ...state.expandedPaths,
+        ...loadedDirs.map((dir) => dir.path),
+      ]),
+      selectedTreePath: target.path,
+      searchQuery: "",
+      searchResults: [],
+      contentSearchResults: [],
+      searchLoading: false,
+    }));
+
+    if (target.kind === "directory") return true;
+    await get().openFile(target);
+    if (options?.lineNumber) {
+      set({
+        searchNavigationTarget: {
+          path: target.path,
+          lineNumber: options.lineNumber,
+          ...(options.columnNumber ? { columnNumber: options.columnNumber } : {}),
+          source: "terminal",
+        },
+      });
+    }
+    return true;
   },
 
   clearSearchNavigationTarget: () => {
@@ -1034,6 +1136,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   saveFile: async (path) => {
     const project = get().project;
+    if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     const file = get().openFiles.find((item) => item.path === path);
     if (!project || !file || file.previewKind === "image" || !file.encoding) return;
     try {
@@ -1072,6 +1175,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   createEntry: async (parent, name, kind, overwrite) => {
     const project = get().project;
+    if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     if (!project) return;
     const command = kind === "directory" ? "file_create_dir" : "file_create_file";
     await invoke(command, { rootPath: project.path, parentPath: parent, name, overwrite });
@@ -1082,6 +1186,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   renameEntry: async (path, newName, overwrite) => {
     const project = get().project;
+    if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     if (!project) return;
     await invoke("file_rename", {
       rootPath: project.path,
@@ -1099,6 +1204,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   deleteEntry: async (path) => {
     const project = get().project;
+    if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     if (!project) return;
     await invoke("file_delete", { rootPath: project.path, relativePath: path });
     await get().loadDir(parentPath(path));
@@ -1113,6 +1219,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   pasteInto: async (targetParentPath, overwrite) => {
     const project = get().project;
+    if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     const clipboard = get().clipboard;
     if (!project || !clipboard) return;
     const command = clipboard.mode === "copy" ? "file_copy" : "file_move";

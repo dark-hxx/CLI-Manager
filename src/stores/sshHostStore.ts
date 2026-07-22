@@ -425,12 +425,26 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
 
   deleteHost: async (id) => {
     const db = await getDb();
-    const references = await db.select<Array<{ count: number }>>(
-      "SELECT COUNT(*) AS count FROM projects WHERE ssh_host_id = $1",
+    const jumpReferences = await db.select<Array<{ count: number }>>(
+      "SELECT COUNT(*) AS count FROM ssh_hosts WHERE jump_host_id = $1",
       [id]
     );
-    if ((references[0]?.count ?? 0) > 0) throw new Error("ssh_host_in_use");
-    await db.execute("DELETE FROM ssh_hosts WHERE id = $1", [id]);
+    if ((jumpReferences[0]?.count ?? 0) > 0) throw new Error("ssh_host_jump_in_use");
+    await db.execute("BEGIN IMMEDIATE");
+    try {
+      await db.execute("UPDATE projects SET ssh_host_id = NULL WHERE ssh_host_id = $1", [id]);
+      await db.execute(
+        `UPDATE ssh_agent_tool_integrations
+         SET host_id = NULL, validation_state = 'unbound', cleanup_state = 'retained'
+         WHERE host_id = $1`,
+        [id],
+      );
+      await db.execute("DELETE FROM ssh_hosts WHERE id = $1", [id]);
+      await db.execute("COMMIT");
+    } catch (error) {
+      await db.execute("ROLLBACK").catch(() => undefined);
+      throw error;
+    }
     await get().fetchHosts();
   },
 

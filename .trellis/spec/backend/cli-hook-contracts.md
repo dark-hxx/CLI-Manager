@@ -353,56 +353,6 @@ void sendSystemNotification(payload, tabTitle);
 - TypeScript type-check must pass after settings migration or Hook settings UI changes.
 - Regression: one Hook payload produces at most one third-party dispatch in app mode and one in daemon mode; frontend reconnect/cache replay produces zero additional remote dispatches.
 
-## Scenario: Remote Handoff Hook Notifications
-
-### 1. Scope / Trigger
-
-- Trigger: an active Codex remote handoff receives UserPromptSubmit, PermissionRequest, Stop, or StopFailure through the daemon Hook listener.
-- Applies to: the managed cc-connect process environment, daemon Hook sink, handoff.json ownership record, cc-connect native send command, persisted notification settings, and the remote connection settings page.
-
-### 2. Contracts
-
-- The managed cc-connect process receives CLI_MANAGER_TAB_ID, CLI_MANAGER_NOTIFY_PORT, and CLI_MANAGER_NOTIFY_TOKEN only while a valid handoff record exists. Normal cc-connect startup explicitly removes stale inherited values.
-- The daemon is the sole task-state scheduler. Frontend Hook replay must not send or schedule remote handoff notifications.
-- A Hook event belongs to a handoff only when source=codex, tabId equals localSessionId, and a present Hook sessionId equals cliSessionId.
-- Delivery always uses the platform and platformSessionKey frozen in the active handoff record. Telegram, Feishu/Lark, Weixin, and WeCom share the same cc-connect send route.
-- Notifications go only to the platform selected for the active handoff; enabling several platforms must not broadcast one task event to all of them.
-- UserPromptSubmit starts or resets task monitoring. Periodic reminders are sent every configured 1-60 minutes.
-- PermissionRequest sends an immediate, deduplicated approval reminder. The reminder does not approve or deny the request; cc-connect retains approval ownership in the original bot conversation.
-- Stop sends one completion message and StopFailure sends one failure message. A task without a terminal Hook event times out after 20 minutes or five minutes after its first configured progress interval, whichever is later.
-- Cancelling or replacing a handoff invalidates queued jobs by the full handoff identity before delivery.
-- Messages contain only handoff metadata: platform, project, Provider, cliSessionId, work directory, elapsed time, and normalized state. They must not contain Prompt text, Hook message content, tool arguments, terminal output, environment variables, or credentials.
-- Delivery is non-blocking at the Hook sink. Scheduler and delivery queues are bounded, and the existing cc-connect retry policy remains authoritative.
-- Delivery status persists only the event, platform, timestamps, and a bounded sanitized error. The daemon token must never be persisted or logged.
-
-### 3. Settings
-
-- remoteHandoffNotificationsEnabled
-- remoteHandoffCompletionNotificationsEnabled
-- remoteHandoffPermissionNotificationsEnabled
-- remoteHandoffProgressNotificationsEnabled
-- remoteHandoffProgressIntervalMinutes (default 5, clamped to 1-60)
-
-All settings apply without restarting cc-connect. Hook installation remains a prerequisite for task-state monitoring.
-
-### 4. Validation & Error Matrix
-
-- No active handoff -> ignore the Hook event.
-- Hook belongs to another local or CLI session -> ignore it.
-- Hook is missing or cannot reach the daemon -> do not infer running state or start blind reminders.
-- App window minimized, hidden, or in the tray -> daemon scheduling and delivery continue.
-- Platform changes after cancellation -> old queued jobs fail identity validation and are discarded.
-- Duplicate permission/terminal events -> at most one matching notification for the current task state.
-- cc-connect send failure -> record a sanitized failure status without blocking Hook broadcast, tab status, or third-party notifications.
-- Feishu has no resolved conversation session -> handoff remains unavailable before monitoring starts; the notifier must not invent a session key.
-
-### 5. Tests Required
-
-- Rust tests for settings defaults/clamping, handoff ownership matching, permission deduplication, daemon Hook environment values, and safe message formatting across all four platforms.
-- Rust compile and cc-connect regression tests after process environment or handoff sender changes.
-- TypeScript type-check and production build after settings migration, backup policy, i18n, or remote connection UI changes.
-- Manual smoke test per platform: long-running reminder, permission reminder, completion, cancellation before the next interval, and no cross-platform broadcast.
-
 ## Scenario: CLI Hook Protection Through cc-switch Common Config
 
 ### 1. Scope / Trigger
@@ -469,11 +419,8 @@ interface HookSettingsStatus {
 
 - Frontend must pass `ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined`; `null`/missing means platform default `~/.cc-switch/cc-switch.db`.
 - Backend must reuse the cc-switch DB resolver: explicit custom paths are validated and never silently replaced by defaults.
-- cc-switch common config means the app-level shared snippet stored in the cc-switch SQLite `settings` table as `common_config_claude` (JSON) or `common_config_codex` (TOML). cc-switch merges that snippet into every provider whose metadata enables "Apply Common Config" when switching providers.
-- User-triggered Hook writes must update the local CLI config first, then best-effort write cc-switch common config automatically. If cc-switch is missing, invalid, or unavailable, the local config write is the fallback and still succeeds.
 - Installing Claude Hook writes normal Claude `settings.json` hooks first, then best-effort merges the same CLI-Manager-owned hook commands into `settings.common_config_claude`.
 - Installing Codex Hook writes normal Codex `hooks.json` commands and `config.toml` feature flags first, then best-effort merges the TOML `[features].hooks = true` flag plus any current CLI-Manager-owned Codex `[hooks.state.*]` trust blocks into `settings.common_config_codex`. Codex hook commands remain in `hooks.json`; `common_config_codex` is not JSON.
-- Only CLI-Manager-owned shared Hook state belongs in common config. Never write provider secrets, model-provider routing, base URLs, project-local hook files, or user-owned hook trust into cc-switch common config.
 - Hook settings UI shows the cc-switch protection card once, above system notification settings. Do not duplicate it in both Claude and Codex sections.
 - Claude common-config merge may remove/replace only CLI-Manager-owned hook commands (`__hook` marker or known legacy scripts); it must preserve non-hook fields and non-CLI-Manager hook entries. Codex common-config merge may only add or replace the TOML `features.hooks` flag and marker-owned `[hooks.state.*]` trust blocks for the current user-level Codex `hooks.json`; it must preserve other TOML fields and unrelated hook state.
 - `settings.value` is nullable in cc-switch DBs. A `NULL` value for `common_config_<tool>` is treated as missing config, not as `db_query_failed`.
@@ -544,6 +491,90 @@ let db = PathBuf::from(r"C:\Users\Admini\.cc-switch\cc-switch.db");
 ```rust
 let path = resolve_ccswitch_db_path_for_hook(&app, cc_switch_db_path, &claude_dir)?;
 ```
+
+## Scenario: SSH Agent Hook Lifecycle And Delivery
+
+### 1. Scope / Trigger
+
+- Trigger: an SSH Host explicitly installs Claude/Codex Hook entries through `cli-manager-ssh-agent`, or a bound remote CLI emits one of those events.
+- Applies to: `hook-schema`, Agent `hook_config`/`hook_runtime`/bridge protocol, SSH launch binding, daemon event validation, `ClaudeHookPayload`, and SSH CLI Integration UI/storage.
+
+### 2. Signatures
+
+```text
+ssh_agent_hook_inspect(configuredConfigRoot, source, Agent identity) -> HookConfigReport
+ssh_agent_hook_preview(..., action=install|uninstall, expectedCanonicalRoot?) -> HookConfigReport
+ssh_agent_hook_apply(..., expectedCanonicalRoot?, expectedFiles[]) -> HookConfigReport
+
+cli-manager-ssh-agent hook --source <source> --event <event>
+  --managed-by cli-manager-ssh-agent --installation-id <uuid>
+```
+
+Reserved launch environment: `CLI_MANAGER_SSH_HOST_ID`, `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`, `CLI_MANAGER_PROJECT_ID`, `CLI_MANAGER_TAB_ID`, and `CLI_MANAGER_BRIDGE_EPOCH`.
+
+### 3. Contracts
+
+- Remote Hook installation is explicit per Host/tool/config root. Page open, Host save, Agent probe, Agent install, and config-root browsing do not write Hook configuration.
+- Agent reports and desktop persistence use the canonical config root plus actual config file paths/fingerprints. Agent binary/install paths are never treated as Hook or history roots.
+- Re-inspection preserves the prior validated installation record for the same canonical root, while explicit uninstall clears it. Multiple Host/project references to one canonical root mirror one physical Hook status.
+- Ownership requires the exact stable Agent command, source/event, `--managed-by cli-manager-ssh-agent`, and current installation UUID. Substring matching is forbidden.
+- Missing standard defaults may be created only by confirmed Hook install. Missing custom roots are rejected. Root or config-file symlinks remain links; a target change after preview aborts the transaction.
+- A custom root deleted after installation remains missing for install/inspect. Uninstall alone may recover one exact Agent-owned canonical record to clear stale ownership without recreating the directory. Any UI uninstall based on a stored Hook report supplies the prior canonical identity, so a configured-root symlink retargeted from A to B can clean only A through an exact unique Agent record; a direct request without an expected identity follows B. Missing, ambiguous, or invalid records fail closed.
+- Config merging preserves unrelated entries and unknown events. Duplicate exact entries are normalized in place. User-owned Codex `features.hooks = true` remains enabled after uninstall.
+- Remote runtime requires all reserved binding variables. Ordinary SSH/IDE/tmux launches and other desktop clients are no-op and produce no spool record.
+- A remote SSH PTY receives the Agent bridge identity only when its effective Host/source/configured root is recorded as `installed` and still matches the current Agent installation/machine identity. Installing Agent without Hook does not add a background SSH connection.
+- Hook stdin is bounded; shared normalization feeds local and remote paths. Remote spool removes prompt/message before persistence.
+- Daemon validates Host/client/project/Tab/epoch/installation/source against a live PTY before routing. Remote transcript refs stay in `remoteTranscriptRef` fields and never enter local transcript/file commands.
+- Delivery is at least once from Agent to daemon, then deduplicated by event id. Spool uses monotonic sequence, ACK deletion, TTL/count/byte limits, and sequenced gap warnings.
+- The reusable bridge is protocol `1.1`: bounded preamble/response deadlines, 10-second heartbeat, global four-bridge/two-reconnect gates, bounded cancellation/backpressure, takeover retry, and streaming spool read/ACK apply before Hook delivery.
+- `ClaudeHookPayload::to_notification_job` must clear SSH cwd. Third-party notifications never receive remote cwd, transcript refs, Host/project/session/Tab identity, or prompt text.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Missing/invalid reserved binding | successful Hook no-op |
+| Source/event/installation/owner invalid | Hook runtime error is swallowed by CLI; no spool write |
+| Config changed after preview | `hook_config_changed` |
+| Root/config symlink target changed | `hook_config_root_changed` |
+| Foreign CLI-Manager marker/placement | `hook_config_owner_conflict` |
+| Stale spool lock | remove only after dead PID/age check and retry |
+| Spool limit/TTL removes events | insert `gap` with dropped count and sequence |
+| Event does not match a live daemon binding | reject without frontend/third-party delivery |
+
+### 5. Good/Base/Bad Cases
+
+- Good: one Host has Claude default root and a Codex project override; both Hooks install independently and share the Host bridge without cross-routing events.
+- Base: Agent is installed but Hook is not; remote terminal behavior is unchanged and live Hook status is unavailable.
+- Base: bridge is offline; Hook appends to its Host/client/installation spool and exits promptly, then reconnect replays and ACKs it.
+- Bad: rewrite all `hooks` arrays, infer ownership from an Agent-name substring, broadcast to every client, interpret a remote transcript ref as a local path, or include remote cwd in third-party notification data.
+
+### 6. Tests Required
+
+- Agent tests: exact merge/uninstall, duplicates, unknown events, malformed JSON/TOML, Codex feature/comment ownership, default/custom roots, symlink target changes, fingerprints, journal rollback, binding no-op, stdin bound, message redaction, stale lock, meta rebuild, spool limits/gap, and ACK.
+- Desktop Rust tests: strict report validation, reserved env overwrite, session binding rejection, bridge full-spool dedup including gap replay, remote payload validation, and third-party cwd redaction.
+- Frontend/type tests: per-tool Host roots, grouped project overrides, retained-root cleanup, preview confirmation, canonical paths, bilingual states, and remote transcript local-API refusal.
+- Run Agent host tests, Linux x64/arm64 all-target checks, desktop Rust tests, TypeScript, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+if command.contains("cli-manager-ssh-agent") {
+    remove_hook(command);
+}
+```
+
+#### Correct
+
+```rust
+if command == expected_command(source, event, installation_id) && matcher == expected_matcher {
+    remove_hook(command);
+}
+```
+
+Exact ownership prevents upgrades or uninstalls from deleting third-party and other-installation entries.
 
 ## Scenario: Pi Agent Extension Hook Bridge
 

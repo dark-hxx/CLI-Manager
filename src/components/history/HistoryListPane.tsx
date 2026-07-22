@@ -44,12 +44,17 @@ type HistoryProjectTreeNode =
   | { type: "group"; group: Group; children: HistoryProjectTreeNode[] }
   | { type: "project"; project: Project };
 
+function historyProjectPath(project: Project): string {
+  return project.environment_type === "ssh" ? project.remote_path : project.path;
+}
+
 interface HistoryListPaneProps {
   historySidebarWidth: number;
   sidebarRef: RefObject<HTMLElement | null>;
   sessionListRef: RefObject<HTMLDivElement | null>;
   sourceFilter: HistorySourceFilter;
   projectPathFilter: string | null;
+  projectIdFilter: string | null;
   scopedProjectPathFilter: string | null;
   projects: Project[];
   groups: Group[];
@@ -75,7 +80,7 @@ interface HistoryListPaneProps {
   onRefresh: () => void;
   onClose: () => void;
   onSourceFilterChange: (value: HistorySourceFilter) => void;
-  onProjectPathFilterChange: (value: string | null) => void;
+  onProjectPathFilterChange: (value: string | null, projectId?: string | null) => void;
   onGlobalQueryChange: (value: string) => void;
   onFavoriteOnlyChange: (value: boolean) => void;
   onEnterSelectionMode: () => void;
@@ -234,6 +239,23 @@ function collectGroupIds(nodes: HistoryProjectTreeNode[], out: string[] = []): s
   return out;
 }
 
+/** 找到选中项目的祖先分组 id，用于展开父节点。 */
+function findAncestorGroupIds(
+  nodes: HistoryProjectTreeNode[],
+  match: (project: Project) => boolean,
+  trail: string[] = [],
+): string[] | null {
+  for (const node of nodes) {
+    if (node.type === "project") {
+      if (match(node.project)) return trail;
+      continue;
+    }
+    const found = findAncestorGroupIds(node.children, match, [...trail, node.group.id]);
+    if (found) return found;
+  }
+  return null;
+}
+
 function normalizeProjectSearch(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -295,6 +317,7 @@ export function HistoryListPane({
   sessionListRef,
   sourceFilter,
   projectPathFilter,
+  projectIdFilter,
   scopedProjectPathFilter,
   projects,
   groups,
@@ -346,6 +369,8 @@ export function HistoryListPane({
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const projectDropdownRef = useRef<HTMLDivElement | null>(null);
+  const projectTreeScrollRef = useRef<HTMLDivElement | null>(null);
+  const selectedProjectNodeRef = useRef<HTMLButtonElement | null>(null);
   const projectMenuWasOpenRef = useRef(false);
   const worktrees = useWorktreeStore((state) => state.worktrees);
   const globalQueryLength = [...globalQuery.trim()].length;
@@ -354,10 +379,13 @@ export function HistoryListPane({
   const selectedSourceIcon = sourceFilter === "all" ? null : resolveHistorySourceIconKey(sourceFilter);
 
   const projectTree = useMemo(() => buildHistoryProjectTree(groups, projects), [groups, projects]);
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.path === projectPathFilter) ?? null,
-    [projectPathFilter, projects]
-  );
+  const selectedProject = useMemo(() => {
+    if (projectIdFilter) {
+      return projects.find((project) => project.id === projectIdFilter) ?? null;
+    }
+    if (!projectPathFilter) return null;
+    return projects.find((project) => historyProjectPath(project) === projectPathFilter) ?? null;
+  }, [projectIdFilter, projectPathFilter, projects]);
   const selectedWorktree = useMemo(
     () => findWorktreeByPath(worktrees, scopedProjectPathFilter ?? projectPathFilter),
     [projectPathFilter, scopedProjectPathFilter, worktrees]
@@ -381,6 +409,15 @@ export function HistoryListPane({
     if (!projectPathFilter) return t("history.allProjects");
     return projectPathFilter.split(/[\\/]/).pop() || projectPathFilter;
   }, [projectPathFilter, selectedProject, t]);
+  const selectedProjectMatch = useCallback((project: Project) => {
+    if (projectIdFilter) return project.id === projectIdFilter;
+    if (!projectPathFilter) return false;
+    return historyProjectPath(project) === projectPathFilter;
+  }, [projectIdFilter, projectPathFilter]);
+  const selectedAncestorGroupIds = useMemo(() => {
+    if (!projectPathFilter && !projectIdFilter) return [] as string[];
+    return findAncestorGroupIds(projectTree, selectedProjectMatch) ?? [];
+  }, [projectIdFilter, projectPathFilter, projectTree, selectedProjectMatch]);
 
   const emptySessionCopy = useMemo(() => {
     const sourceDescriptor = sourceFilter === "all" ? null : HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(sourceFilter);
@@ -428,8 +465,8 @@ export function HistoryListPane({
   }, []);
 
   const handleProjectFilterChange = useCallback(
-    (projectPath: string | null) => {
-      onProjectPathFilterChange(projectPath);
+    (projectPath: string | null, projectId?: string | null) => {
+      onProjectPathFilterChange(projectPath, projectId);
       setProjectMenuOpen(false);
     },
     [onProjectPathFilterChange]
@@ -492,9 +529,14 @@ export function HistoryListPane({
     }
 
     if (!wasOpen) {
-      setCollapsedFilterGroups(new Set(projectGroupIds));
+      // 默认折叠全部，再展开选中项目的祖先链，方便一眼看到高亮项。
+      const nextCollapsed = new Set(projectGroupIds);
+      for (const groupId of selectedAncestorGroupIds) {
+        nextCollapsed.delete(groupId);
+      }
+      setCollapsedFilterGroups(nextCollapsed);
     }
-  }, [projectGroupIds, projectMenuOpen]);
+  }, [projectGroupIds, projectMenuOpen, selectedAncestorGroupIds]);
 
   useEffect(() => {
     if (!projectMenuOpen) return;
@@ -512,6 +554,25 @@ export function HistoryListPane({
       window.removeEventListener("keydown", keyHandler);
     };
   }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!projectMenuOpen || normalizedProjectSearch) return;
+    if (!projectPathFilter && !projectIdFilter) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const node = selectedProjectNodeRef.current;
+      const scroller = projectTreeScrollRef.current;
+      if (!node || !scroller) return;
+
+      const nodeTop = node.offsetTop - scroller.offsetTop;
+      const targetTop = nodeTop - Math.max(0, (scroller.clientHeight - node.offsetHeight) / 2);
+      scroller.scrollTo({
+        top: Math.max(0, targetTop),
+        behavior: "auto",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [normalizedProjectSearch, projectIdFilter, projectMenuOpen, projectPathFilter, selectedAncestorGroupIds]);
 
   const rows = useMemo<HistoryListRow[]>(() => {
     if (loadingSessions) return [{ type: "loading", id: "loading" }];
@@ -580,16 +641,21 @@ export function HistoryListPane({
       );
     }
 
-    const selected = projectPathFilter === node.project.path;
+    const projectPath = historyProjectPath(node.project);
+    const selected = selectedProjectMatch(node.project);
     return (
       <button
         key={`project:${node.project.id}`}
+        ref={selected ? selectedProjectNodeRef : undefined}
         type="button"
-        onClick={() => handleProjectFilterChange(selected ? null : node.project.path)}
+        onClick={() => handleProjectFilterChange(
+          selected ? null : projectPath,
+          selected ? null : node.project.id,
+        )}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
         style={{ paddingLeft }}
-        title={node.project.path}
+        title={projectPath}
       >
         <span className="ui-tree-leading-icon">
           <ProjectFilterIcon project={node.project} size={13} />
@@ -723,12 +789,17 @@ export function HistoryListPane({
                   </button>
                 )}
               </div>
-              <div className="ui-thin-scroll max-h-52 space-y-0.5 overflow-y-auto pr-1" role="tree" aria-label={t("history.projectFilter.treeAria")}>
+              <div
+                ref={projectTreeScrollRef}
+                className="ui-thin-scroll max-h-52 space-y-0.5 overflow-y-auto pr-1"
+                role="tree"
+                aria-label={t("history.projectFilter.treeAria")}
+              >
                 <button
                   type="button"
                   onClick={() => handleProjectFilterChange(null)}
                   className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg px-2 text-left text-[12px]"
-                  data-selected={!projectPathFilter ? "true" : "false"}
+                  data-selected={!projectPathFilter && !projectIdFilter ? "true" : "false"}
                 >
                   <Folder size={13} className="shrink-0" />
                   <span className="min-w-0 flex-1 truncate font-medium">{t("history.allProjects")}</span>

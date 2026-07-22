@@ -769,7 +769,9 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
         ? buildPromptSessionTitle(payload.message) ?? existing?.title ?? buildSourceSessionTitle(source)
         : existing?.title ?? buildSourceSessionTitle(source);
       const cliSessionId = trimOptional(payload.sessionId) ?? existing?.cliSessionId ?? null;
-      const projectPath = trimOptional(payload.cwd) ?? existing?.projectPath ?? null;
+      const projectPath = payload.environmentType === "ssh"
+        ? null
+        : trimOptional(payload.cwd) ?? existing?.projectPath ?? null;
       const rawPayload = payload as unknown as Record<string, unknown>;
       const rawPayloadBytes = stringByteLength(JSON.stringify(rawPayload));
       const willCaptureSnapshot = Boolean(projectPath && shouldCaptureSnapshot(payload.event));

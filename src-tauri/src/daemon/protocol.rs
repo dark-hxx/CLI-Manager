@@ -11,7 +11,7 @@ use crate::ssh_launch::SshLaunchPlan;
 
 /// 单帧最大字节数（含换行前的 JSON 文本）。超限视为非法帧，断连。
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
-pub const CONTROL_PROTOCOL_VERSION: u16 = 2;
+pub const CONTROL_PROTOCOL_VERSION: u16 = 3;
 pub const BINARY_PROTOCOL_VERSION: u8 = 1;
 pub const BINARY_KIND_OUTPUT: u8 = 1;
 pub const BINARY_KIND_REPLAY: u8 = 2;
@@ -26,6 +26,7 @@ pub const FEATURE_CHECKPOINT_REPLAY: &str = "checkpoint_replay_v1";
 pub const FEATURE_PIXEL_RESIZE: &str = "pixel_resize_v1";
 pub const FEATURE_PROCESS_TRAITS: &str = "process_traits_v1";
 pub const FEATURE_TERMINAL_COLORS: &str = "terminal_colors_v1";
+pub const FEATURE_SSH_AGENT_RPC: &str = "ssh_agent_rpc_v1";
 
 pub fn supported_features() -> Vec<String> {
     [
@@ -35,6 +36,7 @@ pub fn supported_features() -> Vec<String> {
         FEATURE_PIXEL_RESIZE,
         FEATURE_PROCESS_TRAITS,
         FEATURE_TERMINAL_COLORS,
+        FEATURE_SSH_AGENT_RPC,
     ]
     .into_iter()
     .map(str::to_string)
@@ -120,6 +122,18 @@ pub enum ClientFrame {
     },
     Status {
         id: u64,
+    },
+    SshAgentRequest {
+        id: u64,
+        consumer_id: String,
+        ssh_launch: SshLaunchPlan,
+        request_kind: String,
+        payload: serde_json::Value,
+    },
+    SshAgentRelease {
+        id: u64,
+        host_id: String,
+        consumer_id: String,
     },
     /// 请求 daemon 自杀（仅在无存活会话时被接受；版本升级路径用）。
     Shutdown {
@@ -282,6 +296,10 @@ pub enum DaemonFrame {
         id: u64,
         summary: serde_json::Value,
     },
+    SshAgentResponse {
+        id: u64,
+        payload: serde_json::Value,
+    },
     /// Attach 应答：base64 编码的 ring buffer 尾部（已保证 ANSI/UTF-8 安全边界）。
     Attached {
         id: u64,
@@ -313,6 +331,10 @@ pub enum DaemonFrame {
     /// 主动推送：CLI hook 上报（daemon 稳定端口收到后转发；无客户端时缓存补发）。
     HookReport {
         payload: serde_json::Value,
+    },
+    SshAgentHookGap {
+        host_id: String,
+        dropped: u64,
     },
     CheckpointAccepted {
         session_id: String,
@@ -473,6 +495,8 @@ const CLIENT_FRAME_TYPES: &[&str] = &[
     "detach",
     "reconcile",
     "status",
+    "ssh_agent_request",
+    "ssh_agent_release",
     "shutdown",
 ];
 
@@ -486,10 +510,12 @@ const DAEMON_FRAME_TYPES: &[&str] = &[
     "sessions",
     "statuses",
     "reconciled",
+    "ssh_agent_response",
     "attached",
     "output",
     "exit",
     "hook_report",
+    "ssh_agent_hook_gap",
     "checkpoint_accepted",
     "checkpoint_rejected",
 ];
@@ -549,6 +575,13 @@ mod tests {
                 server_alive_interval_sec: 30,
                 server_alive_count_max: 3,
                 remote_path: "/srv/app".into(),
+                client_instance_id: String::new(),
+                project_id: String::new(),
+                bridge_epoch: String::new(),
+                agent_path: String::new(),
+                agent_installation_id: String::new(),
+                agent_remote_machine_id: String::new(),
+                tool_source: String::new(),
                 environment_overrides: HashMap::new(),
                 initialization_command: None,
                 startup_command: Some("codex".into()),

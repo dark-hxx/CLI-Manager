@@ -1,6 +1,27 @@
 # Changelog
 
+### 新增
+- **终端相对路径跳转**：终端“文件”工具栏开启时，Ctrl+单击项目或 Worktree 内的相对文件/目录路径可打开右侧文件面板；目录自动展开并选中，文件支持 `:行[:列]` 与 `(行,列)` 定位、高亮和选中。绝对路径仍保持打开系统资源管理器的原有行为。
+
 ## [V1.3.0] - 2026-07-20
+
+### SSH
+
+- SSH Claude/Codex 终端实时统计现复用同一 Agent history consumer 增量同步精确 session detail，并从现有远端 catalog 聚合今日项目用量；切换远端 Tab 不再调用本地 history、Git 分支或 Explorer API，断线时保留上次快照与缓存统计。
+- Agent bridge 协议升级到 `1.6`；SSH 项目文件面板新增只读远端浏览，通过复用 bridge 懒加载目录、搜索文件名或文本并预览 UTF-8 文本与图片；只读 Git 面板支持远端仓库、状态、Diff、分支和 upstream/ahead/behind/asOf。Agent 对路径、symlink、遍历、Diff 大小和 Git 外部扩展实施限制，UI/store 拒绝所有远程写入、网络、凭据、Worktree、外部 Explorer、external diff 与 textconv。
+- SSH Claude/Codex 项目现可在统一历史工作区按绑定项目读取远端会话：Agent 增量索引原生 JSONL，通过共享单写锁维护可重建派生索引；桌面端复用每主机 bridge，支持分页列表、全文搜索、按需详情/Diff、usage 摘要、删除 tombstone 与断线后的摘要缓存，不复制完整远端历史目录，也不把远端路径交给本地文件 API。
+- Agent bridge 协议升级到 `1.3`，详情使用 256 KiB payload 分块并保持 1 MiB frame 上限；桌面端校验 request ID、分块顺序、总数、聚合 64 MiB 上限和整次请求 deadline。远端来源身份稳定绑定 machine/user/source/config root，不随 Agent 重装变化。
+- Agent bridge 协议升级到 `1.4`，远端历史会话可在同一主机/用户/source/config root 上执行恢复前检查：重新确认原 JSONL、cwd 与 CLI 可用性，由 Rust 从结构化参数生成安全 resume 命令；同一客户端已有会话时直接跳转 Tab，其他 consumer 占用时阻止并发恢复，无匹配项目时可显式使用原远端目录创建 SSH terminal。
+
+- SSH 主机新增 Claude/Codex“CLI 配置目录（Hook 与历史）”设置，SSH 项目可单独覆盖；新建、分屏、复制、恢复等统一启动链路会按“项目覆盖 -> 主机配置 -> CLI 原生默认”解析，并安全注入 `CLAUDE_CONFIG_DIR` 或 `CODEX_HOME`。自定义目录仅接受绝对 POSIX 路径或 `~/...`，保存配置不会安装 Agent 或修改远端 Hook。
+- 删除 SSH 主机时会先阻止活动终端和跳板机引用，再解除项目绑定；远端 Agent/Hook 不会被隐式卸载，已验证的远端集成身份保留为待重新绑定状态。
+- 新增独立 `cli-manager-ssh-agent` 协议骨架以及每台 SSH 主机的显式 Agent 检测入口；交互终端与后台短连接复用同一套认证、跳板机、代理和 AskPass 参数。打开设置不会自动连接，只有点击“检测 Agent”才建立一次 `ssh -T` 短连接；登录提示、输出大小、Agent 身份、Linux x64/arm64 目标和协议主版本均经过有界校验，检测结果只保存脱敏的版本、协议、目标和路径元数据。
+- SSH 主机“CLI 集成”新增 `cli-manager-ssh-agent` 安装、升级、回滚和卸载预览；桌面端复用当前 SSH 认证链上传 Linux x64/arm64 签名制品，Agent 通过安装锁、discovery record、版本目录及 `current/previous` 原子链接完成切换，默认拒绝降级并在失败时恢复旧链接。发布流程同步生成 Minisign 签名 manifest 与可审阅的 POSIX `install-ssh-agent.sh`，支持 HTTPS 和显式受信 HTTP 镜像、自定义安装目录、size/SHA-256 校验及 dry-run；这些操作均不修改 Claude/Codex Hook。
+- SSH 主机“CLI 集成”现可按 Claude/Codex 及项目覆盖目录独立检查、预览、安装、升级和卸载远端 Hook；Agent 返回规范化配置根、实际 `settings.json` / `hooks.json` / `config.toml` 路径和指纹，通过锁、备份 journal、原子替换及复读校验保留第三方字段、顺序、matcher、symlink 和用户自有 Codex feature。默认目录仅在明确确认安装后创建，自定义缺失目录拒绝，Agent 卸载会阻止遗留自有 Hook。
+- SSH Claude/Codex 终端注入按主机、客户端、项目、Tab 和 bridge epoch 隔离的非敏感绑定；普通 SSH/IDE/tmux 启动因缺少绑定而快速 no-op。只有有效配置根已验证为 Hook `installed` 且 Agent 身份仍匹配时，每条活动主机配置才复用一个 daemon Agent bridge；断线事件进入 24 小时、10000 条或 32 MiB 的主机/客户端隔离 spool，重连后按 sequence 补发、ACK 删除、event id 去重并显示 gap 告警；远端路径不会交给本地 transcript API 或第三方通知。
+
+- SSH Hook 边界复审：远端 Hook 事件仍可进入本地 Replay 的事件列表，但远端 `cwd` 只作为不透明引用保存，不会被当作本地项目路径或触发本地 Git 快照；SSH PTY 创建链路在 Rust 侧同时忽略供应商启动参数。Hook spool 的 gap 记录也计入字节配额，已保存 Hook 状态的 symlink 卸载会校验旧 canonical 根，避免误操作改指后的目录。
+- SSH Agent bridge 升级为 protocol `1.1`：全局最多 4 条常驻 bridge、2 条并发连接/重连，preamble/hello/响应均有硬超时，10 秒 heartbeat 与 1/2/5/10/30/60 秒抖动退避负责断线恢复；旧 bridge socket 支持自动接管重试，最后一个 Host 会话关闭时会取消并回收 SSH 子进程。Hook spool 改为逐条有界读取与流式 ACK，损坏或超大记录不会被静默删除。
 
 ### 新增
 - **Pi Agent Hook 桥接与实时统计**：Hook 设置新增 Pi Agent 桥接，安装 TypeScript Extension（`~/.pi/agent/extensions/cli-manager-hook.ts`）上报 `session_start` / `agent_start` / `agent_settled` 生命周期事件；HTTP 桥接识别 `source=pi`，绑定 `sessionId` 后终端侧栏可读取 Pi 会话实时 Token 统计。支持按模块安装/卸载、配置目录选择、简中/繁中/英文界面，以及侧栏 Hook 状态灯与自动修复流程。
@@ -11,11 +32,12 @@
 - **cc-connect 微信与企业微信接入**：远程连接新增微信个人号原生 ilink Token、应用内扫码授权，以及企业微信 WebSocket 智能机器人配置；凭据保存在 Windows 凭据管理器中，托管配置仅引用环境变量。
 - **Codex 会话远程托管**：可从桌面宠物选择已停止的本地 Codex 会话与已配置平台进行托管；托管期间终端显示锁定状态，取消托管后按原项目、工作目录与 Provider 恢复本地会话。
 - **远程任务通知**：托管任务支持完成、失败、权限请求、可调间隔进度和长时间状态未知提醒，统一投递到当前托管平台。
-- 
+
 ### 调整
 - 设置页将“桌面宠物”移动到倒数第三，位于“开发者”上方。
 
 ### 修复
+- **终端 Tab 切换焦点回归修复**：活动终端会等待渐进重绘的隐藏遮罩解除后再自动聚焦，修复切换普通 Tab、Workspan、分屏 Pane 或从历史页返回后仍需点击终端内容区才能输入的问题，同时避免非活动分屏抢占键盘焦点。
 - **Grok Build 启动命令修复**：内置 CLI 工具的启动命令由错误的 `grok build .` 修正为 `grok`。
 - **Windows 内部终端环境与退出清理修复**：新建 PowerShell、PowerShell 7、CMD、Git Bash 终端时刷新当前 Windows 用户环境，应用启动后新安装的 CLI 可直接通过最新 `PATH` 解析，同时保留 daemon 临时路径以及项目与 Provider 显式环境变量的覆盖优先级；正常退出且没有运行任务时统一关闭 daemon 中的全部 PTY，避免空闲或隐藏 Shell 导致 daemon 持续驻留，选择“转入后台”时仍保留任务继续运行。
 - 修复 Pi Agent Hook 完整安装被错误判定为部分安装、同名用户扩展可能被覆盖，以及单轮运行重复上报状态的问题；冲突文件现在会保留并在设置页和侧边栏显示本地化错误，AI 回放也会正确标识 Pi Agent 来源。
@@ -38,6 +60,10 @@
 - **远程 Codex Provider 与恢复链路**：为 cc-connect 子进程注入项目 Git 信任配置并强制使用登记 Provider；恢复大型会话时保留原始上下文和 Session ID，取消托管后不会重复拼接旧的 resume 参数。
 - **远程通知最终状态修复**：长任务的状态未知提醒不再终结通知状态机，后续真实完成或失败事件仍会覆盖并发送准确结果。
 - **远程通知取消与脱敏修复**：每次通知重试前重新校验完整 handoff 身份，取消或替换托管后立即丢弃旧通知；状态文件仅保存安全错误码，诊断输出会过滤平台凭据、Provider API Key 与 daemon Token。
+- **Windows 终端创建崩溃修复**：Tauri CSP 精确放行 xterm 图片插件所需的 WebAssembly 编译；图片插件在旧版或受限 WebView2 中加载失败时会记录告警并降级，不再中断基础终端初始化，同时未开放通用 `unsafe-eval`。
+- **历史会话项目筛选高亮**：从左侧项目打开会话列表时，项目筛选树改为优先按 `projectId` 高亮，避免同工作目录下多个项目条目全部被选中；打开筛选菜单时自动展开选中项父分组，并将高亮项滚动到可视区中部。
+- **模型价格同步相似匹配**：同步缺失价格时，本地带后缀的模型名（如 `grok-4.5-build-free`）可在远端存在基座价（如 `grok-4.5` / `xai/grok-4.5`）时进入候选列表；新增 dash-token 前缀基座匹配，并改进 fuzzy 打分混入 token containment。基座/模糊匹配仍仅作候选，不自动写入价格。
+- **模型价格候选行对齐**：同步候选确认中的远程价格下拉与「确认应用」按钮统一高度并底边对齐。
 
 ## [V1.2.9] - 2026-07-18
 

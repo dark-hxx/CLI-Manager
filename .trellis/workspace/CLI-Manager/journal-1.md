@@ -924,3 +924,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: 修复终端图片插件 WASM CSP 崩溃
+
+**Date**: 2026-07-21
+**Task**: 修复终端图片插件 WASM CSP 崩溃
+**Branch**: `master`
+
+### Summary
+
+为 Tauri CSP 增加 wasm-unsafe-eval，并在 xterm ImageAddon 加载失败时安全降级；补充回归测试、变更记录和前端兼容契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b457aa9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

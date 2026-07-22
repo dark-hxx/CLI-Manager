@@ -12,7 +12,8 @@ use super::protocol::{
     BINARY_KIND_REPLAY, BINARY_KIND_REPLAY_RESET, BINARY_PROTOCOL_VERSION,
     CONTROL_PROTOCOL_VERSION, MAX_FRAME_BYTES,
 };
-use crate::claude_hook::{spawn_hook_listener, HookPayloadSink};
+use super::ssh_agent_bridge::SshAgentBridgeManager;
+use crate::claude_hook::{remote_hook_payload_from_spool, spawn_hook_listener, HookPayloadSink};
 use crate::commands::cc_connect::handoff_notification::RemoteHandoffNotifier;
 use crate::pty::manager::{PtyEventSink, PtyManager, PtyProcessStatus};
 use crate::ssh_launch::SshLaunchPlan;
@@ -604,6 +605,16 @@ struct SessionEntry {
     cols: u16,
     rows: u16,
     next_sequence: u64,
+    ssh_hook_binding: Option<SshHookBinding>,
+}
+
+struct SshHookBinding {
+    host_id: String,
+    client_instance_id: String,
+    project_id: String,
+    bridge_epoch: String,
+    installation_id: String,
+    source: String,
 }
 
 type SharedSession = Arc<Mutex<SessionEntry>>;
@@ -616,6 +627,9 @@ pub struct DaemonHost {
     last_idle_since: Mutex<Instant>,
     /// 无客户端期间收到的 hook 上报缓存，客户端连上后补发（契约）。
     hook_cache: Mutex<VecDeque<serde_json::Value>>,
+    hook_gap_cache: Mutex<VecDeque<(String, u64)>>,
+    hook_sink: Mutex<Option<HookPayloadSink>>,
+    ssh_agent_bridges: SshAgentBridgeManager,
     spool_dir: PathBuf,
 }
 
@@ -635,6 +649,9 @@ impl DaemonHost {
             clients: Mutex::new(HashMap::new()),
             last_idle_since: Mutex::new(Instant::now()),
             hook_cache: Mutex::new(VecDeque::new()),
+            hook_gap_cache: Mutex::new(VecDeque::new()),
+            hook_sink: Mutex::new(None),
+            ssh_agent_bridges: SshAgentBridgeManager::default(),
             spool_dir,
         }
     }
@@ -648,6 +665,71 @@ impl DaemonHost {
             .lock()
             .ok()
             .and_then(|sessions| sessions.get(session_id).cloned())
+    }
+
+    fn set_hook_sink(&self, sink: HookPayloadSink) {
+        if let Ok(mut current) = self.hook_sink.lock() {
+            *current = Some(sink);
+        }
+    }
+
+    fn ensure_ssh_agent_bridge(self: &Arc<Self>, session_id: &str, plan: &SshLaunchPlan) {
+        self.ssh_agent_bridges
+            .ensure(Arc::downgrade(self), session_id, plan);
+    }
+
+    fn release_ssh_agent_bridge(&self, session_id: &str) {
+        let host_id = self.get_session(session_id).and_then(|session| {
+            session
+                .lock()
+                .ok()
+                .and_then(|entry| entry.meta.ssh_host_id.clone())
+        });
+        if let Some(host_id) = host_id {
+            self.ssh_agent_bridges.release(&host_id, session_id);
+        }
+    }
+
+    pub(crate) fn accept_remote_hook_event(&self, value: serde_json::Value) {
+        let Some(tab_id) = value.get("tabId").and_then(serde_json::Value::as_str) else {
+            return;
+        };
+        let matches = self.get_session(tab_id).is_some_and(|session| {
+            session.lock().ok().is_some_and(|entry| {
+                let Some(binding) = entry.ssh_hook_binding.as_ref() else {
+                    return false;
+                };
+                if !entry.meta.alive {
+                    return false;
+                }
+                let field = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
+                field("hostId") == Some(binding.host_id.as_str())
+                    && field("clientInstanceId") == Some(binding.client_instance_id.as_str())
+                    && field("projectId") == Some(binding.project_id.as_str())
+                    && field("bridgeEpoch") == Some(binding.bridge_epoch.as_str())
+                    && field("installationId") == Some(binding.installation_id.as_str())
+                    && field("source") == Some(binding.source.as_str())
+            })
+        });
+        if !matches {
+            log::warn!("rejected remote Hook event with an unknown SSH session binding");
+            return;
+        }
+        let payload = match remote_hook_payload_from_spool(&value) {
+            Ok(payload) => payload,
+            Err(error) => {
+                log::warn!("rejected invalid remote Hook event: {error}");
+                return;
+            }
+        };
+        let sink = self
+            .hook_sink
+            .lock()
+            .ok()
+            .and_then(|sink| sink.as_ref().cloned());
+        if let Some(sink) = sink {
+            sink(payload);
+        }
     }
 
     #[cfg(test)]
@@ -701,6 +783,21 @@ impl DaemonHost {
                 cols: 80,
                 rows: 24,
                 next_sequence: 1,
+                ssh_hook_binding: ssh_launch.and_then(|plan| {
+                    (!plan.client_instance_id.is_empty()
+                        && !plan.project_id.is_empty()
+                        && !plan.bridge_epoch.is_empty()
+                        && !plan.agent_installation_id.is_empty()
+                        && !plan.tool_source.is_empty())
+                    .then(|| SshHookBinding {
+                        host_id: plan.host_id.clone(),
+                        client_instance_id: plan.client_instance_id.clone(),
+                        project_id: plan.project_id.clone(),
+                        bridge_epoch: plan.bridge_epoch.clone(),
+                        installation_id: plan.agent_installation_id.clone(),
+                        source: plan.tool_source.clone(),
+                    })
+                }),
             })),
         );
         Ok(())
@@ -718,6 +815,29 @@ impl DaemonHost {
             drop(clients);
             if let Ok(mut cache) = self.hook_cache.lock() {
                 cache.push_back(payload);
+                while cache.len() > HOOK_CACHE_MAX {
+                    cache.pop_front();
+                }
+            }
+            return;
+        }
+        for client in clients.values() {
+            let _ = client.writer.send_frame(&frame);
+        }
+    }
+
+    pub(crate) fn broadcast_remote_hook_gap(&self, host_id: String, dropped: u64) {
+        let frame = DaemonFrame::SshAgentHookGap {
+            host_id: host_id.clone(),
+            dropped,
+        };
+        let Ok(clients) = self.clients.lock() else {
+            return;
+        };
+        if clients.is_empty() {
+            drop(clients);
+            if let Ok(mut cache) = self.hook_gap_cache.lock() {
+                cache.push_back((host_id, dropped));
                 while cache.len() > HOOK_CACHE_MAX {
                     cache.pop_front();
                 }
@@ -766,6 +886,13 @@ impl DaemonHost {
         };
         for payload in cached {
             let _ = writer.send_frame(&DaemonFrame::HookReport { payload });
+        }
+        let gaps: Vec<(String, u64)> = match self.hook_gap_cache.lock() {
+            Ok(mut cache) => cache.drain(..).collect(),
+            Err(_) => return,
+        };
+        for (host_id, dropped) in gaps {
+            let _ = writer.send_frame(&DaemonFrame::SshAgentHookGap { host_id, dropped });
         }
     }
 
@@ -1083,6 +1210,7 @@ fn emit_daemon_status(host: &DaemonHost, session_id: &str, status: PtyProcessSta
             exit_code: status.exit_code,
         },
     );
+    host.release_ssh_agent_bridge(session_id);
     host.enforce_total_buffer_cap();
 }
 
@@ -1266,6 +1394,7 @@ impl DaemonServer {
                 Err(err) => log::warn!("daemon hook payload serialize failed: {err}"),
             }
         });
+        server.host.set_hook_sink(Arc::clone(&hook_sink));
         spawn_hook_listener(hook_listener, token, hook_sink);
 
         server.spawn_idle_watchdog();
@@ -1845,6 +1974,32 @@ impl DaemonServer {
                     .collect();
                 DaemonFrame::Statuses { id, statuses }
             }
+            ClientFrame::SshAgentRequest {
+                id,
+                consumer_id,
+                ssh_launch,
+                request_kind,
+                payload,
+            } => match self.host.ssh_agent_bridges.request(
+                Arc::downgrade(&self.host),
+                &consumer_id,
+                &ssh_launch,
+                &request_kind,
+                payload,
+            ) {
+                Ok(payload) => DaemonFrame::SshAgentResponse { id, payload },
+                Err(message) => DaemonFrame::Err { id, message },
+            },
+            ClientFrame::SshAgentRelease {
+                id,
+                host_id,
+                consumer_id,
+            } => {
+                self.host
+                    .ssh_agent_bridges
+                    .release_consumer(&host_id, &consumer_id);
+                DaemonFrame::Ok { id }
+            }
             ClientFrame::Shutdown { id } => {
                 if self.host.alive_session_count() > 0 {
                     return err_frame(id, "sessions active");
@@ -1918,19 +2073,23 @@ impl DaemonServer {
                 .map(|colors| (colors.foreground.as_str(), colors.background.as_str())),
             sink,
         ) {
-            Ok(process_traits) => self
-                .host
-                .get_session(&session_id)
-                .and_then(|session| {
-                    session.lock().ok().map(|mut entry| {
-                        entry.meta.process_traits = Some(ProcessTraits::current_platform(
-                            process_traits.uses_conpty_dll,
-                        ));
-                        entry.meta.clone()
+            Ok(process_traits) => {
+                if let Some(plan) = ssh_launch.as_ref() {
+                    self.host.ensure_ssh_agent_bridge(&session_id, plan);
+                }
+                self.host
+                    .get_session(&session_id)
+                    .and_then(|session| {
+                        session.lock().ok().map(|mut entry| {
+                            entry.meta.process_traits = Some(ProcessTraits::current_platform(
+                                process_traits.uses_conpty_dll,
+                            ));
+                            entry.meta.clone()
+                        })
                     })
-                })
-                .map(|meta| DaemonFrame::Created { id, meta })
-                .unwrap_or_else(|| err_frame(id, "session state unavailable")),
+                    .map(|meta| DaemonFrame::Created { id, meta })
+                    .unwrap_or_else(|| err_frame(id, "session state unavailable"))
+            }
             Err(message) => {
                 if let Ok(mut sessions) = self.host.sessions.lock() {
                     sessions.remove(&session_id);
@@ -2047,6 +2206,7 @@ mod tests {
             cols: 80,
             rows: 24,
             next_sequence,
+            ssh_hook_binding: None,
         }))
     }
 
