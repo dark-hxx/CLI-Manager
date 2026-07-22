@@ -80,7 +80,8 @@ fn calculate_usage_cost(model: Option<&str>, usage: UsageTokenScan) -> UsageStat
 
 - Price units are **USD per 1M tokens** at every boundary. Remote provider values that are per-token must be multiplied by `1_000_000` before storing or returning to the frontend.
 - Valid price fields are non-negative finite numbers. Invalid, NaN, infinite, or negative values must be rejected or ignored before they reach cost calculation.
-- `model_prices` is persisted by the WebView using `getDb()` / `tauri-plugin-sql`. Rust receives a runtime cache through `model_prices_set_cache`; this avoids coupling Rust commands to plugin-sql's internal database path.
+- Normal `model_prices` CRUD is persisted by the WebView using `getDb()` / `tauri-plugin-sql`. Rust receives a runtime cache through `model_prices_set_cache`; this avoids coupling pricing commands to plugin-sql's internal database path.
+- Versioned backup restore is the narrow exception: its Rust restore command resolves the canonical database through `app_paths::db_path()`, refuses to create a missing database, and replaces selected database domains on one connection so transaction control cannot drift across the plugin SQL pool.
 - Frontend startup must load/seed `model_prices` and then best-effort push the full table to `model_prices_set_cache` before history stats are likely opened. Failure to push the cache must not crash the app; history calculation reports unpriced tokens until the cache is available.
 - Once the DB-backed table is loaded and pushed, the model-price cache is authoritative. If a model is missing from the loaded table, cost calculation must return unpriced tokens, not fall back to stale hardcoded defaults for that model.
 - Hardcoded prices are seed data only: when `model_prices` is empty, insert default rows with `source='builtin'`. Runtime cost calculation must not maintain a second hardcoded pricing table.
@@ -121,7 +122,7 @@ fn calculate_usage_cost(model: Option<&str>, usage: UsageTokenScan) -> UsageStat
 - Base: a model has prices but no context metadata; cost calculation still works and context UI falls through to local rules/unknown.
 - Bad: deleting `claude-sonnet-4-5` causes cost calculation to use the hardcoded seed row anyway. Once the table is loaded, missing means unpriced.
 - Bad: UI components duplicate provider-specific context-window parsing instead of calling `resolveContextLimit(model, exactLimit)`.
-- Bad: Rust opens `cli-manager.db` directly by guessing a filesystem path, creating a second persistence path that can drift from `tauri-plugin-sql`.
+- Bad: Rust guesses a `cli-manager.db` filesystem path instead of resolving the canonical app data path, creating a second persistence location that can drift from `tauri-plugin-sql`.
 
 ### 6. Tests Required
 

@@ -58,6 +58,11 @@ export async function getDb(): Promise<Database> {
 /** SQLite 默认参数上限 32766，预留余量。 */
 const MAX_PARAMS_PER_STMT = 30000;
 
+export interface DatabaseStatement {
+  sql: string;
+  values: unknown[];
+}
+
 /**
  * 把 `UPDATE table SET sort_order = ? WHERE id = ?` 的 N 次循环合并成单条
  * `UPDATE table SET sort_order = CASE id WHEN ? THEN ? ... END WHERE id IN (...)`。
@@ -117,10 +122,22 @@ export async function batchInsert<T>(
   rows: readonly T[],
   mapRow: (row: T) => readonly unknown[],
 ): Promise<void> {
-  if (rows.length === 0) return;
+  for (const statement of buildBatchInsertStatements(table, columns, rows, mapRow)) {
+    await db.execute(statement.sql, statement.values);
+  }
+}
+
+export function buildBatchInsertStatements<T>(
+  table: string,
+  columns: readonly string[],
+  rows: readonly T[],
+  mapRow: (row: T) => readonly unknown[],
+): DatabaseStatement[] {
+  if (rows.length === 0) return [];
   const colCount = columns.length;
   const batchSize = Math.max(1, Math.floor(MAX_PARAMS_PER_STMT / colCount));
   const colList = columns.join(",");
+  const statements: DatabaseStatement[] = [];
   for (let i = 0; i < rows.length; i += batchSize) {
     const chunk = rows.slice(i, i + batchSize);
     const valuesClause: string[] = [];
@@ -138,7 +155,10 @@ export async function batchInsert<T>(
       }
       valuesClause.push(`(${placeholders.join(",")})`);
     }
-    const sql = `INSERT INTO ${table} (${colList}) VALUES ${valuesClause.join(",")}`;
-    await db.execute(sql, values);
+    statements.push({
+      sql: `INSERT INTO ${table} (${colList}) VALUES ${valuesClause.join(",")}`,
+      values,
+    });
   }
+  return statements;
 }

@@ -8,6 +8,7 @@ description = "Remote SSH integration agent for CLI-Manager"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 cli-manager-hook-schema = { path = "../hook-schema" }
 cli-manager-history-core = { path = "../history-core" }
 libc = "0.2"

@@ -60,6 +60,8 @@ test("sorts by count then recency and limits suggestions", () => {
   assert.equal(suggestions.length, 10);
   assert.equal(suggestions[0]?.cliArgs, "--option-1");
   assert.equal(suggestions[1]?.cliArgs, "--option-0");
+  assert.equal(getCliArgsHistorySuggestions(history, "codex", 10, "--option").length, 10);
+  assert.deepEqual(getCliArgsHistorySuggestions(history, "codex", 10, "--option-11").map((entry) => entry.cliArgs), ["--option-11"]);
 });
 
 test("drops invalid entries and merges duplicate persisted values", () => {
@@ -80,4 +82,16 @@ test("includes CLI argument history in preference snapshots", () => {
 
   assert.equal(SETTING_BACKUP_POLICY.cliArgsHistory, "preferences");
   assert.deepEqual(pickSyncableSettings({ cliArgsHistory, debugMode: true }), { cliArgsHistory });
+});
+
+test("records non-clone CLI arguments after either create or edit succeeds", () => {
+  const modalSource = readFileSync(new URL("../src/components/ConfigModal.tsx", import.meta.url), "utf8");
+  const editBranchStart = modalSource.indexOf("if (isEdit && project) {");
+  const sharedRecordStart = modalSource.indexOf("if (!isClone && trimmedCliArgs) {", editBranchStart);
+  const closeAfterSave = modalSource.indexOf("onClose();", sharedRecordStart);
+
+  assert.ok(editBranchStart >= 0);
+  assert.ok(sharedRecordStart > editBranchStart);
+  assert.ok(closeAfterSave > sharedRecordStart);
+  assert.match(modalSource, /!isClone \? \([\s\S]*<CliArgsHistoryField/);
 });

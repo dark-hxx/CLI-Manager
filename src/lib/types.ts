@@ -714,6 +714,7 @@ export interface SshRemoteHistorySyncResult {
   configRootHash: string;
   generation: number;
   cursor: string;
+  applied?: boolean;
   hasMore: boolean;
   totalSessions: number;
   freshnessState: string;

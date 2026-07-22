@@ -21,6 +21,7 @@ const CATALOG_PARSE_BATCH_SIZE: usize = 2;
 const CATALOG_PROGRESS_BATCH_SIZE: usize = 20;
 
 static CATALOG_REFRESH_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+static CATALOG_SCHEMA_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 static CATALOG_DIRTY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
@@ -51,6 +52,10 @@ struct V2LegacySessionRow {
 
 fn catalog_refresh_lock() -> &'static AsyncMutex<()> {
     CATALOG_REFRESH_LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+fn catalog_schema_lock() -> &'static AsyncMutex<()> {
+    CATALOG_SCHEMA_LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
 pub(super) fn mark_dirty() {
@@ -85,6 +90,7 @@ async fn open_catalog_once(path: &Path) -> Result<SqliteConnection, String> {
     let mut conn = SqliteConnection::connect_with(&catalog_connect_options(path))
         .await
         .map_err(|err| err.to_string())?;
+    let _schema_guard = catalog_schema_lock().lock().await;
     ensure_schema(&mut conn).await?;
     Ok(conn)
 }
@@ -228,9 +234,6 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
         )",
         "CREATE INDEX IF NOT EXISTS idx_history_source_instances_source
             ON history_source_instances(source_id, activation_state)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_history_source_instances_active_scope
-            ON history_source_instances(source_id, scope_kind, scope_key)
-            WHERE activation_state = 'active'",
         "CREATE TABLE IF NOT EXISTS history_sessions (
             id INTEGER PRIMARY KEY,
             source_instance_id TEXT NOT NULL,
@@ -549,12 +552,6 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
     .execute(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
-    sqlx::query(&format!(
-        "PRAGMA user_version = {HISTORY_INDEX_SCHEMA_VERSION}"
-    ))
-    .execute(&mut *conn)
-    .await
-    .map_err(|err| err.to_string())?;
     let now = now_millis();
     for (key, value) in [
         ("schema_version", HISTORY_INDEX_SCHEMA_VERSION.to_string()),
@@ -574,6 +571,12 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
         .await
         .map_err(|err| err.to_string())?;
     }
+    sqlx::query(&format!(
+        "PRAGMA user_version = {HISTORY_INDEX_SCHEMA_VERSION}"
+    ))
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -2220,7 +2223,7 @@ fn parse_catalog_batch(batch: Vec<CatalogFile>) -> Vec<CatalogDocument> {
 pub(super) async fn apply_remote_sync(
     host_id: &str,
     result: &RemoteHistorySyncResult,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut conn = open_catalog().await?;
     apply_remote_sync_with_conn(&mut conn, host_id, result).await
 }
@@ -2235,7 +2238,7 @@ async fn apply_remote_sync_with_conn(
     conn: &mut SqliteConnection,
     host_id: &str,
     result: &RemoteHistorySyncResult,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if host_id.trim().is_empty()
         || !matches!(result.source.as_str(), "claude" | "codex")
         || result.source_instance_id.trim().is_empty()
@@ -2248,7 +2251,47 @@ async fn apply_remote_sync_with_conn(
     if !result.discovery_complete && !result.tombstones.is_empty() {
         return Err("history_remote_tombstone_without_discovery".to_string());
     }
+    let incoming_cursor_offset = remote_cursor_offset(&result.cursor, result.generation)?;
     let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
+    // Acquire SQLite's writer lease before checking monotonic state. This keeps the
+    // compare-and-apply decision atomic without serializing unrelated reads in-process.
+    sqlx::query(
+        "UPDATE history_source_state SET generation = generation WHERE source_instance_id = ?1",
+    )
+    .bind(&result.source_instance_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    if let Some(row) = sqlx::query(
+        "SELECT state.generation, instance.sync_cursor_json
+         FROM history_source_instances AS instance
+         LEFT JOIN history_source_state AS state ON state.source_instance_id = instance.id
+         WHERE instance.id = ?1",
+    )
+    .bind(&result.source_instance_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?
+    {
+        let current_generation = row
+            .try_get::<Option<i64>, _>("generation")
+            .map_err(|err| err.to_string())?
+            .unwrap_or_default();
+        let current_generation = u64::try_from(current_generation).unwrap_or_default();
+        let current_cursor = row
+            .try_get::<Option<String>, _>("sync_cursor_json")
+            .map_err(|err| err.to_string())?
+            .unwrap_or_default();
+        let current_cursor_offset =
+            remote_cursor_offset(&current_cursor, current_generation).unwrap_or_default();
+        if result.generation < current_generation
+            || (result.generation == current_generation
+                && incoming_cursor_offset < current_cursor_offset)
+        {
+            tx.rollback().await.map_err(|err| err.to_string())?;
+            return Ok(false);
+        }
+    }
     let scope_key = format!(
         "{}:{}:{}",
         result.remote_machine_id, result.ssh_user, result.config_root_hash
@@ -2602,7 +2645,20 @@ async fn apply_remote_sync_with_conn(
     .await
     .map_err(|err| err.to_string())?;
     tx.commit().await.map_err(|err| err.to_string())?;
-    Ok(())
+    Ok(true)
+}
+
+fn remote_cursor_offset(cursor: &str, generation: u64) -> Result<usize, String> {
+    let (cursor_generation, offset) = cursor
+        .trim()
+        .split_once(':')
+        .ok_or_else(|| "history_remote_cursor_invalid".to_string())?;
+    if cursor_generation.parse::<u64>().ok() != Some(generation) {
+        return Err("history_remote_cursor_invalid".to_string());
+    }
+    offset
+        .parse::<usize>()
+        .map_err(|_| "history_remote_cursor_invalid".to_string())
 }
 
 pub(super) async fn mark_remote_stale(
@@ -3718,6 +3774,40 @@ pub(super) async fn ensure_refresh(
 mod tests {
     use super::*;
 
+    async fn create_legacy_source_instances_schema(conn: &mut SqliteConnection) {
+        sqlx::query(
+            "CREATE TABLE history_source_instances (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                environment_kind TEXT NOT NULL,
+                environment_key TEXT NOT NULL,
+                storage_kind TEXT NOT NULL,
+                display_name TEXT,
+                locations_json TEXT NOT NULL,
+                settings_hash TEXT NOT NULL,
+                activation_state TEXT NOT NULL DEFAULT 'pending',
+                discovered INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE UNIQUE INDEX idx_history_source_instances_one_active
+             ON history_source_instances(source_id)
+             WHERE activation_state = 'active'",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("PRAGMA user_version = 2")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+
     fn remote_sync_result() -> RemoteHistorySyncResult {
         serde_json::from_value(json!({
             "sourceInstanceId": "remote-instance",
@@ -3871,6 +3961,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_upgrades_legacy_source_instances_before_creating_scoped_index() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_legacy_source_instances_schema(&mut conn).await;
+        sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'claude-default', 'claude', 'windows', 'windows', 'file',
+                '{}', 'settings', 'active', 1, 1
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        ensure_schema(&mut conn).await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+
+        let upgraded: (String, String, String) = sqlx::query_as(
+            "SELECT scope_kind, scope_key, transport_kind
+             FROM history_source_instances WHERE id = 'claude-default'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            upgraded,
+            (
+                "configured".to_string(),
+                "desktop".to_string(),
+                "local".to_string(),
+            )
+        );
+
+        let scoped_index: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_history_source_instances_active_scope'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(scoped_index, 1);
+
+        let duplicate = sqlx::query(
+            "INSERT INTO history_source_instances(
+                id, source_id, environment_kind, environment_key, storage_kind,
+                locations_json, settings_hash, activation_state, created_at, updated_at
+             ) VALUES (
+                'claude-duplicate', 'claude', 'windows', 'windows', 'file',
+                '{}', 'duplicate', 'active', 2, 2
+             )",
+        )
+        .execute(&mut conn)
+        .await;
+        assert!(duplicate.is_err());
+    }
+
+    #[tokio::test]
+    async fn concurrent_catalog_opens_serialize_legacy_schema_upgrade() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("history-catalog.db");
+        let mut legacy = SqliteConnection::connect_with(&catalog_connect_options(&path))
+            .await
+            .unwrap();
+        create_legacy_source_instances_schema(&mut legacy).await;
+        legacy.close().await.unwrap();
+
+        let (first, second) = tokio::join!(open_catalog_once(&path), open_catalog_once(&path));
+        let mut first = first.unwrap();
+        let second = second.unwrap();
+
+        let user_version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&mut first)
+            .await
+            .unwrap();
+        assert_eq!(user_version, HISTORY_INDEX_SCHEMA_VERSION);
+        let scope_kind: String = sqlx::query_scalar(
+            "SELECT name FROM pragma_table_info('history_source_instances')
+             WHERE name = 'scope_kind'",
+        )
+        .fetch_one(&mut first)
+        .await
+        .unwrap();
+        assert_eq!(scope_kind, "scope_kind");
+
+        first.close().await.unwrap();
+        second.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn schema_version_does_not_advance_when_metadata_update_fails() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_legacy_source_instances_schema(&mut conn).await;
+        sqlx::query(
+            "CREATE TABLE history_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_history_meta_insert
+             BEFORE INSERT ON history_meta
+             BEGIN
+                SELECT RAISE(ABORT, 'metadata blocked');
+             END",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let error = ensure_schema(&mut conn).await.unwrap_err();
+        assert!(error.contains("metadata blocked"));
+        let user_version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(user_version, 2);
+    }
+
+    #[tokio::test]
     async fn schema_creates_v2_history_index_tables() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         ensure_schema(&mut conn).await.unwrap();
@@ -4009,6 +4224,50 @@ mod tests {
                 .unwrap_err(),
             "history_remote_identity_changed"
         );
+    }
+
+    #[tokio::test]
+    async fn remote_sync_ignores_older_generation_and_cursor() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let mut current = remote_sync_result();
+        current.generation = 2;
+        current.cursor = "2:20".to_string();
+        current.sessions[0].index_generation = 2;
+        current.sessions[0].title = "current".to_string();
+        assert!(apply_remote_sync_with_conn(&mut conn, "host-1", &current)
+            .await
+            .unwrap());
+
+        let mut stale_generation = remote_sync_result();
+        stale_generation.cursor = "1:100".to_string();
+        stale_generation.sessions[0].title = "stale-generation".to_string();
+        assert!(
+            !apply_remote_sync_with_conn(&mut conn, "host-1", &stale_generation)
+                .await
+                .unwrap()
+        );
+
+        let mut stale_cursor = current.clone();
+        stale_cursor.cursor = "2:10".to_string();
+        stale_cursor.sessions[0].title = "stale-cursor".to_string();
+        assert!(
+            !apply_remote_sync_with_conn(&mut conn, "host-1", &stale_cursor)
+                .await
+                .unwrap()
+        );
+
+        let state: (i64, String, String) = sqlx::query_as(
+            "SELECT state.generation, instance.sync_cursor_json, session.title
+             FROM history_source_state AS state
+             JOIN history_source_instances AS instance ON instance.id = state.source_instance_id
+             JOIN history_sessions AS session ON session.source_instance_id = instance.id
+             WHERE instance.id = 'remote-instance' AND session.source_session_id = 'session-1'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(state, (2, "2:20".to_string(), "current".to_string()));
     }
 
     #[tokio::test]

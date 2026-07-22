@@ -1,6 +1,6 @@
 [package]
 name = "cli-manager"
-version = "1.3.0"
+version = "1.3.1"
 description = "A lightweight desktop app for managing CLI tools across multiple projects"
 authors = ["tianhao.zhao", "zhang.yuan"]
 license = "AGPL-3.0-or-later"
@@ -21,7 +21,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "protocol-asset", "devtools"] }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset", "devtools", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
@@ -42,6 +42,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 base64 = "0.22"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 sha2 = "0.10"
 minisign-verify = "0.2.5"
 hmac = "0.12.1"
@@ -62,7 +63,6 @@ notify-debouncer-mini = "0.4"
 fontdb = "0.23"
 tauri-plugin-clipboard-manager = "2"
 sysinfo = "0.39.5"
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
 display-info = "0.5.9"
 wallpaper = "3.2.0"
 url = "2"

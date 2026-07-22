@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "确认这是 root-cause 修复而不是在错误点补 fallback。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "该问题跨前端传输层与 daemon 边界，需要先看清数据流。"}
+{"file": ".trellis/spec/guides/task-delivery-checklist.md", "reason": "文件写入前后要同步 changelog 和交付约束。"}
+{"file": ".trellis/spec/backend/ssh-remote-terminal-contracts.md", "reason": "PTY / daemon / restore 的边界契约与现有终端主链路有关。"}
+{"file": ".trellis/spec/backend/terminal-runtime-monitoring-contracts.md", "reason": "终端会话状态与前端提示/生命周期状态相关。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "终端组件的提示与 i18n 规则在这里。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "终端交互提示属于前端用户可见行为，需遵守诊断输出约束。"}

@@ -1895,11 +1895,15 @@ pub async fn history_remote_sync(
         source_instance_id.as_deref(),
         &result,
     )?;
-    catalog::apply_remote_sync(&host_id, &result).await?;
-    if let Ok(mut cache) = remote_history_detail_cache().lock() {
-        cache.invalidate_instance(&result.source_instance_id);
+    let applied = catalog::apply_remote_sync(&host_id, &result).await?;
+    if applied {
+        if let Ok(mut cache) = remote_history_detail_cache().lock() {
+            cache.invalidate_instance(&result.source_instance_id);
+        }
     }
-    serde_json::to_value(result).map_err(|err| err.to_string())
+    let mut value = serde_json::to_value(result).map_err(|err| err.to_string())?;
+    value["applied"] = Value::Bool(applied);
+    Ok(value)
 }
 
 #[tauri::command]

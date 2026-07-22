@@ -1562,11 +1562,13 @@ function ensureHistoryIndexListener(): Promise<void> {
   return historyIndexListenerPromise;
 }
 
-async function syncRemoteHistoryContext(
+const remoteHistorySyncRequests = new Map<string, Promise<SshRemoteHistorySyncResult>>();
+
+async function requestRemoteHistorySync(
   context: SshAgentHistoryContext,
-  options: { reset?: boolean; limit?: number } = {},
-): Promise<SshAgentHistoryContext> {
-  const result = await invoke<SshRemoteHistorySyncResult>("history_remote_sync", {
+  options: { reset?: boolean; limit?: number },
+): Promise<SshRemoteHistorySyncResult> {
+  const args = {
     consumerId: context.consumerId,
     sshLaunch: context.launch,
     source: context.source,
@@ -1575,13 +1577,34 @@ async function syncRemoteHistoryContext(
     sourceInstanceId: context.sourceInstanceId || null,
     cursor: options.reset ? null : context.cursor || null,
     limit: options.limit ?? SESSION_PAGE_FETCH_LIMIT,
+  };
+  const key = JSON.stringify({ ...args, hostId: context.hostId, scopeKind: context.scopeKind });
+  const existing = remoteHistorySyncRequests.get(key);
+  if (existing) return existing;
+  const request = invoke<SshRemoteHistorySyncResult>("history_remote_sync", args).then(async (result) => {
+    if (result.applied !== false) {
+      await useSshAgentIntegrationStore.getState().recordHistorySource(
+        context.hostId,
+        context.configuredConfigRoot,
+        result,
+        context.scopeKind,
+      );
+    }
+    return result;
   });
-  await useSshAgentIntegrationStore.getState().recordHistorySource(
-    context.hostId,
-    context.configuredConfigRoot,
-    result,
-    context.scopeKind,
-  );
+  remoteHistorySyncRequests.set(key, request);
+  void request.finally(() => {
+    if (remoteHistorySyncRequests.get(key) === request) remoteHistorySyncRequests.delete(key);
+  }).catch(() => undefined);
+  return request;
+}
+
+async function syncRemoteHistoryContext(
+  context: SshAgentHistoryContext,
+  options: { reset?: boolean; limit?: number } = {},
+): Promise<SshAgentHistoryContext> {
+  const result = await requestRemoteHistorySync(context, options);
+  if (result.applied === false) return context;
   return {
     ...context,
     sourceInstanceId: result.sourceInstanceId,

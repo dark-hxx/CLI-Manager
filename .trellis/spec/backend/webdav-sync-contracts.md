@@ -44,18 +44,79 @@ Applies to `src/stores/syncStore.ts`, `src/lib/syncSettings.ts`, the backup sett
 ## Restore
 
 - Restore validates the full snapshot before mutation and creates `.cli-manager/backups/restore-safety/latest.zip` first.
-- Workspace and model-price replacements run in a SQLite transaction.
+- Workspace and model-price replacements run in one Rust-owned SQLite transaction on one SQLx connection, with foreign keys enabled and a bounded busy timeout.
 - Selected domains are replaced completely; unselected domains are untouched.
 - Preferences are restricted to the classified portable key set. Notification targets are sanitized.
 - Statusline files use existing validation and same-directory temporary replacement.
 - After workspace restore, reload project/Worktree stores, refresh project diagnostics, and mark missing Worktrees.
 - Any failure applies the safety snapshot automatically. The latest safety snapshot also supports one explicit undo.
 
+## Scenario: Connection-Affine Database Restore
+
+### 1. Scope / Trigger
+
+- Trigger: restoring `workspace` or `modelPrices` from WebDAV, local ZIP, legacy cloud data, a safety rollback, or explicit undo.
+- Goal: replace selected database domains atomically without allowing transaction control to move between pooled SQLite connections.
+
+### 2. Signatures
+
+- Frontend statement: `DatabaseStatement { sql: string; values: unknown[] }`.
+- Backend command: `backup_restore_database(statements: Vec<BackupDatabaseStatement>) -> Result<(), String>`.
+- Owned tables: `groups`, `projects`, `worktrees`, `command_templates`, and `model_prices`.
+
+### 3. Contracts
+
+- The frontend may build parameterized statements, but Rust validates the complete batch before opening the write transaction.
+- The backend resolves the canonical database through `app_paths::db_path()`, refuses to create a missing database, and executes `BEGIN IMMEDIATE`, all mutations, and `COMMIT` on one `SqliteConnection`.
+- Accepted SQL is limited to exact whole-table `DELETE` statements and parameterized `INSERT` statements with the current owned column lists.
+- Use WAL, foreign keys, a 15-second busy timeout, and one process-level restore lock. Preserve the original restore error if connection close also fails.
+- Never send `BEGIN` / mutations / `COMMIT` as separate `tauri-plugin-sql` IPC calls; its SQLx pool does not guarantee connection affinity between calls.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Empty batch, more than 1000 statements, or more than 30000 parameters in one statement | Reject before `BEGIN IMMEDIATE`. |
+| SQL targets an unowned table, changes the allowed columns, contains multiple statements, or uses an unsupported operation | Return `backup_restore_database_statement_invalid` without mutating data. |
+| Value is an array/object or an unsigned integer outside SQLite's signed range | Return `backup_restore_database_value_invalid` and roll back. |
+| A mutation fails after earlier deletes/inserts | Roll back the complete database-domain batch. |
+| The database remains busy beyond 15 seconds | Return the SQLite lock error; keep the previous database contents. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: workspace and model prices restore together, commit once, then their frontend stores reload.
+- Base: only `model_prices` is selected, so workspace tables are untouched.
+- Bad: a WebView call starts a transaction through `tauri-plugin-sql`, then assumes later `execute` calls use the same pooled connection.
+
+### 6. Tests Required
+
+- Commit a delete-plus-insert batch and assert the replacement row survives with integer SQLite affinity.
+- Force a duplicate-key failure after a delete and assert the original row remains.
+- Submit a statement outside the owned-table whitelist and assert rejection occurs without writes.
+- Run `npx tsc --noEmit`, focused sync/history Rust tests, and `cargo check --locked --manifest-path src-tauri/Cargo.toml`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+await db.execute("BEGIN IMMEDIATE");
+await db.execute("DELETE FROM projects");
+await db.execute("COMMIT");
+```
+
+#### Correct
+
+```typescript
+await invoke("backup_restore_database", { statements });
+```
+
 ## Required verification
 
 - `npx tsc --noEmit`
 - `cargo check --locked --manifest-path src-tauri/Cargo.toml`
 - `cargo test --manifest-path src-tauri/Cargo.toml`
+- Rust restore tests cover successful commit, rejection of non-owned statements, and full rollback after a statement failure.
 - Manual checks: create two snapshots without overwriting, auto-backup no-change skip, offline outbox retry, five-domain restore, rollback/undo, legacy ZIP import, Chinese/English UI, and 24-hour timestamps.
 
 ## Scenario: CLI argument history preference sync

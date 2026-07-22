@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import { create } from "zustand";
 import { getCliManagerDataPaths } from "../lib/appPaths";
-import { batchInsert, getDb } from "../lib/db";
+import { buildBatchInsertStatements, getDb, type DatabaseStatement } from "../lib/db";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../lib/shell";
 import { singleFlight } from "../lib/singleFlight";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
@@ -277,7 +277,7 @@ async function applyPreferences(preferences: Record<string, unknown>) {
   await useSettingsStore.getState().load();
 }
 
-async function replaceWorkspace(db: Awaited<ReturnType<typeof getDb>>, workspace: WorkspaceBackup) {
+async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Promise<DatabaseStatement[]> {
   const now = Date.now().toString();
   const os = await getOsPlatform();
   const platformDefaultShell = defaultShellForOs(os);
@@ -287,16 +287,17 @@ async function replaceWorkspace(db: Awaited<ReturnType<typeof getDb>>, workspace
   const templates = Array.isArray(workspace.commandTemplates) ? workspace.commandTemplates : [];
   const groupIds = new Set(groups.map((item) => String(item.id)));
   const projectIds = new Set(projects.map((item) => String(item.id)));
-  await db.execute("DELETE FROM command_templates");
-  await db.execute("DELETE FROM worktrees");
-  await db.execute("DELETE FROM projects");
-  await db.execute("DELETE FROM groups");
-  await batchInsert(db, "groups", ["id", "name", "parent_id", "sort_order", "created_at"], groups, (item) => [
+  const statements: DatabaseStatement[] = [
+    { sql: "DELETE FROM command_templates", values: [] },
+    { sql: "DELETE FROM worktrees", values: [] },
+    { sql: "DELETE FROM projects", values: [] },
+    { sql: "DELETE FROM groups", values: [] },
+  ];
+  statements.push(...buildBatchInsertStatements("groups", ["id", "name", "parent_id", "sort_order", "created_at"], groups, (item) => [
     item.id, item.name, typeof item.parent_id === "string" && groupIds.has(item.parent_id) ? item.parent_id : null,
     integerOr(item.sort_order, 0), item.created_at ?? now,
-  ]);
-  await batchInsert(
-    db,
+  ]));
+  statements.push(...buildBatchInsertStatements(
     "projects",
     ["id", "name", "path", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "cli_config_root", "created_at", "updated_at"],
     projects,
@@ -324,18 +325,19 @@ async function replaceWorkspace(db: Awaited<ReturnType<typeof getDb>>, workspace
         item.created_at ?? now, item.updated_at ?? now,
       ];
     },
-  );
-  await batchInsert(db, "worktrees", ["id", "project_id", "name", "branch", "path", "base_branch", "deps_prompt_dismissed", "provider_overrides", "status", "created_at", "updated_at"], worktrees.filter((item) => typeof item.project_id === "string" && projectIds.has(item.project_id)), (item) => [
+  ));
+  statements.push(...buildBatchInsertStatements("worktrees", ["id", "project_id", "name", "branch", "path", "base_branch", "deps_prompt_dismissed", "provider_overrides", "status", "created_at", "updated_at"], worktrees.filter((item) => typeof item.project_id === "string" && projectIds.has(item.project_id)), (item) => [
     item.id, item.project_id, item.name, item.branch, item.path, item.base_branch ?? "", integerOr(item.deps_prompt_dismissed, 0),
     item.provider_overrides ?? "{}", item.status === "missing" ? "missing" : "active", item.created_at ?? now, item.updated_at ?? now,
-  ]);
-  await batchInsert(db, "command_templates", ["id", "project_id", "name", "command", "description", "sort_order"], templates, (item) => [
+  ]));
+  statements.push(...buildBatchInsertStatements("command_templates", ["id", "project_id", "name", "command", "description", "sort_order"], templates, (item) => [
     item.id, typeof item.project_id === "string" && projectIds.has(item.project_id) ? item.project_id : null,
     item.name, item.command, item.description ?? "", integerOr(item.sort_order, 0),
-  ]);
+  ]));
+  return statements;
 }
 
-async function replaceModelPrices(db: Awaited<ReturnType<typeof getDb>>, prices: Record<string, unknown>[]) {
+function buildModelPriceRestoreStatements(prices: Record<string, unknown>[]): DatabaseStatement[] {
   const normalized = prices.filter(isRecord).map((item) => ({
     model: typeof item.model === "string" ? item.model : "",
     input_per_1m: numberOrZero(item.input_per_1m), output_per_1m: numberOrZero(item.output_per_1m),
@@ -344,23 +346,24 @@ async function replaceModelPrices(db: Awaited<ReturnType<typeof getDb>>, prices:
     raw_json: item.raw_json ?? null, updated_at_ms: integerOr(item.updated_at_ms, 0),
     synced_at_ms: item.synced_at_ms == null ? null : integerOr(item.synced_at_ms, 0),
   })).filter((item) => item.model);
-  await db.execute("DELETE FROM model_prices");
-  await batchInsert(db, "model_prices", MODEL_PRICE_COLUMNS, normalized, (item) => MODEL_PRICE_COLUMNS.map((column) => item[column]));
+  return [
+    { sql: "DELETE FROM model_prices", values: [] },
+    ...buildBatchInsertStatements("model_prices", MODEL_PRICE_COLUMNS, normalized, (item) => MODEL_PRICE_COLUMNS.map((column) => item[column])),
+  ];
 }
 
 async function applySnapshot(snapshot: BackupSnapshotV3, domains: BackupDomain[]) {
   if (snapshot.version !== 3 || !isRecord(snapshot.data)) throw new Error("backup_invalid_v3");
   const selected = new Set(domains);
-  const db = await getDb();
-  const changesDatabase = selected.has("workspace") || selected.has("model_prices");
-  if (changesDatabase) await db.execute("BEGIN IMMEDIATE");
-  try {
-    if (selected.has("workspace")) await replaceWorkspace(db, snapshot.data.workspace);
-    if (selected.has("model_prices")) await replaceModelPrices(db, snapshot.data.modelPrices);
-    if (changesDatabase) await db.execute("COMMIT");
-  } catch (error) {
-    if (changesDatabase) await db.execute("ROLLBACK").catch(() => undefined);
-    throw error;
+  const databaseStatements: DatabaseStatement[] = [];
+  if (selected.has("workspace")) {
+    databaseStatements.push(...await buildWorkspaceRestoreStatements(snapshot.data.workspace));
+  }
+  if (selected.has("model_prices")) {
+    databaseStatements.push(...buildModelPriceRestoreStatements(snapshot.data.modelPrices));
+  }
+  if (databaseStatements.length > 0) {
+    await invoke("backup_restore_database", { statements: databaseStatements });
   }
   if (selected.has("preferences")) await applyPreferences(snapshot.data.preferences);
   if (selected.has("notifications")) {

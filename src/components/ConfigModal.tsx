@@ -171,8 +171,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [wslPickerLoading, setWslPickerLoading] = useState(false);
   const [wslPickerError, setWslPickerError] = useState("");
   const cliArgsHistorySuggestions = useMemo(
-    () => getCliArgsHistorySuggestions(cliArgsHistory, cliTool),
-    [cliArgsHistory, cliTool]
+    () => getCliArgsHistorySuggestions(cliArgsHistory, cliTool, undefined, cliArgs),
+    [cliArgsHistory, cliTool, cliArgs]
   );
 
   useEffect(() => {
@@ -479,14 +479,14 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
           cli_config_root: trimmedCliConfigRoot,
         });
-        if (!isClone && trimmedCliArgs) {
-          try {
-            await recordCliArgsHistory(trimmedCliTool, trimmedCliArgs);
-          } catch (historyError) {
-            logWarn("Failed to persist CLI arguments history", historyError);
-          }
-        }
         toast.success(t("configModal.toast.created"));
+      }
+      if (!isClone && trimmedCliArgs) {
+        try {
+          await recordCliArgsHistory(trimmedCliTool, trimmedCliArgs);
+        } catch (historyError) {
+          logWarn("Failed to persist CLI arguments history", historyError);
+        }
       }
       onClose();
     } catch (err) {
@@ -717,7 +717,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
               </div>
 
               {cliTool.trim() !== "" && (
-                !isEdit && !isClone ? (
+                !isClone ? (
                   <CliArgsHistoryField
                     label={t("configModal.cliArgs")}
                     value={cliArgs}
@@ -1486,9 +1486,6 @@ function CliArgsHistoryField({
                 className="flex w-[calc(100%-8px)] cursor-pointer items-center gap-3 outline-none hover:bg-surface-container-highest hover:text-text-primary data-[active=true]:bg-surface-container-highest data-[active=true]:text-text-primary"
               >
                 <span className="min-w-0 flex-1 truncate text-left font-mono">{suggestion.cliArgs}</span>
-                <span className="shrink-0 text-text-muted">
-                  {t("configModal.cliArgsHistoryCount", { count: suggestion.count })}
-                </span>
               </button>
             ))}
           </div>

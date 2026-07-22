@@ -5,7 +5,9 @@ use std::time::UNIX_EPOCH;
 
 const MAX_ENTRIES: usize = 500;
 const MAX_SEARCH_RESULTS: usize = 200;
-const MAX_READ_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_TEXT_READ_BYTES: u64 = 1024 * 1024;
+const MAX_IMAGE_READ_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_IMAGE_PIXELS: u64 = 12_000_000;
 const MAX_SEARCH_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_WALK_FILES: usize = 20_000;
 
@@ -108,11 +110,27 @@ pub fn read(request: FileReadRequest) -> Result<RemoteFileRead, String> {
     if !metadata.is_file() {
         return Err("remote_file_not_file".to_string());
     }
-    if metadata.len() > MAX_READ_BYTES {
-        return Err("remote_file_too_large".to_string());
+    if is_video(&path) {
+        return Err("video_preview_unsupported".to_string());
+    }
+    let image = is_image(&path);
+    let max_bytes = if image {
+        MAX_IMAGE_READ_BYTES
+    } else {
+        MAX_TEXT_READ_BYTES
+    };
+    if metadata.len() > max_bytes {
+        return Err(if image {
+            "image_file_too_large".to_string()
+        } else {
+            "remote_file_too_large".to_string()
+        });
+    }
+    if image {
+        validate_image_dimensions(&path)?;
     }
     let bytes = fs::read(&path).map_err(|_| "remote_file_read_failed".to_string())?;
-    let kind = if is_image(&path) { "image" } else { "text" };
+    let kind = if image { "image" } else { "text" };
     let content = if kind == "image" {
         format!(
             "data:{};base64,{}",
@@ -265,8 +283,55 @@ fn is_image(path: &Path) -> bool {
             .and_then(|value| value.to_str())
             .map(str::to_lowercase)
             .as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "webp")
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg")
     )
+}
+
+fn is_video(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_lowercase)
+            .as_deref(),
+        Some(
+            "3g2"
+                | "3gp"
+                | "avi"
+                | "flv"
+                | "m2ts"
+                | "m4v"
+                | "mkv"
+                | "mov"
+                | "mp4"
+                | "mpeg"
+                | "mpg"
+                | "mts"
+                | "ogv"
+                | "ts"
+                | "webm"
+                | "wmv"
+        )
+    )
+}
+
+fn validate_image_dimensions(path: &Path) -> Result<(), String> {
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+    {
+        return Ok(());
+    }
+    let (width, height) =
+        image::image_dimensions(path).map_err(|_| "remote_file_image_invalid".to_string())?;
+    validate_image_pixel_count(width, height)
+}
+
+fn validate_image_pixel_count(width: u32, height: u32) -> Result<(), String> {
+    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
+        return Err("image_dimensions_too_large".to_string());
+    }
+    Ok(())
 }
 
 fn image_mime(path: &Path) -> &'static str {
@@ -279,6 +344,8 @@ fn image_mime(path: &Path) -> &'static str {
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
         _ => "image/png",
     }
 }
@@ -310,7 +377,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 mod tests {
     use super::{
         base64_encode, list, read, search, FileListRequest, FileReadRequest, FileSearchRequest,
-        MAX_ENTRIES, MAX_READ_BYTES, MAX_SEARCH_RESULTS,
+        MAX_ENTRIES, MAX_SEARCH_RESULTS, MAX_TEXT_READ_BYTES,
     };
     use std::fs;
 
@@ -359,7 +426,7 @@ mod tests {
         fs::write(root.path().join("binary.bin"), [0xff, 0xfe]).unwrap();
         fs::write(
             root.path().join("large.txt"),
-            vec![b'a'; MAX_READ_BYTES as usize + 1],
+            vec![b'a'; MAX_TEXT_READ_BYTES as usize + 1],
         )
         .unwrap();
         let root_path = root.path().display().to_string();
@@ -412,13 +479,44 @@ mod tests {
     #[test]
     fn image_read_returns_data_url() {
         let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("pixel.png"), b"png").unwrap();
+        image::save_buffer_with_format(
+            root.path().join("pixel.png"),
+            &[0, 0, 0, 0],
+            1,
+            1,
+            image::ColorType::Rgba8,
+            image::ImageFormat::Png,
+        )
+        .unwrap();
         let result = read(FileReadRequest {
             root_path: root.path().display().to_string(),
             relative_path: "pixel.png".into(),
         })
         .unwrap();
         assert_eq!(result.kind, "image");
-        assert_eq!(result.content, "data:image/png;base64,cG5n");
+        assert!(result.content.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn read_rejects_video_before_reading_content() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("clip.mp4"), b"not-a-video").unwrap();
+        assert_eq!(
+            read(FileReadRequest {
+                root_path: root.path().display().to_string(),
+                relative_path: "clip.mp4".into(),
+            })
+            .unwrap_err(),
+            "video_preview_unsupported"
+        );
+    }
+
+    #[test]
+    fn image_pixel_limit_allows_boundary_and_rejects_excess() {
+        assert!(super::validate_image_pixel_count(4_000, 3_000).is_ok());
+        assert_eq!(
+            super::validate_image_pixel_count(4_000, 3_001).unwrap_err(),
+            "image_dimensions_too_large"
+        );
     }
 }

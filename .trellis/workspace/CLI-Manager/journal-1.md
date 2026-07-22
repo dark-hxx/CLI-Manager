@@ -990,3 +990,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: 文件预览熔断保护
+
+**Date**: 2026-07-22
+**Task**: 文件预览熔断保护
+**Branch**: `master`
+
+### Summary
+
+禁止视频预览，并为本地与 SSH 文件浏览增加 1 MiB 文本、5 MiB 图片和 12 MP 光栅图片读取熔断；补充本地化提示、测试、文档与契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9ca8c923` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

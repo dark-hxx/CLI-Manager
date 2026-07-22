@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import type Database from "@tauri-apps/plugin-sql";
 import { getDb } from "../lib/db";
 import type { CreateSshHostInput, SshHost, SshHostGroup, UpdateSshHostInput } from "../lib/types";
@@ -11,26 +12,6 @@ interface SshHostSchema {
 interface SqliteSchemaRow {
   name: string;
 }
-
-const SSH_HOST_GROUPS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS ssh_host_groups (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    parent_id  TEXT REFERENCES ssh_host_groups(id) ON DELETE SET NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-  )
-`;
-
-const SSH_HOST_GROUPS_PARENT_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_ssh_host_groups_parent
-    ON ssh_host_groups(parent_id, sort_order, name)
-`;
-
-const SSH_HOSTS_GROUP_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_ssh_hosts_group_id
-    ON ssh_hosts(group_id, sort_order, name)
-`;
 
 interface SshHostStore {
   hosts: SshHost[];
@@ -141,57 +122,8 @@ async function getSshHostSchema(db: Database): Promise<SshHostSchema> {
   };
 }
 
-async function addSshHostGroupIdColumn(db: Database): Promise<void> {
-  try {
-    await db.execute("ALTER TABLE ssh_hosts ADD COLUMN group_id TEXT REFERENCES ssh_host_groups(id) ON DELETE SET NULL");
-  } catch {
-    const schema = await getSshHostSchema(db);
-    if (schema.hasGroupId) return;
-    await db.execute("ALTER TABLE ssh_hosts ADD COLUMN group_id TEXT");
-  }
-}
-
-async function migrateLegacySshHostGroups(db: Database): Promise<void> {
-  await db.execute(`
-    INSERT INTO ssh_host_groups (id, name, parent_id, sort_order, created_at)
-    SELECT lower(hex(randomblob(16))), h.group_name, NULL, 0, CAST(strftime('%s', 'now') AS TEXT)
-    FROM ssh_hosts AS h
-    WHERE trim(h.group_name) <> ''
-      AND NOT EXISTS (
-        SELECT 1 FROM ssh_host_groups AS g
-        WHERE g.parent_id IS NULL AND g.name = h.group_name
-      )
-    GROUP BY h.group_name
-  `);
-  await db.execute(`
-    UPDATE ssh_hosts
-    SET group_id = (
-      SELECT id FROM ssh_host_groups
-      WHERE parent_id IS NULL AND name = ssh_hosts.group_name
-      ORDER BY created_at, id LIMIT 1
-    )
-    WHERE trim(group_name) <> ''
-      AND (group_id IS NULL OR trim(group_id) = '')
-  `);
-}
-
 async function repairSshGroupSchema(db: Database): Promise<SshHostSchema> {
-  let schema = await getSshHostSchema(db);
-  if (!schema.hasGroupsTable) {
-    await db.execute(SSH_HOST_GROUPS_TABLE_SQL);
-  }
-  await db.execute(SSH_HOST_GROUPS_PARENT_INDEX_SQL);
-
-  schema = await getSshHostSchema(db);
-  if (!schema.hasGroupId) {
-    await addSshHostGroupIdColumn(db);
-  }
-
-  schema = await getSshHostSchema(db);
-  if (schema.hasGroupId) {
-    await db.execute(SSH_HOSTS_GROUP_INDEX_SQL);
-    await migrateLegacySshHostGroups(db);
-  }
+  await invoke("ssh_db_ensure_group_schema");
   return getSshHostSchema(db);
 }
 
@@ -319,42 +251,31 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
     if (aliases.length === 0) return { imported: 0, skipped: 0 };
 
     const db = await getDb();
-    const schema = await ensureSshGroupSchema(db);
-    await db.execute("BEGIN IMMEDIATE");
-    try {
-      let groupName = "";
-      if (input.group_id) {
-        const groups = await db.select<Array<{ name: string }>>(
-          "SELECT name FROM ssh_host_groups WHERE id = $1",
-          [input.group_id],
-        );
-        if (!groups[0]) throw new Error("ssh_group_parent_not_found");
-        groupName = groups[0].name;
-      }
-      const existingRows = await db.select<Array<{ config_alias: string }>>(
-        "SELECT config_alias FROM ssh_hosts WHERE trim(config_alias) <> ''",
-      );
-      const existing = new Set(existingRows.map((row) => row.config_alias.trim().toLowerCase()));
-      const newAliases = aliases.filter((alias) => !existing.has(alias.toLowerCase()));
-      for (const alias of newAliases) {
-        const host = buildSshHost({
-          name: alias,
-          group_name: groupName,
-          group_id: input.group_id,
-          config_alias: alias,
-          config_file: input.config_file,
-          auth_mode: "ssh_config",
-        });
-        validateSshHost(host);
-        await insertSshHost(db, schema, host);
-      }
-      await db.execute("COMMIT");
-      await get().fetchHosts();
-      return { imported: newAliases.length, skipped: aliases.length - newAliases.length };
-    } catch (error) {
-      await db.execute("ROLLBACK").catch(() => undefined);
-      throw error;
-    }
+    await ensureSshGroupSchema(db);
+    const hosts = aliases.map((alias) => {
+      const host = buildSshHost({
+        name: alias,
+        group_id: input.group_id,
+        config_alias: alias,
+        config_file: input.config_file,
+        auth_mode: "ssh_config",
+      });
+      validateSshHost(host);
+      return {
+        id: host.id,
+        name: host.name,
+        config_alias: host.config_alias,
+        config_file: host.config_file,
+        created_at: host.created_at,
+        updated_at: host.updated_at,
+      };
+    });
+    const result = await invoke<ImportSshConfigHostsResult>("ssh_db_import_config_hosts", {
+      hosts,
+      groupId: input.group_id,
+    });
+    await get().fetchHosts();
+    return result;
   },
 
   updateHost: async (id, input) => {
@@ -424,27 +345,7 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
   },
 
   deleteHost: async (id) => {
-    const db = await getDb();
-    const jumpReferences = await db.select<Array<{ count: number }>>(
-      "SELECT COUNT(*) AS count FROM ssh_hosts WHERE jump_host_id = $1",
-      [id]
-    );
-    if ((jumpReferences[0]?.count ?? 0) > 0) throw new Error("ssh_host_jump_in_use");
-    await db.execute("BEGIN IMMEDIATE");
-    try {
-      await db.execute("UPDATE projects SET ssh_host_id = NULL WHERE ssh_host_id = $1", [id]);
-      await db.execute(
-        `UPDATE ssh_agent_tool_integrations
-         SET host_id = NULL, validation_state = 'unbound', cleanup_state = 'retained'
-         WHERE host_id = $1`,
-        [id],
-      );
-      await db.execute("DELETE FROM ssh_hosts WHERE id = $1", [id]);
-      await db.execute("COMMIT");
-    } catch (error) {
-      await db.execute("ROLLBACK").catch(() => undefined);
-      throw error;
-    }
+    await invoke("ssh_db_delete_host", { id });
     await get().fetchHosts();
   },
 
@@ -469,13 +370,7 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
   deleteGroup: async (id) => {
     const db = await getDb();
     await ensureSshGroupSchema(db);
-    const groups = await db.select<SshHostGroup[]>("SELECT * FROM ssh_host_groups ORDER BY sort_order, name");
-    const group = groups.find((item) => item.id === id);
-    if (!group) return;
-    await db.execute("UPDATE ssh_host_groups SET parent_id = $1 WHERE parent_id = $2", [group.parent_id, id]);
-    const parentName = group.parent_id ? groups.find((item) => item.id === group.parent_id)?.name ?? "" : "";
-    await db.execute("UPDATE ssh_hosts SET group_id = $1, group_name = $2 WHERE group_id = $3", [group.parent_id, parentName, id]);
-    await db.execute("DELETE FROM ssh_host_groups WHERE id = $1", [id]);
+    await invoke("ssh_db_delete_group", { id });
     await get().fetchHosts();
   },
 }));

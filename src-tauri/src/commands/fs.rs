@@ -13,8 +13,9 @@ use crate::file_watcher::FileWatcherBridge;
 use crate::shell_resolver::silent_command;
 use crate::text_encoding::{decode_text, encode_text};
 
-const TEXT_FILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
-const IMAGE_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024;
+const TEXT_FILE_MAX_BYTES: u64 = 1024 * 1024;
+const IMAGE_FILE_MAX_BYTES: u64 = 5 * 1024 * 1024;
+const IMAGE_MAX_PIXELS: u64 = 12_000_000;
 const FILE_SEARCH_MAX_RESULTS: usize = 1000;
 const CONTENT_SEARCH_MAX_RESULTS: usize = 200;
 const CONTENT_SEARCH_MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -466,9 +467,10 @@ pub async fn file_read_image(
             return Err("not_file".into());
         }
         if metadata.len() > IMAGE_FILE_MAX_BYTES {
-            return Err("file_too_large".into());
+            return Err("image_file_too_large".into());
         }
         let mime_type = image_mime_type(&path).ok_or_else(|| "unsupported_image".to_string())?;
+        validate_image_dimensions(&path)?;
         let bytes = fs::read(&path).map_err(|err| format!("read_file_failed: {err}"))?;
         Ok(ImageFilePayload {
             data_base64: general_purpose::STANDARD.encode(bytes),
@@ -515,6 +517,9 @@ fn read_text_file_bytes(root_path: &str, relative_path: &str) -> Result<(Vec<u8>
     let metadata = fs::metadata(&path).map_err(|err| format!("metadata_failed: {err}"))?;
     if !metadata.is_file() {
         return Err("not_file".into());
+    }
+    if is_video_path(&path) {
+        return Err("video_preview_unsupported".into());
     }
     if metadata.len() > TEXT_FILE_MAX_BYTES {
         return Err("file_too_large".into());
@@ -1038,6 +1043,53 @@ fn image_mime_type(path: &Path) -> Option<&'static str> {
     }
 }
 
+fn is_video_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some(
+            "3g2"
+                | "3gp"
+                | "avi"
+                | "flv"
+                | "m2ts"
+                | "m4v"
+                | "mkv"
+                | "mov"
+                | "mp4"
+                | "mpeg"
+                | "mpg"
+                | "mts"
+                | "ogv"
+                | "ts"
+                | "webm"
+                | "wmv"
+        )
+    )
+}
+
+fn validate_image_dimensions(path: &Path) -> Result<(), String> {
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+    {
+        return Ok(());
+    }
+    let (width, height) =
+        image::image_dimensions(path).map_err(|_| "unsupported_image".to_string())?;
+    validate_image_pixel_count(width, height)
+}
+
+fn validate_image_pixel_count(width: u32, height: u32) -> Result<(), String> {
+    if u64::from(width) * u64::from(height) > IMAGE_MAX_PIXELS {
+        return Err("image_dimensions_too_large".into());
+    }
+    Ok(())
+}
+
 fn search_relative_from_root(root: &Path, path: &Path) -> Result<String, String> {
     path.strip_prefix(root)
         .map_err(|err| format!("strip_prefix_failed: {err}"))
@@ -1231,6 +1283,24 @@ fn collect_content_matches_in_file(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn preview_limits_reject_video_and_oversized_image_dimensions() {
+        assert!(validate_image_pixel_count(4_000, 3_000).is_ok());
+        assert_eq!(
+            validate_image_pixel_count(4_000, 3_001).unwrap_err(),
+            "image_dimensions_too_large"
+        );
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("clip.mp4"), b"not-a-video").unwrap();
+        assert_eq!(
+            read_text_file_bytes(&root.to_string_lossy(), "clip.mp4").unwrap_err(),
+            "video_preview_unsupported"
+        );
+    }
 
     #[test]
     fn validate_relative_path_accepts_root_and_nested_paths() {

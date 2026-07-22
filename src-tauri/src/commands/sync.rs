@@ -9,6 +9,149 @@ use crate::sync::{
 use crate::webdav::WebDavConfig;
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
+use serde_json::Value;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+use sqlx::{Connection, SqliteConnection};
+use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::sync::Mutex as AsyncMutex;
+
+const BACKUP_RESTORE_MAX_STATEMENTS: usize = 1_000;
+const BACKUP_RESTORE_MAX_PARAMS_PER_STATEMENT: usize = 30_000;
+const BACKUP_RESTORE_DELETE_STATEMENTS: [&str; 5] = [
+    "DELETE FROM command_templates",
+    "DELETE FROM worktrees",
+    "DELETE FROM projects",
+    "DELETE FROM groups",
+    "DELETE FROM model_prices",
+];
+const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 5] = [
+    ("groups", "id,name,parent_id,sort_order,created_at"),
+    (
+        "projects",
+        "id,name,path,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,created_at,updated_at",
+    ),
+    (
+        "worktrees",
+        "id,project_id,name,branch,path,base_branch,deps_prompt_dismissed,provider_overrides,status,created_at,updated_at",
+    ),
+    (
+        "command_templates",
+        "id,project_id,name,command,description,sort_order",
+    ),
+    (
+        "model_prices",
+        "model,input_per_1m,output_per_1m,cache_read_per_1m,cache_creation_per_1m,source,source_model_id,raw_json,updated_at_ms,synced_at_ms",
+    ),
+];
+
+static BACKUP_DATABASE_RESTORE_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupDatabaseStatement {
+    sql: String,
+    #[serde(default)]
+    values: Vec<Value>,
+}
+
+fn backup_database_restore_lock() -> &'static AsyncMutex<()> {
+    BACKUP_DATABASE_RESTORE_LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+fn validate_backup_database_statement(statement: &BackupDatabaseStatement) -> Result<(), String> {
+    let sql = statement.sql.trim();
+    if sql.is_empty()
+        || sql.contains(';')
+        || statement.values.len() > BACKUP_RESTORE_MAX_PARAMS_PER_STATEMENT
+    {
+        return Err("backup_restore_database_statement_invalid".to_string());
+    }
+    if BACKUP_RESTORE_DELETE_STATEMENTS.contains(&sql) {
+        return if statement.values.is_empty() {
+            Ok(())
+        } else {
+            Err("backup_restore_database_statement_invalid".to_string())
+        };
+    }
+    let allowed = BACKUP_RESTORE_INSERT_COLUMNS
+        .iter()
+        .any(|(table, columns)| {
+            let prefix = format!("INSERT INTO {table} ({columns}) VALUES ");
+            sql.strip_prefix(&prefix).is_some_and(|values_clause| {
+                !values_clause.is_empty()
+                    && values_clause
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || b"$(),".contains(&byte))
+            })
+        });
+    if !allowed || statement.values.is_empty() {
+        return Err("backup_restore_database_statement_invalid".to_string());
+    }
+    Ok(())
+}
+
+async fn execute_backup_database_restore(
+    conn: &mut SqliteConnection,
+    statements: &[BackupDatabaseStatement],
+) -> Result<(), String> {
+    if statements.is_empty() || statements.len() > BACKUP_RESTORE_MAX_STATEMENTS {
+        return Err("backup_restore_database_statement_invalid".to_string());
+    }
+    for statement in statements {
+        validate_backup_database_statement(statement)?;
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|error| format!("backup_restore_database_begin_failed: {error}"))?;
+    let result = async {
+        for statement in statements {
+            let mut query = sqlx::query(statement.sql.trim());
+            for value in &statement.values {
+                query =
+                    match value {
+                        Value::Null => query.bind(None::<String>),
+                        Value::Bool(value) => query.bind(*value),
+                        Value::Number(value) => {
+                            if let Some(value) = value.as_i64() {
+                                query.bind(value)
+                            } else if let Some(value) = value.as_u64() {
+                                query.bind(i64::try_from(value).map_err(|_| {
+                                    "backup_restore_database_value_invalid".to_string()
+                                })?)
+                            } else {
+                                query.bind(value.as_f64().ok_or_else(|| {
+                                    "backup_restore_database_value_invalid".to_string()
+                                })?)
+                            }
+                        }
+                        Value::String(value) => query.bind(value),
+                        Value::Array(_) | Value::Object(_) => {
+                            return Err("backup_restore_database_value_invalid".to_string())
+                        }
+                    };
+            }
+            query
+                .execute(&mut *conn)
+                .await
+                .map_err(|error| format!("backup_restore_database_execute_failed: {error}"))?;
+        }
+        Ok(())
+    }
+    .await;
+
+    if result.is_ok() {
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .map_err(|error| format!("backup_restore_database_commit_failed: {error}"))?;
+    } else {
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+    }
+    result
+}
 
 #[derive(serde::Deserialize)]
 pub struct SyncConfigInput {
@@ -314,6 +457,33 @@ pub async fn backup_restore_safety_clear() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn backup_restore_database(
+    statements: Vec<BackupDatabaseStatement>,
+) -> Result<(), String> {
+    let _restore_guard = backup_database_restore_lock().lock().await;
+    let path = crate::app_paths::db_path()?;
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(15));
+    let mut conn = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|error| format!("backup_restore_database_open_failed: {error}"))?;
+    let restore_result = execute_backup_database_restore(&mut conn, &statements).await;
+    let close_result = conn
+        .close()
+        .await
+        .map_err(|error| format!("backup_restore_database_close_failed: {error}"));
+    match (restore_result, close_result) {
+        (Err(error), _) => Err(error),
+        (Ok(()), result) => result,
+    }
+}
+
+#[tauri::command]
 pub async fn sync_save_password(password: String) -> Result<(), String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
@@ -355,4 +525,127 @@ pub async fn sync_delete_password() -> Result<(), String> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn restore_test_connection() -> SqliteConnection {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id TEXT,
+                sort_order INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO groups(id, name, parent_id, sort_order, created_at)
+             VALUES ('old', 'Old', NULL, 0, '1')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        conn
+    }
+
+    fn delete_groups_statement() -> BackupDatabaseStatement {
+        BackupDatabaseStatement {
+            sql: "DELETE FROM groups".to_string(),
+            values: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn database_restore_executes_statements_in_one_transaction() {
+        let mut conn = restore_test_connection().await;
+        let statements = [
+            delete_groups_statement(),
+            BackupDatabaseStatement {
+                sql: "INSERT INTO groups (id,name,parent_id,sort_order,created_at) VALUES ($1,$2,$3,$4,$5)"
+                    .to_string(),
+                values: vec![
+                    Value::String("new".to_string()),
+                    Value::String("New".to_string()),
+                    Value::Null,
+                    Value::Number(1.into()),
+                    Value::String("2".to_string()),
+                ],
+            },
+        ];
+
+        execute_backup_database_restore(&mut conn, &statements)
+            .await
+            .unwrap();
+
+        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+            "SELECT id, name, sort_order, typeof(sort_order) FROM groups ORDER BY id",
+        )
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![(
+                "new".to_string(),
+                "New".to_string(),
+                1,
+                "integer".to_string(),
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_restore_rolls_back_all_statements_on_failure() {
+        let mut conn = restore_test_connection().await;
+        let statements = [
+            delete_groups_statement(),
+            BackupDatabaseStatement {
+                sql: "INSERT INTO groups (id,name,parent_id,sort_order,created_at) VALUES ($1,$2,$3,$4,$5),($6,$7,$8,$9,$10)"
+                    .to_string(),
+                values: vec![
+                    Value::String("duplicate".to_string()),
+                    Value::String("First".to_string()),
+                    Value::Null,
+                    Value::Number(1.into()),
+                    Value::String("2".to_string()),
+                    Value::String("duplicate".to_string()),
+                    Value::String("Second".to_string()),
+                    Value::Null,
+                    Value::Number(2.into()),
+                    Value::String("3".to_string()),
+                ],
+            },
+        ];
+
+        let error = execute_backup_database_restore(&mut conn, &statements)
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("backup_restore_database_execute_failed:"));
+        let name: String = sqlx::query_scalar("SELECT name FROM groups WHERE id = 'old'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(name, "Old");
+    }
+
+    #[tokio::test]
+    async fn database_restore_rejects_statements_outside_owned_tables() {
+        let mut conn = restore_test_connection().await;
+        let statements = [BackupDatabaseStatement {
+            sql: "DELETE FROM projects; DELETE FROM ssh_hosts".to_string(),
+            values: Vec::new(),
+        }];
+
+        let error = execute_backup_database_restore(&mut conn, &statements)
+            .await
+            .unwrap_err();
+        assert_eq!(error, "backup_restore_database_statement_invalid");
+    }
 }

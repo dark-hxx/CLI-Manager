@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../lib/db";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import type {
@@ -87,29 +88,12 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
       const validationError = validateSshToolConfigRoot(normalizedRoots[source]);
       if (validationError) throw new Error(validationError);
     }
-    const db = await getDb();
-    await db.execute("BEGIN IMMEDIATE");
-    try {
-      for (const source of ["claude", "codex"] as const) {
-        const normalizedRoot = normalizedRoots[source];
-        if (!normalizedRoot) {
-          await db.execute("DELETE FROM ssh_host_tool_preferences WHERE host_id = $1 AND source = $2", [normalizedHostId, source]);
-          continue;
-        }
-        await db.execute(
-          `INSERT INTO ssh_host_tool_preferences (host_id, source, configured_root, updated_at)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT(host_id, source) DO UPDATE SET
-             configured_root = excluded.configured_root,
-             updated_at = excluded.updated_at`,
-          [normalizedHostId, source, normalizedRoot, Date.now().toString()],
-        );
-      }
-      await db.execute("COMMIT");
-    } catch (error) {
-      await db.execute("ROLLBACK").catch(() => undefined);
-      throw error;
-    }
+    await invoke("ssh_db_save_host_preferences", {
+      hostId: normalizedHostId,
+      claudeRoot: normalizedRoots.claude,
+      codexRoot: normalizedRoots.codex,
+      updatedAt: Date.now().toString(),
+    });
     await get().fetchAll();
   },
 
@@ -227,189 +211,23 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
     if (!normalizedHostId) throw new Error("ssh_host_not_found");
     if (!normalizedUser) throw new Error("ssh_user_required");
     if (report.source !== "claude" && report.source !== "codex") throw new Error("hook_source_invalid");
-    const db = await getDb();
-    const existing = integrationId
-      ? await db.select<Array<{ integration_id: string; canonical_root: string; hook_record_json: string; history_source_instance_id: string }>>(
-        `SELECT integration_id, canonical_root, hook_record_json, history_source_instance_id
-         FROM ssh_agent_tool_integrations WHERE integration_id = $1 AND host_id = $2 LIMIT 1`,
-        [integrationId, normalizedHostId],
-      )
-      : scopeKind === "projectOverride"
-        ? await db.select<Array<{ integration_id: string; canonical_root: string; hook_record_json: string; history_source_instance_id: string }>>(
-          `SELECT integration_id, canonical_root, hook_record_json, history_source_instance_id
-           FROM ssh_agent_tool_integrations
-           WHERE host_id = $1 AND source = $2 AND scope_kind = 'projectOverride' AND configured_root = $3
-           LIMIT 1`,
-          [normalizedHostId, report.source, configuredRoot.trim()],
-        )
-        : await db.select<Array<{ integration_id: string; canonical_root: string; hook_record_json: string; history_source_instance_id: string }>>(
-      `SELECT integration_id, canonical_root, hook_record_json, history_source_instance_id FROM ssh_agent_tool_integrations
-       WHERE host_id = $1 AND source = $2 AND scope_kind = 'hostPrimary'
-       LIMIT 1`,
-      [normalizedHostId, report.source],
-    );
-    if (integrationId && !existing[0]) throw new Error("ssh_hook_integration_not_found");
-    let persistedReport = report;
-    let previousHookRecordJson = existing[0]?.canonical_root === report.canonicalConfigRoot
-      ? existing[0].hook_record_json
-      : "";
-    if (report.action === "inspect" && !report.installation && !previousHookRecordJson) {
-      const sameRoot = await db.select<Array<{ hook_record_json: string }>>(
-        `SELECT hook_record_json FROM ssh_agent_tool_integrations
-         WHERE host_id = $1 AND source = $2 AND canonical_root = $3
-         LIMIT 1`,
-        [normalizedHostId, report.source, report.canonicalConfigRoot],
-      );
-      previousHookRecordJson = sameRoot[0]?.hook_record_json ?? "";
-    }
-    if (report.action === "inspect" && !report.installation && previousHookRecordJson) {
-      try {
-        const previous = JSON.parse(previousHookRecordJson) as SshRemoteHookConfigReport;
-        if (previous.installation && previous.canonicalConfigRoot === report.canonicalConfigRoot) {
-          persistedReport = { ...report, installation: previous.installation };
-        }
-      } catch {
-        // A fresh validated report replaces malformed local metadata.
-      }
-    }
-    const values = [
-      report.installationId,
-      report.remoteMachineId,
-      normalizedUser,
-      configuredRoot.trim(),
-      report.canonicalConfigRoot,
-      report.configRootHash,
-      JSON.stringify(persistedReport),
-      Date.now().toString(),
-    ];
-    if (integrationId && existing[0]) {
-      await db.execute(
-        `UPDATE ssh_agent_tool_integrations SET
-           installation_id = $1, remote_machine_id = $2, ssh_user = $3,
-           configured_root = $4, canonical_root = $5, config_root_hash = $6,
-           hook_record_json = $7, validation_state = 'valid',
-           cleanup_state = $8, checked_at = $9
-         WHERE integration_id = $10`,
-        [
-          report.installationId,
-          report.remoteMachineId,
-          normalizedUser,
-          configuredRoot.trim(),
-          report.canonicalConfigRoot,
-          report.configRootHash,
-          JSON.stringify(persistedReport),
-          report.status === "notInstalled" ? "retained" : "cleanupAvailable",
-          Date.now().toString(),
-          integrationId,
-        ],
-      );
-    } else if (existing[0]) {
-      let managedEntries = 0;
-      try {
-        managedEntries = Number((JSON.parse(existing[0].hook_record_json) as { managedEntries?: number }).managedEntries ?? 0);
-      } catch {
-        managedEntries = 0;
-      }
-      const retainExisting = existing[0].canonical_root
-        && existing[0].canonical_root !== report.canonicalConfigRoot
-        && (managedEntries > 0 || Boolean(existing[0].history_source_instance_id));
-      if (retainExisting) {
-        await db.execute("BEGIN IMMEDIATE");
-        try {
-          await db.execute(
-            `UPDATE ssh_agent_tool_integrations
-             SET scope_kind = 'retainedRoot', cleanup_state = 'cleanupAvailable', checked_at = $1
-             WHERE integration_id = $2`,
-            [Date.now().toString(), existing[0].integration_id],
-          );
-          await db.execute(
-            `INSERT INTO ssh_agent_tool_integrations (
-               integration_id, host_id, installation_id, remote_machine_id, ssh_user,
-               source, scope_kind, configured_root, canonical_root, config_root_hash,
-               hook_record_json, validation_state, cleanup_state, checked_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'valid', 'active', $12)`,
-            [
-              crypto.randomUUID(), normalizedHostId, report.installationId, report.remoteMachineId,
-              normalizedUser, report.source, scopeKind, configuredRoot.trim(), report.canonicalConfigRoot,
-              report.configRootHash, JSON.stringify(persistedReport), Date.now().toString(),
-            ],
-          );
-          await db.execute("COMMIT");
-        } catch (error) {
-          await db.execute("ROLLBACK").catch(() => undefined);
-          throw error;
-        }
-      } else {
-        await db.execute(
-          `UPDATE ssh_agent_tool_integrations SET
-             installation_id = $1,
-             remote_machine_id = $2,
-             ssh_user = $3,
-             configured_root = $4,
-             canonical_root = $5,
-             config_root_hash = $6,
-             hook_record_json = $7,
-             validation_state = 'valid',
-             cleanup_state = 'active',
-             checked_at = $8
-           WHERE integration_id = $9`,
-          [...values, existing[0].integration_id],
-        );
-      }
-    } else {
-      await db.execute(
-        `INSERT INTO ssh_agent_tool_integrations (
-           integration_id, host_id, installation_id, remote_machine_id, ssh_user,
-           source, scope_kind, configured_root, canonical_root, config_root_hash,
-           hook_record_json, validation_state, cleanup_state, checked_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'valid', 'active', $12)`,
-        [
-          crypto.randomUUID(),
-          normalizedHostId,
-          report.installationId,
-          report.remoteMachineId,
-          normalizedUser,
-          report.source,
-          scopeKind,
-          configuredRoot.trim(),
-          report.canonicalConfigRoot,
-          report.configRootHash,
-          JSON.stringify(persistedReport),
-          Date.now().toString(),
-        ],
-      );
-    }
-    const mirrors = await db.select<Array<{ integration_id: string; configured_root: string }>>(
-      `SELECT integration_id, configured_root FROM ssh_agent_tool_integrations
-       WHERE host_id = $1 AND source = $2 AND canonical_root = $3`,
-      [normalizedHostId, report.source, report.canonicalConfigRoot],
-    );
-    await db.execute("BEGIN IMMEDIATE");
-    try {
-      const checkedAt = Date.now().toString();
-      for (const mirror of mirrors) {
-        await db.execute(
-          `UPDATE ssh_agent_tool_integrations SET
-             installation_id = $1, remote_machine_id = $2, ssh_user = $3,
-             config_root_hash = $4, hook_record_json = $5,
-             validation_state = 'valid', checked_at = $6
-           WHERE integration_id = $7`,
-          [
-            report.installationId,
-            report.remoteMachineId,
-            normalizedUser,
-            report.configRootHash,
-            JSON.stringify({ ...persistedReport, configuredConfigRoot: mirror.configured_root }),
-            checkedAt,
-            mirror.integration_id,
-          ],
-        );
-      }
-      await db.execute("COMMIT");
-    } catch (error) {
-      await db.execute("ROLLBACK").catch(() => undefined);
-      throw error;
-    }
+    await invoke("ssh_db_record_hook_report", {
+      input: {
+        hostId: normalizedHostId,
+        sshUser: normalizedUser,
+        configuredRoot: configuredRoot.trim(),
+        source: report.source,
+        installationId: report.installationId,
+        remoteMachineId: report.remoteMachineId,
+        canonicalConfigRoot: report.canonicalConfigRoot,
+        configRootHash: report.configRootHash,
+        action: report.action,
+        status: report.status,
+        report,
+        integrationId: integrationId ?? null,
+        scopeKind,
+      },
+    });
     await get().fetchAll();
   },
 
