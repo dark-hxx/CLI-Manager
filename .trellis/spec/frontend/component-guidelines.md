@@ -1486,3 +1486,27 @@ Removing `scrollOnEraseInDisplay: true` is a worse regression: Codex repaints vi
 ```
 
 **Tests**: Run `npx tsc --noEmit`; manually verify at least one light palette and one dark theme. In the light theme, check project-tree selection, terminal tabs, toolbar buttons, and terminal side-panel buttons are distinguishable at a glance without changing layout density.
+
+### Convention: Project CLI argument history records after every eligible successful save
+
+**What**: `ConfigModal` must use `CliArgsHistoryField` for both new and edit forms whenever a CLI tool is selected. Its query filters the current tool's complete history before applying the 10-item limit. After `createProject` or `updateProject` succeeds, record a non-empty `trimmedCliArgs` through the shared `!isClone` path; cloned projects remain excluded.
+
+**Why**: Separating history recording into only the create branch makes an edited project's arguments unavailable when the user subsequently creates another project. Recording after the persistence branch also prevents a failed save from inflating usage counts.
+
+**Correct**:
+
+```tsx
+if (!isClone && trimmedCliArgs) {
+  await recordCliArgsHistory(trimmedCliTool, trimmedCliArgs);
+}
+```
+
+**Wrong**:
+
+```tsx
+if (!isEdit && !isClone && trimmedCliArgs) {
+  await recordCliArgsHistory(trimmedCliTool, trimmedCliArgs);
+}
+```
+
+**Tests**: Run `npx tsc --noEmit` and `node --test scripts/cliArgsHistory.test.mjs`; assert the shared record block occurs after the edit/create persistence branch and before `onClose()`, and a query can find an item outside the unfiltered top 10 while its matching result remains limited to 10 entries.
