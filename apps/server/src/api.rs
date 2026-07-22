@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use cli_manager_web_protocol::{
     AuthStatusResponse, BrowserEventPayload, DeviceView, HistorySessionSummary, OperationStatus,
-    OperationView, ServerToDeviceFrame,
+    OperationView, ServerToDeviceFrame, WorkspaceSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -215,6 +215,18 @@ pub async fn list_devices(
     }))
 }
 
+pub async fn remove_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<String>,
+) -> Result<Json<OkResponse>, AppError> {
+    let user = require_user(&state, &headers).await?;
+    if !state.storage.remove_device_for_user(&user.id, &device_id).await? {
+        return Err(AppError::not_found("device_not_found", "device not found"));
+    }
+    Ok(Json(OkResponse { ok: true }))
+}
+
 pub async fn get_device_wallpaper(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -340,6 +352,7 @@ pub struct HistoryQuery {
 pub struct HistoryResponse {
     items: Vec<HistorySessionSummary>,
     next_offset: Option<u32>,
+    workspace: Option<WorkspaceSnapshot>,
 }
 
 pub async fn list_history(
@@ -362,7 +375,15 @@ pub async fn list_history(
         .list_history(&user.id, query.device_id.as_deref(), limit, offset)
         .await?;
     let next_offset = (items.len() == limit as usize).then_some(offset + limit);
-    Ok(Json(HistoryResponse { items, next_offset }))
+    let workspace = match query.device_id.as_deref() {
+        Some(device_id) => state.storage.workspace_snapshot(device_id).await?,
+        None => None,
+    };
+    Ok(Json(HistoryResponse {
+        items,
+        next_offset,
+        workspace,
+    }))
 }
 
 #[derive(Deserialize)]

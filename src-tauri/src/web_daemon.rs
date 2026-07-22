@@ -6,7 +6,7 @@
 
 use cli_manager_web_protocol::{
     DeviceToServerFrame, HistorySessionSummary, OperationError, OperationStatus, OperationView,
-    ServerToDeviceFrame, DEVICE_PROTOCOL_VERSION,
+    ServerToDeviceFrame, WorkspaceSnapshot, DEVICE_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +25,7 @@ use tungstenite::{connect, Error as WsError, Message, WebSocket};
 use uuid::Uuid;
 
 const PROFILE_FILE_NAME: &str = "web-device.json";
+const DEV_PROFILE_FILE_NAME: &str = "web-device.dev.json";
 const TOKEN_ACCOUNT_PREFIX: &str = "web-device-token:";
 const INFO_FILE_NAME: &str = "web-daemon.json";
 const DEV_INFO_FILE_NAME: &str = "web-daemon.dev.json";
@@ -53,7 +54,12 @@ pub struct DaemonInfo {
 #[serde(rename_all = "camelCase")]
 struct Profile {
     server_url: String,
-    device_id: String,
+    #[serde(alias = "deviceId")]
+    client_id: String,
+    #[serde(default)]
+    machine_id: String,
+    #[serde(default)]
+    client_kind: String,
     name: String,
     #[serde(default)]
     auto_start: bool,
@@ -100,6 +106,7 @@ pub enum Request {
     TakeOperations,
     PublishHistory {
         sessions: Vec<HistorySessionSummary>,
+        workspace: WorkspaceSnapshot,
     },
     OperationAccepted {
         operation_id: String,
@@ -309,11 +316,18 @@ impl DaemonState {
                 upload_wallpaper,
             } => {
                 let existing = load_profile()?;
+                let client_id = existing.as_ref().map(|item| item.client_id.clone());
+                let machine_id = existing
+                    .as_ref()
+                    .map(|item| item.machine_id.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or(crate::app_paths::machine_id()?);
                 let profile = Profile {
                     server_url: normalize_server_url(&server_url)?,
-                    device_id: existing
-                        .map(|item| item.device_id)
-                        .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                    client_id: client_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                    machine_id,
+                    client_kind: client_kind().to_string(),
                     name,
                     auto_start,
                     upload_wallpaper,
@@ -370,7 +384,10 @@ impl DaemonState {
                 )
                 .unwrap(),
             )),
-            Request::PublishHistory { sessions } => {
+            Request::PublishHistory {
+                sessions,
+                workspace,
+            } => {
                 let sequence = {
                     let mut runtime = self
                         .runtime
@@ -379,7 +396,11 @@ impl DaemonState {
                     runtime.history_sequence = runtime.history_sequence.saturating_add(1);
                     runtime.history_sequence
                 };
-                self.queue(DeviceToServerFrame::HistorySnapshot { sequence, sessions })?;
+                self.queue(DeviceToServerFrame::HistorySnapshot {
+                    sequence,
+                    sessions,
+                    workspace: Some(workspace),
+                })?;
                 Ok(None)
             }
             Request::OperationAccepted { operation_id } => {
@@ -513,7 +534,7 @@ impl DaemonState {
         let profile =
             load_profile()?.ok_or_else(|| "web device profile is not configured".to_string())?;
         let url = normalize_server_url(&profile.server_url)?;
-        let token = crate::credential_store::get(&token_account(&profile.device_id))?;
+        let token = crate::credential_store::get(&token_account(&profile.client_id))?;
         let (mut socket, _) =
             connect(url.as_str()).map_err(|err| format!("connect web device failed: {err}"))?;
         set_read_timeout(&mut socket)?;
@@ -522,7 +543,10 @@ impl DaemonState {
             &mut socket,
             &DeviceToServerFrame::Hello {
                 protocol_version: DEVICE_PROTOCOL_VERSION,
-                device_id: profile.device_id.clone(),
+                device_id: profile.client_id.clone(),
+                client_id: Some(profile.client_id.clone()),
+                machine_id: Some(profile.machine_id.clone()),
+                client_kind: Some(profile.client_kind.clone()),
                 device_token: token,
                 name: profile.name.clone(),
                 platform: env::consts::OS.to_string(),
@@ -608,7 +632,7 @@ impl DaemonState {
             ServerToDeviceFrame::PairingClaimed { device_token, .. } => {
                 let profile = load_profile()?
                     .ok_or_else(|| "web device profile is not configured".to_string())?;
-                crate::credential_store::set(&token_account(&profile.device_id), &device_token)?;
+                crate::credential_store::set(&token_account(&profile.client_id), &device_token)?;
                 if let Ok(mut runtime) = self.runtime.lock() {
                     runtime.paired = true;
                     runtime.pairing_code = None;
@@ -669,8 +693,8 @@ impl DaemonState {
             .unwrap_or(false);
         self.stop();
         if let Some(mut profile) = load_profile()? {
-            crate::credential_store::delete(&token_account(&profile.device_id))?;
-            profile.device_id = Uuid::new_v4().to_string();
+            crate::credential_store::delete(&token_account(&profile.client_id))?;
+            profile.client_id = Uuid::new_v4().to_string();
             save_profile(&profile)?;
         }
         if let Ok(mut operations) = self.operations.lock() {
@@ -783,25 +807,29 @@ fn set_read_timeout(socket: &mut DeviceSocket) -> Result<(), String> {
 }
 
 fn load_profile() -> Result<Option<Profile>, String> {
-    let path = crate::app_paths::cli_manager_data_dir()?.join(PROFILE_FILE_NAME);
+    let path = crate::app_paths::cli_manager_data_dir()?.join(profile_file_name());
     if !path.exists() {
         return Ok(None);
     }
     let raw =
         fs::read_to_string(path).map_err(|err| format!("read web device profile failed: {err}"))?;
-    serde_json::from_str(&raw)
-        .map(Some)
-        .map_err(|err| format!("parse web device profile failed: {err}"))
+    let mut profile: Profile = serde_json::from_str(&raw)
+        .map_err(|err| format!("parse web device profile failed: {err}"))?;
+    if profile.machine_id.trim().is_empty() {
+        profile.machine_id = crate::app_paths::machine_id()?;
+    }
+    profile.client_kind = client_kind().to_string();
+    Ok(Some(profile))
 }
 
 fn save_profile(profile: &Profile) -> Result<(), String> {
-    let path = crate::app_paths::cli_manager_data_dir()?.join(PROFILE_FILE_NAME);
+    let path = crate::app_paths::cli_manager_data_dir()?.join(profile_file_name());
     let parent = path
         .parent()
         .ok_or_else(|| "invalid web device profile path".to_string())?;
     fs::create_dir_all(parent)
         .map_err(|err| format!("create web device profile directory failed: {err}"))?;
-    let temporary = parent.join(format!(".{PROFILE_FILE_NAME}.{}.tmp", Uuid::new_v4()));
+    let temporary = parent.join(format!(".{}.{}.tmp", profile_file_name(), Uuid::new_v4()));
     fs::write(
         &temporary,
         serde_json::to_vec_pretty(profile).map_err(|err| err.to_string())?,
@@ -811,6 +839,22 @@ fn save_profile(profile: &Profile) -> Result<(), String> {
         fs::remove_file(&path).map_err(|err| err.to_string())?;
     }
     fs::rename(temporary, path).map_err(|err| err.to_string())
+}
+
+fn profile_file_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        DEV_PROFILE_FILE_NAME
+    } else {
+        PROFILE_FILE_NAME
+    }
+}
+
+fn client_kind() -> &'static str {
+    if cfg!(debug_assertions) {
+        "development"
+    } else {
+        "release"
+    }
 }
 
 fn normalize_server_url(raw: &str) -> Result<String, String> {
@@ -990,7 +1034,9 @@ mod tests {
             paired: true,
             profile: Some(Profile {
                 server_url: "wss://example.com/ws/device".into(),
-                device_id: "device-1".into(),
+                client_id: "client-1".into(),
+                machine_id: "machine-1".into(),
+                client_kind: "development".into(),
                 name: "Desktop".into(),
                 auto_start: true,
                 upload_wallpaper: true,

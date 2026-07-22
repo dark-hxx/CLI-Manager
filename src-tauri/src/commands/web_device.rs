@@ -1,6 +1,6 @@
 use cli_manager_web_protocol::{
     DeviceToServerFrame, HistorySessionSummary, OperationError, OperationStatus, OperationView,
-    ServerToDeviceFrame, DEVICE_PROTOCOL_VERSION,
+    ServerToDeviceFrame, WorkspaceSnapshot, DEVICE_PROTOCOL_VERSION,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::shell_resolver::silent_command;
 
 const PROFILE_FILE_NAME: &str = "web-device.json";
+const DEV_PROFILE_FILE_NAME: &str = "web-device.dev.json";
 const TOKEN_ACCOUNT_PREFIX: &str = "web-device-token:";
 const STATUS_EVENT: &str = "web-device-status-changed";
 const OPERATION_EVENT: &str = "web-device-operation-ready";
@@ -37,7 +38,12 @@ const PAIRING_LIFETIME_MS: i64 = 5 * 60 * 1000;
 #[serde(rename_all = "camelCase")]
 pub struct WebDeviceProfile {
     pub server_url: String,
-    pub device_id: String,
+    #[serde(alias = "deviceId")]
+    pub client_id: String,
+    #[serde(default)]
+    pub machine_id: String,
+    #[serde(default)]
+    pub client_kind: String,
     pub name: String,
     #[serde(default)]
     pub auto_start: bool,
@@ -83,6 +89,7 @@ pub struct PairingResult {
 #[serde(rename_all = "camelCase")]
 pub struct PublishHistoryRequest {
     pub sessions: Vec<HistorySessionSummary>,
+    pub workspace: WorkspaceSnapshot,
 }
 
 #[derive(Debug, Deserialize)]
@@ -316,7 +323,7 @@ impl WebDeviceManager {
         let profile =
             load_profile()?.ok_or_else(|| "web device profile is not configured".to_string())?;
         let url = normalize_server_url(&profile.server_url)?;
-        let token = crate::credential_store::get(&token_account(&profile.device_id))?;
+        let token = crate::credential_store::get(&token_account(&profile.client_id))?;
         let (mut socket, _) =
             connect(url.as_str()).map_err(|err| format!("connect web device failed: {err}"))?;
         set_read_timeout(&mut socket)?;
@@ -325,7 +332,10 @@ impl WebDeviceManager {
             &mut socket,
             &DeviceToServerFrame::Hello {
                 protocol_version: DEVICE_PROTOCOL_VERSION,
-                device_id: profile.device_id.clone(),
+                device_id: profile.client_id.clone(),
+                client_id: Some(profile.client_id.clone()),
+                machine_id: Some(profile.machine_id.clone()),
+                client_kind: Some(profile.client_kind.clone()),
                 device_token: token,
                 name: profile.name.clone(),
                 platform: env::consts::OS.to_string(),
@@ -416,7 +426,7 @@ impl WebDeviceManager {
             }
             ServerToDeviceFrame::PairingOffered { .. } => {}
             ServerToDeviceFrame::PairingClaimed { device_token, .. } => {
-                crate::credential_store::set(&token_account(&profile.device_id), &device_token)?;
+                crate::credential_store::set(&token_account(&profile.client_id), &device_token)?;
                 if let Ok(mut runtime) = self.runtime.lock() {
                     runtime.paired = true;
                     runtime.pairing_code = None;
@@ -425,7 +435,7 @@ impl WebDeviceManager {
                 self.emit_status(app);
             }
             ServerToDeviceFrame::OperationRequest { operation } => {
-                if operation.device_id != profile.device_id {
+                if operation.device_id != profile.client_id {
                     return Err("operation device id does not match profile".to_string());
                 }
                 let push_result = self
@@ -516,21 +526,44 @@ fn default_true() -> bool {
 fn new_profile(
     request: SaveProfileRequest,
     existing: Option<WebDeviceProfile>,
-) -> WebDeviceProfile {
-    WebDeviceProfile {
+) -> Result<WebDeviceProfile, String> {
+    let client_id = existing.as_ref().map(|profile| profile.client_id.clone());
+    let machine_id = existing
+        .as_ref()
+        .map(|profile| profile.machine_id.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or(crate::app_paths::machine_id()?);
+    Ok(WebDeviceProfile {
         server_url: request.server_url,
-        device_id: existing
-            .map(|profile| profile.device_id)
-            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+        client_id: client_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+        machine_id,
+        client_kind: client_kind().to_string(),
         name: request.name,
         auto_start: request.auto_start,
         upload_wallpaper: request.upload_wallpaper,
         capabilities: default_capabilities(),
-    }
+    })
 }
 
 fn profile_path() -> Result<PathBuf, String> {
-    Ok(crate::app_paths::cli_manager_data_dir()?.join(PROFILE_FILE_NAME))
+    Ok(crate::app_paths::cli_manager_data_dir()?.join(profile_file_name()))
+}
+
+fn profile_file_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        DEV_PROFILE_FILE_NAME
+    } else {
+        PROFILE_FILE_NAME
+    }
+}
+
+fn client_kind() -> &'static str {
+    if cfg!(debug_assertions) {
+        "development"
+    } else {
+        "release"
+    }
 }
 
 fn load_profile() -> Result<Option<WebDeviceProfile>, String> {
@@ -540,8 +573,12 @@ fn load_profile() -> Result<Option<WebDeviceProfile>, String> {
     }
     let raw = fs::read_to_string(&path)
         .map_err(|err| format!("read web device profile failed: {err}"))?;
-    let profile = serde_json::from_str(&raw)
+    let mut profile: WebDeviceProfile = serde_json::from_str(&raw)
         .map_err(|err| format!("parse web device profile failed: {err}"))?;
+    if profile.machine_id.trim().is_empty() {
+        profile.machine_id = crate::app_paths::machine_id()?;
+    }
+    profile.client_kind = client_kind().to_string();
     Ok(Some(profile))
 }
 
@@ -559,7 +596,7 @@ fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .ok_or_else(|| "invalid web device profile path".to_string())?;
     fs::create_dir_all(parent)
         .map_err(|err| format!("create web device profile directory failed: {err}"))?;
-    let temporary = parent.join(format!(".{PROFILE_FILE_NAME}.{}.tmp", Uuid::new_v4()));
+    let temporary = parent.join(format!(".{}.{}.tmp", profile_file_name(), Uuid::new_v4()));
     fs::write(&temporary, bytes)
         .map_err(|err| format!("write web device profile failed: {err}"))?;
     if path.exists() {
@@ -576,7 +613,8 @@ fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 fn validate_profile(profile: &WebDeviceProfile) -> Result<(), String> {
     normalize_server_url(&profile.server_url)?;
-    validate_bounded("device id", &profile.device_id, 1, 128)?;
+    validate_bounded("client id", &profile.client_id, 1, 128)?;
+    validate_bounded("machine id", &profile.machine_id, 1, 128)?;
     validate_bounded("device name", &profile.name, 1, 128)?;
     if profile.capabilities.len() > 32
         || profile
@@ -792,7 +830,7 @@ pub fn web_device_save_profile(
             return Ok(status);
         }
     }
-    let mut profile = new_profile(request, load_profile()?);
+    let mut profile = new_profile(request, load_profile()?)?;
     profile.server_url = normalize_server_url(&profile.server_url)?;
     save_profile_file(&profile)?;
     manager.emit_status(&app);
@@ -890,8 +928,8 @@ pub fn web_device_clear_pairing(
         .unwrap_or(false);
     manager.stop(&app);
     if let Some(mut profile) = load_profile()? {
-        crate::credential_store::delete(&token_account(&profile.device_id))?;
-        profile.device_id = Uuid::new_v4().to_string();
+        crate::credential_store::delete(&token_account(&profile.client_id))?;
+        profile.client_id = Uuid::new_v4().to_string();
         save_profile_file(&profile)?;
     }
     if let Ok(mut operations) = manager.operations.lock() {
@@ -939,6 +977,7 @@ pub fn web_device_publish_history(
     if ensure_web_daemon().is_ok() {
         if daemon_call::<()>(crate::web_daemon::Request::PublishHistory {
             sessions: request.sessions.clone(),
+            workspace: request.workspace.clone(),
         })
         .is_ok()
         {
@@ -956,6 +995,7 @@ pub fn web_device_publish_history(
     manager.queue(DeviceToServerFrame::HistorySnapshot {
         sequence,
         sessions: request.sessions,
+        workspace: Some(request.workspace),
     })
 }
 
@@ -1103,7 +1143,9 @@ mod tests {
     fn profile_validation_rejects_invalid_bounds() {
         let valid = WebDeviceProfile {
             server_url: "https://example.com".to_string(),
-            device_id: "device-1".to_string(),
+            client_id: "client-1".to_string(),
+            machine_id: "machine-1".to_string(),
+            client_kind: "development".to_string(),
             name: "Desktop".to_string(),
             auto_start: false,
             upload_wallpaper: true,
@@ -1111,7 +1153,7 @@ mod tests {
         };
         assert!(validate_profile(&valid).is_ok());
         let mut invalid = valid.clone();
-        invalid.device_id.clear();
+        invalid.client_id.clear();
         assert!(validate_profile(&invalid).is_err());
         invalid = valid;
         invalid.capabilities = vec!["x".repeat(65)];
@@ -1122,7 +1164,9 @@ mod tests {
     fn save_request_preserves_device_id_and_resets_capabilities() {
         let existing = WebDeviceProfile {
             server_url: "wss://old.example/ws/device".to_string(),
-            device_id: "stable-device".to_string(),
+            client_id: "stable-client".to_string(),
+            machine_id: "stable-machine".to_string(),
+            client_kind: "development".to_string(),
             name: "Old".to_string(),
             auto_start: false,
             upload_wallpaper: false,
@@ -1136,8 +1180,10 @@ mod tests {
                 upload_wallpaper: true,
             },
             Some(existing),
-        );
-        assert_eq!(profile.device_id, "stable-device");
+        )
+        .unwrap();
+        assert_eq!(profile.client_id, "stable-client");
+        assert_eq!(profile.machine_id, "stable-machine");
         assert_eq!(profile.capabilities, default_capabilities());
         assert!(profile.upload_wallpaper);
     }
@@ -1185,7 +1231,9 @@ mod tests {
     fn profile_json_is_camel_case_and_contains_no_token() {
         let profile = WebDeviceProfile {
             server_url: "wss://example.com/ws/device".to_string(),
-            device_id: "device-1".to_string(),
+            client_id: "client-1".to_string(),
+            machine_id: "machine-1".to_string(),
+            client_kind: "development".to_string(),
             name: "Desktop".to_string(),
             auto_start: true,
             upload_wallpaper: true,
@@ -1193,10 +1241,32 @@ mod tests {
         };
         let value = serde_json::to_value(profile).unwrap();
         assert_eq!(value["serverUrl"], "wss://example.com/ws/device");
-        assert_eq!(value["deviceId"], "device-1");
+        assert_eq!(value["clientId"], "client-1");
+        assert_eq!(value["machineId"], "machine-1");
         assert_eq!(value["uploadWallpaper"], true);
         assert!(value.get("deviceToken").is_none());
         assert!(value.get("token").is_none());
+    }
+
+    #[test]
+    fn legacy_profile_device_id_migrates_to_client_id() {
+        let profile: WebDeviceProfile = serde_json::from_value(serde_json::json!({
+            "serverUrl": "https://example.com",
+            "deviceId": "legacy-device",
+            "name": "Desktop",
+            "autoStart": true,
+            "uploadWallpaper": true,
+            "capabilities": []
+        }))
+        .unwrap();
+        assert_eq!(profile.client_id, "legacy-device");
+        assert!(profile.machine_id.is_empty());
+    }
+
+    #[test]
+    fn development_profile_is_isolated_from_installed_profile() {
+        assert_eq!(profile_file_name(), DEV_PROFILE_FILE_NAME);
+        assert_ne!(profile_file_name(), PROFILE_FILE_NAME);
     }
 
     #[test]

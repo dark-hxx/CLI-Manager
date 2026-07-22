@@ -203,6 +203,9 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
         Ok(DeviceToServerFrame::Hello {
             protocol_version,
             device_id,
+            client_id,
+            machine_id,
+            client_kind,
             device_token,
             name,
             platform,
@@ -212,7 +215,9 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
             wallpaper,
         }) => (
             protocol_version,
-            device_id,
+            client_id.unwrap_or(device_id),
+            machine_id,
+            client_kind,
             device_token,
             name,
             platform,
@@ -234,6 +239,8 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
     let (
         protocol_version,
         device_id,
+        machine_id,
+        client_kind,
         device_token,
         name,
         platform,
@@ -249,6 +256,8 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
         &platform,
         &app_version,
         &capabilities,
+        machine_id.as_deref(),
+        client_kind.as_deref(),
         host_info.as_ref(),
     ) {
         let _ = socket
@@ -313,6 +322,8 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
             &platform,
             &app_version,
             &capabilities,
+            machine_id.as_deref(),
+            client_kind.as_deref(),
             host_info.as_ref(),
             wallpaper
                 .as_ref()
@@ -509,14 +520,22 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
                             }
                         }
                     }
-                    DeviceToServerFrame::HistorySnapshot { sequence, sessions } => {
+                    DeviceToServerFrame::HistorySnapshot { sequence, sessions, workspace } => {
                         let Some(owner_id) = user_id.as_deref() else {
                             if !send_device_error(&mut sender, "pairing_required", "pair the device before sending history").await {
                                 break;
                             }
                             continue;
                         };
-                        match state.storage.replace_history_snapshot(&device_id, owner_id, sequence, &sessions).await {
+                        if let Some(snapshot) = workspace.as_ref() {
+                            if validate_workspace_snapshot(snapshot).is_err() {
+                                if !send_device_error(&mut sender, "invalid_history_snapshot", "workspace snapshot was rejected").await {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+                        match state.storage.replace_history_snapshot(&device_id, owner_id, sequence, &sessions, workspace.as_ref()).await {
                             Ok(changed) => {
                                 if !send_json(&mut sender, &ServerToDeviceFrame::Ack { sequence }).await {
                                     break;
@@ -738,6 +757,8 @@ fn validate_device_hello(
     platform: &str,
     app_version: &str,
     capabilities: &[String],
+    machine_id: Option<&str>,
+    client_kind: Option<&str>,
     host_info: Option<&DeviceHostInfo>,
 ) -> Result<(), String> {
     if protocol_version != DEVICE_PROTOCOL_VERSION {
@@ -758,6 +779,12 @@ fn validate_device_hello(
     if capabilities.len() > 64 || capabilities.iter().any(|value| value.len() > 128) {
         return Err("invalid capabilities".to_string());
     }
+    if machine_id.is_some_and(|value| value.is_empty() || value.len() > 128) {
+        return Err("invalid machine id".to_string());
+    }
+    if client_kind.is_some_and(|value| !matches!(value, "development" | "release")) {
+        return Err("invalid client kind".to_string());
+    }
     if let Some(info) = host_info {
         let strings = [
             (&info.host_name, 128usize),
@@ -775,6 +802,62 @@ fn validate_device_hello(
         {
             return Err("invalid host info".to_string());
         }
+    }
+    Ok(())
+}
+
+fn validate_workspace_snapshot(
+    snapshot: &cli_manager_web_protocol::WorkspaceSnapshot,
+) -> Result<(), String> {
+    if snapshot.groups.len() > 2_000
+        || snapshot.projects.len() > 10_000
+        || snapshot.worktrees.len() > 20_000
+    {
+        return Err("workspace snapshot exceeds item limit".to_string());
+    }
+    if snapshot.groups.iter().any(|group| {
+        group.id.is_empty()
+            || group.id.len() > 128
+            || group.name.is_empty()
+            || group.name.len() > 512
+            || group
+                .parent_id
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+    }) {
+        return Err("invalid workspace group".to_string());
+    }
+    if snapshot.projects.iter().any(|project| {
+        project.id.is_empty()
+            || project.id.len() > 128
+            || project.name.is_empty()
+            || project.name.len() > 512
+            || project
+                .group_id
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+            || project
+                .source
+                .as_ref()
+                .is_some_and(|value| value != "claude" && value != "codex")
+            || project.cwd.as_ref().is_some_and(|value| value.len() > 4096)
+            || !matches!(project.environment_type.as_str(), "local" | "wsl" | "ssh")
+    }) {
+        return Err("invalid workspace project".to_string());
+    }
+    if snapshot.worktrees.iter().any(|worktree| {
+        worktree.id.is_empty()
+            || worktree.id.len() > 128
+            || worktree.project_id.is_empty()
+            || worktree.project_id.len() > 128
+            || worktree.name.is_empty()
+            || worktree.name.len() > 512
+            || worktree.branch.len() > 512
+            || worktree.cwd.is_empty()
+            || worktree.cwd.len() > 4096
+            || !matches!(worktree.status.as_str(), "active" | "missing")
+    }) {
+        return Err("invalid workspace worktree".to_string());
     }
     Ok(())
 }
@@ -882,16 +965,43 @@ mod tests {
 
     #[test]
     fn hello_validation_rejects_wrong_version() {
-        assert!(validate_device_hello(2, "device", "PC", "windows", "1.0", &[], None).is_err());
+        assert!(
+            validate_device_hello(2, "client", "PC", "windows", "1.0", &[], None, None, None)
+                .is_err()
+        );
     }
 
     #[test]
     fn hello_validation_bounds_capabilities() {
         let capabilities = vec!["x".to_string(); 65];
-        assert!(
-            validate_device_hello(1, "device", "PC", "windows", "1.0", &capabilities, None)
-                .is_err()
-        );
+        assert!(validate_device_hello(
+            1,
+            "client",
+            "PC",
+            "windows",
+            "1.0",
+            &capabilities,
+            None,
+            None,
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn hello_validation_accepts_client_identity() {
+        assert!(validate_device_hello(
+            1,
+            "client-1",
+            "PC",
+            "windows",
+            "1.0",
+            &[],
+            Some("machine-1"),
+            Some("development"),
+            None,
+        )
+        .is_ok());
     }
 
     #[test]
@@ -903,5 +1013,24 @@ mod tests {
             height: 270,
         };
         assert!(validate_wallpaper(&upload).is_err());
+    }
+
+    #[test]
+    fn workspace_validation_rejects_unknown_project_source() {
+        let snapshot = cli_manager_web_protocol::WorkspaceSnapshot {
+            groups: vec![],
+            projects: vec![cli_manager_web_protocol::WorkspaceProjectSummary {
+                id: "project-1".to_string(),
+                name: "Project".to_string(),
+                group_id: None,
+                sort_order: 0,
+                source: Some("unknown".to_string()),
+                cwd: Some(r"D:\work\project".to_string()),
+                environment_type: "local".to_string(),
+            }],
+            worktrees: vec![],
+            updated_at: 1,
+        };
+        assert!(validate_workspace_snapshot(&snapshot).is_err());
     }
 }

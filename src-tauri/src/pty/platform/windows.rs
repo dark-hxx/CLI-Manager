@@ -594,10 +594,7 @@ mod tests {
 
         assert_eq!(
             environment.get("PATH"),
-            Some(&(
-                "path".to_string(),
-                r"C:\project-only".to_string()
-            ))
+            Some(&("path".to_string(), r"C:\project-only".to_string()))
         );
     }
 
@@ -616,7 +613,9 @@ mod tests {
 
     #[test]
     fn parses_utf16_environment_block() {
-        let block: Vec<u16> = "Path=C:\\bin\0UNICODE=\u{503c}\0\0".encode_utf16().collect();
+        let block: Vec<u16> = "Path=C:\\bin\0UNICODE=\u{503c}\0\0"
+            .encode_utf16()
+            .collect();
 
         assert_eq!(
             unsafe { parse_environment_block(block.as_ptr()) },

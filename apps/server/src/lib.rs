@@ -8,7 +8,7 @@ pub mod storage;
 pub mod ws;
 
 use axum::http::{header, HeaderValue, Method, StatusCode};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use state::AppState;
 use std::time::Duration;
@@ -33,6 +33,7 @@ pub fn build_router(state: AppState) -> Result<Router, String> {
         .route("/auth/login", post(api::login))
         .route("/auth/logout", post(api::logout))
         .route("/devices", get(api::list_devices))
+        .route("/devices/{device_id}", delete(api::remove_device))
         .route(
             "/devices/{device_id}/wallpaper",
             get(api::get_device_wallpaper),

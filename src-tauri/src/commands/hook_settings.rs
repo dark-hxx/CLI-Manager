@@ -485,8 +485,8 @@ pub async fn hook_settings_install_pi(
     cc_switch_db_path: Option<String>,
     module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
-    let pi_dir = resolve_pi_dir(pi_selected_dir, true)?
-        .ok_or_else(|| "请先选择 Pi 配置目录".to_string())?;
+    let pi_dir =
+        resolve_pi_dir(pi_selected_dir, true)?.ok_or_else(|| "请先选择 Pi 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
     let requested_module = parse_pi_hook_module(module)?;
@@ -525,8 +525,8 @@ pub async fn hook_settings_uninstall_pi(
     cc_switch_db_path: Option<String>,
     module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
-    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?
-        .ok_or_else(|| "未找到 Pi 配置目录".to_string())?;
+    let pi_dir =
+        resolve_pi_dir(pi_selected_dir, false)?.ok_or_else(|| "未找到 Pi 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
     let requested_module = parse_pi_hook_module(module)?;
@@ -2317,7 +2317,6 @@ fn disable_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&config_path)))
 }
 
-
 fn resolve_pi_dir(
     selected_dir: Option<String>,
     create_if_missing: bool,
@@ -2348,7 +2347,9 @@ fn resolve_pi_dir(
 }
 
 fn pi_extension_path(pi_dir: &Path) -> PathBuf {
-    pi_dir.join(PI_EXTENSION_DIR_NAME).join(PI_EXTENSION_FILE_NAME)
+    pi_dir
+        .join(PI_EXTENSION_DIR_NAME)
+        .join(PI_EXTENSION_FILE_NAME)
 }
 
 fn pi_module_marker(module: PiHookModule) -> &'static str {
@@ -3916,7 +3917,6 @@ model_instructions_file = "./instruction.md"
         assert_eq!(error, PI_EXTENSION_CONFLICT_ERROR);
         assert_eq!(fs::read_to_string(extension_path).unwrap(), user_content);
     }
-
 
     #[cfg(windows)]
     #[test]

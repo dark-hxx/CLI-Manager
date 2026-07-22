@@ -19,6 +19,9 @@ export type DeviceHostInfo = {
 
 export type Device = {
   id: string;
+  clientId: string;
+  machineId: string | null;
+  clientKind: "development" | "release" | null;
   name: string;
   platform: string;
   appVersion: string;
@@ -58,6 +61,39 @@ export type HistorySessionSummary = {
   freshness: Freshness;
 };
 
+export type WorkspaceGroup = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  sortOrder: number;
+};
+
+export type WorkspaceProject = {
+  id: string;
+  name: string;
+  groupId: string | null;
+  sortOrder: number;
+  source: "claude" | "codex" | null;
+  cwd: string | null;
+  environmentType: "local" | "wsl" | "ssh";
+};
+
+export type WorkspaceWorktree = {
+  id: string;
+  projectId: string;
+  name: string;
+  branch: string;
+  cwd: string;
+  status: "active" | "missing";
+};
+
+export type WorkspaceSnapshot = {
+  groups: WorkspaceGroup[];
+  projects: WorkspaceProject[];
+  worktrees: WorkspaceWorktree[];
+  updatedAt: number;
+};
+
 export type ProjectContext = {
   key: string;
   source: string;
@@ -66,6 +102,8 @@ export type ProjectContext = {
   branch: string | null;
   title: string;
   freshness: Freshness;
+  projectId?: string;
+  worktreeId?: string;
 };
 
 export type OperationStatus =

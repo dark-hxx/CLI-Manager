@@ -9,6 +9,7 @@ import type {
   PairingState,
   ProjectContext,
   TimelineItem,
+  WorkspaceSnapshot,
 } from "./domain";
 import { ApiError, connectBrowserSocket, webClient } from "./webClient";
 
@@ -48,6 +49,10 @@ function projectContextKey(source: string, projectKey: string, cwd: string) {
   return `${source}:${projectKey}:${cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()}`;
 }
 
+function normalizedContextPath(value: string) {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
 function requestErrorCode(caught: unknown) {
   return caught instanceof ApiError ? caught.code : "request_failed";
 }
@@ -77,6 +82,7 @@ export function useAppModel() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
   const [history, setHistory] = useState<HistorySessionSummary[]>([]);
+  const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [selectedProjectContextKey, setSelectedProjectContextKey] = useState<string>();
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -89,6 +95,45 @@ export function useAppModel() {
   const selectedDevice = devices.find((item) => item.id === selectedDeviceId);
   const selectedSession = history.find((item) => item.sessionId === selectedSessionId);
   const projectContexts = useMemo<ProjectContext[]>(() => {
+    if (workspace) {
+      const contexts: ProjectContext[] = [];
+      const sessionByContext = new Map<string, HistorySessionSummary>();
+      for (const session of history) {
+        const cwd = session.cwd?.trim();
+        if (!cwd) continue;
+        sessionByContext.set(`${session.source}:${cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()}`, session);
+      }
+      for (const project of workspace.projects) {
+        const cwd = project.cwd?.trim();
+        if (!project.source || !cwd || project.environmentType === "ssh") continue;
+        const session = sessionByContext.get(`${project.source}:${cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()}`);
+        contexts.push({
+          key: `project:${project.id}`,
+          source: project.source,
+          projectKey: session?.projectKey ?? project.name,
+          cwd,
+          branch: session?.branch ?? null,
+          title: project.name,
+          freshness: "live",
+          projectId: project.id,
+        });
+        for (const worktree of workspace.worktrees.filter((item) => item.projectId === project.id && item.status === "active")) {
+          const worktreeSession = sessionByContext.get(`${project.source}:${worktree.cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()}`);
+          contexts.push({
+            key: `worktree:${worktree.id}`,
+            source: project.source,
+            projectKey: worktreeSession?.projectKey ?? project.name,
+            cwd: worktree.cwd,
+            branch: worktree.branch,
+            title: worktree.name,
+            freshness: "live",
+            projectId: project.id,
+            worktreeId: worktree.id,
+          });
+        }
+      }
+      return contexts;
+    }
     const contexts = new Map<string, ProjectContext>();
     for (const session of history) {
       const cwd = session.cwd?.trim();
@@ -106,7 +151,7 @@ export function useAppModel() {
       });
     }
     return Array.from(contexts.values());
-  }, [history]);
+  }, [history, workspace]);
   const selectedProjectContext = projectContexts.find((item) => item.key === selectedProjectContextKey);
   const currentDraftKey = useMemo(
     () => draftKey(selectedDeviceId, selectedProjectContext?.projectKey, selectedSessionId),
@@ -137,6 +182,7 @@ export function useAppModel() {
     try {
       const result = await webClient.history(deviceId);
       setHistory(result.items);
+      setWorkspace(result.workspace);
     } catch (caught) {
       handleError(caught);
     }
@@ -247,6 +293,7 @@ export function useAppModel() {
       setAuthPhase("login");
       setDevices([]);
       setHistory([]);
+      setWorkspace(null);
       setSelectedProjectContextKey(undefined);
       setTimeline([]);
     }
@@ -272,9 +319,23 @@ export function useAppModel() {
     }
   };
 
+  const removeDevice = async (deviceId: string) => {
+    await webClient.removeDevice(deviceId);
+    setDevices((current) => current.filter((device) => device.id !== deviceId));
+    if (selectedDeviceId === deviceId) {
+      setSelectedDeviceId(undefined);
+      setHistory([]);
+      setWorkspace(null);
+      setSelectedSessionId(undefined);
+      setSelectedProjectContextKey(undefined);
+      setTimeline([]);
+    }
+  };
+
   const selectDevice = (deviceId: string) => {
     setSelectedDeviceId(deviceId);
     setHistory([]);
+    setWorkspace(null);
     setSelectedSessionId(undefined);
     setSelectedProjectContextKey(undefined);
     setTimeline([]);
@@ -286,7 +347,10 @@ export function useAppModel() {
     const session = history.find((item) => item.sessionId === sessionId);
     const cwd = session?.cwd?.trim();
     if (session && cwd) {
-      setSelectedProjectContextKey(projectContextKey(session.source, session.projectKey, cwd));
+      const workspaceContext = projectContexts.find((context) => (
+        context.source === session.source && normalizedContextPath(context.cwd) === normalizedContextPath(cwd)
+      ));
+      setSelectedProjectContextKey(workspaceContext?.key ?? projectContextKey(session.source, session.projectKey, cwd));
     }
     setTimeline([]);
   };
@@ -295,10 +359,11 @@ export function useAppModel() {
     setSelectedProjectContextKey(key);
     if (selectedSession) {
       const cwd = selectedSession.cwd?.trim();
-      const sessionKey = cwd
-        ? projectContextKey(selectedSession.source, selectedSession.projectKey, cwd)
-        : "";
-      if (sessionKey !== key) setSelectedSessionId(undefined);
+      const context = projectContexts.find((item) => item.key === key);
+      const sameContext = Boolean(cwd && context
+        && context.source === selectedSession.source
+        && normalizedContextPath(context.cwd) === normalizedContextPath(cwd));
+      if (!sameContext) setSelectedSessionId(undefined);
     }
     setTimeline([]);
   };
@@ -362,10 +427,10 @@ export function useAppModel() {
 
   return {
     authPhase, user, loadState, error, devices, selectedDevice, history, selectedSession,
-    projectContexts, selectedProjectContext,
+    workspace, projectContexts, selectedProjectContext,
     timeline, pairing, socketState, draft, composerMessage,
     latestSyncAt: serverTime(selectedDevice?.lastSeenAt),
-    checkAuth, login, logout, loadWorkspace, claimPairing, setPairing,
+    checkAuth, login, logout, loadWorkspace, claimPairing, removeDevice, setPairing,
     selectDevice, selectSession, selectProjectContext, setDraft, sendPrompt, submitManagementOperation,
   };
 }

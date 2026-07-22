@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleUserRound,
   Clock3,
+  Trash2,
   Folder,
   FolderTree,
   GitBranch,
@@ -22,6 +23,7 @@ import {
   PanelRightOpen,
   Radio,
   RefreshCw,
+  Search,
   Send,
   Settings,
   Shield,
@@ -30,13 +32,19 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
-import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TimelineItem } from "./domain";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TimelineItem, WorkspaceGroup, WorkspaceProject, WorkspaceSnapshot } from "./domain";
 import type { TranslationKey } from "./i18n";
 import { deviceWallpaperUrl } from "./webClient";
 import { isManagementOperation, ManagementPanel } from "./ManagementPanel";
 
 type T = (key: TranslationKey) => string;
+
+function clientKindLabel(device: Device, t: T) {
+  if (device.clientKind === "development") return t("clientDevelopment");
+  if (device.clientKind === "release") return t("clientRelease");
+  return "";
+}
 
 export function AppLogo() {
   return <div className="app-logo" aria-hidden="true"><ChevronRight size={29} strokeWidth={3.4} /><span /></div>;
@@ -96,19 +104,40 @@ type HostHomeProps = {
   onLogout: () => void;
   onRefresh: () => void;
   onSelectDevice: (id: string) => void;
+  onRemoveDevice: (id: string) => Promise<void>;
   onClaimPairing: (code: string) => Promise<void>;
   onResetPairing: () => void;
 };
 
 export function HostHome(props: HostHomeProps) {
   const [pairingOpen, setPairingOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | Device["status"]>("all");
+  const [removingDeviceId, setRemovingDeviceId] = useState<string>();
   const devices = [...props.devices].sort((left, right) => {
     if (left.status !== right.status) return left.status === "online" ? -1 : 1;
     return (serverTimestamp(right.lastSeenAt) ?? 0) - (serverTimestamp(left.lastSeenAt) ?? 0);
   });
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleDevices = devices.filter((device) => {
+    if (statusFilter !== "all" && device.status !== statusFilter) return false;
+    if (!normalizedQuery) return true;
+    return [device.name, device.clientId, clientKindLabel(device, props.t), device.platform, device.hostInfo?.hostName, device.hostInfo?.osVersion]
+      .some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
+  });
   const closePairing = () => {
     setPairingOpen(false);
     props.onResetPairing();
+  };
+  const clearFilters = () => {
+    setQuery("");
+    setStatusFilter("all");
+  };
+  const removeDevice = async (device: Device) => {
+    if (removingDeviceId) return;
+    if (!window.confirm(props.t("removeDeviceConfirmation").replace("{name}", device.name))) return;
+    setRemovingDeviceId(device.id);
+    try { await props.onRemoveDevice(device.id); } finally { setRemovingDeviceId(undefined); }
   };
 
   return (
@@ -124,34 +153,88 @@ export function HostHome(props: HostHomeProps) {
         </div>
       </header>
 
-      <section className="host-home-content" aria-labelledby="hosts-title">
-        <div className="host-home-title">
-          <div><h1 id="hosts-title">{props.t("hostsTitle")}</h1><p>{props.t("hostsHint")}</p></div>
-          <button className="secondary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{props.t("pairDevice")}</button>
-        </div>
-
+      <section className="host-home-content" aria-label={props.t("hostsTitle")}>
         {devices.length === 0 ? (
           <div className="host-empty"><Monitor size={42} /><h2>{props.t("noHostsTitle")}</h2><p>{props.t("noHostsHint")}</p><button className="primary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{props.t("pairDevice")}</button></div>
         ) : (
-          <div className="host-list" aria-label={`${props.t("hostsTitle")} · ${devices.length}`}>
-            {devices.map((device) => (
-              <button className={`host-card ${device.status}${device.wallpaperRevision ? " has-wallpaper" : ""}`} type="button" key={device.id} onClick={() => props.onSelectDevice(device.id)} aria-label={`${props.t("openHost")} ${device.name}`}>
-                {device.wallpaperRevision && <img className="host-card-wallpaper" src={deviceWallpaperUrl(device) ?? undefined} alt="" loading="lazy" />}
-                <span className="host-card-shade" aria-hidden="true" />
-                <span className="host-card-icon"><Monitor size={24} /></span>
-                <span className="host-card-body">
-                  <span className="host-card-heading"><strong>{device.name}</strong><span className={`host-status ${device.status}`}><span className={`status-dot ${device.status === "online" ? "" : "warning"}`} />{props.t(device.status === "online" ? "online" : "offline")}</span></span>
-                  <span className="host-meta"><span>{device.hostInfo?.hostName || device.platform || props.t("unknown")}</span><span>{device.hostInfo?.osVersion || device.platform || props.t("unknown")}</span></span>
-                  {device.hostInfo && <span className="host-specs">
-                    <span title={device.hostInfo.cpuModel}>{props.t("cpu")}: {device.hostInfo.cpuModel} · {device.hostInfo.cpuArch}</span>
-                    <span>{props.t("memory")}: {formatMemory(device.hostInfo.totalMemoryBytes)} · {props.t("display")}: {device.hostInfo.displayWidth}x{device.hostInfo.displayHeight}</span>
-                  </span>}
-                  <span className="host-heartbeat"><Clock3 size={15} />{props.t("lastHeartbeat")} <time dateTime={formatServerDateTime(device.lastSeenAt)}>{device.lastSeenAt === null ? props.t("noHeartbeat") : formatServerTime(device.lastSeenAt)}</time></span>
-                </span>
-                <ChevronRight className="host-card-arrow" size={20} />
-              </button>
-            ))}
-          </div>
+          <>
+            <section className="host-inventory" aria-labelledby="device-inventory-title">
+              <div className="host-inventory-toolbar">
+                <h2 id="device-inventory-title">{props.t("deviceInventory")}</h2>
+                <div className="host-inventory-controls">
+                  <div className="host-search">
+                    <label className="sr-only" htmlFor="host-device-search">{props.t("searchDevices")}</label>
+                    <Search size={17} />
+                    <input id="host-device-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={props.t("searchDevices")} />
+                    {query && <button type="button" onClick={() => setQuery("")} aria-label={props.t("clearSearch")}><X size={15} /></button>}
+                  </div>
+                  <button className="secondary-button host-pair-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={17} />{props.t("pairDevice")}</button>
+                  <div className="host-filter" aria-label={props.t("filterByStatus")}>
+                    {(["all", "online", "offline"] as const).map((status) => (
+                      <button className={statusFilter === status ? "active" : ""} type="button" key={status} onClick={() => setStatusFilter(status)} aria-pressed={statusFilter === status}>
+                        {props.t(status === "all" ? "allDevices" : status)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {visibleDevices.length === 0 ? (
+                <div className="host-filter-empty"><Search size={32} /><h3>{props.t("noMatchingDevices")}</h3><p>{props.t("noMatchingDevicesHint")}</p><button className="secondary-button" type="button" onClick={clearFilters}>{props.t("clearFilters")}</button></div>
+              ) : (
+                <div className="host-list" aria-label={`${props.t("hostsTitle")} · ${visibleDevices.length}`}>
+                  {visibleDevices.map((device) => (
+                    <div
+                      className={`host-card ${device.status}`}
+                      key={device.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => props.onSelectDevice(device.id)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        props.onSelectDevice(device.id);
+                      }}
+                      aria-label={`${props.t("openHost")} ${device.name}`}
+                    >
+                      <span className="host-card-actions">
+                        <button
+                          className="host-card-remove"
+                          type="button"
+                          disabled={removingDeviceId === device.id}
+                          aria-label={`${props.t("removeDevice")} ${device.name}`}
+                          onClick={(event) => { event.preventDefault(); event.stopPropagation(); void removeDevice(device); }}
+                        >
+                          <Trash2 size={17} aria-hidden="true" />
+                        </button>
+                      </span>
+                      <span className={`host-card-visual${device.wallpaperRevision ? " has-wallpaper" : ""}`}>
+                        {device.wallpaperRevision && <img className="host-card-wallpaper" src={deviceWallpaperUrl(device) ?? undefined} alt="" loading="lazy" />}
+                        <span className="host-card-shade" aria-hidden="true" />
+                        <Monitor size={25} />
+                      </span>
+                      <span className="host-card-body">
+                        <span className="host-card-heading">
+                          <strong className="host-card-name">{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</strong>
+                          <span className={`host-status ${device.status}`}><span className={`status-dot ${device.status === "online" ? "" : "warning"}`} />{props.t(device.status === "online" ? "online" : "offline")}</span>
+                        </span>
+                        <span className="host-facts">
+                          <span className="host-fact"><span>{props.t("hostName")}</span><strong>{device.hostInfo?.hostName || props.t("unknown")}</strong></span>
+                          <span className="host-fact"><span>{props.t("system")}</span><strong>{device.hostInfo?.osVersion || props.t("unknown")}</strong></span>
+                          <span className="host-fact"><span>{props.t("platform")}</span><strong>{device.platform || props.t("unknown")}</strong></span>
+                          <span className="host-fact"><span>{props.t("appVersion")}</span><strong className="host-version-badge">{device.appVersion ? `v${device.appVersion}` : props.t("unknown")}</strong></span>
+                        </span>
+                      </span>
+                      <span className="host-card-side">
+                        <span className="host-heartbeat"><Clock3 size={14} /><span>{props.t("lastHeartbeat")}</span><time dateTime={formatServerDateTime(device.lastSeenAt)}>{device.lastSeenAt === null ? props.t("noHeartbeat") : formatServerTime(device.lastSeenAt)}</time></span>
+                        <span className="host-card-open">{props.t("openHost")}<ChevronRight size={17} /></span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
         )}
       </section>
 
@@ -160,17 +243,13 @@ export function HostHome(props: HostHomeProps) {
   );
 }
 
-function formatMemory(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "-";
-  return `${Math.round(bytes / 1024 ** 3)} GB`;
-}
-
 type WorkbenchProps = {
   t: T;
   userName: string;
   devices: Device[];
   selectedDevice?: Device;
   history: HistorySessionSummary[];
+  workspace: WorkspaceSnapshot | null;
   selectedSession?: HistorySessionSummary;
   projectContexts: ProjectContext[];
   selectedProjectContext?: ProjectContext;
@@ -232,7 +311,7 @@ export function Workbench(props: WorkbenchProps) {
               <label className="sr-only" htmlFor="device-select">{t("devices")}</label>
               <select id="device-select" className="device-select" value={selectedDevice?.id ?? ""} onChange={(event) => props.onSelectDevice(event.target.value)} disabled={props.devices.length === 0}>
                 {props.devices.length === 0 && <option value="">{t("noDevice")}</option>}
-                {props.devices.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
+                {props.devices.map((device) => <option key={device.id} value={device.id}>{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</option>)}
               </select>
               <DeviceLine device={selectedDevice} t={t} socketState={props.socketState} />
             </div>
@@ -307,24 +386,138 @@ export function Workbench(props: WorkbenchProps) {
   );
 }
 
+type WorkspaceTreeNode =
+  | { type: "group"; group: WorkspaceGroup; children: WorkspaceTreeNode[] }
+  | { type: "project"; project: WorkspaceProject };
+
+function buildWorkspaceTree(workspace: WorkspaceSnapshot): WorkspaceTreeNode[] {
+  const groupIds = new Set(workspace.groups.map((group) => group.id));
+  const groupsByParent = new Map<string | null, WorkspaceGroup[]>();
+  const projectsByGroup = new Map<string | null, WorkspaceProject[]>();
+  for (const group of workspace.groups) {
+    const parentId = group.parentId && groupIds.has(group.parentId) ? group.parentId : null;
+    const siblings = groupsByParent.get(parentId) ?? [];
+    siblings.push(group);
+    groupsByParent.set(parentId, siblings);
+  }
+  for (const project of workspace.projects) {
+    const groupId = project.groupId && groupIds.has(project.groupId) ? project.groupId : null;
+    const siblings = projectsByGroup.get(groupId) ?? [];
+    siblings.push(project);
+    projectsByGroup.set(groupId, siblings);
+  }
+  const sortItems = <T extends { sortOrder: number; name: string }>(items: T[]) =>
+    [...items].sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
+  const buildLevel = (parentId: string | null, ancestors: Set<string>): WorkspaceTreeNode[] => {
+    const nodes: WorkspaceTreeNode[] = [];
+    for (const group of sortItems(groupsByParent.get(parentId) ?? [])) {
+      if (ancestors.has(group.id)) continue;
+      const nextAncestors = new Set(ancestors).add(group.id);
+      nodes.push({
+        type: "group",
+        group,
+        children: buildLevel(group.id, nextAncestors),
+      });
+    }
+    nodes.push(...sortItems(projectsByGroup.get(parentId) ?? []).map((project) => ({ type: "project", project }) as const));
+    return nodes.sort((left, right) => {
+      const leftItem = left.type === "group" ? left.group : left.project;
+      const rightItem = right.type === "group" ? right.group : right.project;
+      return leftItem.sortOrder - rightItem.sortOrder || leftItem.name.localeCompare(rightItem.name);
+    });
+  };
+  return buildLevel(null, new Set());
+}
+
+function countWorkspaceProjects(nodes: WorkspaceTreeNode[]): number {
+  return nodes.reduce((count, node) => count + (node.type === "project" ? 1 : countWorkspaceProjects(node.children)), 0);
+}
+
 function ProjectSidebar(props: WorkbenchProps & { onPair: () => void }) {
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
-  const projects = Array.from(
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(() => new Set());
+  const workspaceTree = useMemo(() => props.workspace ? buildWorkspaceTree(props.workspace) : [], [props.workspace]);
+  const legacyProjects = useMemo(() => Array.from(
     props.projectContexts.reduce((groups, context) => {
       const contexts = groups.get(context.projectKey) ?? [];
       contexts.push(context);
       groups.set(context.projectKey, contexts);
       return groups;
     }, new Map<string, ProjectContext[]>()),
-  );
+  ), [props.projectContexts]);
 
-  const toggleProject = (projectKey: string) => {
-    setCollapsedProjects((current) => {
+  const toggleNode = (key: string) => {
+    setCollapsedNodes((current) => {
       const next = new Set(current);
-      if (next.has(projectKey)) next.delete(projectKey);
-      else next.add(projectKey);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
+  };
+
+  const sessionsForContext = (context: ProjectContext | undefined) => context ? props.history.filter((session) => (
+    session.source === context.source && normalizePath(session.cwd) === normalizePath(context.cwd)
+  )) : [];
+
+  const renderSessions = (context: ProjectContext | undefined) => {
+    const sessions = sessionsForContext(context);
+    if (sessions.length === 0) return null;
+    return <div className="project-sessions">{sessions.map((session) => (
+      <button className={`project-session-row${props.selectedSession?.sessionId === session.sessionId ? " active" : ""}`} type="button" key={session.sessionId} onClick={() => props.onSelectSession(session.sessionId)} title={session.title}>
+        <MessageCircle size={13} /><span>{session.title}</span>
+      </button>
+    ))}</div>;
+  };
+
+  const renderWorkspaceNode = (node: WorkspaceTreeNode, depth = 0): ReactNode => {
+    if (node.type === "group") {
+      const key = `group:${node.group.id}`;
+      const collapsed = collapsedNodes.has(key);
+      return <section className="workspace-group" key={key}>
+        <button className="workspace-group-row" style={{ paddingLeft: 7 + depth * 13 }} type="button" onClick={() => toggleNode(key)} aria-expanded={!collapsed}>
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          <FolderTree size={16} />
+          <strong>{node.group.name}</strong>
+          <span className="project-node-count">{countWorkspaceProjects(node.children)}</span>
+        </button>
+        {!collapsed && node.children.map((child) => renderWorkspaceNode(child, depth + 1))}
+      </section>;
+    }
+
+    const project = node.project;
+    const context = props.projectContexts.find((item) => item.projectId === project.id && !item.worktreeId);
+    const worktrees = props.workspace?.worktrees.filter((item) => item.projectId === project.id) ?? [];
+    const projectSessions = sessionsForContext(context);
+    const key = `project:${project.id}`;
+    const hasChildren = worktrees.length > 0 || projectSessions.length > 0;
+    const collapsed = collapsedNodes.has(key);
+    const active = props.selectedProjectContext?.projectId === project.id;
+    const selectable = Boolean(context);
+    return <section className={`project-node workspace-project${active ? " active" : ""}`} key={key} style={{ marginLeft: depth * 13 }}>
+      <div className="workspace-project-line">
+        {hasChildren ? <button className="tree-toggle" type="button" onClick={() => toggleNode(key)} aria-expanded={!collapsed} aria-label={project.name}>
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        </button> : <span className="tree-toggle-placeholder" />}
+        <button className={`project-context-row workspace-project-row${active ? " active" : ""}`} type="button" disabled={!selectable} onClick={() => context && props.onSelectProjectContext(context.key)} title={project.cwd ?? project.name}>
+          <Folder size={16} />
+          <span><strong>{project.name}</strong><small>{project.source ?? project.environmentType}</small></span>
+          {selectable && <span className="freshness-dot live" role="img" aria-label={props.t("liveData")} />}
+        </button>
+      </div>
+      {!collapsed && <div className="workspace-project-children">
+        {renderSessions(context)}
+        {worktrees.map((worktree) => {
+          const worktreeContext = props.projectContexts.find((item) => item.worktreeId === worktree.id);
+          return <div className="project-context-node workspace-worktree" key={worktree.id}>
+            <button className={`project-context-row${props.selectedProjectContext?.worktreeId === worktree.id ? " active" : ""}`} type="button" disabled={!worktreeContext} onClick={() => worktreeContext && props.onSelectProjectContext(worktreeContext.key)} title={worktree.cwd}>
+              <GitBranch size={15} />
+              <span><strong>{worktree.name}</strong><small>{worktree.branch}</small></span>
+              {worktree.status === "active" && <span className="freshness-dot live" role="img" aria-label={props.t("liveData")} />}
+            </button>
+            {renderSessions(worktreeContext)}
+          </div>;
+        })}
+      </div>}
+    </section>;
   };
 
   return (
@@ -332,43 +525,18 @@ function ProjectSidebar(props: WorkbenchProps & { onPair: () => void }) {
       <div className="sidebar-brand"><AppLogo /><strong>CLI-Manager</strong></div>
       <button className="new-chat-button" type="button" onClick={() => props.onSelectSession(undefined)}><Plus size={18} /><span>{props.t("newConversation")}</span></button>
       <div className="project-tree">
-        <div className="side-section-title"><span>{props.t("projects")}</span><span className="count">{projects.length}</span></div>
-        {projects.length === 0 ? <p className="empty-copy">{props.t("noProjectContext")}</p> : projects.map(([projectKey, contexts]) => {
-          const collapsed = collapsedProjects.has(projectKey);
-          const activeProject = props.selectedProjectContext?.projectKey === projectKey;
-          return (
-            <section className={`project-node${activeProject ? " active" : ""}`} key={projectKey}>
-              <button className="project-node-header" type="button" onClick={() => toggleProject(projectKey)} aria-expanded={!collapsed}>
-                {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-                <FolderTree size={17} />
-                <strong>{projectKey}</strong>
-                <span className="project-node-count">{contexts.length}</span>
-              </button>
-              {!collapsed && <div className="project-branches">{contexts.map((context) => {
-                const selected = props.selectedProjectContext?.key === context.key;
-                const sessions = props.history.filter((session) => session.source === context.source && session.projectKey === context.projectKey && normalizePath(session.cwd) === normalizePath(context.cwd));
-                return (
-                  <div className="project-context-node" key={context.key}>
-                    <button className={`project-context-row${selected ? " active" : ""}`} type="button" onClick={() => props.onSelectProjectContext(context.key)} title={context.cwd}>
-                      <Folder size={16} />
-                      <span><strong>{pathLeaf(context.cwd) || context.projectKey}</strong><small><GitBranch size={11} />{context.branch ?? context.source}</small></span>
-                      <span
-                        className={`freshness-dot ${context.freshness}`}
-                        role="img"
-                        aria-label={props.t(context.freshness === "live" ? "liveData" : context.freshness === "cached" ? "cachedData" : "staleData")}
-                      />
-                    </button>
-                    {sessions.length > 0 && <div className="project-sessions">{sessions.map((session) => (
-                      <button className={`project-session-row${props.selectedSession?.sessionId === session.sessionId ? " active" : ""}`} type="button" key={session.sessionId} onClick={() => props.onSelectSession(session.sessionId)} title={session.title}>
-                        <MessageCircle size={13} /><span>{session.title}</span>
-                      </button>
-                    ))}</div>}
-                  </div>
-                );
-              })}</div>}
-            </section>
-          );
-        })}
+        <div className="side-section-title"><span>{props.t("projects")}</span><span className="count">{props.workspace?.projects.length ?? legacyProjects.length}</span></div>
+        {props.workspace
+          ? (workspaceTree.length === 0 ? <p className="empty-copy">{props.t("noProjectContext")}</p> : workspaceTree.map((node) => renderWorkspaceNode(node)))
+          : legacyProjects.map(([projectKey, contexts]) => <section className="project-node" key={projectKey}>
+              <div className="project-node-header"><ChevronDown size={15} /><FolderTree size={17} /><strong>{projectKey}</strong><span className="project-node-count">{contexts.length}</span></div>
+              <div className="project-branches">{contexts.map((context) => <div className="project-context-node" key={context.key}>
+                <button className={`project-context-row${props.selectedProjectContext?.key === context.key ? " active" : ""}`} type="button" onClick={() => props.onSelectProjectContext(context.key)} title={context.cwd}>
+                  <Folder size={16} /><span><strong>{pathLeaf(context.cwd) || context.projectKey}</strong><small><GitBranch size={11} />{context.branch ?? context.source}</small></span><span className={`freshness-dot ${context.freshness}`} />
+                </button>
+                {renderSessions(context)}
+              </div>)}</div>
+            </section>)}
       </div>
       <div className="sidebar-footer"><button className="footer-row" type="button" onClick={props.onPair}><Monitor size={20} /><span>{props.t("pairDevice")}</span></button><button className="account-row" type="button" onClick={props.onLogout}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button></div>
     </aside>
@@ -422,11 +590,11 @@ function PairingForm({ t, state, onClaim }: { t: T; state: PairingState; onClaim
 }
 
 function DeviceLine({ device, t, socketState }: { device?: Device; t: T; socketState: "connecting" | "open" | "closed" }) {
-  return <div className="device-line"><Monitor size={16} />{device?.name ?? t("noDevice")}<span className={`status-dot ${device?.status === "online" ? "" : "warning"}`} /><span>{t(device?.status === "online" ? "online" : "offline")}</span>{socketState === "open" ? <Wifi size={15} /> : <WifiOff size={15} />}</div>;
+  return <div className="device-line"><Monitor size={16} />{device?.name ?? t("noDevice")}{device && clientKindLabel(device, t) && <span>{clientKindLabel(device, t)}</span>}<span className={`status-dot ${device?.status === "online" ? "" : "warning"}`} /><span>{t(device?.status === "online" ? "online" : "offline")}</span>{socketState === "open" ? <Wifi size={15} /> : <WifiOff size={15} />}</div>;
 }
 
 function DeviceCard({ device, t, syncText }: { device: Device; t: T; syncText: string }) {
-  return <div className="device-card"><div><Monitor size={22} /><strong>{device.name}</strong></div><dl><dt>{t("status")}</dt><dd>{t(device.status === "online" ? "online" : "offline")}</dd><dt>{t("platform")}</dt><dd>{device.platform}</dd><dt>{t("appVersion")}</dt><dd>{device.appVersion}</dd><dt>{t("lastSync")}</dt><dd>{syncText}</dd></dl></div>;
+  return <div className="device-card"><div><Monitor size={22} /><strong>{device.name}</strong></div><dl><dt>{t("status")}</dt><dd>{t(device.status === "online" ? "online" : "offline")}</dd><dt>{t("platform")}</dt><dd>{device.platform}</dd><dt>{t("appVersion")}</dt><dd>{clientKindLabel(device, t) || t("unknown")} · {device.appVersion}</dd><dt>{t("softwareId")}</dt><dd>{device.clientId}</dd><dt>{t("lastSync")}</dt><dd>{syncText}</dd></dl></div>;
 }
 
 function EmptyDevice({ t, onPair }: { t: T; onPair: () => void }) {

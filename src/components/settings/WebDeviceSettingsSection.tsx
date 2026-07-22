@@ -101,7 +101,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
         <TextInput label={t("settings.webDevice.deviceName")} placeholder={t("settings.webDevice.defaultName")} value={deviceName} onChange={(event) => setDeviceName(event.currentTarget.value)} />
         <Switch checked={autoStart} onChange={(event) => setAutoStart(event.currentTarget.checked)} label={t("settings.webDevice.autoStart")} description={t("settings.webDevice.autoStartHint")} />
         <Switch checked={uploadWallpaper} onChange={(event) => setUploadWallpaper(event.currentTarget.checked)} label={t("settings.webDevice.uploadWallpaper")} description={t("settings.webDevice.uploadWallpaperHint")} />
-        {status?.profile && <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.webDevice.deviceId")}: {status.profile.deviceId}</Text>}
+        {status?.profile && <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.webDevice.clientId")}: {status.profile.clientId}</Text>}
         {status?.lastError && <Text size="xs" c="red">{status.lastError}</Text>}
 
         {status?.pairingCode && (

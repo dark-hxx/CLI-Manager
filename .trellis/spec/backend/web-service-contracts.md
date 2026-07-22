@@ -34,17 +34,19 @@
 | Command | Contract |
 |---|---|
 | `web_device_get_status` | Returns non-secret profile, connection, pairing, queue, and error state |
-| `web_device_save_profile` | Saves `serverUrl`, `name`, and `autoStart`; preserves stable `deviceId` |
+| `web_device_save_profile` | Saves `serverUrl`, `name`, and `autoStart`; preserves the channel-specific stable `clientId` |
 | `web_device_start/stop/restart` | Controls the Rust-owned device worker independently of React lifecycle |
-| `web_device_create_pairing/clear_pairing` | Creates a short-lived code or revokes the credential and rotates `deviceId` |
+| `web_device_create_pairing/clear_pairing` | Creates a short-lived code or revokes the credential and rotates `clientId` |
 | `web_device_take_operations` | Returns the bounded, deduplicated desktop operation queue |
-| `web_device_publish_history` | Sends a full `HistorySnapshot` |
+| `web_device_publish_history` | Sends a full `HistorySnapshot { sessions, workspace }`; `workspace` contains desktop groups, projects, and Worktrees |
 | `web_device_validate_context` | Canonicalizes native/WSL roots and rejects a `cwd` outside the registered project or Worktree |
 | `web_device_operation_accepted/running/completed` | Emits device-authoritative operation state frames |
 
 ### SQLite
 
 - Migration owner: `apps/server/migrations/`.
+- `devices.workspace_snapshot_json` stores the latest accepted `WorkspaceSnapshot` as one atomic JSON document; it must not contain environment variables, startup commands, SSH credentials, identity paths, or provider secrets.
+- `devices.id` remains the connection key and stores the effective software `clientId`; `devices.machine_id` groups software instances on one computer and `devices.client_kind` distinguishes `development` from `release`.
 - Migration SQL files must use LF. Before SQLx validation, startup may rewrite an applied migration checksum only when it exactly matches the same embedded SQL with the alternate LF/CRLF representation; any other checksum mismatch must remain an error.
 - Required uniqueness: browser token hash, pairing code hash, `(device_id, stream)` cursor, `(user_id, idempotency_key)` operation, browser event sequence.
 - Startup must mark persisted devices offline before accepting new connections.
@@ -73,15 +75,16 @@
 ### Device connection
 
 - Validate protocol version and hello field bounds before persisting hello data.
+- New clients send stable `clientId`, shared `machineId`, and `clientKind`. They also mirror `clientId` into legacy `deviceId`, so older servers still treat Dev and installed builds as separate connections. Servers accept an older hello without the new fields by using `deviceId` as the effective client identity.
 - A paired device must prove its token before `upsert_device_hello` can mark it online.
 - An unpaired device may send only pairing offers and heartbeat frames.
 - Replacing a device connection shuts down the older generation; only the current connection may ingest state.
 - Device send queues are bounded. Queue failure closes the connection; cleanup marks the current generation offline.
 - Desktop keeps delivered operations until a server `OperationAck` confirms the state update. If the local operation queue overflows, it keeps the connection alive long enough to consume ACKs, then reconnects after capacity is recovered so the server can resend deferred operations.
-- History snapshot sequence is per `(device, history)` and full snapshots replace missing sessions atomically.
+- History snapshot sequence is per `(device, history)` and full snapshots replace missing sessions atomically. The same frame may carry an optional desktop workspace snapshot (groups, projects, and Worktrees); the server stores it atomically with the accepted history sequence, and `/history` returns it separately from session items. Legacy frames without `workspace` remain valid.
 - Tauri owns `/ws/device`, heartbeat, reconnect, pairing, history, and outbound queues in Rust; hiding, minimizing, or unmounting a settings component must not stop the connection.
 - When `cli-manager-web-daemon` is available, it owns `/ws/device`, heartbeat, reconnect, pairing, history, and outbound queues; Tauri remains the local operation executor and keeps the existing command/event surface.
-- The non-secret profile lives under stable `.cli-manager` app data. `deviceToken` lives only in the native credential store and must never enter a WebView payload, log, SQLite row, or JSON profile.
+- The non-secret installed profile is `.cli-manager/web-device.json`; Dev uses `.cli-manager/web-device.dev.json`. Both share `.cli-manager/machine-id`, while each profile owns a distinct stable `clientId`. `deviceToken` is keyed by `clientId` in the native credential store and must never enter a WebView payload, log, SQLite row, or JSON profile.
 - Only loopback servers may use `ws://`; remote device servers require `wss://`.
 
 ### Browser events
@@ -108,11 +111,11 @@ non-terminal -> canceled | timed_out
 - An exact idempotency hit is returned before re-checking the device's current capability or online state.
 - Only device frames update accepted/running/terminal states. Browser/UI code must never infer success.
 - Browser operation payloads explicitly carry `source`, `projectKey`, `cwd`, and `prompt`; `conversation.prompt` additionally carries `sessionId`.
-- Before launch, desktop must match the payload against its own history snapshot, registered project/Worktree, CLI source, installed Hook, and canonical path boundary. SSH projects remain rejected in P0.
+- Before launch, desktop must match the payload against its registered project/Worktree, CLI source, installed Hook, and canonical path boundary. `conversation.prompt` additionally must match the desktop history session; `conversation.start` and management operations must work for registered projects that have no history yet. SSH projects remain rejected in P0.
 - Desktop sends the Prompt only after the matching CLI reports `SessionStart`. `Stop` is the success authority and `StopFailure` is the failure authority.
 - Pure validation failure or a desktop user denial may transition directly from `submitted/waiting_device` to `rejected`; no side effect may start first.
 - `payload.confirmed=true` records browser intent only. Every management write, Git Fetch, and SSH new-host-key acceptance must also receive a native desktop confirmation that cannot be forged by the remote browser.
-- Management operations execute serially in the desktop bridge. Files/Git/Worktree paths are resolved from desktop history and registered local state, not from a browser-provided root.
+- Management operations execute serially in the desktop bridge. Files/Git/Worktree paths are resolved from registered desktop project/Worktree state, not from history presence or a browser-provided root.
 - Operation results use Web-specific DTOs: never return SSH credentials, identity/proxy paths, raw OpenSSH stderr, local Worktree paths, Hook config paths, or database paths.
 - Hook `status/test` always use `autoRepair=false`; Web cannot choose Hook directories.
 
@@ -137,6 +140,7 @@ non-terminal -> canceled | timed_out
 | Canonical `cwd` escapes the registered native/WSL root | Reject before operation execution |
 | Remote plaintext device URL | Reject profile/start; only loopback may use `ws://` |
 | Invalid state jump | `invalid_operation_transition` |
+| Workspace snapshot exceeds item/string bounds or contains an unknown source/environment/status | Reject the whole frame as `invalid_history_snapshot`; do not advance the history sequence |
 | Applied migration checksum differs only by LF/CRLF | Rewrite to the embedded migration checksum, then run normal SQLx validation |
 | Applied migration checksum differs by SQL content | Preserve SQLx `VersionMismatch`; never auto-repair |
 | Unknown `/api/*` path | JSON 404; never SPA `index.html` |
@@ -145,8 +149,12 @@ non-terminal -> canceled | timed_out
 
 - Good: browser reconnects with sequence 42, receives persisted events 43..N, then live events without gaps or duplicates.
 - Good: online operation stays submitted until desktop accepted/running/final frames arrive.
+- Good: a desktop project with no history session still appears in the Web tree because project navigation comes from `workspace.projects`, not from `history_sessions`.
+- Good: desktop groups and Worktrees preserve their IDs and hierarchy while only safe display/launch context fields cross the device boundary.
+- Good: installed and Dev clients run concurrently on one machine with different `clientId` values and the same `machineId`; reconnecting either client does not replace the other connection or workspace snapshot.
 - Base: dispatch races with a disconnect; operation becomes `waiting_device` and is resent after device reconnect.
 - Base: service restarts; cached history remains readable, all devices start offline, and no Redis state is required.
+- Base: an older desktop sends `HistorySnapshot` without `workspace`; the server accepts it and the Web client may fall back to legacy history-derived contexts.
 - Base: a Windows checkout changes an applied migration from LF to CRLF; startup repairs only that byte-level line-ending drift and continues.
 - Base: the window is hidden while the Rust worker remains connected; queued operations are delivered when the WebView bridge is ready.
 - Base: the renderer reloads after an operation reached accepted/running; the server resends it and desktop reports `operation_interrupted` instead of executing it again.
@@ -157,6 +165,7 @@ non-terminal -> canceled | timed_out
 - Bad: allow `submitted -> succeeded`, trust browser-provided success, or serve SPA HTML for an unknown API route.
 - Bad: treat `payload.confirmed` as authorization, expose native paths/SSH stderr in results, or remove a local operation before its server ACK.
 - Bad: overwrite `_sqlx_migrations.checksum` for an unknown mismatch or rerun an already-applied migration.
+- Bad: derive the Web project tree from history rows, or upload full desktop `Project` records containing `env_vars`, startup commands, credential references, or provider overrides.
 
 ## 6. Tests Required
 
@@ -171,6 +180,8 @@ non-terminal -> canceled | timed_out
   - health, protected route, and JSON API fallback routing.
   - known LF/CRLF migration checksum drift is repaired while unknown drift remains `VersionMismatch`.
 - `cargo test --manifest-path crates/web-protocol/Cargo.toml` to lock camelCase fields, snake_case statuses, and dotted browser event names.
+- Protocol tests must assert that legacy history frames omit `workspace`, current frames serialize `workspace.updatedAt/groupId` in camelCase, and no sensitive desktop project fields exist in the DTO.
+- Server storage tests must assert that an accepted snapshot persists the workspace atomically and that a newer snapshot replaces it without changing history pagination semantics.
 - `npm run web:typecheck` and `npm run web:build`.
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --check`, `cargo check --manifest-path src-tauri/Cargo.toml`, and `cargo test --manifest-path src-tauri/Cargo.toml web_device` with assertions for URL TLS policy, profile/token serialization, queue bounds/deduplication, profile replacement, and native path boundary rejection.
 - `npx tsc --noEmit` and `npm run build` for the desktop bridge and settings integration.
@@ -191,6 +202,11 @@ storage.update_operation_status(device_id, id, OperationStatus::Succeeded, ...).
 // Wrong: browser-provided context is used directly in a shell command.
 const command = `codex resume ${payload.sessionId}`;
 createSession(undefined, payload.cwd, command);
+```
+
+```typescript
+// Wrong: history rows are treated as the authoritative project catalog.
+const projects = unique(history.map((session) => session.projectKey));
 ```
 
 ### Correct
@@ -218,4 +234,15 @@ await webDeviceApi.validateContext(project.path, payload.cwd);
 // Browser intent is not sufficient for writes; obtain native desktop approval first.
 await webDeviceApi.accepted(operation.id);
 await webDeviceApi.running(operation.id);
+```
+
+```typescript
+// Correct: the desktop publishes a safe workspace DTO; history remains session-only data.
+await webDeviceApi.publishHistory(sessions, {
+  groups,
+  projects: projects.map(({ id, name, groupId, source, cwd, environmentType }) =>
+    ({ id, name, groupId, source, cwd, environmentType })),
+  worktrees,
+  updatedAt: Date.now(),
+});
 ```

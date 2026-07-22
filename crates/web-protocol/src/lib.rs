@@ -108,6 +108,9 @@ pub struct DeviceWallpaperUpload {
 #[serde(rename_all = "camelCase")]
 pub struct DeviceView {
     pub id: String,
+    pub client_id: String,
+    pub machine_id: Option<String>,
+    pub client_kind: Option<String>,
     pub name: String,
     pub platform: String,
     pub app_version: String,
@@ -133,6 +136,47 @@ pub struct HistorySessionSummary {
     pub message_count: u64,
     pub branch: Option<String>,
     pub freshness: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGroupSummary {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProjectSummary {
+    pub id: String,
+    pub name: String,
+    pub group_id: Option<String>,
+    pub sort_order: i64,
+    pub source: Option<String>,
+    pub cwd: Option<String>,
+    pub environment_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceWorktreeSummary {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub branch: String,
+    pub cwd: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSnapshot {
+    pub groups: Vec<WorkspaceGroupSummary>,
+    pub projects: Vec<WorkspaceProjectSummary>,
+    pub worktrees: Vec<WorkspaceWorktreeSummary>,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -167,6 +211,12 @@ pub enum DeviceToServerFrame {
     Hello {
         protocol_version: u16,
         device_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_kind: Option<String>,
         device_token: Option<String>,
         name: String,
         platform: String,
@@ -187,6 +237,8 @@ pub enum DeviceToServerFrame {
     HistorySnapshot {
         sequence: u64,
         sessions: Vec<HistorySessionSummary>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<WorkspaceSnapshot>,
     },
     OperationAccepted {
         operation_id: String,
@@ -325,6 +377,9 @@ mod tests {
         });
         let frame: DeviceToServerFrame = serde_json::from_value(legacy).unwrap();
         let DeviceToServerFrame::Hello {
+            client_id,
+            machine_id,
+            client_kind,
             host_info,
             wallpaper,
             ..
@@ -332,12 +387,18 @@ mod tests {
         else {
             panic!("expected hello frame");
         };
+        assert!(client_id.is_none());
+        assert!(machine_id.is_none());
+        assert!(client_kind.is_none());
         assert!(host_info.is_none());
         assert!(wallpaper.is_none());
 
         let value = serde_json::to_value(DeviceToServerFrame::Hello {
             protocol_version: 1,
             device_id: "device-1".to_string(),
+            client_id: Some("client-1".to_string()),
+            machine_id: Some("machine-1".to_string()),
+            client_kind: Some("development".to_string()),
             device_token: None,
             name: "PC".to_string(),
             platform: "windows".to_string(),
@@ -356,6 +417,9 @@ mod tests {
         })
         .unwrap();
         assert_eq!(value["hostInfo"]["hostName"], "WORKSTATION");
+        assert_eq!(value["clientId"], "client-1");
+        assert_eq!(value["machineId"], "machine-1");
+        assert_eq!(value["clientKind"], "development");
         assert!(value.get("wallpaper").is_none());
     }
 
@@ -370,5 +434,41 @@ mod tests {
         assert_eq!(value["type"], "pairing.updated");
         assert_eq!(value["pairingId"], "pairing-1");
         assert_eq!(value["deviceId"], "device-1");
+    }
+
+    #[test]
+    fn history_snapshot_workspace_is_optional_and_camel_case() {
+        let legacy = serde_json::json!({
+            "type": "history_snapshot",
+            "sequence": 1,
+            "sessions": []
+        });
+        let frame: DeviceToServerFrame = serde_json::from_value(legacy).unwrap();
+        let DeviceToServerFrame::HistorySnapshot { workspace, .. } = frame else {
+            panic!("expected history snapshot");
+        };
+        assert!(workspace.is_none());
+
+        let value = serde_json::to_value(DeviceToServerFrame::HistorySnapshot {
+            sequence: 2,
+            sessions: vec![],
+            workspace: Some(WorkspaceSnapshot {
+                groups: vec![],
+                projects: vec![WorkspaceProjectSummary {
+                    id: "project-1".to_string(),
+                    name: "CLI-Manager".to_string(),
+                    group_id: None,
+                    sort_order: 0,
+                    source: Some("codex".to_string()),
+                    cwd: Some(r"D:\work\CLI-Manager".to_string()),
+                    environment_type: "local".to_string(),
+                }],
+                worktrees: vec![],
+                updated_at: 7,
+            }),
+        })
+        .unwrap();
+        assert_eq!(value["workspace"]["projects"][0]["groupId"], Value::Null);
+        assert_eq!(value["workspace"]["updatedAt"], 7);
     }
 }

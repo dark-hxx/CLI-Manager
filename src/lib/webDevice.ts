@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 export interface WebDeviceProfile {
   serverUrl: string;
-  deviceId: string;
+  clientId: string;
+  machineId: string;
+  clientKind: "development" | "release";
   name: string;
   autoStart: boolean;
   uploadWallpaper: boolean;
@@ -55,6 +57,28 @@ export interface WebHistorySessionSummary {
   freshness: "live";
 }
 
+export interface WebWorkspaceSnapshot {
+  groups: Array<{ id: string; name: string; parentId: string | null; sortOrder: number }>;
+  projects: Array<{
+    id: string;
+    name: string;
+    groupId: string | null;
+    sortOrder: number;
+    source: "claude" | "codex" | null;
+    cwd: string | null;
+    environmentType: "local" | "wsl" | "ssh";
+  }>;
+  worktrees: Array<{
+    id: string;
+    projectId: string;
+    name: string;
+    branch: string;
+    cwd: string;
+    status: "active" | "missing";
+  }>;
+  updatedAt: number;
+}
+
 export const webDeviceApi = {
   getStatus: () => invoke<WebDeviceStatus>("web_device_get_status"),
   saveProfile: (request: WebDeviceProfileInput) => invoke<WebDeviceStatus>("web_device_save_profile", { request }),
@@ -64,7 +88,8 @@ export const webDeviceApi = {
   createPairing: () => invoke<{ code: string; expiresAt: number }>("web_device_create_pairing"),
   clearPairing: () => invoke<WebDeviceStatus>("web_device_clear_pairing"),
   takeOperations: () => invoke<WebDeviceOperation[]>("web_device_take_operations"),
-  publishHistory: (sessions: WebHistorySessionSummary[]) => invoke<void>("web_device_publish_history", { request: { sessions } }),
+  publishHistory: (sessions: WebHistorySessionSummary[], workspace: WebWorkspaceSnapshot) =>
+    invoke<void>("web_device_publish_history", { request: { sessions, workspace } }),
   validateContext: (rootPath: string, cwd: string) => invoke<void>("web_device_validate_context", { request: { rootPath, cwd } }),
   accepted: (operationId: string) => invoke<void>("web_device_operation_accepted", { request: { operationId } }),
   running: (operationId: string) => invoke<void>("web_device_operation_running", { request: { operationId } }),

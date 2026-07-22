@@ -1,12 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useHistoryStore } from "../stores/historyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useSshHostStore } from "../stores/sshHostStore";
 import { useWorktreeStore } from "../stores/worktreeStore";
 import type { CreateSshHostInput, Project, SshAuthMode, UpdateSshHostInput, WorktreeRecord } from "./types";
 import { buildSshConnectionSpec } from "./ssh";
-import { findProjectByPath, findWorktreeByPath, normalizeProjectPath } from "./terminalProject";
+import { findProjectByPath, findWorktreeByPath } from "./terminalProject";
 import { webDeviceApi, type WebDeviceOperation } from "./webDevice";
 
 const MANAGEMENT_KINDS = new Set([
@@ -99,16 +98,8 @@ function requireConfirmation(operation: WebDeviceOperation, payload: Payload) {
 }
 
 async function resolveLocalContext(payload: Payload): Promise<LocalContext> {
-  const projectKey = requiredString(payload, "projectKey", 512);
+  requiredString(payload, "projectKey", 512);
   const cwd = requiredString(payload, "cwd");
-  const historyStore = useHistoryStore.getState();
-  await historyStore.loadSessions();
-  const historyMatch = useHistoryStore.getState().sessions.some((session) => (
-    session.project_key === projectKey
-    && normalizeProjectPath(session.cwd?.trim() || "") === normalizeProjectPath(cwd)
-  ));
-  if (!historyMatch) managementError("history_context_not_found", "project context does not match desktop history");
-
   const projectStore = useProjectStore.getState();
   if (!projectStore.loaded) await projectStore.fetchAll("startup");
   const { projects, worktrees } = useProjectStore.getState();

@@ -6,6 +6,7 @@ import type {
   JsonObject,
   Operation,
   Pairing,
+  WorkspaceSnapshot,
 } from "./domain";
 
 export class ApiError extends Error {
@@ -39,6 +40,7 @@ export const webClient = {
     request<AuthStatus>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   logout: () => request<{ ok: true }>("/auth/logout", { method: "POST" }),
   devices: () => request<{ devices: Device[] }>("/devices"),
+  removeDevice: (deviceId: string) => request<{ ok: true }>(`/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" }),
   claimPairing: (code: string) =>
     request<{ pairing: Pairing; device: Device }>("/pairing/claim", {
       method: "POST",
@@ -46,7 +48,7 @@ export const webClient = {
     }),
   history: (deviceId: string, limit = 50, offset = 0) => {
     const query = new URLSearchParams({ deviceId, limit: String(limit), offset: String(offset) });
-    return request<{ items: HistorySessionSummary[]; nextOffset: number | null }>(`/history?${query}`);
+    return request<{ items: HistorySessionSummary[]; nextOffset: number | null; workspace: WorkspaceSnapshot | null }>(`/history?${query}`);
   },
   createOperation: (input: {
     deviceId: string;

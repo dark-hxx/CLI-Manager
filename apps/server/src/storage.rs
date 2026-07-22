@@ -1,7 +1,10 @@
 use crate::error::AppError;
+#[cfg(test)]
+use cli_manager_web_protocol::WorkspaceProjectSummary;
 use cli_manager_web_protocol::{
     BrowserEventPayload, BrowserSocketFrame, DeviceHostInfo, DeviceStatus, DeviceView,
     HistorySessionSummary, OperationError, OperationStatus, OperationView, UserView,
+    WorkspaceSnapshot,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha384};
@@ -14,6 +17,11 @@ use uuid::Uuid;
 const KNOWN_MIGRATIONS: &[(i64, &[u8])] = &[
     (1, include_bytes!("../migrations/0001_initial.sql")),
     (2, include_bytes!("../migrations/0002_device_identity.sql")),
+    (
+        3,
+        include_bytes!("../migrations/0003_device_workspace_snapshot.sql"),
+    ),
+    (4, include_bytes!("../migrations/0004_client_identity.sql")),
 ];
 
 #[derive(Debug, Clone)]
@@ -173,6 +181,8 @@ impl Storage {
         platform: &str,
         app_version: &str,
         capabilities: &[String],
+        machine_id: Option<&str>,
+        client_kind: Option<&str>,
         host_info: Option<&DeviceHostInfo>,
         wallpaper: Option<(&[u8], &str)>,
     ) -> Result<DeviceView, AppError> {
@@ -185,8 +195,8 @@ impl Storage {
         sqlx::query(
             "INSERT INTO devices
                 (id, name, platform, app_version, status, capabilities_json, last_seen_at,
-                 host_info_json, wallpaper_jpeg, wallpaper_revision)
-             VALUES (?1, ?2, ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9)
+                 host_info_json, wallpaper_jpeg, wallpaper_revision, machine_id, client_kind)
+             VALUES (?1, ?2, ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 platform = excluded.platform,
@@ -196,7 +206,9 @@ impl Storage {
                 last_seen_at = excluded.last_seen_at,
                 host_info_json = COALESCE(excluded.host_info_json, devices.host_info_json),
                 wallpaper_jpeg = COALESCE(excluded.wallpaper_jpeg, devices.wallpaper_jpeg),
-                wallpaper_revision = COALESCE(excluded.wallpaper_revision, devices.wallpaper_revision)",
+                wallpaper_revision = COALESCE(excluded.wallpaper_revision, devices.wallpaper_revision),
+                machine_id = COALESCE(excluded.machine_id, devices.machine_id),
+                client_kind = COALESCE(excluded.client_kind, devices.client_kind)",
         )
         .bind(device_id)
         .bind(name)
@@ -207,6 +219,8 @@ impl Storage {
         .bind(host_info_json)
         .bind(wallpaper_jpeg)
         .bind(wallpaper_revision)
+        .bind(machine_id)
+        .bind(client_kind)
         .execute(&self.pool)
         .await?;
         self.device_by_id(device_id)
@@ -264,13 +278,26 @@ impl Storage {
     pub async fn list_devices(&self, user_id: &str) -> Result<Vec<DeviceView>, AppError> {
         let rows = sqlx::query(
             "SELECT id, name, platform, app_version, status, capabilities_json, paired_at,
-                    last_seen_at, host_info_json, wallpaper_revision
+                    last_seen_at, host_info_json, wallpaper_revision, machine_id, client_kind
              FROM devices WHERE user_id = ?1 ORDER BY last_seen_at DESC, id",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(device_from_row).collect()
+    }
+
+    pub async fn remove_device_for_user(&self, user_id: &str, device_id: &str) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE devices
+             SET user_id = NULL, device_token_hash = NULL, paired_at = NULL
+             WHERE id = ?1 AND user_id = ?2",
+        )
+        .bind(device_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
     }
 
     pub async fn device_for_user(
@@ -280,7 +307,7 @@ impl Storage {
     ) -> Result<Option<DeviceView>, AppError> {
         let row = sqlx::query(
             "SELECT id, name, platform, app_version, status, capabilities_json, paired_at,
-                    last_seen_at, host_info_json, wallpaper_revision
+                    last_seen_at, host_info_json, wallpaper_revision, machine_id, client_kind
              FROM devices WHERE user_id = ?1 AND id = ?2",
         )
         .bind(user_id)
@@ -293,7 +320,7 @@ impl Storage {
     async fn device_by_id(&self, device_id: &str) -> Result<Option<DeviceView>, AppError> {
         let row = sqlx::query(
             "SELECT id, name, platform, app_version, status, capabilities_json, paired_at,
-                    last_seen_at, host_info_json, wallpaper_revision
+                    last_seen_at, host_info_json, wallpaper_revision, machine_id, client_kind
              FROM devices WHERE id = ?1",
         )
         .bind(device_id)
@@ -472,6 +499,7 @@ impl Storage {
         user_id: &str,
         sequence: u64,
         sessions: &[HistorySessionSummary],
+        workspace: Option<&WorkspaceSnapshot>,
     ) -> Result<bool, AppError> {
         let sequence = i64::try_from(sequence).map_err(|_| {
             AppError::bad_request("invalid_sequence", "sequence exceeds supported range")
@@ -528,6 +556,16 @@ impl Storage {
             .execute(&mut *tx)
             .await?;
         }
+        if let Some(workspace) = workspace {
+            let serialized = serde_json::to_string(workspace).map_err(|error| {
+                AppError::Internal(format!("serialize workspace snapshot failed: {error}"))
+            })?;
+            sqlx::query("UPDATE devices SET workspace_snapshot_json = ?1 WHERE id = ?2")
+                .bind(serialized)
+                .bind(device_id)
+                .execute(&mut *tx)
+                .await?;
+        }
         sqlx::query(
             "INSERT INTO device_event_cursors (device_id, stream, last_sequence)
              VALUES (?1, 'history', ?2)
@@ -539,6 +577,25 @@ impl Storage {
         .await?;
         tx.commit().await?;
         Ok(true)
+    }
+
+    pub async fn workspace_snapshot(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<WorkspaceSnapshot>, AppError> {
+        let serialized: Option<String> =
+            sqlx::query_scalar("SELECT workspace_snapshot_json FROM devices WHERE id = ?1")
+                .bind(device_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
+        serialized
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    AppError::Internal(format!("decode workspace snapshot failed: {error}"))
+                })
+            })
+            .transpose()
     }
 
     pub async fn list_history(
@@ -874,8 +931,12 @@ pub fn now_ms() -> i64 {
 fn device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<DeviceView, AppError> {
     let status: String = row.get("status");
     let host_info_json: Option<String> = row.get("host_info_json");
+    let client_id: String = row.get("id");
     Ok(DeviceView {
-        id: row.get("id"),
+        id: client_id.clone(),
+        client_id,
+        machine_id: row.get("machine_id"),
+        client_kind: row.get("client_kind"),
         name: row.get("name"),
         platform: row.get("platform"),
         app_version: row.get("app_version"),
@@ -1008,9 +1069,23 @@ mod tests {
             .unwrap()
             .unwrap();
         storage
-            .upsert_device_hello("device-1", "PC", "windows", "1.0", &[], None, None)
+            .upsert_device_hello(
+                "device-1",
+                "PC",
+                "windows",
+                "1.0",
+                &[],
+                Some("machine-1"),
+                Some("development"),
+                None,
+                None,
+            )
             .await
             .unwrap();
+        let device = storage.device_by_id("device-1").await.unwrap().unwrap();
+        assert_eq!(device.client_id, "device-1");
+        assert_eq!(device.machine_id.as_deref(), Some("machine-1"));
+        assert_eq!(device.client_kind.as_deref(), Some("development"));
         sqlx::query("UPDATE devices SET user_id = ?1 WHERE id = 'device-1'")
             .bind(&user.id)
             .execute(storage.pool())
@@ -1062,7 +1137,17 @@ mod tests {
             .unwrap()
             .unwrap();
         storage
-            .upsert_device_hello("device-1", "PC", "windows", "1.0", &[], None, None)
+            .upsert_device_hello(
+                "device-1",
+                "PC",
+                "windows",
+                "1.0",
+                &[],
+                Some("machine-1"),
+                Some("development"),
+                None,
+                None,
+            )
             .await
             .unwrap();
         sqlx::query("UPDATE devices SET user_id = ?1 WHERE id = 'device-1'")
@@ -1083,17 +1168,40 @@ mod tests {
             branch: None,
             freshness: "live".to_string(),
         };
+        let workspace = |name: &str, updated_at: i64| WorkspaceSnapshot {
+            groups: vec![],
+            projects: vec![WorkspaceProjectSummary {
+                id: "project-1".to_string(),
+                name: name.to_string(),
+                group_id: None,
+                sort_order: 0,
+                source: Some("codex".to_string()),
+                cwd: Some(r"D:\work\CLI-Manager".to_string()),
+                environment_type: "local".to_string(),
+            }],
+            worktrees: vec![],
+            updated_at,
+        };
+        let first_workspace = workspace("CLI-Manager", 1);
         storage
             .replace_history_snapshot(
                 "device-1",
                 &user.id,
                 1,
                 &[session("session-a"), session("session-b")],
+                Some(&first_workspace),
             )
             .await
             .unwrap();
+        let next_workspace = workspace("CLI-Manager renamed", 2);
         storage
-            .replace_history_snapshot("device-1", &user.id, 2, &[session("session-b")])
+            .replace_history_snapshot(
+                "device-1",
+                &user.id,
+                2,
+                &[session("session-b")],
+                Some(&next_workspace),
+            )
             .await
             .unwrap();
         let sessions = storage
@@ -1102,6 +1210,13 @@ mod tests {
             .unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "session-b");
+        let stored_workspace = storage
+            .workspace_snapshot("device-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_workspace.projects[0].name, "CLI-Manager renamed");
+        assert_eq!(stored_workspace.updated_at, 2);
     }
 
     #[test]

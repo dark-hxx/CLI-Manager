@@ -41,7 +41,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
  import { getLanguageLocale, useI18n, type AppLanguage, type TranslationKey } from "../../../lib/i18n";
- import type { WebDeviceStatus } from "../../../lib/webDevice";
+ import { webDeviceApi, type WebDeviceStatus } from "../../../lib/webDevice";
 import { useProjectStore } from "../../../stores/projectStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { ConfirmDialog } from "../../ConfirmDialog";
@@ -343,14 +343,18 @@ export function CcConnectSettingsPage() {
     statusInFlightRef.current = true;
     const requestId = ++statusRequestRef.current;
     try {
-      const [next, nextNotificationStatus] = await Promise.all([
+      const [next, nextNotificationStatus, nextWebDeviceStatus] = await Promise.all([
         invoke<CcConnectStatus>("cc_connect_get_status", { refreshDetection: force }),
         invoke<CcConnectHandoffNotificationStatus>(
           "cc_connect_handoff_notification_status"
         ).catch(() => null),
+        webDeviceApi.getStatus().catch(() => null),
       ]);
       if (requestId !== statusRequestRef.current) return;
       setStatus(next);
+      if (nextWebDeviceStatus) {
+        setWebDeviceStatus(nextWebDeviceStatus);
+      }
       if (nextNotificationStatus) {
         setHandoffNotificationStatus(nextNotificationStatus);
       }
@@ -927,7 +931,7 @@ export function CcConnectSettingsPage() {
 
   return (
     <>
-      <Stack gap="md" maw={1040}>
+      <Stack gap="md" w="100%">
         <UnstyledButton
           className="ui-focus-ring block h-full w-full rounded-lg text-left"
           onClick={() => setActiveConnection("cc-connect")}

@@ -15,6 +15,7 @@
 - Stable data directory: `<home>/.cli-manager`.
 - Stable store files: `settings.json`, production `sessions.json`, development `sessions.dev.json`, `sync-config.json`, `external-session-sync.json`.
 - Stable SQLite DB: `cli-manager.db`.
+- Stable machine identity: `machine-id`; installed Web profile: `web-device.json`; development Web profile: `web-device.dev.json`.
 - History index cache: production `history-cache`, development `history-cache-dev`.
 
 ### 3. Contracts
@@ -22,6 +23,7 @@
 - All durable CLI-Manager user data must resolve under `.cli-manager`, not versioned or identifier-dependent Tauri data folders.
 - `app_get_data_paths().sessionsStorePath` must use `sessions.dev.json` under Tauri `cfg(dev)` and `sessions.json` otherwise. Other stores remain shared unless another contract explicitly isolates them.
 - History index caches must use `history-cache-dev` under Tauri `cfg(dev)` and `history-cache` otherwise, so installed and development apps can run concurrently without competing over catalog activation/index runs.
+- Installed and development Web bridges must use separate profile files and software `clientId` values. They share only `machine-id`, so both builds can run concurrently without replacing each other's WebSocket generation, pairing token, or workspace snapshot.
 - Legacy store migration continues to migrate `sessions.json` as production user data. It must not copy production or legacy sessions into `sessions.dev.json`.
 - Store migration from legacy Tauri app data must be non-destructive:
   - copy the legacy store file when the target file is missing;

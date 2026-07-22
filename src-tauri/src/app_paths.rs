@@ -1,11 +1,15 @@
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, Runtime};
+use uuid::Uuid;
 
 const APP_HOME_DIR_NAME: &str = ".cli-manager";
+const MACHINE_ID_FILE_NAME: &str = "machine-id";
 const DB_FILE_NAME: &str = "cli-manager.db";
 const SETTINGS_STORE_FILE_NAME: &str = "settings.json";
 const SESSIONS_STORE_FILE_NAME: &str = "sessions.json";
@@ -53,6 +57,36 @@ pub(crate) fn home_dir_from_env() -> Result<PathBuf, String> {
 
 pub fn cli_manager_data_dir() -> Result<PathBuf, String> {
     Ok(home_dir_from_env()?.join(APP_HOME_DIR_NAME))
+}
+
+pub fn machine_id() -> Result<String, String> {
+    let data_dir = cli_manager_data_dir()?;
+    fs::create_dir_all(&data_dir).map_err(|err| format!("create data directory failed: {err}"))?;
+    let path = data_dir.join(MACHINE_ID_FILE_NAME);
+    if let Ok(value) = fs::read_to_string(&path) {
+        return validate_machine_id(&value);
+    }
+
+    let value = Uuid::new_v4().to_string();
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            file.write_all(value.as_bytes())
+                .map_err(|err| format!("write machine id failed: {err}"))?;
+            Ok(value)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            validate_machine_id(&fs::read_to_string(path).map_err(|read_err| {
+                format!("read concurrently created machine id failed: {read_err}")
+            })?)
+        }
+        Err(err) => Err(format!("create machine id failed: {err}")),
+    }
+}
+
+fn validate_machine_id(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    Uuid::parse_str(value).map_err(|_| "invalid machine id".to_string())?;
+    Ok(value.to_string())
 }
 
 pub fn logs_dir() -> Result<PathBuf, String> {
@@ -317,6 +351,13 @@ mod tests {
         assert_eq!(sessions_store_file_name(true), "sessions.dev.json");
         assert_eq!(history_cache_dir_name(false), "history-cache");
         assert_eq!(history_cache_dir_name(true), "history-cache-dev");
+    }
+
+    #[test]
+    fn validates_stable_machine_id() {
+        let id = Uuid::new_v4().to_string();
+        assert_eq!(validate_machine_id(&format!(" {id}\n")).unwrap(), id);
+        assert!(validate_machine_id("not-a-uuid").is_err());
     }
 
     #[test]

@@ -13,7 +13,7 @@ import { appendResumeCliArgs, resolveProjectStartupCommand } from "../lib/projec
 import { getProviderSwitchAppType } from "../lib/providerSwitching";
 import { logWarn } from "../lib/logger";
 import { translateCurrent } from "../lib/i18n";
-import { webDeviceApi, type WebDeviceOperation, type WebHistorySessionSummary } from "../lib/webDevice";
+import { webDeviceApi, type WebDeviceOperation, type WebHistorySessionSummary, type WebWorkspaceSnapshot } from "../lib/webDevice";
 import {
   executeWebManagementOperation,
   isWebManagementOperation,
@@ -214,16 +214,18 @@ async function executeOperation(operation: WebDeviceOperation) {
 
     const projectStore = useProjectStore.getState();
     if (!projectStore.loaded) await projectStore.fetchAll("startup");
-    const historyStore = useHistoryStore.getState();
-    await historyStore.loadSessions();
-    const matchesHistoryContext = useHistoryStore.getState().sessions.some((session) => (
-      session.source === payload.source
-      && session.project_key === payload.projectKey
-      && normalizeProjectPath(session.cwd?.trim() || "") === normalizeProjectPath(payload.cwd)
-      && (operation.kind !== "conversation.prompt" || session.session_id === payload.sessionId)
-    ));
-    if (!matchesHistoryContext) {
-      throw operationError("history_context_not_found", "operation context does not match desktop history");
+    if (operation.kind === "conversation.prompt") {
+      const historyStore = useHistoryStore.getState();
+      await historyStore.loadSessions();
+      const matchesHistoryContext = useHistoryStore.getState().sessions.some((session) => (
+        session.source === payload.source
+        && session.project_key === payload.projectKey
+        && normalizeProjectPath(session.cwd?.trim() || "") === normalizeProjectPath(payload.cwd)
+        && session.session_id === payload.sessionId
+      ));
+      if (!matchesHistoryContext) {
+        throw operationError("history_context_not_found", "operation context does not match desktop history");
+      }
     }
     const { projects, worktrees } = useProjectStore.getState();
     const worktree = findWorktreeByPath(worktrees, payload.cwd);
@@ -304,11 +306,13 @@ async function publishHistory() {
   try {
     const historyStore = useHistoryStore.getState();
     await historyStore.loadSessions();
+    const projectStore = useProjectStore.getState();
+    if (!projectStore.loaded) await projectStore.fetchAll("startup");
     const status = await webDeviceApi.getStatus();
     if (!status.paired || !status.connected || !status.profile) return;
     const sessions: WebHistorySessionSummary[] = useHistoryStore.getState().sessions.map((session) => ({
       sessionId: session.session_id,
-      deviceId: status.profile!.deviceId,
+      deviceId: status.profile!.clientId,
       source: session.source,
       projectKey: session.project_key,
       title: session.displayTitle || session.title,
@@ -319,7 +323,34 @@ async function publishHistory() {
       branch: session.branch ?? null,
       freshness: "live",
     }));
-    await webDeviceApi.publishHistory(sessions);
+    const { groups, projects, worktrees } = useProjectStore.getState();
+    const workspace: WebWorkspaceSnapshot = {
+      groups: groups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        parentId: group.parent_id,
+        sortOrder: group.sort_order,
+      })),
+      projects: projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        groupId: project.group_id,
+        sortOrder: project.sort_order,
+        source: getProviderSwitchAppType(project),
+        cwd: (project.environment_type === "ssh" ? project.remote_path : project.path).trim() || null,
+        environmentType: project.environment_type,
+      })),
+      worktrees: worktrees.map((worktree) => ({
+        id: worktree.id,
+        projectId: worktree.project_id,
+        name: worktree.name,
+        branch: worktree.branch,
+        cwd: worktree.path,
+        status: worktree.status,
+      })),
+      updatedAt: Date.now(),
+    };
+    await webDeviceApi.publishHistory(sessions, workspace);
   } catch (caught) {
     logWarn("Failed to publish Web device history", caught);
   }
@@ -352,11 +383,19 @@ export function useWebDeviceBridge(ready: boolean) {
     const unlisten = listen(OPERATION_EVENT, () => void drainOperations());
     void drainOperations();
     void publishHistory();
+    let workspacePublishTimer: number | null = null;
+    const unsubscribeProjects = useProjectStore.subscribe((state, previous) => {
+      if (state.groups === previous.groups && state.projects === previous.projects && state.worktrees === previous.worktrees) return;
+      if (workspacePublishTimer !== null) window.clearTimeout(workspacePublishTimer);
+      workspacePublishTimer = window.setTimeout(() => void publishHistory(), 300);
+    });
     const operationTimer = window.setInterval(() => void drainOperations(), OPERATION_POLL_MS);
     const historyTimer = window.setInterval(() => void publishHistory(), HISTORY_PUBLISH_MS);
     return () => {
       window.clearInterval(operationTimer);
       window.clearInterval(historyTimer);
+      if (workspacePublishTimer !== null) window.clearTimeout(workspacePublishTimer);
+      unsubscribeProjects();
       void unlisten.then((dispose) => dispose());
     };
   }, [ready]);

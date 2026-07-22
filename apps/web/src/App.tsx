@@ -81,6 +81,7 @@ export function App() {
           model.selectDevice(deviceId);
           setPage("workbench");
         }}
+        onRemoveDevice={model.removeDevice}
         onClaimPairing={model.claimPairing}
         onResetPairing={() => model.setPairing({ status: "idle" })}
       />
@@ -94,6 +95,7 @@ export function App() {
       devices={model.devices}
       selectedDevice={model.selectedDevice}
       history={model.history}
+      workspace={model.workspace}
       selectedSession={model.selectedSession}
       projectContexts={model.projectContexts}
       selectedProjectContext={model.selectedProjectContext}

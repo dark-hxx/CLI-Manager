@@ -10784,7 +10784,12 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
     // Pi 把 reasoning 单独记账；归入 output，避免实时统计少计思考 token。
     let reasoning = extract_u64_by_keys(
         map,
-        &["reasoning", "reasoning_tokens", "reasoningTokens", "thinking_tokens"],
+        &[
+            "reasoning",
+            "reasoning_tokens",
+            "reasoningTokens",
+            "thinking_tokens",
+        ],
     )
     .unwrap_or(0);
     output = output.saturating_add(reasoning);
