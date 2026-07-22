@@ -35,7 +35,7 @@ import type {
   Group,
   Project,
 } from "../../lib/types";
-import { fetchHistoryStatsPayload } from "../../stores/historyStore";
+import { fetchHistoryStatsPayload, fetchRemoteHistoryStatsPayload } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
 import { TimelineHeatmap } from "./TimelineHeatmap";
@@ -61,6 +61,7 @@ import { CliToolIcon } from "../CliToolIcon";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
 import { RequestLogsView } from "./RequestLogsView";
 import { projectSupportsCapability } from "../../lib/projectCapabilities";
+import { resolveHistoryProjectPath } from "../../lib/historyProjectPaths";
 
 interface StatsPanelProps {
   open: boolean;
@@ -165,7 +166,7 @@ function statsProjectMatchesSearch(project: Project, query: string): boolean {
   if (!query) return true;
   return (
     project.name.toLowerCase().includes(query) ||
-    project.path.toLowerCase().includes(query) ||
+    resolveHistoryProjectPath(project).toLowerCase().includes(query) ||
     project.cli_tool.toLowerCase().includes(query)
   );
 }
@@ -1093,16 +1094,16 @@ function StatsSourceFilterDropdown({
 function StatsProjectFilterDropdown({
   projects,
   groups,
-  selectedProjectPath,
+  selectedProjectId,
   rawProjectKey,
-  onSelectProjectPath,
+  onSelectProjectId,
   onClear,
 }: {
   projects: Project[];
   groups: Group[];
-  selectedProjectPath: string;
+  selectedProjectId: string;
   rawProjectKey: string;
-  onSelectProjectPath: (path: string) => void;
+  onSelectProjectId: (projectId: string) => void;
   onClear: () => void;
 }) {
   const { t } = useI18n();
@@ -1113,8 +1114,8 @@ function StatsProjectFilterDropdown({
   const wasOpenRef = useRef(false);
 
   const selectedProject = useMemo(
-    () => projects.find((project) => project.path === selectedProjectPath) ?? null,
-    [projects, selectedProjectPath]
+    () => projects.find((project) => project.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId]
   );
   const projectTree = useMemo(() => buildStatsProjectTree(groups, projects), [groups, projects]);
   const groupIds = useMemo(() => collectStatsGroupIds(projectTree), [projectTree]);
@@ -1128,7 +1129,7 @@ function StatsProjectFilterDropdown({
     [filteredTree]
   );
   const label = selectedProject?.name || rawProjectKey || t("common.allProjects");
-  const title = selectedProject?.path || rawProjectKey || t("common.allProjects");
+  const title = resolveHistoryProjectPath(selectedProject) || rawProjectKey || t("common.allProjects");
 
   useEffect(() => {
     const wasOpen = wasOpenRef.current;
@@ -1175,11 +1176,11 @@ function StatsProjectFilterDropdown({
   }, [onClear]);
 
   const handleSelectProject = useCallback(
-    (path: string) => {
-      onSelectProjectPath(path);
+    (projectId: string) => {
+      onSelectProjectId(projectId);
       setOpen(false);
     },
-    [onSelectProjectPath]
+    [onSelectProjectId]
   );
 
   const renderNode = (node: StatsProjectTreeNode, depth = 0): ReactNode => {
@@ -1209,16 +1210,17 @@ function StatsProjectFilterDropdown({
       );
     }
 
-    const selected = selectedProjectPath === node.project.path;
+    const selected = selectedProjectId === node.project.id;
+    const projectPath = resolveHistoryProjectPath(node.project);
     return (
       <button
         key={`project:${node.project.id}`}
         type="button"
-        onClick={() => handleSelectProject(node.project.path)}
+        onClick={() => handleSelectProject(node.project.id)}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
         style={{ paddingLeft }}
-        title={node.project.path}
+        title={projectPath}
       >
         <span className="ui-tree-leading-icon">
           <StatsProjectFilterIcon project={node.project} size={13} />
@@ -1278,7 +1280,7 @@ function StatsProjectFilterDropdown({
               type="button"
               onClick={handleClear}
               className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg px-2 text-left text-[12px]"
-              data-selected={!selectedProjectPath && !rawProjectKey ? "true" : "false"}
+              data-selected={!selectedProjectId && !rawProjectKey ? "true" : "false"}
             >
               <Folder size={13} className="shrink-0" />
               <span className="min-w-0 flex-1 truncate font-medium">{t("common.allProjects")}</span>
@@ -1313,7 +1315,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const fetchProjects = useProjectStore((s) => s.fetchAll);
 
   const [projectKey, setProjectKey] = useState("");
-  const [projectPath, setProjectPath] = useState("");
+  const [projectId, setProjectId] = useState("");
   const [sourceFilter, setSourceFilter] = useState<HistorySourceFilter>("all");
   const [activeTab, setActiveTab] = useState<StatsPanelTab>("overview");
   const [timeWindow, setTimeWindow] = useState<StatsTimeWindowState>(() => getDefaultStatsTimeWindow());
@@ -1322,6 +1324,11 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const [dayVisibleCount, setDayVisibleCount] = useState(DAY_SESSION_PAGE_SIZE);
   const resolvedTimeWindow = useMemo(() => resolveStatsTimeWindow(timeWindow), [timeWindow]);
   const dateRange = useMemo(() => dateRangeFromStatsTimeWindow(resolvedTimeWindow), [resolvedTimeWindow]);
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === projectId) ?? null,
+    [projectId, projects]
+  );
+  const projectPath = resolveHistoryProjectPath(selectedProject);
 
   const dateBounds = useMemo(() => {
     const startAt = parseDateInput(dateRange.startDate, false);
@@ -1334,17 +1341,17 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
   const dateRangeLabel = dateBounds.error ? t("stats.rangeInactive") : statsTimeWindowLabel(resolvedTimeWindow, dateRange, t);
   const statsBaseQueryKey = useMemo(
-    () => `${sourceFilter}|path=${projectPath || ALL_PROJECTS_VALUE}|key=${projectKey || ALL_PROJECTS_VALUE}|${dateBounds.startAt ?? "invalid"}|${dateBounds.endAt ?? "invalid"}`,
-    [dateBounds.endAt, dateBounds.startAt, projectKey, projectPath, sourceFilter]
+    () => `${sourceFilter}|project_id=${projectId || ALL_PROJECTS_VALUE}|path=${projectPath || ALL_PROJECTS_VALUE}|key=${projectKey || ALL_PROJECTS_VALUE}|${dateBounds.startAt ?? "invalid"}|${dateBounds.endAt ?? "invalid"}`,
+    [dateBounds.endAt, dateBounds.startAt, projectId, projectKey, projectPath, sourceFilter]
   );
   const effectiveRefreshNonce = manualRefresh?.key === statsBaseQueryKey ? manualRefresh.nonce : 0;
   const statsQuery = useQuery({
-    queryKey: ["historyStats", sourceFilter, projectPath || null, projectKey || null, dateBounds.startAt, dateBounds.endAt, effectiveRefreshNonce],
+    queryKey: ["historyStats", sourceFilter, projectId || null, projectPath || null, projectKey || null, dateBounds.startAt, dateBounds.endAt, effectiveRefreshNonce],
     queryFn: () => {
       if (dateBounds.startAt === null || dateBounds.endAt === null) {
         throw new Error(dateBounds.error ?? "Invalid stats range");
       }
-      return fetchHistoryStatsPayload({
+      const options = {
         sourceFilter,
         projectKey: projectPath ? null : projectKey || null,
         projectPath: projectPath || null,
@@ -1352,7 +1359,10 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
         startAt: dateBounds.startAt,
         endAt: dateBounds.endAt,
         force: effectiveRefreshNonce > 0,
-      });
+      };
+      return selectedProject?.environment_type === "ssh"
+        ? fetchRemoteHistoryStatsPayload(selectedProject, options)
+        : fetchHistoryStatsPayload(options);
     },
     enabled: open && activeTab === "overview" && dateBounds.error === null && dateBounds.startAt !== null && dateBounds.endAt !== null,
   });
@@ -1360,15 +1370,10 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const loadingStats = statsQuery.isFetching;
   const statsError = statsQuery.error ? String(statsQuery.error) : null;
   const statsUpdatedAt = statsQuery.dataUpdatedAt || null;
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.path === projectPath) ?? null,
-    [projectPath, projects]
-  );
-
   useEffect(() => {
     if (!open) return;
     setProjectKey("");
-    setProjectPath("");
+    setProjectId("");
     setSourceFilter("all");
     setActiveTab("overview");
     setTimeWindow(getDefaultStatsTimeWindow());
@@ -1389,15 +1394,15 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   }, [fetchProjects, open, projectsLoaded]);
 
   useEffect(() => {
-    if (!projectPath || projects.length === 0) return;
-    if (!projects.some((project) => project.path === projectPath)) setProjectPath("");
-  }, [projectPath, projects]);
+    if (!projectId || projects.length === 0) return;
+    if (!projects.some((project) => project.id === projectId)) setProjectId("");
+  }, [projectId, projects]);
 
   useEffect(() => {
     if (!open) return;
     setSelectedDayStart(null);
     setDayVisibleCount(DAY_SESSION_PAGE_SIZE);
-  }, [open, sourceFilter, projectKey, projectPath, dateRange.startDate, dateRange.endDate]);
+  }, [open, sourceFilter, projectId, projectKey, dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
     setDayVisibleCount(DAY_SESSION_PAGE_SIZE);
@@ -1509,10 +1514,10 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
             <StatsProjectFilterDropdown
               projects={statisticsProjects}
               groups={groups}
-              selectedProjectPath={projectPath}
+              selectedProjectId={projectId}
               rawProjectKey={projectKey}
-              onSelectProjectPath={(path) => { setProjectPath(path); setProjectKey(""); }}
-              onClear={() => { setProjectPath(""); setProjectKey(""); }}
+              onSelectProjectId={(id) => { setProjectId(id); setProjectKey(""); }}
+              onClear={() => { setProjectId(""); setProjectKey(""); }}
             />
             <Select
               value={timeWindow.mode}
@@ -1566,8 +1571,8 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                       <ProjectRanking
                         items={stats.project_ranking}
                         selectedProjectKey={projectKey}
-                        onSelectProject={(nextProjectKey) => { setProjectPath(""); setProjectKey((prev) => (prev === nextProjectKey ? "" : nextProjectKey)); }}
-                        onClearProject={() => { setProjectPath(""); setProjectKey(""); }}
+                        onSelectProject={(nextProjectKey) => { setProjectId(""); setProjectKey((prev) => (prev === nextProjectKey ? "" : nextProjectKey)); }}
+                        onClearProject={() => { setProjectId(""); setProjectKey(""); }}
                       />
                     </div>
                     <div className="2xl:col-span-3"><ModelRankingChart items={stats.model_distribution} /></div>

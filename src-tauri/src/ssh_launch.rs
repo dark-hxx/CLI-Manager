@@ -38,6 +38,8 @@ pub struct SshLaunchPlan {
     #[serde(default)]
     pub project_id: String,
     #[serde(default)]
+    pub project_name: String,
+    #[serde(default)]
     pub bridge_epoch: String,
     #[serde(default)]
     pub agent_path: String,
@@ -89,6 +91,9 @@ impl SshLaunchPlan {
             }
         }
         if self.project_id.contains(['\0', '\r', '\n', '/', '\\']) || self.project_id.len() > 256 {
+            return Err("ssh_hook_binding_invalid".to_string());
+        }
+        if self.project_name.contains(['\0', '\r', '\n']) || self.project_name.len() > 256 {
             return Err("ssh_hook_binding_invalid".to_string());
         }
         let agent_fields_present = [
@@ -272,6 +277,7 @@ mod tests {
             remote_path: "/srv/project name/开发".into(),
             client_instance_id: String::new(),
             project_id: String::new(),
+            project_name: String::new(),
             bridge_epoch: String::new(),
             agent_path: String::new(),
             agent_installation_id: String::new(),

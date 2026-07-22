@@ -2008,13 +2008,19 @@ pub async fn history_remote_get_session(
     project_paths: Vec<String>,
     source_instance_id: String,
     source_session_id: String,
+    remote_transcript_ref: Option<String>,
 ) -> Result<Value, String> {
     let source = source.trim().to_lowercase();
     validate_remote_history_plan(&ssh_launch, &source)?;
+    let direct_transcript = remote_transcript_ref
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
     let cache_key = format!("{}:{}", source_instance_id.trim(), source_session_id.trim());
-    if let Ok(mut cache) = remote_history_detail_cache().lock() {
-        if let Some(value) = cache.get(&cache_key) {
-            return Ok(value);
+    if !direct_transcript {
+        if let Ok(mut cache) = remote_history_detail_cache().lock() {
+            if let Some(value) = cache.get(&cache_key) {
+                return Ok(value);
+            }
         }
     }
     let payload = {
@@ -2026,6 +2032,9 @@ pub async fn history_remote_get_session(
             Some(1),
         );
         payload["sourceSessionId"] = Value::String(source_session_id.clone());
+        payload["remoteTranscriptRef"] = remote_transcript_ref
+            .map(Value::String)
+            .unwrap_or(Value::Null);
         payload
     };
     let client = daemon_bridge
@@ -2039,14 +2048,17 @@ pub async fn history_remote_get_session(
     let response = match response {
         Ok(value) => value,
         Err(error) => {
-            let _ =
-                catalog::mark_remote_stale(&source_instance_id, remote_error_code(&error)).await;
+            if !source_instance_id.trim().is_empty() {
+                let _ = catalog::mark_remote_stale(&source_instance_id, remote_error_code(&error))
+                    .await;
+            }
             return Err(error);
         }
     };
     let detail: RemoteHistorySessionDetail = serde_json::from_value(response)
         .map_err(|_| "history_remote_response_invalid".to_string())?;
-    if detail.summary.session_ref.source_instance_id != source_instance_id
+    if (!source_instance_id.trim().is_empty()
+        && detail.summary.session_ref.source_instance_id != source_instance_id)
         || detail.summary.session_ref.source_session_id != source_session_id
         || detail.summary.session_ref.source_id != source
         || detail.summary.session_ref.transport_kind != "ssh"
@@ -2054,8 +2066,10 @@ pub async fn history_remote_get_session(
         return Err("history_remote_identity_changed".to_string());
     }
     let value = remote_detail_value(detail);
-    if let Ok(mut cache) = remote_history_detail_cache().lock() {
-        cache.insert(cache_key, value.clone());
+    if !direct_transcript {
+        if let Ok(mut cache) = remote_history_detail_cache().lock() {
+            cache.insert(cache_key, value.clone());
+        }
     }
     Ok(value)
 }
@@ -2537,6 +2551,7 @@ pub async fn history_get_stats(
     project_key: Option<String>,
     project_path: Option<String>,
     project_paths: Option<Vec<String>>,
+    source_instance_id: Option<String>,
     range_days: Option<usize>,
     start_at: Option<i64>,
     end_at: Option<i64>,
@@ -2549,23 +2564,34 @@ pub async fn history_get_stats(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
     let target_project_paths = normalize_history_stats_project_paths(project_path, project_paths);
+    let target_source_instance = source_instance_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if target_source_instance
+        .as_ref()
+        .is_some_and(|value| value.len() > 512 || value.contains(['\0', '\r', '\n']))
+    {
+        return Err("history_source_instance_invalid".to_string());
+    }
     let bounds = resolve_stats_time_bounds(range_days, start_at, end_at)?;
     let force = force.unwrap_or(false);
-    let include_opencode = source_filter
-        .as_deref()
-        .map(|source| source == "opencode")
-        .unwrap_or(true);
+    let include_opencode = target_source_instance.is_none()
+        && source_filter
+            .as_deref()
+            .map(|source| source == "opencode")
+            .unwrap_or(true);
     let index = refresh_history_index_snapshot(&roots, force);
     let cache_key = make_history_stats_aggregation_cache_key(
         &roots,
         source_filter.as_deref(),
         target_project.as_deref(),
         &target_project_paths,
+        target_source_instance.as_deref(),
         bounds,
         index.generation,
     );
 
-    if !force && !include_opencode {
+    if !force && !include_opencode && target_source_instance.is_none() {
         if let Some(response) = stats_aggregation_cache_get(&cache_key) {
             log_history_stats_oom_diagnostic(
                 "history_get_stats_cache_hit",
@@ -2576,16 +2602,31 @@ pub async fn history_get_stats(
         }
     }
 
-    let daily_index_key = make_history_stats_daily_index_cache_key(
-        &roots,
-        source_filter.as_deref(),
-        target_project.as_deref(),
-        &target_project_paths,
-        bounds,
-        index.generation,
-    );
-    let daily_index = if !force {
-        stats_daily_index_cache_get(&daily_index_key).unwrap_or_else(|| {
+    let mut days = if target_source_instance.is_some() {
+        BTreeMap::new()
+    } else {
+        let daily_index_key = make_history_stats_daily_index_cache_key(
+            &roots,
+            source_filter.as_deref(),
+            target_project.as_deref(),
+            &target_project_paths,
+            target_source_instance.as_deref(),
+            bounds,
+            index.generation,
+        );
+        let daily_index = if !force {
+            stats_daily_index_cache_get(&daily_index_key).unwrap_or_else(|| {
+                let daily_index = build_history_stats_daily_index(
+                    index.entries,
+                    source_filter.as_deref(),
+                    target_project.as_deref(),
+                    &target_project_paths,
+                    bounds,
+                );
+                stats_daily_index_cache_set(daily_index_key, daily_index.clone());
+                daily_index
+            })
+        } else {
             let daily_index = build_history_stats_daily_index(
                 index.entries,
                 source_filter.as_deref(),
@@ -2595,20 +2636,9 @@ pub async fn history_get_stats(
             );
             stats_daily_index_cache_set(daily_index_key, daily_index.clone());
             daily_index
-        })
-    } else {
-        let daily_index = build_history_stats_daily_index(
-            index.entries,
-            source_filter.as_deref(),
-            target_project.as_deref(),
-            &target_project_paths,
-            bounds,
-        );
-        stats_daily_index_cache_set(daily_index_key, daily_index.clone());
-        daily_index
+        };
+        daily_index.days
     };
-
-    let mut days = daily_index.days;
     if include_opencode {
         for fact in opencode_stats_facts(
             source_filter.as_deref(),
@@ -2628,6 +2658,7 @@ pub async fn history_get_stats(
         source_filter.as_deref(),
         target_project.as_deref(),
         &target_project_paths,
+        target_source_instance.as_deref(),
     )
     .await
     {
@@ -2657,7 +2688,7 @@ pub async fn history_get_stats(
         &response,
         started_at.elapsed().as_millis(),
     );
-    if !include_opencode {
+    if !include_opencode && target_source_instance.is_none() {
         stats_aggregation_cache_set(cache_key, response.clone());
     }
     Ok(response)
@@ -3385,15 +3416,17 @@ fn make_history_stats_daily_index_cache_key(
     source_filter: Option<&str>,
     target_project: Option<&str>,
     target_project_paths: &[String],
+    target_source_instance: Option<&str>,
     bounds: StatsTimeBounds,
     index_generation: u64,
 ) -> String {
     format!(
-        "{}|source={}|project={}|project_paths={}|day_offset={}|gen={}",
+        "{}|source={}|project={}|project_paths={}|source_instance={}|day_offset={}|gen={}",
         roots.cache_key(),
         source_filter.unwrap_or("__all__"),
         target_project.unwrap_or("__all__"),
         history_stats_project_paths_cache_key(target_project_paths),
+        target_source_instance.unwrap_or("__all__"),
         stats_day_start_offset(bounds),
         index_generation
     )
@@ -3404,15 +3437,17 @@ fn make_history_stats_aggregation_cache_key(
     source_filter: Option<&str>,
     target_project: Option<&str>,
     target_project_paths: &[String],
+    target_source_instance: Option<&str>,
     bounds: StatsTimeBounds,
     index_generation: u64,
 ) -> String {
     format!(
-        "{}|source={}|project={}|project_paths={}|start={}|end={}|gen={}",
+        "{}|source={}|project={}|project_paths={}|source_instance={}|start={}|end={}|gen={}",
         roots.cache_key(),
         source_filter.unwrap_or("__all__"),
         target_project.unwrap_or("__all__"),
         history_stats_project_paths_cache_key(target_project_paths),
+        target_source_instance.unwrap_or("__all__"),
         bounds.start_at,
         bounds.end_at,
         index_generation
@@ -11898,6 +11933,7 @@ mod tests {
             remote_path: "/work/project".to_string(),
             client_instance_id: "client-1".to_string(),
             project_id: "project-1".to_string(),
+            project_name: "Project One".to_string(),
             bridge_epoch: "epoch-1".to_string(),
             agent_path: "~/.local/bin/cli-manager-ssh-agent".to_string(),
             agent_installation_id: "installation-1".to_string(),

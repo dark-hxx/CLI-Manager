@@ -49,6 +49,8 @@ pub struct HistoryGetRequest {
     #[serde(flatten)]
     pub scope: HistoryScopeRequest,
     pub source_session_id: String,
+    #[serde(default)]
+    pub remote_transcript_ref: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -303,6 +305,10 @@ pub fn get(request: HistoryGetRequest) -> Result<RemoteHistorySessionDetail, Str
         return Err("history_session_id_invalid".to_string());
     }
     let scope = resolve_scope(&request.scope)?;
+    if !request.remote_transcript_ref.trim().is_empty() {
+        let path = safe_transcript_ref(&scope.canonical_root, &request.remote_transcript_ref)?;
+        return detail_from_path(&scope, &path, source_session_id, 0);
+    }
     let index = load_index(&scope)?;
     let entry = index
         .entries
@@ -338,6 +344,50 @@ pub fn get(request: HistoryGetRequest) -> Result<RemoteHistorySessionDetail, Str
         index.generation,
         lines,
     ))
+}
+
+fn detail_from_path(
+    scope: &ResolvedScope,
+    path: &Path,
+    source_session_id: &str,
+    index_generation: u64,
+) -> Result<RemoteHistorySessionDetail, String> {
+    let metadata = path
+        .metadata()
+        .map_err(|_| "history_artifact_unavailable".to_string())?;
+    if metadata.len() > MAX_DETAIL_BYTES {
+        return Err("history_detail_too_large".to_string());
+    }
+    let relative = relative_string(&scope.canonical_root, path)
+        .ok_or_else(|| "history_artifact_outside_root".to_string())?;
+    let bytes = fs::read(path).map_err(|_| "history_artifact_read_failed".to_string())?;
+    let complete = complete_jsonl_bytes(&bytes);
+    let detail = parse_detail(
+        &scope.source,
+        &scope.source_instance_id,
+        &hash_text(&relative),
+        Path::new(&relative)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(source_session_id),
+        &project_key(scope, &relative),
+        file_created_ms(&metadata),
+        file_modified_ms(&metadata),
+        index_generation,
+        String::from_utf8_lossy(complete)
+            .lines()
+            .map(str::to_string),
+    );
+    if detail.summary.session_ref.source_session_id != source_session_id
+        || !path_matches_scope(
+            detail.summary.cwd.as_deref(),
+            &detail.summary.project_key,
+            &scope.project_paths,
+        )
+    {
+        return Err("history_session_identity_mismatch".to_string());
+    }
+    Ok(detail)
 }
 
 pub fn resume_preflight(
@@ -1027,6 +1077,28 @@ fn safe_artifact_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+fn safe_transcript_ref(root: &Path, reference: &str) -> Result<PathBuf, String> {
+    let reference = reference.trim();
+    if reference.is_empty() || reference.contains(['\0', '\r', '\n', '\\']) {
+        return Err("history_artifact_ref_invalid".to_string());
+    }
+    let candidate = Path::new(reference);
+    let canonical = if candidate.is_absolute() {
+        candidate
+            .canonicalize()
+            .map_err(|_| "history_artifact_unavailable".to_string())?
+    } else {
+        safe_artifact_path(root, reference)?
+    };
+    if !canonical.starts_with(root)
+        || !canonical.is_file()
+        || canonical.extension().and_then(|value| value.to_str()) != Some("jsonl")
+    {
+        return Err("history_artifact_outside_root".to_string());
+    }
+    Ok(canonical)
+}
+
 fn relative_string(root: &Path, path: &Path) -> Option<String> {
     path.strip_prefix(root)
         .ok()
@@ -1152,11 +1224,11 @@ fn set_file_permissions(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_lock_with_stale_after, build_resume_args, complete_jsonl_bytes, empty_index,
-        file_id, initialize_lock_dir, load_index, refresh_summaries, relative_string,
-        remote_source_instance_id, remove_missing_entries, sync_cursor_offset, update_entry,
-        validate_project_path, validate_resume_cwd, ResolvedScope, MAX_FILE_READ_BYTES,
-        MAX_SCAN_BYTES,
+        acquire_lock_with_stale_after, build_resume_args, complete_jsonl_bytes, detail_from_path,
+        empty_index, file_id, initialize_lock_dir, load_index, refresh_summaries, relative_string,
+        remote_source_instance_id, remove_missing_entries, safe_transcript_ref, sync_cursor_offset,
+        update_entry, validate_project_path, validate_resume_cwd, ResolvedScope,
+        MAX_FILE_READ_BYTES, MAX_SCAN_BYTES,
     };
     use std::collections::BTreeSet;
     use std::fs::{self, OpenOptions};
@@ -1183,6 +1255,79 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, content).unwrap();
         path.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn direct_transcript_detail_reads_only_the_referenced_session() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let target = write_session(
+            temp.path(),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\",\"cwd\":\"/srv/app\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"target\"}}\n",
+        );
+        let decoy = temp
+            .path()
+            .join("projects")
+            .join("-srv-app")
+            .join("other.jsonl");
+        fs::write(
+            decoy,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-2\",\"cwd\":\"/srv/app\"}}\n",
+        )
+        .unwrap();
+        let mut scope = test_scope(temp.path(), vec!["/srv/app".to_string()]);
+        scope.source = "codex".to_string();
+
+        let relative = relative_string(&scope.canonical_root, &target).unwrap();
+        let resolved = safe_transcript_ref(&scope.canonical_root, &relative).unwrap();
+        let detail = detail_from_path(&scope, &resolved, "session-1", 0).unwrap();
+
+        assert_eq!(detail.summary.session_ref.source_session_id, "session-1");
+        assert_eq!(detail.messages.len(), 1);
+        assert_eq!(detail.messages[0].content, "target");
+    }
+
+    #[test]
+    fn direct_transcript_ref_rejects_outside_root_and_non_jsonl_files() {
+        let root = tempfile::TempDir::new().unwrap();
+        #[cfg(unix)]
+        {
+            let outside = tempfile::NamedTempFile::new().unwrap();
+            assert_eq!(
+                safe_transcript_ref(
+                    &root.path().canonicalize().unwrap(),
+                    outside.path().to_str().unwrap()
+                )
+                .unwrap_err(),
+                "history_artifact_outside_root"
+            );
+        }
+
+        let text = root.path().join("session.txt");
+        fs::write(&text, "{}\n").unwrap();
+        assert_eq!(
+            safe_transcript_ref(&root.path().canonicalize().unwrap(), "session.txt").unwrap_err(),
+            "history_artifact_outside_root"
+        );
+    }
+
+    #[test]
+    fn direct_transcript_detail_rejects_session_and_project_mismatches() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = write_session(
+            temp.path(),
+            "{\"sessionId\":\"session-1\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"cwd\":\"/srv/app\"}\n",
+        );
+        let scope = test_scope(temp.path(), vec!["/srv/app".to_string()]);
+        assert_eq!(
+            detail_from_path(&scope, &path, "session-2", 0).unwrap_err(),
+            "history_session_identity_mismatch"
+        );
+
+        let other_scope = test_scope(temp.path(), vec!["/srv/other".to_string()]);
+        assert_eq!(
+            detail_from_path(&other_scope, &path, "session-1", 0).unwrap_err(),
+            "history_session_identity_mismatch"
+        );
     }
 
     #[test]

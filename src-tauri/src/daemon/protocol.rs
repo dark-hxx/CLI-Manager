@@ -577,6 +577,7 @@ mod tests {
                 remote_path: "/srv/app".into(),
                 client_instance_id: String::new(),
                 project_id: String::new(),
+                project_name: String::new(),
                 bridge_epoch: String::new(),
                 agent_path: String::new(),
                 agent_installation_id: String::new(),

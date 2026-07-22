@@ -423,6 +423,7 @@ export interface TerminalSession {
   /** true 时启动命令由 XTermTerminal 在 initialTerminalOutput 写完后再发送。 */
   deferStartupUntilInitialOutput?: boolean;
   cliSessionId?: string;
+  remoteTranscriptRef?: string;
   remoteHistoryConsumerId?: string;
   remoteHistorySourceInstanceId?: string;
   /** 远程托管期间保留标签元数据，但本地不再持有 PTY。 */

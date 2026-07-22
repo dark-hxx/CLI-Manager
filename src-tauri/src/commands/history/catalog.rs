@@ -1623,6 +1623,7 @@ pub(super) async fn stats_session_facts(
     source_filter: Option<&str>,
     target_project: Option<&str>,
     target_project_paths: &[String],
+    target_source_instance: Option<&str>,
 ) -> Result<Vec<HistoryStatsSessionFact>, String> {
     let mut conn = open_catalog().await?;
     stats_session_facts_from_v2(
@@ -1631,6 +1632,7 @@ pub(super) async fn stats_session_facts(
         source_filter,
         target_project,
         target_project_paths,
+        target_source_instance,
     )
     .await
 }
@@ -1641,9 +1643,10 @@ async fn stats_session_facts_from_v2(
     source_filter: Option<&str>,
     target_project: Option<&str>,
     target_project_paths: &[String],
+    target_source_instance: Option<&str>,
 ) -> Result<Vec<HistoryStatsSessionFact>, String> {
     let rows = sqlx::query(
-        "SELECT hs.id, i.source_id AS source, hs.source_session_id AS session_id,
+        "SELECT hs.id, i.id AS source_instance_id, i.source_id AS source, hs.source_session_id AS session_id,
                 hs.project_key, hs.title,
                 COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) AS file_path,
                 hs.cwd, hs.created_at, hs.updated_at, hs.message_count, hs.branch,
@@ -1671,6 +1674,12 @@ async fn stats_session_facts_from_v2(
 
     let mut facts = Vec::new();
     for row in rows {
+        let source_instance_id: String = row
+            .try_get("source_instance_id")
+            .map_err(|err| err.to_string())?;
+        if target_source_instance.is_some_and(|target| source_instance_id != target) {
+            continue;
+        }
         let summary = HistorySessionSummary {
             session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
             source: row.try_get("source").map_err(|err| err.to_string())?,
@@ -4412,7 +4421,7 @@ mod tests {
         .await
         .unwrap();
 
-        let facts = stats_session_facts_from_v2(&mut conn, &roots, None, None, &[])
+        let facts = stats_session_facts_from_v2(&mut conn, &roots, None, None, &[], None)
             .await
             .unwrap();
 
@@ -4437,6 +4446,13 @@ mod tests {
             .find(|fact| fact.summary.session_id == "codex-v2")
             .unwrap();
         assert_eq!(codex.occurred_at, 2000);
+
+        let codex_only =
+            stats_session_facts_from_v2(&mut conn, &roots, None, None, &[], Some("codex-stats"))
+                .await
+                .unwrap();
+        assert_eq!(codex_only.len(), 1);
+        assert_eq!(codex_only[0].summary.session_id, "codex-v2");
     }
 
     #[tokio::test]

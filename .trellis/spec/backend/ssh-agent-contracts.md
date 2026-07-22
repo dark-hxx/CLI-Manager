@@ -146,12 +146,12 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Cancellation IDs are validated and held in a bounded 1024-entry registry. Unknown frame kinds return a versioned error without closing the bridge; invalid request IDs/kinds, oversized frames, contaminated preamble/frame streams, or malformed response identities close it.
 - Hook batches are accepted only when at most 128 records have strictly increasing sequences above the current cursor and the final sequence equals `latestSequence`; ACK must echo `accepted=true` and the exact sequence. Remote error codes are limited to 128 ASCII identifier bytes before logging.
 - Spool drain and ACK use bounded per-record streaming rather than loading the full 32 MiB file. A malformed or over-1-MiB record fails closed and preserves the original spool; ACK temporary files are removed on failure.
-- Remote history list/search/detail requests reuse the Host bridge and remain project-scoped. Agent cursors use `generation:offset`; full detail uses ordered 256-KiB chunks under the existing 1-MiB frame limit and a 64-MiB aggregate cap.
+- Remote history list/search/detail requests reuse the Host bridge and remain project-scoped. Agent cursors use `generation:offset`; full detail uses ordered 256-KiB chunks under the existing 1-MiB frame limit and a 64-MiB aggregate cap. Realtime detail may use a Hook-provided `remoteTranscriptRef` as an opaque Agent-side locator: the Agent must canonicalize it under the configured source root, require a regular `.jsonl` file, parse only that file, and reject a session-id or project-scope mismatch.
 - Desktop remote-history consumers validate installation/machine/user/source/config-root/source-instance identity on initial and continuation pages. Detail chunks additionally validate request identity, sequence, total, aggregate size, and one request deadline.
 - Resume preflight reopens the indexed artifact, validates the stable source identity, verifies the original JSONL is still readable, canonicalizes an enterable absolute POSIX cwd, checks the standard Claude/Codex executable, and returns structured resume args plus the canonical config-root environment override.
 - Agent uninstall returns `agent_managed_hooks_present` while any Agent Hook installation record remains. Hook uninstall does not delete the configured root, future history source identity, or unrelated Agent state.
 - If a custom config root was deleted externally, install/inspect still report it missing, but preview-uninstall/uninstall may recover exactly one matching canonical identity from the bounded Agent-owned record set and remove that stale record without recreating the directory. Retained-root cleanup also sends the previously validated `expectedCanonicalRoot`; if the configured path is a symlink that now resolves elsewhere, only an exact unique Agent record may route cleanup back to the old canonical root. Ambiguous, missing, invalid, or retargeted canonical records fail closed.
-- Remote Hook third-party notification jobs omit remote cwd, transcript refs, Host/project/session/Tab identifiers, and prompt text.
+- Remote Hook third-party notification jobs omit remote cwd, transcript refs, Host/project/session/Tab identifiers, and prompt text. Their optional display project is the daemon-validated sidebar project name captured at launch, never a remote cwd basename or remote event field.
 
 ## 4. Validation & Error Matrix
 
@@ -191,6 +191,7 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 | Hook batch sequence/latest/ACK mismatch | close bridge without advancing the cursor |
 | Remote continuation identity changes | `history_remote_identity_changed`; preserve the previous catalog rows |
 | Detail chunks are reordered, duplicated, oversized, or exceed the deadline | close/fail the request without caching partial detail |
+| Realtime transcript ref escapes the configured root, is not a regular `.jsonl`, or parses to another session/project | `history_artifact_*` / `history_session_identity_mismatch`; return no detail and do not fall back to discovery |
 | Resume source JSONL or cwd is missing | `remote_session_source_missing` / `remote_session_cwd_unavailable`; create no PTY |
 | Another daemon consumer owns the same source-instance/session | `remote_session_active_elsewhere` |
 | Remote file root is not absolute/canonical or a relative path escapes through `..`/symlink | stable `remote_file_root_*` / `remote_file_path_*` error; no local fallback |
@@ -219,7 +220,7 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Good: the desktop disconnects, events spool under the bound Host/client namespace, and reconnect replays each event at most once before ACK deletion.
 - Good: four Host bridges are connected, a fifth waits without starting SSH, and closing one Host releases a permit for the waiting Host.
 - Good: an SSH project file panel reuses its Host bridge, lists only canonical-root descendants, skips symlinks, and reads bounded UTF-8 text or supported image data URLs.
-- Good: an SSH terminal stats panel reuses one history consumer for incremental detail and catalog usage facts, while stale/offline failures preserve the last bounded snapshot without local path fallback.
+- Good: an SSH terminal stats panel with a Hook session id and transcript ref reads only that bounded JSONL through the Agent, while stale/offline failures preserve the last bounded snapshot without local path fallback or full history discovery.
 - Bad: pass a remote absolute path to local `file_*`/Git commands, expose create/save/delete/move/external opener actions, or traverse more than the Agent file quotas.
 - Good: a replaced bridge briefly receives `bridge_already_active`, backs off, then takes ownership after the old Agent process removes its socket.
 - Base: a missing or malformed discovery record is reconstructed only after an explicit install; no page-open or probe action changes remote files.
@@ -240,13 +241,13 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Assert explicit path validation and safe HOME expansion.
 - Assert bounded banner/report parsing, invalid UTF-8/contamination, protocol mismatch, identity mismatch, unsupported target, clean EOF, partial frame length, oversized frame, and mandatory bridge protocol.
 - Assert protocol minor 1 capability negotiation, bounded reader/response timeouts, global bridge/connect permits, retry jitter/reset classification, `bridge_already_active` takeover, heartbeat echo, cancellation bounds, and last-session shutdown.
-- Assert protocol minor 3 history capability negotiation, generation cursors, continuation identity, chunk ordering/size/deadline, detail LRU eviction, and consumer release.
+- Assert protocol minor 3 history capability negotiation, generation cursors, continuation identity, chunk ordering/size/deadline, detail LRU eviction, consumer release, and direct transcript-ref root/type/session/project confinement.
 - Assert protocol minor 4 resume capability and protocol minor 5 remote-file capability, structured Claude/Codex args, source/cwd validation, ownership claim/release, and implicit SSH Config username handling.
 - Assert remote file root/path confinement, symlink escape rejection, binary/oversized refusal, directory/search/visited limits, image data URLs, and UI/store read-only routing.
 - Assert manifest tampering, duplicate/unknown targets, HTTP opt-in, query/fragment rejection, target selection, size/SHA-256 mismatch, and bounded downloads.
 - Assert install path quoting, strict operation markers/metadata, semantic version actions, lock conflicts, default/custom roots, corrupt/missing discovery recovery, promote rollback, distinct previous versions, and transactional uninstall.
 - Assert Claude/Codex exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, user-owned Codex feature/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.
-- Assert missing binding no-op, event allowlists, 1 MiB stdin bound, message redaction, Host/client/installation namespace isolation, stale lock recovery, monotonic meta rebuild, TTL/count/byte gap, streaming read/ACK, malformed-record preservation, monotonic batch/ACK validation, full-window event/gap dedup, and remote notification cwd redaction.
+- Assert missing binding no-op, event allowlists, 1 MiB stdin bound, message redaction, Host/client/installation namespace isolation, stale lock recovery, monotonic meta rebuild, TTL/count/byte gap, streaming read/ACK, malformed-record preservation, monotonic batch/ACK validation, full-window event/gap dedup, and Claude/Codex remote notification cwd redaction plus trusted project-name propagation.
 - Run the POSIX installer smoke test for HTTPS dry-run, default HTTP rejection, explicit HTTP, custom install root, downgrade forwarding, and temporary-directory cleanup.
 - Compile the Agent for Linux `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` in addition to host tests.
 - Manually verify the CLI Integration page opens without SSH traffic and only Probe Agent starts a one-shot connection.

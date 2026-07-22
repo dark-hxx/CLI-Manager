@@ -1,9 +1,14 @@
 # Changelog
 
-## [TEMP]
+## [V1.3.1] - 2026-07-23
 
 ### SSH
 
+- 修复切换到 SSH 项目后文件、Git 变更、会话历史与实时统计面板加载完成却不展示或反复闪烁的问题；受支持的远程面板不再因会话切换被本地能力守卫关闭。
+- 修复 SSH 项目 Tab 菜单与右侧工具栏“新建终端”重复执行项目 CLI 启动命令的问题；现在会在对应远程目录打开空 Shell。
+- 修复 SSH Claude/Codex Hook 的第三方通知使用当前目录名或 `Unknown Project` 的问题；通知项目名改为绑定终端对应的左侧菜单项目名，并由 daemon 校验绑定后注入。
+- 修复 SSH 实时统计重复加载整段远程会话历史、面板持续加载或闪烁的问题；Hook 绑定会话后按 session ID 与 transcript 引用直接读取单一会话，并隔离并发请求与过期结果。
+- 修复 SSH 项目会话历史与历史用量筛选退化为全局范围的问题；项目选择使用稳定项目 ID，查询使用 `remote_path`，统计再以远程 `source_instance_id` 隔离不同主机与配置根，同名路径和空本地路径不再导致多个远程项目同时选中。
 - SSH Claude/Codex 终端实时统计现复用同一 Agent history consumer 增量同步精确 session detail，并从现有远端 catalog 聚合今日项目用量；切换远端 Tab 不再调用本地 history、Git 分支或 Explorer API，断线时保留上次快照与缓存统计。
 - Agent bridge 协议升级到 `1.6`；SSH 项目文件面板新增只读远端浏览，通过复用 bridge 懒加载目录、搜索文件名或文本并预览 UTF-8 文本与图片；只读 Git 面板支持远端仓库、状态、Diff、分支和 upstream/ahead/behind/asOf。Agent 对路径、symlink、遍历、Diff 大小和 Git 外部扩展实施限制，UI/store 拒绝所有远程写入、网络、凭据、Worktree、外部 Explorer、external diff 与 textconv。
 - SSH Claude/Codex 项目现可在统一历史工作区按绑定项目读取远端会话：Agent 增量索引原生 JSONL，通过共享单写锁维护可重建派生索引；桌面端复用每主机 bridge，支持分页列表、全文搜索、按需详情/Diff、usage 摘要、删除 tombstone 与断线后的摘要缓存，不复制完整远端历史目录，也不把远端路径交给本地文件 API。

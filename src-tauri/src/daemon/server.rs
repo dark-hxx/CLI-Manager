@@ -612,6 +612,7 @@ struct SshHookBinding {
     host_id: String,
     client_instance_id: String,
     project_id: String,
+    project_name: String,
     bridge_epoch: String,
     installation_id: String,
     source: String,
@@ -694,34 +695,36 @@ impl DaemonHost {
         let Some(tab_id) = value.get("tabId").and_then(serde_json::Value::as_str) else {
             return;
         };
-        let matches = self.get_session(tab_id).is_some_and(|session| {
-            session.lock().ok().is_some_and(|entry| {
+        let project_name = self.get_session(tab_id).and_then(|session| {
+            session.lock().ok().and_then(|entry| {
                 let Some(binding) = entry.ssh_hook_binding.as_ref() else {
-                    return false;
+                    return None;
                 };
                 if !entry.meta.alive {
-                    return false;
+                    return None;
                 }
                 let field = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
-                field("hostId") == Some(binding.host_id.as_str())
+                (field("hostId") == Some(binding.host_id.as_str())
                     && field("clientInstanceId") == Some(binding.client_instance_id.as_str())
                     && field("projectId") == Some(binding.project_id.as_str())
                     && field("bridgeEpoch") == Some(binding.bridge_epoch.as_str())
                     && field("installationId") == Some(binding.installation_id.as_str())
-                    && field("source") == Some(binding.source.as_str())
+                    && field("source") == Some(binding.source.as_str()))
+                .then(|| binding.project_name.clone())
             })
         });
-        if !matches {
+        let Some(project_name) = project_name else {
             log::warn!("rejected remote Hook event with an unknown SSH session binding");
             return;
-        }
+        };
         let payload = match remote_hook_payload_from_spool(&value) {
             Ok(payload) => payload,
             Err(error) => {
                 log::warn!("rejected invalid remote Hook event: {error}");
                 return;
             }
-        };
+        }
+        .with_remote_project_name(project_name);
         let sink = self
             .hook_sink
             .lock()
@@ -793,6 +796,7 @@ impl DaemonHost {
                         host_id: plan.host_id.clone(),
                         client_instance_id: plan.client_instance_id.clone(),
                         project_id: plan.project_id.clone(),
+                        project_name: plan.project_name.clone(),
                         bridge_epoch: plan.bridge_epoch.clone(),
                         installation_id: plan.agent_installation_id.clone(),
                         source: plan.tool_source.clone(),
@@ -2222,6 +2226,77 @@ mod tests {
             next_sequence,
             ssh_hook_binding: None,
         }))
+    }
+
+    fn remote_hook_launch(source: &str) -> SshLaunchPlan {
+        SshLaunchPlan {
+            host_id: "host-1".to_string(),
+            host: "example.com".to_string(),
+            port: 22,
+            username: "dev".to_string(),
+            config_alias: String::new(),
+            config_file: String::new(),
+            auth_mode: "agent".to_string(),
+            identity_file: String::new(),
+            credential_ref: String::new(),
+            jump_target: String::new(),
+            proxy_type: String::new(),
+            proxy_host: String::new(),
+            proxy_port: 0,
+            proxy_command: String::new(),
+            connect_timeout_sec: 10,
+            server_alive_interval_sec: 30,
+            server_alive_count_max: 3,
+            remote_path: "/srv/private-directory".to_string(),
+            client_instance_id: "client-1".to_string(),
+            project_id: "project-1".to_string(),
+            project_name: "Sidebar Project".to_string(),
+            bridge_epoch: "epoch-1".to_string(),
+            agent_path: "~/.local/bin/cli-manager-ssh-agent".to_string(),
+            agent_installation_id: "installation-1".to_string(),
+            agent_remote_machine_id: "machine-1".to_string(),
+            tool_source: source.to_string(),
+            environment_overrides: HashMap::new(),
+            initialization_command: None,
+            startup_command: None,
+        }
+    }
+
+    #[test]
+    fn remote_hook_binding_injects_sidebar_project_for_claude_and_codex() {
+        for (index, source) in ["claude", "codex"].into_iter().enumerate() {
+            let host = DaemonHost::new();
+            let tab_id = format!("tab-{index}");
+            let launch = remote_hook_launch(source);
+            host.reserve_session_with_launch(&tab_id, None, None, Some(&launch))
+                .unwrap();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            host.set_hook_sink(Arc::new(move |payload| {
+                sender.send(payload.to_notification_job()).unwrap();
+            }));
+
+            host.accept_remote_hook_event(serde_json::json!({
+                "kind": "hookEvent",
+                "eventId": format!("event-{index}"),
+                "sequence": index + 1,
+                "tabId": tab_id,
+                "hostId": launch.host_id,
+                "clientInstanceId": launch.client_instance_id,
+                "projectId": launch.project_id,
+                "bridgeEpoch": launch.bridge_epoch,
+                "installationId": launch.agent_installation_id,
+                "source": source,
+                "event": "Stop",
+                "sessionId": format!("session-{index}"),
+                "remoteCwd": launch.remote_path,
+                "occurredAt": 1,
+            }));
+
+            let job = receiver.try_recv().unwrap();
+            assert_eq!(job.source, source);
+            assert_eq!(job.cwd, None);
+            assert_eq!(job.project.as_deref(), Some("Sidebar Project"));
+        }
     }
 
     #[test]
