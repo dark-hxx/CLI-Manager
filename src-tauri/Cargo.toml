@@ -42,6 +42,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 base64 = "0.22"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 sha2 = "0.10"
 minisign-verify = "0.2.5"
 hmac = "0.12.1"
