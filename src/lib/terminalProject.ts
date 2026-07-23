@@ -4,6 +4,17 @@ export function normalizeProjectPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
+function normalizeRemoteProjectPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\/+$/, "") || "/";
+}
+
+type ProjectFileContext = Pick<
+  Project,
+  "id" | "path" | "environment_type" | "ssh_host_id" | "remote_path"
+>;
+
 export function findProjectByPath(projects: Project[], path: string | null | undefined): Project | null {
   const normalizedPath = path?.trim() ? normalizeProjectPath(path) : "";
   if (!normalizedPath) return null;
@@ -24,15 +35,21 @@ export function findProjectByPath(projects: Project[], path: string | null | und
 }
 
 export function isSameProjectFileContext(
-  left: Pick<Project, "id" | "path"> | null | undefined,
-  right: Pick<Project, "id" | "path"> | null | undefined
+  left: ProjectFileContext | null | undefined,
+  right: ProjectFileContext | null | undefined
 ): boolean {
-  return Boolean(
-    left &&
-      right &&
-      left.id === right.id &&
-      normalizeProjectPath(left.path) === normalizeProjectPath(right.path)
-  );
+  if (!left || !right || left.id !== right.id) return false;
+
+  const leftIsSsh = left.environment_type === "ssh";
+  const rightIsSsh = right.environment_type === "ssh";
+  if (leftIsSsh || rightIsSsh) {
+    return leftIsSsh
+      && rightIsSsh
+      && left.ssh_host_id === right.ssh_host_id
+      && normalizeRemoteProjectPath(left.remote_path) === normalizeRemoteProjectPath(right.remote_path);
+  }
+
+  return normalizeProjectPath(left.path) === normalizeProjectPath(right.path);
 }
 
 export function findWorktreeByPath(worktrees: WorktreeRecord[], path: string | null | undefined): WorktreeRecord | null {

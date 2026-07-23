@@ -349,6 +349,16 @@ impl DaemonClient {
         payload: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         let id = self.next_request_id();
+        let timeout = if matches!(
+            request_kind.as_str(),
+            "gitFetch" | "gitPush" | "gitPull" | "gitSmartCheckout"
+        ) {
+            Duration::from_secs(190)
+        } else if request_kind.starts_with("git") {
+            Duration::from_secs(100)
+        } else {
+            Duration::from_secs(75)
+        };
         match self.request_with_timeout(
             id,
             &ClientFrame::SshAgentRequest {
@@ -358,7 +368,7 @@ impl DaemonClient {
                 request_kind,
                 payload,
             },
-            Duration::from_secs(75),
+            timeout,
         )? {
             DaemonFrame::SshAgentResponse { payload, .. } => Ok(payload),
             DaemonFrame::Err { message, .. } => Err(message),

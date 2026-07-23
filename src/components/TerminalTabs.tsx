@@ -2453,7 +2453,9 @@ export function TerminalTabs({
     () => resolveProjectForSessionFileContext(activeSession, sessions, projects, projectById, worktrees),
     [activeSession, projectById, projects, sessions, worktrees]
   );
-  const sidePanelProjectPath = panelSession?.cwd ?? filePanelProject?.path ?? null;
+  const sidePanelProjectPath = panelProject?.environment_type === "ssh"
+    ? panelProject.remote_path.trim() || null
+    : panelSession?.cwd?.trim() || filePanelProject?.path.trim() || null;
   const workspanTabModels = useMemo(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
     const memberSessions = sessionIds
       .map((sessionId) => sessions.find((session) => session.id === sessionId))
@@ -3283,7 +3285,16 @@ export function TerminalTabs({
       return;
     }
     void syncFilePanelProject(filePanelProject);
-  }, [closeFilesPanel, filePanelProject?.id, filePanelProject?.path, filesPanelActive, syncFilePanelProject]);
+  }, [
+    closeFilesPanel,
+    filePanelProject?.id,
+    filePanelProject?.path,
+    filePanelProject?.environment_type,
+    filePanelProject?.ssh_host_id,
+    filePanelProject?.remote_path,
+    filesPanelActive,
+    syncFilePanelProject,
+  ]);
 
   const handleOpenHistoryTab = useCallback(() => {
     if (historyOpen) {

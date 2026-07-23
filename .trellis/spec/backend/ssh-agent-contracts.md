@@ -4,13 +4,15 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and one reusable daemon-owned protocol `1.6` primary bridge per active SSH Host. Protocol 1.5 file RPCs and protocol 1.6 Git RPCs are read-only; realtime/historical stats remain separate stages.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and daemon-owned protocol `1.7` bridges per active SSH Host. Protocol 1.5 file RPCs remain read-only; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane. Realtime/historical stats remain separate stages.
 
 ### Agent Release Identity
 
 - The Agent product version is `src-tauri/ssh-agent/Cargo.toml` `[package].version`; its Cargo
   lockfile package entry and `AGENT_VERSION` must resolve to the same value. It is independent
   from the desktop app version and from the bridge protocol version.
+- Protocol `1.7` plus `gitFull` first ships as Agent `0.1.1`. The published `0.1.0`
+  prerelease reports protocol `1.6`; its tag, signature, hashes, and binaries are immutable.
 - The independent Agent release tag is exactly `ssh-agent-v<agent-version>`. Its signed manifest
   must carry that Agent version and point only to assets on that same tag.
 - Independent Agent releases are GitHub prereleases with `make_latest: false`. The desktop
@@ -131,6 +133,7 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - `ssh_agent_installations` preserves last-known sanitized metadata on unreachable/authentication-required probes, but a confirmed `notInstalled` result clears stale version/path metadata.
 - Bridge `--protocol` is mandatory. A clean EOF before a frame starts is normal; a partial four-byte length or payload is a protocol error.
 - A healthy Agent must report protocol major 1 and minor 4 or newer. Minor 1 advertises `heartbeat`, `requestCancellation`, and `boundedBackpressure`; minor 3 adds remote history RPCs and `historyDetailChunks`; minor 4 adds `historyResumePreflight`. Older minor versions remain upgradeable but are not marked usable by the current desktop.
+- The full remote Git panel additionally requires protocol minor 7 and the explicit `gitFull` capability; capability absence blocks Git only and never falls back to local Git commands or the read-only lane.
 - Desktop install and the HTTP(S) script consume the same schema-1 release manifest and Tauri updater Minisign trust root. The signature covers manifest bytes; the manifest pins channel, semantic version, protocol range, Linux target, URL, size, and SHA-256.
 - Release URLs default to HTTPS. HTTP requires explicit user opt-in, never permits embedded credentials, query strings, or fragments, and still requires a valid signature. Manifest, signature, and artifact downloads are bounded.
 - Install preview is read-only. Confirmation re-fetches and re-verifies the manifest before downloading or opening SSH, preventing a stale preview from authorizing different bytes.
@@ -153,7 +156,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Bridge hello requires Host/client/installation identity and reports remote machine identity. The desktop also validates every event against the live daemon session's Host/client/project/Tab/epoch/installation/source binding before routing it to the existing Hook sink.
 - SSH PTY launch injects Agent bridge identity only when the effective Host/source/configured root has a locally validated `installed` Hook report whose Agent installation and remote machine identities still match. Agent installation alone must not create a background Hook bridge.
 - The daemon owns one bridge entry per Host/client connection fingerprint while every PTY remains independent. Address, SSH user/config alias, auth, identity/credential reference, jump/proxy settings, Agent identity/path, ConnectTimeout, or KeepAlive changes replace the old bridge without holding the global registry lock during process shutdown.
-- File and Git requests reserve the existing primary bridge while it is connecting or connected and has no external request in flight. A slow history request may use one isolated read-only bridge instead of blocking file/Git. Bridge startup, authentication, handshake, and capacity failures are delivered immediately to queued consumers; a dropped response channel is never reported as a response timeout.
+- File requests reserve the existing primary bridge while it is connecting or connected and has no external request in flight. Git requests use a separate Host-scoped Git lane with its own client identity and serialize reads/writes so a refresh cannot observe a write in progress. A slow history request may use one isolated read-only bridge instead of blocking file/Git. Bridge startup, authentication, handshake, and capacity failures are delivered immediately to queued consumers; a dropped response channel is never reported as a response timeout.
+- Every Git request must carry the exact SSH project `remotePath` as `rootPath`; the Tauri command rejects a mismatch before opening the Agent bridge. The Agent then canonicalizes that root and confines every repo-relative path beneath it. An SSH Git context that is pending or unavailable is a hard error and must never select the local Git transport.
 - At most four bridge processes and two concurrent connect/reconnect handshakes run globally. A fifth active Host waits without opening SSH; releasing its last session cancels that wait. Probe/install one-shot processes do not consume a bridge permit.
 - Bridge stdout is consumed by a bounded 32-frame reader queue. Login banner plus preamble must complete within `min(ConnectTimeout + 10s, 60s)`; hello, ACK, ping, and ordinary responses have a 10-second bound. Timeout or disconnect kills/reaps the local SSH child before retry.
 - Bridge stderr is always drained but only the first 8 KiB is retained in memory for classification. Permission/passphrase/keyboard-interactive failures become `ssh_interactive_auth_required`; Host Key failures become `ssh_host_key_verification_required`; raw stderr is never persisted or logged.
@@ -234,6 +238,11 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 | Local Hook metadata remains write-locked after the bounded wait | `ssh_agent_hook_metadata_busy`; preserve all integration rows |
 | CLI-Manager marker belongs to another installation or placement | status `conflict` / `hook_config_owner_conflict` |
 | Spool JSONL was appended but meta is stale | rebuild count/bytes/next sequence before append |
+| Git request root differs from `SshLaunchPlan.remotePath` | `remote_git_root_mismatch`; do not open the Agent bridge |
+| Git capability `gitFull` is absent | `ssh_agent_capability_missing:gitFull`; do not downgrade to read-only or local Git |
+| Untracked Git diff target is a symlink or directory | `remote_git_symlink_rejected`; do not follow or read the target |
+| Git path list exceeds count or aggregate byte bound | `remote_git_paths_invalid` |
+| SSH Git context is pending, missing, or stale | `ssh_agent_context_unavailable`; do not invoke any local `git_*` command |
 
 ## 5. Good / Base / Bad Cases
 
@@ -255,6 +264,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Base: two imports contain the same config alias; the later transaction observes the normalized existing alias and reports it as skipped.
 - Bad: issue `BEGIN IMMEDIATE`, updates, and `COMMIT` as separate `tauri-plugin-sql` calls and assume the pool preserves connection affinity.
 - Bad: pass a remote absolute path to local `file_*`/Git commands, expose create/save/delete/move/external opener actions, or traverse more than the Agent file quotas.
+- Good: while an SSH project is still building its Agent context, Git actions fail closed; once ready, `rootPath` equals the launch plan and only the dedicated Git lane is used.
+- Bad: let a missing SSH context make `createGitTransport` silently choose the local transport, or allow a symlinked untracked file to be read by `fs::read`.
 - Good: a replaced bridge briefly receives `bridge_already_active`, backs off, then takes ownership after the old Agent process removes its socket.
 - Base: a missing or malformed discovery record is reconstructed only after an explicit install; no page-open or probe action changes remote files.
 - Base: Claude/Codex launched from an ordinary SSH shell has no binding variables; the installed Hook exits successfully without writing spool data.
@@ -282,6 +293,7 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Assert protocol minor 3 history capability negotiation, generation cursors, continuation identity, chunk ordering/size/deadline, detail LRU eviction, consumer release, and direct transcript-ref root/type/session/project confinement.
 - Assert protocol minor 4 resume capability and protocol minor 5 remote-file capability, structured Claude/Codex args, source/cwd validation, ownership claim/release, and implicit SSH Config username handling.
 - Assert remote file root/path confinement, symlink escape rejection, binary refusal, 1 MiB text and 5 MiB image limits, the exact 12,000,000-pixel boundary, video refusal, directory/search/visited limits, image data URLs, and UI/store read-only routing.
+- Assert protocol minor 7 and `gitFull`, dedicated Git-lane serialization and identity isolation, exact launch-root binding, strict per-RPC payloads, full Git mutation/network operations, write timeout/no-retry result-unknown handling, path/branch/patch validation, untracked symlink rejection, and SSH-pending fail-closed transport selection.
 - Assert manifest tampering, duplicate/unknown targets, HTTP opt-in, query/fragment rejection, target selection, size/SHA-256 mismatch, and bounded downloads.
 - Assert install path quoting, strict operation markers/metadata, semantic version actions, lock conflicts, default/custom roots, corrupt/missing discovery recovery, promote rollback, distinct previous versions, and transactional uninstall.
 - Assert Claude/Codex exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, user-owned Codex feature/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.
@@ -306,6 +318,19 @@ transport.build_one_shot_launch(agent_probe_script, SshOneShotOptions::default()
 ```
 
 The shared transport owns authentication and routing; the caller owns whether the process is an interactive PTY or a bounded one-shot operation.
+
+### Wrong: treat an SSH Git request as local when the Agent context is not ready
+
+```ts
+return createGitTransport(projectRoot, remoteContext); // null silently means local
+```
+
+### Correct: make the remote requirement explicit and fail closed
+
+```ts
+return createGitTransport(projectRoot, remoteContext, remoteRequired);
+// remoteRequired && !remoteContext -> ssh_agent_context_unavailable
+```
 
 ### Wrong: split a database transaction across pooled IPC calls
 

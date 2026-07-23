@@ -1,0 +1,7 @@
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Trellis 交付、验证、commit 前检查"}
+{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"逐项复核所有用户路径与不可逆写操作"}
+{"file":".trellis/spec/backend/git-status-contracts.md","reason":"核对状态/Diff/嵌套仓库与三种运行环境回归"}
+{"file":".trellis/spec/backend/ssh-agent-contracts.md","reason":"核对协议 1.7、gitFull、Git lane、超时与禁止重试"}
+{"file":".trellis/spec/backend/ssh-remote-terminal-contracts.md","reason":"核对 SSH 身份、路径和 capability 不降级"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"确认无 SSH 专用 JSX 和重复交互"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"确认异步响应不会跨项目/仓库覆盖"}

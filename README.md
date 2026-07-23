@@ -219,10 +219,10 @@ When developing across multiple projects, you may run into these problems:
 - **Remote project workflow** - browse remote directories, configure remote startup commands and environment variables, and launch AI CLI sessions directly in the target path
 - **Workspace integration** - remote terminals support tabs, splits, Workspan, background execution, and daemon-backed recovery
 - **Remote Agent and Hook** - explicitly install or upgrade the signed `cli-manager-ssh-agent`, configure Claude/Codex roots per host or project, preview Hook changes, and install or remove only CLI-Manager-owned entries
-- **Reliable live status** - SSH sessions with a validated installed Hook reuse one per-host protocol 1.6 Agent bridge with bounded handshake/response timeouts, heartbeat, reconnect gates, and a streaming Host/client-isolated spool
+- **Reliable live status** - SSH sessions with a validated installed Hook reuse daemon-owned protocol 1.7 Agent bridges with bounded handshake/response timeouts, heartbeat, reconnect gates, and a streaming Host/client-isolated spool
 - **Remote history** - browse scoped Claude Code and Codex sessions from the existing history workspace, with incremental list/search, on-demand detail and Diff, usage summaries, pagination, and explicit stale/offline cache state
 - **Remote resume** - preflight the original session, Host identity, config root, and cwd through the Agent, then continue it in a new interactive SSH terminal or jump to the existing Tab
-- **Read-only remote files and Git** - browse a confined lazy tree, search names or text, preview UTF-8 text and images, and inspect remote Git status, Diff, branches, and upstream freshness without passing remote paths to local filesystem or Git APIs
+- **Remote files and Git** - browse a confined read-only file tree, search names or text, preview text and images, and use the full Git panel through the SSH Agent without passing remote paths to local filesystem or Git APIs
 - **Credential safety** - passwords use the operating system credential store; sync and export never include passwords, credentials, or private-key paths
 
 > Remote Hook status, read-only remote history/resume, file and Git panels, realtime Tab stats, and catalog-backed usage analytics are available for Claude Code and Codex. Remote file/Git writes, local Explorer/Finder actions, Worktree tools, external terminal launch, and remote resource monitoring are not available. SSH projects never scan or switch remote providers.

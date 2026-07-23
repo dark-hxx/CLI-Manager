@@ -19,8 +19,7 @@ import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { findProjectByPath } from "../../lib/terminalProject";
 import type { GitTreeNode, GitPullStrategy, GitBranchInfo, Project } from "../../lib/types";
-import { buildSshRemoteGitContext, sshRemoteGitDiff } from "../../lib/sshRemoteGit";
-import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
+import { buildSshRemoteGitContext } from "../../lib/sshRemoteGit";
 
 interface GitChangesPanelProps {
   open: boolean;
@@ -43,6 +42,9 @@ type Translate = ReturnType<typeof useI18n>["t"];
 
 // 把后端 git 网络错误码（形如 "auth_failed: <原文>"）映射为当前语言的 toast。
 function formatGitNetError(prefix: string, raw: string, t: Translate): string {
+  if (raw.includes("ssh_agent_not_installed")) {
+    return t("settings.sshHosts.cliIntegration.agent.code.ssh_agent_not_installed");
+  }
   if (raw.includes("auth_failed")) return t("git.error.authFailed", { prefix });
   if (raw.includes("not_fast_forward")) return t("git.error.notFastForward", { prefix });
   if (raw.includes("no_upstream")) return t("git.error.noUpstream", { prefix });
@@ -56,6 +58,8 @@ function formatGitNetError(prefix: string, raw: string, t: Translate): string {
   if (raw.includes("smart_checkout_apply_conflict")) return t("git.error.smartCheckoutApplyConflict", { prefix });
   if (raw.includes("invalid_branch")) return t("git.error.invalidBranch", { prefix });
   if (raw.includes("git_not_found")) return t("git.error.gitNotFound", { prefix });
+  if (raw.includes("ssh_agent_capability_missing")) return t("git.error.agentCapabilityMissing", { prefix });
+  if (raw.includes("remote_git_result_unknown")) return t("git.error.resultUnknown", { prefix });
   return t("git.error.generic", { prefix, message: raw.replace(/^[a-z_]+:\s*/, "") });
 }
 
@@ -282,6 +286,9 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     discardAll,
     deleteUntrackedPaths,
     discarding,
+    loadFileDiff,
+    revertHunk,
+    revertLines,
     stageFile,
     unstageFile,
     stagePaths,
@@ -331,8 +338,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [groupByMenuOpen, setGroupByMenuOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
-  const [remoteDiff, setRemoteDiff] = useState<{ name: string; content: string } | null>(null);
-  const [remoteDiffLoading, setRemoteDiffLoading] = useState(false);
+  const [contextLoading, setContextLoading] = useState(false);
   const [hideFilterLabels, setHideFilterLabels] = useState(false);
   const filterRowRef = useRef<HTMLDivElement | null>(null);
   const panelActive = open && visible;
@@ -341,8 +347,6 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
   ), [projectId, projectPath, projects]);
   const setRemoteContext = useGitStore((state) => state.setRemoteContext);
   const remoteContext = useGitStore((state) => state.remoteContext);
-  const asOf = useGitStore((state) => state.asOf);
-  const readOnly = project?.environment_type === "ssh";
   // 多仓库切换：根仓库显示项目目录名（取不到时回落「根仓库」文案），子仓库显示相对路径。
   const rootRepoLabel = projectPath?.split(/[\\/]/).filter(Boolean).pop() || t("git.repo.root");
   const activeRepo = activeRepoPath ? repositories.find((repo) => repo.absolutePath === activeRepoPath) : null;
@@ -350,28 +354,40 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
 
   useEffect(() => {
     if (panelActive && projectPath) {
+      if (projectId && !project) {
+        setContextLoading(false);
+        return;
+      }
       let cancelled = false;
-      if (project?.environment_type === "ssh") reset();
-      else setRemoteContext(null);
+      const remoteRequired = project?.environment_type === "ssh";
+      setContextLoading(true);
+      setRemoteContext(null, remoteRequired);
       void (async () => {
         try {
-          const remoteContext = project?.environment_type === "ssh" ? await buildSshRemoteGitContext(project) : null;
+          const nextRemoteContext = remoteRequired && project
+            ? await buildSshRemoteGitContext(project)
+            : null;
           if (cancelled) return;
-          setRemoteContext(remoteContext);
+          setRemoteContext(nextRemoteContext, remoteRequired);
           fetchChanges(projectPath);
-      // 枚举项目根下的多仓库（面板打开 / 项目切换时刷新；fetchChanges 已先设定 currentProjectPath）。
-      void fetchRepositories(projectPath);
+          setContextLoading(false);
+          // 枚举项目根下的多仓库（面板打开 / 项目切换时刷新；fetchChanges 已先设定 currentProjectPath）。
+          void fetchRepositories(projectPath);
           void fetchBranches(projectPath);
         } catch (err) {
-          if (!cancelled) toast.error(t("git.error.generic", { prefix: t("git.title"), message: String(err) }));
+          if (!cancelled) {
+            setContextLoading(false);
+            toast.error(formatGitNetError(t("git.title"), String(err), t));
+          }
         }
       })();
       return () => { cancelled = true; };
     } else if (!open) {
+      setContextLoading(false);
       setRemoteContext(null);
       reset();
     }
-  }, [panelActive, open, projectPath, project, fetchChanges, fetchRepositories, fetchBranches, reset, setRemoteContext]);
+  }, [panelActive, open, projectPath, project, fetchChanges, fetchRepositories, fetchBranches, reset, setRemoteContext, t]);
 
   useEffect(() => {
     const filterRow = filterRowRef.current;
@@ -451,6 +467,25 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       void invoke("git_watch_stop").catch(() => {});
     };
   }, [panelActive, projectPath, project?.environment_type, fetchChanges]);
+
+  // 远程项目没有本地 watcher：仅在面板可见且窗口聚焦时低频刷新，重新聚焦立即同步。
+  useEffect(() => {
+    if (!panelActive || !projectPath || project?.environment_type !== "ssh" || !remoteContext) return;
+    let disposed = false;
+    const isActive = () => !disposed && document.visibilityState === "visible" && document.hasFocus();
+    const refreshIfActive = () => { if (isActive()) void fetchChanges(projectPath, true); };
+    const timer = window.setInterval(refreshIfActive, FALLBACK_POLL_INTERVAL_MS);
+    const onFocus = () => refreshIfActive();
+    const onVisibility = () => { if (document.visibilityState === "visible") refreshIfActive(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [panelActive, projectPath, project?.environment_type, remoteContext, fetchChanges]);
 
   const directoryPaths = useMemo(
     () => [...collectDirectoryPaths(tree, "tracked"), ...collectDirectoryPaths(untrackedTree, "untracked")],
@@ -735,75 +770,6 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     ? "flex h-full min-h-0 flex-col overflow-hidden font-mono"
     : "relative z-[1] flex w-[184px] shrink-0 flex-col overflow-hidden border-l border-border font-mono";
   const Container = embedded ? "div" : "aside";
-  if (readOnly) {
-    const openRemoteDiff = async (change: typeof changes[number]) => {
-      if (!remoteContext) return;
-      setRemoteDiffLoading(true);
-      try {
-        const content = await sshRemoteGitDiff(remoteContext, activeRepoPath ?? "", change.path);
-        setRemoteDiff({ name: change.path, content });
-      } catch (err) {
-        toast.error(t("git.error.generic", { prefix: t("git.title"), message: String(err) }));
-      } finally {
-        setRemoteDiffLoading(false);
-      }
-    };
-    return (
-      <Container className={panelClassName} style={{ backgroundColor: TERM.bg, ...TERMINAL_PANEL_SCROLLBAR_STYLE }}>
-        <div className="flex items-center justify-between gap-2 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
-          <span className="flex min-w-0 items-center gap-2 text-[11px] font-bold" style={{ color: TERM.fg }}>
-            <GitBranch size={12} />
-            <span className="truncate">{branchStatus?.branch ?? t("git.title")}</span>
-            <span className="text-[9px] font-normal" style={{ color: TERM.dim }}>
-              {t("git.readOnly")}{asOf ? ` · ${new Date(asOf).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : ""}
-            </span>
-          </span>
-          <button type="button" className="ui-focus-ring ui-icon-action" onClick={handleRefresh} aria-label={t("common.refresh")}>
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-        {repositories.length > 0 && (
-          <select
-            value={activeRepoPath ?? ""}
-            onChange={(event) => setActiveRepo(event.currentTarget.value || null)}
-            aria-label={t("git.repo.select")}
-            className="mx-2 my-1 min-w-0 rounded border px-1 py-0.5 text-[10px]"
-            style={{ backgroundColor: TERM.bg, color: TERM.fg, borderColor: TERM.dim }}
-          >
-            <option value="">{rootRepoLabel}</option>
-            {repositories.filter((repo) => repo.absolutePath).map((repo) => (
-              <option key={repo.absolutePath} value={repo.absolutePath}>{repo.relativePath || rootRepoLabel}</option>
-            ))}
-          </select>
-        )}
-        {branchStatus?.hasUpstream && (
-          <div className="flex gap-3 border-b px-2 py-1 text-[10px]" style={{ color: TERM.dim, borderColor: TERM.dim }}>
-            <span>{branchStatus.upstream}</span>
-            <span><ArrowUp size={10} className="inline" /> {branchStatus.ahead}</span>
-            <span><ArrowDown size={10} className="inline" /> {branchStatus.behind}</span>
-          </div>
-        )}
-        <div className="ui-thin-scroll min-h-0 flex-1 overflow-y-auto p-1">
-          {changes.length === 0 ? (
-            <div className="px-3 py-8 text-center text-xs" style={{ color: TERM.dim }}>{loading ? t("git.diff.loading") : t("git.empty.noChanges")}</div>
-          ) : changes.map((change) => (
-            <button key={`${change.path}:${change.staged}`} type="button" onClick={() => void openRemoteDiff(change)} className="ui-focus-ring flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[11px] hover:opacity-80">
-              <span className="w-4 shrink-0 font-bold" style={{ color: STATUS_CONFIG[change.status]?.color ?? TERM.dim }}>{change.status}</span>
-              <span className="min-w-0 flex-1 truncate" style={{ color: TERM.fg }}>{change.path}</span>
-            </button>
-          ))}
-        </div>
-        <Dialog open={remoteDiff !== null || remoteDiffLoading} onOpenChange={(open) => { if (!open) setRemoteDiff(null); }}>
-          <DialogContent className="max-h-[85vh] max-w-[90vw] overflow-hidden">
-            <DialogTitle>{remoteDiff?.name ?? t("git.diff.loading")}</DialogTitle>
-            <pre className="ui-thin-scroll max-h-[70vh] overflow-auto whitespace-pre p-3 text-[11px]" style={{ backgroundColor: TERM.cardInner, color: TERM.fg }}>
-              {remoteDiffLoading ? t("git.diff.loading") : remoteDiff?.content || t("git.diff.noContent")}
-            </pre>
-          </DialogContent>
-        </Dialog>
-      </Container>
-    );
-  }
   return (
     <Container
       className={panelClassName}
@@ -1064,7 +1030,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       <div className="min-h-0 flex-1 overflow-y-auto p-2 ui-thin-scroll">
         {!projectPath ? (
           <EmptyHint text={t("git.empty.noProject")} />
-        ) : loading && changes.length === 0 ? (
+        ) : (contextLoading || loading) && changes.length === 0 ? (
           <EmptyHint text={t("common.loading")} />
         ) : changes.length === 0 ? (
           <EmptyHint text={t("git.empty.noChanges")} />
@@ -1343,6 +1309,9 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
           filePath={selectedFile.path}
           fileName={selectedFile.name}
           status={selectedFile.status}
+          loadDiff={loadFileDiff}
+          revertHunk={revertHunk}
+          revertLines={revertLines}
           onRequestDiscard={handleRequestDiscard}
         />
       )}
