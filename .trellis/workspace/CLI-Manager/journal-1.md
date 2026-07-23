@@ -1023,3 +1023,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: 修复 Codex 子任务窗格自动关闭
+
+**Date**: 2026-07-23
+**Task**: 修复 Codex 子任务窗格自动关闭
+**Branch**: `master`
+
+### Summary
+
+为 Codex 子任务转录补充 task_complete/turn_aborted 终态兜底，统一自动关闭延迟并更新契约与文档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0347ab8e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
