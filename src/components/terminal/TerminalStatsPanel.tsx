@@ -57,8 +57,8 @@ interface TerminalStatsPanelProps {
   embedded?: boolean;
 }
 
-const POLL_INTERVAL_MS = 10_000;
-/** 已绑定 cliSessionId 但用量尚未出来时加快轮询，避免 Pi 等新会话空等 10s 再闪出。 */
+const POLL_INTERVAL_MS = 5_000;
+/** 已绑定 cliSessionId 但用量尚未出来时加快轮询，避免 Pi 等新会话空等 5s 再闪出。 */
 const WAITING_USAGE_POLL_INTERVAL_MS = 2_000;
 const TICK_INTERVAL_MS = 30_000;
 const TERMINAL_PANEL_SCROLLBAR_STYLE = {
@@ -517,7 +517,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     setRefreshSeq((prev) => prev + 1);
   }, [panelActive]);
 
-  // A6: 统一定时器调度 - 稳定后 10s；等待用量时 2s，尽快追上落盘的 CLI 会话。
+  // A6: 统一定时器调度 - 稳定后 5s；等待用量时 2s，尽快追上落盘的 CLI 会话。
   useEffect(() => {
     if (!panelActive || waitingForBoundSessionId || waitingForRemoteSessionId) return;
     const intervalMs = waitingForUsage ? WAITING_USAGE_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
@@ -657,7 +657,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   }, [saveSession, terminalSession, project]);
 
   // A7: 实时查询当前项目的 git 分支，初始值为会话静态分支，避免首屏闪烁
-  // A6: 通过 pollTrigger 与会话数据轮询共用 10s 节拍
+  // A6: 通过 pollTrigger 与会话数据轮询共用 5s 节拍
   const currentBranch = useCurrentGitBranch(
     lookupProjectPath,
     panelActive && !isSshProject,
@@ -792,8 +792,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
 
       {!displayProjectPath ? (
         <EmptyHint text={t("termStats.noProject")} />
-      ) : loadingSession && !latestSession && !emptyDisplaySession ? (
-        <EmptyHint text={t("common.loading")} />
       ) : !displaySession ? (
         <EmptyHint text={t("termStats.noSessionRecord", { source: sourceFilter ?? "CLI" })} />
       ) : !hasVisibleCard ? (

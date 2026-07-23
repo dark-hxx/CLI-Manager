@@ -57,7 +57,13 @@ impl HookNotifyError {
 
 fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
     // 优先使用 PTY 注入的 tab 绑定；Grok/外部 CLI 缺少注入环境变量时回退到 daemon 发现文件。
-    let notify = resolve_notify_target().ok_or(HookNotifyError::MissingPort)?;
+    let notify = resolve_notify_target().ok_or_else(|| {
+        if non_empty_env("CLI_MANAGER_NOTIFY_PORT").is_some() {
+            HookNotifyError::MissingToken
+        } else {
+            HookNotifyError::MissingPort
+        }
+    })?;
     let tab_id = non_empty_env("CLI_MANAGER_TAB_ID")
         .unwrap_or_else(|| format!("external:{source}"));
 

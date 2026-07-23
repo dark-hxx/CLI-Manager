@@ -2959,6 +2959,7 @@ fn build_grok_status(grok_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus
         subagent_start_hook_required: true,
         // Reuse hooks_feature_installed to mean "cross-vendor hook isolation enabled".
         hooks_feature_installed: isolation_ok,
+        hooks_trusted: true,
     };
 
     Ok(status_from_checks(
