@@ -64,7 +64,7 @@ import { projectSupportsCapability, resolveProjectCapabilities, type ProjectCapa
 import { resolveCliToolHistorySourceId } from "../lib/cliTools";
 import { resolveHistoryProjectPath } from "../lib/historyProjectPaths";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
-import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check, Cpu, Cloud } from "./icons";
+import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check, Cpu, Cloud, Undo2 } from "./icons";
 import { WorktreeIcon } from "./WorktreeIcon";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
@@ -189,7 +189,8 @@ const PULSING_TAB_STATES = new Set<TabNotificationState>(["running", "attention"
 const PANE_DROP_PREFIX = "pane-drop:";
 const PANE_CENTER_DROP_PREFIX = "pane-center:";
 const PANE_EDGE_DROP_PREFIX = "pane-edge:";
-const WORKSPAN_SPLIT_ACTIVATION_RATIO = 0.18;
+const WORKSPAN_TABBAR_END_DROP_ID = "workspan-tabbar:end";
+const WORKSPAN_SPLIT_ACTIVATION_RATIO = 0.08;
 const PANE_DROP_EDGES: TerminalPaneDropEdge[] = ["left", "right", "top", "bottom"];
 const WORKSPAN_NOTIFICATION_PRIORITY: Record<TabNotificationState, number> = {
   none: 0,
@@ -370,8 +371,19 @@ const terminalTabCollisionDetection: CollisionDetection = (args) => {
     return workspanTabCollision ? [workspanTabCollision] : [];
   }
 
+  const workspanTabCollision = pointerCollisions.find((collision) => String(collision.id).startsWith(WORKSPAN_DRAG_PREFIX));
+  if (workspanTabCollision) return [workspanTabCollision];
+
+  const workspanTabbarEndCollision = pointerCollisions.find((collision) => collision.id === WORKSPAN_TABBAR_END_DROP_ID);
+  if (workspanTabbarEndCollision) return [workspanTabbarEndCollision];
+
   const closestCollisions = closestCenter(args);
-  const tabCollision = closestCollisions.find((collision) => !isPaneDropCollisionId(String(collision.id)));
+  const tabCollision = closestCollisions.find((collision) => {
+    const id = String(collision.id);
+    return !isPaneDropCollisionId(id)
+      && !id.startsWith(WORKSPAN_DRAG_PREFIX)
+      && id !== WORKSPAN_TABBAR_END_DROP_ID;
+  });
   if (tabCollision) return [tabCollision];
 
   const paneBarCollision = pointerCollisions.find((collision) => String(collision.id).startsWith(PANE_DROP_PREFIX));
@@ -961,6 +973,11 @@ function SortableWorkspanTab({
   );
 }
 
+function WorkspanTabbarEndDropTarget({ disabled }: { disabled: boolean }) {
+  const { setNodeRef } = useDroppable({ id: WORKSPAN_TABBAR_END_DROP_ID, disabled });
+  return <div ref={setNodeRef} className="h-full min-w-0 flex-1" aria-hidden="true" />;
+}
+
 function DragOverlayTab({
   title,
   notification,
@@ -989,6 +1006,12 @@ function DragOverlayTab({
         </span>
       )}
       <span className="ui-terminal-tab-title min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
+      <span
+        className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant"
+        aria-hidden="true"
+      >
+        <X size={13} strokeWidth={2.2} />
+      </span>
     </div>
   );
 }
@@ -1002,7 +1025,13 @@ interface TerminalDragOverlayData {
   };
 }
 
-function TerminalTabDragOverlay({ style }: { style: CSSProperties }) {
+function TerminalTabDragOverlay({
+  style,
+  themeTone,
+}: {
+  style: CSSProperties;
+  themeTone: "light" | "dark";
+}) {
   const { active } = useDndContext();
   const dragData = active?.data.current as TerminalDragOverlayData | undefined;
   const overlay = dragData?.overlay;
@@ -1015,11 +1044,15 @@ function TerminalTabDragOverlay({ style }: { style: CSSProperties }) {
         style={style}
       >
         {overlay ? (
-          <DragOverlayTab
-            title={overlay.title}
-            notification={overlay.notification}
-            vendor={overlay.vendor}
-          />
+          <div className="ui-terminal-well ui-terminal-drag-overlay-theme" data-terminal-theme-tone={themeTone}>
+            <div className="ui-terminal-pane-chrome ui-terminal-drag-overlay-chrome">
+              <DragOverlayTab
+                title={overlay.title}
+                notification={overlay.notification}
+                vendor={overlay.vendor}
+              />
+            </div>
+          </div>
         ) : null}
       </DragOverlay>
     </Portal>
@@ -1058,6 +1091,7 @@ interface PaneTabBarProps {
   onHideBackground: (sessionId: string) => void;
   onShowBackground: (sessionId: string) => void;
   onTogglePaneFullscreen: (paneId: string) => void;
+  onDetachSessionToWorkspan: (sessionId: string) => void;
   onOpenWorktreeChanges: (sessionId: string) => void;
   onOpenWorktreeHistory: (project: Project, worktree: WorktreeRecord) => void;
   onFinishWorktree: (project: Project, worktree: WorktreeRecord) => void;
@@ -1095,6 +1129,7 @@ function PaneTabBar({
   onHideBackground,
   onShowBackground,
   onTogglePaneFullscreen,
+  onDetachSessionToWorkspan,
   onOpenWorktreeChanges,
   onOpenWorktreeHistory,
   onFinishWorktree,
@@ -1108,6 +1143,7 @@ function PaneTabBar({
   darkThemePalette,
 }: PaneTabBarProps) {
   const { t } = useI18n();
+  const workspanEnabled = useSettingsStore((s) => s.workspanEnabled);
   const { setNodeRef, isOver } = useDroppable({ id: `${PANE_DROP_PREFIX}${pane.id}` });
   const tabMenuTheme = getTerminalTheme(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
   const tabMenuForeground = normalizeTabMenuHex(tabMenuTheme.foreground, resolvedTheme === "dark" ? "#d8dee9" : "#1e293b");
@@ -1120,6 +1156,7 @@ function PaneTabBar({
   } as CSSProperties;
   const tabScrollRef = useRef<HTMLDivElement | null>(null);
   const tabScrollUpdateTimeoutRef = useRef<number | null>(null);
+  const isWorkspanSplit = workspanEnabled && variant === "pane" && allPanes.length > 1;
   const [tabListOpen, setTabListOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
     isOverflowing: false,
@@ -1147,8 +1184,8 @@ function PaneTabBar({
       : paneSessionIds[0] ?? null;
   const otherPanes = allPanes.filter((item) => item.id !== pane.id && item.sessionIds.length > 0);
   const paneFullscreenLabel = isPaneFullscreen
-    ? t("terminal.toolbar.exitImmersiveFullscreen")
-    : t("terminal.toolbar.enterImmersiveFullscreen");
+    ? t("terminal.toolbar.exitTerminalFullscreen")
+    : t("terminal.toolbar.enterTerminalFullscreen");
   const tabScrollSignature = paneSessions
     .map((session) => `${session.id}:${session.title}:${tabNotifications[session.id] ?? "none"}`)
     .join("|");
@@ -1330,6 +1367,7 @@ function PaneTabBar({
       className={`ui-terminal-chrome ${variant === "global" ? "ui-terminal-global-chrome" : "ui-terminal-pane-chrome"} relative flex h-10 shrink-0 items-center`}
       data-drop-target={isOver ? "true" : "false"}
       data-chrome-variant={variant}
+      data-terminal-split-pane={isWorkspanSplit ? "true" : undefined}
     >
       {variant === "pane" && tabScrollState.isOverflowing && (
         <button
@@ -1528,8 +1566,19 @@ function PaneTabBar({
           </Popover>
         </>
       )}
-      {variant === "pane" && allPanes.length > 1 && (
+      {variant === "pane" && (
         <div className="ui-terminal-actions flex shrink-0 items-center">
+          {isWorkspanSplit && activePaneTabId && (
+            <button
+              type="button"
+              className="ui-focus-ring ui-icon-action"
+              onClick={() => onDetachSessionToWorkspan(activePaneTabId)}
+              title={t("terminal.tab.detachWorkspan")}
+              aria-label={t("terminal.tab.detachWorkspan")}
+            >
+              <Undo2 size={14} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          )}
           <button
             type="button"
             className="ui-focus-ring ui-icon-action ui-action-fullscreen"
@@ -1541,6 +1590,17 @@ function PaneTabBar({
           >
             {isPaneFullscreen ? <Minimize2 size={14} strokeWidth={1.8} /> : <Maximize2 size={14} strokeWidth={1.8} />}
           </button>
+          {isWorkspanSplit && activePaneTabId && (
+            <button
+              type="button"
+              className="ui-focus-ring ui-icon-action"
+              onClick={(event) => closePaneSessions([activePaneTabId], event.currentTarget.getBoundingClientRect())}
+              title={t("terminal.tab.closeCurrent")}
+              aria-label={t("terminal.tab.closeCurrent")}
+            >
+              <X size={14} strokeWidth={2} aria-hidden="true" />
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1585,6 +1645,7 @@ interface PaneLeafViewProps {
   onHideBackground: (sessionId: string) => void;
   onShowBackground: (sessionId: string) => void;
   onTogglePaneFullscreen: (paneId: string) => void;
+  onDetachSessionToWorkspan: (sessionId: string) => void;
   onOpenWorktreeChanges: (sessionId: string) => void;
   onOpenWorktreeHistory: (project: Project, worktree: WorktreeRecord) => void;
   onFinishWorktree: (project: Project, worktree: WorktreeRecord) => void;
@@ -1632,6 +1693,7 @@ function PaneLeafView({
   onHideBackground,
   onShowBackground,
   onTogglePaneFullscreen,
+  onDetachSessionToWorkspan,
   onOpenWorktreeChanges,
   onOpenWorktreeHistory,
   onFinishWorktree,
@@ -1682,6 +1744,7 @@ function PaneLeafView({
           onHideBackground={onHideBackground}
           onShowBackground={onShowBackground}
           onTogglePaneFullscreen={onTogglePaneFullscreen}
+          onDetachSessionToWorkspan={onDetachSessionToWorkspan}
           onOpenWorktreeChanges={onOpenWorktreeChanges}
           onOpenWorktreeHistory={onOpenWorktreeHistory}
           onFinishWorktree={onFinishWorktree}
@@ -1900,6 +1963,7 @@ function arePaneLeafViewPropsEqual(prevProps: PaneLeafViewProps, nextProps: Pane
     prevProps.onHideBackground === nextProps.onHideBackground &&
     prevProps.onShowBackground === nextProps.onShowBackground &&
     prevProps.onTogglePaneFullscreen === nextProps.onTogglePaneFullscreen &&
+    prevProps.onDetachSessionToWorkspan === nextProps.onDetachSessionToWorkspan &&
     prevProps.onOpenWorktreeChanges === nextProps.onOpenWorktreeChanges &&
     prevProps.onOpenWorktreeHistory === nextProps.onOpenWorktreeHistory &&
     prevProps.onFinishWorktree === nextProps.onFinishWorktree &&
@@ -2224,11 +2288,13 @@ export function TerminalTabs({
   const setActiveWorkspan = useTerminalStore((s) => s.setActiveWorkspan);
   const reorderWorkspans = useTerminalStore((s) => s.reorderWorkspans);
   const renameWorkspan = useTerminalStore((s) => s.renameWorkspan);
+  const restoreWorkspanToSinglePane = useTerminalStore((s) => s.restoreWorkspanToSinglePane);
   const mergeWorkspanAtPaneEdge = useTerminalStore((s) => s.mergeWorkspanAtPaneEdge);
   const closeSession = useTerminalStore((s) => s.closeSession);
   const createSession = useTerminalStore((s) => s.createSession);
   const reorderSessions = useTerminalStore((s) => s.reorderSessions);
   const moveSessionToPane = useTerminalStore((s) => s.moveSessionToPane);
+  const detachSessionToWorkspan = useTerminalStore((s) => s.detachSessionToWorkspan);
   const splitSessionToPaneEdge = useTerminalStore((s) => s.splitSessionToPaneEdge);
   const renameSession = useTerminalStore((s) => s.renameSession);
   const splitTerminal = useTerminalStore((s) => s.splitTerminal);
@@ -2281,6 +2347,11 @@ export function TerminalTabs({
   const [closeConfirm, setCloseConfirm] = useState<TerminalCloseConfirmState>(null);
   const [daemonTasks, setDaemonTasks] = useState<BackgroundTaskMeta[]>([]);
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
+  const [workspanDetachPreview, setWorkspanDetachPreview] = useState({
+    left: 0,
+    targetId: null as string | null,
+    visible: false,
+  });
   const [fullscreenPaneId, setFullscreenPaneId] = useState<string | null>(null);
   const [workspanTabListOpen, setWorkspanTabListOpen] = useState(false);
   const [workspanTabOverflow, setWorkspanTabOverflow] = useState<WorkspanTabOverflowState>({
@@ -2298,8 +2369,6 @@ export function TerminalTabs({
   const [finishTarget, setFinishTarget] = useState<{ project: Project; worktree: WorktreeRecord } | null>(null);
   const [discardTarget, setDiscardTarget] = useState<{ project: Project; worktree: WorktreeRecord } | null>(null);
   const [activeToolbarDragId, setActiveToolbarDragId] = useState<string | null>(null);
-  const paneFullscreenStartedFromGlobalRef = useRef(false);
-  const previousFullscreenRef = useRef(fullscreen);
   const splitPickerOpenFrameRef = useRef<number | null>(null);
   const splitPickerOpenTimerRef = useRef<number | null>(null);
   const splitPickerOutsideGuardUntilRef = useRef(0);
@@ -2697,19 +2766,7 @@ export function TerminalTabs({
     if (!fullscreenPaneId || activeFullscreenPaneId) return;
 
     setFullscreenPaneId(null);
-    const shouldExitFullscreen = !paneFullscreenStartedFromGlobalRef.current && fullscreen;
-    paneFullscreenStartedFromGlobalRef.current = false;
-    if (shouldExitFullscreen) onToggleFullscreen?.();
-  }, [activeFullscreenPaneId, fullscreen, fullscreenPaneId, onToggleFullscreen]);
-
-  useEffect(() => {
-    const wasFullscreen = previousFullscreenRef.current;
-    previousFullscreenRef.current = fullscreen;
-    if (!wasFullscreen || fullscreen || !activeFullscreenPaneId) return;
-
-    setFullscreenPaneId(null);
-    paneFullscreenStartedFromGlobalRef.current = false;
-  }, [activeFullscreenPaneId, fullscreen]);
+  }, [activeFullscreenPaneId, fullscreenPaneId]);
 
   const clearSplitPickerOpenSchedule = useCallback(() => {
     if (splitPickerOpenFrameRef.current !== null) {
@@ -2891,9 +2948,6 @@ export function TerminalTabs({
   const handleTogglePaneFullscreen = useCallback((paneId: string) => {
     if (activeFullscreenPaneId === paneId) {
       setFullscreenPaneId(null);
-      const shouldExitFullscreen = !paneFullscreenStartedFromGlobalRef.current && fullscreen;
-      paneFullscreenStartedFromGlobalRef.current = false;
-      if (shouldExitFullscreen) onToggleFullscreen?.();
       return;
     }
 
@@ -2907,10 +2961,15 @@ export function TerminalTabs({
       setActiveWorkspaceTab("terminal");
     }
 
-    paneFullscreenStartedFromGlobalRef.current = fullscreen;
     setFullscreenPaneId(paneId);
-    if (!fullscreen) onToggleFullscreen?.();
-  }, [activeFullscreenPaneId, activeSessionId, allPanes, closeHistory, fullscreen, handleActivateSession, onToggleFullscreen]);
+  }, [activeFullscreenPaneId, activeSessionId, allPanes, closeHistory, handleActivateSession]);
+
+  const handleRestoreWorkspanToSinglePane = useCallback((workspanId: string) => {
+    if (workspanId === effectiveActiveWorkspanId && activeFullscreenPaneId) {
+      handleTogglePaneFullscreen(activeFullscreenPaneId);
+    }
+    restoreWorkspanToSinglePane(workspanId);
+  }, [activeFullscreenPaneId, effectiveActiveWorkspanId, handleTogglePaneFullscreen, restoreWorkspanToSinglePane]);
 
   const resolveCloseConfirmAnchor = useCallback((anchor?: SplitPickerAnchor) => {
     const rawX = anchor ? ("right" in anchor ? anchor.right : anchor.x) : window.innerWidth - 72;
@@ -3361,11 +3420,18 @@ export function TerminalTabs({
     });
   }, []);
 
+  const hideWorkspanDetachPreview = useCallback(() => {
+    setWorkspanDetachPreview((current) => (
+      current.visible ? { ...current, targetId: null, visible: false } : current
+    ));
+  }, []);
+
   const clearDragState = useCallback(() => {
     const wasDraggingWorkspan = activeDragWorkspanIdRef.current !== null;
     activeDragWorkspanIdRef.current = null;
     clearWorkspanDragHoverActivation();
     updateActiveDropPreview(null);
+    hideWorkspanDetachPreview();
     if (wasDraggingWorkspan) {
       if (workspanDragOverflowFrameRef.current !== null) {
         window.cancelAnimationFrame(workspanDragOverflowFrameRef.current);
@@ -3375,10 +3441,11 @@ export function TerminalTabs({
         updateWorkspanTabOverflow();
       });
     }
-  }, [clearWorkspanDragHoverActivation, updateActiveDropPreview, updateWorkspanTabOverflow]);
+  }, [clearWorkspanDragHoverActivation, hideWorkspanDetachPreview, updateActiveDropPreview, updateWorkspanTabOverflow]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     clearWorkspanDragHoverActivation();
+    hideWorkspanDetachPreview();
     activeDragWorkspanIdRef.current = null;
     const dragId = String(event.active.id);
     const workspanId = parseWorkspanDragId(dragId);
@@ -3387,12 +3454,13 @@ export function TerminalTabs({
       activeDragWorkspanIdRef.current = workspanId;
       return;
     }
-  }, [clearWorkspanDragHoverActivation, scopedSessionIds, workspans]);
+  }, [clearWorkspanDragHoverActivation, hideWorkspanDetachPreview, scopedSessionIds, workspans]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     if (!event.over) {
       clearWorkspanDragHoverActivation();
       updateActiveDropPreview(null);
+      hideWorkspanDetachPreview();
       return;
     }
 
@@ -3401,6 +3469,7 @@ export function TerminalTabs({
     const overId = String(event.over.id);
     const dropTarget = parsePaneDropTarget(overId);
     if (activeWorkspanId) {
+      hideWorkspanDetachPreview();
       const hoverTarget = resolveWorkspanDragHoverTarget(activeWorkspanId, overId);
       if (hoverTarget) {
         scheduleWorkspanDragHoverActivation(hoverTarget);
@@ -3420,6 +3489,23 @@ export function TerminalTabs({
       return;
     }
 
+    const targetWorkspanId = parseWorkspanDragId(overId);
+    if (!scopedSessionIds && (targetWorkspanId || overId === WORKSPAN_TABBAR_END_DROP_ID)) {
+      const tabBarRect = workspanTabBarRef.current?.getBoundingClientRect();
+      if (tabBarRect) {
+        const left = Math.max(4, Math.min(tabBarRect.width - 4, event.over.rect.left - tabBarRect.left));
+        setWorkspanDetachPreview((current) => (
+          current.visible && current.targetId === overId && Math.abs(current.left - left) < 0.5
+            ? current
+            : { left, targetId: overId, visible: true }
+        ));
+      }
+      updateActiveDropPreview(null);
+      return;
+    }
+
+    hideWorkspanDetachPreview();
+
     if (dropTarget?.type === "edge" && canSplitSessionToPaneEdge(activeId, dropTarget.paneId)) {
       updateActiveDropPreview({ paneId: dropTarget.paneId, edge: dropTarget.edge });
       return;
@@ -3430,7 +3516,9 @@ export function TerminalTabs({
     activeWorkspanLayout,
     canSplitSessionToPaneEdge,
     clearWorkspanDragHoverActivation,
+    hideWorkspanDetachPreview,
     scheduleWorkspanDragHoverActivation,
+    scopedSessionIds,
     updateActiveDropPreview,
   ]);
 
@@ -3471,6 +3559,18 @@ export function TerminalTabs({
     const sourcePane = findPaneForSession(activeId);
     if (!sourcePane) return;
 
+    const targetWorkspanId = parseWorkspanDragId(overId);
+    if (targetWorkspanId || overId === WORKSPAN_TABBAR_END_DROP_ID) {
+      if (scopedSessionIds) return;
+      const insertAt = targetWorkspanId
+        ? workspans.findIndex((workspan) => workspan.id === targetWorkspanId)
+        : workspans.length;
+      if (insertAt < 0) return;
+      detachSessionToWorkspan(activeId, insertAt);
+      setActiveWorkspaceTab("terminal");
+      return;
+    }
+
     const dropTarget = parsePaneDropTarget(overId);
     if (dropTarget?.type === "edge") {
       if (canSplitSessionToPaneEdge(activeId, dropTarget.paneId)) {
@@ -3496,7 +3596,7 @@ export function TerminalTabs({
     }
     moveSessionToPane(activeId, targetPane.id, overId);
     setActiveWorkspaceTab("terminal");
-  }, [activeWorkspanLayout, canSplitSessionToPaneEdge, clearDragState, findPaneForSession, mergeWorkspanAtPaneEdge, moveSessionToPane, reorderSessions, reorderWorkspans, splitSessionToPaneEdge]);
+  }, [activeWorkspanLayout, canSplitSessionToPaneEdge, clearDragState, detachSessionToWorkspan, findPaneForSession, mergeWorkspanAtPaneEdge, moveSessionToPane, reorderSessions, reorderWorkspans, scopedSessionIds, splitSessionToPaneEdge, workspans]);
 
   const handleToolbarDragStart = useCallback((event: DragStartEvent) => {
     setActiveToolbarDragId(String(event.active.id));
@@ -3544,7 +3644,6 @@ export function TerminalTabs({
   const handleToggleGlobalFullscreen = useCallback(() => {
     if (activeFullscreenPaneId) {
       setFullscreenPaneId(null);
-      paneFullscreenStartedFromGlobalRef.current = false;
     }
     onToggleFullscreen?.();
   }, [activeFullscreenPaneId, onToggleFullscreen]);
@@ -3859,13 +3958,14 @@ export function TerminalTabs({
         onHideBackground={hideBackgroundForSession}
         onShowBackground={showBackgroundForSession}
         onTogglePaneFullscreen={handleTogglePaneFullscreen}
+        onDetachSessionToWorkspan={detachSessionToWorkspan}
         onOpenWorktreeChanges={handleOpenWorktreeChanges}
         onOpenWorktreeHistory={handleOpenWorktreeHistory}
         onFinishWorktree={handlePaneFinishWorktree}
         onInstallWorktreeDeps={handleInstallWorktreeDeps}
         onDiscardWorktree={handlePaneDiscardWorktree}
         onOpenWorktreeDirectory={handleOpenWorktreeDirectory}
-        hideTabBar={workspanEnabled && visiblePaneSessionCount <= 1}
+        hideTabBar={workspanEnabled && layoutPanes.length <= 1 && visiblePaneSessionCount <= 1}
       />
     );
   }, [
@@ -3898,6 +3998,7 @@ export function TerminalTabs({
     moveSessionToPane,
     projects,
     resolvedTheme,
+    detachSessionToWorkspan,
     scopedSessionIds,
     sessions,
     worktrees,
@@ -4031,8 +4132,14 @@ export function TerminalTabs({
                 {workspanEnabled && (
                   <div
                     ref={workspanTabBarRef}
-                    className="ui-terminal-pane-chrome ui-workspan-tabbar flex h-9 shrink-0 items-center px-1"
+                    className="ui-terminal-pane-chrome ui-workspan-tabbar relative flex h-9 shrink-0 items-center px-1"
                   >
+                  <div
+                    className="ui-workspan-detach-insertion"
+                    data-visible={workspanDetachPreview.visible ? "true" : "false"}
+                    style={{ transform: `translate3d(${workspanDetachPreview.left}px, -50%, 0)` }}
+                    aria-hidden="true"
+                  />
                   <div
                     ref={workspanTabScrollRef}
                     className="ui-workspan-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto"
@@ -4080,6 +4187,13 @@ export function TerminalTabs({
                                 });
                               }, 0)}>
                                 {t("terminal.workspan.rename")}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                disabled={model.sessionIds.length <= 1 || Boolean(scopedSessionIds)}
+                                title={scopedSessionIds ? t("terminal.workspan.restoreSinglePaneScopedDisabled") : undefined}
+                                onSelect={() => handleRestoreWorkspanToSinglePane(model.workspan.id)}
+                              >
+                                {t("terminal.workspan.restoreSinglePane")}
                               </ContextMenuItem>
                               {/*
                                 Reachability: in the default single-pane layout the pane-level tab bar
@@ -4144,6 +4258,7 @@ export function TerminalTabs({
                         />
                       ))}
                     </SortableContext>
+                    <WorkspanTabbarEndDropTarget disabled={hasScopedTerminalFilter} />
                   </div>
                   {workspanTabOverflow.isOverflowing && (
                     <Popover open={workspanTabListOpen} onOpenChange={setWorkspanTabListOpen}>
@@ -4251,7 +4366,7 @@ export function TerminalTabs({
                     );
                   })}
                 </div>
-                <TerminalTabDragOverlay style={terminalWellStyle} />
+                <TerminalTabDragOverlay style={terminalWellStyle} themeTone={terminalThemeTone} />
               </DndContext>
             ) : null}
             {hasScopedTerminalFilter && visibleSessions.length === 0 && !useExternalTerminal && scopedEmptyState && (

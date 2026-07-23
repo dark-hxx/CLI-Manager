@@ -6,6 +6,7 @@ import {
   buildTerminalSplitLayout,
   observeTerminalSplitPixelRatio,
   type TerminalSplitDragPreview,
+  type TerminalSplitLayout,
   type TerminalSplitPixelGrid,
   type TerminalSplitRect,
 } from "../terminal/browser/TerminalSplitLayout";
@@ -24,6 +25,11 @@ interface SplitLayoutMetrics {
   pixelGrid: TerminalSplitPixelGrid;
 }
 
+interface LiveDragLayout {
+  layout: TerminalSplitLayout;
+  visibleLayout: TerminalSplitLayout;
+}
+
 function rectStyle(rect: TerminalSplitRect): CSSProperties {
   return {
     left: rect.left,
@@ -33,6 +39,14 @@ function rectStyle(rect: TerminalSplitRect): CSSProperties {
   };
 }
 
+function applyRectStyle(element: HTMLDivElement | undefined, rect: TerminalSplitRect): void {
+  if (!element) return;
+  element.style.left = `${rect.left}px`;
+  element.style.top = `${rect.top}px`;
+  element.style.width = `${rect.width}px`;
+  element.style.height = `${rect.height}px`;
+}
+
 export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullscreenLeafId }: Props) {
   const setSplitRatio = useTerminalStore((s) => s.setSplitRatio);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,7 +54,11 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
     rect: { left: 0, top: 0, width: 0, height: 0 },
     pixelGrid: { originLeft: 0, originTop: 0, devicePixelRatio: 1 },
   });
-  const [dragPreview, setDragPreview] = useState<TerminalSplitDragPreview | null>(null);
+  const [draggingSplitId, setDraggingSplitId] = useState<string | null>(null);
+  const leafElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const dividerElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const liveDragLayoutRef = useRef<LiveDragLayout | null>(null);
+  const activeDragCleanupRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -79,6 +97,7 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
     resizeObserver.observe(container);
     window.addEventListener("resize", updateLayoutMetrics);
     return () => {
+      activeDragCleanupRef.current?.();
       resizeObserver.disconnect();
       stopObservingPixelRatio();
       window.removeEventListener("resize", updateLayoutMetrics);
@@ -87,24 +106,44 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
 
   const { rect: containerRect, pixelGrid } = layoutMetrics;
   const layout = useMemo(
-    () => buildTerminalSplitLayout(node, containerRect, dragPreview, pixelGrid),
-    [containerRect, dragPreview, node, pixelGrid],
+    () => buildTerminalSplitLayout(node, containerRect, null, pixelGrid),
+    [containerRect, node, pixelGrid],
   );
   const visibleLayout = useMemo(
     () => visibleNode
-      ? buildTerminalSplitLayout(visibleNode, containerRect, dragPreview, pixelGrid)
+      ? buildTerminalSplitLayout(visibleNode, containerRect, null, pixelGrid)
       : { leaves: [], dividers: [] },
-    [containerRect, dragPreview, pixelGrid, visibleNode]
+    [containerRect, pixelGrid, visibleNode]
   );
-  const visibleLeafLayouts = useMemo(
-    () => new Map(visibleLayout.leaves.map((leafLayout) => [leafLayout.leaf.id, leafLayout])),
-    [visibleLayout.leaves]
+  const renderedLayout = liveDragLayoutRef.current?.layout ?? layout;
+  const renderedVisibleLayout = liveDragLayoutRef.current?.visibleLayout ?? visibleLayout;
+  const visibleLeafLayouts = new Map(
+    renderedVisibleLayout.leaves.map((leafLayout) => [leafLayout.leaf.id, leafLayout])
   );
   const fullscreenLeaf = fullscreenLeafId
-    ? visibleLayout.leaves.find(({ leaf }) => leaf.id === fullscreenLeafId)
+    ? renderedVisibleLayout.leaves.find(({ leaf }) => leaf.id === fullscreenLeafId)
     : null;
   const fullscreenRect = containerRect;
-  const isDraggingDivider = dragPreview !== null;
+  const isDraggingDivider = draggingSplitId !== null;
+
+  const applyDragPreview = useCallback((dragPreview: TerminalSplitDragPreview) => {
+    // Keep the hot drag path outside React; React receives only drag start/end state.
+    const nextLayout = buildTerminalSplitLayout(node, containerRect, dragPreview, pixelGrid);
+    const nextVisibleLayout = visibleNode
+      ? buildTerminalSplitLayout(visibleNode, containerRect, dragPreview, pixelGrid)
+      : { leaves: [], dividers: [] };
+    liveDragLayoutRef.current = { layout: nextLayout, visibleLayout: nextVisibleLayout };
+
+    const nextVisibleLeaves = new Map(
+      nextVisibleLayout.leaves.map((leafLayout) => [leafLayout.leaf.id, leafLayout])
+    );
+    for (const { leaf, rect: fallbackRect } of nextLayout.leaves) {
+      applyRectStyle(leafElementsRef.current.get(leaf.id), nextVisibleLeaves.get(leaf.id)?.rect ?? fallbackRect);
+    }
+    for (const { split, rect } of nextVisibleLayout.dividers) {
+      applyRectStyle(dividerElementsRef.current.get(split.id), rect);
+    }
+  }, [containerRect, node, pixelGrid, visibleNode]);
 
   const handleDragStart = useCallback(
     (split: TerminalPaneSplit, splitRect: TerminalSplitRect, e: MouseEvent) => {
@@ -116,40 +155,72 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
       const isHorizontal = split.direction === "horizontal";
       let latestRatio = split.ratio;
       let rafId: number | null = null;
+      let disposed = false;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
 
       const flush = () => {
         rafId = null;
-        setDragPreview((current) => (
-          current?.splitId === split.id && current.ratio === latestRatio
-            ? current
-            : { splitId: split.id, ratio: latestRatio }
-        ));
+        applyDragPreview({ splitId: split.id, ratio: latestRatio });
       };
 
-      const onMove = (ev: globalThis.MouseEvent) => {
+      const updateLatestRatio = (ev: globalThis.MouseEvent) => {
         latestRatio = clampSplitRatio(isHorizontal
           ? (ev.clientX - rootRect.left - splitRect.left) / splitRect.width
           : (ev.clientY - rootRect.top - splitRect.top) / splitRect.height);
+      };
+
+      const onMove = (ev: globalThis.MouseEvent) => {
+        updateLatestRatio(ev);
         if (rafId === null) rafId = requestAnimationFrame(flush);
       };
 
-      const onUp = () => {
+      const cleanup = () => {
+        if (disposed) return;
+        disposed = true;
         if (rafId !== null) cancelAnimationFrame(rafId);
-        setDragPreview(null);
-        setSplitRatio(split.id, latestRatio);
+        rafId = null;
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
+        window.removeEventListener("blur", onBlur);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        if (activeDragCleanupRef.current === cleanup) activeDragCleanupRef.current = null;
       };
 
+      const finish = () => {
+        if (disposed) return;
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        applyDragPreview({ splitId: split.id, ratio: latestRatio });
+        cleanup();
+        setSplitRatio(split.id, latestRatio);
+        liveDragLayoutRef.current = null;
+        setDraggingSplitId(null);
+      };
+
+      function onUp(ev: globalThis.MouseEvent) {
+        updateLatestRatio(ev);
+        finish();
+      }
+
+      function onBlur() {
+        finish();
+      }
+
+      activeDragCleanupRef.current?.();
+      activeDragCleanupRef.current = cleanup;
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
+      window.addEventListener("blur", onBlur);
       document.body.style.cursor = isHorizontal ? "col-resize" : "row-resize";
       document.body.style.userSelect = "none";
-      setDragPreview({ splitId: split.id, ratio: split.ratio });
+      applyDragPreview({ splitId: split.id, ratio: split.ratio });
+      setDraggingSplitId(split.id);
     },
-    [setSplitRatio]
+    [applyDragPreview, setSplitRatio]
   );
 
   return (
@@ -159,7 +230,7 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
       data-dragging={isDraggingDivider ? "true" : undefined}
       data-fullscreen={fullscreenLeaf ? "true" : undefined}
     >
-      {layout.leaves.map(({ leaf, rect: fallbackRect }) => {
+      {renderedLayout.leaves.map(({ leaf, rect: fallbackRect }) => {
         const visibleLeafLayout = visibleLeafLayouts.get(leaf.id);
         const rect = visibleLeafLayout?.rect ?? fallbackRect;
         const isFullscreenLeaf = fullscreenLeaf?.leaf.id === leaf.id;
@@ -168,6 +239,10 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
         return (
           <div
             key={leaf.id}
+            ref={(element) => {
+              if (element) leafElementsRef.current.set(leaf.id, element);
+              else leafElementsRef.current.delete(leaf.id);
+            }}
             className="ui-terminal-split-child absolute min-h-0 min-w-0 overflow-hidden"
             data-fullscreen={isFullscreenLeaf ? "true" : undefined}
             data-hidden={isHiddenByScope || isHiddenByFullscreen ? "true" : undefined}
@@ -181,12 +256,16 @@ export function SplitTerminalView({ node, visibleNode = node, renderLeaf, fullsc
           </div>
         );
       })}
-      {!fullscreenLeaf && visibleLayout.dividers.map(({ split, rect, splitRect }) => {
+      {!fullscreenLeaf && renderedVisibleLayout.dividers.map(({ split, rect, splitRect }) => {
         const isHorizontal = split.direction === "horizontal";
-        const isDragging = dragPreview?.splitId === split.id;
+        const isDragging = draggingSplitId === split.id;
         return (
           <div
             key={split.id}
+            ref={(element) => {
+              if (element) dividerElementsRef.current.set(split.id, element);
+              else dividerElementsRef.current.delete(split.id);
+            }}
             onMouseDown={(event) => handleDragStart(split, splitRect, event)}
             className="ui-terminal-split-divider absolute shrink-0 transition-colors"
             data-dragging={isDragging ? "true" : undefined}

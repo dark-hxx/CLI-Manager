@@ -328,7 +328,9 @@ splitSessionToPaneEdge(sessionId: string, targetPaneId: string, edge: TerminalPa
 - PTY restoration creates new session IDs. Restore Workspan trees through the old-to-new session ID map before selecting the active Workspan.
 - Workspan edge-drop inserts the complete source pane tree beside the hovered target pane; it must preserve the full session ID set without duplicates.
 - Inactive Workspans stay mounted but hidden so xterm scrollback and live output survive switching.
-- With Workspan enabled, a pane with one visible session hides its local tab bar; panes with multiple stacked transient views keep a compact switcher. With Workspan disabled, every visible Pane keeps its local terminal Tab bar.
+- With Workspan enabled, hide a local tab bar only when the visible layout has one pane with one session; split Workspan panes keep a compact tab bar with the session title, close, drag, fullscreen, and current-Tab restore controls. The Pane restore control detaches only the current Tab into a standalone top-level Workspan; the Workspan context-menu restore detaches every Tab. With Workspan disabled, every visible Pane keeps its local terminal Tab bar.
+- Restoring a Workspan detaches each session into its own top-level Workspan in deterministic tree order without creating or closing PTYs. Restoring an individual Tab inserts its standalone Workspan beside the source Workspan and activates it; a single-session Workspan is not detached.
+- Dragging a Pane Tab onto a top-level Workspan tab detaches only that session and inserts a standalone Workspan before the target; dragging onto the unused tab-strip area appends it. The action preserves the PTY and does nothing while a scoped terminal filter is active.
 - Async PTY creation must re-resolve the source session's current Workspan and pane after every await. If the source session was closed, unsubscribe the new listener, close the abandoned PTY, and do not add an unowned session.
 - Project/group/worktree scoped views may show a filtered Workspan layout, but bulk close actions must use only session IDs from that filtered tree; hidden sessions remain untouched.
 - Multi-session close operations must be serialized so older persistence writes cannot overwrite the final Workspan/session snapshot.
@@ -341,11 +343,15 @@ splitSessionToPaneEdge(sessionId: string, targetPaneId: string, edge: TerminalPa
 - Assert sanitization keeps a session ID in only one pane even when persisted layout data contains duplicates.
 - Assert adjacent Workspan navigation supports forward/backward movement and wraps at both ends without changing the existing multi-Tab or multi-Pane priority.
 - Assert persisted custom titles are trimmed, blank titles migrate to `null`, and restore/sanitize operations preserve non-empty titles.
+- Assert restoring a Workspan creates one standalone Workspan per session in deterministic order.
+- Assert restoring one Tab detaches only that Tab into a standalone Workspan and leaves the source Workspan's remaining sessions intact.
+- Assert single-Tab detachment supports adjacent, explicit-index, and end insertion without duplicate or lost session IDs; a single-session Workspan is unchanged.
 - Manual desktop verification: switch Workspans, change split ratios, restart, and verify each layout restores with the correct active session.
 - Manual desktop verification: with enough Workspans to overflow the tab strip, verify the dropdown trigger appears only while overflowing, the dropdown lists only hidden or partially clipped tabs, and activating the last Workspan through the dropdown, keyboard, or another navigation entry makes its tab visible without reordering tabs; mouse horizontal scrolling must still work.
 - Manual desktop verification: close focused and inactive sessions, and verify Workspan selection remains correct.
 - Manual desktop verification: start a split, then move/close its source Workspan before PTY creation completes; no orphan tab or stale layout may appear.
 - Manual desktop verification: in a scoped view, closing a Workspan tab closes only visible sessions and preserves hidden project sessions.
+- Manual desktop verification: split a Workspan until each pane has one session, then verify each pane still exposes its title, close, drag, and fullscreen/restore controls; use the Workspan context menu to restore the complete layout to the active pane without changing inactive focus.
 
 ### Pattern: Worktree records are project state; worktree sessions are terminal metadata
 

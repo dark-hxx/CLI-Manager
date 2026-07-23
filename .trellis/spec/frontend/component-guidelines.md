@@ -878,11 +878,11 @@ function buildSplitLayout(node: TerminalPaneNode, rect: Rect): { leaves: LeafLay
 - [ ] Divider drag resizing still works; nested splits resize correctly.
 - [ ] Pane tab switching and session activation unchanged.
 
-### Convention: Terminal resize drag uses local or DOM preview, then commits once
+### Convention: Terminal resize drag uses DOM preview, then commits once
 
-**What**: For terminal split dividers and terminal-side resizable panels, the drag interaction must update only a local preview during `mousemove` and commit the final width/ratio to React/Zustand state on `mouseup`. Do not write heavy global state or rerender embedded stats / git panels on every drag frame.
+**What**: For terminal split dividers and terminal-side resizable panels, the drag interaction must update wrapper geometry directly in the DOM during `mousemove` and commit the final width/ratio to React/Zustand state on `mouseup`. Do not write local/global React state or rerender embedded terminals, stats, or git panels on every drag frame.
 
-**Why**: Terminal panes contain xterm, realtime stats, and git views. Writing `paneTree` or panel width state every frame causes the whole terminal shell or panel subtree to rerender during drag, which makes width adjustment feel sticky and unsmooth.
+**Why**: Terminal panes contain xterm, realtime stats, and git views. Even component-local preview state still makes `SplitTerminalView` rebuild and reconcile every pane wrapper per frame. VS Code's SplitView/Sash path updates view geometry directly and commits proportions at drag end; matching that boundary keeps pointer tracking independent from React rendering.
 
 **Correct**:
 
@@ -906,18 +906,21 @@ const onUp = () => {
 
 ```tsx
 const onMove = (event: MouseEvent) => {
-  latestRatio = clampSplitRatio(rawRatio);
+  pendingRatioRef.current = clampSplitRatio(rawRatio);
   if (rafId === null) {
     rafId = requestAnimationFrame(() => {
       rafId = null;
-      setDragPreview({ splitId, ratio: latestRatio });
+      applySplitLayoutToElements(buildSplitLayout({
+        splitId,
+        ratio: pendingRatioRef.current,
+      }));
     });
   }
 };
 
 const onUp = () => {
-  setDragPreview(null);
-  setSplitRatio(splitId, latestRatio);
+  applyFinalPreview();
+  setSplitRatio(splitId, pendingRatioRef.current);
 };
 ```
 
@@ -937,7 +940,9 @@ const onMove = (event: MouseEvent) => {
 
 **Contracts**:
 
-- Drag preview may use local component state or direct DOM width updates, but the persistent width/ratio source of truth updates once on drag end.
+- Drag preview updates pane/divider wrapper geometry directly in the DOM at most once per animation frame; React state is limited to drag start/end presentation state.
+- Keep the latest live layout in a ref so an unrelated React render cannot restore stale persisted geometry during the drag.
+- The persistent width/ratio source of truth updates once on drag end, after synchronously applying the last pointer position.
 - For split panes, keep pane content component identity stable while only wrapper geometry changes.
 - For terminal-side panels, avoid rerendering `TerminalStatsPanel` / `GitChangesPanel` on every mousemove.
 

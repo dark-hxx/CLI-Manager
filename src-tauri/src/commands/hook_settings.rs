@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, Row, SqliteConnection};
 use tauri::AppHandle;
@@ -2137,6 +2138,108 @@ fn codex_hook_state_event_name(event: &str) -> Option<&'static str> {
     }
 }
 
+fn codex_cli_manager_hooks_trusted(
+    settings: &Value,
+    hooks_path: &Path,
+    config_path: &Path,
+) -> Result<bool, String> {
+    let config = match fs::read_to_string(config_path) {
+        Ok(value) => value,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(format!("读取 {} 失败: {err}", path_to_string(config_path))),
+    };
+    let config: toml::Value = toml::from_str(&config)
+        .map_err(|err| format!("解析 {} 失败: {err}", path_to_string(config_path)))?;
+    let state = config
+        .get("hooks")
+        .and_then(|value| value.get("state"))
+        .and_then(toml::Value::as_table);
+    let Some(hooks) = settings.get("hooks").and_then(Value::as_object) else {
+        return Ok(false);
+    };
+
+    let mut found = false;
+    for event in CODEX_HOOK_EVENTS {
+        let Some(event_name) = codex_hook_state_event_name(event) else {
+            continue;
+        };
+        let Some(entries) = hooks.get(event).and_then(Value::as_array) else {
+            continue;
+        };
+        for (entry_index, entry) in entries.iter().enumerate() {
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for (hook_index, hook) in commands.iter().enumerate() {
+                if !is_cli_manager_command(hook, &CODEX_LEGACY_SCRIPTS) {
+                    continue;
+                }
+                found = true;
+                let key = format!(
+                    "{}:{event_name}:{entry_index}:{hook_index}",
+                    path_to_string(hooks_path)
+                );
+                let Some(entry_state) = state.and_then(|state| state.get(&key)) else {
+                    return Ok(false);
+                };
+                if entry_state.get("enabled").and_then(toml::Value::as_bool) == Some(false) {
+                    return Ok(false);
+                }
+                let trusted_hash = entry_state
+                    .get("trusted_hash")
+                    .and_then(toml::Value::as_str);
+                if trusted_hash != Some(codex_hook_trusted_hash(event, entry, hook)?.as_str()) {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+fn codex_hook_trusted_hash(event: &str, group: &Value, hook: &Value) -> Result<String, String> {
+    let mut normalized_hook = serde_json::Map::new();
+    normalized_hook.insert("type".to_string(), json!("command"));
+    normalized_hook.insert(
+        "command".to_string(),
+        hook.get("command").cloned().unwrap_or(Value::Null),
+    );
+    let timeout = hook
+        .get("timeout")
+        .and_then(Value::as_u64)
+        .unwrap_or(600)
+        .max(1);
+    normalized_hook.insert("timeout".to_string(), json!(timeout));
+    normalized_hook.insert(
+        "async".to_string(),
+        json!(hook.get("async").and_then(Value::as_bool).unwrap_or(false)),
+    );
+    if let Some(status_message) = hook.get("statusMessage") {
+        normalized_hook.insert("statusMessage".to_string(), status_message.clone());
+    }
+
+    let mut normalized_group = serde_json::Map::new();
+    normalized_group.insert(
+        "event_name".to_string(),
+        json!(codex_hook_state_event_name(event)),
+    );
+    if matches!(
+        event,
+        "PermissionRequest" | "SessionStart" | "SubagentStart" | "SubagentStop"
+    ) {
+        if let Some(matcher) = group.get("matcher") {
+            normalized_group.insert("matcher".to_string(), matcher.clone());
+        }
+    }
+    normalized_group.insert(
+        "hooks".to_string(),
+        Value::Array(vec![Value::Object(normalized_hook)]),
+    );
+    let canonical = serde_json::to_vec(&Value::Object(normalized_group))
+        .map_err(|err| format!("序列化 Codex hook 信任数据失败: {err}"))?;
+    Ok(format!("sha256:{:x}", Sha256::digest(canonical)))
+}
+
 fn extract_codex_hook_state_blocks(config: &str, expected_keys: &[String]) -> Vec<Vec<String>> {
     let lines: Vec<&str> = config.lines().collect();
     let mut blocks = Vec::new();
@@ -2618,6 +2721,7 @@ fn build_pi_status(pi_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, St
         subagent_start_hook_installed: false,
         subagent_start_hook_required: false,
         hooks_feature_installed: true,
+        hooks_trusted: true,
     };
 
     Ok(status_from_checks(
@@ -2765,6 +2869,7 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
             ),
         subagent_start_hook_required: true,
         hooks_feature_installed: true,
+        hooks_trusted: true,
     };
 
     Ok(status_from_checks(
@@ -2804,6 +2909,7 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
         subagent_start_hook_installed: registered("SubagentStart") && registered("SubagentStop"),
         subagent_start_hook_required: true,
         hooks_feature_installed: codex_hooks_feature_installed(&config_path)?,
+        hooks_trusted: codex_cli_manager_hooks_trusted(&settings, &hooks_path, &config_path)?,
     };
 
     Ok(status_from_checks(
@@ -2828,6 +2934,7 @@ struct ToolChecks {
     subagent_start_hook_installed: bool,
     subagent_start_hook_required: bool,
     hooks_feature_installed: bool,
+    hooks_trusted: bool,
 }
 
 fn missing_status() -> Result<ToolHookSettingsStatus, String> {
@@ -2861,6 +2968,7 @@ fn status_from_checks(
         checks.running_hook_installed,
         checks.stop_hook_installed,
         checks.hooks_feature_installed,
+        checks.hooks_trusted,
     ];
     if checks.attention_hook_required {
         values.push(checks.attention_hook_installed);
@@ -3150,6 +3258,41 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn trust_installed_codex_hooks(codex_dir: &Path) {
+        let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+        let settings = read_json_if_exists(&hooks_path).unwrap();
+        let hooks = settings.get("hooks").and_then(Value::as_object).unwrap();
+        let mut blocks = Vec::new();
+        for event in CODEX_HOOK_EVENTS {
+            let event_name = codex_hook_state_event_name(event).unwrap();
+            let Some(entries) = hooks.get(event).and_then(Value::as_array) else {
+                continue;
+            };
+            for (entry_index, entry) in entries.iter().enumerate() {
+                let commands = entry.get("hooks").and_then(Value::as_array).unwrap();
+                for (hook_index, hook) in commands.iter().enumerate() {
+                    if !is_cli_manager_command(hook, &CODEX_LEGACY_SCRIPTS) {
+                        continue;
+                    }
+                    let key = toml_escape_basic_string(&format!(
+                        "{}:{event_name}:{entry_index}:{hook_index}",
+                        path_to_string(&hooks_path)
+                    ));
+                    let hash = codex_hook_trusted_hash(event, entry, hook).unwrap();
+                    blocks.push(format!(
+                        "[hooks.state.\"{key}\"]\ntrusted_hash = \"{hash}\""
+                    ));
+                }
+            }
+        }
+        let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+        let mut config = fs::read_to_string(&config_path).unwrap();
+        config.push('\n');
+        config.push_str(&blocks.join("\n\n"));
+        config.push('\n');
+        fs::write(config_path, config).unwrap();
+    }
+
     #[tokio::test]
     async fn install_codex_rejects_missing_selected_dir_without_creating_it() {
         let tmp = TempDir::new().unwrap();
@@ -3170,6 +3313,12 @@ mod tests {
         fs::create_dir_all(&codex_dir).unwrap();
 
         install_codex_hooks(&codex_dir).unwrap();
+        let untrusted_status = build_codex_status(Some(codex_dir.clone())).unwrap();
+        assert!(matches!(
+            untrusted_status.status,
+            HookInstallStatus::PartialInstalled
+        ));
+        trust_installed_codex_hooks(&codex_dir);
         let status = build_codex_status(Some(codex_dir.clone())).unwrap();
 
         assert!(matches!(status.status, HookInstallStatus::Installed));
@@ -3186,6 +3335,54 @@ mod tests {
             .join("hooks")
             .join(CODEX_ATTENTION_SCRIPT_NAME)
             .is_file());
+    }
+
+    #[test]
+    fn codex_hook_trusted_hash_matches_codex_canonical_format() {
+        let group = json!({
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": "/tmp/cli-manager __hook --source codex --event SessionStart",
+                "timeout": 15
+            }]
+        });
+        let hook = &group["hooks"][0];
+
+        assert_eq!(
+            codex_hook_trusted_hash("SessionStart", &group, hook).unwrap(),
+            "sha256:9e6b7860465f1ee644164253a9e2aee2b124b234b836f5a68330eeb99929dfb4"
+        );
+    }
+
+    #[test]
+    fn codex_status_rejects_disabled_or_stale_hook_trust() {
+        let tmp = TempDir::new().unwrap();
+        let codex_dir = tmp.path().join("codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        install_codex_hooks(&codex_dir).unwrap();
+        trust_installed_codex_hooks(&codex_dir);
+        let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+        let trusted = fs::read_to_string(&config_path).unwrap();
+
+        fs::write(
+            &config_path,
+            trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1),
+        )
+        .unwrap();
+        let disabled = build_codex_status(Some(codex_dir.clone())).unwrap();
+        assert!(matches!(
+            disabled.status,
+            HookInstallStatus::PartialInstalled
+        ));
+
+        fs::write(
+            &config_path,
+            trusted.replacen("sha256:", "sha256:stale-", 1),
+        )
+        .unwrap();
+        let stale = build_codex_status(Some(codex_dir)).unwrap();
+        assert!(matches!(stale.status, HookInstallStatus::PartialInstalled));
     }
 
     #[tokio::test]

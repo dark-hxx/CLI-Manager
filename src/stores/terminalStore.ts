@@ -34,6 +34,7 @@ import {
 import { useProjectStore } from "./projectStore";
 import { useSshHostStore } from "./sshHostStore";
 import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
+import { resolveCliSessionRebind } from "./terminalCliSession";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "../lib/ssh";
 import { parseStoredSshHookReport, resolveSshToolSource } from "../lib/sshToolIntegration";
 import { getSshClientInstanceId } from "../lib/sshClientIdentity";
@@ -65,6 +66,8 @@ import {
   collapseTerminalWorkspansToLegacy,
   collectWorkspanSessionIds,
   createTerminalWorkspan,
+  detachTerminalSessionToWorkspan,
+  detachTerminalWorkspanSessions,
   findWorkspanByPane,
   findWorkspanBySession,
   getAdjacentWorkspanSessionId,
@@ -264,6 +267,7 @@ interface TerminalStore {
   setActiveWorkspan: (id: string) => void;
   reorderWorkspans: (fromId: string, toId: string) => void;
   renameWorkspan: (id: string, title: string) => void;
+  restoreWorkspanToSinglePane: (id: string) => void;
   mergeWorkspanAtPaneEdge: (sourceId: string, targetId: string, targetPaneId: string, edge: TerminalPaneDropEdge) => void;
   updateSessionCwd: (sessionId: string, cwd: string) => void;
   updateSshConnectionState: (sessionId: string, connectionState: SshConnectionState, disconnectReason?: SshDisconnectReason) => void;
@@ -281,6 +285,7 @@ interface TerminalStore {
   bumpStatsPanelRefresh: () => void;
   reorderSessions: (fromId: string, toId: string) => void;
   moveSessionToPane: (sessionId: string, targetPaneId: string, beforeSessionId?: string) => void;
+  detachSessionToWorkspan: (sessionId: string, insertAt?: number) => void;
   splitSessionToPaneEdge: (sessionId: string, targetPaneId: string, edge: TerminalPaneDropEdge) => void;
   renameSession: (id: string, title: string) => void;
   splitTerminal: (sessionId: string, direction: TerminalPaneSplitDirection, options?: SplitTerminalOptions) => Promise<string | null>;
@@ -2080,6 +2085,22 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     persistWorkspanState(workspans, state.activeWorkspanId, state.sessions);
   },
 
+  restoreWorkspanToSinglePane: (id) => {
+    const state = get();
+    const current = state.workspans.find((workspan) => workspan.id === id);
+    if (!current) return;
+    const detached = detachTerminalWorkspanSessions(current, createWorkspanId, createPaneId);
+    if (detached.length <= 1) return;
+
+    const workspans = state.workspans.flatMap((workspan) => (workspan.id === id ? detached : [workspan]));
+    const requestedActiveWorkspanId = state.activeWorkspanId === id
+      ? detached.find((workspan) => workspan.activeSessionId === current.activeSessionId)?.id ?? detached[0]?.id ?? null
+      : state.activeWorkspanId;
+    const mirror = buildWorkspanMirror(workspans, requestedActiveWorkspanId);
+    set(state.activeWorkspanId === id ? mirror : { workspans });
+    persistWorkspanState(workspans, mirror.activeWorkspanId, state.sessions);
+  },
+
   mergeWorkspanAtPaneEdge: (sourceId, targetId, targetPaneId, edge) => {
     const state = get();
     const result = mergeTerminalWorkspansAtPaneEdge(
@@ -2117,14 +2138,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       set((state) => ({
         sessions: state.sessions.map((session) => {
           if (session.id !== rawTabId) return session;
-          const nextCliSessionId =
-            cliSessionId && session.cliSessionId !== cliSessionId ? cliSessionId : session.cliSessionId;
-          if (cliSessionId && session.cliSessionId !== cliSessionId) {
+          const cliSessionRebind = resolveCliSessionRebind(session.cliSessionId, cliSessionId);
+          if (cliSessionRebind.changed) {
             boundNewCliSessionId = true;
           }
           return {
             ...session,
-            ...(nextCliSessionId !== session.cliSessionId ? { cliSessionId: nextCliSessionId } : {}),
+            ...(cliSessionRebind.changed ? { cliSessionId: cliSessionRebind.cliSessionId } : {}),
             ...(remoteTranscriptRef && session.remoteTranscriptRef !== remoteTranscriptRef
               ? { remoteTranscriptRef }
               : {}),
@@ -2229,6 +2249,21 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     set(buildWorkspanMirror(workspans, owner.id));
     scheduleSaveActiveId(sessionId);
     persistWorkspanState(workspans, owner.id, state.sessions);
+  },
+
+  detachSessionToWorkspan: (sessionId, insertAt) => {
+    const state = get();
+    const result = detachTerminalSessionToWorkspan(
+      state.workspans,
+      sessionId,
+      createWorkspanId,
+      createPaneId,
+      insertAt
+    );
+    if (!result.changed || !result.detachedWorkspanId) return;
+    set(buildWorkspanMirror(result.workspans, result.detachedWorkspanId));
+    scheduleSaveActiveId(sessionId);
+    persistWorkspanState(result.workspans, result.detachedWorkspanId, state.sessions);
   },
 
   splitSessionToPaneEdge: (sessionId, targetPaneId, edge) => {

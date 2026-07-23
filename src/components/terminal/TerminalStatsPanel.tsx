@@ -424,9 +424,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const worktrees = useWorktreeStore((state) => state.worktrees);
 
   const [latestSession, setLatestSession] = useState<HistorySessionDetail | null>(null);
-  const [loadingSession, setLoadingSession] = useState(false);
   const [todayStats, setTodayStats] = useState<TodayProjectStats | null>(null);
-  const [loadingToday, setLoadingToday] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [, setNowTick] = useState(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
@@ -535,7 +533,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       lastPathRef.current = null;
       latestRef.current = null;
       setLatestSession(null);
-      setLoadingSession(false);
       return;
     }
     // 切换 Tab（项目路径、CLI 来源、Tab ID 或 cliSessionId 变化）时按作用域换数据：
@@ -551,7 +548,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     const loadSession = async (initial: boolean) => {
       if (sessionLoadInFlightRef.current.has(scopeKey)) return;
       sessionLoadInFlightRef.current.add(scopeKey);
-      if (initial && !latestRef.current) setLoadingSession(true);
       const current = latestRef.current;
       const prev = current
         ? { filePath: current.file_path, updatedAt: current.updated_at }
@@ -588,7 +584,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       if (result !== "unchanged") {
         // 查找 miss 时不要清掉已有可用数据，避免侧栏 Token 卡片「闪一下归零再回来」。
         if (result === null && latestRef.current) {
-          if (initial) setLoadingSession(false);
           return;
         }
         latestRef.current = result;
@@ -597,7 +592,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         if (result) sessionDetailCache.set(scopeKey, result);
       }
       if (initial) {
-        setLoadingSession(false);
         if (updatedAt === null) setUpdatedAt(Date.now());
       }
     };
@@ -612,16 +606,13 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   useEffect(() => {
     if (!panelActive || !todayUsageScope) {
       setTodayStats(null);
-      setLoadingToday(false);
       return;
     }
     if (isSshProject) {
       setTodayStats(null);
-      setLoadingToday(false);
       return;
     }
     let cancelled = false;
-    setLoadingToday(true);
     const loadTodayStats = async () => {
       try {
         const result = await fetchTodayProjectStatsMerged(
@@ -632,8 +623,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         if (!cancelled) setTodayStats(result);
       } catch {
         if (!cancelled) setTodayStats(null);
-      } finally {
-        if (!cancelled) setLoadingToday(false);
       }
     };
     void loadTodayStats();
@@ -760,7 +749,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
           />
         );
       case "todayUsage":
-        return <TodayUsageCard key={cardKey} stats={todayStats} loading={loadingToday} />;
+        return <TodayUsageCard key={cardKey} stats={todayStats} loading={false} />;
     }
   };
 
@@ -790,7 +779,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
           {updatedAt && <span>{formatRelativeTime(updatedAt)}</span>}
           <button
             onClick={handleRefresh}
-            className={`ui-focus-ring rounded p-0.5 ${loadingSession ? "animate-spin" : ""}`}
+            className="ui-focus-ring rounded p-0.5"
             style={{ color: TERM.cyan }}
             title={t("termStats.refresh")}
             aria-label={t("termStats.refresh")}
@@ -802,8 +791,6 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
 
       {!displayProjectPath ? (
         <EmptyHint text={t("termStats.noProject")} />
-      ) : loadingSession && !latestSession ? (
-        <EmptyHint text={t("common.loading")} />
       ) : !displaySession ? (
         <EmptyHint text={t("termStats.noSessionRecord", { source: sourceFilter ?? "CLI" })} />
       ) : !hasVisibleCard ? (

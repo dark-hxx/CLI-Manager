@@ -38,6 +38,8 @@ const {
   collapseTerminalWorkspansToLegacy,
   collectWorkspanSessionIds,
   createTerminalWorkspan,
+  detachTerminalSessionToWorkspan,
+  detachTerminalWorkspanSessions,
   getAdjacentWorkspanSessionId,
   mergeTerminalWorkspansAtPaneEdge,
   migrateTerminalWorkspans,
@@ -54,14 +56,69 @@ function idFactory(prefix = "generated") {
 
 test("workspan pane drop keeps a neutral center and resolves outer directions", () => {
   const rect = { left: 100, top: 200, width: 200, height: 100 };
-  const activationRatio = 0.18;
+  const activationRatio = 0.08;
 
-  assert.equal(resolvePaneDropEdgeFromPoint(160, 250, rect, activationRatio), "left");
-  assert.equal(resolvePaneDropEdgeFromPoint(240, 250, rect, activationRatio), "right");
-  assert.equal(resolvePaneDropEdgeFromPoint(200, 225, rect, activationRatio), "top");
-  assert.equal(resolvePaneDropEdgeFromPoint(200, 275, rect, activationRatio), "bottom");
+  assert.equal(resolvePaneDropEdgeFromPoint(140, 250, rect, activationRatio), "left");
+  assert.equal(resolvePaneDropEdgeFromPoint(260, 250, rect, activationRatio), "right");
+  assert.equal(resolvePaneDropEdgeFromPoint(200, 215, rect, activationRatio), "top");
+  assert.equal(resolvePaneDropEdgeFromPoint(200, 285, rect, activationRatio), "bottom");
   assert.equal(resolvePaneDropEdgeFromPoint(200, 250, rect, activationRatio), null);
-  assert.equal(resolvePaneDropEdgeFromPoint(170, 250, rect, activationRatio), null);
+  assert.equal(resolvePaneDropEdgeFromPoint(150, 250, rect, activationRatio), "left");
+  assert.equal(resolvePaneDropEdgeFromPoint(185, 250, rect, activationRatio), null);
+});
+
+test("detaching Workspan sessions creates one top-level Workspan per Tab", () => {
+  const workspan = {
+    id: "source",
+    paneTree: {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: { type: "leaf", id: "first-pane", sessionIds: ["a", "b"], activeSessionId: "b" },
+      second: { type: "leaf", id: "second-pane", sessionIds: ["c"], activeSessionId: "c" },
+    },
+    activePaneId: "second-pane",
+    activeSessionId: "c",
+  };
+  const detached = detachTerminalWorkspanSessions(workspan, idFactory("workspan"), idFactory("pane"));
+  assert.deepEqual(detached.map((item) => collectWorkspanSessionIds(item)), [["a"], ["b"], ["c"]]);
+  assert.deepEqual(detached.map((item) => item.paneTree.id), ["pane-1", "pane-2", "pane-3"]);
+});
+
+test("detaching one session preserves the source and honors top-level insertion", () => {
+  const first = createTerminalWorkspan("first", "first-pane", "first-session");
+  const source = {
+    id: "source",
+    customTitle: null,
+    paneTree: {
+      type: "leaf",
+      id: "source-pane",
+      sessionIds: ["source-session", "detached-session"],
+      activeSessionId: "detached-session",
+    },
+    activePaneId: "source-pane",
+    activeSessionId: "detached-session",
+  };
+  const last = createTerminalWorkspan("last", "last-pane", "last-session");
+  const workspans = [first, source, last];
+
+  const adjacent = detachTerminalSessionToWorkspan(workspans, "detached-session", idFactory("workspan"), idFactory("pane"));
+  assert.equal(adjacent.changed, true);
+  assert.deepEqual(adjacent.workspans.map((item) => item.id), ["first", "source", "workspan-1", "last"]);
+  assert.deepEqual(collectWorkspanSessionIds(adjacent.workspans[1]), ["source-session"]);
+  assert.deepEqual(collectWorkspanSessionIds(adjacent.workspans[2]), ["detached-session"]);
+
+  const atStart = detachTerminalSessionToWorkspan(workspans, "detached-session", idFactory("start"), idFactory("pane"), 0);
+  assert.deepEqual(atStart.workspans.map((item) => item.id), ["start-1", "first", "source", "last"]);
+
+  const atEnd = detachTerminalSessionToWorkspan(workspans, "detached-session", idFactory("end"), idFactory("pane"), workspans.length);
+  assert.deepEqual(atEnd.workspans.map((item) => item.id), ["first", "source", "last", "end-1"]);
+
+  const single = [createTerminalWorkspan("single", "single-pane", "single-session")];
+  const unchanged = detachTerminalSessionToWorkspan(single, "single-session", idFactory("noop"), idFactory("pane"));
+  assert.equal(unchanged.changed, false);
+  assert.equal(unchanged.workspans, single);
 });
 
 test("scoped pane filtering collapses visible layout without mutating the mounted pane tree", () => {

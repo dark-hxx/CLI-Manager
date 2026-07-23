@@ -115,6 +115,46 @@ export function collectWorkspanSessionIds(workspan: TerminalWorkspan): string[] 
   return collectPaneLeaves(workspan.paneTree).flatMap((pane) => pane.sessionIds);
 }
 
+export function detachTerminalWorkspanSessions(
+  workspan: TerminalWorkspan,
+  createWorkspanId: IdFactory,
+  createPaneId: IdFactory
+): TerminalWorkspan[] {
+  const seen = new Set<string>();
+  return collectPaneLeaves(workspan.paneTree).flatMap((pane) => pane.sessionIds).flatMap((sessionId) => {
+    if (seen.has(sessionId)) return [];
+    seen.add(sessionId);
+    return [createTerminalWorkspan(createWorkspanId(), createPaneId(), sessionId)];
+  });
+}
+
+export function detachTerminalSessionToWorkspan(
+  workspans: TerminalWorkspan[],
+  sessionId: string,
+  createWorkspanId: IdFactory,
+  createPaneId: IdFactory,
+  requestedInsertAt?: number
+): { workspans: TerminalWorkspan[]; detachedWorkspanId: string | null; changed: boolean } {
+  const owner = findWorkspanBySession(workspans, sessionId);
+  if (!owner || collectWorkspanSessionIds(owner).length <= 1) {
+    return { workspans, detachedWorkspanId: null, changed: false };
+  }
+
+  const sourceIndex = workspans.findIndex((workspan) => workspan.id === owner.id);
+  const remaining = removeSessionFromTerminalWorkspans(workspans, sessionId);
+  const detached = createTerminalWorkspan(createWorkspanId(), createPaneId(), sessionId);
+  const defaultInsertAt = Math.min(remaining.length, sourceIndex + 1);
+  const insertAt = requestedInsertAt === undefined
+    ? defaultInsertAt
+    : Math.max(0, Math.min(remaining.length, Math.trunc(requestedInsertAt)));
+
+  return {
+    workspans: [...remaining.slice(0, insertAt), detached, ...remaining.slice(insertAt)],
+    detachedWorkspanId: detached.id,
+    changed: true,
+  };
+}
+
 export function collapseTerminalWorkspansToLegacy(
   workspans: TerminalWorkspan[],
   requestedActiveWorkspanId: string | null,
