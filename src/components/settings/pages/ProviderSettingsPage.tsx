@@ -40,8 +40,10 @@ import {
 } from "@/components/icons";
 import { ProviderBadge } from "@/components/provider/ProviderRow";
 import { SettingsListItem } from "@/components/settings/SettingsListItem";
+import { CliToolIcon } from "@/components/CliToolIcon";
 import { VendorIcon, inferVendor, type VendorKey } from "@/components/VendorIcon";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { resolveCliToolIconKey } from "@/lib/cliTools";
 import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 
 // 深度合并对象（target 覆盖 source）
@@ -823,6 +825,7 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
     return types.map((type) => ({
       value: type,
       label: `${type} (${counts.get(type)})`,
+      icon: resolveCliToolIconKey(type),
     }));
   }, [data]);
 
@@ -967,7 +970,7 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
                 key={option.value}
                 type="button"
                 onClick={() => setAppTypeFilter(option.value)}
-                className="shrink-0 px-3 py-1.5 text-xs font-medium transition-all"
+                className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all"
                 style={{
                   borderRadius: "10px",
                   backgroundColor:
@@ -994,6 +997,13 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
                   }
                 }}
               >
+                <span aria-hidden="true" className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
+                  {option.icon ? (
+                    <CliToolIcon icon={option.icon} size={14} className="text-current" />
+                  ) : (
+                    <Boxes size={14} />
+                  )}
+                </span>
                 {option.label}
               </button>
             ))}
