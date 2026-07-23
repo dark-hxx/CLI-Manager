@@ -90,6 +90,22 @@ test("uncommitted output is redelivered after display remount and ACKed once", a
   assert.equal(secondDeliveries.length, 1);
 });
 
+test("committed output is not redelivered after display remount", async () => {
+  const manager = new TerminalProcessManager();
+  const firstDeliveries = [];
+  const disposeFirst = await manager.subscribeOutput("session-committed", (delivery) => firstDeliveries.push(delivery));
+  socketStub.emitOutput("session-committed", {
+    ...frame(1, "committed"),
+    sessionId: "session-committed",
+  });
+  firstDeliveries[0].commit("committed".length);
+  disposeFirst();
+
+  const secondDeliveries = [];
+  await manager.subscribeOutput("session-committed", (delivery) => secondDeliveries.push(delivery));
+  assert.equal(secondDeliveries.length, 0);
+});
+
 test("out-of-order write callbacks drain and ACK frames in sequence order", async () => {
   socketStub.acknowledgments.length = 0;
   const manager = new TerminalProcessManager();

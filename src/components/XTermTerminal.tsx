@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Terminal,
   type IBufferLine,
@@ -406,6 +406,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const snapshotBeforeUnmountRef = useRef<(() => void) | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const isActiveRef = useRef(isActive);
@@ -457,6 +458,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     lastNearCompositionFingerprint: null,
     lastNearCompositionAt: -1,
   });
+
+  useLayoutEffect(() => () => {
+    snapshotBeforeUnmountRef.current?.();
+    snapshotBeforeUnmountRef.current = null;
+  }, [sessionId]);
 
   const getOsPlatformForPathQuoting = async () => {
     if (osPlatformRef.current !== "unknown") return osPlatformRef.current;
@@ -1222,15 +1228,41 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         formatStartupInputForPty(sessionSnapshot.startupCmd, normalizeShellKey(sessionSnapshot.shell) ?? null),
       ).catch((err) => reportPtyWriteError("deferredStartup", err));
     };
+    let resolveInitialDisplayReady: (() => void) | null = null;
+    const initialDisplayReady = new Promise<void>((resolve) => {
+      resolveInitialDisplayReady = resolve;
+    });
+    const markInitialDisplayReady = () => {
+      const resolve = resolveInitialDisplayReady;
+      resolveInitialDisplayReady = null;
+      resolve?.();
+    };
+    const finishInitialDisplayRestore = () => {
+      scheduleFit(true);
+      requestAnimationFrame(() => {
+        if (terminalRef.current !== terminal) return;
+        snapshotBeforeUnmountRef.current = () => {
+          try {
+            useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, serializeAddon.serialize());
+          } catch (err) {
+            logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
+          }
+        };
+        markInitialDisplayReady();
+      });
+    };
     if (initialTerminalOutput) {
       terminal.write(initialTerminalOutput, () => {
+        if (terminalRef.current !== terminal) return;
         terminal.scrollToBottom();
         refreshTerminalViewport(terminal);
         scheduleViewportRefresh();
         writeDeferredStartup();
+        finishInitialDisplayRestore();
       });
     } else {
       writeDeferredStartup();
+      finishInitialDisplayRestore();
     }
     if (isActive && isVisible) {
       terminal.focus();
@@ -1483,16 +1515,19 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     });
     inputDisposables.push({ dispose: inputForwarding.dispose });
 
-    const ptyOutput = attachPtyOutput({
-      waitForReplay: useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId),
-    });
-    if (useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId)) {
-      void ptyOutput.ready.then(async () => {
+    let ptyOutput: ReturnType<typeof attachPtyOutput> | null = null;
+    const attachOutput = () => {
+      const output = attachPtyOutput({
+        waitForReplay: useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId),
+      });
+      ptyOutput = output;
+      if (!useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId)) return;
+      void output.ready.then(async () => {
         if (terminalRef.current !== terminal) return;
         const attach = await terminalProcessManager.attach(sessionId);
         if (terminalRef.current !== terminal) return;
         applyProcessTraits(attach.processTraits);
-        const replayCompleted = await ptyOutput.completeReplay(attach.replay);
+        const replayCompleted = await output.completeReplay(attach.replay);
         if (!replayCompleted) return;
         useTerminalStore.setState((state) => ({
           daemonAttachPendingSessionIds: new Set(
@@ -1505,7 +1540,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           toast.warning(t("terminal.backgroundTasks.replayTruncated"));
         }
       }).catch(async (err) => {
-        const replayCompleted = await ptyOutput.completeReplay([]);
+        const replayCompleted = await output.completeReplay([]);
         if (!replayCompleted) return;
         useTerminalStore.setState((state) => ({
           daemonAttachPendingSessionIds: new Set(
@@ -1515,7 +1550,17 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         logError("Failed to attach daemon terminal output", { sessionId, err });
         toast.error(t("terminal.backgroundTasks.restoreFailed"), { description: String(err) });
       });
-    }
+    };
+    // Restore the local display before subscribing so the PTY stream cannot race the snapshot.
+    let attachOutputTimer: number | null = null;
+    void initialDisplayReady.then(() => {
+      if (terminalRef.current !== terminal) return;
+      attachOutputTimer = window.setTimeout(() => {
+        attachOutputTimer = null;
+        if (terminalRef.current !== terminal) return;
+        attachOutput();
+      }, 0);
+    });
     const detachViewport = attachViewport(terminal);
     displayDisposables.push({ dispose: detachViewport });
     displayDisposables.push(terminal.onRender((range) => {
@@ -1544,17 +1589,17 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       disposeTerminalSubsystem(inputDisposables);
       disposeTerminalSubsystem(displayDisposables);
       cancelScheduledFit();
-      try {
-        const serializedOutput = serializeAddon.serialize();
-        useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, serializedOutput);
-      } catch (err) {
-        logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
+      if (attachOutputTimer !== null) {
+        window.clearTimeout(attachOutputTimer);
+        attachOutputTimer = null;
       }
+      resolveInitialDisplayReady?.();
+      resolveInitialDisplayReady = null;
+      ptyOutput?.dispose();
       if (tuiComposerNormalizeRafRef.current !== null) {
         cancelAnimationFrame(tuiComposerNormalizeRafRef.current);
         tuiComposerNormalizeRafRef.current = null;
       }
-      ptyOutput.dispose();
       resetOutputState();
       clearHiddenWebglDisposeTimer();
       clearVisibilityRestoreRevealSchedule();
