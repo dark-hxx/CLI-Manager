@@ -186,6 +186,7 @@ export interface DesktopPetSettings {
   enabled: boolean;
   petId: string;
   alwaysOnTop: boolean;
+  agentSessionsOnly: boolean;
   size: DesktopPetSize;
   showActionMenu: boolean;
   openOnHover: boolean;
@@ -593,6 +594,7 @@ const DEFAULTS: Settings = {
     enabled: false,
     petId: BUILTIN_DESKTOP_PET_ID,
     alwaysOnTop: true,
+    agentSessionsOnly: true,
     size: DESKTOP_PET_SIZE_DEFAULT_PERCENT,
     showActionMenu: true,
     openOnHover: true,
@@ -1045,6 +1047,10 @@ export function migrateDesktopPetSettings(value: unknown): DesktopPetSettings {
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : defaults.enabled,
     petId,
     alwaysOnTop: typeof raw.alwaysOnTop === "boolean" ? raw.alwaysOnTop : defaults.alwaysOnTop,
+    agentSessionsOnly:
+      typeof raw.agentSessionsOnly === "boolean"
+        ? raw.agentSessionsOnly
+        : defaults.agentSessionsOnly,
     size,
     showActionMenu:
       typeof raw.showActionMenu === "boolean" ? raw.showActionMenu : defaults.showActionMenu,
