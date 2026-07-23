@@ -617,3 +617,31 @@
 - `node --check scripts/codexAppServerProxy.e2e.test.mjs`：通过。
 - `npm run test:tauri-dev-proxy`：12 项通过，覆盖 Tauri/runner/application 双层边界及 target/release/profile/target-dir。
 - 按用户要求未运行 Cargo 编译、Rust 测试、真实 Codex proxy E2E、Tauri dev/build 或桌面应用。
+
+## 桌宠仅关注 Agent 终端（2026-07-23）
+
+### 根因与发现清单
+
+- 根因位于终端语义与桌宠状态聚合边界：桌宠此前只消费 PTY 输出、进程存活和 Hook 状态，没有区分由项目 `cli_tool` 启动的 Agent 终端与 `startup_cmd`/空 Shell 普通终端，因此前端、Java、Go 等长期进程会持续显示为工作中。
+- 新增会话级 `isAgentSession`/`cliTool` 快照，创建终端时按项目是否配置 `cli_tool` 固化；恢复、daemon attach、分屏和远程托管恢复继续保留，旧会话缺少字段时从关联项目兼容推导。
+- 新增桌宠设置 `agentSessionsOnly`，默认开启；过滤只落在 `deriveDesktopPetSnapshot` 的前台和 daemon 候选入口，不修改终端标签状态、后台任务面板、退出确认、PTY 或 Hook 状态机。
+- 已修改：终端会话类型与创建/恢复链、桌宠协调器和快照聚合、桌宠设置迁移与独立窗口默认配置、设置页及中英文文案、Agent 终端分类纯逻辑测试。
+- 已确认无需修改：Rust PTY/daemon 协议。daemon 任务通过 `sessionId` 与已持久化的 `TerminalSession` 配对，分类信息在主窗口关闭及重新 attach 后仍可恢复。
+- GitNexus 未建立索引；`npx gitnexus analyze` 因其 npx 包缺少 `tree-sitter-kotlin` 失败，按仓库规则降级为 `rg` 调用点、真实源码、Git diff、类型检查和构建验证。
+
+### 场景覆盖
+
+- 本地、WSL 与 SSH 项目统一以项目 `cli_tool` 是否非空分类；自定义 CLI 工具也视为用户显式声明的 Agent。
+- 未关联项目、`cli_tool` 为空、使用自定义启动命令或空 Shell 的普通终端，在开关开启时不进入桌宠任务、计数和状态选择。
+- 开关关闭时保留原有全终端聚合行为；旧设置缺少新字段时迁移为默认开启。
+- 前台多会话、分屏、后台 daemon、应用重启恢复和远程托管恢复均保留创建时分类；项目配置后续改变不会重写已运行会话的类型。
+- Hook 安装与否只影响 Agent 会话的细分状态，不再决定终端类型；普通 Shell 中手动运行 Agent 且项目未配置 CLI 工具时按设计仍视为普通终端。
+
+### 验证结果
+
+- `node scripts/agentTerminal.test.mjs`：4 项通过，覆盖 Agent/普通分类、分类快照稳定性、旧会话兼容和开关关闭兼容行为。
+- `node scripts/desktopPetTransport.test.mjs`：4 项通过。
+- `node scripts/desktopPetSize.test.mjs`：4 项通过。
+- `npx tsc --noEmit`：通过。
+- `npm run build`：通过。
+- `git diff --check`：通过，仅有仓库现有 Windows 行尾提示。

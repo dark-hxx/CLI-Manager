@@ -119,6 +119,7 @@ const DEFAULT_CONFIG: DesktopPetConfigPayload = {
     enabled: true,
     petId: BUILTIN_DESKTOP_PET_ID,
     alwaysOnTop: true,
+    agentSessionsOnly: true,
     size: 100,
     showActionMenu: true,
     openOnHover: true,

@@ -709,6 +709,13 @@ export function DesktopPetSettingsPage() {
             description={t("desktopPet.settings.behaviorDescription")}
           />
           <ToggleRow
+            title={t("desktopPet.settings.agentSessionsOnly")}
+            description={t("desktopPet.settings.agentSessionsOnlyDescription")}
+            checked={desktopPet.agentSessionsOnly}
+            ariaLabel={t("desktopPet.settings.agentSessionsOnly")}
+            onChange={(checked) => void patch({ agentSessionsOnly: checked })}
+          />
+          <ToggleRow
             title={t("desktopPet.settings.alwaysOnTop")}
             description={t("desktopPet.settings.alwaysOnTopDescription")}
             checked={desktopPet.alwaysOnTop}

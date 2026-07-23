@@ -10,6 +10,10 @@ import type {
   SubagentTranscriptSource,
   TerminalSession,
 } from "../lib/types";
+import {
+  createAgentTerminalMetadata,
+  resolveAgentTerminalMetadata,
+} from "../lib/agentTerminal";
 import { debugConsoleWarn } from "../lib/debugConsole";
 import { sourceTool, type SyncedHistoryGroup } from "../lib/externalSessionGrouping";
 import { logError, logInfo, logWarn, recordCrashActivity } from "../lib/logger";
@@ -1267,6 +1271,23 @@ function getProviderLaunchProject(projectId?: string, worktreeId?: string) {
   return project ? resolveProjectForProviderLaunch(project, projectState.worktrees, worktreeId) : null;
 }
 
+function getProjectAgentTerminalMetadata(projectId?: string) {
+  const project = projectId
+    ? useProjectStore.getState().projects.find((item) => item.id === projectId)
+    : undefined;
+  return createAgentTerminalMetadata(project);
+}
+
+function getRestoredAgentTerminalMetadata(
+  session: Pick<TerminalSession, "isAgentSession" | "cliTool"> | null | undefined,
+  projectId?: string
+) {
+  const project = projectId
+    ? useProjectStore.getState().projects.find((item) => item.id === projectId)
+    : undefined;
+  return resolveAgentTerminalMetadata(session, project);
+}
+
 function getCodexProviderLaunchConfig(projectId?: string, startupCmd?: string | null, worktreeId?: string) {
   const project = getProviderLaunchProject(projectId, worktreeId);
   if (!project || !isExactCodexProject(project) || project.startup_cmd.trim() || !startupCmd?.trim()) {
@@ -1800,6 +1821,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       shell: resolvedShell,
       envVars,
       startupCmd: launch.startupHandledByLaunch ? launchStartupCmd : startupCmd,
+      ...getProjectAgentTerminalMetadata(projectId),
       environmentType: launch.environmentType,
       sshHostId: launch.sshHostId,
       remotePath: launch.remotePath,
@@ -2285,6 +2307,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       shell: resolvedShell,
       envVars: options?.envVars,
       startupCmd: launch.startupHandledByLaunch ? launchStartupCmd : options?.startupCmd,
+      ...getProjectAgentTerminalMetadata(options?.projectId),
       environmentType: launch.environmentType,
       sshHostId: launch.sshHostId,
       remotePath: launch.remotePath,
@@ -2676,6 +2699,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         newIdMap[ps.id] = ps.id;
         restoredSessions.push({
           ...ps,
+          ...getRestoredAgentTerminalMetadata(ps, ps.projectId),
           kind: undefined,
           deferStartupUntilInitialOutput: false,
         });
@@ -2705,6 +2729,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
               envVars: ps.envVars,
               // 仅保留给 Tab 厂商识别；daemon attach 不会重新执行该命令。
               startupCmd: ps.startupCmd,
+              ...getRestoredAgentTerminalMetadata(ps, attachedMeta.projectId),
               cliSessionId: ps.cliSessionId,
               remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
               remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
@@ -2825,6 +2850,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         shell: resolvedShell,
         envVars: ps.envVars,
         startupCmd: launch.startupHandledByLaunch ? restoredStartupCmd : launchStartupCmd,
+        ...getRestoredAgentTerminalMetadata(ps, ps.projectId),
         environmentType: launch.environmentType ?? ps.environmentType,
         sshHostId: launch.sshHostId ?? ps.sshHostId,
         remotePath: launch.remotePath ?? ps.remotePath,
@@ -2975,6 +3001,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       envVars: persisted?.envVars,
       // 元数据用于 Tab 厂商识别；daemon attach 不会重新执行该命令。
       startupCmd: persisted?.startupCmd,
+      ...getRestoredAgentTerminalMetadata(persisted, attachedMeta.projectId),
       cliSessionId: persisted?.cliSessionId,
       remoteHistoryConsumerId: persisted?.remoteHistoryConsumerId,
       remoteHistorySourceInstanceId: persisted?.remoteHistorySourceInstanceId,
