@@ -164,7 +164,7 @@ jobs:
 
       - name: Publish SSH Agent prerelease
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: CLI-Manager SSH Agent v${{ steps.version.outputs.version }}
