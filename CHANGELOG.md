@@ -7,6 +7,7 @@
 - SSH Git 面板与本地/WSL 复用同一套仓库、状态、Diff、暂存、回滚、提交、Fetch/Push/Pull、分支切换和冲突处理交互。Agent bridge 协议升级到 `1.7`，远程 Git 通过 `gitFull` capability 和独立串行 Git lane 执行；写操作不自动重试，项目根、仓库/文件路径、分支、Patch、symlink、输入大小和非交互凭据均在 Agent 边界重新校验，SSH context 未就绪时不会回落到本地 Git。
 - 修复 SSH 项目终端的空本地 `cwd` 导致 Git 面板误报“当前终端未关联项目”，以及刷新已打开远程文件时漏传 Agent 文件上下文、错误调用本地文件命令并返回 `root_not_absolute` 的问题；Host 或 `remote_path` 变化会重建文件上下文并丢弃旧请求结果，文件与 Git 面板首次远程加载期间统一显示“加载中…”。携带 `gitFull` 的 SSH Agent 独立版本升级到 `0.1.1`，安装预览可正确识别协议 `1.6` 的 `0.1.0` Agent 并执行升级。
 - SSH Agent 版本提升到 `0.1.2`，修复将合法的空 `repoPath` 误判为 `remote_git_path_invalid`；远程项目根仓库现在可以正常加载 Git 变更、分支和 Diff。
+- SSH Agent 版本提升到 `0.1.3`，远程 Git 状态会把普通未跟踪目录展开到具体文件，并过滤由仓库列表单独管理的嵌套 Git 仓库；修复目录被显示为空名称文件、打开 Diff 返回 `remote_git_path_invalid` 的问题，未跟踪文件右键删除继续复用本地面板的二次确认与状态复核流程。
 
 ## [V1.3.1] - 2026-07-23
 

@@ -4,15 +4,16 @@
 
 ---
 
-## 状态收集的三条链路（改过滤逻辑必须全部检查）
+## 状态收集的四条链路（改过滤逻辑必须全部检查）
 
 | 链路 | 入口 | 消费方 | 收集方式 |
 |------|------|--------|----------|
 | Git 面板 | `git_get_changes`（Tauri command） | `gitStore.fetchChanges` / `fileExplorerStore` | **内联 status 循环**（git.rs 内 `for entry in statuses.iter()`） |
 | Replay 快照 | `git_get_worktree_snapshot` → `build_worktree_snapshot` | `replayStore` | `collect_git_changes_from_repo()` |
 | WSL 项目 | `git_get_changes` → `git_get_changes_wsl` | 同面板 | `git status --porcelain -z` 文本解析（`parse_wsl_git_status`） |
+| SSH 项目 | Agent `gitChanges` → `changes` | 同面板，经 `SshGitTransport` | `git status --porcelain=v1 -z --untracked-files=all` 文本解析（`parse_status`） |
 
-> **Warning**: `git_get_changes` 与 `collect_git_changes_from_repo` 是两段**重复实现**的收集循环，历史原因未合并。任何条目过滤/状态映射规则变更必须同步两处（优先提取共享函数），WSL 文本解析链路也要评估是否同样适用。
+> **Warning**: `git_get_changes` 与 `collect_git_changes_from_repo` 是两段**重复实现**的收集循环，历史原因未合并。任何条目过滤/状态映射规则变更必须同步两处（优先提取共享函数），WSL 与 SSH Agent 文本解析链路也要评估是否同样适用。
 
 ### WSL UNC 指向 `/mnt/<drive>` 时必须回退 Windows Git
 
@@ -61,6 +62,8 @@ git_get_file_diff(project_path: String, file_path: String, status: String) -> Re
 ### Contracts
 
 - libgit2 `statuses()` + `recurse_untracked_dirs(true)` 下：普通未跟踪目录会被展开为文件条目；**只有嵌套 git 仓库**保留为带尾部 `/` 的目录条目（如 `sub-repo-a/`）。
+- SSH Agent 必须使用 `--untracked-files=all` 与本地的递归语义对齐；`--untracked-files=normal` 会把普通目录折叠为 `?? test/`，前端拆分后产生空名称文件节点，禁止使用。
+- SSH Agent 对仍带尾部 `/` 且 `<repo>/<path>/.git` 存在的嵌套仓库条目执行过滤；普通 `test/c.txt` 必须保留为具体文件路径，供 Diff、暂存和未跟踪删除使用。
 - 命中 `is_nested_repo_entry` 的条目：`continue` 跳过，不进入 `GitFileChange` 列表。
 - `git_get_file_diff` 的 `"U" | "??"` 分支：读取文件字节前有 `is_dir()` 兜底守卫，目录条目返回友好中文错误，而非原始 OS 错误（Windows 下曾表现为 os error 123/5/3，随环境浮动）。
 - 未跟踪文本文件通过项目文本编码检测读取并生成全新增 Diff；二进制或无法解码内容返回稳定错误。
@@ -82,7 +85,18 @@ git_get_file_diff(project_path: String, file_path: String, status: String) -> Re
 
 - `commands::git::tests::collect_git_changes_skips_nested_repo_dir`（正例 + 反例）
 - `commands::git::tests::is_nested_repo_entry_detects_nested_repo_dir_only`
+- Agent `git::tests::changes_expands_untracked_directories_and_skips_nested_repositories`
 - 手工夹具：`D:\github\nested-git-test`（一级/二级嵌套仓库 + node_modules 假 .git）
+
+### Wrong vs Correct
+
+```rust
+// Wrong: 普通目录被折叠成 `?? test/`，共享前端生成空名称文件节点。
+&["status", "--porcelain=v1", "-z", "-unormal"]
+
+// Correct: 普通目录展开到具体文件，随后仅过滤嵌套仓库目录条目。
+&["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+```
 
 ### 已知未覆盖（后续项）
 

@@ -581,15 +581,22 @@ fn parse_count(value: &str) -> Option<i32> {
     }
 }
 
+fn is_nested_repo_entry(repo: &Path, file_path: &str) -> bool {
+    file_path.ends_with('/') && repo.join(file_path).join(".git").exists()
+}
+
 fn changes(request: RepoRequest) -> Result<Vec<GitChange>, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    // Match the local panel's recurse_untracked_dirs(true): normal mode collapses `test/c.txt`
+    // into `test/`, which the shared file tree would misread as an empty file name.
     let status = run_git(
         &repo,
-        &["status", "--porcelain=v1", "-z", "-unormal"],
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         false,
         READ_TIMEOUT,
     )?;
     let mut changes = parse_status(&status.stdout)?;
+    changes.retain(|change| !is_nested_repo_entry(&repo, &change.path));
     if changes.len() <= 2000 {
         if let Ok(numstat) = run_git(
             &repo,
@@ -1461,7 +1468,8 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        dispatch, parse_status, validate_patch, validate_relative, validate_untracked_target,
+        changes, dispatch, is_nested_repo_entry, parse_status, validate_patch, validate_relative,
+        validate_untracked_target, RepoRequest,
     };
     use serde_json::json;
     #[test]
@@ -1485,6 +1493,59 @@ mod tests {
         );
         assert_eq!(changes[3].status, "C");
     }
+
+    #[test]
+    fn nested_repo_entries_are_distinguished_from_regular_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let regular = root.path().join("test");
+        let nested = root.path().join("nested");
+        let worktree = root.path().join("worktree");
+        std::fs::create_dir(&regular).unwrap();
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::create_dir(&worktree).unwrap();
+        std::fs::create_dir(nested.join(".git")).unwrap();
+        std::fs::write(worktree.join(".git"), b"gitdir: /tmp/worktree").unwrap();
+
+        assert!(!is_nested_repo_entry(root.path(), "test/"));
+        assert!(is_nested_repo_entry(root.path(), "nested/"));
+        assert!(is_nested_repo_entry(root.path(), "worktree/"));
+        assert!(!is_nested_repo_entry(root.path(), "nested/file.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changes_expands_untracked_directories_and_skips_nested_repositories() {
+        let root = tempfile::tempdir().unwrap();
+        let regular = root.path().join("test");
+        let nested = root.path().join("nested");
+        std::fs::create_dir(&regular).unwrap();
+        std::fs::write(regular.join("c.txt"), b"content").unwrap();
+        std::fs::create_dir(&nested).unwrap();
+
+        for directory in [root.path(), nested.as_path()] {
+            let status = std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(directory)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        let changes = changes(RepoRequest {
+            root_path: root.path().to_string_lossy().to_string(),
+            repo_path: String::new(),
+        })
+        .unwrap();
+        let paths = changes
+            .into_iter()
+            .map(|change| change.path)
+            .collect::<Vec<_>>();
+
+        assert!(paths.iter().any(|path| path == "test/c.txt"));
+        assert!(!paths.iter().any(|path| path == "test/"));
+        assert!(!paths.iter().any(|path| path == "nested/"));
+    }
+
     #[test]
     fn patches_are_confined_to_the_requested_file() {
         let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n";

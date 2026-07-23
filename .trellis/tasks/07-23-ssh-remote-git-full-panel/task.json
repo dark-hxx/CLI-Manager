@@ -48,6 +48,6 @@
     "README.md",
     "docs/功能清单.md"
   ],
-  "notes": "实现与自动验证完成。主工程全量测试 702 passed / 1 failed / 1 ignored；唯一失败为未修改的 Pi Hook 卸载测试。追加修复 SSH 项目空本地 cwd 导致 Git 面板误报未关联项目，以及远程文件可见状态刷新漏传 remote context 导致 root_not_absolute；文件/Git 首次远程加载显示加载中。用户人工验收确认已发布 Agent 0.1.0 仍是协议 1.6、缺少 gitFull；新协议 1.7 Agent 改为不可变的新版本 0.1.1。同时修复 SSH 文件上下文只比较空本地 path，导致 Host/remote_path 更新后继续复用旧目录树的问题，并增加旧异步结果防串写。最新 GitNexus detect-changes: 25 files / 165 symbols / 18 flows / CRITICAL，风险集中于本任务原有 Git/bridge/Agent 全链路。本轮不再扩展范围；按用户要求不运行构建或功能测试，也未提交，桌面人工验收由用户执行。",
+  "notes": "实现与自动验证完成。主工程全量测试 702 passed / 1 failed / 1 ignored；唯一失败为未修改的 Pi Hook 卸载测试。追加修复 SSH 项目空本地 cwd 导致 Git 面板误报未关联项目，以及远程文件可见状态刷新漏传 remote context 导致 root_not_absolute；文件/Git 首次远程加载显示加载中。用户人工验收确认已发布 Agent 0.1.0 仍是协议 1.6、缺少 gitFull；新协议 1.7 Agent 改为不可变的新版本 0.1.1。同时修复 SSH 文件上下文只比较空本地 path，导致 Host/remote_path 更新后继续复用旧目录树的问题，并增加旧异步结果防串写。最新 GitNexus detect-changes: 25 files / 165 symbols / 18 flows / CRITICAL，风险集中于本任务原有 Git/bridge/Agent 全链路。本轮不再扩展范围；按用户要求不运行构建或功能测试，也未提交，桌面人工验收由用户执行。后续 Agent 0.1.2 修复根仓库空 repoPath；0.1.3 改用 --untracked-files=all 展开普通未跟踪目录并过滤嵌套仓库，修复空名称文件与 remote_git_path_invalid，右键删除继续走共享面板和 Agent 状态复核。本轮 GitNexus 未提交范围为 9 files / 6 symbols / 0 flows / LOW；相对 master 的既有整条功能分支为 CRITICAL。",
   "meta": {}
 }

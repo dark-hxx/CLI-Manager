@@ -193,3 +193,5 @@ git diff --check
 - 人工验收追加根因：文件上下文身份沿用了本地项目的 `id + path` 假设，而 SSH `path` 恒为空；同时面板同步 effect 未订阅 Host/`remote_path`，异步完成守卫只检查项目 id，导致设置变化后旧树/旧结果被复用。修复后 SSH 使用 `id + host + case-sensitive remote_path`，本地/WSL 规则不变，旧请求成功或失败均不能覆盖新上下文。
 - 根因分类：B（跨层契约）+ C（变更传播遗漏）+ D（测试覆盖缺口）+ E（隐式本地路径假设）。前一次只修复“刷新携带 remote context”的症状路径，未覆盖“同一项目设置变化”的状态维度；已将身份/竞态契约和静态回归补入 spec/test。
 - 最新 GitNexus `detect-changes` 覆盖当前整套未提交任务：25 files / 165 symbols / 18 flows，CRITICAL risk；风险集中于既有 Git Store、共享面板、daemon bridge 与 Agent runner 全链路。本轮不再扩展范围，也未提交。
+- 人工验收追加根因：Agent `git status -unormal` 把普通未跟踪目录折叠为 `?? test/`，共享前端按 `/` 拆分后产生空名称文件节点，Diff 路径校验因此返回 `remote_git_path_invalid`。Agent `0.1.3` 改用 `--untracked-files=all`，并过滤由仓库列表管理的嵌套 Git 仓库；未跟踪文件及目录右键删除继续走既有二次确认和 Agent 状态复核。
+- `0.1.3` 本轮 GitNexus：未提交变更为 9 files / 6 symbols / 0 flows / LOW；相对 `master` 的整条功能分支为 37 files / 332 symbols / 17 flows / CRITICAL，后者来自既有远程 Git 全链路，不是本轮状态参数修复新增的风险。
