@@ -177,9 +177,10 @@ pub struct SshLaunchPlan {
 
 ### Sync
 
-- Sync/export may carry project `environment_type`, `remote_path`, and `cli_config_root`.
-- It must exclude `ssh_hosts`, `ssh_host_id`, `config_file`, `identity_file`, `credential_ref`, passwords, and machine-specific proxy credentials.
-- Imported SSH projects have `ssh_host_id = null`, preserve only a valid explicit POSIX/`~/...` project config root, and clear machine-specific provider/worktree configuration before requesting host rebinding.
+- Sync/export carries project `environment_type`, `remote_path`, `cli_config_root`, and `ssh_host_id`, plus SSH host groups and portable SSH host profiles.
+- Sync excludes `config_file`, `identity_file`, `credential_ref`, passwords, `proxy_command`, private-key contents, and machine-specific proxy credentials. An existing same-ID host on the destination retains these local-only fields.
+- On a new device, a restored `identity_file` mode without a local key becomes `interactive`; a `credential_ref` mode without a local credential becomes `password_prompt`; a ProxyCommand without a local command is disabled. The host, project path, grouping, address, port, user, Config alias, jump route, structured HTTP/SOCKS5 proxy, timeout, keepalive, encoding, startup script, and notes remain available.
+- Older snapshots without both SSH workspace arrays retain existing destination host tables, and their imported SSH projects remain unbound. SSH project provider/worktree configuration remains subject to the existing machine-specific cleanup.
 
 ## 4. Validation & Error Matrix
 
@@ -228,11 +229,11 @@ pub struct SshLaunchPlan {
 - Base: password-prompt/MFA users manually enter a remote path, then authenticate in the real PTY.
 - Base: a host imported from the default `~/.ssh/config` stores an empty `config_file` and lets OpenSSH resolve its normal user config.
 - Base: a manually entered address with no jump route stores an empty `config_file` and runs with `-F none`; unrelated default Config permissions and rules do not participate in that connection.
-- Base: an imported SSH project remains visible with a rebinding warning.
+- Base: an older snapshot imports an SSH project with an unbound-host warning.
 - Bad: treating `path = ""` as a local project key; on POSIX this can match every local path.
 - Bad: passing a remote POSIX path into local filesystem, Git, Worktree, history, or provider APIs.
 - Bad: falling back to default OpenSSH config after a custom `config_file` is moved or becomes unreadable.
-- Bad: synchronizing host IDs or private-key paths across machines.
+- Bad: synchronizing passwords, credential references, private-key paths, custom SSH Config paths, or ProxyCommand content.
 - Bad: quoting `~/.claude` as one literal shell token; this disables tilde expansion and points the CLI at a directory named `~`.
 
 ## 6. Tests Required
@@ -254,7 +255,7 @@ pub struct SshLaunchPlan {
 - Assert Rust overwrites reserved binding env, provider launch fields remain null for SSH, one Host bridge serves multiple PTYs, mismatched events are rejected, and the final PTY release stops the bridge.
 - Assert session restore attaches live daemon PTYs and never reruns an exited SSH command.
 - Assert SSH projects are rejected by file and Worktree stores and excluded from local path matching.
-- Assert export/import omits all host and credential fields and requires rebinding.
+- Assert export/import preserves portable host fields and the project host binding, while omitting all secrets and machine-local paths.
 - Manually verify OpenSSH Agent, private key, password/MFA, first host key, changed host key, ProxyJump, ProxyCommand, network interruption, zh-CN/en-US, and 24-hour time display.
 
 ## 7. Wrong vs Correct

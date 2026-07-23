@@ -18,15 +18,25 @@ use tokio::sync::Mutex as AsyncMutex;
 
 const BACKUP_RESTORE_MAX_STATEMENTS: usize = 1_000;
 const BACKUP_RESTORE_MAX_PARAMS_PER_STATEMENT: usize = 30_000;
-const BACKUP_RESTORE_DELETE_STATEMENTS: [&str; 5] = [
+const BACKUP_RESTORE_DELETE_STATEMENTS: [&str; 7] = [
     "DELETE FROM command_templates",
     "DELETE FROM worktrees",
     "DELETE FROM projects",
+    "DELETE FROM ssh_hosts",
+    "DELETE FROM ssh_host_groups",
     "DELETE FROM groups",
     "DELETE FROM model_prices",
 ];
-const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 5] = [
+const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 7] = [
     ("groups", "id,name,parent_id,sort_order,created_at"),
+    (
+        "ssh_host_groups",
+        "id,name,parent_id,sort_order,created_at",
+    ),
+    (
+        "ssh_hosts",
+        "id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,startup_script,notes,sort_order,created_at,updated_at",
+    ),
     (
         "projects",
         "id,name,path,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,created_at,updated_at",
@@ -598,6 +608,194 @@ mod tests {
                 1,
                 "integer".to_string(),
             )]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_restore_preserves_ssh_host_project_binding() {
+        let mut conn = restore_test_connection().await;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE ssh_host_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id TEXT,
+                sort_order INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE ssh_hosts (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                group_name TEXT NOT NULL,
+                group_id TEXT REFERENCES ssh_host_groups(id),
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                username TEXT NOT NULL,
+                config_alias TEXT NOT NULL,
+                config_file TEXT NOT NULL,
+                auth_mode TEXT NOT NULL,
+                identity_file TEXT NOT NULL,
+                credential_ref TEXT NOT NULL,
+                jump_mode TEXT NOT NULL,
+                jump_host_id TEXT,
+                proxy_type TEXT NOT NULL,
+                proxy_host TEXT NOT NULL,
+                proxy_port INTEGER NOT NULL,
+                proxy_command TEXT NOT NULL,
+                connect_timeout_sec INTEGER NOT NULL,
+                server_alive_interval_sec INTEGER NOT NULL,
+                server_alive_count_max INTEGER NOT NULL,
+                terminal_encoding TEXT NOT NULL,
+                startup_script TEXT NOT NULL,
+                notes TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                group_id TEXT,
+                sort_order INTEGER NOT NULL,
+                cli_tool TEXT NOT NULL,
+                cli_args TEXT NOT NULL,
+                startup_cmd TEXT NOT NULL,
+                env_vars TEXT NOT NULL,
+                shell TEXT NOT NULL,
+                provider_overrides TEXT NOT NULL,
+                worktree_strategy TEXT NOT NULL,
+                worktree_root TEXT NOT NULL,
+                worktree_deps_prompt_enabled INTEGER NOT NULL,
+                environment_type TEXT NOT NULL,
+                ssh_host_id TEXT REFERENCES ssh_hosts(id),
+                remote_path TEXT NOT NULL,
+                cli_config_root TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let statements = [
+            BackupDatabaseStatement {
+                sql: "DELETE FROM projects".to_string(),
+                values: Vec::new(),
+            },
+            BackupDatabaseStatement {
+                sql: "DELETE FROM ssh_hosts".to_string(),
+                values: Vec::new(),
+            },
+            BackupDatabaseStatement {
+                sql: "DELETE FROM ssh_host_groups".to_string(),
+                values: Vec::new(),
+            },
+            delete_groups_statement(),
+            BackupDatabaseStatement {
+                sql: "INSERT INTO groups (id,name,parent_id,sort_order,created_at) VALUES ($1,$2,$3,$4,$5)".to_string(),
+                values: vec![
+                    Value::String("project-group".to_string()),
+                    Value::String("Projects".to_string()),
+                    Value::Null,
+                    Value::Number(0.into()),
+                    Value::String("1".to_string()),
+                ],
+            },
+            BackupDatabaseStatement {
+                sql: "INSERT INTO ssh_host_groups (id,name,parent_id,sort_order,created_at) VALUES ($1,$2,$3,$4,$5)".to_string(),
+                values: vec![
+                    Value::String("ssh-group".to_string()),
+                    Value::String("Production".to_string()),
+                    Value::Null,
+                    Value::Number(0.into()),
+                    Value::String("1".to_string()),
+                ],
+            },
+            BackupDatabaseStatement {
+                sql: "INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,startup_script,notes,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)".to_string(),
+                values: vec![
+                    Value::String("ssh-host".to_string()),
+                    Value::String("Server".to_string()),
+                    Value::String("Production".to_string()),
+                    Value::String("ssh-group".to_string()),
+                    Value::String("ssh.example.com".to_string()),
+                    Value::Number(22.into()),
+                    Value::String("dev".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("agent".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("none".to_string()),
+                    Value::Null,
+                    Value::String("none".to_string()),
+                    Value::String("".to_string()),
+                    Value::Number(0.into()),
+                    Value::String("".to_string()),
+                    Value::Number(15.into()),
+                    Value::Number(30.into()),
+                    Value::Number(3.into()),
+                    Value::String("UTF-8".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("".to_string()),
+                    Value::Number(0.into()),
+                    Value::String("1".to_string()),
+                    Value::String("1".to_string()),
+                ],
+            },
+            BackupDatabaseStatement {
+                sql: "INSERT INTO projects (id,name,path,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)".to_string(),
+                values: vec![
+                    Value::String("remote-project".to_string()),
+                    Value::String("Remote Project".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("project-group".to_string()),
+                    Value::Number(0.into()),
+                    Value::String("codex".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("{}".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("{}".to_string()),
+                    Value::String("disabled".to_string()),
+                    Value::String("".to_string()),
+                    Value::Number(0.into()),
+                    Value::String("ssh".to_string()),
+                    Value::String("ssh-host".to_string()),
+                    Value::String("/srv/project".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("1".to_string()),
+                    Value::String("1".to_string()),
+                ],
+            },
+        ];
+
+        execute_backup_database_restore(&mut conn, &statements)
+            .await
+            .unwrap();
+
+        let row: (String, String, String, String) = sqlx::query_as(
+            "SELECT projects.ssh_host_id, projects.remote_path, ssh_hosts.host, ssh_host_groups.name
+             FROM projects
+             JOIN ssh_hosts ON ssh_hosts.id = projects.ssh_host_id
+             JOIN ssh_host_groups ON ssh_host_groups.id = ssh_hosts.group_id",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            row,
+            (
+                "ssh-host".to_string(),
+                "/srv/project".to_string(),
+                "ssh.example.com".to_string(),
+                "Production".to_string(),
+            )
         );
     }
 
