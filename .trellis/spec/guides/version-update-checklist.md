@@ -18,8 +18,12 @@ version bump unless the Agent itself changes.
 | CLI-Manager desktop | app version sources listed below | `V<desktop-version>` |
 | SSH Agent | `src-tauri/ssh-agent/Cargo.toml` `[package].version` | `ssh-agent-v<agent-version>` |
 
-- The Agent version must increase monotonically from the published `1.3.0` baseline. The
-  first independent Agent release is `1.3.1`.
+- The first independent Agent release is the published `0.1.0` prerelease. New Agent bytes,
+  protocol capabilities, or signed artifacts require a new monotonic Agent version; protocol
+  `1.7` plus `gitFull` therefore ships as `0.1.1` rather than replacing `0.1.0`.
+- Published Agent releases are immutable even when the protocol does not change. The root
+  repository fix shipped as `0.1.2`; the untracked-directory status fix therefore ships as
+  `0.1.3` instead of replacing the `0.1.2` assets.
 - `src-tauri/ssh-agent/Cargo.lock` must be refreshed with the same Agent package version.
 - Never set `CLI_MANAGER_SSH_AGENT_VERSION`; Cargo package metadata is the only Agent version
   source for the binary, manifest, installer downgrade check, and install directory.

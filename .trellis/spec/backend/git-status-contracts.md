@@ -4,15 +4,16 @@
 
 ---
 
-## 状态收集的三条链路（改过滤逻辑必须全部检查）
+## 状态收集的四条链路（改过滤逻辑必须全部检查）
 
 | 链路 | 入口 | 消费方 | 收集方式 |
 |------|------|--------|----------|
 | Git 面板 | `git_get_changes`（Tauri command） | `gitStore.fetchChanges` / `fileExplorerStore` | **内联 status 循环**（git.rs 内 `for entry in statuses.iter()`） |
 | Replay 快照 | `git_get_worktree_snapshot` → `build_worktree_snapshot` | `replayStore` | `collect_git_changes_from_repo()` |
 | WSL 项目 | `git_get_changes` → `git_get_changes_wsl` | 同面板 | `git status --porcelain -z` 文本解析（`parse_wsl_git_status`） |
+| SSH 项目 | Agent `gitChanges` → `changes` | 同面板，经 `SshGitTransport` | `git status --porcelain=v1 -z --untracked-files=all` 文本解析（`parse_status`） |
 
-> **Warning**: `git_get_changes` 与 `collect_git_changes_from_repo` 是两段**重复实现**的收集循环，历史原因未合并。任何条目过滤/状态映射规则变更必须同步两处（优先提取共享函数），WSL 文本解析链路也要评估是否同样适用。
+> **Warning**: `git_get_changes` 与 `collect_git_changes_from_repo` 是两段**重复实现**的收集循环，历史原因未合并。任何条目过滤/状态映射规则变更必须同步两处（优先提取共享函数），WSL 与 SSH Agent 文本解析链路也要评估是否同样适用。
 
 ### WSL UNC 指向 `/mnt/<drive>` 时必须回退 Windows Git
 
@@ -61,6 +62,8 @@ git_get_file_diff(project_path: String, file_path: String, status: String) -> Re
 ### Contracts
 
 - libgit2 `statuses()` + `recurse_untracked_dirs(true)` 下：普通未跟踪目录会被展开为文件条目；**只有嵌套 git 仓库**保留为带尾部 `/` 的目录条目（如 `sub-repo-a/`）。
+- SSH Agent 必须使用 `--untracked-files=all` 与本地的递归语义对齐；`--untracked-files=normal` 会把普通目录折叠为 `?? test/`，前端拆分后产生空名称文件节点，禁止使用。
+- SSH Agent 对仍带尾部 `/` 且 `<repo>/<path>/.git` 存在的嵌套仓库条目执行过滤；普通 `test/c.txt` 必须保留为具体文件路径，供 Diff、暂存和未跟踪删除使用。
 - 命中 `is_nested_repo_entry` 的条目：`continue` 跳过，不进入 `GitFileChange` 列表。
 - `git_get_file_diff` 的 `"U" | "??"` 分支：读取文件字节前有 `is_dir()` 兜底守卫，目录条目返回友好中文错误，而非原始 OS 错误（Windows 下曾表现为 os error 123/5/3，随环境浮动）。
 - 未跟踪文本文件通过项目文本编码检测读取并生成全新增 Diff；二进制或无法解码内容返回稳定错误。
@@ -82,7 +85,18 @@ git_get_file_diff(project_path: String, file_path: String, status: String) -> Re
 
 - `commands::git::tests::collect_git_changes_skips_nested_repo_dir`（正例 + 反例）
 - `commands::git::tests::is_nested_repo_entry_detects_nested_repo_dir_only`
+- Agent `git::tests::changes_expands_untracked_directories_and_skips_nested_repositories`
 - 手工夹具：`D:\github\nested-git-test`（一级/二级嵌套仓库 + node_modules 假 .git）
+
+### Wrong vs Correct
+
+```rust
+// Wrong: 普通目录被折叠成 `?? test/`，共享前端生成空名称文件节点。
+&["status", "--porcelain=v1", "-z", "-unormal"]
+
+// Correct: 普通目录展开到具体文件，随后仅过滤嵌套仓库目录条目。
+&["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+```
 
 ### 已知未覆盖（后续项）
 
@@ -349,4 +363,93 @@ await invoke("git_delete_untracked_paths", {
   projectPath,
   paths: [filePath],
 });
+```
+
+---
+
+## SSH 远程 Git 全功能面板合约（Protocol 1.7）
+
+### 1. Scope / Trigger
+
+- 修改 `GitChangesPanel`、`gitStore`、Git Transport、`ssh_remote_git_request`、daemon Git lane 或 SSH Agent Git runner 时适用。
+- SSH、本地和 WSL 共用一套面板行为；执行环境差异只能存在于 Transport/后端边界。
+
+### 2. Signatures
+
+```typescript
+createGitTransport(
+  projectRoot: string,
+  remoteContext: SshRemoteGitContext | null,
+  remoteRequired: boolean,
+): GitTransport;
+```
+
+```rust
+ssh_remote_git_request(consumer_id, ssh_launch, kind, payload) -> Result<Value, String>
+```
+
+### 3. Contracts
+
+- SSH Git 要求 Agent capability `gitFull`，所有 Git 请求进入独立串行 Git lane；本地/WSL 继续调用既有 `git_*` command。
+- `payload.rootPath` 必须与 `SshLaunchPlan.remote_path` 完全一致，`repoPath` 和文件路径只允许仓库内 POSIX 相对路径。
+- SSH 根仓库的 `repoPath` 是合法空字符串 `""`，只有 `null` 表示没有生效仓库；Store action 禁止用 `!repoPath` 拒绝根仓库操作。
+- `remoteRequired=true` 且 SSH context 未就绪时返回 `ssh_agent_context_unavailable`，禁止选择 LocalGitTransport。
+- 写操作不自动重试；响应超时、通道关闭或读失败映射为 `remote_git_result_unknown`，先刷新真实状态。
+- 未跟踪 Diff 禁止跟随 symlink；路径数组同时限制数量与总字节数。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| Agent 缺少 `gitFull` | `ssh_agent_capability_missing:gitFull` |
+| `rootPath != ssh_launch.remote_path` | `remote_git_root_mismatch` |
+| SSH context pending/missing | `ssh_agent_context_unavailable`，不调用本地 Git |
+| SSH 根仓库 `repoPath == ""` | 作为根仓库正常执行，不能静默 return |
+| repo/file 路径越界、绝对路径、反斜杠、控制字符 | 稳定 `remote_git_*_invalid/confined` 错误 |
+| 未跟踪 Diff 目标为 symlink/目录 | `remote_git_symlink_rejected` |
+| 写响应结果不确定 | `remote_git_result_unknown`，刷新后由用户决定后续动作 |
+
+### 5. Good / Base / Bad Cases
+
+- Good: SSH 项目切换期间 context 为空，面板清空旧数据并阻断操作；context 就绪后才开始 15 秒低频轮询。
+- Good: Stage/Commit/Pull 等写操作在 Agent Git lane 串行执行，完成后按动作刷新状态。
+- Good: SSH 根仓库删除未跟踪文件时，空 `repoPath` 继续进入 Transport；嵌套仓库仍使用相对路径。
+- Base: Agent 未安装或 capability 不兼容，显示本地化提示，本地和 WSL Git 不受影响。
+- Bad: 将 SSH `remote_path` 传给 `git_get_changes` 或把 `remoteContext === null` 解释为本地项目。
+- Bad: 对未跟踪 symlink 使用 `fs::read`，从而读取仓库外目标。
+- Bad: 用 `if (!repoPath)` 判断仓库是否存在，导致 SSH 根仓库操作被静默跳过。
+
+### 6. Tests Required
+
+- `npx tsc --noEmit`。
+- `cargo check --manifest-path src-tauri/Cargo.toml`。
+- `cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml --lib`。
+- Agent 请求结构拒绝未知字段；路径、分支、patch、symlink 和输入上限有回归测试。
+- Node 回归测试断言 SSH 根仓库的空 `repoPath` 不被 Store action 当成缺失值。
+- GitNexus `detect-changes` 确认只影响预期 Git 面板、SSH bridge 和 Agent 流程。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+return remoteContext
+  ? createSshGitTransport(remoteContext)
+  : createLocalGitTransport(projectRoot);
+```
+
+#### Correct
+
+```typescript
+return createGitTransport(projectRoot, remoteContext, remoteRequired);
+```
+
+仓库标识判空同样必须区分合法空字符串与缺失值：
+
+```typescript
+// Wrong: SSH 根仓库 repoPath === "" 会被误判。
+if (!repoPath) return;
+
+// Correct: 只有 null 表示当前没有仓库。
+if (repoPath === null) return;
 ```

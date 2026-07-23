@@ -82,7 +82,7 @@ import {
 } from "./terminalWorkspan";
 
 export type SessionStatus = "running" | "exited" | "error";
-export type CliHookSource = "claude" | "codex" | "pi";
+export type CliHookSource = "claude" | "codex" | "pi" | "grok";
 export type CliHookEventName =
   | "SessionStart"
   | "UserPromptSubmit"
@@ -234,6 +234,7 @@ interface HookSettingsStatusPayload {
   claude: HookToolStatus;
   codex: HookToolStatus;
   pi: HookToolStatus;
+  grok: HookToolStatus;
   claudeAutoRepaired?: boolean;
 }
 
@@ -1076,15 +1077,17 @@ function prepareStartupCommandForPty(command: string | undefined, shell: ShellKe
 // 与 isDirectCodexStartupCommand（要求 codex 位于命令开头）不同，这里用更宽松的整词匹配做类型判定。
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const GROK_COMMAND_PATTERN = /(?:^|\s)grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 
-// 恢复会话时判定它是否为 codex/claude 这类 TUI CLI 会话。判定依据 = startupCmd 文本 + 项目 cli_tool 配置。
+// 恢复会话时判定它是否为 codex/claude/grok 这类 TUI CLI 会话。判定依据 = startupCmd 文本 + 项目 cli_tool 配置。
 // 判不出（如普通 pwsh/bash）返回 null，走 shell 分支（静态贴回 scrollback）。
 export function detectCliResumeKind(
   startupCmd: string | undefined,
   project: Project | undefined
-): "claude" | "codex" | null {
+): "claude" | "codex" | "grok" | null {
   const cmd = startupCmd?.trim() ?? "";
   const projectKind = project ? getProviderSwitchAppType(project) : null;
+  const cliTool = project?.cli_tool?.trim().toLowerCase() ?? "";
   // codex 优先：codex 项目可能带自定义 startupCmd，仍应当 codex resume。
   if (projectKind === "codex" || (project ? isExactCodexProject(project) : false) || CODEX_COMMAND_PATTERN.test(cmd)) {
     return "codex";
@@ -1092,14 +1095,17 @@ export function detectCliResumeKind(
   if (projectKind === "claude" || CLAUDE_COMMAND_PATTERN.test(cmd)) {
     return "claude";
   }
+  if (cliTool.includes("grok") || GROK_COMMAND_PATTERN.test(cmd)) {
+    return "grok";
+  }
   return null;
 }
 
-// 构造 CLI 会话的 resume 启动命令。为什么不贴 scrollback 而改走 resume：codex/claude 启动用绝对光标
+// 构造 CLI 会话的 resume 启动命令。为什么不贴 scrollback 而改走 resume：codex/claude/grok 启动用绝对光标
 // 定位整屏重绘，会盖掉我们贴回的历史文本（见 research/tui-startup-clear-sequences.md），因此改由 CLI
 // 自己 resume 重画上次对话。有 cliSessionId 走带 id 的 resume；无 id 兜底续最近一次（用户已拍板）。
 function buildCliResumeStartupCommand(
-  kind: "claude" | "codex",
+  kind: "claude" | "codex" | "grok",
   cliSessionId: string | undefined,
   project: Project | undefined
 ): string {
@@ -1108,6 +1114,11 @@ function buildCliResumeStartupCommand(
   if (kind === "codex") {
     const base = hasValidId ? `codex resume --no-alt-screen ${id}` : "codex resume --no-alt-screen --last";
     return appendResumeCliArgs(base, "codex", project ?? null);
+  }
+  if (kind === "grok") {
+    // Align with Claude: no --no-alt-screen by default. No id → cwd-scoped continue.
+    const base = hasValidId ? `grok --resume ${id}` : "grok --continue";
+    return appendResumeCliArgs(base, "grok", project ?? null);
   }
   const base = hasValidId ? `claude --resume ${id}` : "claude --continue";
   return appendResumeCliArgs(base, "claude", project ?? null);
@@ -1249,7 +1260,12 @@ function scheduleHookRunningTimeout(tabId: string, updatedAt: string) {
 
 async function shouldEnableHookEnv(): Promise<boolean> {
   const settings = useSettingsStore.getState();
-  if (!settings.claudeHookBridgeEnabled && !settings.codexHookBridgeEnabled && !settings.piHookBridgeEnabled) {
+  if (
+    !settings.claudeHookBridgeEnabled &&
+    !settings.codexHookBridgeEnabled &&
+    !settings.piHookBridgeEnabled &&
+    !settings.grokHookBridgeEnabled
+  ) {
     return false;
   }
   try {
@@ -1257,13 +1273,15 @@ async function shouldEnableHookEnv(): Promise<boolean> {
       selectedDir: settings.claudeHookConfigDir?.trim() || null,
       codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
       piSelectedDir: settings.piHookConfigDir?.trim() || null,
+      grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
       ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
       autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
     });
     return (
       (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
       (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
-      (settings.piHookBridgeEnabled && status.pi.status === "installed")
+      (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
+      (settings.grokHookBridgeEnabled && status.grok.status === "installed")
     );
   } catch (err) {
     logError("hook_settings_get_status failed while deciding terminal hook env", { err });

@@ -97,6 +97,9 @@ function parseProjectEnvVars(project?: Project | null): Record<string, string> |
 }
 
 function matchesHistorySource(project: Project, source: string): boolean {
+  if (source === "grok") {
+    return project.cli_tool.trim().toLowerCase().includes("grok");
+  }
   return getProviderSwitchAppType(project) === source;
 }
 
@@ -146,6 +149,7 @@ function resolveResumeCommand(session: HistorySessionView | HistorySessionDetail
   if (!sessionId || /\s/.test(sessionId) || /[\r\n]/.test(sessionId)) return null;
   if (session.source === "claude") return appendResumeCliArgs(`claude --resume ${sessionId}`, "claude", project);
   if (session.source === "codex") return appendResumeCliArgs(`codex resume ${sessionId}`, "codex", project);
+  if (session.source === "grok") return appendResumeCliArgs(`grok --resume ${sessionId}`, "grok", project);
   return null;
 }
 

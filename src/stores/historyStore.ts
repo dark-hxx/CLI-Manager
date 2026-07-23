@@ -784,7 +784,7 @@ export async function fetchRemoteHistoryStatsPayload(
 // source 非空时只匹配对应 CLI（claude/codex），供按终端工具区分的场景使用。
 // 传入 prev（上次结果的 file_path/updated_at）时，若最近会话未变化则返回 "unchanged"，
 // 跳过整个 jsonl 的重新解析，供轮询场景使用。
-// forceCatalogRefresh：Hook 刚绑定 sessionId / 用量仍为 0 时强制扫盘索引，避免 catalog TTL 导致侧栏空等再闪出。
+// forceCatalogRefresh：Hook 刚绑定 sessionId / 用量仍为 0 时后台触发扫盘索引；查询保持非阻塞。
 export async function fetchLatestProjectSessionDetail(
   projectPath: string,
   prev?: { filePath: string; updatedAt: number },
@@ -830,7 +830,7 @@ export async function fetchLatestProjectSessionDetail(
     };
 
     // 绑定了 CLI sessionId 时：先按项目过滤找，失败再仅按 sessionId 找（Pi 等 cwd/project_key 口径与 Claude 不同）。
-    // 仍 miss 时强制刷新 catalog 再试一次，避免新会话落盘后 10s TTL 内侧栏一直空白。
+    // 仍 miss 时后台刷新 catalog 再试一次；Grok 精确 sessionId 可由后端绕过 catalog 直接命中。
     const sessionQuery = cliSessionId?.trim() || null;
     const resolveBoundSummary = async (): Promise<HistorySessionSummary | null> => {
       if (!sessionQuery) {
@@ -842,7 +842,7 @@ export async function fetchLatestProjectSessionDetail(
       if (summary?.session_id === sessionQuery) return summary;
       if (!forceCatalogRefresh) return null;
       try {
-        await invoke("history_refresh_index", { ...pathArgs, wait: true });
+        await invoke("history_refresh_index", { ...pathArgs, wait: false });
       } catch (error) {
         logWarn("history.realtime.lookup.refreshFailed", {
           source: source ?? null,

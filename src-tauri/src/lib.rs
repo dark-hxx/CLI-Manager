@@ -1071,6 +1071,8 @@ pub fn run() {
             commands::hook_settings::hook_settings_uninstall_codex,
             commands::hook_settings::hook_settings_install_pi,
             commands::hook_settings::hook_settings_uninstall_pi,
+            commands::hook_settings::hook_settings_install_grok,
+            commands::hook_settings::hook_settings_uninstall_grok,
             commands::hook_settings::hook_settings_select_dir,
             commands::ccusage::ccusage_get_status,
             commands::ccusage::ccusage_install_tools,

@@ -404,6 +404,21 @@ fn is_valid_payload(payload: &ClaudeHookRequest) -> bool {
                 | "ToolStart"
                 | "ToolStop"
         ),
+        "grok" => matches!(
+            payload.event.as_str(),
+            "SessionStart"
+                | "UserPromptSubmit"
+                | "Notification"
+                | "PermissionRequest"
+                | "Stop"
+                | "StopFailure"
+                | "SubagentStart"
+                | "SubagentStop"
+                | "AgentToolStart"
+                | "AgentToolStop"
+                | "ToolStart"
+                | "ToolStop"
+        ),
         "codex" => matches!(
             payload.event.as_str(),
             "SessionStart"
@@ -474,6 +489,7 @@ fn normalize_source(source: Option<&str>) -> &str {
     match source {
         Some("codex") => "codex",
         Some("pi") => "pi",
+        Some("grok") => "grok",
         Some("claude") | None => "claude",
         _ => "",
     }
@@ -486,6 +502,55 @@ fn write_response(stream: &mut TcpStream, status: &str, body: &str) {
     );
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::{is_valid_payload, normalize_source, ClaudeHookRequest};
+    use serde_json::json;
+
+    #[test]
+    fn normalizes_and_accepts_grok_hook_events() {
+        assert_eq!(normalize_source(Some("grok")), "grok");
+
+        for event in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "Notification",
+            "PermissionRequest",
+            "Stop",
+            "StopFailure",
+            "SubagentStart",
+            "SubagentStop",
+            "AgentToolStart",
+            "AgentToolStop",
+            "ToolStart",
+            "ToolStop",
+        ] {
+            let request: ClaudeHookRequest = serde_json::from_value(json!({
+                "tabId": "external:grok:session",
+                "source": "grok",
+                "event": event,
+            }))
+            .expect("test payload should deserialize");
+            assert!(
+                is_valid_payload(&request),
+                "Grok event should be valid: {event}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_grok_hook_events() {
+        let request: ClaudeHookRequest = serde_json::from_value(json!({
+            "tabId": "external:grok:session",
+            "source": "grok",
+            "event": "UnknownEvent",
+        }))
+        .expect("test payload should deserialize");
+
+        assert!(!is_valid_payload(&request));
+    }
 }
 
 #[cfg(test)]

@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-23-ssh-remote-git-full-panel"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

@@ -18,6 +18,8 @@ const CODEX_FINISHED_SCRIPT_NAME: &str = "notify-cli-manager-codex-finished.ps1"
 const CLAUDE_SETTINGS_FILE_NAME: &str = "settings.json";
 const CODEX_HOOKS_FILE_NAME: &str = "hooks.json";
 const CODEX_CONFIG_FILE_NAME: &str = "config.toml";
+const GROK_HOOKS_FILE_NAME: &str = "cli-manager.json";
+const GROK_CONFIG_FILE_NAME: &str = "config.toml";
 
 const HOOK_COMMAND_MARKER: &str = "__hook";
 const CODEX_COMMON_CONFIG_HOOKS_MARKER: &str = "# CLI-Manager hook protection";
@@ -58,6 +60,7 @@ pub struct HookSettingsStatus {
     claude: ToolHookSettingsStatus,
     codex: ToolHookSettingsStatus,
     pi: ToolHookSettingsStatus,
+    grok: ToolHookSettingsStatus,
     cc_switch: CcSwitchHookProtectionStatus,
     claude_auto_repaired: bool,
 }
@@ -155,12 +158,14 @@ pub async fn hook_settings_get_status(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     auto_repair: Option<bool>,
 ) -> Result<HookSettingsStatus, String> {
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
     let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
     let mut claude_auto_repaired = false;
 
     if auto_repair.unwrap_or(false) {
@@ -184,6 +189,7 @@ pub async fn hook_settings_get_status(
     let claude = build_claude_status(claude_dir.clone())?;
     let codex = build_codex_status(codex_dir.clone())?;
     let pi = build_pi_status(pi_dir.clone())?;
+    let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -198,6 +204,7 @@ pub async fn hook_settings_get_status(
         claude,
         codex,
         pi,
+        grok,
         cc_switch,
         claude_auto_repaired,
     })
@@ -209,6 +216,7 @@ pub async fn hook_settings_install(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -217,6 +225,7 @@ pub async fn hook_settings_install(
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
     let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
     let requested_module = parse_claude_hook_module(module)?;
     if let Some(module) = requested_module {
         install_claude_hook_module(&claude_dir, module)?;
@@ -260,6 +269,7 @@ pub async fn hook_settings_install(
     }
     let codex = build_codex_status(codex_dir.clone())?;
     let pi = build_pi_status(pi_dir.clone())?;
+    let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -273,6 +283,7 @@ pub async fn hook_settings_install(
         claude,
         codex,
         pi,
+        grok,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -284,6 +295,7 @@ pub async fn hook_settings_uninstall(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -292,6 +304,7 @@ pub async fn hook_settings_uninstall(
         .ok_or_else(|| "请先选择 Claude 配置目录".to_string())?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
     let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
     let requested_module = parse_claude_hook_module(module)?;
     if let Some(module) = requested_module {
         uninstall_claude_hook_module(&claude_dir, module)?;
@@ -322,6 +335,7 @@ pub async fn hook_settings_uninstall(
     }
     let codex = build_codex_status(codex_dir.clone())?;
     let pi = build_pi_status(pi_dir.clone())?;
+    let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -335,6 +349,7 @@ pub async fn hook_settings_uninstall(
         claude,
         codex,
         pi,
+        grok,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -346,6 +361,7 @@ pub async fn hook_settings_install_codex(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -354,6 +370,7 @@ pub async fn hook_settings_install_codex(
         .ok_or_else(|| "请先选择 Codex 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
     let requested_module = parse_codex_hook_module(module)?;
     if let Some(module) = requested_module {
         install_codex_hook_module(&codex_dir, module)?;
@@ -397,6 +414,7 @@ pub async fn hook_settings_install_codex(
     }
     let claude = build_claude_status(claude_dir.clone())?;
     let pi = build_pi_status(pi_dir.clone())?;
+    let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -410,6 +428,7 @@ pub async fn hook_settings_install_codex(
         claude,
         codex,
         pi,
+        grok,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -421,6 +440,7 @@ pub async fn hook_settings_uninstall_codex(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
     sync_cc_switch_common_config: Option<bool>,
@@ -429,6 +449,7 @@ pub async fn hook_settings_uninstall_codex(
         .ok_or_else(|| "未找到 Codex 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
     let requested_module = parse_codex_hook_module(module)?;
     if let Some(module) = requested_module {
         uninstall_codex_hook_module(&codex_dir, module)?;
@@ -459,6 +480,7 @@ pub async fn hook_settings_uninstall_codex(
         }
     }
     let pi = build_pi_status(pi_dir.clone())?;
+    let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -472,6 +494,7 @@ pub async fn hook_settings_uninstall_codex(
         claude,
         codex,
         pi,
+        grok,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -483,6 +506,7 @@ pub async fn hook_settings_install_pi(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
@@ -490,6 +514,7 @@ pub async fn hook_settings_install_pi(
         .ok_or_else(|| "请先选择 Pi 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
     let requested_module = parse_pi_hook_module(module)?;
     if let Some(module) = requested_module {
         install_pi_hook_module(&pi_dir, module)?;
@@ -499,6 +524,7 @@ pub async fn hook_settings_install_pi(
     let claude = build_claude_status(claude_dir.clone())?;
     let codex = build_codex_status(codex_dir.clone())?;
     let pi = build_pi_status(Some(pi_dir.clone()))?;
+    let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -512,6 +538,7 @@ pub async fn hook_settings_install_pi(
         claude,
         codex,
         pi,
+        grok,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -523,6 +550,7 @@ pub async fn hook_settings_uninstall_pi(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
     pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
     cc_switch_db_path: Option<String>,
     module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
@@ -530,6 +558,7 @@ pub async fn hook_settings_uninstall_pi(
         .ok_or_else(|| "未找到 Pi 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
     let requested_module = parse_pi_hook_module(module)?;
     if let Some(module) = requested_module {
         uninstall_pi_hook_module(&pi_dir, module)?;
@@ -539,6 +568,7 @@ pub async fn hook_settings_uninstall_pi(
     let claude = build_claude_status(claude_dir.clone())?;
     let codex = build_codex_status(codex_dir.clone())?;
     let pi = build_pi_status(Some(pi_dir.clone()))?;
+    let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
         &app,
         cc_switch_db_path,
@@ -552,6 +582,99 @@ pub async fn hook_settings_uninstall_pi(
         claude,
         codex,
         pi,
+        grok,
+        cc_switch,
+        claude_auto_repaired: false,
+    })
+}
+
+
+#[tauri::command]
+pub async fn hook_settings_install_grok(
+    app: AppHandle,
+    selected_dir: Option<String>,
+    codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
+    cc_switch_db_path: Option<String>,
+    module: Option<String>,
+) -> Result<HookSettingsStatus, String> {
+    let grok_dir = resolve_grok_dir(grok_selected_dir, true)?
+        .ok_or_else(|| "请先选择 Grok 配置目录".to_string())?;
+    let claude_dir = resolve_claude_dir(selected_dir, false)?;
+    let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
+    let requested_module = parse_claude_hook_module(module)?;
+    if let Some(module) = requested_module {
+        install_grok_hook_module(&grok_dir, module)?;
+    } else {
+        install_grok_hooks(&grok_dir)?;
+    }
+    // Always enforce cross-vendor hook isolation on install (full or module).
+    disable_grok_cross_vendor_hooks(&grok_dir)?;
+    let claude = build_claude_status(claude_dir.clone())?;
+    let codex = build_codex_status(codex_dir.clone())?;
+    let pi = build_pi_status(pi_dir.clone())?;
+    let grok = build_grok_status(Some(grok_dir.clone()))?;
+    let cc_switch = inspect_ccswitch_hook_protection(
+        &app,
+        cc_switch_db_path,
+        claude_dir.as_deref(),
+        codex_dir.as_deref(),
+        &claude,
+        &codex,
+    )
+    .await;
+    Ok(HookSettingsStatus {
+        claude,
+        codex,
+        pi,
+        grok,
+        cc_switch,
+        claude_auto_repaired: false,
+    })
+}
+
+#[tauri::command]
+pub async fn hook_settings_uninstall_grok(
+    app: AppHandle,
+    selected_dir: Option<String>,
+    codex_selected_dir: Option<String>,
+    pi_selected_dir: Option<String>,
+    grok_selected_dir: Option<String>,
+    cc_switch_db_path: Option<String>,
+    module: Option<String>,
+) -> Result<HookSettingsStatus, String> {
+    let grok_dir = resolve_grok_dir(grok_selected_dir, false)?
+        .ok_or_else(|| "未找到 Grok 配置目录".to_string())?;
+    let claude_dir = resolve_claude_dir(selected_dir, false)?;
+    let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
+    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?;
+    let requested_module = parse_claude_hook_module(module)?;
+    if let Some(module) = requested_module {
+        uninstall_grok_hook_module(&grok_dir, module)?;
+    } else {
+        uninstall_grok_hooks(&grok_dir)?;
+    }
+    // Do not re-enable compat.*.hooks on uninstall (product decision).
+    let claude = build_claude_status(claude_dir.clone())?;
+    let codex = build_codex_status(codex_dir.clone())?;
+    let pi = build_pi_status(pi_dir.clone())?;
+    let grok = build_grok_status(Some(grok_dir.clone()))?;
+    let cc_switch = inspect_ccswitch_hook_protection(
+        &app,
+        cc_switch_db_path,
+        claude_dir.as_deref(),
+        codex_dir.as_deref(),
+        &claude,
+        &codex,
+    )
+    .await;
+    Ok(HookSettingsStatus {
+        claude,
+        codex,
+        pi,
+        grok,
         cc_switch,
         claude_auto_repaired: false,
     })
@@ -559,6 +682,7 @@ pub async fn hook_settings_uninstall_pi(
 
 #[tauri::command]
 pub async fn hook_settings_select_dir(
+
     app: AppHandle,
     title: Option<String>,
 ) -> Result<Option<String>, String> {
@@ -2421,6 +2545,432 @@ fn disable_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
 }
 
 
+
+fn resolve_grok_dir(
+    selected_dir: Option<String>,
+    create_if_missing: bool,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(dir) = selected_dir.and_then(|value| normalize_selected_dir(&value)) {
+        if dir.is_dir() {
+            return Ok(Some(dir));
+        }
+        if create_if_missing {
+            fs::create_dir_all(&dir).map_err(|e| format!("创建 Grok 配置目录失败: {e}"))?;
+            return Ok(Some(dir));
+        }
+        return Err("选择的 Grok 配置目录不存在".to_string());
+    }
+
+    let Some(home) = home_dir() else {
+        return Ok(None);
+    };
+    let default_dir = env::var_os("GROK_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".grok"));
+    if default_dir.is_dir() {
+        Ok(Some(default_dir))
+    } else if create_if_missing {
+        fs::create_dir_all(&default_dir).map_err(|e| format!("创建 Grok 配置目录失败: {e}"))?;
+        Ok(Some(default_dir))
+    } else {
+        Ok(None)
+    }
+}
+
+fn grok_hooks_path(grok_dir: &Path) -> PathBuf {
+    grok_dir.join("hooks").join(GROK_HOOKS_FILE_NAME)
+}
+
+fn grok_config_path(grok_dir: &Path) -> PathBuf {
+    grok_dir.join(GROK_CONFIG_FILE_NAME)
+}
+
+fn install_grok_hooks(grok_dir: &Path) -> Result<(), String> {
+    let exe = hook_exe_for_dir(grok_dir)?;
+    let hooks_path = grok_hooks_path(grok_dir);
+    if let Some(parent) = hooks_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 Grok hooks 目录失败: {e}"))?;
+    }
+    let mut settings = read_json(&hooks_path)?;
+    ensure_root_object(&settings, GROK_HOOKS_FILE_NAME)?;
+    remove_hook_commands(&mut settings, &CLAUDE_HOOK_EVENTS, &[]);
+    for module in ALL_CLAUDE_HOOK_MODULES {
+        apply_named_hook_module(&mut settings, &exe, "grok", module);
+    }
+    write_json(&hooks_path, &settings)?;
+    verify_grok_hooks_file(&hooks_path, &exe)?;
+    disable_grok_cross_vendor_hooks(grok_dir)?;
+    verify_grok_cross_vendor_isolation(grok_dir)?;
+    Ok(())
+}
+
+fn install_grok_hook_module(grok_dir: &Path, module: ClaudeHookModule) -> Result<(), String> {
+    let exe = hook_exe_for_dir(grok_dir)?;
+    let hooks_path = grok_hooks_path(grok_dir);
+    if let Some(parent) = hooks_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 Grok hooks 目录失败: {e}"))?;
+    }
+    let mut settings = read_json(&hooks_path)?;
+    ensure_root_object(&settings, GROK_HOOKS_FILE_NAME)?;
+    if let ClaudeHookModule::Attention = module {
+        remove_named_hook_module(&mut settings, "grok", module);
+    }
+    apply_named_hook_module(&mut settings, &exe, "grok", module);
+    write_json(&hooks_path, &settings)?;
+    // Module install still enforces isolation so partial installs cannot leave foreign hooks active.
+    disable_grok_cross_vendor_hooks(grok_dir)?;
+    Ok(())
+}
+
+fn verify_grok_hooks_file(hooks_path: &Path, exe: &str) -> Result<(), String> {
+    if !hooks_path.is_file() {
+        return Err(format!(
+            "Grok Hook 写入失败：文件不存在 {}",
+            path_to_string(hooks_path)
+        ));
+    }
+    let settings = read_json(hooks_path)?;
+    let expected = build_command(exe, "grok", "SessionStart");
+    if !exact_command_registered(&settings, "SessionStart", &expected) {
+        return Err(format!(
+            "Grok Hook 写入校验失败：未在 {} 找到 SessionStart 命令",
+            path_to_string(hooks_path)
+        ));
+    }
+    if !settings
+        .get("hooks")
+        .and_then(Value::as_object)
+        .is_some_and(|hooks| !hooks.is_empty())
+    {
+        return Err(format!(
+            "Grok Hook 写入校验失败：{} 中 hooks 为空",
+            path_to_string(hooks_path)
+        ));
+    }
+    Ok(())
+}
+
+fn verify_grok_cross_vendor_isolation(grok_dir: &Path) -> Result<(), String> {
+    let config_path = grok_config_path(grok_dir);
+    if !grok_cross_vendor_hooks_disabled(&config_path)? {
+        return Err(format!(
+            "Grok 跨工具 Hook 隔离写入失败：请检查 {} 中 compat.claude.hooks / compat.cursor.hooks",
+            path_to_string(&config_path)
+        ));
+    }
+    Ok(())
+}
+
+fn uninstall_grok_hooks(grok_dir: &Path) -> Result<(), String> {
+    let hooks_path = grok_hooks_path(grok_dir);
+    if !hooks_path.is_file() {
+        return Ok(());
+    }
+    let mut settings = read_json(&hooks_path)?;
+    ensure_root_object(&settings, GROK_HOOKS_FILE_NAME)?;
+    remove_hook_commands(&mut settings, &CLAUDE_HOOK_EVENTS, &[]);
+    if settings.get("hooks").is_none() {
+        let _ = fs::remove_file(&hooks_path);
+        return Ok(());
+    }
+    write_json(&hooks_path, &settings)
+}
+
+fn uninstall_grok_hook_module(grok_dir: &Path, module: ClaudeHookModule) -> Result<(), String> {
+    let hooks_path = grok_hooks_path(grok_dir);
+    if !hooks_path.is_file() {
+        return Ok(());
+    }
+    let mut settings = read_json(&hooks_path)?;
+    ensure_root_object(&settings, GROK_HOOKS_FILE_NAME)?;
+    remove_named_hook_module(&mut settings, "grok", module);
+    if settings.get("hooks").is_none() {
+        let _ = fs::remove_file(&hooks_path);
+        return Ok(());
+    }
+    write_json(&hooks_path, &settings)
+}
+
+fn disable_grok_cross_vendor_hooks(grok_dir: &Path) -> Result<(), String> {
+    let config_path = grok_config_path(grok_dir);
+    let content = match fs::read_to_string(&config_path) {
+        Ok(value) => value,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("读取 {} 失败: {e}", path_to_string(&config_path))),
+    };
+    let mut next = set_toml_table_bool(&content, "compat.claude", "hooks", false);
+    next = set_toml_table_bool(&next, "compat.cursor", "hooks", false);
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 Grok 配置目录失败: {e}"))?;
+    }
+    fs::write(&config_path, next)
+        .map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&config_path)))
+}
+
+/// Set `key = bool` under a dotted table header like `compat.claude`.
+/// Creates the table if missing. Preserves unrelated lines.
+fn set_toml_table_bool(content: &str, table: &str, key: &str, value: bool) -> String {
+    let header = format!("[{table}]");
+    let value_text = if value { "true" } else { "false" };
+    let assignment = format!("{key} = {value_text}");
+    let mut lines: Vec<String> = content.lines().map(ToString::to_string).collect();
+
+    let header_index = lines.iter().position(|line| line.trim() == header);
+    let Some(header_index) = header_index else {
+        if !lines.is_empty() && !lines.last().map(|l| l.trim().is_empty()).unwrap_or(true) {
+            lines.push(String::new());
+        }
+        lines.push(header);
+        lines.push(assignment);
+        lines.push(String::new());
+        return format_toml_lines(&lines);
+    };
+
+    let mut insert_index = lines.len();
+    let mut key_line = None;
+    for index in header_index + 1..lines.len() {
+        let trimmed = lines[index].trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            insert_index = index;
+            break;
+        }
+        if trimmed.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
+            key_line = Some(index);
+            break;
+        }
+    }
+    if let Some(index) = key_line {
+        lines[index] = assignment;
+    } else {
+        lines.insert(insert_index, assignment);
+    }
+    format_toml_lines(&lines)
+}
+
+fn format_toml_lines(lines: &[String]) -> String {
+    let mut out = lines.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn grok_cross_vendor_hooks_disabled(config_path: &Path) -> Result<bool, String> {
+    let content = match fs::read_to_string(config_path) {
+        Ok(value) => value,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("读取 {} 失败: {e}", path_to_string(config_path))),
+    };
+    Ok(
+        toml_table_bool(&content, "compat.claude", "hooks") == Some(false)
+            && toml_table_bool(&content, "compat.cursor", "hooks") == Some(false)
+    )
+}
+
+fn toml_table_bool(content: &str, table: &str, key: &str) -> Option<bool> {
+    let header = format!("[{table}]");
+    let mut in_table = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_table = trimmed == header;
+            continue;
+        }
+        if !in_table {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            if k.trim() == key {
+                let value = v.split('#').next().unwrap_or("").trim();
+                return match value {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                };
+            }
+        }
+    }
+    None
+}
+
+fn apply_named_hook_module(
+    settings: &mut Value,
+    exe: &str,
+    source: &str,
+    module: ClaudeHookModule,
+) {
+    match module {
+        ClaudeHookModule::SessionStart => add_hook_command(
+            settings,
+            "SessionStart",
+            build_command(exe, source, "SessionStart"),
+        ),
+        ClaudeHookModule::Running => add_hook_command(
+            settings,
+            "UserPromptSubmit",
+            build_command(exe, source, "UserPromptSubmit"),
+        ),
+        ClaudeHookModule::Attention => add_hook_command_with_matcher(
+            settings,
+            "PreToolUse",
+            "Bash|Edit|Write|MultiEdit",
+            build_command(exe, source, "PermissionRequest"),
+        ),
+        ClaudeHookModule::Stop => {
+            add_hook_command(settings, "Stop", build_command(exe, source, "Stop"))
+        }
+        ClaudeHookModule::Failure => add_hook_command(
+            settings,
+            "StopFailure",
+            build_command(exe, source, "StopFailure"),
+        ),
+        ClaudeHookModule::Subagent => {
+            add_hook_command(
+                settings,
+                "SubagentStart",
+                build_command(exe, source, "SubagentStart"),
+            );
+            add_hook_command(
+                settings,
+                "SubagentStop",
+                build_command(exe, source, "SubagentStop"),
+            );
+            add_hook_command_with_matcher(
+                settings,
+                "PreToolUse",
+                "Agent|Task",
+                build_command(exe, source, "AgentToolStart"),
+            );
+            add_hook_command_with_matcher(
+                settings,
+                "PostToolUse",
+                "Agent|Task",
+                build_command(exe, source, "AgentToolStop"),
+            );
+            add_hook_command(
+                settings,
+                "PreToolUse",
+                build_command(exe, source, "ToolStart"),
+            );
+            add_hook_command(
+                settings,
+                "PostToolUse",
+                build_command(exe, source, "ToolStop"),
+            );
+        }
+    }
+}
+
+fn remove_named_hook_module(settings: &mut Value, source: &str, module: ClaudeHookModule) {
+    match module {
+        ClaudeHookModule::SessionStart => {
+            remove_named_hook_command(settings, "SessionStart", source, "SessionStart")
+        }
+        ClaudeHookModule::Running => {
+            remove_named_hook_command(settings, "UserPromptSubmit", source, "UserPromptSubmit")
+        }
+        ClaudeHookModule::Attention => {
+            // Remove the obsolete Grok Notification registration during module upgrades.
+            remove_named_hook_command(settings, "Notification", source, "Notification");
+            remove_named_hook_command(settings, "PreToolUse", source, "PermissionRequest");
+        }
+        ClaudeHookModule::Stop => remove_named_hook_command(settings, "Stop", source, "Stop"),
+        ClaudeHookModule::Failure => {
+            remove_named_hook_command(settings, "StopFailure", source, "StopFailure")
+        }
+        ClaudeHookModule::Subagent => {
+            for (hook_event, command_event) in [
+                ("SubagentStart", "SubagentStart"),
+                ("SubagentStop", "SubagentStop"),
+                ("PreToolUse", "AgentToolStart"),
+                ("PostToolUse", "AgentToolStop"),
+                ("PreToolUse", "ToolStart"),
+                ("PostToolUse", "ToolStop"),
+            ] {
+                remove_named_hook_command(settings, hook_event, source, command_event);
+            }
+        }
+    }
+}
+
+fn build_grok_status(grok_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, String> {
+    let Some(grok_dir) = grok_dir else {
+        return missing_status();
+    };
+
+    let hooks_dir = grok_dir.join("hooks");
+    let hooks_path = grok_hooks_path(&grok_dir);
+    let config_path = grok_config_path(&grok_dir);
+    let exe = hook_exe_for_dir(&grok_dir).ok();
+    let settings = read_json_if_exists(&hooks_path)?;
+    let registered = |event: &str| {
+        exe.as_deref().is_some_and(|exe| {
+            exact_command_registered(&settings, event, &build_command(exe, "grok", event))
+        })
+    };
+    let isolation_ok = grok_cross_vendor_hooks_disabled(&config_path)?;
+    let checks = ToolChecks {
+        attention_script_installed: exe.is_some(),
+        finished_script_installed: exe.is_some(),
+        session_start_hook_installed: registered("SessionStart"),
+        running_hook_installed: registered("UserPromptSubmit"),
+        attention_hook_installed: registered_exact_command(
+            &settings,
+            exe.as_deref(),
+            "PreToolUse",
+            "grok",
+            "PermissionRequest",
+        ),
+        attention_hook_required: true,
+        stop_hook_installed: registered("Stop"),
+        failure_hook_installed: registered("StopFailure"),
+        failure_hook_required: true,
+        subagent_start_hook_installed: registered("SubagentStart")
+            && registered("SubagentStop")
+            && registered_exact_command(
+                &settings,
+                exe.as_deref(),
+                "PreToolUse",
+                "grok",
+                "AgentToolStart",
+            )
+            && registered_exact_command(
+                &settings,
+                exe.as_deref(),
+                "PostToolUse",
+                "grok",
+                "AgentToolStop",
+            )
+            && registered_exact_command(
+                &settings,
+                exe.as_deref(),
+                "PreToolUse",
+                "grok",
+                "ToolStart",
+            )
+            && registered_exact_command(
+                &settings,
+                exe.as_deref(),
+                "PostToolUse",
+                "grok",
+                "ToolStop",
+            ),
+        subagent_start_hook_required: true,
+        // Reuse hooks_feature_installed to mean "cross-vendor hook isolation enabled".
+        hooks_feature_installed: isolation_ok,
+    };
+
+    Ok(status_from_checks(
+        Some(grok_dir),
+        Some(hooks_dir),
+        Some(hooks_path),
+        Some(config_path),
+        checks,
+    ))
+}
+
+
 fn resolve_pi_dir(
     selected_dir: Option<String>,
     create_if_missing: bool,
@@ -3123,6 +3673,44 @@ fn remove_hook_commands(settings: &mut Value, events: &[&str], script_names: &[&
     }
 }
 
+fn remove_named_hook_command(
+    settings: &mut Value,
+    hook_event: &str,
+    source: &str,
+    command_event: &str,
+) {
+    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(Value::Array(entries)) = hooks.get_mut(hook_event) else {
+        return;
+    };
+    let source_arg = format!("--source {source}");
+    let event_arg = format!("--event {command_event}");
+    entries.retain_mut(|entry| {
+        let Some(commands) = entry.get_mut("hooks").and_then(Value::as_array_mut) else {
+            return true;
+        };
+        commands.retain(|hook| {
+            !hook
+                .get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|command| {
+                    command.contains(HOOK_COMMAND_MARKER)
+                        && command.contains(&source_arg)
+                        && command.contains(&event_arg)
+                })
+        });
+        !commands.is_empty()
+    });
+    if entries.is_empty() {
+        hooks.remove(hook_event);
+    }
+    if hooks.is_empty() {
+        settings.as_object_mut().map(|root| root.remove("hooks"));
+    }
+}
+
 fn registered_exact_command(
     settings: &Value,
     exe: Option<&str>,
@@ -3404,6 +3992,136 @@ mod tests {
         let after_uninstall = fs::read_to_string(codex_dir.join(CODEX_HOOKS_FILE_NAME)).unwrap();
         assert!(!after_uninstall.contains("--event SubagentStart"));
         assert!(!after_uninstall.contains("--event SubagentStop"));
+    }
+
+    #[tokio::test]
+    async fn install_then_uninstall_grok_writes_hooks_and_disables_compat() {
+        let tmp = TempDir::new().unwrap();
+        let grok_dir = tmp.path().join("grok");
+        fs::create_dir_all(&grok_dir).unwrap();
+
+        install_grok_hooks(&grok_dir).unwrap();
+        let status = build_grok_status(Some(grok_dir.clone())).unwrap();
+        assert!(matches!(status.status, HookInstallStatus::Installed));
+        assert!(status.hooks_feature_installed);
+
+        let hooks_json = fs::read_to_string(grok_hooks_path(&grok_dir)).unwrap();
+        assert!(hooks_json.contains(HOOK_COMMAND_MARKER));
+        assert!(hooks_json.contains("--source grok"));
+        assert!(hooks_json.contains("--event SessionStart"));
+        assert!(hooks_json.contains("--event PermissionRequest"));
+        assert!(hooks_json.contains("Bash|Edit|Write|MultiEdit"));
+        assert!(hooks_json.contains("--event ToolStart"));
+        assert!(!hooks_json.contains("--event Notification"));
+
+        let config = fs::read_to_string(grok_config_path(&grok_dir)).unwrap();
+        assert!(config.contains("[compat.claude]"));
+        assert!(config.contains("[compat.cursor]"));
+        assert_eq!(
+            toml_table_bool(&config, "compat.claude", "hooks"),
+            Some(false)
+        );
+        assert_eq!(
+            toml_table_bool(&config, "compat.cursor", "hooks"),
+            Some(false)
+        );
+
+        uninstall_grok_hooks(&grok_dir).unwrap();
+        let status = build_grok_status(Some(grok_dir.clone())).unwrap();
+        assert!(!matches!(status.status, HookInstallStatus::Installed));
+        // Uninstall must NOT re-enable foreign hooks.
+        let config = fs::read_to_string(grok_config_path(&grok_dir)).unwrap();
+        assert_eq!(
+            toml_table_bool(&config, "compat.claude", "hooks"),
+            Some(false)
+        );
+        assert_eq!(
+            toml_table_bool(&config, "compat.cursor", "hooks"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn uninstall_grok_attention_preserves_tool_start_hook() {
+        let tmp = TempDir::new().unwrap();
+        let grok_dir = tmp.path().join("grok");
+        fs::create_dir_all(&grok_dir).unwrap();
+
+        install_grok_hooks(&grok_dir).unwrap();
+        uninstall_grok_hook_module(&grok_dir, ClaudeHookModule::Attention).unwrap();
+
+        let settings = read_json(&grok_hooks_path(&grok_dir)).unwrap();
+        let exe = hook_exe_for_dir(&grok_dir).unwrap();
+        assert!(!registered_exact_command(
+            &settings,
+            Some(&exe),
+            "PreToolUse",
+            "grok",
+            "PermissionRequest",
+        ));
+        assert!(registered_exact_command(
+            &settings,
+            Some(&exe),
+            "PreToolUse",
+            "grok",
+            "ToolStart",
+        ));
+    }
+
+    #[test]
+    fn install_grok_attention_upgrades_obsolete_notification_hook() {
+        let tmp = TempDir::new().unwrap();
+        let grok_dir = tmp.path().join("grok");
+        fs::create_dir_all(&grok_dir).unwrap();
+        let exe = hook_exe_for_dir(&grok_dir).unwrap();
+        let hooks_path = grok_hooks_path(&grok_dir);
+        let mut settings = json!({});
+        add_hook_command_with_matcher(
+            &mut settings,
+            "Notification",
+            "permission_prompt|idle_prompt",
+            build_command(&exe, "grok", "Notification"),
+        );
+        fs::create_dir_all(hooks_path.parent().unwrap()).unwrap();
+        write_json(&hooks_path, &settings).unwrap();
+
+        install_grok_hook_module(&grok_dir, ClaudeHookModule::Attention).unwrap();
+
+        let settings = read_json(&hooks_path).unwrap();
+        assert!(!registered_exact_command(
+            &settings,
+            Some(&exe),
+            "Notification",
+            "grok",
+            "Notification",
+        ));
+        assert!(registered_exact_command(
+            &settings,
+            Some(&exe),
+            "PreToolUse",
+            "grok",
+            "PermissionRequest",
+        ));
+    }
+
+    #[test]
+    fn set_toml_table_bool_updates_existing_and_preserves_other_keys() {
+        let input = r#"
+[models]
+default = "x"
+
+[compat.claude]
+skills = true
+hooks = true
+
+[ui]
+yolo = false
+"#;
+        let out = set_toml_table_bool(input, "compat.claude", "hooks", false);
+        assert_eq!(toml_table_bool(&out, "compat.claude", "hooks"), Some(false));
+        assert!(out.contains("skills = true"));
+        assert!(out.contains("[models]"));
+        assert!(out.contains("[ui]"));
     }
 
     #[tokio::test]

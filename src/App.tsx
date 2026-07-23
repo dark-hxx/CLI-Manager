@@ -130,6 +130,7 @@ interface HookSettingsStatusPayload {
   claude: { status: HookInstallStatus };
   codex: { status: HookInstallStatus };
   pi: { status: HookInstallStatus };
+  grok: { status: HookInstallStatus };
   claudeAutoRepaired?: boolean;
 }
 
@@ -149,6 +150,7 @@ async function hasInstalledCliHook(): Promise<boolean> {
     selectedDir: settings.claudeHookConfigDir?.trim() || null,
     codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
     piSelectedDir: settings.piHookConfigDir?.trim() || null,
+    grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
     ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
     autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
   });
@@ -161,7 +163,8 @@ async function hasInstalledCliHook(): Promise<boolean> {
   return (
     (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
     (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
-    (settings.piHookBridgeEnabled && status.pi.status === "installed")
+    (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
+    (settings.grokHookBridgeEnabled && status.grok.status === "installed")
   );
 }
 
@@ -208,6 +211,7 @@ function getClaudeHookToastStyle(payload: CliHookPayload): ClaudeHookToastStyle 
 function getCliHookSourceName(payload: CliHookPayload): string {
   if (payload.source === "codex") return "Codex CLI";
   if (payload.source === "pi") return "Pi Agent";
+  if (payload.source === "grok") return "Grok Build";
   return "Claude Code";
 }
 
@@ -769,9 +773,14 @@ function App() {
         }
         return;
       }
-      const tabId = useTerminalStore.getState().handleCliHookEvent(event.payload);
+      const boundTabId = useTerminalStore.getState().handleCliHookEvent(event.payload);
+      // External hooks (no PTY tab env) still carry a synthetic tabId like external:grok:<session>.
+      // Prefer bound session when present; otherwise fall back so toast/system notifications still fire.
+      const tabId = boundTabId ?? event.payload.tabId?.trim() ?? null;
       const terminalStore = useTerminalStore.getState();
-      const tabTitle = tabId ? terminalStore.sessions.find((session) => session.id === tabId)?.title ?? null : null;
+      const tabTitle = boundTabId
+        ? terminalStore.sessions.find((session) => session.id === boundTabId)?.title ?? null
+        : null;
       // SessionStart/UserPromptSubmit 只更新状态；普通工具生命周期事件不打扰用户。
       if (
         tabId &&

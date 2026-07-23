@@ -1,6 +1,75 @@
 # CLI Hook Contracts
 
-Concrete contracts for Claude/Codex hook integration.
+Concrete contracts for Claude/Codex/Pi/Grok hook integration.
+
+## Scenario: Local Hook Source Admission
+
+### 1. Scope / Trigger
+
+- Trigger: adding a local CLI Hook source or extending its installed event modules.
+- Applies to: Hook installation, the hidden `__hook` client, local HTTP bridge validation, frontend source typing, and realtime session binding.
+
+### 2. Signatures
+
+```text
+<cli-manager-exe> __hook --source <claude|codex|pi|grok> --event <event>
+normalize_source(source: Option<&str>) -> &str
+is_valid_payload(payload: &ClaudeHookRequest) -> bool
+```
+
+### 3. Contracts
+
+- A source is supported only when the installer, `__hook` client, HTTP receiver, frontend `CliHookSource`, and history binding all recognize the same source value.
+- `normalize_source` preserves `grok`; unknown explicit values normalize to an empty value and are rejected.
+- Grok installer maps approval attention to `PreToolUse` with matcher `Bash|Edit|Write|MultiEdit`, then reports it as `PermissionRequest`; Grok 0.2.111 does not expose a native `PermissionRequest` hook and `Notification` is not an approval event.
+- Grok accepts `SessionStart`, `UserPromptSubmit`, legacy `Notification`, `PermissionRequest`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `AgentToolStart`, `AgentToolStop`, `ToolStart`, and `ToolStop`. Uninstalling the attention module must remove only its `PreToolUse -> PermissionRequest` command and preserve `ToolStart`/sub-agent hooks sharing the same native event.
+- Grok `permissionMode=bypassPermissions` suppresses the synthetic approval notification; `auto` does not, because dangerous tools may still require approval.
+- Grok hook stdin may use camelCase `sessionId` and `transcriptPath`; shared hook normalization must preserve them.
+- Invalid source/event pairs return HTTP 400 and never reach frontend or third-party notification sinks. The hidden Hook process still exits successfully so a bridge failure cannot interrupt the CLI.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|-----------|-------------------|
+| Known source + allowed event | Accept, normalize, and route the payload. |
+| Known source + unknown event | HTTP 400; no notification delivery. |
+| Unknown explicit source | Normalize to empty, HTTP 400. |
+| Missing source | Preserve the legacy Claude default. |
+| Grok camelCase session id | Bind the normalized session id when present. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Grok displays a successful Hook execution and CLI-Manager receives the event under `source=grok`.
+- Base: Claude, Codex, and Pi keep their existing event sets and routing behavior.
+- Bad: the installer writes `--source grok`, but `normalize_source` or `is_valid_payload` omits Grok, causing every request to be silently discarded after Hook execution.
+
+### 6. Tests Required
+
+- Rust unit test that every installed Grok event passes `is_valid_payload` and an unknown event fails.
+- Hook-schema unit test that Grok camelCase `sessionId` is normalized.
+- Run `cargo check` after changing source admission or payload fields.
+- Manual desktop check: start an internal Grok terminal, confirm SessionStart binds the session, then confirm Stop and an approved dangerous-tool `PermissionRequest` reach CLI-Manager.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Installer supports Grok, but the HTTP receiver still rejects it.
+match normalize_source(payload.source.as_deref()) {
+    "claude" => validate_claude_event(&payload.event),
+    _ => false,
+}
+```
+
+#### Correct
+
+```rust
+match normalize_source(payload.source.as_deref()) {
+    "claude" | "grok" => validate_claude_compatible_event(&payload.event),
+    _ => false,
+}
+```
 
 ## Scenario: Per-Tool Hook Bridge Enablement
 

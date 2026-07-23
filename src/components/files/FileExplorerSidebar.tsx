@@ -805,6 +805,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const project = useFileExplorerStore((s) => s.project);
   const readOnly = project?.environment_type === "ssh";
   const tree = useFileExplorerStore((s) => s.tree);
+  const loading = useFileExplorerStore((s) => s.loading);
   const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
   const searchMode = useFileExplorerStore((s) => s.searchMode);
   const searchQuery = useFileExplorerStore((s) => s.searchQuery);
@@ -1602,6 +1603,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   }, [project, t]);
 
   const renderRows = useMemo(() => {
+    if (loading && tree.length === 0) {
+      return <div className="px-3 py-8 text-center text-xs text-text-muted">{t("common.loading")}</div>;
+    }
+
     if (hasSearchQuery && searchLoading) {
       return <div className="px-3 py-8 text-center text-xs text-text-muted">{t("files.searching")}</div>;
     }
@@ -1651,7 +1656,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       <div className="px-3 py-8 text-center text-xs text-text-muted">{t("files.empty")}</div>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, getGitChange, requestOpenDiff, autoCollapseGroups, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, renamingAction?.path, submitRename, cancelRename, t]);
+  }, [loading, tree.length, hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, getGitChange, requestOpenDiff, autoCollapseGroups, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, renamingAction?.path, submitRename, cancelRename, t]);
 
   if (!project) return null;
 

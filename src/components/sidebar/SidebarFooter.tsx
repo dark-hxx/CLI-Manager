@@ -10,7 +10,7 @@ import { useI18n } from "../../lib/i18n";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
 type HookLightStatus = "missing" | "partial" | "installed";
-type HookTool = "claude" | "codex" | "pi";
+type HookTool = "claude" | "codex" | "pi" | "grok";
 
 interface ToolHookSettingsStatus {
   configDir: string | null;
@@ -21,6 +21,7 @@ interface HookSettingsStatus {
   claude: ToolHookSettingsStatus;
   codex: ToolHookSettingsStatus;
   pi: ToolHookSettingsStatus;
+  grok: ToolHookSettingsStatus;
   claudeAutoRepaired?: boolean;
 }
 
@@ -41,8 +42,8 @@ function getApplicableTools(
   enabledTools: Record<HookTool, boolean>
 ): HookTool[] {
   if (!status) return [];
-  return (["claude", "codex", "pi"] as const).filter(
-    (tool) => enabledTools[tool] && Boolean(status[tool].configDir)
+  return (["claude", "codex", "pi", "grok"] as const).filter(
+    (tool) => enabledTools[tool] && Boolean(status[tool]?.configDir)
   );
 }
 
@@ -64,10 +65,12 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const piHookConfigDir = useSettingsStore((s) => s.piHookConfigDir);
+  const grokHookConfigDir = useSettingsStore((s) => s.grokHookConfigDir);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const claudeHookBridgeEnabled = useSettingsStore((s) => s.claudeHookBridgeEnabled);
   const codexHookBridgeEnabled = useSettingsStore((s) => s.codexHookBridgeEnabled);
   const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
+  const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
   const claudeHookAutoRepairKnownInstalled = useSettingsStore((s) => s.claudeHookAutoRepairKnownInstalled);
   const claudeHookAutoRepairNoticeShown = useSettingsStore((s) => s.claudeHookAutoRepairNoticeShown);
   const updateSetting = useSettingsStore((s) => s.update);
@@ -78,15 +81,18 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   const selectedDir = useMemo(() => trimDir(claudeHookConfigDir), [claudeHookConfigDir]);
   const codexSelectedDir = useMemo(() => trimDir(codexHookConfigDir), [codexHookConfigDir]);
   const piSelectedDir = useMemo(() => trimDir(piHookConfigDir), [piHookConfigDir]);
+  const grokSelectedDir = useMemo(() => trimDir(grokHookConfigDir), [grokHookConfigDir]);
   const enabledTools = useMemo<Record<HookTool, boolean>>(
     () => ({
       claude: claudeHookBridgeEnabled,
       codex: codexHookBridgeEnabled,
       pi: piHookBridgeEnabled,
+      grok: grokHookBridgeEnabled,
     }),
-    [claudeHookBridgeEnabled, codexHookBridgeEnabled, piHookBridgeEnabled]
+    [claudeHookBridgeEnabled, codexHookBridgeEnabled, piHookBridgeEnabled, grokHookBridgeEnabled]
   );
-  const allBridgesDisabled = !claudeHookBridgeEnabled && !codexHookBridgeEnabled && !piHookBridgeEnabled;
+  const allBridgesDisabled =
+    !claudeHookBridgeEnabled && !codexHookBridgeEnabled && !piHookBridgeEnabled && !grokHookBridgeEnabled;
   const lightStatus = getHookLightStatus(status, enabledTools);
 
   const refreshStatus = useCallback(async () => {
@@ -96,6 +102,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
         selectedDir,
         codexSelectedDir,
         piSelectedDir,
+        grokSelectedDir,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         autoRepair: claudeHookBridgeEnabled && claudeHookAutoRepairKnownInstalled,
       });
@@ -117,8 +124,10 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
     claudeHookAutoRepairKnownInstalled,
     claudeHookAutoRepairNoticeShown,
     codexSelectedDir,
+    grokSelectedDir,
     piSelectedDir,
     selectedDir,
+    t,
     updateSetting,
   ]);
 
@@ -136,49 +145,30 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
 
     setWorking(true);
     try {
+      const dirs = {
+        selectedDir,
+        codexSelectedDir,
+        piSelectedDir,
+        grokSelectedDir,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      };
       if (tools.includes("claude")) {
-        await invoke<HookSettingsStatus>("hook_settings_uninstall", {
-          selectedDir,
-          codexSelectedDir,
-          piSelectedDir,
-          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-        });
-        await invoke<HookSettingsStatus>("hook_settings_install", {
-          selectedDir,
-          codexSelectedDir,
-          piSelectedDir,
-          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-        });
+        await invoke<HookSettingsStatus>("hook_settings_uninstall", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install", dirs);
         await updateSetting("claudeHookAutoRepairKnownInstalled", true);
         await updateSetting("claudeHookAutoRepairNoticeShown", false);
       }
       if (tools.includes("codex")) {
-        await invoke<HookSettingsStatus>("hook_settings_uninstall_codex", {
-          selectedDir,
-          codexSelectedDir,
-          piSelectedDir,
-          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-        });
-        await invoke<HookSettingsStatus>("hook_settings_install_codex", {
-          selectedDir,
-          codexSelectedDir,
-          piSelectedDir,
-          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-        });
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_codex", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_codex", dirs);
       }
       if (tools.includes("pi")) {
-        await invoke<HookSettingsStatus>("hook_settings_uninstall_pi", {
-          selectedDir,
-          codexSelectedDir,
-          piSelectedDir,
-          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-        });
-        await invoke<HookSettingsStatus>("hook_settings_install_pi", {
-          selectedDir,
-          codexSelectedDir,
-          piSelectedDir,
-          ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-        });
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_pi", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_pi", dirs);
+      }
+      if (tools.includes("grok")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_grok", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_grok", dirs);
       }
       await refreshStatus();
       toast.success(t("sidebar.hook.reinstalled"));

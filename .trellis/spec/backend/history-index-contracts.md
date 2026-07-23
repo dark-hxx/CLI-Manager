@@ -18,6 +18,8 @@
 
 - The catalog DB is derived and rebuildable; never store it in `cli-manager.db` or treat it as user-authored data.
 - List requests query cached summaries first and schedule fingerprint-based background refresh.
+- A realtime lookup scoped to `source=grok`, an exact UUID session ID, `limit=1`, and `offset=0` may bypass a catalog miss by checking only `<grok-root>/sessions/<workspace>/<session-id>/updates.jsonl`; it must validate the UUID before joining paths and still honor the optional project path.
+- Realtime forced refresh uses `history_refresh_index(..., wait=false)`. A large derived catalog rebuild must never hold the panel's single-flight polling request; later polls consume the direct Grok result or refreshed catalog.
 - Opening history must schedule the same TTL-governed refresh even when the frontend reuses its in-memory list.
 - Search requires at least three Unicode characters and uses FTS5 trigram literal matching; user text must be quoted/escaped before `MATCH`.
 - First indexing is recent-first and partial results remain usable. A ready generation change reloads the list and current search.
@@ -36,6 +38,7 @@
 | File disappeared | Delete its message and summary rows. |
 | Catalog refresh fails | Keep previous rows and emit `phase=error`; never delete source JSONL. |
 | Catalog DB is malformed | Recreate only the derived catalog and rebuild. |
+| Exact Grok UUID is absent from catalog but exists on disk | Return that session directly without scanning every transcript or falling back to the project's latest session. |
 
 ### 5. Good/Base/Bad Cases
 
@@ -50,6 +53,7 @@
 - Rust: FTS schema/triggers support Chinese and ASCII trigram matches; literal quoting handles embedded quotes.
 - Rust: unchanged fingerprints skip parsing; changed and deleted files update only their own rows.
 - Rust: project/source filters and pagination preserve existing command behavior.
+- Rust: exact Grok UUID lookup finds the matching workspace session, rejects a different project path, and rejects non-UUID traversal input.
 - Frontend: stale searches cannot overwrite the newest query; one/two-character input does not invoke search.
 - Run `cargo test history --lib`, `cargo check`, and `npx tsc --noEmit`.
 

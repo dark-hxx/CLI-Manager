@@ -33,13 +33,16 @@ const WSL_WRAPPER_PATTERN = /(?:^|\s)wsl(?:\.exe)?\s/i;
  * on every resume.
  */
 function buildResumeStartupCmd(
-  kind: "claude" | "codex",
+  kind: "claude" | "codex" | "grok",
   id: string,
   sourceStartupCmd: string,
 ): string {
-  const resumeCore = kind === "codex"
-    ? `codex resume --no-alt-screen ${id}`
-    : `claude --resume ${id}`;
+  const resumeCore =
+    kind === "codex"
+      ? `codex resume --no-alt-screen ${id}`
+      : kind === "grok"
+        ? `grok --resume ${id}`
+        : `claude --resume ${id}`;
   return WSL_WRAPPER_PATTERN.test(sourceStartupCmd) ? `wsl ${resumeCore}` : resumeCore;
 }
 
@@ -49,28 +52,30 @@ function buildResumeStartupCmd(
  * Contract (mirrors resolveResumeCommand in externalSessionSyncStore.ts:282):
  * - `claude` → `<sourceCliArgs trimmed> --resume <id>`
  * - `codex`  → `<sourceCliArgs trimmed> resume --no-alt-screen <id>`
+ * - `grok`   → `<sourceCliArgs trimmed> --resume <id>`
  *
  * Pre-existing resume fragments in `sourceCliArgs` are stripped first so
  * re-saving a saved session does not double-append. Invalid session ids
  * (empty, whitespace-containing, CR/LF-containing) return null.
  */
 export function buildResumeCliArgs(
-  kind: "claude" | "codex",
+  kind: "claude" | "codex" | "grok",
   sourceCliArgs: string,
   sessionId: string,
 ): string | null {
   const id = normalizeSessionId(sessionId);
   if (!id) return null;
   const base = stripResumeCliArgs(sourceCliArgs);
-  const suffix = kind === "codex" ? ` resume --no-alt-screen ${id}` : ` --resume ${id}`;
+  const suffix =
+    kind === "codex" ? ` resume --no-alt-screen ${id}` : ` --resume ${id}`;
   return `${base}${suffix}`;
 }
 
 /**
  * True iff `session` carries a valid cliSessionId AND we can resolve a
- * CLI resume kind (`claude` | `codex`) from the session's startup command
- * / owning project. When false, the "save to sidebar" affordance must be
- * disabled — createProject would either fail validation or produce a
+ * CLI resume kind (`claude` | `codex` | `grok`) from the session's startup
+ * command / owning project. When false, the "save to sidebar" affordance must
+ * be disabled — createProject would either fail validation or produce a
  * useless entry.
  */
 export function canSaveSessionToSidebar(

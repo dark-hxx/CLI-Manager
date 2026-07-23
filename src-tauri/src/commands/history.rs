@@ -962,6 +962,39 @@ pub async fn history_list_sessions(
     .await
     {
         Ok(mut sessions) => {
+            if sessions.is_empty()
+                && source
+                    .as_deref()
+                    .is_some_and(|value| value.trim().eq_ignore_ascii_case("grok"))
+                && query
+                    .as_deref()
+                    .is_some_and(|value| Uuid::parse_str(value.trim()).is_ok())
+                && limit == Some(1)
+                && offset.unwrap_or(0) == 0
+            {
+                let session_id = query
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .to_string();
+                let target_project_path = project_path.clone();
+                let direct = tokio::task::spawn_blocking(move || {
+                    find_exact_grok_session_in_root(
+                        &resolve_grok_history_root(),
+                        &session_id,
+                        target_project_path.as_deref(),
+                    )
+                })
+                .await
+                .map_err(|err| err.to_string())?;
+                if let Some(session) = direct {
+                    debug!(
+                        "history_list_sessions direct Grok hit: session_id={} path={}",
+                        session.session_id, session.file_path
+                    );
+                    sessions.push(session);
+                }
+            }
             let targeted_lookup = query
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
@@ -4001,7 +4034,97 @@ fn build_session_computation(
     if let Some(metadata) = cursor_metadata {
         apply_cursor_metadata_to_computation(&mut computed, &metadata);
     }
+    if looks_like_grok_updates_file(path) {
+        apply_grok_summary_metadata(path, &mut computed);
+    }
     computed
+}
+
+/// Enrich list/detail summary fields from Grok `summary.json` so the history list
+/// shows title, message count, timestamps, and branch instead of sparse parser-only data.
+fn apply_grok_summary_metadata(path: &Path, computed: &mut CachedSessionComputation) {
+    let Some(summary) = grok_summary_value(path) else {
+        return;
+    };
+
+    if let Some(title) = grok_string_by_paths(
+        &summary,
+        &[&["generated_title"], &["session_summary"], &["title"]],
+    ) {
+        let trimmed = title.trim();
+        if !trimmed.is_empty()
+            && (computed.title.is_empty()
+                || computed.title == computed.session_id
+                || computed.title.chars().count() < 4)
+        {
+            computed.title = excerpt(trimmed, 80);
+        } else if !trimmed.is_empty() {
+            // Prefer Grok's generated title when available (more readable than first user chunk).
+            computed.title = excerpt(trimmed, 80);
+        }
+    }
+
+    let summary_message_count = summary
+        .get("num_chat_messages")
+        .and_then(Value::as_u64)
+        .or_else(|| summary.get("num_messages").and_then(Value::as_u64))
+        .map(|value| value as usize)
+        .unwrap_or(0);
+    if summary_message_count > computed.message_count {
+        computed.message_count = summary_message_count;
+    }
+
+    if let Some(branch) = grok_string_by_paths(&summary, &[&["head_branch"], &["branch"]]) {
+        let trimmed = branch.trim();
+        if !trimmed.is_empty() {
+            computed.branch = Some(trimmed.to_string());
+        }
+    }
+
+    if let Some(created) = grok_summary_timestamp_ms(&summary, &["created_at", "createdAt"]) {
+        // Prefer summary creation time when file mtime is missing or later noise.
+        if computed.created_at <= 0 || created < computed.created_at {
+            computed.created_at = created;
+        }
+    }
+    if let Some(updated) = grok_summary_timestamp_ms(
+        &summary,
+        &["last_active_at", "updated_at", "updatedAt"],
+    ) {
+        if updated > computed.updated_at {
+            computed.updated_at = updated;
+        }
+    }
+
+    if let Some(model) = grok_string_by_paths(
+        &summary,
+        &[&["current_model_id"], &["model"], &["selectedModel"]],
+    ) {
+        if computed.stats.current_model.is_none() {
+            computed.stats.current_model = Some(model.clone());
+        }
+        if computed.stats.dominant_model.is_none() {
+            computed.stats.dominant_model = Some(model);
+        }
+    }
+}
+
+fn grok_summary_timestamp_ms(summary: &Value, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        if let Some(value) = summary.get(*key) {
+            if let Some(ms) = value.as_i64() {
+                if ms > 0 {
+                    return Some(ms);
+                }
+            }
+            if let Some(text) = value.as_str() {
+                if let Ok(parsed) = DateTime::parse_from_rfc3339(text.trim()) {
+                    return Some(parsed.timestamp_millis());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDetailParts {
@@ -6565,6 +6688,48 @@ fn collect_grok_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+fn find_exact_grok_session_in_root(
+    root: &Path,
+    session_id: &str,
+    project_path: Option<&str>,
+) -> Option<HistorySessionSummary> {
+    let session_id = session_id.trim();
+    if Uuid::parse_str(session_id).is_err() {
+        return None;
+    }
+    let target_project_path = project_path
+        .map(normalize_history_path)
+        .filter(|value| !value.is_empty());
+    for workspace in read_dir_entries(&root.join("sessions")) {
+        let path = workspace.path().join(session_id).join("updates.jsonl");
+        if !looks_like_grok_updates_file(&path) {
+            continue;
+        }
+        let file_ref = SessionFileRef {
+            source: "grok".to_string(),
+            project_key: grok_project_key_from_path(&path),
+            path,
+        };
+        if target_project_path
+            .as_deref()
+            .is_some_and(|target| !session_matches_project_path(&file_ref, target))
+        {
+            continue;
+        }
+        let fingerprint = session_file_fingerprint(&file_ref.path);
+        let computed = scan_session_computation(
+            &file_ref.path,
+            fingerprint.created_at,
+            fingerprint.updated_at,
+        );
+        if computed.session_id != session_id {
+            continue;
+        }
+        return Some(summary_from_computation(&file_ref, &computed));
+    }
+    None
+}
+
 fn collect_pi_session_files(root: &Path) -> Vec<SessionFileRef> {
     let sessions = root.join("sessions");
     if !sessions.exists() {
@@ -6807,9 +6972,11 @@ fn grok_workspace_from_path(path: &Path) -> Option<String> {
 }
 
 fn grok_project_key_from_path(path: &Path) -> String {
+    // Prefer full normalized workspace path so list UI shows the real project path
+    // (not only the last segment) and path-based filtering can match exactly.
     grok_workspace_from_path(path)
-        .as_deref()
-        .and_then(project_key_from_cwd)
+        .map(|cwd| normalize_history_path(&cwd))
+        .filter(|key| !key.is_empty())
         .or_else(|| grok_session_id_from_path(path))
         .unwrap_or_else(|| "grok".to_string())
 }
@@ -8262,6 +8429,8 @@ fn scan_grok_jsonl_session(
     let mut seen_tool_call_ids = HashSet::new();
     let mut tool_call_count = 0u64;
     let mut builtin_calls = HashMap::new();
+    let mut turn_usage_totals = GrokTurnUsageTotals::default();
+    let mut token_trend: Vec<HistoryTokenTrendPoint> = Vec::new();
 
     for (line_index, line) in BufReader::with_capacity(READ_BUF_CAPACITY, file)
         .lines()
@@ -8315,7 +8484,9 @@ fn scan_grok_jsonl_session(
                     );
                 }
             }
-            "agent_thought_chunk" => {}
+            "agent_thought_chunk" => {
+                // Thoughts are not primary chat bubbles; keep stream state intact.
+            }
             "tool_call" => {
                 grok_flush_pending_message(
                     &mut pending_role,
@@ -8329,9 +8500,52 @@ fn scan_grok_jsonl_session(
                     let call_id = grok_tool_call_id(update);
                     if mark_tool_event_seen(call_id.as_deref(), &mut seen_tool_call_ids) {
                         tool_call_count += 1;
-                        *builtin_calls.entry(name).or_insert(0) += 1;
+                        *builtin_calls.entry(name.clone()).or_insert(0) += 1;
+                    }
+                    if collect_messages {
+                        let content = grok_tool_message_text(update, &name);
+                        if !content.is_empty() {
+                            let mut message = json_history_message(
+                                "tool".to_string(),
+                                content,
+                                grok_event_timestamp(&value, update),
+                                None,
+                            );
+                            message.line_index = Some(line_index);
+                            messages.push(message);
+                        }
                     }
                 }
+            }
+            "tool_call_update" => {
+                // Tool lifecycle/output is captured via tool events; avoid double-counting calls.
+            }
+            "turn_completed" => {
+                grok_flush_pending_message(
+                    &mut pending_role,
+                    &mut pending_content,
+                    &mut pending_timestamp,
+                    &mut pending_line_index,
+                    &mut pending_model,
+                    &mut messages,
+                );
+                if let Some(usage) = update.get("usage") {
+                    if let Some(point) = apply_grok_turn_usage(usage, &mut turn_usage_totals) {
+                        token_trend.push(point);
+                    }
+                }
+            }
+            "session_recap" | "plan" | "current_mode_update" | "hook_execution"
+            | "retry_state" | "task_backgrounded" | "task_completed" => {
+                // Non-chat control events; flush any open text bubble only.
+                grok_flush_pending_message(
+                    &mut pending_role,
+                    &mut pending_content,
+                    &mut pending_timestamp,
+                    &mut pending_line_index,
+                    &mut pending_model,
+                    &mut messages,
+                );
             }
             _ => grok_flush_pending_message(
                 &mut pending_role,
@@ -8364,7 +8578,86 @@ fn scan_grok_jsonl_session(
     }
     stats.tool_call_count = tool_call_count;
     stats.builtin_calls = builtin_calls;
+    if turn_usage_totals.input_tokens > 0 || turn_usage_totals.output_tokens > 0 {
+        stats.input_tokens = turn_usage_totals.input_tokens;
+        stats.output_tokens = turn_usage_totals.output_tokens;
+        stats.cache_read_tokens = turn_usage_totals.cache_read_tokens;
+        if let Some(model_name) = turn_usage_totals.model.clone() {
+            stats.current_model = Some(model_name.clone());
+            stats.dominant_model = Some(model_name);
+        }
+    }
+    // Token 趋势图需要逐回合点；Grok 消息行本身无 per-message usage，只能靠 turn_completed。
+    if !token_trend.is_empty() {
+        stats.token_trend = token_trend;
+    }
+    apply_grok_signals_stats(path, &mut stats);
     (summary_scan, stats, output_messages)
+}
+
+/// Merge sibling `signals.json` into session stats for TerminalStatsPanel (context/token cards).
+fn apply_grok_signals_stats(updates_path: &Path, stats: &mut SessionStatsScan) {
+    let signals_path = updates_path
+        .parent()
+        .map(|parent| parent.join("signals.json"));
+    let Some(signals_path) = signals_path else {
+        return;
+    };
+    let Ok(raw) = fs::read_to_string(&signals_path) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return;
+    };
+
+    if let Some(tokens) = value
+        .get("contextTokensUsed")
+        .and_then(Value::as_u64)
+        .or_else(|| value.get("context_tokens_used").and_then(Value::as_u64))
+    {
+        stats.last_context_tokens = Some(tokens);
+        // Grok signals do not always split input/output; surface context usage as input so
+        // TerminalStats token cards are non-zero when only context is available.
+        if stats.input_tokens == 0 && stats.output_tokens == 0 {
+            stats.input_tokens = tokens;
+        }
+    }
+    if let Some(window) = value
+        .get("contextWindowTokens")
+        .and_then(Value::as_u64)
+        .or_else(|| value.get("context_window_tokens").and_then(Value::as_u64))
+    {
+        stats.context_window = Some(window);
+    }
+    if stats.current_model.is_none() {
+        if let Some(model) = value
+            .get("primaryModelId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                value
+                    .get("modelsUsed")
+                    .and_then(Value::as_array)
+                    .and_then(|items| items.first())
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+        {
+            stats.current_model = Some(model.clone());
+            if stats.dominant_model.is_none() {
+                stats.dominant_model = Some(model);
+            }
+        }
+    }
+    if stats.tool_call_count == 0 {
+        if let Some(count) = value.get("toolCallCount").and_then(Value::as_u64) {
+            stats.tool_call_count = count;
+        }
+    }
 }
 
 fn grok_update_value(value: &Value) -> Option<&Value> {
@@ -8503,9 +8796,36 @@ fn grok_tool_input(update: &Value) -> Option<String> {
 fn grok_tool_output(update: &Value) -> Option<String> {
     update
         .get("content")
-        .and_then(json_content_text)
+        .and_then(grok_nested_content_text)
+        .or_else(|| update.get("content").and_then(json_content_text))
         .or_else(|| update.get("output").and_then(summarize_json_value))
         .or_else(|| update.get("result").and_then(summarize_json_value))
+}
+
+/// Grok tool_call_update often wraps output as:
+/// `content: [{ "type": "content", "content": { "type": "text", "text": "..." } }]`
+fn grok_nested_content_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Array(items) => {
+            let text = items
+                .iter()
+                .filter_map(grok_nested_content_text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.trim().is_empty()).then_some(text)
+        }
+        Value::Object(map) => {
+            if map
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("content"))
+            {
+                return map.get("content").and_then(grok_content_text);
+            }
+            grok_content_text(value)
+        }
+        _ => grok_content_text(value),
+    }
 }
 
 fn grok_tool_status(update: &Value) -> Option<String> {
@@ -8518,6 +8838,79 @@ fn grok_tool_status(update: &Value) -> Option<String> {
         Some("started".to_string())
     } else {
         Some(status)
+    }
+}
+
+#[derive(Default)]
+struct GrokTurnUsageTotals {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    model: Option<String>,
+}
+
+/// Accumulate session totals and return a trend point for this turn (if non-zero).
+fn apply_grok_turn_usage(
+    usage: &Value,
+    totals: &mut GrokTurnUsageTotals,
+) -> Option<HistoryTokenTrendPoint> {
+    let input = usage
+        .get("inputTokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output = usage
+        .get("outputTokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read = usage
+        .get("cachedReadTokens")
+        .or_else(|| usage.get("cache_read_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation = usage
+        .get("cachedWriteTokens")
+        .or_else(|| usage.get("cache_creation_tokens"))
+        .or_else(|| usage.get("cacheCreationTokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    totals.input_tokens = totals.input_tokens.saturating_add(input);
+    totals.output_tokens = totals.output_tokens.saturating_add(output);
+    totals.cache_read_tokens = totals.cache_read_tokens.saturating_add(cache_read);
+
+    let mut model = None;
+    if let Some(model_usage) = usage.get("modelUsage").and_then(Value::as_object) {
+        if let Some((name, _)) = model_usage.iter().next() {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                model = Some(trimmed.to_string());
+            }
+        }
+    }
+    if totals.model.is_none() {
+        totals.model = model.clone();
+    }
+
+    let token_scan = UsageTokenScan {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: cache_read,
+        cache_creation_tokens: cache_creation,
+        explicit_cost_usd: None,
+    };
+    if usage_total_tokens(token_scan) == 0 {
+        return None;
+    }
+    Some(usage_trend_point(token_scan, model.or_else(|| totals.model.clone())))
+}
+
+fn grok_tool_message_text(update: &Value, name: &str) -> String {
+    let input = grok_tool_input(update).unwrap_or_default();
+    if input.is_empty() {
+        format!("[{name}]")
+    } else {
+        format!("[{name}] {input}")
     }
 }
 
@@ -12473,6 +12866,22 @@ mod tests {
                     }
                 }
             }),
+            json!({
+                "timestamp": 1780272005u64,
+                "method": "session/update",
+                "params": {
+                    "sessionId": "grok-session",
+                    "update": {
+                        "sessionUpdate": "turn_completed",
+                        "usage": {
+                            "inputTokens": 120,
+                            "outputTokens": 34,
+                            "cachedReadTokens": 10,
+                            "modelUsage": { "grok-4-code-fast-1": { "inputTokens": 120, "outputTokens": 34 } }
+                        }
+                    }
+                }
+            }),
         ]
         .into_iter()
         .map(|event| event.to_string())
@@ -12483,20 +12892,41 @@ mod tests {
         let files = collect_grok_session_files(&root);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].source, "grok");
-        assert_eq!(files[0].project_key, "business-center");
+        // project_key is the full normalized workspace path for display/filter fidelity.
+        assert!(
+            files[0]
+                .project_key
+                .to_lowercase()
+                .contains("business-center")
+        );
 
         let (summary, stats, messages) = scan_session_detail(&path);
         assert_eq!(summary.session_id.as_deref(), Some("grok-session"));
-        assert_eq!(summary.message_count, 2);
+        // user + assistant + tool call bubble
+        assert_eq!(summary.message_count, 3);
         assert_eq!(summary.first_user_message.as_deref(), Some("hello grok"));
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "hello grok");
         assert_eq!(messages[1].role, "assistant");
         assert_eq!(messages[1].content, "hi there");
         assert_eq!(messages[1].model.as_deref(), Some("grok-4-code-fast-1"));
+        assert_eq!(messages[2].role, "tool");
+        assert!(messages[2].content.contains("Read file"));
         assert_eq!(stats.current_model.as_deref(), Some("grok-4-code-fast-1"));
         assert_eq!(stats.tool_call_count, 1);
         assert_eq!(stats.builtin_calls.get("Read file"), Some(&1));
+        assert_eq!(stats.input_tokens, 120);
+        assert_eq!(stats.output_tokens, 34);
+        assert_eq!(stats.cache_read_tokens, 10);
+        assert_eq!(stats.token_trend.len(), 1);
+        assert_eq!(stats.token_trend[0].input_tokens, 120);
+        assert_eq!(stats.token_trend[0].output_tokens, 34);
+        assert_eq!(stats.token_trend[0].cache_read_tokens, 10);
+        assert_eq!(stats.token_trend[0].total_tokens, 164);
+        assert_eq!(
+            stats.token_trend[0].model.as_deref(),
+            Some("grok-4-code-fast-1")
+        );
 
         let project = scan_session_project(&path);
         assert_eq!(
@@ -12518,7 +12948,61 @@ mod tests {
             true
         })
         .unwrap();
-        assert_eq!(iterated, vec!["hello grok", "hi there"]);
+        assert_eq!(iterated.len(), 3);
+        assert_eq!(iterated[0], "hello grok");
+        assert_eq!(iterated[1], "hi there");
+        assert!(iterated[2].contains("Read file"));
+    }
+
+    #[test]
+    fn exact_grok_session_lookup_bypasses_catalog_miss() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join(".grok");
+        let session_id = "019f8f73-cf03-7eb1-88bd-ae350e2cb327";
+        let path = root
+            .join("sessions")
+            .join("F%3A%5Cgithub%5CCLI-Manager")
+            .join(session_id)
+            .join("updates.jsonl");
+        write_text(
+            &path.with_file_name("summary.json"),
+            &json!({
+                "info": {
+                    "id": session_id,
+                    "cwd": r"F:\github\CLI-Manager"
+                },
+                "session_summary": "Current Grok session"
+            })
+            .to_string(),
+        );
+        write_text(
+            &path,
+            &json!({
+                "method": "session/update",
+                "params": {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": { "type": "text", "text": "hello" }
+                    }
+                }
+            })
+            .to_string(),
+        );
+
+        let summary =
+            find_exact_grok_session_in_root(&root, session_id, Some(r"F:\github\CLI-Manager"))
+                .expect("exact Grok session should be found directly from disk");
+        assert_eq!(summary.session_id, session_id);
+        assert_eq!(summary.source, "grok");
+        assert_eq!(summary.message_count, 1);
+        assert_eq!(summary.file_path, path.to_string_lossy());
+
+        assert!(
+            find_exact_grok_session_in_root(&root, session_id, Some(r"F:\other-project"),)
+                .is_none()
+        );
+        assert!(find_exact_grok_session_in_root(&root, "../session", None).is_none());
     }
 
     #[test]
@@ -13504,6 +13988,36 @@ mod tests {
         };
         let target = normalize_history_path(r"D:\work\pythonProject\CLI-Manager");
         assert!(!session_matches_project_path(&file_ref, &target));
+    }
+
+    #[test]
+    fn apply_grok_summary_metadata_fills_list_fields() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_dir = temp_dir.path().join("sess");
+        fs::create_dir_all(&session_dir).unwrap();
+        let updates = session_dir.join("updates.jsonl");
+        fs::write(&updates, "{}\n").unwrap();
+        fs::write(
+            session_dir.join("summary.json"),
+            r#"{"info":{"id":"g2","cwd":"F:\\github\\CLI-Manager"},"generated_title":"Grok titled session","num_chat_messages":38,"num_messages":116,"head_branch":"master","current_model_id":"grok-4.5","created_at":"2026-07-22T11:14:36.452422900Z","last_active_at":"2026-07-22T12:00:00.000000000Z"}"#,
+        )
+        .unwrap();
+
+        let mut computed = CachedSessionComputation {
+            created_at: 1,
+            updated_at: 1,
+            session_id: "g2".to_string(),
+            title: "g2".to_string(),
+            message_count: 0,
+            branch: None,
+            stats: SessionStatsScan::default(),
+        };
+        apply_grok_summary_metadata(&updates, &mut computed);
+        assert_eq!(computed.title, "Grok titled session");
+        assert_eq!(computed.message_count, 38);
+        assert_eq!(computed.branch.as_deref(), Some("master"));
+        assert!(computed.updated_at > 1);
+        assert_eq!(computed.stats.current_model.as_deref(), Some("grok-4.5"));
     }
 
     #[test]

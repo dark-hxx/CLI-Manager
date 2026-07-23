@@ -9,7 +9,7 @@ import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 import { ThirdPartyNotificationSection } from "../ThirdPartyNotificationSection";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
-type HookTool = "claude" | "codex" | "pi";
+type HookTool = "claude" | "codex" | "pi" | "grok";
 type HookModule = "sessionStart" | "running" | "attention" | "stop" | "failure" | "subagent" | "hooksFeature";
 
 interface ToolHookSettingsStatus {
@@ -33,6 +33,7 @@ interface HookSettingsStatus {
   claude: ToolHookSettingsStatus;
   codex: ToolHookSettingsStatus;
   pi: ToolHookSettingsStatus;
+  grok: ToolHookSettingsStatus;
   ccSwitch: CcSwitchHookProtectionStatus;
   claudeAutoRepaired: boolean;
 }
@@ -500,14 +501,17 @@ export function HookSettingsPage() {
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const piHookConfigDir = useSettingsStore((s) => s.piHookConfigDir);
+  const grokHookConfigDir = useSettingsStore((s) => s.grokHookConfigDir);
   const [status, setStatus] = useState<HookSettingsStatus | null>(null);
   const [selectedDir, setSelectedDir] = useState<string | null>(claudeHookConfigDir);
   const [codexSelectedDir, setCodexSelectedDir] = useState<string | null>(codexHookConfigDir);
   const [piSelectedDir, setPiSelectedDir] = useState<string | null>(piHookConfigDir);
+  const [grokSelectedDir, setGrokSelectedDir] = useState<string | null>(grokHookConfigDir);
   const [loading, setLoading] = useState(false);
   const [claudeWorking, setClaudeWorking] = useState(false);
   const [codexWorking, setCodexWorking] = useState(false);
   const [piWorking, setPiWorking] = useState(false);
+  const [grokWorking, setGrokWorking] = useState(false);
   const hookPopupNotificationsEnabled = useSettingsStore((s) => s.hookPopupNotificationsEnabled);
   const hookPopupAutoCloseEnabled = useSettingsStore((s) => s.hookPopupAutoCloseEnabled);
   const hookPopupAutoCloseSeconds = useSettingsStore((s) => s.hookPopupAutoCloseSeconds);
@@ -515,6 +519,7 @@ export function HookSettingsPage() {
   const claudeHookBridgeEnabled = useSettingsStore((s) => s.claudeHookBridgeEnabled);
   const codexHookBridgeEnabled = useSettingsStore((s) => s.codexHookBridgeEnabled);
   const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
+  const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
   const systemNotificationsEnabled = useSettingsStore((s) => s.systemNotificationsEnabled);
   const suppressSystemNotificationsWhenFocused = useSettingsStore((s) => s.suppressSystemNotificationsWhenFocused);
   const systemNotificationEvents = useSettingsStore((s) => s.systemNotificationEvents);
@@ -530,6 +535,8 @@ export function HookSettingsPage() {
   const [codexInfoOpen, setCodexInfoOpen] = useState(false);
   const [piPathsOpen, setPiPathsOpen] = useState(false);
   const [piInfoOpen, setPiInfoOpen] = useState(false);
+  const [grokPathsOpen, setGrokPathsOpen] = useState(false);
+  const [grokInfoOpen, setGrokInfoOpen] = useState(false);
 
   const toggleHookSection = (key: HookSettingsSectionKey) => {
     const current = useSettingsStore.getState().hookSettingsSectionsExpanded;
@@ -555,14 +562,20 @@ export function HookSettingsPage() {
     setPiSelectedDir(piHookConfigDir);
   }, [piHookConfigDir]);
 
+  useEffect(() => {
+    setGrokSelectedDir(grokHookConfigDir);
+  }, [grokHookConfigDir]);
+
   const selectedDirArg = useMemo(() => selectedDir ?? undefined, [selectedDir]);
   const codexSelectedDirArg = useMemo(() => codexSelectedDir ?? undefined, [codexSelectedDir]);
   const piSelectedDirArg = useMemo(() => piSelectedDir ?? undefined, [piSelectedDir]);
+  const grokSelectedDirArg = useMemo(() => grokSelectedDir ?? undefined, [grokSelectedDir]);
 
   const refreshStatus = async (
     dir = selectedDirArg,
     codexDir = codexSelectedDirArg,
     piDir = piSelectedDirArg,
+    grokDir = grokSelectedDirArg,
   ) => {
     setLoading(true);
     try {
@@ -570,6 +583,7 @@ export function HookSettingsPage() {
         selectedDir: dir,
         codexSelectedDir: codexDir,
         piSelectedDir: piDir,
+        grokSelectedDir: grokDir,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         autoRepair: claudeHookBridgeEnabled && claudeHookAutoRepairKnownInstalled,
       });
@@ -590,6 +604,12 @@ export function HookSettingsPage() {
         setPiSelectedDir(nextStatus.pi.configDir);
         if (useSettingsStore.getState().piHookConfigDir !== nextStatus.pi.configDir) {
           await updateSetting("piHookConfigDir", nextStatus.pi.configDir);
+        }
+      }
+      if (nextStatus.grok?.configDir) {
+        setGrokSelectedDir(nextStatus.grok.configDir);
+        if (useSettingsStore.getState().grokHookConfigDir !== nextStatus.grok.configDir) {
+          await updateSetting("grokHookConfigDir", nextStatus.grok.configDir);
         }
       }
       if (nextStatus.claudeAutoRepaired && !claudeHookAutoRepairNoticeShown) {
@@ -667,6 +687,7 @@ export function HookSettingsPage() {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -690,6 +711,7 @@ export function HookSettingsPage() {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -711,6 +733,7 @@ export function HookSettingsPage() {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -733,6 +756,7 @@ export function HookSettingsPage() {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -767,6 +791,7 @@ export function HookSettingsPage() {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -788,6 +813,7 @@ export function HookSettingsPage() {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
       });
       setStatus(nextStatus);
@@ -800,11 +826,87 @@ export function HookSettingsPage() {
     }
   };
 
+  const handleSelectGrokDir = async () => {
+    try {
+      const dir = await invoke<string | null>("hook_settings_select_dir", {
+        title: text("选择 Grok 配置目录", "Choose Grok config directory"),
+      });
+      if (!dir) return;
+      setGrokSelectedDir(dir);
+      await updateSetting("grokHookConfigDir", dir);
+      await refreshStatus(selectedDirArg, codexSelectedDirArg, piSelectedDirArg, dir);
+    } catch (error) {
+      toast.error(text("选择 Grok 目录失败", "Failed to choose Grok directory"), { description: getErrorMessage(error) });
+    }
+  };
+
+  const handleManualGrokDirCommit = async (value: string) => {
+    const next = value.trim() || null;
+    setGrokSelectedDir(next);
+    await updateSetting("grokHookConfigDir", next);
+    await refreshStatus(selectedDirArg, codexSelectedDirArg, piSelectedDirArg, next ?? undefined);
+  };
+
+  const handleGrokInstall = async () => {
+    setGrokWorking(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install_grok", {
+        selectedDir: selectedDirArg,
+        codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      setStatus(nextStatus);
+      if (nextStatus.grok.configDir) setGrokSelectedDir(nextStatus.grok.configDir);
+      const hooksFile = nextStatus.grok.configPath?.trim();
+      const configFile = nextStatus.grok.featureConfigPath?.trim();
+      toast.success(text("Grok Hook 已安装", "Grok Hook installed"), {
+        description: [
+          hooksFile
+            ? text(`Hook 文件：${hooksFile}`, `Hook file: ${hooksFile}`)
+            : text("Hook 文件：~/.grok/hooks/cli-manager.json", "Hook file: ~/.grok/hooks/cli-manager.json"),
+          configFile
+            ? text(`兼容隔离：${configFile}（compat.claude/cursor.hooks=false）`, `Isolation: ${configFile} (compat.claude/cursor.hooks=false)`)
+            : text("兼容隔离：~/.grok/config.toml", "Isolation: ~/.grok/config.toml"),
+          text("注意：Grok 不使用 settings.json，请查看 hooks 目录而非 Claude 配置。", "Note: Grok does not use settings.json; check the hooks directory, not Claude config."),
+        ].join("\n"),
+        duration: 12_000,
+      });
+      setGrokPathsOpen(true);
+    } catch (error) {
+      toast.error(text("安装 Grok Hook 失败", "Failed to install Grok Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setGrokWorking(false);
+    }
+  };
+
+  const handleGrokUninstall = async () => {
+    setGrokWorking(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall_grok", {
+        selectedDir: selectedDirArg,
+        codexSelectedDir: codexSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      setStatus(nextStatus);
+      if (nextStatus.grok.configDir) setGrokSelectedDir(nextStatus.grok.configDir);
+      toast.success(text("Grok Hook 已删除", "Grok Hook removed"));
+    } catch (error) {
+      toast.error(text("删除 Grok Hook 失败", "Failed to remove Grok Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setGrokWorking(false);
+    }
+  };
+
   const syncStatusAfterMutation = (nextStatus: HookSettingsStatus) => {
     setStatus(nextStatus);
     if (nextStatus.claude.configDir) setSelectedDir(nextStatus.claude.configDir);
     if (nextStatus.codex.configDir) setCodexSelectedDir(nextStatus.codex.configDir);
     if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
+    if (nextStatus.grok?.configDir) setGrokSelectedDir(nextStatus.grok.configDir);
   };
 
   const handleModuleToggle = async (
@@ -818,10 +920,19 @@ export function HookSettingsPage() {
         ? (installed ? "hook_settings_uninstall" : "hook_settings_install")
         : tool === "codex"
           ? (installed ? "hook_settings_uninstall_codex" : "hook_settings_install_codex")
-          : (installed ? "hook_settings_uninstall_pi" : "hook_settings_install_pi");
+          : tool === "pi"
+            ? (installed ? "hook_settings_uninstall_pi" : "hook_settings_install_pi")
+            : (installed ? "hook_settings_uninstall_grok" : "hook_settings_install_grok");
     const setWorking =
-      tool === "claude" ? setClaudeWorking : tool === "codex" ? setCodexWorking : setPiWorking;
-    const toolLabel = tool === "claude" ? "Claude" : tool === "codex" ? "Codex" : "Pi";
+      tool === "claude"
+        ? setClaudeWorking
+        : tool === "codex"
+          ? setCodexWorking
+          : tool === "pi"
+            ? setPiWorking
+            : setGrokWorking;
+    const toolLabel =
+      tool === "claude" ? "Claude" : tool === "codex" ? "Codex" : tool === "pi" ? "Pi" : "Grok";
 
     setWorking(true);
     try {
@@ -829,6 +940,7 @@ export function HookSettingsPage() {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         module,
       });
@@ -869,10 +981,13 @@ export function HookSettingsPage() {
   const claude = status?.claude;
   const codex = status?.codex;
   const pi = status?.pi;
+  const grok = status?.grok;
   const ccSwitchProtection = status?.ccSwitch ?? null;
   const claudeStatus = claude?.status ?? "directoryMissing";
   const codexStatus = codex?.status ?? "directoryMissing";
   const piStatus = pi?.status ?? "directoryMissing";
+  const grokStatus = grok?.status ?? "directoryMissing";
+  const anyWorking = loading || claudeWorking || codexWorking || piWorking || grokWorking;
   const claudeSessionStartInstalled = Boolean(claude?.attentionScriptInstalled && claude.sessionStartHookInstalled);
   const claudeRunningInstalled = Boolean(claude?.attentionScriptInstalled && claude.runningHookInstalled);
   const claudeAttentionInstalled = Boolean(claude?.attentionScriptInstalled && claude.attentionHookInstalled);
@@ -889,9 +1004,17 @@ export function HookSettingsPage() {
   const piSessionStartInstalled = Boolean(pi?.attentionScriptInstalled && pi.sessionStartHookInstalled);
   const piRunningInstalled = Boolean(pi?.attentionScriptInstalled && pi.runningHookInstalled);
   const piStopInstalled = Boolean(pi?.finishedScriptInstalled && pi.stopHookInstalled);
+  const grokSessionStartInstalled = Boolean(grok?.attentionScriptInstalled && grok.sessionStartHookInstalled);
+  const grokRunningInstalled = Boolean(grok?.attentionScriptInstalled && grok.runningHookInstalled);
+  const grokAttentionInstalled = Boolean(grok?.attentionScriptInstalled && grok.attentionHookInstalled);
+  const grokStopInstalled = Boolean(grok?.finishedScriptInstalled && grok.stopHookInstalled);
+  const grokFailureInstalled = Boolean(grok?.finishedScriptInstalled && grok.failureHookInstalled);
+  const grokSubagentInstalled = Boolean(grok?.subagentStartHookInstalled);
+  const grokIsolationInstalled = Boolean(grok?.hooksFeatureInstalled);
   const claudeToolLabel = "Claude";
   const codexToolLabel = "Codex";
   const piToolLabel = "Pi";
+  const grokToolLabel = "Grok";
   const claudeSessionStartLabel = text("会话启动", "Session Start");
   const claudeRunningLabel = text("运行中", "Running");
   const claudeAttentionLabel = text("待审批", "Awaiting Approval");
@@ -907,6 +1030,13 @@ export function HookSettingsPage() {
   const piSessionStartLabel = text("会话启动", "Session Start");
   const piRunningLabel = text("运行中", "Running");
   const piStopLabel = text("任务完成", "Task Completed");
+  const grokSessionStartLabel = text("会话启动", "Session Start");
+  const grokRunningLabel = text("运行中", "Running");
+  const grokAttentionLabel = text("待审批", "Awaiting Approval");
+  const grokStopLabel = text("任务完成", "Task Completed");
+  const grokFailureLabel = text("执行失败", "Failed");
+  const grokSubagentLabel = text("子 Agent", "Subagent");
+  const grokIsolationLabel = text("跨工具 Hook 隔离", "Cross-tool Hook Isolation");
   const buildModuleActionLabel = (toolLabel: string, moduleLabel: string, installed: boolean) =>
     t(installed ? "settings.hooks.card.clickToUninstall" : "settings.hooks.card.clickToInstall", {
       tool: toolLabel,
@@ -1607,6 +1737,226 @@ export function HookSettingsPage() {
               {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
             </Button>
           </Group>
+            </>
+          )}
+        </Stack>
+      </CollapsibleHookSection>
+
+      <CollapsibleHookSection
+        title={text("Grok Build Hook 桥接", "Grok Build Hook Bridge")}
+        description={text(
+          "对齐 Claude 的 Hook 模块；安装时写入 ~/.grok/hooks 并关闭 Grok 对 Claude/Cursor hooks 的兼容扫描。",
+          "Aligns with Claude Hook modules; install writes ~/.grok/hooks and disables Grok scanning of Claude/Cursor hooks.",
+        )}
+        open={hookSettingsSectionsExpanded.grok}
+        onToggle={() => toggleHookSection("grok")}
+        collapsible={grokHookBridgeEnabled}
+        action={(
+          <Switch
+            color="cliPrimary"
+            checked={grokHookBridgeEnabled}
+            onChange={(event) => void updateSetting("grokHookBridgeEnabled", event.currentTarget.checked)}
+            aria-label={t("settings.hooks.bridge.enabled")}
+          />
+        )}
+        right={grokHookBridgeEnabled ? <StatusPill status={grokStatus} /> : undefined}
+      >
+        <Stack gap="lg">
+          {grokHookBridgeEnabled && (
+            <>
+              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
+                <HookCard
+                  icon={<Play />}
+                  label={grokSessionStartLabel}
+                  checked={grokSessionStartInstalled}
+                  notifyEnabled={notifyState(["SessionStart"])}
+                  onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
+                  notifyDisabled={!systemNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("grok", "sessionStart", grokSessionStartInstalled, grokSessionStartLabel)}
+                  disabled={anyWorking || grokStatus === "directoryMissing"}
+                  actionLabel={buildModuleActionLabel(grokToolLabel, grokSessionStartLabel, grokSessionStartInstalled)}
+                />
+                <HookCard
+                  icon={<Activity />}
+                  label={grokRunningLabel}
+                  checked={grokRunningInstalled}
+                  notifyEnabled={notifyState(["UserPromptSubmit"])}
+                  onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
+                  notifyDisabled={!systemNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("grok", "running", grokRunningInstalled, grokRunningLabel)}
+                  disabled={anyWorking || grokStatus === "directoryMissing"}
+                  actionLabel={buildModuleActionLabel(grokToolLabel, grokRunningLabel, grokRunningInstalled)}
+                />
+                <HookCard
+                  icon={<Bell />}
+                  label={grokAttentionLabel}
+                  checked={grokAttentionInstalled}
+                  notifyEnabled={notifyState(["Notification"])}
+                  onToggleNotify={() => toggleNotifyEvents(["Notification"], !notifyState(["Notification"]))}
+                  notifyDisabled={!systemNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("grok", "attention", grokAttentionInstalled, grokAttentionLabel)}
+                  disabled={anyWorking || grokStatus === "directoryMissing"}
+                  actionLabel={buildModuleActionLabel(grokToolLabel, grokAttentionLabel, grokAttentionInstalled)}
+                />
+                <HookCard
+                  icon={<CheckCircle />}
+                  label={grokStopLabel}
+                  checked={grokStopInstalled}
+                  notifyEnabled={notifyState(["Stop"])}
+                  onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
+                  notifyDisabled={!systemNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("grok", "stop", grokStopInstalled, grokStopLabel)}
+                  disabled={anyWorking || grokStatus === "directoryMissing"}
+                  actionLabel={buildModuleActionLabel(grokToolLabel, grokStopLabel, grokStopInstalled)}
+                />
+                <HookCard
+                  icon={<XCircle size={26} />}
+                  label={grokFailureLabel}
+                  checked={grokFailureInstalled}
+                  notifyEnabled={notifyState(["StopFailure"])}
+                  onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
+                  notifyDisabled={!systemNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("grok", "failure", grokFailureInstalled, grokFailureLabel)}
+                  disabled={anyWorking || grokStatus === "directoryMissing"}
+                  actionLabel={buildModuleActionLabel(grokToolLabel, grokFailureLabel, grokFailureInstalled)}
+                />
+                <HookCard
+                  icon={<Layers size={26} />}
+                  label={grokSubagentLabel}
+                  checked={grokSubagentInstalled}
+                  onClick={() => void handleModuleToggle("grok", "subagent", grokSubagentInstalled, grokSubagentLabel)}
+                  disabled={anyWorking || grokStatus === "directoryMissing"}
+                  actionLabel={buildModuleActionLabel(grokToolLabel, grokSubagentLabel, grokSubagentInstalled)}
+                />
+              </SimpleGrid>
+
+              <Card className="bg-surface-container-low/50" p="sm" radius="lg">
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box style={{ color: grokIsolationInstalled ? "var(--success)" : "var(--warning)", marginTop: 2 }}>
+                    <ShieldAlert size={18} />
+                  </Box>
+                  <Stack gap={4}>
+                    <Text size="xs" fw={500} c="var(--on-surface)">
+                      {grokIsolationLabel}
+                    </Text>
+                    <Text size="xs" c="var(--on-surface-variant)">
+                      {grokIsolationInstalled
+                        ? text(
+                            "已关闭 compat.claude.hooks 与 compat.cursor.hooks；卸载 Hook 时不会自动恢复。",
+                            "compat.claude.hooks and compat.cursor.hooks are disabled; uninstall will not re-enable them.",
+                          )
+                        : text(
+                            "安装 Grok Hook 后会写入 config.toml，禁止 Grok 读取 Claude/Cursor 的 hooks。",
+                            "Installing Grok Hook writes config.toml so Grok no longer loads Claude/Cursor hooks.",
+                          )}
+                    </Text>
+                  </Stack>
+                </Group>
+              </Card>
+
+              <Group gap="xs">
+                <Button
+                  variant="subtle"
+                  color="gray"
+                  size="xs"
+                  onClick={() => setGrokPathsOpen(!grokPathsOpen)}
+                  leftSection={grokPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                >
+                  {text("查看配置路径", "View Config Paths")}
+                </Button>
+                <Button
+                  variant="subtle"
+                  color="gray"
+                  size="xs"
+                  onClick={() => setGrokInfoOpen(!grokInfoOpen)}
+                  leftSection={<HelpCircle size={14} />}
+                >
+                  {text("安装说明", "Install Notes")}
+                </Button>
+              </Group>
+
+              {grokPathsOpen && (
+                <Card className="bg-surface-container-low/50" p="sm" radius="lg">
+                  <Stack gap="xs">
+                    <PathRow label={text("Grok 配置目录", "Grok Config Directory")} value={grok?.configDir ?? grokSelectedDir} />
+                    <PathRow label={text("hooks 目录", "hooks Directory")} value={grok?.hooksDir ?? null} />
+                    <PathRow label="cli-manager.json" value={grok?.configPath ?? null} />
+                    <PathRow label="config.toml" value={grok?.featureConfigPath ?? null} />
+                  </Stack>
+                </Card>
+              )}
+
+              {grokInfoOpen && (
+                <Card className="bg-surface-container-low/50" p="md" radius="lg">
+                  <Stack gap="md">
+                    <Group gap="sm" wrap="nowrap" align="flex-start">
+                      <Box style={{ color: "var(--success)", marginTop: 2 }}>
+                        <Check size={18} />
+                      </Box>
+                      <Stack gap={4}>
+                        <Text size="xs" fw={500} c="var(--on-surface)">
+                          {text("安装内容", "Installed Content")}
+                        </Text>
+                        <Stack gap={2}>
+                          <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
+                            {text("~/.grok/hooks/cli-manager.json（不是 settings.json）", "~/.grok/hooks/cli-manager.json (not settings.json)")}
+                          </Text>
+                          <Text size="xs" c="var(--on-surface-variant)">
+                            {text("注册 __hook --source grok 事件；Grok 扫描 hooks/*.json", "Registers __hook --source grok events; Grok scans hooks/*.json")}
+                          </Text>
+                          <Text size="xs" c="var(--on-surface-variant)">
+                            {text("~/.grok/config.toml：compat.claude.hooks / compat.cursor.hooks = false", "~/.grok/config.toml: compat.claude.hooks / compat.cursor.hooks = false")}
+                          </Text>
+                        </Stack>
+                      </Stack>
+                    </Group>
+                    <Group gap="sm" wrap="nowrap" align="flex-start">
+                      <Box style={{ color: "var(--warning)", marginTop: 2 }}>
+                        <X size={18} />
+                      </Box>
+                      <Stack gap={4}>
+                        <Text size="xs" fw={500} c="var(--on-surface)">
+                          {text("删除时", "On Removal")}
+                        </Text>
+                        <Text size="xs" c="var(--on-surface-variant)">
+                          {text("• 仅移除 CLI-Manager 的 Grok hook 条目", "• Only removes CLI-Manager Grok hook entries")}
+                        </Text>
+                        <Text size="xs" c="var(--on-surface-variant)">
+                          {text("• 不恢复跨工具 hook 兼容（避免再次串线）", "• Does not re-enable cross-tool hook compatibility")}
+                        </Text>
+                      </Stack>
+                    </Group>
+                  </Stack>
+                </Card>
+              )}
+
+              <TextInput
+                size="xs"
+                label={text("Grok 配置目录（可手动粘贴，默认 ~/.grok）", "Grok config directory (manual paste supported, default ~/.grok)")}
+                placeholder={text("C:\\Users\\你\\.grok", "C:\\Users\\you\\.grok")}
+                value={grokSelectedDir ?? ""}
+                onChange={(e) => setGrokSelectedDir(e.currentTarget.value || null)}
+                onBlur={(e) => void handleManualGrokDirCommit(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleManualGrokDirCommit(e.currentTarget.value);
+                }}
+                disabled={anyWorking}
+              />
+
+              <Group gap="xs">
+                <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectGrokDir} disabled={anyWorking}>
+                  {text("选择 Grok 目录", "Choose Grok Directory")}
+                </Button>
+                <Button color="cliPrimary" size="xs" onClick={handleGrokInstall} disabled={loading || grokWorking || grokStatus === "directoryMissing"}>
+                  {grokWorking ? text("处理中...", "Processing...") : text("安装 Grok Hook", "Install Grok Hook")}
+                </Button>
+                <Button variant="light" color="red" size="xs" onClick={handleGrokUninstall} disabled={loading || grokWorking || grokStatus === "directoryMissing"}>
+                  {text("删除 Grok Hook", "Remove Grok Hook")}
+                </Button>
+                <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={anyWorking}>
+                  {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
+                </Button>
+              </Group>
             </>
           )}
         </Stack>

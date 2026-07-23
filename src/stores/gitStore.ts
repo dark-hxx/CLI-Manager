@@ -1,25 +1,19 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
 import { debugConsoleLog, debugConsoleWarn } from "../lib/debugConsole";
 import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy, GitBranchInfo } from "../lib/types";
 import { useSettingsStore } from "./settingsStore";
+import type { SshRemoteGitContext } from "../lib/sshRemoteGit";
 import {
-  sshRemoteGitBranchStatus,
-  sshRemoteGitBranches,
-  sshRemoteGitChanges,
-  sshRemoteGitListRepositories,
-  type SshRemoteGitContext,
-} from "../lib/sshRemoteGit";
+  createGitTransport,
+  type GitFileDiffPayload,
+  type GitRepositoryRef,
+  type GitTransport,
+} from "../lib/gitTransport";
 
 type GitStatusFilter = "all" | "M" | "A" | "D" | "U";
 
 /** 项目根下枚举出的 Git 仓库（后端 git_list_repositories 返回）。 */
-export interface GitRepoInfo {
-  /** 相对项目根路径：根仓库为空串，子仓库如 "sub-repo-a"、"tools/sub-repo-c"（'/' 分隔）。 */
-  relativePath: string;
-  absolutePath: string;
-  branch: string | null;
-}
+export type GitRepoInfo = GitRepositoryRef;
 
 // 判断已跟踪文件是否匹配当前筛选。未跟踪(U/??)单独成组展示，不参与此处筛选。
 function matchTrackedFilter(status: string, filter: GitStatusFilter): boolean {
@@ -33,6 +27,7 @@ function isUntracked(status: string): boolean {
 
 interface GitStore {
   remoteContext: SshRemoteGitContext | null;
+  remoteRequired: boolean;
   asOf: number | null;
   changes: GitFileChange[];
   tree: GitTreeNode[];
@@ -60,7 +55,7 @@ interface GitStore {
   repositories: GitRepoInfo[];
   /** 当前激活的子仓库绝对路径；null 表示项目根仓库。 */
   activeRepoPath: string | null;
-  setRemoteContext: (context: SshRemoteGitContext | null) => void;
+  setRemoteContext: (context: SshRemoteGitContext | null, remoteRequired?: boolean) => void;
 
   fetchChanges: (projectPath: string, silent?: boolean) => Promise<void>;
   fetchBranchStatus: (projectPath: string) => Promise<void>;
@@ -72,8 +67,9 @@ interface GitStore {
   discardFile: (filePath: string, status: string) => Promise<void>;
   discardAll: () => Promise<void>;
   deleteUntrackedPaths: (paths: string[]) => Promise<void>;
-  revertHunk: (diffText: string, hunkIndex: number) => Promise<void>;
-  revertLines: (diffText: string, selectedLines: { side: "old" | "new"; lineNumber: number }[]) => Promise<void>;
+  loadFileDiff: (filePath: string, status: string) => Promise<GitFileDiffPayload>;
+  revertHunk: (filePath: string, diffText: string, hunkIndex: number) => Promise<void>;
+  revertLines: (filePath: string, diffText: string, selectedLines: { side: "old" | "new"; lineNumber: number }[]) => Promise<void>;
   stageFile: (filePath: string) => Promise<void>;
   unstageFile: (filePath: string) => Promise<void>;
   stagePaths: (paths: string[]) => Promise<void>;
@@ -219,65 +215,44 @@ function collectDirectoryPaths(nodes: GitTreeNode[], treeId: string): string[] {
   return paths;
 }
 
-const inFlightChangeRequests = new Map<string, Promise<GitFileChange[]>>();
-const inFlightBranchStatusRequests = new Map<string, Promise<GitBranchStatus>>();
-const inFlightBranchListRequests = new Map<string, Promise<GitBranchInfo[]>>();
-
 /**
  * 生效仓库路径：激活子仓库时指向子仓库，否则项目根（null = 无项目）。
  * 所有 git invoke 的 projectPath 参数统一走此处；currentProjectPath 仍保留项目根身份，
  * 用于竞态守卫与 git-changed 事件过滤。
  */
 function effectiveRepoPath(): string | null {
-  const { activeRepoPath, currentProjectPath } = useGitStore.getState();
-  return activeRepoPath ?? currentProjectPath;
+  const { activeRepoPath, currentProjectPath, remoteRequired } = useGitStore.getState();
+  return activeRepoPath ?? (remoteRequired ? "" : currentProjectPath);
 }
 
-function assertGitWritable(): void {
-  if (useGitStore.getState().remoteContext) throw new Error("remote_git_read_only");
+function currentTransport(projectPath?: string | null): GitTransport {
+  const state = useGitStore.getState();
+  const root = projectPath ?? state.currentProjectPath;
+  if (!root) throw new Error("no_project");
+  return createGitTransport(root, state.remoteContext, state.remoteRequired);
 }
 
-function invokeGitChanges(projectPath: string): Promise<GitFileChange[]> {
-  const existing = inFlightChangeRequests.get(projectPath);
-  if (existing) return existing;
-
-  const request = invoke<GitFileChange[]>("git_get_changes", { projectPath }).finally(() => {
-    if (inFlightChangeRequests.get(projectPath) === request) {
-      inFlightChangeRequests.delete(projectPath);
-    }
-  });
-  inFlightChangeRequests.set(projectPath, request);
-  return request;
+function requestStillCurrent(projectPath: string, repoPath: string, contextKey: string): boolean {
+  const state = useGitStore.getState();
+  if (state.currentProjectPath !== projectPath || effectiveRepoPath() !== repoPath) return false;
+  try {
+    return currentTransport(projectPath).contextKey === contextKey;
+  } catch {
+    return false;
+  }
 }
 
-function invokeGitBranchStatus(projectPath: string): Promise<GitBranchStatus> {
-  const existing = inFlightBranchStatusRequests.get(projectPath);
-  if (existing) return existing;
-
-  const request = invoke<GitBranchStatus>("git_branch_status", { projectPath }).finally(() => {
-    if (inFlightBranchStatusRequests.get(projectPath) === request) {
-      inFlightBranchStatusRequests.delete(projectPath);
-    }
-  });
-  inFlightBranchStatusRequests.set(projectPath, request);
-  return request;
-}
-
-function invokeGitBranches(projectPath: string): Promise<GitBranchInfo[]> {
-  const existing = inFlightBranchListRequests.get(projectPath);
-  if (existing) return existing;
-
-  const request = invoke<GitBranchInfo[]>("git_list_branches", { projectPath }).finally(() => {
-    if (inFlightBranchListRequests.get(projectPath) === request) {
-      inFlightBranchListRequests.delete(projectPath);
-    }
-  });
-  inFlightBranchListRequests.set(projectPath, request);
-  return request;
+async function refreshIfResultUnknown(projectPath: string, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes("remote_git_result_unknown")) return;
+  const store = useGitStore.getState();
+  await store.fetchChanges(projectPath, true);
+  await store.fetchBranchStatus(projectPath);
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
   remoteContext: null,
+  remoteRequired: false,
   asOf: null,
   changes: [],
   tree: [],
@@ -301,7 +276,25 @@ export const useGitStore = create<GitStore>((set, get) => ({
   statusFilter: "all",
   repositories: [],
   activeRepoPath: null,
-  setRemoteContext: (remoteContext) => set({ remoteContext }),
+  setRemoteContext: (remoteContext, remoteRequired = remoteContext !== null) => set((state) => {
+    if (state.remoteRequired === remoteRequired && state.remoteContext?.contextKey === remoteContext?.contextKey) {
+      return { remoteContext };
+    }
+    return {
+      remoteContext,
+      remoteRequired,
+      changes: [],
+      tree: [],
+      untrackedTree: [],
+      branchStatus: null,
+      branches: [],
+      asOf: null,
+      repositories: [],
+      activeRepoPath: null,
+      selectedUntracked: new Set<string>(),
+      deselectedAdded: new Set<string>(),
+    };
+  }),
 
   fetchChanges: async (projectPath: string, silent = false) => {
     // 项目切换：清空子仓库激活态与列表，避免带着上个项目的 activeRepoPath 查错仓库。
@@ -315,14 +308,15 @@ export const useGitStore = create<GitStore>((set, get) => ({
       set({ loading: true, error: null, currentProjectPath: projectPath, ...switchPatch });
     }
 
-    const remoteContext = get().remoteContext;
-    const repoPath = get().activeRepoPath ?? (remoteContext ? "" : projectPath);
+    const repoPath = get().activeRepoPath ?? (get().remoteRequired ? "" : projectPath);
+    let contextKey: string | null = null;
     try {
-      const remoteSnapshot = remoteContext ? await sshRemoteGitChanges(remoteContext, repoPath) : null;
-      const changes = remoteSnapshot?.value ?? await invokeGitChanges(repoPath);
-      if (get().currentProjectPath !== projectPath) return;
-      // 等待期间切换了子仓库 → 丢弃过期结果（新一轮 fetchChanges 已在路上）。
-      if ((get().activeRepoPath ?? (remoteContext ? "" : projectPath)) !== repoPath) return;
+      const transport = currentTransport(projectPath);
+      contextKey = transport.contextKey;
+      const snapshot = await transport.getChanges(repoPath);
+      const changes = snapshot.value;
+      // 等待期间切换了项目、Transport 或子仓库 → 丢弃过期结果。
+      if (!requestStillCurrent(projectPath, repoPath, contextKey)) return;
 
       // 应用筛选并拆分已跟踪 / 未跟踪两棵树，使用当前分组模式
       const { statusFilter } = get();
@@ -336,13 +330,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
       const addedNow = new Set(changes.filter((c) => c.status === "A").map((c) => c.path));
       const prevDeselected = get().deselectedAdded;
       const deselectedAdded = new Set([...prevDeselected].filter((p) => addedNow.has(p)));
-      set({ changes, tree, untrackedTree, selectedUntracked, deselectedAdded, loading: false, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
+      set({ changes, tree, untrackedTree, selectedUntracked, deselectedAdded, loading: false, ...(snapshot.asOf !== undefined ? { asOf: snapshot.asOf } : {}) });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 获取 Git 变更失败:`, err);
       // silent 失败（轮询）不清空已有数据、不弹错，避免打扰；仅非静默时显式报错。
-      if (get().currentProjectPath !== projectPath) return;
-      if ((get().activeRepoPath ?? (remoteContext ? "" : projectPath)) !== repoPath) return;
+      const scopeStillCurrent = get().currentProjectPath === projectPath && effectiveRepoPath() === repoPath;
+      if (!scopeStillCurrent || (contextKey !== null && !requestStillCurrent(projectPath, repoPath, contextKey))) return;
       if (silent) {
         set({ loading: false });
       } else {
@@ -357,37 +351,43 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   fetchBranchStatus: async (projectPath: string) => {
-    const remoteContext = get().remoteContext;
-    const repoPath = get().activeRepoPath ?? (remoteContext ? "" : projectPath);
+    const repoPath = effectiveRepoPath() ?? projectPath;
+    let contextKey: string | null = null;
     try {
-      const remoteSnapshot = remoteContext ? await sshRemoteGitBranchStatus(remoteContext, repoPath) : null;
-      const branchStatus = remoteSnapshot?.value ?? await invokeGitBranchStatus(repoPath);
+      const transport = currentTransport(projectPath);
+      contextKey = transport.contextKey;
+      const snapshot = await transport.getBranchStatus(repoPath);
+      const branchStatus = snapshot.value;
       // 仅当仍是当前项目且生效仓库未变时写入，避免切换项目/子仓库时的竞态覆盖。
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
-        set({ branchStatus, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
+      if (contextKey !== null && requestStillCurrent(projectPath, repoPath, contextKey)) {
+        set({ branchStatus, ...(snapshot.asOf !== undefined ? { asOf: snapshot.asOf } : {}) });
       }
     } catch (err) {
       debugConsoleWarn(`[GitStore] 获取分支状态失败:`, err);
       // 与成功路径同守卫：stale 请求（项目/子仓库已切换）失败时不得清掉新仓库的有效状态。
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
+      const scopeStillCurrent = get().currentProjectPath === projectPath && effectiveRepoPath() === repoPath;
+      if (scopeStillCurrent && (contextKey === null || requestStillCurrent(projectPath, repoPath, contextKey))) {
         set({ branchStatus: null });
       }
     }
   },
 
   fetchBranches: async (projectPath: string, silent = false) => {
-    const remoteContext = get().remoteContext;
-    const repoPath = get().activeRepoPath ?? (remoteContext ? "" : projectPath);
+    const repoPath = effectiveRepoPath() ?? projectPath;
+    let contextKey: string | null = null;
     if (!silent) set({ branchLoading: true, error: null });
     try {
-      const remoteSnapshot = remoteContext ? await sshRemoteGitBranches(remoteContext, repoPath) : null;
-      const branches = remoteSnapshot?.value ?? await invokeGitBranches(repoPath);
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
-        set({ branches, branchLoading: false, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
+      const transport = currentTransport(projectPath);
+      contextKey = transport.contextKey;
+      const snapshot = await transport.listBranches(repoPath);
+      const branches = snapshot.value;
+      if (contextKey !== null && requestStillCurrent(projectPath, repoPath, contextKey)) {
+        set({ branches, branchLoading: false, ...(snapshot.asOf !== undefined ? { asOf: snapshot.asOf } : {}) });
       }
     } catch (err) {
       debugConsoleWarn(`[GitStore] 获取分支列表失败:`, err);
-      if (get().currentProjectPath === projectPath && (get().activeRepoPath ?? (remoteContext ? "" : projectPath)) === repoPath) {
+      const scopeStillCurrent = get().currentProjectPath === projectPath && effectiveRepoPath() === repoPath;
+      if (scopeStillCurrent && (contextKey === null || requestStillCurrent(projectPath, repoPath, contextKey))) {
         set({ branches: [], branchLoading: false });
       }
     }
@@ -399,21 +399,17 @@ export const useGitStore = create<GitStore>((set, get) => ({
       set({ repositories: [], activeRepoPath: null });
     }
     try {
-      const remoteSnapshot = get().remoteContext ? await sshRemoteGitListRepositories(get().remoteContext!) : null;
-      const repositories = remoteSnapshot
-        ? remoteSnapshot.value.map((repo) => ({
-            relativePath: repo.relativePath,
-            absolutePath: repo.repoId,
-            branch: repo.branch,
-          }))
-        : await invoke<GitRepoInfo[]>("git_list_repositories", { projectPath });
+      const transport = currentTransport(projectPath);
+      const contextKey = transport.contextKey;
+      const snapshot = await transport.listRepositories();
+      const repositories = snapshot.value;
       // 竞态守卫：仅当仍是当前项目时写入（面板总是先 fetchChanges 再 fetchRepositories）。
-      if (get().currentProjectPath !== projectPath) return;
+      if (!requestStillCurrent(projectPath, effectiveRepoPath() ?? projectPath, contextKey)) return;
       const { activeRepoPath } = get();
       // 激活的子仓库已不在列表（被删除等）→ 回落到根仓库。
       const activeStillExists =
         activeRepoPath === null || repositories.some((repo) => repo.absolutePath === activeRepoPath);
-      set(activeStillExists ? { repositories, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) } : { repositories, activeRepoPath: null, ...(remoteSnapshot ? { asOf: remoteSnapshot.asOf } : {}) });
+      set(activeStillExists ? { repositories, ...(snapshot.asOf !== undefined ? { asOf: snapshot.asOf } : {}) } : { repositories, activeRepoPath: null, ...(snapshot.asOf !== undefined ? { asOf: snapshot.asOf } : {}) });
     } catch (err) {
       debugConsoleWarn(`[GitStore] 枚举 Git 仓库失败:`, err);
       if (get().currentProjectPath === projectPath) {
@@ -435,17 +431,19 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   discardFile: async (filePath: string, status: string) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     set({ discarding: true, error: null });
     try {
-      await invoke("git_discard_file", { projectPath: effectiveRepoPath(), filePath, status });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).discardFile(repoPath, filePath, status);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 回滚文件失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     } finally {
       set({ discarding: false });
@@ -453,7 +451,6 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   discardAll: async () => {
-    assertGitWritable();
     const { currentProjectPath, changes } = get();
     if (!currentProjectPath) return;
     // 仅回滚已跟踪改动，排除未跟踪文件（U/??）。
@@ -462,11 +459,9 @@ export const useGitStore = create<GitStore>((set, get) => ({
     set({ discarding: true, error: null });
     try {
       for (const c of trackable) {
-        await invoke("git_discard_file", {
-          projectPath: effectiveRepoPath(),
-          filePath: c.path,
-          status: c.status,
-        });
+        const repoPath = effectiveRepoPath();
+        if (repoPath === null) return;
+        await currentTransport(currentProjectPath).discardFile(repoPath, c.path, c.status);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -480,13 +475,12 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   deleteUntrackedPaths: async (paths: string[]) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     const repoPath = effectiveRepoPath();
-    if (!currentProjectPath || !repoPath || paths.length === 0) return;
+    if (!currentProjectPath || repoPath === null || paths.length === 0) return;
     set({ discarding: true, error: null });
     try {
-      await invoke("git_delete_untracked_paths", { projectPath: repoPath, paths });
+      await currentTransport(currentProjectPath).deleteUntracked(repoPath, paths);
       set((state) => {
         const selectedUntracked = new Set(state.selectedUntracked);
         for (const path of paths) {
@@ -499,42 +493,54 @@ export const useGitStore = create<GitStore>((set, get) => ({
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 删除未跟踪文件失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     } finally {
       set({ discarding: false });
     }
   },
 
-  revertHunk: async (diffText: string, hunkIndex: number) => {
-    assertGitWritable();
+  loadFileDiff: async (filePath: string, status: string) => {
+    const { currentProjectPath } = get();
+    const repoPath = effectiveRepoPath();
+    if (!currentProjectPath || repoPath === null) throw new Error("no_project");
+    return (await currentTransport(currentProjectPath).getFileDiff(repoPath, filePath, status)).value;
+  },
+
+  revertHunk: async (filePath: string, diffText: string, hunkIndex: number) => {
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     set({ discarding: true, error: null });
     try {
-      await invoke("git_revert_hunk", { projectPath: effectiveRepoPath(), diffText, hunkIndex });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).revertHunk(repoPath, filePath, diffText, hunkIndex);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 回滚 hunk 失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     } finally {
       set({ discarding: false });
     }
   },
 
-  revertLines: async (diffText, selectedLines) => {
-    assertGitWritable();
+  revertLines: async (filePath, diffText, selectedLines) => {
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     set({ discarding: true, error: null });
     try {
-      await invoke("git_revert_lines", { projectPath: effectiveRepoPath(), diffText, selectedLines });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).revertLines(repoPath, filePath, diffText, selectedLines);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 回滚选中行失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     } finally {
       set({ discarding: false });
@@ -542,91 +548,103 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   stageFile: async (filePath: string) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
-      await invoke("git_stage_file", { projectPath: effectiveRepoPath(), filePath });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).stage(repoPath, [filePath]);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 暂存文件失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     }
   },
 
   unstageFile: async (filePath: string) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
-      await invoke("git_unstage_file", { projectPath: effectiveRepoPath(), filePath });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).unstage(repoPath, [filePath]);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 取消暂存文件失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     }
   },
 
   stageAll: async () => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
-      await invoke("git_stage_all", { projectPath: effectiveRepoPath() });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).stageAll(repoPath);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 全部暂存失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     }
   },
 
   stagePaths: async (paths: string[]) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath || paths.length === 0) return;
     try {
-      await invoke("git_stage_paths", { projectPath: effectiveRepoPath(), paths });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).stage(repoPath, paths);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 批量暂存失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     }
   },
 
   unstagePaths: async (paths: string[]) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath || paths.length === 0) return;
     try {
-      await invoke("git_unstage_paths", { projectPath: effectiveRepoPath(), paths });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).unstage(repoPath, paths);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 批量取消暂存失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     }
   },
 
   unstageAll: async () => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) return;
     try {
-      await invoke("git_unstage_all", { projectPath: effectiveRepoPath() });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) return;
+      await currentTransport(currentProjectPath).unstageAll(repoPath);
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 全部取消暂存失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     }
   },
@@ -676,7 +694,6 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   commit: async (message: string) => {
-    assertGitWritable();
     const { currentProjectPath, selectedUntracked, deselectedAdded, changes } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ committing: true, error: null });
@@ -684,13 +701,17 @@ export const useGitStore = create<GitStore>((set, get) => ({
       // 提交前先 add 选中的未跟踪文件（延迟到此刻才真正 git add）。
       const toAdd = [...selectedUntracked];
       if (toAdd.length > 0) {
-        await invoke("git_stage_paths", { projectPath: effectiveRepoPath(), paths: toAdd });
+        const repoPath = effectiveRepoPath();
+        if (repoPath === null) throw new Error("no_project");
+        await currentTransport(currentProjectPath).stage(repoPath, toAdd);
       }
 
       let shortId: string;
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
       if (deselectedAdded.size === 0) {
         // 无「取消勾选的 A 文件」→ 走整库索引提交（保持既有语义）。
-        shortId = await invoke<string>("git_commit", { projectPath: effectiveRepoPath(), message });
+        shortId = await currentTransport(currentProjectPath).commit(repoPath, message);
       } else {
         // 有取消勾选的 A 文件 → 仅提交选中的路径（pathspec），被取消勾选者保持暂存不提交。
         const includedStaged = changes
@@ -698,11 +719,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
           .map((c) => c.path);
         const commitPaths = [...new Set([...includedStaged, ...toAdd])];
         if (commitPaths.length === 0) throw new Error("nothing_staged");
-        shortId = await invoke<string>("git_commit_paths", {
-          projectPath: effectiveRepoPath(),
-          message,
-          paths: commitPaths,
-        });
+        shortId = await currentTransport(currentProjectPath).commit(repoPath, message, commitPaths);
       }
 
       set({ selectedUntracked: new Set() });
@@ -721,7 +738,6 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   push: async () => {
-    assertGitWritable();
     const { currentProjectPath, branchStatus } = get();
     if (!currentProjectPath) throw new Error("no_project");
     // 无 upstream 时建立跟踪：push -u origin <branch>。
@@ -730,11 +746,9 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (setUpstream && !branch) throw new Error("empty_branch");
     set({ pushing: true, error: null });
     try {
-      const out = await invoke<string>("git_push", {
-        projectPath: effectiveRepoPath(),
-        setUpstream,
-        branch: setUpstream ? branch : null,
-      });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).push(repoPath, setUpstream, setUpstream ? branch : null);
       await get().fetchBranchStatus(currentProjectPath);
       return out;
     } catch (err) {
@@ -750,12 +764,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   fetchRemote: async () => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ fetching: true, error: null });
     try {
-      const out = await invoke<string>("git_fetch", { projectPath: effectiveRepoPath() });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).fetch(repoPath);
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
       await get().fetchBranches(currentProjectPath, true);
@@ -765,6 +780,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 获取远端更新失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     } finally {
       set({ fetching: false });
@@ -772,16 +788,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   checkoutBranch: async (branch: string, remote: boolean) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ checkingOutBranch: true, error: null });
     try {
-      const out = await invoke<string>("git_checkout_branch", {
-        projectPath: effectiveRepoPath(),
-        branch,
-        remote,
-      });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).checkout(repoPath, branch, remote);
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
       await get().fetchBranches(currentProjectPath, true);
@@ -801,16 +814,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   smartCheckoutBranch: async (branch: string, remote: boolean) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ checkingOutBranch: true, error: null });
     try {
-      const out = await invoke<string>("git_smart_checkout_branch", {
-        projectPath: effectiveRepoPath(),
-        branch,
-        remote,
-      });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).checkout(repoPath, branch, remote, true);
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
       await get().fetchBranches(currentProjectPath, true);
@@ -830,15 +840,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   createBranch: async (branch: string) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ creatingBranch: true, error: null });
     try {
-      const out = await invoke<string>("git_create_branch", {
-        projectPath: effectiveRepoPath(),
-        branch,
-      });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).createBranch(repoPath, branch);
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
       await get().fetchBranches(currentProjectPath, true);
@@ -848,6 +856,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 新建分支失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     } finally {
       set({ creatingBranch: false });
@@ -855,12 +864,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   pull: async (strategy) => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ pulling: true, error: null });
     try {
-      const out = await invoke<string>("git_pull", { projectPath: effectiveRepoPath(), strategy });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).pull(repoPath, strategy);
       // 拉取改动工作区与提交，需同时刷新变更列表与分支状态。
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
@@ -879,18 +889,20 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   pullAbort: async () => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ pulling: true, error: null });
     try {
-      await invoke<string>("git_pull_abort", { projectPath: effectiveRepoPath() });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      await currentTransport(currentProjectPath).pullAbort(repoPath);
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 中止拉取失败:`, err);
       set({ error: errorMsg });
+      await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
     } finally {
       set({ pulling: false });
@@ -898,12 +910,13 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   rebaseContinue: async () => {
-    assertGitWritable();
     const { currentProjectPath } = get();
     if (!currentProjectPath) throw new Error("no_project");
     set({ pulling: true, error: null });
     try {
-      const out = await invoke<string>("git_rebase_continue", { projectPath: effectiveRepoPath() });
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).rebaseContinue(repoPath);
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
       return out;
@@ -977,6 +990,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       repositories: [],
       activeRepoPath: null,
       remoteContext: null,
+      remoteRequired: false,
       asOf: null,
     });
   },

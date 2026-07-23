@@ -200,7 +200,8 @@ pub fn normalize_hook_input(event: &str, hook_input: &Value) -> Option<Normalize
         });
     Some(NormalizedHookInput {
         message,
-        session_id: first_string(hook_input, &["session_id"]),
+        // Claude/Codex use snake_case; Grok Build emits camelCase (sessionId).
+        session_id: first_string(hook_input, &["session_id", "sessionId"]),
         agent_id,
         tool_use_id,
         tool_name,
@@ -208,7 +209,7 @@ pub fn normalize_hook_input(event: &str, hook_input: &Value) -> Option<Normalize
         skill_name,
         agent_type,
         agent_transcript_path,
-        transcript_path: first_string(hook_input, &["transcript_path"]),
+        transcript_path: first_string(hook_input, &["transcript_path", "transcriptPath"]),
         reasoning_effort: extract_reasoning_effort(hook_input),
     })
 }
@@ -287,6 +288,23 @@ mod tests {
             Some("/tmp/child.jsonl")
         );
         assert_eq!(normalized.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn normalizes_grok_camel_case_session_id() {
+        // Grok Build hook stdin uses camelCase field names (see Grok hooks docs).
+        let input = json!({
+            "hookEventName": "session_start",
+            "sessionId": "019f8ea7-262f-75b3-acfd-74499dd0013c",
+            "cwd": r"F:\github\CLI-Manager",
+            "workspaceRoot": r"F:\github\CLI-Manager",
+            "timestamp": "2026-07-23T11:00:00Z"
+        });
+        let normalized = normalize_hook_input("SessionStart", &input).unwrap();
+        assert_eq!(
+            normalized.session_id.as_deref(),
+            Some("019f8ea7-262f-75b3-acfd-74499dd0013c")
+        );
     }
 
     #[test]

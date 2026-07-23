@@ -2522,7 +2522,9 @@ export function TerminalTabs({
     () => resolveProjectForSessionFileContext(activeSession, sessions, projects, projectById, worktrees),
     [activeSession, projectById, projects, sessions, worktrees]
   );
-  const sidePanelProjectPath = panelSession?.cwd ?? filePanelProject?.path ?? null;
+  const sidePanelProjectPath = panelProject?.environment_type === "ssh"
+    ? panelProject.remote_path.trim() || null
+    : panelSession?.cwd?.trim() || filePanelProject?.path.trim() || null;
   const workspanTabModels = useMemo(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
     const memberSessions = sessionIds
       .map((sessionId) => sessions.find((session) => session.id === sessionId))
@@ -3054,12 +3056,18 @@ export function TerminalTabs({
   const ensureStatsPanelAllowed = useCallback(async () => {
     try {
       const settings = useSettingsStore.getState();
-      const status = await invoke<{ claude: { status: string }; codex: { status: string }; pi: { status: string } }>(
+      const status = await invoke<{
+        claude: { status: string };
+        codex: { status: string };
+        pi: { status: string };
+        grok: { status: string };
+      }>(
         "hook_settings_get_status",
         {
           selectedDir: settings.claudeHookConfigDir?.trim() || null,
           codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
           piSelectedDir: settings.piHookConfigDir?.trim() || null,
+          grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
           ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
           autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
         }
@@ -3067,7 +3075,8 @@ export function TerminalTabs({
       const hasEnabledInstalledHook =
         (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
         (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
-        (settings.piHookBridgeEnabled && status.pi.status === "installed");
+        (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
+        (settings.grokHookBridgeEnabled && status.grok.status === "installed");
       if (!hasEnabledInstalledHook) {
         toast.warning(t("notifications.stats.needHook"), {
           description: t("notifications.stats.needHookDescription"),
@@ -3342,7 +3351,16 @@ export function TerminalTabs({
       return;
     }
     void syncFilePanelProject(filePanelProject);
-  }, [closeFilesPanel, filePanelProject?.id, filePanelProject?.path, filesPanelActive, syncFilePanelProject]);
+  }, [
+    closeFilesPanel,
+    filePanelProject?.id,
+    filePanelProject?.path,
+    filePanelProject?.environment_type,
+    filePanelProject?.ssh_host_id,
+    filePanelProject?.remote_path,
+    filesPanelActive,
+    syncFilePanelProject,
+  ]);
 
   const handleOpenHistoryTab = useCallback(() => {
     if (historyOpen) {

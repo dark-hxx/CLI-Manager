@@ -641,6 +641,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     set({
       project,
       remoteFileContext: null,
+      tree: keepCurrentProject ? get().tree : [],
       loading: true,
       searchMode: "files",
       searchQuery: "",
@@ -665,9 +666,10 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         remoteContext ? sshRemoteListDir(remoteContext) : listDir(project.path, ""),
         remoteContext ? Promise.resolve([]) : fetchGitChanges(project.path),
       ]);
-      if (get().project?.id !== project.id) return;
+      if (!isSameProjectFileContext(get().project, project)) return;
       set({ tree, gitChanges, remoteFileContext: remoteContext, loading: false });
     } catch (err) {
+      if (!isSameProjectFileContext(get().project, project)) return;
       logError("Failed to open project files", err);
       toast.error("文件列表加载失败", { description: String(err) });
       set({ tree: [], gitChanges: [], loading: false });
@@ -732,11 +734,17 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   },
 
   refreshVisibleStateOnce: async (changedPaths) => {
-    const project = get().project;
+    const state = get();
+    const project = state.project;
     if (!project) return;
 
-    const expandedPaths = get().expandedPaths;
-    const openFiles = get().openFiles;
+    const remoteFileContext = state.remoteFileContext;
+    // SSH 项目的本地 path 为空。远程上下文尚未建立或已经失败时，绝不能
+    // 回落到本地 file_* command，否则会把空根路径送进 canonical_root。
+    if (project.environment_type === "ssh" && !remoteFileContext) return;
+
+    const expandedPaths = state.expandedPaths;
+    const openFiles = state.openFiles;
     const refreshPaths = collectRefreshPaths(expandedPaths, openFiles, changedPaths);
 
     try {
@@ -744,8 +752,8 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         try {
           return {
             path,
-            children: get().remoteFileContext
-              ? await sshRemoteListDir(get().remoteFileContext!, path)
+            children: remoteFileContext
+              ? await sshRemoteListDir(remoteFileContext, path)
               : await listDir(project.path, path),
           };
         } catch (err) {
@@ -798,8 +806,16 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
           continue;
         }
 
-        const { file: refreshedFile } = await loadProjectFile(project, latestEntry);
+        const { file: refreshedFile } = await loadProjectFile(project, latestEntry, remoteFileContext);
         nextOpenFiles.push(refreshedFile);
+      }
+
+      const currentState = get();
+      if (
+        !isSameProjectFileContext(currentState.project, project)
+        || currentState.remoteFileContext?.consumerId !== remoteFileContext?.consumerId
+      ) {
+        return;
       }
 
       const activeFile = nextOpenFiles.find((file) => file.path === get().activeFilePath) ?? nextOpenFiles[0] ?? null;

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"新功能场景枚举与 Discovery List 闸机"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"WebView、Tauri、daemon、SSH Agent 跨层契约"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用单一 Git 面板并控制 Transport 抽象边界"}
+{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"远程仓库、文件路径、symlink 与破坏性写操作边界"}
+{"file":".trellis/spec/backend/git-status-contracts.md","reason":"Git 状态、嵌套仓库和本地/WSL 基准契约"}
+{"file":".trellis/spec/backend/ssh-agent-contracts.md","reason":"Agent 协议、capability、bridge、frame 和身份契约"}
+{"file":".trellis/spec/backend/ssh-remote-terminal-contracts.md","reason":"SSH 项目身份、远程路径和 capability 路由契约"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"共享 Git 面板组件和 Diff 回调边界"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand 异步竞态、项目/仓库上下文隔离"}

@@ -9,6 +9,7 @@ import { useI18n } from "../../lib/i18n";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { refractor, detectLanguage } from "./diffHighlight";
 import { Portal } from "../ui/Portal";
+import type { GitFileDiffPayload } from "../../lib/gitTransport";
 import "react-diff-view/style/index.css";
 import "./diffViewer.css";
 
@@ -24,6 +25,9 @@ interface DiffViewerModalProps {
   fileName: string;
   status: string;
   diffText?: string;
+  loadDiff?: (filePath: string, status: string) => Promise<GitFileDiffPayload>;
+  revertHunk?: (filePath: string, diffText: string, hunkIndex: number) => Promise<void>;
+  revertLines?: (filePath: string, diffText: string, selectedLines: { side: "old" | "new"; lineNumber: number }[]) => Promise<void>;
   onRequestDiscard?: (path: string, name: string, status: string) => void;
 }
 
@@ -33,16 +37,14 @@ interface GitDiffViewerProps {
   fileName: string;
   status: string;
   diffText?: string;
+  loadDiff?: (filePath: string, status: string) => Promise<GitFileDiffPayload>;
+  revertHunk?: (filePath: string, diffText: string, hunkIndex: number) => Promise<void>;
+  revertLines?: (filePath: string, diffText: string, selectedLines: { side: "old" | "new"; lineNumber: number }[]) => Promise<void>;
   onRequestDiscard?: (path: string, name: string, status: string) => void;
   onClose?: () => void;
   onReverted?: () => void;
   closeOnRevert?: boolean;
   useTerminalTheme?: boolean;
-}
-
-interface GitFileDiffPayload {
-  content: string;
-  canRevertHunks: boolean;
 }
 
 const TERMINAL_DIFF_ROOT_STYLE = {
@@ -85,6 +87,9 @@ export function GitDiffViewer({
   fileName,
   status,
   diffText: providedDiffText,
+  loadDiff,
+  revertHunk,
+  revertLines,
   onRequestDiscard,
   onClose,
   onReverted,
@@ -121,7 +126,10 @@ export function GitDiffViewer({
     setLoading(true);
     setCanRevertHunks(false);
 
-    invoke<GitFileDiffPayload>("git_get_file_diff", { projectPath, filePath, status })
+    const request = loadDiff
+      ? loadDiff(filePath, status)
+      : invoke<GitFileDiffPayload>("git_get_file_diff", { projectPath, filePath, status });
+    request
       .then((payload) => {
         if (cancelled) return;
         setDiffText(payload.content);
@@ -149,7 +157,7 @@ export function GitDiffViewer({
     return () => {
       cancelled = true;
     };
-  }, [projectPath, filePath, status, providedDiffText, t]);
+  }, [projectPath, filePath, status, providedDiffText, loadDiff, t]);
 
   // diff 解析放在 hooks 区（行选择 hook 依赖 hunks，不能在条件 return 之后）。
   const parsed = useMemo(() => {
@@ -201,7 +209,8 @@ export function GitDiffViewer({
   const handleRevertHunk = async (hunkIndex: number) => {
     setReverting(true);
     try {
-      await invoke("git_revert_hunk", { projectPath, diffText, hunkIndex });
+      if (revertHunk) await revertHunk(filePath, diffText, hunkIndex);
+      else await invoke("git_revert_hunk", { projectPath, diffText, hunkIndex });
       onReverted?.();
       if (closeOnRevert) onClose?.();
     } catch {
@@ -232,7 +241,8 @@ export function GitDiffViewer({
     if (selectedLines.length === 0) return;
     setReverting(true);
     try {
-      await invoke("git_revert_lines", { projectPath, diffText, selectedLines });
+      if (revertLines) await revertLines(filePath, diffText, selectedLines);
+      else await invoke("git_revert_lines", { projectPath, diffText, selectedLines });
       onReverted?.();
       if (closeOnRevert) onClose?.();
     } catch {
@@ -429,7 +439,7 @@ export function GitDiffViewer({
   );
 }
 
-export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName, status, diffText, onRequestDiscard }: DiffViewerModalProps) {
+export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName, status, diffText, loadDiff, revertHunk, revertLines, onRequestDiscard }: DiffViewerModalProps) {
   // Esc 关闭弹窗（仅 open 时挂载监听；对齐 SettingsModal / HistoryWorkspace 的 keydown 处理模式）。
   useEffect(() => {
     if (!open) return;
@@ -464,6 +474,9 @@ export function DiffViewerModal({ open, onClose, projectPath, filePath, fileName
             fileName={fileName}
             status={status}
             diffText={diffText}
+            loadDiff={loadDiff}
+            revertHunk={revertHunk}
+            revertLines={revertLines}
             onClose={onClose}
             onRequestDiscard={onRequestDiscard}
             closeOnRevert
