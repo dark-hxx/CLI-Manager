@@ -161,6 +161,8 @@ type TreeNode =
 - Windows extended-length path prefixes (`\\?\` / `//?/`) must be stripped before passing paths to `git worktree add/remove`; Git CLI receives normal local paths only.
 - WSL / UNC / remote paths remain unsupported and must be rejected before appending the task name or executing Git.
 - If `git worktree add -b wt/<task>` fails after creating the branch, cleanup may delete only a branch that did not exist before the add attempt and still validates as a `wt/` worktree branch. Never delete non-`wt/` branches.
+- While a Worktree create request for the same project path, worktree root, and task name is in flight, the frontend must not invoke `git_worktree_create` again. Duplicate triggers must fail locally with `worktree_create_in_progress` and release the guard on both success and failure.
+- A failed `git_worktree_create` response must preserve the final Git error tail. Checkout progress prefixes may be normalized or truncated only after the terminal `fatal`/`error` text remains available to the frontend.
 
 #### Dependency prompt
 
@@ -191,6 +193,7 @@ type TreeNode =
 | `projectWorktreeConfigEnabled=false` | Open the project directly; do not validate Git, prompt, or auto-create a Worktree. Preserve stored project Worktree fields. |
 | Invalid task name | Return `invalid_task_name`; no directory or branch is created. |
 | Branch already exists | Return Git failure; frontend asks for a different name or auto-generates a collision suffix. |
+| Same project/root/task creation already in flight | Return `worktree_create_in_progress` locally; do not issue another Git command or show an unhandled Promise rejection. |
 | Worktree path already exists | Return `worktree_path_exists`; frontend must not reuse silently. |
 | Main checkout dirty before merge | Return `dirty_main_worktree`; no checkout/merge happens. |
 | Worktree branch has no content diff from base branch | Return skipped `no_diff`; no checkout/merge happens; cleanup remains available. |
@@ -207,6 +210,7 @@ type TreeNode =
 ### 5. Good/Base/Bad Cases
 
 - Good: Project A has `cli_tool=codex` and one existing open Project A terminal. Opening another Project A terminal under `prompt` shows a worktree prompt; choosing isolate creates `wt/task-*`, opens the new PTY in that path, and displays a tab badge.
+- Good: A fast double-click or simultaneous auto/manual trigger for the same task produces one Git create request; the duplicate is ignored while the first request completes.
 - Base: Project A has `worktree_strategy=disabled`. Opening a terminal uses the original project path and existing startup command behavior, even when a CLI tool and same-project terminal already exist.
 - Base: global Worktree configuration is disabled while Project A stores `worktree_strategy=prompt` or `always`. Normal and split launches open directly, the project form hides Worktree controls, and the stored strategy remains unchanged.
 - Base: Project A has `cli_tool=codex` but no existing same-project terminals. Under `autoParallel`, opening a terminal uses the original project path and existing startup command behavior.
@@ -217,6 +221,7 @@ type TreeNode =
 - Bad: Calling `git merge` while the main checkout has uncommitted changes. This mixes unrelated work and must be blocked.
 - Bad: Rendering `dirty_main_worktree` or `merge_conflict` raw in the dialog. The codes are correct transport values but not actionable user guidance.
 - Bad: Deleting a path passed from the frontend without confirming it is a registered Git worktree. This is a high-risk filesystem deletion and is forbidden.
+- Bad: Returning only the first 300 characters of Git output when checkout progress occupies that prefix; the actual fatal cause becomes invisible and cannot be diagnosed.
 
 ### 6. Tests Required
 
@@ -226,6 +231,7 @@ type TreeNode =
   - dependency detection returns the expected command for npm/pnpm/yarn fixtures and no prompt when dependency directories exist.
   - stale worktree directory cleanup retries transient Windows file-lock errors such as `os error 32`.
   - remove/merge helpers reject non-`wt/` branches and branch/path mismatches where feasible.
+  - create error formatting keeps a final `fatal`/`error` line after long checkout progress.
 - Frontend static checks:
   - `npx tsc --noEmit` must pass after adding `WorktreeRecord`, `TreeNode` union changes, and `TerminalSession.worktreeId`.
   - new project defaults keep `worktree_strategy="disabled"` and `worktree_deps_prompt_enabled=0`.

@@ -1972,6 +1972,18 @@ mod tests {
     }
 
     #[test]
+    fn direct_address_probe_ignores_the_default_ssh_config() {
+        let mut value = spec();
+        value.jump_target.clear();
+        let command = ssh_probe_command(&value, false).unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|pair| pair == ["-F", "none"]));
+    }
+
+    #[test]
     fn agent_probe_script_rejects_unsafe_explicit_paths() {
         assert_eq!(
             build_agent_probe_script(Some("$HOME/agent")).unwrap_err(),

@@ -19,6 +19,40 @@ function commandArgsContainConfig(argsToCheck) {
   );
 }
 
+function cargoBuildSelectionArgs(argsToCheck) {
+  const selectionArgs = [];
+  let separatorCount = 0;
+
+  for (let index = 1; index < argsToCheck.length; index += 1) {
+    const arg = argsToCheck[index];
+    if (arg === "--") {
+      separatorCount += 1;
+      if (separatorCount === 2) break;
+      continue;
+    }
+
+    if (arg === "--release") {
+      selectionArgs.push(arg);
+      continue;
+    }
+
+    const option = ["--target", "-t", "--profile", "--target-dir"].find(
+      (candidate) => arg === candidate || arg.startsWith(`${candidate}=`),
+    );
+    if (!option) continue;
+
+    const inlineValue = arg.startsWith(`${option}=`)
+      ? arg.slice(option.length + 1)
+      : null;
+    const value = inlineValue ?? argsToCheck[index + 1];
+    if (!value || value === "--") continue;
+    selectionArgs.push(option === "-t" ? "--target" : option, value);
+    if (inlineValue === null) index += 1;
+  }
+
+  return selectionArgs;
+}
+
 function withDevConfig(argsToRun) {
   if (argsToRun[0] !== "dev" || commandArgsContainConfig(argsToRun)) {
     return argsToRun;
@@ -70,24 +104,65 @@ function devSpawnEnv(argsToRun) {
 
 const tauriArgs = resolveConfigPaths(withDevConfig(args));
 
-let child;
-try {
-  child = spawn("tauri", tauriArgs, {
-    cwd: tauriRoot,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-    env: devSpawnEnv(tauriArgs),
+function buildWindowsDevProxy(argsToRun) {
+  if (process.platform !== "win32" || argsToRun[0] !== "dev") {
+    return Promise.resolve(0);
+  }
+
+  const cargoArgs = [
+    "build",
+    "--locked",
+    "--manifest-path",
+    path.join(tauriRoot, "Cargo.toml"),
+    "--bin",
+    "cli-manager-codex-proxy",
+  ];
+  cargoArgs.push(...cargoBuildSelectionArgs(argsToRun));
+
+  return new Promise((resolve) => {
+    const child = spawn("cargo", cargoArgs, {
+      cwd: tauriRoot,
+      stdio: "inherit",
+      shell: true,
+      env: devSpawnEnv(argsToRun),
+    });
+    child.on("error", (error) => {
+      console.error(`Failed to build Codex app-server proxy: ${error.message}`);
+      resolve(1);
+    });
+    child.on("exit", (code) => resolve(code ?? 1));
   });
-} catch (error) {
-  console.error(`Failed to start Tauri CLI: ${error.message}`);
-  process.exit(1);
 }
 
-child.on("error", (error) => {
-  console.error(`Failed to start Tauri CLI: ${error.message}`);
-  process.exit(1);
-});
+async function main() {
+  const proxyBuildCode = await buildWindowsDevProxy(tauriArgs);
+  if (proxyBuildCode !== 0) {
+    process.exitCode = proxyBuildCode;
+    return;
+  }
 
-child.on("exit", (code) => {
-  process.exit(code ?? 1);
-});
+  let child;
+  try {
+    child = spawn("tauri", tauriArgs, {
+      cwd: tauriRoot,
+      stdio: "inherit",
+      shell: process.platform === "win32",
+      env: devSpawnEnv(tauriArgs),
+    });
+  } catch (error) {
+    console.error(`Failed to start Tauri CLI: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  child.on("error", (error) => {
+    console.error(`Failed to start Tauri CLI: ${error.message}`);
+    process.exitCode = 1;
+  });
+
+  child.on("exit", (code) => {
+    process.exitCode = code ?? 1;
+  });
+}
+
+void main();

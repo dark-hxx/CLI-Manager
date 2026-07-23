@@ -709,11 +709,32 @@ export function DesktopPetSettingsPage() {
             description={t("desktopPet.settings.behaviorDescription")}
           />
           <ToggleRow
+            title={t("desktopPet.settings.agentSessionsOnly")}
+            description={t("desktopPet.settings.agentSessionsOnlyDescription")}
+            checked={desktopPet.agentSessionsOnly}
+            ariaLabel={t("desktopPet.settings.agentSessionsOnly")}
+            onChange={(checked) => void patch({ agentSessionsOnly: checked })}
+          />
+          <ToggleRow
             title={t("desktopPet.settings.alwaysOnTop")}
             description={t("desktopPet.settings.alwaysOnTopDescription")}
             checked={desktopPet.alwaysOnTop}
             ariaLabel={t("desktopPet.settings.alwaysOnTop")}
             onChange={(checked) => void patch({ alwaysOnTop: checked })}
+          />
+          <ToggleRow
+            title={t("desktopPet.settings.showActionMenu")}
+            description={t("desktopPet.settings.showActionMenuDescription")}
+            checked={desktopPet.showActionMenu}
+            ariaLabel={t("desktopPet.settings.showActionMenu")}
+            onChange={(checked) => void patch({ showActionMenu: checked })}
+          />
+          <ToggleRow
+            title={t("desktopPet.settings.openOnHover")}
+            description={t("desktopPet.settings.openOnHoverDescription")}
+            checked={desktopPet.openOnHover}
+            ariaLabel={t("desktopPet.settings.openOnHover")}
+            onChange={(checked) => void patch({ openOnHover: checked })}
           />
           <Stack gap={8}>
             <ToggleRow

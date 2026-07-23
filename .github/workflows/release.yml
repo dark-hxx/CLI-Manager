@@ -31,6 +31,9 @@ jobs:
           cargo install cargo-zigbuild --locked
           npm ci
 
+      - name: Test R2 release preparation
+        run: node .github/scripts/prepare-r2-release.test.mjs
+
       - name: Extract SSH Agent version
         id: agent_version
         shell: bash
@@ -127,6 +130,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test Codex app-server proxy
+        if: matrix.platform == 'windows-latest'
+        run: npm run test:codex-proxy:e2e
+
+      - name: Test Tauri dev proxy preparation
+        if: matrix.platform == 'windows-latest'
+        run: npm run test:tauri-dev-proxy
+
       - name: Download bundled SSH Agent
         uses: actions/download-artifact@v4
         with:
@@ -214,6 +225,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Download SSH Agent release files
         uses: actions/download-artifact@v4
         with:
@@ -224,6 +246,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          draft: true
           files: |
             dist/ssh-agent/cli-manager-ssh-agent-linux-x86_64
             dist/ssh-agent/cli-manager-ssh-agent-linux-aarch64
@@ -231,7 +254,7 @@ jobs:
             dist/ssh-agent/ssh-agent-release-manifest.json.sig
             dist/ssh-agent/install-ssh-agent.sh
 
-      - name: Verify assets and publish release
+      - name: Verify GitHub release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -248,5 +271,106 @@ jobs:
               echo "Missing required SSH Agent release asset: $required" >&2
               exit 1
             }
+          done
+
+      - name: Prepare R2 release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          test "$R2_PUBLIC_BASE_URL" = "https://github.bwm.de5.net" || {
+            echo "R2_PUBLIC_BASE_URL must match the updater endpoint" >&2
+            exit 1
+          }
+          rm -rf dist/github-release dist/r2-release
+          mkdir -p dist/github-release
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir dist/github-release \
+            --clobber
+          test -f dist/github-release/latest.json
+          test -f dist/github-release/ssh-agent-release-manifest.json
+          node .github/scripts/prepare-r2-release.mjs \
+            dist/github-release \
+            dist/r2-release \
+            "$R2_PUBLIC_BASE_URL" \
+            "$GITHUB_REF_NAME"
+          rm -f dist/r2-release/ssh-agent-release-manifest.json.sig
+          npx tauri signer sign dist/r2-release/ssh-agent-release-manifest.json
+
+      - name: Upload release assets to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+        shell: bash
+        run: |
+          test -n "$R2_ACCOUNT_ID"
+          test -n "$R2_BUCKET"
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          VERSION_PREFIX="CLI-Manager/releases/${GITHUB_REF_NAME}"
+          aws s3 cp dist/r2-release "s3://${R2_BUCKET}/${VERSION_PREFIX}/" \
+            --recursive \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp dist/r2-release/latest.json \
+            "s3://${R2_BUCKET}/CLI-Manager/releases/latest/latest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache"
+          for agent_file in \
+            cli-manager-ssh-agent-linux-x86_64 \
+            cli-manager-ssh-agent-linux-aarch64 \
+            ssh-agent-release-manifest.json \
+            ssh-agent-release-manifest.json.sig \
+            install-ssh-agent.sh
+          do
+            aws s3 cp "dist/r2-release/${agent_file}" \
+              "s3://${R2_BUCKET}/CLI-Manager/releases/ssh-agent/latest/${agent_file}" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-cache"
+          done
+
+      - name: Verify R2 assets and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            "$R2_PUBLIC_BASE_URL/CLI-Manager/releases/latest/latest.json" \
+            --output /tmp/r2-latest.json
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            "$R2_PUBLIC_BASE_URL/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json" \
+            --output /tmp/r2-agent-manifest.json
+          node - "$R2_PUBLIC_BASE_URL" <<'NODE'
+          const fs = require("node:fs");
+          const base = process.argv[2];
+          const latest = JSON.parse(fs.readFileSync("/tmp/r2-latest.json", "utf8"));
+          const agent = JSON.parse(fs.readFileSync("/tmp/r2-agent-manifest.json", "utf8"));
+          const urls = [
+            ...Object.values(latest.platforms ?? {}).map((entry) => entry.url),
+            ...(agent.artifacts ?? []).map((entry) => entry.url),
+          ];
+          if (urls.length === 0 || urls.some((url) => typeof url !== "string" || !url.startsWith(`${base}/`))) {
+            throw new Error("R2 manifests contain a non-R2 asset URL");
+          }
+          fs.writeFileSync("/tmp/r2-asset-urls.txt", `${urls.join("\n")}\n`);
+          NODE
+          while IFS= read -r asset_url
+          do
+            curl --fail --silent --show-error --location --head --retry 5 --retry-all-errors "$asset_url"
+          done < /tmp/r2-asset-urls.txt
+          for stable_asset in \
+            ssh-agent-release-manifest.json.sig \
+            install-ssh-agent.sh
+          do
+            curl --fail --silent --show-error --location --head --retry 5 --retry-all-errors \
+              "$R2_PUBLIC_BASE_URL/CLI-Manager/releases/ssh-agent/latest/$stable_asset"
           done
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest

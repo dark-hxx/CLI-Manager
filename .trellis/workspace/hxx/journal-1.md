@@ -1386,7 +1386,106 @@ Completed S06-S10 with remote history/cache and resume, read-only file and Git p
 - None - task complete
 
 
-## Session 40: 完成 SSH 远程 Git 全功能面板
+## Session 40: 修复 PR #165 跨平台 Tauri Feature 配置
+
+**Date**: 2026-07-22
+**Task**: 修复 PR #165 跨平台 Tauri Feature 配置
+**Branch**: `pr-165-targeted-tauri-feature`
+
+### Summary
+
+将 macos-private-api 限定到 macOS Cargo target，恢复 Windows proxy E2E 与直接 Cargo 检查；同步发布契约、CHANGELOG 和验证记录。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c723c3c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 41: 修复 Worktree 创建并发与错误诊断
+
+**Date**: 2026-07-23
+**Task**: 修复 Worktree 创建并发与错误诊断
+**Branch**: `master`
+
+### Summary
+
+修复同名 Worktree 创建并发撞路径、Git checkout 错误截断和未处理 Promise；补齐中英文提示、Worktree 合约及 V1.3.1 变更记录。用户已确认修复成功。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a140aaef` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 42: 修复 WebDAV 远程项目恢复字段
+
+**Date**: 2026-07-23
+**Task**: 修复 WebDAV 远程项目恢复字段
+**Branch**: `master`
+
+### Summary
+
+WebDAV 工作区快照现同步可移植 SSH 主机分组、主机档案及项目绑定；恢复保持远程路径和主机绑定，严格排除凭据与本机路径，并补齐事务回归测试和同步契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4be60cce` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 43: 完成 SSH 远程 Git 全功能面板
 
 **Date**: 2026-07-23
 **Task**: 完成 SSH 远程 Git 全功能面板

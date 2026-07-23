@@ -2,8 +2,10 @@
 set -eu
 
 REPOSITORY="dark-hxx/CLI-Manager"
+R2_PUBLIC_BASE_URL="https://github.bwm.de5.net"
 PUBLIC_KEY="RWQ2q8PpYSJOegTuwYHCPZ5ArX7D8RnAyC2LCylqKghGnRGfzuioR+KL"
 manifest_url=""
+fallback_manifest_url=""
 install_dir=""
 requested_version=""
 requested_channel=""
@@ -105,9 +107,11 @@ if [ -z "$manifest_url" ]; then
       1.3.0) release_tag="V$requested_version" ;;
       *) release_tag="ssh-agent-v$requested_version" ;;
     esac
-    manifest_url="https://github.com/$REPOSITORY/releases/download/$release_tag/ssh-agent-release-manifest.json"
+    manifest_url="$R2_PUBLIC_BASE_URL/CLI-Manager/releases/$release_tag/ssh-agent-release-manifest.json"
+    fallback_manifest_url="https://github.com/$REPOSITORY/releases/download/$release_tag/ssh-agent-release-manifest.json"
   else
-    manifest_url="https://github.com/$REPOSITORY/releases/latest/download/ssh-agent-release-manifest.json"
+    manifest_url="$R2_PUBLIC_BASE_URL/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json"
+    fallback_manifest_url="https://github.com/$REPOSITORY/releases/latest/download/ssh-agent-release-manifest.json"
   fi
 fi
 case "$manifest_url" in
@@ -129,25 +133,38 @@ download() {
   url=$2
   maximum=$3
   if [ "$allow_http" -eq 1 ]; then
-    curl -fL --proto '=https,http' --proto-redir '=https,http' --max-redirs 3 --max-filesize "$maximum" -o "$output" "$url"
+    curl -fL --proto '=https,http' --proto-redir '=https,http' --max-redirs 3 --max-filesize "$maximum" -o "$output" "$url" || return 1
   else
-    curl -fL --proto '=https' --proto-redir '=https' --max-redirs 3 --max-filesize "$maximum" -o "$output" "$url"
+    curl -fL --proto '=https' --proto-redir '=https' --max-redirs 3 --max-filesize "$maximum" -o "$output" "$url" || return 1
   fi
-  [ "$(wc -c < "$output" | tr -d ' ')" -le "$maximum" ] || fail "download exceeded the size limit"
+  bytes=$(wc -c < "$output" 2>/dev/null | tr -d ' ') || return 1
+  [ -n "$bytes" ] && [ "$bytes" -le "$maximum" ] || return 1
 }
 
-download "$manifest" "$manifest_url" 1048576
-download "$signature_encoded" "$manifest_url.sig" 65536
-if command -v base64 >/dev/null 2>&1; then
-  if ! base64 -d "$signature_encoded" > "$signature" 2>/dev/null; then
-    base64 --decode "$signature_encoded" > "$signature" 2>/dev/null || fail "invalid manifest signature encoding"
-  fi
-elif command -v openssl >/dev/null 2>&1; then
-  openssl base64 -d -A -in "$signature_encoded" -out "$signature" || fail "invalid manifest signature encoding"
-else
+if ! command -v base64 >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
   fail "base64 or openssl is required"
 fi
-minisign -Vm "$manifest" -P "$PUBLIC_KEY" -x "$signature" >/dev/null
+
+load_manifest() {
+  candidate=$1
+  rm -f "$manifest" "$signature_encoded" "$signature"
+  download "$manifest" "$candidate" 1048576 || return 1
+  download "$signature_encoded" "$candidate.sig" 65536 || return 1
+  if command -v base64 >/dev/null 2>&1; then
+    if ! base64 -d "$signature_encoded" > "$signature" 2>/dev/null; then
+      base64 --decode "$signature_encoded" > "$signature" 2>/dev/null || return 1
+    fi
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl base64 -d -A -in "$signature_encoded" -out "$signature" || return 1
+  fi
+  minisign -Vm "$manifest" -P "$PUBLIC_KEY" -x "$signature" >/dev/null 2>&1 || return 1
+  manifest_url=$candidate
+}
+
+if ! load_manifest "$manifest_url"; then
+  [ -n "$fallback_manifest_url" ] || fail "unable to load or verify the release manifest"
+  load_manifest "$fallback_manifest_url" || fail "unable to load or verify the release manifest"
+fi
 
 case "$(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)" in
   Linux/x86_64|Linux/amd64) target="linux-x86_64" ;;
@@ -179,48 +196,73 @@ print("\t".join(map(str, values)))
 PY
 }
 
-if command -v jq >/dev/null 2>&1; then
-  fields=$(parse_with_jq) || fail "invalid release manifest"
-elif command -v python3 >/dev/null 2>&1; then
-  fields=$(parse_with_python) || fail "invalid release manifest"
-else
-  fail "jq or python3 is required to parse the signed manifest"
-fi
-old_ifs=$IFS
-IFS='	'
-set -- $fields
-IFS=$old_ifs
-[ "$#" -eq 8 ] || fail "signed manifest does not contain the selected target"
-schema=$1 channel=$2 version=$3 protocol_min=$4 protocol_max=$5 artifact_url=$6 expected_size=$7 expected_sha256=$8
-[ "$schema" = "1" ] || fail "unsupported manifest schema"
-case "$protocol_min:$protocol_max" in *[!0-9:]*) fail "invalid Agent protocol range" ;; esac
-[ "$protocol_min" -le 1 ] && [ "$protocol_max" -ge 1 ] || fail "incompatible Agent protocol"
-[ -z "$requested_version" ] || [ "$version" = "$requested_version" ] || fail "manifest version mismatch"
-[ -z "$requested_channel" ] || [ "$channel" = "$requested_channel" ] || fail "manifest channel mismatch"
-case "$artifact_url" in
-  https://*) ;;
-  http://*) [ "$allow_http" -eq 1 ] || fail "HTTP artifact requires --allow-http" ;;
-  *) fail "invalid artifact URL" ;;
-esac
-case "$artifact_url" in *\?*|*\#*) fail "artifact URL cannot contain a query or fragment" ;; esac
-case "$expected_size" in *[!0-9]*|"") fail "invalid artifact size" ;; esac
-[ "$expected_size" -le 134217728 ] || fail "artifact exceeds the 128 MB limit"
-case "$expected_sha256" in *[!0-9a-fA-F]*|"") fail "invalid artifact SHA-256" ;; esac
-[ "${#expected_sha256}" -eq 64 ] || fail "invalid artifact SHA-256"
+read_release() {
+  if command -v jq >/dev/null 2>&1; then
+    fields=$(parse_with_jq) || fail "invalid release manifest"
+  elif command -v python3 >/dev/null 2>&1; then
+    fields=$(parse_with_python) || fail "invalid release manifest"
+  else
+    fail "jq or python3 is required to parse the signed manifest"
+  fi
+  old_ifs=$IFS
+  IFS='	'
+  set -- $fields
+  IFS=$old_ifs
+  [ "$#" -eq 8 ] || fail "signed manifest does not contain the selected target"
+  schema=$1 channel=$2 version=$3 protocol_min=$4 protocol_max=$5 artifact_url=$6 expected_size=$7 expected_sha256=$8
+  [ "$schema" = "1" ] || fail "unsupported manifest schema"
+  case "$protocol_min:$protocol_max" in *[!0-9:]*) fail "invalid Agent protocol range" ;; esac
+  [ "$protocol_min" -le 1 ] && [ "$protocol_max" -ge 1 ] || fail "incompatible Agent protocol"
+  [ -z "$requested_version" ] || [ "$version" = "$requested_version" ] || fail "manifest version mismatch"
+  [ -z "$requested_channel" ] || [ "$channel" = "$requested_channel" ] || fail "manifest channel mismatch"
+  case "$artifact_url" in
+    https://*) ;;
+    http://*) [ "$allow_http" -eq 1 ] || fail "HTTP artifact requires --allow-http" ;;
+    *) fail "invalid artifact URL" ;;
+  esac
+  case "$artifact_url" in *\?*|*\#*) fail "artifact URL cannot contain a query or fragment" ;; esac
+  case "$expected_size" in *[!0-9]*|"") fail "invalid artifact size" ;; esac
+  [ "$expected_size" -le 134217728 ] || fail "artifact exceeds the 128 MB limit"
+  case "$expected_sha256" in *[!0-9a-fA-F]*|"") fail "invalid artifact SHA-256" ;; esac
+  [ "${#expected_sha256}" -eq 64 ] || fail "invalid artifact SHA-256"
+}
 
-download "$artifact" "$artifact_url" "$expected_size"
-actual_size=$(wc -c < "$artifact" | tr -d ' ')
-[ "$actual_size" = "$expected_size" ] || fail "artifact size mismatch"
-if command -v sha256sum >/dev/null 2>&1; then
-  actual_sha256=$(sha256sum "$artifact" | awk '{print $1}')
-elif command -v shasum >/dev/null 2>&1; then
-  actual_sha256=$(shasum -a 256 "$artifact" | awk '{print $1}')
-elif command -v openssl >/dev/null 2>&1; then
-  actual_sha256=$(openssl dgst -sha256 "$artifact" | awk '{print $NF}')
-else
-  fail "sha256sum, shasum, or openssl is required"
+read_release
+artifact_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$artifact" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$artifact" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$artifact" | awk '{print $NF}'
+  else
+    fail "sha256sum, shasum, or openssl is required"
+  fi
+}
+
+download_verified_artifact() {
+  rm -f "$artifact"
+  download "$artifact" "$artifact_url" "$expected_size" || return 1
+  actual_size=$(wc -c < "$artifact" | tr -d ' ')
+  [ "$actual_size" = "$expected_size" ] || return 1
+  actual_sha256=$(artifact_sha256)
+  [ "$(printf '%s' "$actual_sha256" | tr 'A-F' 'a-f')" = "$(printf '%s' "$expected_sha256" | tr 'A-F' 'a-f')" ]
+}
+
+primary_version=$version
+primary_size=$expected_size
+primary_sha256=$expected_sha256
+if ! download_verified_artifact; then
+  [ -n "$fallback_manifest_url" ] && [ "$manifest_url" != "$fallback_manifest_url" ] \
+    || fail "unable to download Agent artifact"
+  load_manifest "$fallback_manifest_url" || fail "unable to load or verify the fallback release manifest"
+  read_release
+  [ "$version" = "$primary_version" ] \
+    && [ "$expected_size" = "$primary_size" ] \
+    && [ "$(printf '%s' "$expected_sha256" | tr 'A-F' 'a-f')" = "$(printf '%s' "$primary_sha256" | tr 'A-F' 'a-f')" ] \
+    || fail "fallback release does not match the primary release"
+  download_verified_artifact || fail "unable to download or verify Agent artifact"
 fi
-[ "$(printf '%s' "$actual_sha256" | tr 'A-F' 'a-f')" = "$(printf '%s' "$expected_sha256" | tr 'A-F' 'a-f')" ] || fail "artifact SHA-256 mismatch"
 chmod 700 "$artifact"
 
 if [ "$dry_run" -eq 1 ]; then

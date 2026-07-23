@@ -199,6 +199,16 @@ impl SshTransportSpec {
     fn append_connection_args(&self, args: &mut Vec<String>, one_shot: bool) {
         if !self.config_file.trim().is_empty() {
             args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
+        } else if self.config_alias.trim().is_empty()
+            && self.jump_target.trim().is_empty()
+            && matches!(
+                self.auth_mode.as_str(),
+                "identity_file" | "password_prompt" | "credential_ref" | "interactive"
+            )
+        {
+            // These modes fully describe authentication in CLI-Manager. Agent and ssh_config
+            // must retain the default Config for settings such as IdentityAgent and Host *.
+            args.extend(["-F".to_string(), "none".to_string()]);
         }
         args.extend([
             "-o".to_string(),
@@ -409,7 +419,65 @@ mod tests {
             .build_one_shot_launch("true".into(), SshOneShotOptions::default())
             .unwrap();
         assert!(!launch.args.iter().any(|arg| arg == "-p"));
+        assert!(!launch.args.iter().any(|arg| arg == "-F"));
         assert_eq!(launch.args[launch.args.len() - 2], "prod");
+    }
+
+    #[test]
+    fn explicit_authentication_modes_ignore_the_default_ssh_config() {
+        for mode in ["identity_file", "password_prompt", "interactive"] {
+            let mut value = spec(mode);
+            value.jump_target.clear();
+            for launch in [
+                value.build_interactive_launch("shell".into()).unwrap(),
+                value
+                    .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+                    .unwrap(),
+            ] {
+                assert!(
+                    launch.args.windows(2).any(|pair| pair == ["-F", "none"]),
+                    "mode={mode} args={:?}",
+                    launch.args
+                );
+            }
+        }
+
+        let mut credential_args = Vec::new();
+        let mut credential = spec("credential_ref");
+        credential.jump_target.clear();
+        credential.append_connection_args(&mut credential_args, true);
+        assert!(credential_args
+            .windows(2)
+            .any(|pair| pair == ["-F", "none"]));
+    }
+
+    #[test]
+    fn agent_and_ssh_config_modes_keep_the_default_config_for_explicit_addresses() {
+        for mode in ["agent", "ssh_config"] {
+            let mut value = spec(mode);
+            value.jump_target.clear();
+            for launch in [
+                value.build_interactive_launch("shell".into()).unwrap(),
+                value
+                    .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+                    .unwrap(),
+            ] {
+                assert!(
+                    !launch.args.iter().any(|arg| arg == "-F"),
+                    "mode={mode} args={:?}",
+                    launch.args
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn config_alias_jump_keeps_the_default_ssh_config_enabled() {
+        let launch = spec("agent")
+            .build_interactive_launch("shell".into())
+            .unwrap();
+        assert!(!launch.args.iter().any(|arg| arg == "-F"));
+        assert!(launch.args.windows(2).any(|pair| pair == ["-J", "bastion"]));
     }
 
     #[test]

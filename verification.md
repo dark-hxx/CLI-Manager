@@ -465,3 +465,183 @@
 - 已同步并合并 origin/master 44f5695c，冲突仅为上游 1.3.0 与本分支 1.3.1 的五个版本字段，统一保留 1.3.1。
 - 使用 tauri.local.conf.json 关闭 updater artifacts，仅构建 NSIS；产物为 src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.1_x64-setup.exe，大小 19021755 字节，SHA-256 为 E13FCF061B1B2EFDB7FABBF63C6050F4F7781992DE23948C049F11FE0AE1A3B9。
 - 未构建 MSI、未生成更新签名、未复制到 F:\cli-manager、未停止用户安装目录中的服务，也未 push。
+
+## 桌宠菜单可配置与三卡滚动（2026-07-22）
+
+### 功能与兼容性
+
+- “设置 -> 桌面宠物 -> 显示与交互”新增“显示快捷操作菜单”和“悬停自动展开”两个开关；旧配置缺少字段时均默认开启，保持升级前行为。
+- 快捷操作关闭后只保留任务卡片，窗口几何同步缩窄并把卡片贴近宠物，不留下原操作菜单占用的空白；没有任务时右键和悬停均不展开空窗口。
+- 悬停自动展开关闭后仅右键可展开；双击当前会话、任务卡片点击、拖动、Esc 和离开窗口关闭逻辑保持不变。
+- 普通任务与托管会话列表最多显示三张卡片，第四张起使用透明轨道、半透明绿色滑块的纵向滚动条；远程平台选择列表继续最多显示五项。
+- 触点覆盖：settingsStore 默认值/迁移、桌宠设置真实入口、中英文文案、配置事件传输、DesktopPetApp 交互、窗口几何、卡片 CSS 和几何测试；Rust、PTY、Hook、远程托管协议及 cc-connect 均未修改。
+
+### 验证
+
+- 前端 TypeScript noEmit 检查：通过。
+- desktopPetMenuGeometry.test.mjs：14 项通过，新增覆盖三卡高度上限、任务单栏缩窄、空菜单不扩窗和平台五项兼容。
+- Node.js 22 环境下 npm run build：通过，Vite 完成 6678 个模块转换。
+- git diff --check：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- GitNexus CLI 本轮无法在时限内启动，已降级使用 codebase-memory、源码引用、rg、Git diff、几何测试和生产构建复核。
+- 本次未生成安装包，未启动或停止用户安装目录中的 CLI-Manager，也未 push。
+
+## PR #165 审查意见修复（2026-07-22）
+
+### 根因与发现清单
+
+- macOS Universal 缺失代理的根因位于 Tauri 打包前置脚本：Cargo 会把 `src/bin` 中的辅助程序作为各平台 bin 目标构建，但旧脚本只对 `cli-manager-daemon` 执行 `lipo`，新增 `cli-manager-codex-proxy` 后没有生成 Universal 产物。修复在统一辅助程序合并入口同时处理 daemon 和 proxy，并在任一架构产物缺失或 `lipo` 失败时给出具体二进制名称。
+- 测试缺口位于单元测试与真实进程边界之间：原测试只能证明参数构造和文件复制，不能证明 GUI 子系统 proxy 能实际启动 CMD/EXE launcher、转发 JSONL、传递 Provider 环境和退出码。新增 Windows E2E 编译并启动真实 `cli-manager-codex-proxy.exe`，假 Codex 仅用于观测真实代理产生的子进程行为。
+- 文档偏差位于“第三方 cc-connect 源码”和“CLI-Manager 内部 cc-connect 集成”的表述边界；CHANGELOG 与功能清单现明确前者未修改，后者包含代理准备、Provider 注入和启动环境调整。
+- 已修改：`scripts/prepare-bundle-binaries.mjs`、新增 `scripts/codexAppServerProxy.e2e.test.mjs`、`package.json`、Windows release CI、CHANGELOG、功能清单与本验证记录。
+- 已复核但未修改：`src-tauri/src/bin/cli-manager-codex-proxy.rs`、`codex_app_server_proxy.rs`、`commands/cc_connect.rs`、Cargo bin 自动发现和 `tauri.conf.json` 的 `beforeBundleCommand` 接入；远程运行链保持原样。
+- GitNexus CLI 因其安装包缺少 `tree-sitter-kotlin` 无法重建索引；已降级为 codebase-memory moderate 重建索引、调用链风险追踪、源码/rg 和 Git diff。代理进程运行链被标记为 CRITICAL，因此本次只增加黑盒验证，不改其运行符号。
+
+### 场景覆盖
+
+- Windows launcher：覆盖 `.cmd` 与 `.exe` 两条真实 `Command` 分支、stdin/stdout JSONL 转发和非零退出码透传。
+- Provider：覆盖未登记 Provider 的参数原样传递，以及登记 Provider 后 Base URL、env key、wire API、模型的 `-c` 注入；API Key 只在子进程环境变量中可见，不出现在参数、stdout 或 stderr。
+- Windows 控制台：解析真实 proxy 的 PE Header，断言 `Subsystem == 2`（Windows GUI），避免 proxy 自身分配控制台；CMD/EXE 子进程继续由现有 `silent_command` 隐藏。
+- macOS：Universal debug/release 按 Tauri 环境选择 profile，同时要求 ARM64、x64 的 daemon 和 proxy 均存在后逐一合并；非 macOS 或非 Universal 构建继续立即跳过。当前 Windows 主机无法实际执行 Apple `lipo`，最终由 macOS CI/打包环境验证。
+- 窗口焦点、分屏、托盘、WSL、Worktree 与 Hook 安装状态不参与辅助二进制合并或代理进程协议，确认与本次改动无关。
+
+### 验证结果
+
+- `npm run test:codex-proxy:e2e`：通过，3 组检查覆盖真实 proxy 构建、PE GUI 子系统、EXE/CMD launcher、Provider 环境、密钥不进入参数/输出、JSONL 转发及退出码。
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`：通过。
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml`：687 项通过、1 项因缺少 WSL 测试环境忽略；`install_then_uninstall_pi_extension` 失败。该测试对应的 `hook_settings.rs` 与 `origin/master` 完全一致，单独复跑仍失败，确认不是本次打包、代理或文档变更引入，按连续失败规则不继续重复执行。
+- `node scripts/desktopPetMenuGeometry.test.mjs`：14 项通过；`desktopPetSize.test.mjs`：4 项通过；`desktopPetTransport.test.mjs`：4 项通过。
+- `./node_modules/.bin/tsc.cmd --noEmit`：通过。
+- `npm run build`：通过，Vite 完成 6688 个模块转换。
+- `node --check`：新增 E2E 与 Universal 打包脚本语法检查通过。
+- `git diff --check`：通过，仅输出仓库既有的 LF/CRLF 转换提示。
+- 本次未生成安装包，未启动或停止用户安装目录中的 CLI-Manager/cc-connect，也未修改第三方 cc-connect 源码或二进制。
+
+## PR #165 跨平台 Tauri Feature 隔离（2026-07-22）
+
+### 根因与发现清单
+
+- 根因位于 Cargo 目标依赖与 Tauri 平台配置边界：通用 `tauri` 依赖在 Windows/Linux 也启用了 `macos-private-api`，但对应的 `app.macOSPrivateApi = true` 只存在于 `tauri.macos.conf.json`；绕过 Tauri CLI 直接运行 Cargo 时，`tauri-build` 因 feature/config 不一致而终止。
+- 修复落在依赖声明源头：通用依赖只保留跨平台 feature，`macos-private-api` 移入现有 macOS target dependency；未在 E2E 中注入 `TAURI_CONFIG` 或增加错误兜底。
+- 已修改：`src-tauri/Cargo.toml`、Tauri 发布契约、CHANGELOG 与本验证记录。
+- 已复核但未修改：`tauri.macos.conf.json` 继续启用私有 API；`verify-macos-window-controls.mjs` 可识别目标依赖；Windows proxy E2E 与 Release Workflow 继续使用真实直接 Cargo 构建作为回归门。
+- `Cargo.lock` 无需更新；依赖包与版本未变化，仅调整既有 Tauri feature 的目标归属。
+- GitNexus MCP 与项目本地 runner 均不可用，按仓库规则降级使用契约、Cargo metadata、关键词交叉引用和 Git diff 检查。
+
+### 场景覆盖
+
+- Windows/Linux：不解析 `macos-private-api`，直接 `cargo build/check` 不再与 macOS 配置发生冲突。
+- macOS：目标依赖继续启用 `macos-private-api`，并与 `tauri.macos.conf.json` 保持一致。
+- Tauri CLI 与直接 Cargo：常规平台配置合并链保持不变；不经 Tauri CLI 的 proxy E2E 也可构建。
+- 窗口焦点、分屏、托盘、WSL、Worktree 与 Hook 状态不参与 Cargo feature 解析，确认与本修复无关。
+
+### 验证结果
+
+- Cargo metadata：通用 `tauri` feature 为 `tray-icon`、`protocol-asset`、`devtools`；macOS target 单独包含 `macos-private-api`。
+- `node scripts/verify-macos-window-controls.mjs`：通过。
+- `npm run test:codex-proxy:e2e`：通过，3 组真实 Windows proxy 检查全部成功。
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`：通过。
+- `git diff --check`：通过。
+
+## PR #165 Windows Tauri 开发代理准备（2026-07-22）
+
+### 根因与发现清单
+
+- 根因位于 Windows 开发启动器与 Cargo 多二进制产物的边界：`src-tauri/Cargo.toml` 的 `default-run = "cli-manager"` 只构建主程序，而远程 Codex 托管在运行时从主程序同目录读取 `cli-manager-codex-proxy.exe`；因此直接执行 `npm run tauri dev` 会在首次远程托管时报告代理缺失。修复落在开发启动入口，在 Tauri 启动前构建实际被消费的 proxy，而不在运行时报错处增加回退或复制逻辑。
+- 已修改：`scripts/tauri-cli.mjs` 在 Windows `dev` 入口执行锁定的 proxy Cargo build，转发 `--target`/`-t` 与 `--release`；新增黑盒脚本测试、npm 命令与 Windows release CI 门。
+- 已复核但未修改：`commands/cc_connect.rs::write_codex_profile_wrapper` 继续严格要求同目录 proxy，`src-tauri/Cargo.toml` 的默认运行目标保持主程序，生产打包、macOS/Linux 代理路径与 app-server 协议均不变。
+- GitNexus MCP 与本地 runner 不可用；按项目降级规则使用启动契约、`rg` 交叉引用、`cc_connect.rs` 消费端、Cargo 清单和 Git diff 进行发现与影响核对。
+
+### 场景覆盖
+
+- Windows 默认开发目标：先生成默认 debug proxy，再启动 Tauri。
+- Windows 交叉目标：`--target`、`--target=<triple>`、`-t` 与 `-t=<triple>` 都归一化为 proxy Cargo 的 `--target`，确保 proxy 与主程序落在同一目标目录。
+- Windows release 开发配置：`dev --release` 同步构建 release proxy，避免主程序与 proxy 分落 `target/release`、`target/debug`。
+- 失败边界：proxy 构建退出非零时将其状态返回，Tauri 不会启动，也不会把缺失推迟到远程托管运行时。
+- 平台和命令边界：非 Windows、`build` 和其他非 `dev` 子命令不触发开发 proxy 预构建；已有 dev config 注入和 WebView2 开发环境保持原行为。
+- 窗口焦点、分屏、托盘、WSL、Worktree 与 Hook 安装状态不参与本启动产物选择，确认无关。
+
+### 验证结果
+
+- `npm run test:tauri-dev-proxy`：通过，8 组黑盒检查覆盖分离/内联的长短 target、release profile 与 `--` 参数边界、Cargo 先于 Tauri、构建失败阻断启动，以及非 dev 命令不预构建。
+- `node --check scripts/tauri-cli.mjs` 与 `node --check scripts/tauriCliDevProxy.test.mjs`：通过。
+- `node scripts/verify-macos-window-controls.mjs`：通过。
+- `git diff --check`：通过。
+- 未启动桌面应用，未生成安装包；本轮仅验证启动器分支与脚本语法，未重复执行此前已通过的真实 proxy E2E 和 Cargo 检查。
+
+## SSH 显式地址直连被默认 Config 权限阻断修复（2026-07-22）
+
+### 根因陈述与发现清单
+
+- 根因位于“CLI-Manager 结构化 SSH 配置 → 系统 OpenSSH 参数”的进程边界：显式地址主机已经由应用提供地址、端口和认证参数，但旧实现没有传递 `-F`，OpenSSH 仍会自动读取用户 `~/.ssh/config`；当该文件向其他用户/组开放写权限时，OpenSSH 在连接与密码认证前直接以 `Bad owner or permissions` 退出。
+- 本机证据：`C:\Users\lenovo\.ssh\config` 所有者正确，但继承了 `CodexSandboxUsers` 与另一个 SID 的 Modify 权限；裸 `ssh -G` 可稳定复现相同错误。目标 SSH 端口可达，使用 `-F none` 后能够完成协议握手并进入服务器提供的 `publickey,password` 认证阶段，确认服务器与网络不是本次失败点。
+- 修复落在共享 `SshTransportSpec::append_connection_args`：未指定自定义 Config、没有目标 Config 别名且未配置跳板路由的显式地址直连统一追加 `-F none`；交互终端和一次性诊断/Agent/Hook 请求自动复用，不在错误展示层增加重试或兜底。
+- 已修改：`ssh_transport.rs` 的共享参数生成及专项测试、`commands/ssh.rs` 的真实诊断命令参数断言、SSH 远程终端契约、CHANGELOG、功能清单和本验证记录。
+- 已确认无需修改：SSH 主机数据库 Schema、密码凭据存储与 AskPass broker、前端主机编辑器、系统 `~/.ssh/config` 文件及其 ACL、远端服务器配置、SSH Config 导入解析器。
+- GitNexus CLI 当前没有可用索引；codebase-memory 影响追踪将共享 SSH 参数入口标记为 CRITICAL。调用面覆盖交互终端、连接测试、远端 Agent/Hook、历史 bridge 与后台任务，因此修复严格限定在“显式地址、无自定义 Config 且未配置跳板路由”状态。
+
+### 场景覆盖
+
+- 显式地址直连：指定私钥、密码提示、凭据保存密码和 Keyboard-interactive 追加 `-F none`；Agent 保留默认 Config 以支持 `IdentityAgent` 等设置，交互式 PTY 与一次性连接使用相同规则。
+- SSH Config 与跳板：存在目标 Config 别名或配置任意跳板路由时继续读取用户默认配置，不追加 `-F none`；选择自定义文件时继续使用 `-F <绝对路径>`。
+- 路由：端口、跳板机、HTTP/SOCKS5/自定义 ProxyCommand 参数构造未改变；`-F none` 只隔离未显式选择的默认配置。
+- 平台与状态：OpenSSH 的 `-F none` 在当前 Windows OpenSSH 9.5p2 实测可用，并为跨平台 OpenSSH 约定；窗口焦点、分屏、托盘、WSL、Worktree 与 Hook 是否安装不改变参数选择条件。
+
+### 验证结果
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml ssh_transport::tests`：9 项通过，覆盖显式地址隔离、默认 Config 目标/跳板别名、自定义 Config、交互/一次性连接、认证和代理路由。
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml ssh_launch::tests`：14 项通过，覆盖真实交互终端 Launch Plan。
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml commands::ssh::tests`：27 项通过，覆盖连接诊断、密码/交互模式、Agent 与 Hook 命令。
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`：通过。
+- `rustfmt --edition 2021 --check src-tauri/src/ssh_transport.rs src-tauri/src/commands/ssh.rs`：通过。
+- `npm run build`：通过，Vite 完成 6688 个模块转换。
+- `ssh -F none` 对目标主机的无密码探测成功越过本机 Config ACL 检查并抵达认证阶段；为避免在命令记录中传播用户密码，本次未用自动化脚本提交明文密码。
+- 本次未修改用户 `~/.ssh/config` 权限、未写入远端文件，也未启动或停止用户安装目录中的 CLI-Manager。
+
+## PR #165 合并阻断项根因修复（2026-07-23）
+
+### 根因与发现清单
+
+- macOS/Linux Codex wrapper 的问题位于原子文件替换与 POSIX 执行权限边界：普通文件写入受 umask 影响且内容未变化时会提前返回。修复统一在写入或复用后校正 `0755`，并增加权限回归测试。
+- SSH Agent 的问题位于结构化 Host 模型与 OpenSSH Config 能力边界：当前模型没有 `IdentityAgent` 等字段，Agent 直连不能声称已完整描述认证。`-F none` 现仅用于私钥、密码、凭据引用和交互认证；Agent/SSH Config 继续读取默认 Config。
+- Tauri 开发参数的问题位于 Tauri、Cargo runner 与应用参数的双层边界：第一个 `--` 后仍是 runner 参数，第二个 `--` 后才是应用参数。proxy 预构建现同步 target、release、profile、target-dir，并忽略应用区。
+- Windows Codex shim 的问题位于 PATH 替换后的命令兼容边界：shim 置于 PATH 首位后必须保持原 wrapper 的普通命令行为。现仅在首个子命令为 `app-server` 时启用 JSONL 代理，其他命令透传 stdio、Provider 覆盖和退出码。
+- 探测超时的问题位于启动器与真实后代进程的生命周期边界：只 kill 直接子进程无法回收真实 Codex，也可能让后代继续持有 stdout/stderr。Windows 统一使用 Job Object，macOS/Linux 使用独立进程组；超时、等待失败和启动器提前退出都清理所属进程树。
+- Unix launcher 的问题位于 wrapper PATH 优先级与真实 Codex 解析边界：把裸字符串 `codex` 同时保存为 launcher 并把 wrapper 目录放到 PATH 首位，会让 app-server 和普通命令再次命中 wrapper 自身。现从原 PATH 解析并校验 wrapper 之外的可执行绝对路径，新增排除 managed wrapper 的回归测试。
+- 触点已覆盖 `cc_connect` wrapper/托管进程、共享 `output_with_timeout` 调用方、SSH PTY/探测/Agent/Hook/bridge、Tauri 开发启动脚本、Codex proxy、契约、功能清单和 V1.3.1 CHANGELOG。数据库 Schema、前端 SSH 编辑器、第三方 cc-connect 源码及用户 Config 文件确认无须修改。
+- GitNexus 在该 worktree 无可用工具入口，按项目规则降级为契约文档、`rg` 调用链和源码 diff；共享 `append_connection_args` 与 `output_with_timeout` 按高风险入口复核。
+
+### 验证结果
+
+- `node --check scripts/tauri-cli.mjs`：通过。
+- `node --check scripts/tauriCliDevProxy.test.mjs`：通过。
+- `node --check scripts/codexAppServerProxy.e2e.test.mjs`：通过。
+- `npm run test:tauri-dev-proxy`：12 项通过，覆盖 Tauri/runner/application 双层边界及 target/release/profile/target-dir。
+- 按用户要求未运行 Cargo 编译、Rust 测试、真实 Codex proxy E2E、Tauri dev/build 或桌面应用。
+
+## 桌宠仅关注 Agent 终端（2026-07-23）
+
+### 根因与发现清单
+
+- 根因位于终端语义与桌宠状态聚合边界：桌宠此前只消费 PTY 输出、进程存活和 Hook 状态，没有区分由项目 `cli_tool` 启动的 Agent 终端与 `startup_cmd`/空 Shell 普通终端，因此前端、Java、Go 等长期进程会持续显示为工作中。
+- 新增会话级 `isAgentSession`/`cliTool` 快照，创建终端时按项目是否配置 `cli_tool` 固化；恢复、daemon attach、分屏和远程托管恢复继续保留，旧会话缺少字段时从关联项目兼容推导。
+- 新增桌宠设置 `agentSessionsOnly`，默认开启；过滤只落在 `deriveDesktopPetSnapshot` 的前台和 daemon 候选入口，不修改终端标签状态、后台任务面板、退出确认、PTY 或 Hook 状态机。
+- 已修改：终端会话类型与创建/恢复链、桌宠协调器和快照聚合、桌宠设置迁移与独立窗口默认配置、设置页及中英文文案、Agent 终端分类纯逻辑测试。
+- 已确认无需修改：Rust PTY/daemon 协议。daemon 任务通过 `sessionId` 与已持久化的 `TerminalSession` 配对，分类信息在主窗口关闭及重新 attach 后仍可恢复。
+- GitNexus 未建立索引；`npx gitnexus analyze` 因其 npx 包缺少 `tree-sitter-kotlin` 失败，按仓库规则降级为 `rg` 调用点、真实源码、Git diff、类型检查和构建验证。
+
+### 场景覆盖
+
+- 本地、WSL 与 SSH 项目统一以项目 `cli_tool` 是否非空分类；自定义 CLI 工具也视为用户显式声明的 Agent。
+- 未关联项目、`cli_tool` 为空、使用自定义启动命令或空 Shell 的普通终端，在开关开启时不进入桌宠任务、计数和状态选择。
+- 开关关闭时保留原有全终端聚合行为；旧设置缺少新字段时迁移为默认开启。
+- 前台多会话、分屏、后台 daemon、应用重启恢复和远程托管恢复均保留创建时分类；项目配置后续改变不会重写已运行会话的类型。
+- Hook 安装与否只影响 Agent 会话的细分状态，不再决定终端类型；普通 Shell 中手动运行 Agent 且项目未配置 CLI 工具时按设计仍视为普通终端。
+
+### 验证结果
+
+- `node scripts/agentTerminal.test.mjs`：4 项通过，覆盖 Agent/普通分类、分类快照稳定性、旧会话兼容和开关关闭兼容行为。
+- `node scripts/desktopPetTransport.test.mjs`：4 项通过。
+- `node scripts/desktopPetSize.test.mjs`：4 项通过。
+- `npx tsc --noEmit`：通过。
+- `npm run build`：通过。
+- `git diff --check`：通过，仅有仓库现有 Windows 行尾提示。

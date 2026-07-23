@@ -37,6 +37,9 @@ jobs:
           cargo install cargo-zigbuild --locked
           npm ci
 
+      - name: Test R2 release preparation
+        run: node .github/scripts/prepare-r2-release.test.mjs
+
       - name: Resolve and validate version
         id: version
         shell: bash
@@ -97,6 +100,57 @@ jobs:
           name: ssh-agent-${{ steps.version.outputs.version }}
           path: dist/ssh-agent/*
           if-no-files-found: error
+
+      - name: Prepare R2 SSH Agent assets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          test "$R2_PUBLIC_BASE_URL" = "https://github.bwm.de5.net" || {
+            echo "R2_PUBLIC_BASE_URL must match the updater endpoint" >&2
+            exit 1
+          }
+          rm -rf dist/ssh-agent-r2
+          node .github/scripts/prepare-r2-release.mjs \
+            dist/ssh-agent \
+            dist/ssh-agent-r2 \
+            "$R2_PUBLIC_BASE_URL" \
+            "${{ steps.version.outputs.tag }}"
+          rm -f dist/ssh-agent-r2/ssh-agent-release-manifest.json.sig
+          npx tauri signer sign dist/ssh-agent-r2/ssh-agent-release-manifest.json
+
+      - name: Upload SSH Agent assets to R2
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
+        shell: bash
+        run: |
+          test -n "$R2_ACCOUNT_ID"
+          test -n "$R2_BUCKET"
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          VERSION_PREFIX="CLI-Manager/releases/${{ steps.version.outputs.tag }}"
+          aws s3 cp dist/ssh-agent-r2 "s3://${R2_BUCKET}/${VERSION_PREFIX}/" \
+            --recursive \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public,max-age=31536000,immutable"
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            "$R2_PUBLIC_BASE_URL/$VERSION_PREFIX/ssh-agent-release-manifest.json" \
+            --output /tmp/r2-agent-manifest.json
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const manifest = JSON.parse(fs.readFileSync("/tmp/r2-agent-manifest.json", "utf8"));
+          if (!manifest.artifacts?.length || manifest.artifacts.some((artifact) => !artifact.url.startsWith("https://github.bwm.de5.net/"))) {
+            throw new Error("R2 Agent manifest contains a non-R2 artifact URL");
+          }
+          NODE
 
       - name: Record desktop latest release
         if: startsWith(github.ref, 'refs/tags/')

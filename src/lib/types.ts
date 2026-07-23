@@ -413,6 +413,10 @@ export interface TerminalSession {
   shell?: string | null;
   envVars?: Record<string, string>;
   startupCmd?: string;
+  /** 创建终端时根据项目 CLI 工具固化的分类；缺省表示旧会话，需要从项目配置兼容推导。 */
+  isAgentSession?: boolean;
+  /** 创建 Agent 终端时固化的 CLI 工具，用于在项目配置变更后保持会话语义稳定。 */
+  cliTool?: string;
   environmentType?: ProjectEnvironmentType;
   sshHostId?: string;
   remotePath?: string;

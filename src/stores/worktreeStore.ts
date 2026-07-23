@@ -31,6 +31,10 @@ export interface GitWorktreeMergeResult {
 
 export type WorktreeIsolationDecision = "prompt" | "auto" | "none";
 
+export const WORKTREE_CREATE_IN_PROGRESS = "worktree_create_in_progress";
+
+const inFlightWorktreeCreates = new Set<string>();
+
 const RESERVED_WINDOWS_WORKTREE_NAMES = new Set([
   "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
   "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
@@ -118,6 +122,10 @@ export function sanitizeWorktreeTaskName(value: string): string {
 export function validateWorktreeTaskName(value: string): boolean {
   const trimmed = value.trim();
   return /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/.test(trimmed) && !RESERVED_WINDOWS_WORKTREE_NAMES.has(trimmed.toUpperCase());
+}
+
+export function isWorktreeCreateInProgressError(error: unknown): boolean {
+  return String(error).includes(WORKTREE_CREATE_IN_PROGRESS);
 }
 
 function mapCreateResultToRecord(projectId: string, result: GitWorktreeCreateResult): WorktreeRecord {
@@ -208,18 +216,27 @@ export const useWorktreeStore = create<WorktreeStore>((set, get) => ({
     if (!validateWorktreeTaskName(taskName)) {
       throw new Error("task_name_invalid");
     }
-    const result = await invoke<GitWorktreeCreateResult>("git_worktree_create", {
-      req: {
-        projectPath: project.path,
-        taskName,
-        worktreeRoot: project.worktree_root.trim() || null,
-      },
-    });
-    const record = mapCreateResultToRecord(project.id, result);
-    await saveWorktreeRecord(record);
-    set((state) => ({ worktrees: [record, ...state.worktrees] }));
-    await useProjectStore.getState().fetchAll("interactive");
-    return record;
+    const creationKey = `${project.path}\u0000${project.worktree_root.trim()}\u0000${taskName}`;
+    if (inFlightWorktreeCreates.has(creationKey)) {
+      throw new Error(WORKTREE_CREATE_IN_PROGRESS);
+    }
+    inFlightWorktreeCreates.add(creationKey);
+    try {
+      const result = await invoke<GitWorktreeCreateResult>("git_worktree_create", {
+        req: {
+          projectPath: project.path,
+          taskName,
+          worktreeRoot: project.worktree_root.trim() || null,
+        },
+      });
+      const record = mapCreateResultToRecord(project.id, result);
+      await saveWorktreeRecord(record);
+      set((state) => ({ worktrees: [record, ...state.worktrees] }));
+      await useProjectStore.getState().fetchAll("interactive");
+      return record;
+    } finally {
+      inFlightWorktreeCreates.delete(creationKey);
+    }
   },
 
   shouldIsolateNewSession: (project, sessions) => {

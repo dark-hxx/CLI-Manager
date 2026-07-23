@@ -13,6 +13,7 @@ import { useBackgroundOperationStore } from "./backgroundOperationStore";
 import { useModelPricingStore } from "./modelPricingStore";
 import { useProjectStore } from "./projectStore";
 import { useSettingsStore } from "./settingsStore";
+import { useSshHostStore } from "./sshHostStore";
 import { useWorktreeStore } from "./worktreeStore";
 
 export type BackupStatus = "idle" | "backing_up" | "restoring" | "queued" | "success" | "error";
@@ -31,6 +32,8 @@ export interface BackupManifest {
 
 interface WorkspaceBackup {
   groups: Record<string, unknown>[];
+  sshHostGroups?: Record<string, unknown>[];
+  sshHosts?: Record<string, unknown>[];
   projects: Record<string, unknown>[];
   worktrees: Record<string, unknown>[];
   commandTemplates: Record<string, unknown>[];
@@ -114,14 +117,32 @@ interface BackupStore {
 }
 
 const ALL_DOMAINS: BackupDomain[] = ["workspace", "preferences", "model_prices", "notifications", "statusline"];
-const PROJECT_SELECT = "SELECT id, name, path, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, remote_path, cli_config_root, created_at, updated_at FROM projects ORDER BY sort_order";
+const PROJECT_SELECT = "SELECT id, name, path, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, ssh_host_id, remote_path, cli_config_root, created_at, updated_at FROM projects ORDER BY sort_order";
 const GROUP_SELECT = "SELECT id, name, parent_id, sort_order, created_at FROM groups ORDER BY sort_order";
+const SSH_HOST_GROUP_SELECT = "SELECT id, name, parent_id, sort_order, created_at FROM ssh_host_groups ORDER BY sort_order";
+const SSH_HOST_SELECT = "SELECT id, name, group_name, group_id, host, port, username, config_alias, auth_mode, jump_mode, jump_host_id, proxy_type, proxy_host, proxy_port, connect_timeout_sec, server_alive_interval_sec, server_alive_count_max, terminal_encoding, startup_script, notes, sort_order, created_at, updated_at FROM ssh_hosts ORDER BY sort_order";
+const LOCAL_SSH_HOST_FIELDS_SELECT = "SELECT id, identity_file, credential_ref, config_file, proxy_command FROM ssh_hosts";
 const TEMPLATE_SELECT = "SELECT id, project_id, name, command, description, sort_order FROM command_templates ORDER BY sort_order";
 const WORKTREE_SELECT = "SELECT id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at FROM worktrees WHERE status = 'active' ORDER BY created_at DESC";
 const MODEL_PRICE_COLUMNS = ["model", "input_per_1m", "output_per_1m", "cache_read_per_1m", "cache_creation_per_1m", "source", "source_model_id", "raw_json", "updated_at_ms", "synced_at_ms"] as const;
 const MODEL_PRICE_SELECT = `SELECT ${MODEL_PRICE_COLUMNS.join(", ")} FROM model_prices ORDER BY model COLLATE NOCASE`;
+const SSH_HOST_GROUP_COLUMNS = ["id", "name", "parent_id", "sort_order", "created_at"] as const;
+const SSH_HOST_COLUMNS = [
+  "id", "name", "group_name", "group_id", "host", "port", "username", "config_alias", "config_file",
+  "auth_mode", "identity_file", "credential_ref", "jump_mode", "jump_host_id", "proxy_type", "proxy_host",
+  "proxy_port", "proxy_command", "connect_timeout_sec", "server_alive_interval_sec", "server_alive_count_max",
+  "terminal_encoding", "startup_script", "notes", "sort_order", "created_at", "updated_at",
+] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+
+interface LocalSshHostFields {
+  id: string;
+  identity_file: string;
+  credential_ref: string;
+  config_file: string;
+  proxy_command: string;
+}
 
 let configStore: Store | null = null;
 let sessionWebdavPassword = "";
@@ -159,9 +180,11 @@ function webdavConfig(state: Pick<BackupStore, "webdavUrl" | "webdavUsername">) 
 }
 
 async function collectBackupData(db: Awaited<ReturnType<typeof getDb>>): Promise<BackupSnapshotV3["data"]> {
-  const [projects, groups, commandTemplates, worktrees, modelPrices, statusline] = await Promise.all([
+  const [projects, groups, sshHostGroups, sshHosts, commandTemplates, worktrees, modelPrices, statusline] = await Promise.all([
     db.select<Record<string, unknown>[]>(PROJECT_SELECT),
     db.select<Record<string, unknown>[]>(GROUP_SELECT),
+    db.select<Record<string, unknown>[]>(SSH_HOST_GROUP_SELECT),
+    db.select<Record<string, unknown>[]>(SSH_HOST_SELECT),
     db.select<Record<string, unknown>[]>(TEMPLATE_SELECT),
     db.select<Record<string, unknown>[]>(WORKTREE_SELECT),
     db.select<Record<string, unknown>[]>(MODEL_PRICE_SELECT),
@@ -169,7 +192,14 @@ async function collectBackupData(db: Awaited<ReturnType<typeof getDb>>): Promise
   ]);
   const settings = useSettingsStore.getState();
   return {
-    workspace: { groups, projects, worktrees, commandTemplates },
+    workspace: {
+      groups,
+      sshHostGroups,
+      sshHosts: sshHosts.map(sanitizePortableSshHost),
+      projects,
+      worktrees,
+      commandTemplates,
+    },
     preferences: pickSyncableSettings(settings as unknown as Record<string, unknown>) as Record<string, unknown>,
     modelPrices,
     notifications: {
@@ -270,6 +300,31 @@ function normalizeWorktreeStrategy(value: unknown): string {
   return value === "prompt" || value === "autoParallel" || value === "always" ? value : "disabled";
 }
 
+function normalizeSshAuthMode(value: unknown, localFields: LocalSshHostFields | undefined): string {
+  if (value === "identity_file") return localFields?.identity_file ? value : "interactive";
+  if (value === "credential_ref") return localFields?.credential_ref ? value : "password_prompt";
+  return value === "ssh_config" || value === "agent" || value === "password_prompt" || value === "interactive"
+    ? value
+    : "interactive";
+}
+
+function normalizeSshJumpMode(value: unknown): string {
+  return value === "host" || value === "proxy_jump" ? value : "none";
+}
+
+function normalizeSshProxyType(value: unknown, localFields: LocalSshHostFields | undefined): string {
+  if (value === "http" || value === "socks5") return value;
+  return value === "proxy_command" && localFields?.proxy_command ? value : "none";
+}
+
+function sanitizePortableSshHost(host: Record<string, unknown>): Record<string, unknown> {
+  if ((host.proxy_type === "http" || host.proxy_type === "socks5")
+    && typeof host.proxy_host === "string" && host.proxy_host.includes("@")) {
+    return { ...host, proxy_type: "none", proxy_host: "", proxy_port: 0 };
+  }
+  return host;
+}
+
 async function applyPreferences(preferences: Record<string, unknown>) {
   for (const key of SYNCABLE_SETTING_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(preferences, key)) continue;
@@ -283,21 +338,64 @@ async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Prom
   const os = await getOsPlatform();
   const platformDefaultShell = defaultShellForOs(os);
   const groups = Array.isArray(workspace.groups) ? workspace.groups : [];
+  const sshHostGroups = Array.isArray(workspace.sshHostGroups) ? workspace.sshHostGroups : [];
+  const sshHosts = Array.isArray(workspace.sshHosts) ? workspace.sshHosts : [];
+  const hasSshHostData = Array.isArray(workspace.sshHostGroups) && Array.isArray(workspace.sshHosts);
   const projects = Array.isArray(workspace.projects) ? workspace.projects : [];
   const worktrees = Array.isArray(workspace.worktrees) ? workspace.worktrees : [];
   const templates = Array.isArray(workspace.commandTemplates) ? workspace.commandTemplates : [];
   const groupIds = new Set(groups.map((item) => String(item.id)));
+  const sshHostGroupIds = new Set(sshHostGroups.map((item) => String(item.id)));
+  const sshHostIds = new Set(sshHosts.map((item) => String(item.id)));
   const projectIds = new Set(projects.map((item) => String(item.id)));
   const statements: DatabaseStatement[] = [
     { sql: "DELETE FROM command_templates", values: [] },
     { sql: "DELETE FROM worktrees", values: [] },
     { sql: "DELETE FROM projects", values: [] },
-    { sql: "DELETE FROM groups", values: [] },
   ];
+  const localSshHostFields = new Map<string, LocalSshHostFields>();
+  if (hasSshHostData) {
+    const db = await getDb();
+    const localHosts = await db.select<LocalSshHostFields[]>(LOCAL_SSH_HOST_FIELDS_SELECT);
+    localHosts.forEach((host) => localSshHostFields.set(host.id, host));
+    statements.push(
+      { sql: "DELETE FROM ssh_hosts", values: [] },
+      { sql: "DELETE FROM ssh_host_groups", values: [] },
+    );
+  }
+  statements.push({ sql: "DELETE FROM groups", values: [] });
   statements.push(...buildBatchInsertStatements("groups", ["id", "name", "parent_id", "sort_order", "created_at"], groups, (item) => [
     item.id, item.name, typeof item.parent_id === "string" && groupIds.has(item.parent_id) ? item.parent_id : null,
     integerOr(item.sort_order, 0), item.created_at ?? now,
   ]));
+  if (hasSshHostData) {
+    statements.push(...buildBatchInsertStatements("ssh_host_groups", SSH_HOST_GROUP_COLUMNS, sshHostGroups, (item) => [
+      item.id, item.name,
+      typeof item.parent_id === "string" && sshHostGroupIds.has(item.parent_id) ? item.parent_id : null,
+      integerOr(item.sort_order, 0), item.created_at ?? now,
+    ]));
+    statements.push(...buildBatchInsertStatements("ssh_hosts", SSH_HOST_COLUMNS, sshHosts, (item) => {
+      const hostId = typeof item.id === "string" ? item.id : "";
+      const localFields = localSshHostFields.get(hostId);
+      const jumpMode = normalizeSshJumpMode(item.jump_mode);
+      const proxyType = normalizeSshProxyType(item.proxy_type, localFields);
+      return [
+        item.id, item.name, item.group_name ?? "",
+        typeof item.group_id === "string" && sshHostGroupIds.has(item.group_id) ? item.group_id : null,
+        item.host ?? "", integerOr(item.port, 22), item.username ?? "", item.config_alias ?? "",
+        localFields?.config_file ?? "", normalizeSshAuthMode(item.auth_mode, localFields),
+        localFields?.identity_file ?? "", localFields?.credential_ref ?? "", jumpMode,
+        jumpMode !== "none" && typeof item.jump_host_id === "string" && sshHostIds.has(item.jump_host_id)
+          ? item.jump_host_id
+          : null,
+        proxyType, proxyType === "none" ? "" : item.proxy_host ?? "",
+        proxyType === "none" ? 0 : integerOr(item.proxy_port, 0), localFields?.proxy_command ?? "",
+        integerOr(item.connect_timeout_sec, 15), integerOr(item.server_alive_interval_sec, 30),
+        integerOr(item.server_alive_count_max, 3), item.terminal_encoding ?? "UTF-8", item.startup_script ?? "",
+        item.notes ?? "", integerOr(item.sort_order, 0), item.created_at ?? now, item.updated_at ?? now,
+      ];
+    }));
+  }
   statements.push(...buildBatchInsertStatements(
     "projects",
     ["id", "name", "path", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "cli_config_root", "created_at", "updated_at"],
@@ -321,7 +419,11 @@ async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Prom
         item.env_vars ?? "{}", shell, isSshProject ? "{}" : item.provider_overrides ?? "{}",
         isSshProject ? "disabled" : normalizeWorktreeStrategy(item.worktree_strategy),
         isSshProject ? "" : item.worktree_root ?? "", isSshProject ? 0 : integerOr(item.worktree_deps_prompt_enabled, 0),
-        environmentType, null, isSshProject && typeof item.remote_path === "string" ? item.remote_path : "",
+        environmentType,
+        isSshProject && hasSshHostData && typeof item.ssh_host_id === "string" && sshHostIds.has(item.ssh_host_id)
+          ? item.ssh_host_id
+          : null,
+        isSshProject && typeof item.remote_path === "string" ? item.remote_path : "",
         cliConfigRoot,
         item.created_at ?? now, item.updated_at ?? now,
       ];
@@ -374,6 +476,7 @@ async function applySnapshot(snapshot: BackupSnapshotV3, domains: BackupDomain[]
   if (selected.has("statusline")) await invoke("statusline_backup_restore", { bundle: snapshot.data.statusline });
   if (selected.has("model_prices")) await useModelPricingStore.getState().load();
   if (selected.has("workspace")) {
+    await useSshHostStore.getState().fetchHosts();
     await useProjectStore.getState().fetchAll();
     await useWorktreeStore.getState().loadWorktrees();
     await useProjectStore.getState().refreshProjectDiagnostics();

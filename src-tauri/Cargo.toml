@@ -67,6 +67,8 @@ local-ip-address = "0.6.13"
 tungstenite = "0.30.0"
 
 # macOS universal 交叉编译时不能复用宿主架构的 OpenSSL，因此仅在 macOS 使用 vendored 构建。
+# 注意：macos-private-api 必须在上方 [dependencies].tauri 中声明（不能仅放在 macOS target 下），
+# 因为 tauri.conf.json 的 macOSPrivateApi 会在所有平台的 build script 中校验 feature allowlist。
 [target.'cfg(target_os = "macos")'.dependencies]
 git2 = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
 apple-native-keyring-store = { version = "1", features = ["keychain"] }

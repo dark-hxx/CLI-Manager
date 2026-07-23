@@ -33,8 +33,12 @@ while [ "$#" -gt 0 ]; do
 done
 [ -z "${DOWNLOAD_LOG:-}" ] || printf '%s\n' "$url" >> "$DOWNLOAD_LOG"
 case "$url" in
+  https://github.bwm.de5.net/*/agent) [ "${FAIL_R2_ARTIFACT:-0}" -eq 0 ] || exit 22 ;;
+  https://github.bwm.de5.net/*) [ "${FAIL_R2:-0}" -eq 0 ] || exit 22 ;;
+esac
+case "$url" in
   *.json.sig) cp "$FIXTURE_SIGNATURE" "$output" ;;
-  *.json) cp "$FIXTURE_MANIFEST" "$output" ;;
+  *.json) printf '%s\n' "$url" > "$output" ;;
   */agent) cp "$FIXTURE_ARTIFACT" "$output" ;;
   *) exit 22 ;;
 esac
@@ -47,7 +51,15 @@ EOF
 
 cat > "$bin/jq" <<'EOF'
 #!/bin/sh
-printf '1\ttemp\t%s\t1\t1\t%s\t%s\t%s\n' "${MANIFEST_VERSION:-1.2.3}" "$ARTIFACT_URL" "$ARTIFACT_SIZE" "$ARTIFACT_SHA256"
+for argument in "$@"; do manifest=$argument; done
+artifact_url=$ARTIFACT_URL
+if [ "${USE_SOURCE_ARTIFACT_URLS:-0}" -eq 1 ]; then
+  case "$(cat "$manifest")" in
+    https://github.bwm.de5.net/*) artifact_url="https://github.bwm.de5.net/release/agent" ;;
+    https://github.com/*) artifact_url="https://github.com/release/agent" ;;
+  esac
+fi
+printf '1\ttemp\t%s\t1\t1\t%s\t%s\t%s\n' "${MANIFEST_VERSION:-1.2.3}" "$artifact_url" "$ARTIFACT_SIZE" "$ARTIFACT_SHA256"
 EOF
 
 cat > "$bin/uname" <<'EOF'
@@ -74,11 +86,23 @@ case "$dry_run" in *'"action":"dryRun"'*'"target":"linux-x86_64"'*) ;; *) exit 1
 
 : > "$DOWNLOAD_LOG"
 MANIFEST_VERSION=1.2.3 sh "$root/scripts/install-ssh-agent.sh" --version 1.2.3 --dry-run >/dev/null
-grep -F "https://github.com/dark-hxx/CLI-Manager/releases/download/ssh-agent-v1.2.3/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
+grep -F "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent-v1.2.3/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
 
 : > "$DOWNLOAD_LOG"
 MANIFEST_VERSION=1.3.0 sh "$root/scripts/install-ssh-agent.sh" --version 1.3.0 --dry-run >/dev/null
-grep -F "https://github.com/dark-hxx/CLI-Manager/releases/download/V1.3.0/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
+grep -F "https://github.bwm.de5.net/CLI-Manager/releases/V1.3.0/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
+
+: > "$DOWNLOAD_LOG"
+FAIL_R2=1 MANIFEST_VERSION=1.2.3 sh "$root/scripts/install-ssh-agent.sh" --dry-run >/dev/null
+grep -F "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
+grep -F "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
+
+: > "$DOWNLOAD_LOG"
+FAIL_R2_ARTIFACT=1 USE_SOURCE_ARTIFACT_URLS=1 MANIFEST_VERSION=1.2.3 \
+  sh "$root/scripts/install-ssh-agent.sh" --dry-run >/dev/null
+grep -F "https://github.bwm.de5.net/release/agent" "$DOWNLOAD_LOG" >/dev/null
+grep -F "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/ssh-agent-release-manifest.json" "$DOWNLOAD_LOG" >/dev/null
+grep -F "https://github.com/release/agent" "$DOWNLOAD_LOG" >/dev/null
 
 if sh "$root/scripts/install-ssh-agent.sh" --manifest-url http://mirror/manifest.json --dry-run >/dev/null 2>&1; then
   exit 1

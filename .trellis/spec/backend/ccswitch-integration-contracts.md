@@ -351,14 +351,21 @@ env_key = "CLI_MANAGER_CODEX_PROVIDER_<hash>_API_KEY"
   the plaintext secret is applied.
 - **Managed cc-connect launch**: remote Codex sessions resolve the registered
   project's `provider_overrides.codex.providerId` directly from the CLI-Manager
-  database, refresh the same generated profile in the real Codex home, and prepend
-  a CLI-Manager-owned `codex` wrapper to the cc-connect child process `PATH`. The
-  wrapper adds `--profile <profileName>` before `app-server`; `CODEX_HOME` and the
-  profile's secret env key are scoped to the managed process tree. This path must
-  not depend on a local terminal session having been opened first.
+  database and prepend a CLI-Manager-owned `codex` wrapper to the cc-connect child
+  process `PATH`. The app-server proxy adds validated `-c` provider overrides before
+  `app-server`; `CODEX_HOME` and the provider's secret env key are scoped to the
+  managed process tree. This path must not depend on a local terminal session having
+  been opened first.
 - **Remote wrapper contents**: the wrapper may contain only environment-variable
   names and command routing. It must never contain the Provider secret, modify
   cc-connect source, or rewrite the user's base `config.toml` / `auth.json`.
+- **Remote wrapper execution**: macOS/Linux wrapper files must be mode `0755`, including
+  when an existing file already has current contents but stale permissions. The real Unix
+  launcher must be resolved to an executable absolute path outside the managed wrapper
+  directory before that directory is prepended to `PATH`; a bare `codex` launcher would
+  resolve back to the wrapper and recurse. The Windows native shim proxies only when the
+  first subcommand is `app-server`; all other Codex commands inherit stdio, receive the same
+  Provider overrides, and return the real exit code.
 - **Unsafe TOML fallback**: if the raw TOML contains the resolved plaintext secret, do not
   copy it; fall back to the generated non-secret routing profile.
 - **Launch command**: for exact Codex projects with empty `startup_cmd`, the

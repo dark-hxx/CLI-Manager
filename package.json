@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "node ./scripts/dev-server.mjs",
     "build": "tsc && vite build",
+    "test:codex-proxy:e2e": "node ./scripts/codexAppServerProxy.e2e.test.mjs",
+    "test:tauri-dev-proxy": "node ./scripts/tauriCliDevProxy.test.mjs",
     "preview": "vite preview",
     "tauri": "node ./scripts/tauri-cli.mjs",
     "tauri:build:local": "node ./scripts/tauri-cli.mjs build --config src-tauri/tauri.local.conf.json"

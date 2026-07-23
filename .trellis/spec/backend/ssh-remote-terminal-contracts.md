@@ -98,7 +98,7 @@ pub struct SshLaunchPlan {
 - Host grouping is independent from the existing manual project grouping.
 - `ssh_host_groups` owns the editable multi-level SSH host tree. `ssh_hosts.group_name` is legacy display/migration data; new UI should bind by `group_id`.
 - Migration 21 must preserve old flat `group_name` values as root groups and backfill each host's `group_id`.
-- Migration 22 adds `ssh_hosts.config_file TEXT NOT NULL DEFAULT ''`; empty values keep the system OpenSSH default config behavior.
+- Migration 22 adds `ssh_hosts.config_file TEXT NOT NULL DEFAULT ''`; an empty value means no custom Config file was selected. SSH Config aliases, Agent authentication, and configured jump routes still use the system default Config. Address-based connections without a jump route isolate it with `-F none` only when CLI-Manager fully supplies identity-file, password, credential-reference, or keyboard-interactive authentication.
 
 ### Authentication and secrets
 
@@ -130,6 +130,8 @@ pub struct SshLaunchPlan {
 - Environment keys must match shell variable syntax.
 - Directory browsing/check commands use non-interactive `BatchMode=yes` for SSH Config, Agent, and identity-file modes.
 - Every OpenSSH probe, directory query, and terminal launch must add `-F <config_file>` when `config_file` is non-empty. If that file later becomes invalid or unreadable, return an error and never fall back to the default config.
+- A fully structured address-based connection without a jump route must add `-F none` for identity-file, password-prompt, credential-reference, and keyboard-interactive authentication. This prevents an unrelated, malformed, or insecurely-permissioned `~/.ssh/config` from blocking modes whose authentication is fully represented by CLI-Manager.
+- Agent and SSH Config authentication must continue to load the system default Config even for explicit addresses, because the host model does not represent settings such as `IdentityAgent` or general `Host *` rules. A target Config alias or configured jump route also keeps the default Config when no custom `config_file` is selected.
 - HTTP and SOCKS5 proxy URLs are stored as structured `proxy_type`, `proxy_host`, and `proxy_port` fields. The app binary provides the stdio proxy helper used by OpenSSH `ProxyCommand`; users must not need to author a raw command.
 - When a direct HTTP/SOCKS5 proxy is enabled, it takes precedence over `ProxyJump`; do not emit both routes for the same connection.
 - Connection testing must probe a configured HTTP/SOCKS5 proxy as a separate diagnostic stage before starting SSH, and return the sanitized proxy endpoint plus the raw connect/handshake error when that stage fails.
@@ -179,9 +181,10 @@ pub struct SshLaunchPlan {
 
 ### Sync
 
-- Sync/export may carry project `environment_type`, `remote_path`, and `cli_config_root`.
-- It must exclude `ssh_hosts`, `ssh_host_id`, `config_file`, `identity_file`, `credential_ref`, passwords, and machine-specific proxy credentials.
-- Imported SSH projects have `ssh_host_id = null`, preserve only a valid explicit POSIX/`~/...` project config root, and clear machine-specific provider/worktree configuration before requesting host rebinding.
+- Sync/export carries project `environment_type`, `remote_path`, `cli_config_root`, and `ssh_host_id`, plus SSH host groups and portable SSH host profiles.
+- Sync excludes `config_file`, `identity_file`, `credential_ref`, passwords, `proxy_command`, private-key contents, and machine-specific proxy credentials. An existing same-ID host on the destination retains these local-only fields.
+- On a new device, a restored `identity_file` mode without a local key becomes `interactive`; a `credential_ref` mode without a local credential becomes `password_prompt`; a ProxyCommand without a local command is disabled. The host, project path, grouping, address, port, user, Config alias, jump route, structured HTTP/SOCKS5 proxy, timeout, keepalive, encoding, startup script, and notes remain available.
+- Older snapshots without both SSH workspace arrays retain existing destination host tables, and their imported SSH projects remain unbound. SSH project provider/worktree configuration remains subject to the existing machine-specific cleanup.
 
 ## 4. Validation & Error Matrix
 
@@ -235,14 +238,15 @@ pub struct SshLaunchPlan {
 - Good: a host imported from a custom config directory uses the same canonical `config_file` for testing, browsing, and terminal launch.
 - Base: password-prompt/MFA users manually enter a remote path, then authenticate in the real PTY.
 - Base: a host imported from the default `~/.ssh/config` stores an empty `config_file` and lets OpenSSH resolve its normal user config.
-- Base: an imported SSH project remains visible with a rebinding warning.
+- Base: a manually entered address with no jump route stores an empty `config_file` and runs with `-F none`; unrelated default Config permissions and rules do not participate in that connection.
+- Base: an older snapshot imports an SSH project with an unbound-host warning.
 - Bad: treating `path = ""` as a local project key; on POSIX this can match every local path.
 - Bad: passing a remote POSIX path into local filesystem, Git, Worktree, history, or provider APIs.
 - Bad: selecting LocalGitTransport merely because the SSH Agent context is temporarily null during project switching.
 - Bad: calling `loadProjectFile(project, entry)` from an SSH refresh and thereby treating `project.path == ""` as a local root.
 - Bad: deriving an SSH Git panel root from `session.cwd`, which is intentionally empty for the desktop PTY launch.
 - Bad: falling back to default OpenSSH config after a custom `config_file` is moved or becomes unreadable.
-- Bad: synchronizing host IDs or private-key paths across machines.
+- Bad: synchronizing passwords, credential references, private-key paths, custom SSH Config paths, or ProxyCommand content.
 - Bad: quoting `~/.claude` as one literal shell token; this disables tilde expansion and points the CLI at a directory named `~`.
 
 ## 6. Tests Required
@@ -267,7 +271,7 @@ pub struct SshLaunchPlan {
 - Assert SSH Git context pending/failure cannot invoke local `git_*`, `rootPath` must equal Launch Plan `remotePath`, and missing `gitFull` blocks only the Git panel.
 - Assert terminal Git panel path resolution uses `remote_path` for SSH even when `session.cwd == ""`; initial file/Git loading renders `common.loading`; visible-file refresh passes the remote context into `loadProjectFile`.
 - Assert changing an SSH project's Host or `remote_path` while the file panel is open clears the previous tree, rebuilds `SshRemoteFileContext`, and discards success/failure from the old async load; local/WSL Worktree path comparison remains unchanged.
-- Assert export/import omits all host and credential fields and requires rebinding.
+- Assert export/import preserves portable host fields and the project host binding, while omitting all secrets and machine-local paths.
 - Manually verify OpenSSH Agent, private key, password/MFA, first host key, changed host key, ProxyJump, ProxyCommand, network interruption, zh-CN/en-US, and 24-hour time display.
 
 ## 7. Wrong vs Correct

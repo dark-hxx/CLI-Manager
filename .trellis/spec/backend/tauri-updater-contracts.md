@@ -200,3 +200,107 @@ if (update) {
 ```json
 "permissions": ["updater:default", "process:allow-restart"]
 ```
+
+## Scenario: Target-scoped Tauri configuration features
+
+### 1. Scope / Trigger
+
+- Trigger: adding or moving a Tauri Cargo feature whose enablement must match a platform-specific `tauri.*.conf.json` value, such as `macos-private-api` / `app.macOSPrivateApi`; or adding a Windows native sidecar consumed beside the debug executable during `npm run tauri dev`.
+
+### 2. Signatures
+
+```toml
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "protocol-asset", "devtools"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+```
+
+```json
+// src-tauri/tauri.macos.conf.json
+{ "app": { "macOSPrivateApi": true } }
+```
+
+```text
+# scripts/tauri-cli.mjs, Windows `tauri dev` only
+cargo build --locked --manifest-path <repo>/src-tauri/Cargo.toml \
+  --bin cli-manager-codex-proxy [--target <triple>] [--release] \
+  [--profile <name>] [--target-dir <path>]
+```
+
+### 3. Contracts
+
+- Configuration-sensitive Tauri features must be declared under the same Cargo target that owns the corresponding platform config.
+- Windows and Linux direct Cargo commands must not activate `macos-private-api`.
+- macOS builds must activate `macos-private-api` and keep `app.macOSPrivateApi = true`.
+- Tests must exercise the real Cargo invocation; do not inject a synthetic `TAURI_CONFIG` merely to suppress the consistency error.
+- On Windows, the `scripts/tauri-cli.mjs` `dev` entrypoint must build `cli-manager-codex-proxy` before spawning Tauri, because remote Codex handoff resolves `current_exe().with_file_name("cli-manager-codex-proxy.exe")`.
+- The prebuild must forward both `--target <triple>` / `--target=<triple>` and `-t <triple>` / `-t=<triple>` as Cargo's `--target <triple>`.
+- Tauri's first `--` starts Cargo runner arguments; only the second `--` starts application arguments. The prebuild must inspect Tauri options and runner arguments, forward `--release`, `--profile`, and `--target-dir`, and ignore everything after the second boundary.
+- A failed or unavailable Cargo prebuild must return a non-zero exit and must not start Tauri. Non-Windows platforms and non-`dev` Tauri commands must not run this prebuild.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| `macos-private-api` is in common dependencies | Reject: Windows/Linux direct Cargo builds can fail Tauri feature/config consistency checks. |
+| macOS target feature is missing | Reject: macOS transparent/private-API window behavior loses its required Cargo capability. |
+| macOS feature exists but `macOSPrivateApi` is false/missing | Reject through the existing macOS window-controls verification. |
+| Common and target dependency declarations are correctly split | Windows/Linux resolve only common features; macOS additionally resolves `macos-private-api`. |
+| Windows `tauri dev` without a target | Build the proxy into Cargo's default debug target before Tauri starts. |
+| Windows `tauri dev` with either target syntax | Build the proxy for the same target triple before Tauri starts. |
+| Windows `tauri dev --release` | Build the proxy in the release profile before Tauri starts. |
+| Windows runner arguments select `--profile` or `--target-dir` | Forward the selection to the proxy Cargo build. |
+| Application arguments after the second `--` resemble Cargo options | Ignore them when selecting the proxy build target/profile/directory. |
+| Windows proxy Cargo build fails | Return Cargo's non-zero result and do not invoke Tauri. |
+| Non-Windows or a non-`dev` Tauri command | Do not build the Windows proxy. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Windows Codex proxy E2E calls `cargo build --locked` directly and succeeds without platform-config overrides.
+- Base: normal Tauri CLI builds continue merging the platform config and resolve the same target-specific feature set.
+- Bad: set `TAURI_CONFIG` inside one test to claim success while the manifest still enables a macOS-only feature globally.
+- Good: `npm run tauri dev -- --target x86_64-pc-windows-msvc` completes the proxy prebuild before launching the dev process.
+- Bad: rely on Cargo's `default-run = "cli-manager"` and launch Tauri without compiling the separately consumed proxy binary.
+
+### 6. Tests Required
+
+- Inspect `cargo metadata --no-deps` and assert the common `tauri` dependency excludes `macos-private-api` while the macOS-target dependency includes it.
+- Run `npm run test:codex-proxy:e2e` on Windows.
+- Run `cargo check --locked --manifest-path src-tauri/Cargo.toml`.
+- Run `node scripts/verify-macos-window-controls.mjs`.
+- Run `npm run test:tauri-dev-proxy` on Windows. Assert Cargo runs before Tauri, target forwarding covers Tauri and runner long/short forms, release/profile/target-dir respect both `--` boundaries, Cargo failure prevents Tauri launch, and `build` does not prebuild the proxy.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```toml
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+```
+
+#### Correct
+
+```toml
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "protocol-asset", "devtools"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+```
+
+#### Wrong
+
+```js
+spawn("tauri", ["dev", ...args]);
+```
+
+#### Correct
+
+```js
+const proxyBuildCode = await buildWindowsDevProxy(tauriArgs);
+if (proxyBuildCode !== 0) process.exitCode = proxyBuildCode;
+else spawn("tauri", tauriArgs);
+```

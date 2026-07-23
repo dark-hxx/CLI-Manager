@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const DEFAULT_MANIFEST_URL: &str =
+    "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json";
+pub const FALLBACK_MANIFEST_URL: &str =
     "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/ssh-agent-release-manifest.json";
 const TRUSTED_PUBLIC_KEY: &str = include_str!("../ssh-agent-public-key.txt");
 const MANIFEST_MAX_BYTES: usize = 1024 * 1024;
@@ -54,6 +56,7 @@ pub struct VerifiedRelease {
     pub manifest_url: String,
     pub manifest: AgentReleaseManifest,
     source: AgentReleaseSource,
+    fallback_manifest_url: Option<String>,
 }
 
 impl VerifiedRelease {
@@ -127,6 +130,7 @@ fn try_load_bundled_release(root: &Path) -> Result<Option<VerifiedRelease>, Stri
         manifest_url: manifest_provenance_url(&manifest),
         manifest,
         source: AgentReleaseSource::Bundled(root.to_path_buf()),
+        fallback_manifest_url: None,
     }))
 }
 
@@ -289,7 +293,29 @@ pub async fn fetch_verified_release(
             }
         }
     }
-    let manifest_url = custom_manifest_url.unwrap_or(DEFAULT_MANIFEST_URL);
+    let manifest_urls = match custom_manifest_url {
+        Some(url) => vec![url],
+        None => vec![DEFAULT_MANIFEST_URL, FALLBACK_MANIFEST_URL],
+    };
+    let mut last_error = None;
+    for manifest_url in manifest_urls {
+        match fetch_verified_remote_release(manifest_url, allow_http).await {
+            Ok(mut release) => {
+                if custom_manifest_url.is_none() && manifest_url == DEFAULT_MANIFEST_URL {
+                    release.fallback_manifest_url = Some(FALLBACK_MANIFEST_URL.to_string());
+                }
+                return Ok(release);
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "ssh_agent_release_download_failed".to_string()))
+}
+
+async fn fetch_verified_remote_release(
+    manifest_url: &str,
+    allow_http: bool,
+) -> Result<VerifiedRelease, String> {
     let manifest_url = validate_url(manifest_url, allow_http)?;
     let signature_url = validate_url(&format!("{}.sig", manifest_url.as_str()), allow_http)?;
     let client = release_client(allow_http)?;
@@ -315,6 +341,7 @@ pub async fn fetch_verified_release(
         manifest_url: manifest_url.to_string(),
         manifest,
         source: AgentReleaseSource::Remote,
+        fallback_manifest_url: None,
     })
 }
 
@@ -339,6 +366,40 @@ pub async fn download_artifact(
         let bytes = read_bundled_file(&root.join(file), ARTIFACT_MAX_BYTES)?;
         return verify_artifact_bytes(bytes, artifact);
     }
+    match download_remote_artifact(artifact, allow_http).await {
+        Ok(bytes) => Ok(bytes),
+        Err(primary_error) => {
+            let Some(fallback_manifest_url) = release.fallback_manifest_url.as_deref() else {
+                return Err(primary_error);
+            };
+            let fallback_release = fetch_verified_remote_release(fallback_manifest_url, allow_http)
+                .await
+                .map_err(|fallback_error| format!("{primary_error};fallback:{fallback_error}"))?;
+            let fallback_artifact = select_artifact(&fallback_release.manifest, &artifact.target)
+                .map_err(|fallback_error| {
+                format!("{primary_error};fallback:{fallback_error}")
+            })?;
+            if fallback_release.manifest.version != release.manifest.version
+                || fallback_artifact.size != artifact.size
+                || !fallback_artifact
+                    .sha256
+                    .eq_ignore_ascii_case(&artifact.sha256)
+            {
+                return Err(format!(
+                    "{primary_error};fallback:ssh_agent_release_fallback_mismatch"
+                ));
+            }
+            download_remote_artifact(fallback_artifact, allow_http)
+                .await
+                .map_err(|fallback_error| format!("{primary_error};fallback:{fallback_error}"))
+        }
+    }
+}
+
+async fn download_remote_artifact(
+    artifact: &AgentReleaseArtifact,
+    allow_http: bool,
+) -> Result<Vec<u8>, String> {
     let url = validate_url(&artifact.url, allow_http)?;
     let response = release_client(allow_http)?
         .get(url)
@@ -372,11 +433,24 @@ mod tests {
         bundled_artifact_file, bundled_release_presence, select_artifact, validate_manifest,
         validate_redirect_target, verify_artifact_bytes, verify_with_public_key,
         AgentReleaseArtifact, AgentReleaseManifest, BUNDLED_ARTIFACT_FILES, BUNDLED_MANIFEST_FILE,
+        DEFAULT_MANIFEST_URL, FALLBACK_MANIFEST_URL,
     };
     use base64::Engine;
     use reqwest::Url;
     use sha2::{Digest, Sha256};
     use std::fs;
+
+    #[test]
+    fn default_release_sources_prefer_r2_and_keep_github_fallback() {
+        assert_eq!(
+            DEFAULT_MANIFEST_URL,
+            "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json"
+        );
+        assert_eq!(
+            FALLBACK_MANIFEST_URL,
+            "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/ssh-agent-release-manifest.json"
+        );
+    }
 
     const SAMPLE_PUBLIC_KEY: &str = "untrusted comment: minisign public key\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
     const SAMPLE_SIGNATURE: &str = "untrusted comment: signature from minisign secret key\nRWQf6LRCGA9i59SLOFxz6NxvASXDJeRtuZykwQepbDEGt87ig1BNpWaVWuNrm73YiIiJbq71Wi+dP9eKL8OC351vwIasSSbXxwA=\ntrusted comment: timestamp:1555779966\tfile:test\nQtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==";

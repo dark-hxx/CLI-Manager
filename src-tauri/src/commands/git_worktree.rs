@@ -65,6 +65,24 @@ impl GitCommandOutput {
     }
 }
 
+const GIT_CREATE_ERROR_SNIPPET_LEN: usize = 300;
+
+fn git_create_error_snippet(output: &str) -> String {
+    let normalized = output.replace('\r', "\n");
+    let lines = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let chars = lines.chars().collect::<Vec<_>>();
+    if chars.len() <= GIT_CREATE_ERROR_SNIPPET_LEN {
+        return lines;
+    }
+    let start = chars.len() - GIT_CREATE_ERROR_SNIPPET_LEN;
+    format!("...{}", chars[start..].iter().collect::<String>())
+}
+
 fn strip_windows_extended_path_prefix(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("\\\\?\\") {
         if let Some(unc_tail) = rest.strip_prefix("UNC\\") {
@@ -694,7 +712,7 @@ pub async fn git_worktree_create(
                 &branch,
                 branch_existed_before_add,
             );
-            let snippet: String = add_output.combined().chars().take(300).collect();
+            let snippet = git_create_error_snippet(&add_output.combined());
             return Err(format!("git_failed: {snippet}"));
         }
 
@@ -876,7 +894,7 @@ pub async fn git_worktree_remove(
 mod tests {
     use super::{
         check_dependency_need, classify_worktree_registration, cleanup_empty_worktree_parent,
-        cleanup_stale_unregistered_worktree, default_worktree_root,
+        cleanup_stale_unregistered_worktree, default_worktree_root, git_create_error_snippet,
         is_retryable_worktree_remove_error, is_stale_worktree_remove_error,
         parse_worktree_list_entries, path_to_git_arg, remove_registered_stale_worktree_dir,
         remove_worktree_path_with_retry, resolve_worktree_target_path,
@@ -922,6 +940,16 @@ mod tests {
             validate_worktree_branch("wt/bad/name").unwrap_err(),
             "task_name_invalid"
         );
+    }
+
+    #[test]
+    fn keeps_final_git_error_after_checkout_progress() {
+        let output = format!(
+            "Preparing worktree\r{}fatal: unable to checkout files",
+            "Checking out files: 30%\r".repeat(30)
+        );
+        let snippet = git_create_error_snippet(&output);
+        assert!(snippet.contains("fatal: unable to checkout files"));
     }
 
     #[test]

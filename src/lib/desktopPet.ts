@@ -21,14 +21,18 @@ import type {
   TabStatusDetails,
 } from "../stores/terminalStore";
 import type { DesktopPetSettings, LanguagePreference } from "../stores/settingsStore";
+import { shouldIncludeAgentTerminal } from "./agentTerminal";
 import { desktopPetScaleFromPercent } from "./desktopPetSize";
 
 export {
   calculateDesktopPetMenuWindowGeometry,
+  DESKTOP_PET_MENU_MAX_VISIBLE_PLATFORMS,
+  DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS,
   resizeDesktopPetCollapsedWindowBounds,
   createLatestAsyncTaskRunner,
   type DesktopPetMenuHorizontalPlacement,
   type DesktopPetMenuVerticalPlacement,
+  type DesktopPetMenuWindowOptions,
   type DesktopPetMenuWindowGeometry,
   type DesktopPetWindowRect,
   type LatestAsyncTaskContext,
@@ -294,6 +298,7 @@ interface DeriveDesktopPetSnapshotInput {
   projects: Project[];
   worktrees: WorktreeRecord[];
   backgroundTasks: BackgroundPetTask[];
+  agentSessionsOnly: boolean;
   activeHandoff: CcConnectHandoffInfo | null;
   handoffBusy: boolean;
   now?: number;
@@ -349,12 +354,19 @@ function snapshotFromTargets(
 
 export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): DesktopPetSnapshot {
   const now = input.now ?? Date.now();
-  const openPtySessions = input.sessions.filter((session) => !session.kind || session.kind === "pty");
-  const openIds = new Set(openPtySessions.map((session) => session.id));
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   const worktreeById = new Map(input.worktrees.map((worktree) => [worktree.id, worktree]));
   const persistedById = new Map(input.persistedSessions.map((session) => [session.id, session]));
   const backgroundById = new Map(input.backgroundTasks.map((task) => [task.sessionId, task]));
+  const allOpenPtySessions = input.sessions.filter((session) => !session.kind || session.kind === "pty");
+  const openIds = new Set(allOpenPtySessions.map((session) => session.id));
+  const openPtySessions = allOpenPtySessions.filter((session) => (
+    shouldIncludeAgentTerminal(
+      session,
+      session.projectId ? projectById.get(session.projectId) : undefined,
+      input.agentSessionsOnly
+    )
+  ));
   const candidates: DesktopPetTarget[] = openPtySessions.map((session) => {
     const { status, updatedAt } = resolveOpenSessionStatus(
       session.id,
@@ -393,6 +405,7 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
     if (openIds.has(task.sessionId)) continue;
     const persisted = persistedById.get(task.sessionId);
     const project = persisted?.projectId ? projectById.get(persisted.projectId) : undefined;
+    if (!shouldIncludeAgentTerminal(persisted, project, input.agentSessionsOnly)) continue;
     candidates.push({
       sessionId: task.sessionId,
       daemonOnly: true,

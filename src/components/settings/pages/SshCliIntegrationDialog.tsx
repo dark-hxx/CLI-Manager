@@ -41,13 +41,15 @@ interface Props {
 
 const SOURCES: SshToolSource[] = ["claude", "codex"];
 const OFFICIAL_AGENT_MANIFEST_PATH = /^\/dark-hxx\/CLI-Manager\/releases\/(?:latest\/download|download\/[^/]+)\/ssh-agent-release-manifest\.json$/;
+const R2_AGENT_MANIFEST_PATH = "/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json";
 
 function savedManifestInput(value: string | null | undefined): string {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return "";
   try {
     const url = new URL(trimmed);
-    return url.hostname === "github.com" && OFFICIAL_AGENT_MANIFEST_PATH.test(url.pathname)
+    return (url.hostname === "github.com" && OFFICIAL_AGENT_MANIFEST_PATH.test(url.pathname))
+      || (url.hostname === "github.bwm.de5.net" && url.pathname === R2_AGENT_MANIFEST_PATH)
       ? ""
       : trimmed;
   } catch {
@@ -138,7 +140,8 @@ const HOOK_FILE_ROLE_KEYS: Record<string, TranslationKey> = {
   unknown: "settings.sshHosts.cliIntegration.hook.file.unknown",
 };
 
-const HTTP_INSTALL_SCRIPT_URL = "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/install-ssh-agent.sh";
+const R2_INSTALL_SCRIPT_URL = "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/install-ssh-agent.sh";
+const GITHUB_INSTALL_SCRIPT_URL = "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/install-ssh-agent.sh";
 
 export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Props) {
   const { t } = useI18n();
@@ -402,7 +405,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   };
 
   const copyHttpInstallCommand = async () => {
-    const command = `curl -fL -o install-ssh-agent.sh ${HTTP_INSTALL_SCRIPT_URL}\nless install-ssh-agent.sh\nsh install-ssh-agent.sh`;
+    const command = `curl -fL -o install-ssh-agent.sh ${R2_INSTALL_SCRIPT_URL} || curl -fL -o install-ssh-agent.sh ${GITHUB_INSTALL_SCRIPT_URL}\nless install-ssh-agent.sh\nsh install-ssh-agent.sh`;
     try {
       await navigator.clipboard.writeText(command);
       setScriptCopied(true);

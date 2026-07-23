@@ -1,7 +1,12 @@
+#[cfg(not(target_os = "windows"))]
+use crate::codex_app_server_proxy::HELPER_SUBCOMMAND as CODEX_PROXY_SUBCOMMAND;
 use crate::codex_app_server_proxy::{
-    CODEX_LAUNCHER_ENV, EXPECTED_SESSION_ID_ENV, HELPER_SUBCOMMAND as CODEX_PROXY_SUBCOMMAND,
-    PROXY_EXECUTABLE_ENV,
+    CODEX_BASE_URL_OVERRIDE_ENV, CODEX_ENV_KEY_OVERRIDE_ENV, CODEX_LAUNCHER_ENV,
+    CODEX_MODEL_OVERRIDE_ENV, CODEX_REMOTE_PROVIDER_NAME, CODEX_WIRE_API_OVERRIDE_ENV,
+    EXPECTED_SESSION_ID_ENV, PROXY_EXECUTABLE_ENV,
 };
+#[cfg(target_os = "windows")]
+use crate::process_job::ChildJob;
 use crate::shell_resolver::{output_with_timeout, silent_command};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -68,11 +73,6 @@ const FEISHU_APP_SECRET_ENV: &str = "CLI_MANAGER_CC_FEISHU_APP_SECRET";
 const WEIXIN_TOKEN_ENV: &str = "CLI_MANAGER_CC_WEIXIN_TOKEN";
 const WECOM_BOT_ID_ENV: &str = "CLI_MANAGER_CC_WECOM_BOT_ID";
 const WECOM_BOT_SECRET_ENV: &str = "CLI_MANAGER_CC_WECOM_BOT_SECRET";
-const CODEX_BASE_URL_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_BASE_URL_OVERRIDE";
-const CODEX_ENV_KEY_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_ENV_KEY_OVERRIDE";
-const CODEX_MODEL_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_MODEL_OVERRIDE";
-const CODEX_WIRE_API_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_WIRE_API_OVERRIDE";
-const CODEX_REMOTE_PROVIDER_NAME: &str = "cli_manager_remote";
 // Official v1.4.1 executable digests from the upstream release checksums.txt.
 // Hash before executing --version so an arbitrary PATH candidate cannot run during detection.
 const VERIFIED_V1_4_1_BINARY_SHA256: &[&str] = &[
@@ -1733,6 +1733,72 @@ fn write_file_atomically_if_changed(
     write_file_atomically(path, payload, label)
 }
 
+#[cfg(unix)]
+fn write_executable_file_atomically_if_changed(
+    path: &Path,
+    payload: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    write_file_atomically_if_changed(path, payload, label)?;
+    let metadata =
+        fs::metadata(path).map_err(|err| format!("read {label} metadata failed: {err}"))?;
+    let mut permissions = metadata.permissions();
+    if permissions.mode() & 0o777 != 0o755 {
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)
+            .map_err(|err| format!("set {label} executable permissions failed: {err}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn copy_file_atomically_if_changed(
+    source: &Path,
+    destination: &Path,
+    label: &str,
+) -> Result<(), String> {
+    let source_digest = sha256_file(source)?;
+    if destination.is_file()
+        && sha256_file(destination)
+            .ok()
+            .is_some_and(|digest| digest == source_digest)
+    {
+        return Ok(());
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("{label} parent is missing"))?;
+    fs::create_dir_all(parent).map_err(|err| format!("create {label} directory failed: {err}"))?;
+    let file_name = destination
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("codex.exe");
+    let temp = parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        now_millis()
+    ));
+    let result = (|| {
+        let mut input =
+            File::open(source).map_err(|err| format!("open source {label} failed: {err}"))?;
+        let mut output =
+            File::create(&temp).map_err(|err| format!("create temporary {label} failed: {err}"))?;
+        std::io::copy(&mut input, &mut output)
+            .map_err(|err| format!("copy temporary {label} failed: {err}"))?;
+        output
+            .sync_all()
+            .map_err(|err| format!("sync temporary {label} failed: {err}"))?;
+        drop(output);
+        replace_file(&temp, destination).map_err(|err| format!("replace {label} failed: {err}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
 #[cfg(target_os = "windows")]
 fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
@@ -2118,18 +2184,22 @@ fn configured_cc_switch_db_path(profile: Option<&CcConnectProfile>) -> Option<Pa
         .or_else(default_cc_switch_db_path)
 }
 
-struct RemoteCodexLaunch {
-    wrapper_dir: PathBuf,
-    launcher: PathBuf,
-    proxy_executable: PathBuf,
-    expected_session_id: Option<String>,
-    codex_home: PathBuf,
+struct RemoteCodexProviderLaunch {
     base_url_override: String,
     env_key_override: String,
     model_override: Option<String>,
     wire_api_override: String,
     env_key: String,
     secret: String,
+}
+
+struct RemoteCodexLaunch {
+    wrapper_dir: PathBuf,
+    launcher: PathBuf,
+    proxy_executable: PathBuf,
+    expected_session_id: Option<String>,
+    codex_home: PathBuf,
+    provider: Option<RemoteCodexProviderLaunch>,
 }
 
 fn codex_config_dir(profile: &CcConnectProfile) -> Result<PathBuf, String> {
@@ -2161,20 +2231,46 @@ fn resolve_codex_launcher(wrapper_dir: &Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn resolve_codex_launcher(_wrapper_dir: &Path) -> Result<PathBuf, String> {
-    Ok(PathBuf::from("codex"))
+fn resolve_codex_launcher(wrapper_dir: &Path) -> Result<PathBuf, String> {
+    let path_value = env::var_os("PATH").ok_or_else(|| "codex PATH is unavailable".to_string())?;
+    resolve_codex_launcher_from_path(wrapper_dir, &path_value)
 }
 
+#[cfg(not(target_os = "windows"))]
+fn resolve_codex_launcher_from_path(
+    wrapper_dir: &Path,
+    path_value: &std::ffi::OsStr,
+) -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let wrapper = wrapper_dir.join("codex");
+    let canonical_wrapper = wrapper.canonicalize().ok();
+    for directory in env::split_paths(path_value) {
+        let candidate = directory.join("codex");
+        let Ok(metadata) = candidate.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
+        let canonical_candidate = candidate.canonicalize().unwrap_or(candidate);
+        if canonical_candidate == wrapper
+            || canonical_wrapper
+                .as_ref()
+                .is_some_and(|managed| managed == &canonical_candidate)
+        {
+            continue;
+        }
+        return Ok(canonical_candidate);
+    }
+    Err("Codex launcher was not found in PATH".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
 fn codex_profile_wrapper_payload() -> String {
-    #[cfg(target_os = "windows")]
-    let payload = format!(
-        "@echo off\r\nsetlocal\r\nif /I \"%~1\"==\"app-server\" (\r\n  if defined {CODEX_MODEL_OVERRIDE_ENV} (\r\n    \"%{PROXY_EXECUTABLE_ENV}%\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" -c \"%{CODEX_MODEL_OVERRIDE_ENV}%\" %*\r\n  ) else (\r\n    \"%{PROXY_EXECUTABLE_ENV}%\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" %*\r\n  )\r\n) else (\r\n  if defined {CODEX_MODEL_OVERRIDE_ENV} (\r\n    call \"%{CODEX_LAUNCHER_ENV}%\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" -c \"%{CODEX_MODEL_OVERRIDE_ENV}%\" %*\r\n  ) else (\r\n    call \"%{CODEX_LAUNCHER_ENV}%\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"%{CODEX_BASE_URL_OVERRIDE_ENV}%\" -c \"%{CODEX_ENV_KEY_OVERRIDE_ENV}%\" -c \"%{CODEX_WIRE_API_OVERRIDE_ENV}%\" %*\r\n  )\r\n)\r\nexit /b %errorlevel%\r\n"
-    );
-    #[cfg(not(target_os = "windows"))]
-    let payload = format!(
-        "#!/bin/sh\nif [ \"${{1:-}}\" = \"app-server\" ]; then\n  if [ -n \"${{{CODEX_MODEL_OVERRIDE_ENV}:-}}\" ]; then\n    exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_OVERRIDE_ENV}\" \"$@\"\n  else\n    exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" \"$@\"\n  fi\nfi\nif [ -n \"${{{CODEX_MODEL_OVERRIDE_ENV}:-}}\" ]; then\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_OVERRIDE_ENV}\" \"$@\"\nelse\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" \"$@\"\nfi\n"
-    );
-    payload
+    format!(
+        "#!/bin/sh\nif [ \"${{1:-}}\" = \"app-server\" ]; then\n  exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} \"$@\"\nfi\nif [ -n \"${{{CODEX_MODEL_OVERRIDE_ENV}:-}}\" ]; then\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_OVERRIDE_ENV}\" \"$@\"\nelse\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" \"$@\"\nfi\n"
+    )
 }
 
 fn codex_wrapper_override(key: &str, value: &str) -> Result<String, String> {
@@ -2241,16 +2337,39 @@ fn codex_model_override(value: Option<&str>) -> Result<Option<String>, String> {
         .transpose()
 }
 
+#[cfg(target_os = "windows")]
+fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
+    // cc-connect v1.4.1 hardcodes `codex` for its app-server backend. A native
+    // GUI-subsystem shim is required here because a batch shim allocates a console.
+    let wrapper_dir = remote_manager_dir()?.join("bin");
+    fs::create_dir_all(&wrapper_dir)
+        .map_err(|err| format!("create Codex wrapper directory failed: {err}"))?;
+    let source = env::current_exe()
+        .map_err(|err| format!("resolve CLI-Manager executable failed: {err}"))?
+        .with_file_name("cli-manager-codex-proxy.exe");
+    if !source.is_file() {
+        return Err(format!(
+            "bundled Codex app-server proxy is missing: {}",
+            path_string(&source)
+        ));
+    }
+    let wrapper_path = wrapper_dir.join("codex.exe");
+    copy_file_atomically_if_changed(&source, &wrapper_path, "Codex app-server proxy")?;
+    Ok(wrapper_path)
+}
+
+#[cfg(not(target_os = "windows"))]
 fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
     let wrapper_dir = remote_manager_dir()?.join("bin");
     fs::create_dir_all(&wrapper_dir)
         .map_err(|err| format!("create Codex wrapper directory failed: {err}"))?;
-    #[cfg(target_os = "windows")]
-    let wrapper_path = wrapper_dir.join("codex.cmd");
-    #[cfg(not(target_os = "windows"))]
     let wrapper_path = wrapper_dir.join("codex");
     let payload = codex_profile_wrapper_payload();
-    write_file_atomically_if_changed(&wrapper_path, payload.as_bytes(), "Codex profile wrapper")?;
+    write_executable_file_atomically_if_changed(
+        &wrapper_path,
+        payload.as_bytes(),
+        "Codex profile wrapper",
+    )?;
     Ok(wrapper_path)
 }
 
@@ -2261,21 +2380,35 @@ fn prepare_remote_codex_launch(
     if profile.agent != CcConnectAgent::Codex {
         return Ok(None);
     }
-    let Some(provider_id) = project.codex_provider_id.as_deref() else {
-        return Ok(None);
+    let provider = match project.codex_provider_id.as_deref() {
+        Some(provider_id) => {
+            let database_path = configured_cc_switch_db_path(Some(profile))
+                .ok_or_else(|| "home_dir_unavailable".to_string())?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| format!("create provider query runtime failed: {err}"))?
+                .block_on(
+                    crate::commands::ccswitch::load_codex_runtime_config_from_path(
+                        provider_id,
+                        &database_path,
+                    ),
+                )?;
+            Some(RemoteCodexProviderLaunch {
+                base_url_override: codex_base_url_override(&runtime.base_url)?,
+                env_key_override: codex_env_key_override(&runtime.env_key)?,
+                model_override: codex_model_override(runtime.model.as_deref())?,
+                wire_api_override: codex_wire_api_override(runtime.wire_api.as_deref())?,
+                env_key: runtime.env_key,
+                secret: runtime.secret_value,
+            })
+        }
+        None => None,
     };
-    let database_path = configured_cc_switch_db_path(Some(profile))
-        .ok_or_else(|| "home_dir_unavailable".to_string())?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("create provider query runtime failed: {err}"))?
-        .block_on(
-            crate::commands::ccswitch::load_codex_runtime_config_from_path(
-                provider_id,
-                &database_path,
-            ),
-        )?;
+    #[cfg(not(target_os = "windows"))]
+    if provider.is_none() {
+        return Ok(None);
+    }
     let codex_home = codex_config_dir(profile)?;
     let wrapper_path = write_codex_profile_wrapper()?;
     let wrapper_dir = wrapper_path
@@ -2293,12 +2426,7 @@ fn prepare_remote_codex_launch(
         proxy_executable,
         expected_session_id,
         codex_home,
-        base_url_override: codex_base_url_override(&runtime.base_url)?,
-        env_key_override: codex_env_key_override(&runtime.env_key)?,
-        model_override: codex_model_override(runtime.model.as_deref())?,
-        wire_api_override: codex_wire_api_override(runtime.wire_api.as_deref())?,
-        env_key: runtime.env_key,
-        secret: runtime.secret_value,
+        provider,
     }))
 }
 
@@ -2316,9 +2444,6 @@ fn apply_remote_codex_launch_environment(
         .env("PATH", path_value)
         .env(CODEX_LAUNCHER_ENV, &launch.launcher)
         .env(PROXY_EXECUTABLE_ENV, &launch.proxy_executable)
-        .env(CODEX_BASE_URL_OVERRIDE_ENV, &launch.base_url_override)
-        .env(CODEX_ENV_KEY_OVERRIDE_ENV, &launch.env_key_override)
-        .env(CODEX_WIRE_API_OVERRIDE_ENV, &launch.wire_api_override)
         .env("CODEX_HOME", &launch.codex_home);
     match launch.expected_session_id.as_ref() {
         Some(session_id) => {
@@ -2328,12 +2453,27 @@ fn apply_remote_codex_launch_environment(
             command.env_remove(EXPECTED_SESSION_ID_ENV);
         }
     }
-    match launch.model_override.as_ref() {
-        Some(model_override) => {
-            command.env(CODEX_MODEL_OVERRIDE_ENV, model_override);
+    match launch.provider.as_ref() {
+        Some(provider) => {
+            command
+                .env(CODEX_BASE_URL_OVERRIDE_ENV, &provider.base_url_override)
+                .env(CODEX_ENV_KEY_OVERRIDE_ENV, &provider.env_key_override)
+                .env(CODEX_WIRE_API_OVERRIDE_ENV, &provider.wire_api_override);
+            match provider.model_override.as_ref() {
+                Some(model_override) => {
+                    command.env(CODEX_MODEL_OVERRIDE_ENV, model_override);
+                }
+                None => {
+                    command.env_remove(CODEX_MODEL_OVERRIDE_ENV);
+                }
+            }
         }
         None => {
-            command.env_remove(CODEX_MODEL_OVERRIDE_ENV);
+            command
+                .env_remove(CODEX_BASE_URL_OVERRIDE_ENV)
+                .env_remove(CODEX_ENV_KEY_OVERRIDE_ENV)
+                .env_remove(CODEX_MODEL_OVERRIDE_ENV)
+                .env_remove(CODEX_WIRE_API_OVERRIDE_ENV);
         }
     }
     Ok(())
@@ -2341,29 +2481,22 @@ fn apply_remote_codex_launch_environment(
 
 fn probe_remote_codex_app_server(launch: &RemoteCodexLaunch) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = silent_command("cmd.exe");
-        command
-            .args(["/d", "/c"])
-            .arg(launch.wrapper_dir.join("codex.cmd"));
-        command
-    };
+    let mut command = silent_command(&path_string(&launch.wrapper_dir.join("codex.exe")));
     #[cfg(not(target_os = "windows"))]
     let mut command = silent_command(&path_string(&launch.wrapper_dir.join("codex")));
     command.args(["app-server", "--listen", "stdio://"]);
-    command.env(&launch.env_key, &launch.secret);
+    if let Some(provider) = launch.provider.as_ref() {
+        command.env(&provider.env_key, &provider.secret);
+    }
     apply_remote_codex_launch_environment(&mut command, launch)?;
     let output = output_with_timeout(command, CODEX_APP_SERVER_PROBE_TIMEOUT)
-        .map_err(|err| format!("Codex Provider app-server probe failed: {err}"))?;
+        .map_err(|err| format!("Codex app-server proxy probe failed: {err}"))?;
     if output.status.success() {
         return Ok(());
     }
-    let detail = redact_log_line(
-        &output_text(&output.stdout, &output.stderr),
-        std::slice::from_ref(&launch.secret),
-    );
+    let detail = redact_remote_codex_probe_output(launch, &output.stdout, &output.stderr);
     Err(format!(
-        "Codex Provider app-server probe exited with {}: {}",
+        "Codex app-server proxy probe exited with {}: {}",
         output.status,
         if detail.is_empty() {
             "no diagnostic output"
@@ -2371,6 +2504,19 @@ fn probe_remote_codex_app_server(launch: &RemoteCodexLaunch) -> Result<(), Strin
             &detail
         }
     ))
+}
+
+fn redact_remote_codex_probe_output(
+    launch: &RemoteCodexLaunch,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> String {
+    let secrets = launch
+        .provider
+        .as_ref()
+        .map(|provider| vec![provider.secret.clone()])
+        .unwrap_or_default();
+    redact_log_line(&output_text(stdout, stderr), &secrets)
 }
 
 async fn load_provider_catalog(database_path: Option<&Path>) -> ProviderCatalog {
@@ -3414,7 +3560,7 @@ impl CcConnectManager {
             .spawn()
             .map_err(|err| format!("start Weixin authorization failed: {err}"))?;
         #[cfg(target_os = "windows")]
-        let job = match ChildJob::assign(&child) {
+        let job = match ChildJob::assign(&child, "Weixin authorization") {
             Ok(job) => job,
             Err(err) => {
                 let _ = child.kill();
@@ -3963,7 +4109,7 @@ impl CcConnectManager {
         let codex_launch = prepare_remote_codex_launch(&profile, &project)?;
         if let Some(launch) = codex_launch.as_ref() {
             probe_remote_codex_app_server(launch)
-                .map_err(|err| format!("Codex project Provider backend is unavailable: {err}"))?;
+                .map_err(|err| format!("Codex remote app-server backend is unavailable: {err}"))?;
         }
         let binary = self.detect(profile.executable_path.as_deref(), true)?;
         if !binary.compatible {
@@ -3975,9 +4121,12 @@ impl CcConnectManager {
         let config_path = write_managed_config(&profile)?;
         format_and_check_config_syntax(&binary.path, &config_path)?;
         let (mut environment, mut secrets) = credential_environment_for_profile(&profile)?;
-        if let Some(launch) = codex_launch.as_ref() {
-            environment.push((launch.env_key.clone(), launch.secret.clone()));
-            secrets.push(launch.secret.clone());
+        if let Some(provider) = codex_launch
+            .as_ref()
+            .and_then(|launch| launch.provider.as_ref())
+        {
+            environment.push((provider.env_key.clone(), provider.secret.clone()));
+            secrets.push(provider.secret.clone());
         }
         let proxy = resolve_proxy_url_if_enabled(
             profile.proxy_enabled,
@@ -4029,7 +4178,7 @@ impl CcConnectManager {
             .spawn()
             .map_err(|err| format!("spawn cc-connect failed: {err}"))?;
         #[cfg(target_os = "windows")]
-        let job = match ChildJob::assign(&child) {
+        let job = match ChildJob::assign(&child, "cc-connect") {
             Ok(job) => job,
             Err(err) => {
                 let _ = child.kill();
@@ -4367,64 +4516,6 @@ pub(crate) fn redact_log_line(raw: &str, secrets: &[String]) -> String {
     value
 }
 
-#[cfg(target_os = "windows")]
-struct ChildJob(windows_sys::Win32::Foundation::HANDLE);
-#[cfg(target_os = "windows")]
-unsafe impl Send for ChildJob {}
-#[cfg(target_os = "windows")]
-impl ChildJob {
-    fn assign(child: &Child) -> Result<Self, String> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        };
-        unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return Err(format!(
-                    "create cc-connect job object failed: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &limits as *const _ as *const core::ffi::c_void,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-            {
-                let err = std::io::Error::last_os_error();
-                CloseHandle(job);
-                return Err(format!("configure cc-connect job object failed: {err}"));
-            }
-            if AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0 {
-                let err = std::io::Error::last_os_error();
-                CloseHandle(job);
-                return Err(format!("assign cc-connect process to job failed: {err}"));
-            }
-            Ok(Self(job))
-        }
-    }
-    fn terminate(&self) {
-        unsafe {
-            let _ = windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
-        }
-    }
-}
-#[cfg(target_os = "windows")]
-impl Drop for ChildJob {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.0);
-        }
-    }
-}
-
 #[tauri::command]
 pub async fn cc_connect_get_status(
     manager: State<'_, CcConnectManager>,
@@ -4647,6 +4738,52 @@ mod tests {
         assert!(!is_verified_binary_hash(
             "0000000000000000000000000000000000000000000000000000000000000000"
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_atomic_write_sets_and_repairs_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("codex");
+        let payload = b"#!/bin/sh\nexit 0\n";
+
+        write_executable_file_atomically_if_changed(&path, payload, "test wrapper").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&path, permissions).unwrap();
+        write_executable_file_atomically_if_changed(&path, payload, "test wrapper").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_codex_launcher_resolution_skips_the_managed_wrapper() {
+        let directory = tempfile::tempdir().unwrap();
+        let wrapper_dir = directory.path().join("managed");
+        let launcher_dir = directory.path().join("real");
+        fs::create_dir_all(&wrapper_dir).unwrap();
+        fs::create_dir_all(&launcher_dir).unwrap();
+        let wrapper = wrapper_dir.join("codex");
+        let launcher = launcher_dir.join("codex");
+        write_executable_file_atomically_if_changed(&wrapper, b"#!/bin/sh\nexit 0\n", "wrapper")
+            .unwrap();
+        write_executable_file_atomically_if_changed(&launcher, b"#!/bin/sh\nexit 0\n", "launcher")
+            .unwrap();
+        let path_value = env::join_paths([&wrapper_dir, &launcher_dir]).unwrap();
+
+        let resolved = resolve_codex_launcher_from_path(&wrapper_dir, &path_value).unwrap();
+
+        assert_eq!(resolved, launcher.canonicalize().unwrap());
     }
     #[test]
     fn allowlist_is_fail_closed_and_normalized() {
@@ -5163,27 +5300,8 @@ allow_from = ""
         assert!(!error.contains("must-not-leak"));
     }
 
-    #[test]
-    fn codex_wrapper_forces_the_registered_provider_without_embedding_secrets() {
-        let payload = codex_profile_wrapper_payload();
-        assert!(!payload.contains("--profile"));
-        assert!(payload.contains("model_provider=cli_manager_remote"));
-        assert!(payload.contains(CODEX_LAUNCHER_ENV));
-        assert!(payload.contains(PROXY_EXECUTABLE_ENV));
-        assert!(payload.contains(CODEX_PROXY_SUBCOMMAND));
-        assert!(payload.contains(CODEX_BASE_URL_OVERRIDE_ENV));
-        assert!(payload.contains(CODEX_ENV_KEY_OVERRIDE_ENV));
-        assert!(payload.contains(CODEX_MODEL_OVERRIDE_ENV));
-        assert!(payload.contains(CODEX_WIRE_API_OVERRIDE_ENV));
-        assert!(!payload.contains("sk-provider-secret"));
-
-        let mut command = Command::new("cc-connect");
-        let launch = RemoteCodexLaunch {
-            wrapper_dir: PathBuf::from(r"C:\Users\test\.cli-manager\remote-manager\bin"),
-            launcher: PathBuf::from(r"D:\npm\codex.cmd"),
-            proxy_executable: PathBuf::from(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
-            expected_session_id: Some("thread-original".to_string()),
-            codex_home: PathBuf::from(r"C:\Users\test\.codex"),
+    fn sample_remote_codex_launch(provider: bool) -> RemoteCodexLaunch {
+        let provider = provider.then(|| RemoteCodexProviderLaunch {
             base_url_override:
                 "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
                     .to_string(),
@@ -5194,7 +5312,21 @@ allow_from = ""
             wire_api_override: "model_providers.cli_manager_remote.wire_api=responses".to_string(),
             env_key: "CLI_MANAGER_CODEX_PROVIDER_API_KEY".to_string(),
             secret: "sk-provider-secret".to_string(),
-        };
+        });
+        RemoteCodexLaunch {
+            wrapper_dir: PathBuf::from(r"C:\Users\test\.cli-manager\remote-manager\bin"),
+            launcher: PathBuf::from(r"D:\npm\codex.cmd"),
+            proxy_executable: PathBuf::from(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
+            expected_session_id: Some("thread-original".to_string()),
+            codex_home: PathBuf::from(r"C:\Users\test\.codex"),
+            provider,
+        }
+    }
+
+    #[test]
+    fn codex_launch_environment_forces_provider_without_embedding_secrets() {
+        let mut command = Command::new("cc-connect");
+        let launch = sample_remote_codex_launch(true);
         apply_remote_codex_launch_environment(&mut command, &launch).unwrap();
         let environment = command
             .get_envs()
@@ -5230,48 +5362,47 @@ allow_from = ""
             .any(|value| value == "sk-provider-secret"));
     }
 
+    #[test]
+    fn codex_launch_environment_clears_provider_overrides_when_unregistered() {
+        let mut command = Command::new("cc-connect");
+        let launch = sample_remote_codex_launch(false);
+        apply_remote_codex_launch_environment(&mut command, &launch).unwrap();
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        for key in [
+            CODEX_BASE_URL_OVERRIDE_ENV,
+            CODEX_ENV_KEY_OVERRIDE_ENV,
+            CODEX_MODEL_OVERRIDE_ENV,
+            CODEX_WIRE_API_OVERRIDE_ENV,
+        ] {
+            assert_eq!(environment.get(key), Some(&None));
+        }
+        assert_eq!(
+            environment.get(CODEX_LAUNCHER_ENV),
+            Some(&Some(r"D:\npm\codex.cmd".to_string()))
+        );
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
-    fn codex_wrapper_places_supported_overrides_before_the_app_server_subcommand() {
+    fn native_codex_proxy_is_copied_atomically_and_refreshed() {
         let directory = tempfile::tempdir().unwrap();
-        let launcher = directory.path().join("real-codex.cmd");
-        let wrapper = directory.path().join("codex.cmd");
-        let arguments = directory.path().join("arguments.txt");
-        fs::write(
-            &launcher,
-            "@echo off\r\n> \"%CLI_MANAGER_TEST_CODEX_ARGS%\" echo %*\r\n",
-        )
-        .unwrap();
-        fs::write(&wrapper, codex_profile_wrapper_payload()).unwrap();
+        let source = directory.path().join("cli-manager-codex-proxy.exe");
+        let destination = directory.path().join("bin").join("codex.exe");
+        fs::write(&source, b"proxy-v1").unwrap();
+        copy_file_atomically_if_changed(&source, &destination, "test proxy").unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"proxy-v1");
 
-        let status = Command::new("cmd.exe")
-            .args(["/d", "/c"])
-            .arg(&wrapper)
-            .args(["app-server", "--listen", "stdio://"])
-            .env(CODEX_LAUNCHER_ENV, &launcher)
-            .env(PROXY_EXECUTABLE_ENV, &launcher)
-            .env(
-                CODEX_BASE_URL_OVERRIDE_ENV,
-                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1",
-            )
-            .env(
-                CODEX_ENV_KEY_OVERRIDE_ENV,
-                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY",
-            )
-            .env(CODEX_MODEL_OVERRIDE_ENV, "model=gpt-5.4")
-            .env(
-                CODEX_WIRE_API_OVERRIDE_ENV,
-                "model_providers.cli_manager_remote.wire_api=responses",
-            )
-            .env("CLI_MANAGER_TEST_CODEX_ARGS", &arguments)
-            .status()
-            .unwrap();
-
-        assert!(status.success());
-        assert_eq!(
-            fs::read_to_string(arguments).unwrap().trim(),
-            "__codex_app_server_proxy -c \"model_provider=cli_manager_remote\" -c \"model_providers.cli_manager_remote.name=CLI-Manager remote\" -c \"model_providers.cli_manager_remote.base_url=https://provider.example.com/v1\" -c \"model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY\" -c \"model_providers.cli_manager_remote.wire_api=responses\" -c \"model=gpt-5.4\" app-server --listen stdio://"
-        );
+        fs::write(&source, b"proxy-v2").unwrap();
+        copy_file_atomically_if_changed(&source, &destination, "test proxy").unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"proxy-v2");
     }
 
     #[test]
@@ -5292,42 +5423,16 @@ allow_from = ""
         assert!(codex_model_override(Some("gpt-5.4\" & whoami")).is_err());
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn codex_provider_probe_reports_startup_errors_without_leaking_secrets() {
-        let directory = tempfile::tempdir().unwrap();
-        let launcher = directory.path().join("real-codex.cmd");
-        let wrapper_dir = directory.path().join("bin");
-        let wrapper = wrapper_dir.join("codex.cmd");
-        fs::create_dir_all(&wrapper_dir).unwrap();
-        fs::write(
-            &launcher,
-            "@echo off\r\n>&2 echo provider startup rejected %CLI_MANAGER_CODEX_PROVIDER_API_KEY%\r\nexit /b 9\r\n",
-        )
-        .unwrap();
-        fs::write(&wrapper, codex_profile_wrapper_payload()).unwrap();
-        let launch = RemoteCodexLaunch {
-            wrapper_dir,
-            proxy_executable: launcher.clone(),
-            launcher,
-            expected_session_id: None,
-            codex_home: directory.path().join("codex-home"),
-            base_url_override:
-                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
-                    .to_string(),
-            env_key_override:
-                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
-                    .to_string(),
-            model_override: None,
-            wire_api_override: "model_providers.cli_manager_remote.wire_api=responses".to_string(),
-            env_key: "CLI_MANAGER_CODEX_PROVIDER_API_KEY".to_string(),
-            secret: "sk-provider-secret".to_string(),
-        };
-
-        let error = probe_remote_codex_app_server(&launch).unwrap_err();
-        assert!(error.contains("provider startup rejected"));
-        assert!(!error.contains("sk-provider-secret"));
-        assert!(error.contains("[REDACTED]"));
+        let detail = redact_remote_codex_probe_output(
+            &sample_remote_codex_launch(true),
+            b"",
+            b"provider startup rejected sk-provider-secret",
+        );
+        assert!(detail.contains("provider startup rejected"));
+        assert!(!detail.contains("sk-provider-secret"));
+        assert!(detail.contains("[REDACTED]"));
     }
 
     #[test]
