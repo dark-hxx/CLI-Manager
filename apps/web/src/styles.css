@@ -75,10 +75,11 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid color-mix(in s
 .host-filter button { min-height: 30px; padding: 0 11px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; font-size: 12px; }
 .host-filter button:hover, .host-filter button.active { color: var(--text); background: var(--surface); box-shadow: 0 1px 4px rgba(28, 42, 62, .08); }
 .host-list { min-height: 0; flex: 1; overflow-y: auto; align-content: start; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; padding: 14px; background: var(--surface-raised); scrollbar-gutter: stable; }
-.host-card { width: 100%; min-width: 0; min-height: 334px; position: relative; overflow: hidden; display: grid; grid-template-rows: 132px auto auto; align-content: start; padding: 0; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface); text-align: left; cursor: pointer; transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease; }
+.host-card-wrap { position: relative; }
+.host-card { width: 100%; min-width: 0; min-height: 334px; overflow: hidden; display: grid; grid-template-rows: 132px auto auto; align-content: start; padding: 0; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface); text-align: left; cursor: pointer; transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease; }
 .host-card:hover { border-color: color-mix(in srgb, var(--primary) 42%, var(--border)); background: color-mix(in srgb, var(--surface) 96%, var(--primary-soft)); box-shadow: var(--shadow); }
 .host-card-actions { position: absolute; z-index: 4; top: 10px; right: 10px; opacity: 0; transition: opacity 160ms ease; }
-.host-card:hover .host-card-actions, .host-card:focus-visible .host-card-actions { opacity: 1; }
+.host-card-wrap:hover .host-card-actions, .host-card:focus-visible + .host-card-actions, .host-card-remove:focus-visible { opacity: 1; }
 .host-card-remove { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px; color: #fff; background: color-mix(in srgb, var(--danger) 88%, #000); box-shadow: 0 2px 8px rgba(0, 0, 0, .2); cursor: pointer; }
 .host-card-remove:hover { background: var(--danger); }
 .host-card-remove:disabled { cursor: wait; opacity: .6; }

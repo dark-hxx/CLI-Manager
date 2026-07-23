@@ -184,19 +184,30 @@ export function HostHome(props: HostHomeProps) {
               ) : (
                 <div className="host-list" aria-label={`${props.t("hostsTitle")} · ${visibleDevices.length}`}>
                   {visibleDevices.map((device) => (
-                    <div
-                      className={`host-card ${device.status}`}
-                      key={device.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => props.onSelectDevice(device.id)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        props.onSelectDevice(device.id);
-                      }}
-                      aria-label={`${props.t("openHost")} ${device.name}`}
-                    >
+                    <div className="host-card-wrap" key={device.id}>
+                      <button className={`host-card ${device.status}`} type="button" onClick={() => props.onSelectDevice(device.id)} aria-label={`${props.t("openHost")} ${device.name}`}>
+                        <span className={`host-card-visual${device.wallpaperRevision ? " has-wallpaper" : ""}`}>
+                          {device.wallpaperRevision && <img className="host-card-wallpaper" src={deviceWallpaperUrl(device) ?? undefined} alt="" loading="lazy" />}
+                          <span className="host-card-shade" aria-hidden="true" />
+                          <Monitor size={25} />
+                        </span>
+                        <span className="host-card-body">
+                          <span className="host-card-heading">
+                            <strong className="host-card-name">{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</strong>
+                            <span className={`host-status ${device.status}`}><span className={`status-dot ${device.status === "online" ? "" : "warning"}`} />{props.t(device.status === "online" ? "online" : "offline")}</span>
+                          </span>
+                          <span className="host-facts">
+                            <span className="host-fact"><span>{props.t("hostName")}</span><strong>{device.hostInfo?.hostName || props.t("unknown")}</strong></span>
+                            <span className="host-fact"><span>{props.t("system")}</span><strong>{device.hostInfo?.osVersion || props.t("unknown")}</strong></span>
+                            <span className="host-fact"><span>{props.t("platform")}</span><strong>{device.platform || props.t("unknown")}</strong></span>
+                            <span className="host-fact"><span>{props.t("appVersion")}</span><strong className="host-version-badge">{device.appVersion ? `v${device.appVersion}` : props.t("unknown")}</strong></span>
+                          </span>
+                        </span>
+                        <span className="host-card-side">
+                          <span className="host-heartbeat"><Clock3 size={14} /><span>{props.t("lastHeartbeat")}</span><time dateTime={formatServerDateTime(device.lastSeenAt)}>{device.lastSeenAt === null ? props.t("noHeartbeat") : formatServerTime(device.lastSeenAt)}</time></span>
+                          <span className="host-card-open">{props.t("openHost")}<ChevronRight size={17} /></span>
+                        </span>
+                      </button>
                       <span className="host-card-actions">
                         <button
                           className="host-card-remove"
@@ -207,27 +218,6 @@ export function HostHome(props: HostHomeProps) {
                         >
                           <Trash2 size={17} aria-hidden="true" />
                         </button>
-                      </span>
-                      <span className={`host-card-visual${device.wallpaperRevision ? " has-wallpaper" : ""}`}>
-                        {device.wallpaperRevision && <img className="host-card-wallpaper" src={deviceWallpaperUrl(device) ?? undefined} alt="" loading="lazy" />}
-                        <span className="host-card-shade" aria-hidden="true" />
-                        <Monitor size={25} />
-                      </span>
-                      <span className="host-card-body">
-                        <span className="host-card-heading">
-                          <strong className="host-card-name">{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</strong>
-                          <span className={`host-status ${device.status}`}><span className={`status-dot ${device.status === "online" ? "" : "warning"}`} />{props.t(device.status === "online" ? "online" : "offline")}</span>
-                        </span>
-                        <span className="host-facts">
-                          <span className="host-fact"><span>{props.t("hostName")}</span><strong>{device.hostInfo?.hostName || props.t("unknown")}</strong></span>
-                          <span className="host-fact"><span>{props.t("system")}</span><strong>{device.hostInfo?.osVersion || props.t("unknown")}</strong></span>
-                          <span className="host-fact"><span>{props.t("platform")}</span><strong>{device.platform || props.t("unknown")}</strong></span>
-                          <span className="host-fact"><span>{props.t("appVersion")}</span><strong className="host-version-badge">{device.appVersion ? `v${device.appVersion}` : props.t("unknown")}</strong></span>
-                        </span>
-                      </span>
-                      <span className="host-card-side">
-                        <span className="host-heartbeat"><Clock3 size={14} /><span>{props.t("lastHeartbeat")}</span><time dateTime={formatServerDateTime(device.lastSeenAt)}>{device.lastSeenAt === null ? props.t("noHeartbeat") : formatServerTime(device.lastSeenAt)}</time></span>
-                        <span className="host-card-open">{props.t("openHost")}<ChevronRight size={17} /></span>
                       </span>
                     </div>
                   ))}
