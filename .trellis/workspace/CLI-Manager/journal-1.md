@@ -1056,3 +1056,36 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 32: 修复跨 Workspan 终端空白
+
+**Date**: 2026-07-23
+**Task**: 修复跨 Workspan 终端空白
+**Branch**: `master`
+
+### Summary
+
+修复普通终端跨 Workspan 分屏重挂载时 StrictMode 探测实例覆盖有效快照的问题，并补充重挂载输出契约测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5cd5011d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
