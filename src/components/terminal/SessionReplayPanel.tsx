@@ -26,7 +26,9 @@ import {
 import { debugConsoleInfo, debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import type { HistoryFileChangeSummary, HistoryMessage, HistorySessionDetail } from "../../lib/types";
-import { fetchLatestProjectSessionDetail } from "../../stores/historyStore";
+import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../../lib/sshAgentHistory";
+import { fetchLatestProjectSessionDetail, fetchRemoteLatestProjectSessionDetail } from "../../stores/historyStore";
+import { useProjectStore } from "../../stores/projectStore";
 import {
   useReplayStore,
   type ReplayEvent,
@@ -705,6 +707,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
   const loadSession = useReplayStore((state) => state.loadSession);
   const selectSession = useReplayStore((state) => state.selectSession);
   const captureCodeSnapshot = useReplayStore((state) => state.captureCodeSnapshot);
+  const projects = useProjectStore((state) => state.projects);
   const [viewMode, setViewMode] = useState<ReplayViewMode>("progress");
   const [rollbackPending, setRollbackPending] = useState(false);
   const [forkPending, setForkPending] = useState(false);
@@ -714,6 +717,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
   const [historyDetail, setHistoryDetail] = useState<HistorySessionDetail | null>(null);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const historyDetailRef = useRef<{ sessionKey: string; detail: HistorySessionDetail } | null>(null);
+  const remoteHistoryContextRef = useRef<SshAgentHistoryContext | null>(null);
   const panelActive = open && visible;
 
   useEffect(() => {
@@ -729,6 +733,16 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
 
   const selectedSession = sessions.find((session) => session.sessionKey === selectedSessionKey) ?? null;
   const events = selectedSessionKey ? eventsBySession[selectedSessionKey] ?? [] : [];
+  const remoteProjectId = useMemo(() => {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const projectId = getStringPayload(events[index].payload, "remoteProjectId");
+      if (projectId) return projectId;
+    }
+    return null;
+  }, [events]);
+  const remoteProject = remoteProjectId
+    ? projects.find((project) => project.id === remoteProjectId && project.environment_type === "ssh") ?? null
+    : null;
   const selectedSessionTitle = resolveReplaySessionTitle(selectedSession, selectedSessionKey ? eventsBySession[selectedSessionKey] : undefined, t);
   const viewingHistory = Boolean(activeSessionId && selectedSessionKey && selectedSessionKey !== activeSessionId);
   const historySessions = useMemo(
@@ -743,7 +757,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
   }, [events]);
 
   useEffect(() => {
-    if (!panelActive || !selectedSessionKey || !selectedSession?.projectPath || !selectedSession.cliSessionId) {
+    if (!panelActive || !selectedSessionKey || (!selectedSession?.projectPath && !remoteProject) || !selectedSession?.cliSessionId) {
       historyDetailRef.current = null;
       setHistoryDetail(null);
       setHistoryDetailLoading(false);
@@ -764,16 +778,39 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     if (!previous) setHistoryDetail(null);
     setHistoryDetailLoading(true);
     const timer = window.setTimeout(() => {
-      void fetchLatestProjectSessionDetail(
-        selectedSession.projectPath!,
-        previous ? { filePath: previous.file_path, updatedAt: previous.updated_at } : undefined,
-        source,
-        selectedSession.cliSessionId
-      ).then((result) => {
+      const loadDetail = async () => {
+        const previousRef = previous
+          ? { filePath: previous.file_path, updatedAt: previous.updated_at }
+          : undefined;
+        if (remoteProject) {
+          if (remoteHistoryContextRef.current?.launch.projectId !== remoteProject.id) {
+            remoteHistoryContextRef.current = await buildSshAgentHistoryContext(remoteProject);
+          }
+          const remote = await fetchRemoteLatestProjectSessionDetail(
+            remoteHistoryContextRef.current,
+            previousRef,
+            selectedSession.cliSessionId,
+          );
+          remoteHistoryContextRef.current = remote.context;
+          return remote.result;
+        }
+        return fetchLatestProjectSessionDetail(
+          selectedSession.projectPath!,
+          previousRef,
+          source,
+          selectedSession.cliSessionId,
+        );
+      };
+      void loadDetail().then((result) => {
         if (cancelled) return;
         if (result !== "unchanged") {
           setHistoryDetail(result);
           historyDetailRef.current = result ? { sessionKey: selectedSessionKey, detail: result } : null;
+        }
+      }).catch(() => {
+        if (!cancelled) {
+          setHistoryDetail(null);
+          historyDetailRef.current = null;
         }
       }).finally(() => {
         if (!cancelled) setHistoryDetailLoading(false);
@@ -784,7 +821,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [events.length, panelActive, selectedSession?.cliSessionId, selectedSession?.eventCount, selectedSession?.projectPath, selectedSession?.source, selectedSession?.updatedAt, selectedSessionKey]);
+  }, [events.length, panelActive, remoteProject, selectedSession?.cliSessionId, selectedSession?.eventCount, selectedSession?.projectPath, selectedSession?.source, selectedSession?.updatedAt, selectedSessionKey]);
 
   useEffect(() => {
     if (!panelActive) return;

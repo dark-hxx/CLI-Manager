@@ -74,6 +74,7 @@ pub struct SshLaunchPlan {
     pub remote_path: String,
     pub client_instance_id: String,
     pub project_id: String,
+    pub project_name: String,
     pub bridge_epoch: String,
     pub agent_path: String,
     pub agent_installation_id: String,
@@ -147,7 +148,7 @@ pub struct SshLaunchPlan {
 - Resolve the source only from the SSH project's configured `cli_tool`. Inject `CLAUDE_CONFIG_DIR` for Claude or `CODEX_HOME` for Codex; do not scan or switch remote providers.
 - Absolute POSIX roots use normal POSIX quoting. `~` and `~/...` roots must be rendered with an explicit quoted `${HOME}` prefix so shell expansion occurs without evaluating arbitrary variables or command substitution.
 - Active PTYs capture the root in their launch plan. Editing a Host or project root affects only subsequent launches and never rewrites a running session.
-- When an SSH project creates a terminal without an explicit session command, resolve its project command as `startup_cmd` first, otherwise `cli_tool + cli_args`; project environment variables follow the same fallback rule. Explicit resume/template commands take precedence, and machine-local provider overrides are not injected into the remote command.
+- Opening an SSH project without an explicit session command resolves its project command as `startup_cmd` first, otherwise `cli_tool + cli_args`; project environment variables follow the same fallback rule. The in-terminal `New Terminal` actions explicitly request an empty command so they open a shell in the same remote directory instead of relaunching the project's CLI. Explicit resume/template commands take precedence, and machine-local provider overrides are not injected into the remote command.
 - SSH startup commands are embedded in `SshLaunchPlan` and executed exactly once by the remote launch command. The frontend may retain the resolved command as session metadata but must not write it again through `pty_write`.
 - A configured initialization/startup command runs inside one login shell, then hands control to a non-login interactive shell that inherits the initialized environment. Do not start a second login shell after the command; repeated MOTD/profile output can bury command output and rerun login side effects.
 
@@ -158,15 +159,17 @@ pub struct SshLaunchPlan {
 - Reopen a live daemon session by attaching to its existing PTY. Never rerun the SSH launch or startup command.
 - An exited daemon session may restore replay and disconnected metadata only.
 - If an older daemon rejects the SSH create frame, fall back to the in-process PTY path; legacy local Create frames remain compatible.
-- Rust removes user-supplied reserved Hook variables and injects `CLI_MANAGER_SSH_HOST_ID`, `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`, `CLI_MANAGER_PROJECT_ID`, `CLI_MANAGER_TAB_ID`, and `CLI_MANAGER_BRIDGE_EPOCH` from validated launch/session state.
-- The daemon stores the corresponding Hook binding with the live PTY. Remote events are accepted only when Host/client/project/Tab/epoch/Agent installation/source all match and the session remains alive.
+- Rust removes user-supplied reserved Hook variables and injects `CLI_MANAGER_SSH_HOST_ID`, `CLI_MANAGER_SSH_CLIENT_INSTANCE_ID`, `CLI_MANAGER_PROJECT_ID`, `CLI_MANAGER_TAB_ID`, and `CLI_MANAGER_BRIDGE_EPOCH` from validated launch/session state. `project_name` is desktop-only display metadata and must not be exported to the remote environment.
+- The daemon stores the corresponding Hook binding, including the configured sidebar project name, with the live PTY. Remote events are accepted only when Host/client/project/Tab/epoch/Agent installation/source all match and the session remains alive; only then may the daemon attach the trusted project display name for third-party notification rendering.
 - One daemon Agent bridge is reused for active sessions on the same Host/client/connection identity. PTYs remain independent SSH processes. The last Host session release stops the Hook bridge; probe/install/config operations remain short-lived connections.
 - Remote resume persists `cliSessionId`, history source instance, and history consumer identity with the terminal. The same current-client session jumps to its existing Tab; another consumer is blocked until PTY exit/error/close releases ownership.
 
 ### Capability routing
 
 - All SSH feature entry points must consult `resolveProjectCapabilities` or an equivalent hard backend/store guard.
-- SSH project capabilities allow `terminal`, `splitTerminal`, and `commandTemplates`; remote Hook state is routed by the dedicated Agent/binding contract rather than by local history/provider capability fallbacks.
+- SSH project capabilities allow `terminal`, `splitTerminal`, `commandTemplates`, remote `files`, read-only remote `git`, remote `history`, and remote `statistics`; remote Hook state is routed by the dedicated Agent/binding contract rather than by local history/provider capability fallbacks.
+- Switching to an SSH session must not close a supported terminal side panel. Files, Git, history/replay, and statistics remain open after their asynchronous remote load completes in both merged and independent panel layouts.
+- Opening session history from an SSH terminal scopes both remote synchronization and cached listing to that project's `remote_path`; the empty desktop-local `path` must never be passed as the history filter or interpreted as all remote projects.
 - A hidden or disabled UI control is not sufficient for files and Worktree: stores must reject SSH projects before invoking local filesystem/Git processes.
 - `findProjectByPath` and other local path matchers must exclude SSH projects and empty local paths.
 - The system resources panel is local-only and must be labelled `Local Resources` / `本机资源` for SSH sessions.

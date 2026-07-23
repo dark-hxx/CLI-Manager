@@ -9,6 +9,7 @@ import { singleFlight } from "../lib/singleFlight";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import { pickSyncableSettings, SYNCABLE_SETTING_KEYS, type SyncableSettingKey } from "../lib/syncSettings";
 import { sanitizeThirdPartyHookTargets } from "../lib/thirdPartyNotifications";
+import { useBackgroundOperationStore } from "./backgroundOperationStore";
 import { useModelPricingStore } from "./modelPricingStore";
 import { useProjectStore } from "./projectStore";
 import { useSettingsStore } from "./settingsStore";
@@ -435,12 +436,24 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
 
   createBackup: async (manual = true) => {
     const state = get();
+    const operationId = "data-sync:backup";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.backup",
+      contextLabel: state.deviceName,
+    });
     set({ status: "backing_up" });
     try {
       const snapshot = await createSnapshot(state.deviceId, state.deviceName);
       const store = await getConfigStore();
       const lastHash = (await store.get<string>("lastBackupContentHash")) ?? "";
-      if (!manual && lastHash === snapshot.manifest.contentHash) { set({ status: "idle" }); return null; }
+      if (!manual && lastHash === snapshot.manifest.contentHash) {
+        set({ status: "idle" });
+        useBackgroundOperationStore.getState().succeed(operationId);
+        return null;
+      }
       let result: string;
       if (state.backupMode === "local") {
         if (!state.localBackupDir) throw new Error("backup_local_directory_required");
@@ -464,9 +477,11 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
       const db = await getDb();
       await db.execute("INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)", [state.deviceId, snapshot.manifest.createdAt, snapshot.manifest.contentHash]);
       set({ status: "success", lastBackupAt: snapshot.manifest.createdAt });
+      useBackgroundOperationStore.getState().succeed(operationId);
       return result;
     } catch (error) {
       if (!(error instanceof Error && error.message === "backup_queued")) set({ status: "error" });
+      useBackgroundOperationStore.getState().fail(operationId, error);
       throw error;
     }
   },
@@ -483,16 +498,29 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
     return normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
   },
   restoreBackup: async (remotePath, domains) => {
-    const state = get(); set({ status: "restoring" });
-    const safety = await createSnapshot(state.deviceId, state.deviceName);
-    await invoke("backup_restore_safety_save", { snapshot: safety });
+    const state = get();
+    const operationId = "data-sync:restore";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.restore",
+      contextLabel: state.deviceName,
+    });
+    set({ status: "restoring" });
+    let safety: BackupSnapshotV3 | null = null;
     try {
+      safety = await createSnapshot(state.deviceId, state.deviceName);
+      await invoke("backup_restore_safety_save", { snapshot: safety });
       const raw = await invoke<unknown>("backup_download", { config: webdavConfig(state), remotePath, remoteDir: state.remoteDir || undefined });
       const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
       await applySnapshot(snapshot, domains); set({ status: "success", lastBackupAt: snapshot.manifest.createdAt });
+      useBackgroundOperationStore.getState().succeed(operationId);
     } catch (error) {
-      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Restore rollback failed", rollbackError));
-      set({ status: "error" }); throw error;
+      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Restore rollback failed", rollbackError));
+      useBackgroundOperationStore.getState().fail(operationId, error);
+      set({ status: "error" });
+      throw error;
     }
   },
   importLegacyCloud: async (domains) => {
@@ -516,16 +544,29 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
     await get().listBackups();
   },
   localImport: async (zipPath, domains) => {
-    const state = get(); set({ status: "restoring" });
-    const safety = await createSnapshot(state.deviceId, state.deviceName);
-    await invoke("backup_restore_safety_save", { snapshot: safety });
+    const state = get();
+    const operationId = "data-sync:import";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.import",
+      contextLabel: state.deviceName,
+    });
+    set({ status: "restoring" });
+    let safety: BackupSnapshotV3 | null = null;
     try {
+      safety = await createSnapshot(state.deviceId, state.deviceName);
+      await invoke("backup_restore_safety_save", { snapshot: safety });
       const raw = await invoke<unknown>("backup_local_import", { zipPath });
       const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
       await applySnapshot(snapshot, domains); set({ status: "success" });
+      useBackgroundOperationStore.getState().succeed(operationId);
     } catch (error) {
-      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Import rollback failed", rollbackError));
-      set({ status: "error" }); throw error;
+      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Import rollback failed", rollbackError));
+      useBackgroundOperationStore.getState().fail(operationId, error);
+      set({ status: "error" });
+      throw error;
     }
   },
   previewLocalImport: async (zipPath) => {
@@ -534,17 +575,30 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
     return normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
   },
   undoLastRestore: async () => {
-    const raw = await invoke<unknown | null>("backup_restore_safety_load");
-    if (!raw) throw new Error("backup_no_restore_to_undo");
     const state = get();
-    const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+    const operationId = "data-sync:undo";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.undo",
+      contextLabel: state.deviceName,
+    });
     set({ status: "restoring" });
     try {
+      const raw = await invoke<unknown | null>("backup_restore_safety_load");
+      if (!raw) throw new Error("backup_no_restore_to_undo");
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
       await applySnapshot(snapshot, ALL_DOMAINS);
       await invoke("backup_restore_safety_clear");
       set({ status: "success" });
+      useBackgroundOperationStore.getState().succeed(operationId);
     }
-    catch (error) { set({ status: "error" }); throw error; }
+    catch (error) {
+      useBackgroundOperationStore.getState().fail(operationId, error);
+      set({ status: "error" });
+      throw error;
+    }
   },
   retryOutbox: async () => {
     const state = get();

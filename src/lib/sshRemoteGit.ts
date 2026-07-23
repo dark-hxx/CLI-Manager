@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Project, GitBranchInfo, GitBranchStatus, GitFileChange } from "./types";
 import { buildSshRemoteFileContext, type SshRemoteFileContext } from "./sshRemoteFiles";
+import { useBackgroundOperationStore } from "../stores/backgroundOperationStore";
 
 export interface SshRemoteGitContext extends SshRemoteFileContext {}
 
@@ -28,14 +29,31 @@ async function request<T>(
   repoPath = "",
   relativePath = "",
 ): Promise<T> {
-  return invoke<T>("ssh_remote_git_request", {
-    consumerId: context.consumerId,
-    sshLaunch: context.launch,
-    kind,
-    rootPath: context.rootPath,
-    repoPath,
-    relativePath,
+  const id = `remote-git:${context.consumerId}`;
+  const action = () => request<T>(context, kind, repoPath, relativePath);
+  useBackgroundOperationStore.getState().start({
+    id,
+    kind: "remoteGit",
+    titleKey: "backgroundOperations.remoteGit.title",
+    detailKey: "backgroundOperations.remoteGit.loading",
+    contextLabel: context.rootPath,
+    retry: () => { void action().catch(() => undefined); },
   });
+  try {
+    const result = await invoke<T>("ssh_remote_git_request", {
+      consumerId: context.consumerId,
+      sshLaunch: context.launch,
+      kind,
+      rootPath: context.rootPath,
+      repoPath,
+      relativePath,
+    });
+    useBackgroundOperationStore.getState().succeed(id);
+    return result;
+  } catch (error) {
+    useBackgroundOperationStore.getState().fail(id, error);
+    throw error;
+  }
 }
 
 export async function sshRemoteGitListRepositories(context: SshRemoteGitContext): Promise<SshRemoteGitSnapshot<SshRemoteGitRepository[]>> {

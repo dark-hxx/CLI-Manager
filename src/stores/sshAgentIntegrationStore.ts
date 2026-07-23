@@ -13,16 +13,30 @@ import type {
   SshToolSource,
 } from "../lib/types";
 
+export type SshAgentInstallJobStatus = "running" | "succeeded" | "failed";
+
+export interface SshAgentInstallJob {
+  hostId: string;
+  status: SshAgentInstallJobStatus;
+  phase: string;
+  progress: number;
+  error: string;
+  updatedAt: number;
+}
+
 interface SshAgentIntegrationStore {
   installations: SshAgentInstallation[];
   preferences: SshHostToolPreference[];
   integrations: SshAgentToolIntegration[];
+  agentInstallJobs: Record<string, SshAgentInstallJob>;
   loaded: boolean;
   loadError: string | null;
   fetchAll: () => Promise<void>;
   saveHostPreferences: (hostId: string, roots: Record<SshToolSource, string>) => Promise<void>;
   recordAgentProbe: (hostId: string, result: SshAgentProbeResult) => Promise<void>;
   recordAgentOperation: (hostId: string, result: SshAgentOperationResult) => Promise<void>;
+  updateAgentInstallJob: (hostId: string, job: Omit<SshAgentInstallJob, "hostId" | "updatedAt">) => void;
+  clearAgentInstallJob: (hostId: string) => void;
   recordHookReport: (
     hostId: string,
     sshUser: string,
@@ -45,6 +59,7 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
   installations: [],
   preferences: [],
   integrations: [],
+  agentInstallJobs: {},
   loaded: false,
   loadError: null,
 
@@ -202,6 +217,33 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
       ],
     );
     await get().fetchAll();
+  },
+
+  updateAgentInstallJob: (hostId, job) => {
+    const normalizedHostId = hostId.trim();
+    if (!normalizedHostId) return;
+    set((state) => ({
+      agentInstallJobs: {
+        ...state.agentInstallJobs,
+        [normalizedHostId]: {
+          hostId: normalizedHostId,
+          ...job,
+          progress: Math.max(0, Math.min(100, Math.round(job.progress))),
+          updatedAt: Date.now(),
+        },
+      },
+    }));
+  },
+
+  clearAgentInstallJob: (hostId) => {
+    const normalizedHostId = hostId.trim();
+    if (!normalizedHostId) return;
+    set((state) => {
+      if (!state.agentInstallJobs[normalizedHostId]) return state;
+      const agentInstallJobs = { ...state.agentInstallJobs };
+      delete agentInstallJobs[normalizedHostId];
+      return { agentInstallJobs };
+    });
   },
 
   recordHookReport: async (hostId, sshUser, configuredRoot, report, integrationId, scopeKind = "hostPrimary") => {

@@ -62,6 +62,7 @@ import { openWindowsTerminal } from "../lib/externalTerminal";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { projectSupportsCapability, resolveProjectCapabilities, type ProjectCapability } from "../lib/projectCapabilities";
 import { resolveCliToolHistorySourceId } from "../lib/cliTools";
+import { resolveHistoryProjectPath } from "../lib/historyProjectPaths";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
 import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check, Cpu, Cloud } from "./icons";
 import { WorktreeIcon } from "./WorktreeIcon";
@@ -2757,10 +2758,12 @@ export function TerminalTabs({
       setActiveWorkspaceTab("terminal");
       return;
     }
+    const isRemoteProject = activeProject?.environment_type === "ssh";
     await createSession(
-      activeProject?.environment_type === "ssh" ? activeProject.id : undefined,
+      isRemoteProject ? activeProject.id : undefined,
       newTerminalContext.cwd ?? undefined,
-      newTerminalContext.title
+      newTerminalContext.title,
+      isRemoteProject ? "" : undefined,
     );
     closeHistory();
     setActiveWorkspaceTab("terminal");
@@ -3282,18 +3285,6 @@ export function TerminalTabs({
     void syncFilePanelProject(filePanelProject);
   }, [closeFilesPanel, filePanelProject?.id, filePanelProject?.path, filesPanelActive, syncFilePanelProject]);
 
-  useEffect(() => {
-    const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
-    if (!project || resolveProjectCapabilities(project).environment !== "ssh") return;
-    setStatsOpen(false);
-    setGitOpen(false);
-    setReplayOpen(false);
-    setFilesOpen(false);
-    if (sidePanelMerged && sidePanelOpen && sidePanelTab !== "systemResources") {
-      setSidePanelOpen(false);
-    }
-  }, [panelSession?.projectId, projectById, sidePanelMerged, sidePanelOpen, sidePanelTab]);
-
   const handleOpenHistoryTab = useCallback(() => {
     if (historyOpen) {
       closeHistory();
@@ -3313,7 +3304,7 @@ export function TerminalTabs({
     setActiveWorkspaceTab("history");
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project?.cli_tool),
-      projectPath: project?.path ?? activeSession?.cwd ?? null,
+      projectPath: resolveHistoryProjectPath(project) || activeSession?.cwd || null,
       projectId: project?.id ?? null,
       scopedProjectPath: activeWorktree?.path ?? null,
     });

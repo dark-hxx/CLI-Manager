@@ -946,6 +946,8 @@ pub fn run() {
             commands::ssh::ssh_agent_hook_inspect,
             commands::ssh::ssh_agent_hook_preview,
             commands::ssh::ssh_agent_hook_apply,
+            commands::ssh_integration::ssh_agent_record_hook_report,
+            commands::ssh_integration::ssh_agent_save_host_preferences,
             commands::ssh::ssh_save_password,
             commands::ssh::ssh_password_status,
             commands::ssh::ssh_delete_password,

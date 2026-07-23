@@ -1167,6 +1167,7 @@ interface SshLaunchPayload extends SshConnectionSpecPayload {
   remotePath: string;
   clientInstanceId: string;
   projectId: string;
+  projectName: string;
   bridgeEpoch: string;
   agentPath: string;
   agentInstallationId: string;
@@ -1381,6 +1382,7 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
           remotePath,
           clientInstanceId: getSshClientInstanceId(),
           projectId: project?.id ?? "",
+          projectName: project?.name.trim() ?? "",
           bridgeEpoch: crypto.randomUUID(),
           agentPath: hookBridgeEnabled ? agentInstallation?.install_path ?? "" : "",
           agentInstallationId: hookBridgeEnabled ? agentInstallation?.installation_id ?? "" : "",
@@ -2071,9 +2073,10 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const tabId = resolvePrimaryTabId(payload.tabId, get().splits);
     if (!get().sessions.some((session) => session.id === tabId)) return null;
     const cliSessionId = payload.sessionId?.trim();
+    const remoteTranscriptRef = payload.environmentType === "ssh" ? payload.remoteTranscriptRef?.trim() : undefined;
     const cliReasoningEffort = payload.reasoningEffort?.trim();
     let boundNewCliSessionId = false;
-    if ((cliSessionId || cliReasoningEffort) && get().sessions.some((session) => session.id === rawTabId)) {
+    if ((cliSessionId || remoteTranscriptRef || cliReasoningEffort) && get().sessions.some((session) => session.id === rawTabId)) {
       set((state) => ({
         sessions: state.sessions.map((session) => {
           if (session.id !== rawTabId) return session;
@@ -2085,6 +2088,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           return {
             ...session,
             ...(nextCliSessionId !== session.cliSessionId ? { cliSessionId: nextCliSessionId } : {}),
+            ...(remoteTranscriptRef && session.remoteTranscriptRef !== remoteTranscriptRef
+              ? { remoteTranscriptRef }
+              : {}),
             ...(cliReasoningEffort && session.cliReasoningEffort !== cliReasoningEffort
               ? { cliReasoningEffort }
               : {}),

@@ -13,6 +13,8 @@ use crate::history::{
     HistoryGetRequest, HistoryResumePreflightRequest, HistoryScopeRequest, HistorySearchRequest,
 };
 use crate::hook_runtime::{ack_spool, read_spool_batch, spool_namespace};
+#[cfg(unix)]
+use crate::hook_runtime::{bridge_pid_file_name, bridge_socket_file_name};
 use crate::installer::read_installation_record;
 use crate::layout::resolve_layout;
 use crate::{PROTOCOL_MAJOR, PROTOCOL_MINOR};
@@ -139,8 +141,8 @@ fn bind_hook_bridge(payload: &Value) -> Result<HookBridgeBinding, String> {
             .map_err(|_| "bridge_runtime_dir_failed".to_string())?;
         fs::set_permissions(&layout.runtime_dir, fs::Permissions::from_mode(0o700))
             .map_err(|_| "bridge_runtime_permissions_failed".to_string())?;
-        let socket_path = layout.runtime_dir.join(format!("hook-{namespace}.sock"));
-        let pid_path = layout.runtime_dir.join(format!("hook-{namespace}.pid"));
+        let socket_path = layout.runtime_dir.join(bridge_socket_file_name(&namespace));
+        let pid_path = layout.runtime_dir.join(bridge_pid_file_name(&namespace));
         if socket_path.exists() || pid_path.exists() {
             if process_alive(&pid_path) {
                 return Err("bridge_already_active".to_string());
