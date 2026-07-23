@@ -116,16 +116,18 @@ function runProxy({
     });
   }
 
-  const request = {
-    jsonrpc: "2.0",
-    id: requestId,
-    method: "initialize",
-    params: { marker: `request-${requestId}` },
-  };
+  const request = requestId === undefined
+    ? null
+    : {
+        jsonrpc: "2.0",
+        id: requestId,
+        method: "initialize",
+        params: { marker: `request-${requestId}` },
+      };
   const result = spawnSync(proxyPath, childArgs, {
     cwd: repoRoot,
     env: environment,
-    input: `${JSON.stringify(request)}\n`,
+    input: request === null ? undefined : `${JSON.stringify(request)}\n`,
     encoding: "utf8",
     timeout: 30_000,
     windowsHide: true,
@@ -169,18 +171,22 @@ try {
 let input = "";
 process.stdin.setEncoding("utf8");
 for await (const chunk of process.stdin) input += chunk;
-const request = JSON.parse(input.trim());
+const request = input.trim() ? JSON.parse(input.trim()) : null;
 writeFileSync(process.env.FAKE_CODEX_CAPTURE_PATH, JSON.stringify({
   args: process.argv.slice(2),
   request,
   apiKeyPresent: typeof process.env.CLI_MANAGER_TEST_API_KEY === "string",
   apiKeyMatches: process.env.CLI_MANAGER_TEST_API_KEY === ${JSON.stringify(providerSecret)},
 }));
-process.stdout.write(JSON.stringify({
-  jsonrpc: "2.0",
-  id: request.id,
-  result: { marker: request.params.marker },
-}) + "\\n");
+if (request) {
+  process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { marker: request.params.marker },
+  }) + "\\n");
+} else {
+  process.stdout.write("fake Codex passthrough\\n");
+}
 process.exitCode = Number(process.env.FAKE_CODEX_EXIT_CODE || "0");
 `,
     "utf8",
@@ -239,7 +245,36 @@ process.exitCode = Number(process.env.FAKE_CODEX_EXIT_CODE || "0");
   assert.ok(!withProvider.result.stderr.includes(providerSecret));
   assertForwarding(withProvider);
 
-  console.log("codex app-server proxy E2E: 3 checks passed");
+  const passthroughCapture = path.join(temporaryDirectory, "passthrough.json");
+  const passthrough = runProxy({
+    proxyPath,
+    launcher: fakeCodexCmd,
+    childArgs: ["--version"],
+    capturePath: passthroughCapture,
+    provider: true,
+    exitCode: 17,
+  });
+  assert.equal(passthrough.result.status, 17, "shim must forward ordinary Codex exit codes");
+  assert.deepEqual(passthrough.capture.args, [
+    "-c",
+    "model_provider=cli_manager_remote",
+    "-c",
+    "model_providers.cli_manager_remote.name=CLI-Manager remote",
+    "-c",
+    "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1",
+    "-c",
+    "model_providers.cli_manager_remote.env_key=CLI_MANAGER_TEST_API_KEY",
+    "-c",
+    "model_providers.cli_manager_remote.wire_api=responses",
+    "-c",
+    "model=gpt-5.4",
+    "--version",
+  ]);
+  assert.equal(passthrough.capture.request, null);
+  assert.equal(passthrough.result.stdout, "fake Codex passthrough\n");
+  assert.equal(passthrough.capture.apiKeyMatches, true);
+
+  console.log("codex app-server proxy E2E: 4 checks passed");
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

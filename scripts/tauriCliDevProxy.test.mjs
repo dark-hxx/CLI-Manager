@@ -74,7 +74,46 @@ try {
 
   const runnerReleaseArgument = runTauriCli(["dev", "--", "--release"]);
   assert.equal(runnerReleaseArgument.status, 0);
-  assert.doesNotMatch(runnerReleaseArgument.lines[0], /--release/);
+  assert.match(runnerReleaseArgument.lines[0], /--bin cli-manager-codex-proxy --release$/);
+
+  const runnerProfile = runTauriCli(["dev", "--", "--profile", "custom"]);
+  assert.equal(runnerProfile.status, 0);
+  assert.match(runnerProfile.lines[0], /--profile custom$/);
+
+  const runnerTargetDirectory = runTauriCli([
+    "dev",
+    "--",
+    "--target-dir",
+    "custom-target",
+  ]);
+  assert.equal(runnerTargetDirectory.status, 0);
+  assert.match(runnerTargetDirectory.lines[0], /--target-dir custom-target$/);
+
+  const runnerTarget = runTauriCli([
+    "dev",
+    "--",
+    "--target",
+    "aarch64-pc-windows-msvc",
+  ]);
+  assert.equal(runnerTarget.status, 0);
+  assert.match(runnerTarget.lines[0], /--target aarch64-pc-windows-msvc$/);
+
+  const applicationArguments = runTauriCli([
+    "dev",
+    "--",
+    "--release",
+    "--",
+    "--release",
+    "--profile",
+    "ignored",
+  ]);
+  assert.equal(applicationArguments.status, 0);
+  assert.equal(
+    applicationArguments.lines[0].match(/--release/g)?.length,
+    1,
+    "application arguments must not affect the proxy Cargo build",
+  );
+  assert.doesNotMatch(applicationArguments.lines[0], /ignored/);
 
   const failedBuild = runTauriCli(["dev"], 23);
   assert.equal(failedBuild.status, 23, "proxy build failure must stop tauri dev");
@@ -85,7 +124,7 @@ try {
   assert.equal(build.status, 0);
   assert.deepEqual(build.lines, ["tauri build"]);
 
-  console.log("tauri dev proxy preparation test: 8 checks passed");
+  console.log("tauri dev proxy preparation test: 12 checks passed");
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

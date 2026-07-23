@@ -225,7 +225,8 @@ tauri = { version = "2", features = ["macos-private-api"] }
 ```text
 # scripts/tauri-cli.mjs, Windows `tauri dev` only
 cargo build --locked --manifest-path <repo>/src-tauri/Cargo.toml \
-  --bin cli-manager-codex-proxy [--target <triple>] [--release]
+  --bin cli-manager-codex-proxy [--target <triple>] [--release] \
+  [--profile <name>] [--target-dir <path>]
 ```
 
 ### 3. Contracts
@@ -236,7 +237,7 @@ cargo build --locked --manifest-path <repo>/src-tauri/Cargo.toml \
 - Tests must exercise the real Cargo invocation; do not inject a synthetic `TAURI_CONFIG` merely to suppress the consistency error.
 - On Windows, the `scripts/tauri-cli.mjs` `dev` entrypoint must build `cli-manager-codex-proxy` before spawning Tauri, because remote Codex handoff resolves `current_exe().with_file_name("cli-manager-codex-proxy.exe")`.
 - The prebuild must forward both `--target <triple>` / `--target=<triple>` and `-t <triple>` / `-t=<triple>` as Cargo's `--target <triple>`.
-- The prebuild must forward `--release` only before Tauri's `--` argument boundary, so the proxy uses the same Cargo profile and executable directory without interpreting runner/application arguments.
+- Tauri's first `--` starts Cargo runner arguments; only the second `--` starts application arguments. The prebuild must inspect Tauri options and runner arguments, forward `--release`, `--profile`, and `--target-dir`, and ignore everything after the second boundary.
 - A failed or unavailable Cargo prebuild must return a non-zero exit and must not start Tauri. Non-Windows platforms and non-`dev` Tauri commands must not run this prebuild.
 
 ### 4. Validation & Error Matrix
@@ -250,6 +251,8 @@ cargo build --locked --manifest-path <repo>/src-tauri/Cargo.toml \
 | Windows `tauri dev` without a target | Build the proxy into Cargo's default debug target before Tauri starts. |
 | Windows `tauri dev` with either target syntax | Build the proxy for the same target triple before Tauri starts. |
 | Windows `tauri dev --release` | Build the proxy in the release profile before Tauri starts. |
+| Windows runner arguments select `--profile` or `--target-dir` | Forward the selection to the proxy Cargo build. |
+| Application arguments after the second `--` resemble Cargo options | Ignore them when selecting the proxy build target/profile/directory. |
 | Windows proxy Cargo build fails | Return Cargo's non-zero result and do not invoke Tauri. |
 | Non-Windows or a non-`dev` Tauri command | Do not build the Windows proxy. |
 
@@ -267,7 +270,7 @@ cargo build --locked --manifest-path <repo>/src-tauri/Cargo.toml \
 - Run `npm run test:codex-proxy:e2e` on Windows.
 - Run `cargo check --locked --manifest-path src-tauri/Cargo.toml`.
 - Run `node scripts/verify-macos-window-controls.mjs`.
-- Run `npm run test:tauri-dev-proxy` on Windows. Assert Cargo runs before Tauri, target forwarding covers long and short forms, release profile respects the `--` boundary, Cargo failure prevents Tauri launch, and `build` does not prebuild the proxy.
+- Run `npm run test:tauri-dev-proxy` on Windows. Assert Cargo runs before Tauri, target forwarding covers Tauri and runner long/short forms, release/profile/target-dir respect both `--` boundaries, Cargo failure prevents Tauri launch, and `build` does not prebuild the proxy.
 
 ### 7. Wrong vs Correct
 

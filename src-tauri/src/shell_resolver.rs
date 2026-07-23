@@ -4,6 +4,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use crate::process_job::ChildJob;
+
 pub const GIT_BASH_NOT_FOUND_MESSAGE: &str =
     "Git Bash executable not found. Please install Git for Windows or add Git Bash to PATH.";
 
@@ -49,11 +52,26 @@ pub fn output_with_timeout(
     use std::io::Read;
     use std::process::Stdio;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command.spawn()?;
+    #[cfg(target_os = "windows")]
+    let job = match ChildJob::assign(&child, "probe process") {
+        Ok(job) => job,
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other(err));
+        }
+    };
 
     // 独立线程排空管道，避免子进程输出填满管道缓冲后互相等待。
     let stdout_pipe = child.stdout.take();
@@ -75,15 +93,28 @@ pub fn output_with_timeout(
 
     let deadline = std::time::Instant::now() + timeout;
     let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(err) => {
+                #[cfg(target_os = "windows")]
+                job.terminate();
+                #[cfg(unix)]
+                terminate_process_group(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err);
+            }
         }
         if std::time::Instant::now() >= deadline {
+            #[cfg(target_os = "windows")]
+            job.terminate();
+            #[cfg(unix)]
+            terminate_process_group(child.id());
             let _ = child.kill();
             let _ = child.wait();
-            // 不 join 读线程：kill 只终止直接子进程，孙进程（如 cmd 启动的 node）
-            // 可能仍持有管道写端，join 会把无界阻塞重新带回来。读线程持有的
-            // 缓冲区随线程结束释放，管道关闭后线程自行退出。
+            // Cleanup is best-effort. Do not turn a bounded timeout back into an
+            // unbounded wait if the OS cannot terminate a descendant or close its pipe.
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 format!("进程超过 {}s 未结束，已终止", timeout.as_secs()),
@@ -92,11 +123,43 @@ pub fn output_with_timeout(
         std::thread::sleep(std::time::Duration::from_millis(30));
     };
 
+    // A launcher can exit before a descendant that inherited its stdout/stderr pipes.
+    // Tear down the owned tree before joining readers so successful probes cannot hang.
+    #[cfg(target_os = "windows")]
+    drop(job);
+    #[cfg(unix)]
+    terminate_process_group(child.id());
+
     Ok(std::process::Output {
         status,
         stdout: stdout_reader.join().unwrap_or_default(),
         stderr: stderr_reader.join().unwrap_or_default(),
     })
+}
+
+#[cfg(unix)]
+fn terminate_process_group(pid: u32) {
+    use nix::sys::signal::{killpg, Signal};
+    use nix::unistd::Pid;
+
+    let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+}
+
+#[cfg(all(test, unix))]
+mod process_tree_tests {
+    use super::*;
+
+    #[test]
+    fn launcher_exit_does_not_leave_a_descendant_holding_output_pipes() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30 &"]);
+        let started = std::time::Instant::now();
+
+        let output = output_with_timeout(command, std::time::Duration::from_secs(2)).unwrap();
+
+        assert!(output.status.success());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
 }
 
 pub fn resolve_git_bash_exe() -> Option<PathBuf> {

@@ -581,7 +581,7 @@
 
 ### 场景覆盖
 
-- 显式地址直连：Agent、指定私钥、密码提示、凭据保存密码和 Keyboard-interactive 均追加 `-F none`；交互式 PTY 与一次性连接使用相同规则。
+- 显式地址直连：指定私钥、密码提示、凭据保存密码和 Keyboard-interactive 追加 `-F none`；Agent 保留默认 Config 以支持 `IdentityAgent` 等设置，交互式 PTY 与一次性连接使用相同规则。
 - SSH Config 与跳板：存在目标 Config 别名或配置任意跳板路由时继续读取用户默认配置，不追加 `-F none`；选择自定义文件时继续使用 `-F <绝对路径>`。
 - 路由：端口、跳板机、HTTP/SOCKS5/自定义 ProxyCommand 参数构造未改变；`-F none` 只隔离未显式选择的默认配置。
 - 平台与状态：OpenSSH 的 `-F none` 在当前 Windows OpenSSH 9.5p2 实测可用，并为跨平台 OpenSSH 约定；窗口焦点、分屏、托盘、WSL、Worktree 与 Hook 是否安装不改变参数选择条件。
@@ -596,3 +596,24 @@
 - `npm run build`：通过，Vite 完成 6688 个模块转换。
 - `ssh -F none` 对目标主机的无密码探测成功越过本机 Config ACL 检查并抵达认证阶段；为避免在命令记录中传播用户密码，本次未用自动化脚本提交明文密码。
 - 本次未修改用户 `~/.ssh/config` 权限、未写入远端文件，也未启动或停止用户安装目录中的 CLI-Manager。
+
+## PR #165 合并阻断项根因修复（2026-07-23）
+
+### 根因与发现清单
+
+- macOS/Linux Codex wrapper 的问题位于原子文件替换与 POSIX 执行权限边界：普通文件写入受 umask 影响且内容未变化时会提前返回。修复统一在写入或复用后校正 `0755`，并增加权限回归测试。
+- SSH Agent 的问题位于结构化 Host 模型与 OpenSSH Config 能力边界：当前模型没有 `IdentityAgent` 等字段，Agent 直连不能声称已完整描述认证。`-F none` 现仅用于私钥、密码、凭据引用和交互认证；Agent/SSH Config 继续读取默认 Config。
+- Tauri 开发参数的问题位于 Tauri、Cargo runner 与应用参数的双层边界：第一个 `--` 后仍是 runner 参数，第二个 `--` 后才是应用参数。proxy 预构建现同步 target、release、profile、target-dir，并忽略应用区。
+- Windows Codex shim 的问题位于 PATH 替换后的命令兼容边界：shim 置于 PATH 首位后必须保持原 wrapper 的普通命令行为。现仅在首个子命令为 `app-server` 时启用 JSONL 代理，其他命令透传 stdio、Provider 覆盖和退出码。
+- 探测超时的问题位于启动器与真实后代进程的生命周期边界：只 kill 直接子进程无法回收真实 Codex，也可能让后代继续持有 stdout/stderr。Windows 统一使用 Job Object，macOS/Linux 使用独立进程组；超时、等待失败和启动器提前退出都清理所属进程树。
+- Unix launcher 的问题位于 wrapper PATH 优先级与真实 Codex 解析边界：把裸字符串 `codex` 同时保存为 launcher 并把 wrapper 目录放到 PATH 首位，会让 app-server 和普通命令再次命中 wrapper 自身。现从原 PATH 解析并校验 wrapper 之外的可执行绝对路径，新增排除 managed wrapper 的回归测试。
+- 触点已覆盖 `cc_connect` wrapper/托管进程、共享 `output_with_timeout` 调用方、SSH PTY/探测/Agent/Hook/bridge、Tauri 开发启动脚本、Codex proxy、契约、功能清单和 V1.3.1 CHANGELOG。数据库 Schema、前端 SSH 编辑器、第三方 cc-connect 源码及用户 Config 文件确认无须修改。
+- GitNexus 在该 worktree 无可用工具入口，按项目规则降级为契约文档、`rg` 调用链和源码 diff；共享 `append_connection_args` 与 `output_with_timeout` 按高风险入口复核。
+
+### 验证结果
+
+- `node --check scripts/tauri-cli.mjs`：通过。
+- `node --check scripts/tauriCliDevProxy.test.mjs`：通过。
+- `node --check scripts/codexAppServerProxy.e2e.test.mjs`：通过。
+- `npm run test:tauri-dev-proxy`：12 项通过，覆盖 Tauri/runner/application 双层边界及 target/release/profile/target-dir。
+- 按用户要求未运行 Cargo 编译、Rust 测试、真实 Codex proxy E2E、Tauri dev/build 或桌面应用。

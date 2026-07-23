@@ -11,11 +11,12 @@
 - **PTY daemon 断连诊断与重连提示**：保留 `pty-daemon` 作为终端主链路不变，新增 WebSocket 连接、断开、心跳超时与重连过程日志；终端写入在可恢复断连时改为“连接已断开，正在尝试自动重连”的提示，不再只暴露裸 `PtyHost WebSocket disconnected`。
 - **文件预览资源熔断**：项目文件浏览器不再预览视频；文本/其他文件超过 1 MiB、图片超过 5 MiB 或光栅图片超过 1200 万像素时会在读取和 Base64 转换前拒绝预览。本地、WSL/UNC 与 SSH 文件读取均增加后端兜底，避免大文件或高像素图片导致 WebView 卡死和 GPU 飙升。
 - **新建终端 PTY 写入超时**：daemon 的 WebSocket writer 将 Attach Replay 拆为可调度帧，Replay 期间允许普通控制响应优先发送，避免大滚动缓冲区恢复时已执行的启动命令因确认响应延迟而误报 `PtyHost request timed out: write`。
-- **远程 Codex 托管启动链路**：Windows 改用随应用打包的 GUI 子系统原生代理启动 Codex app-server，避免连接、对话和停止托管时弹出命令窗口；恢复会话时严格校验目标 Session，并压缩超过 cc-connect 扫描上限的恢复响应。项目登记的 Provider 配置会强制注入远程 Codex，API Key 仅通过子进程环境变量传递，不进入命令行参数或日志。
+- **远程 Codex 托管启动链路**：Windows 改用随应用打包的 GUI 子系统原生代理启动 Codex app-server，避免连接、对话和停止托管时弹出命令窗口；原生 shim 仅拦截首个子命令为 `app-server` 的调用，其他 Codex 命令继续透传参数、Provider 覆盖和退出码。macOS/Linux wrapper 会在内容写入或复用后统一校正为 `0755`，并在 PATH 注入前解析 wrapper 目录之外的真实 Codex 绝对路径，避免自递归启动。恢复会话时严格校验目标 Session，并压缩超过 cc-connect 扫描上限的恢复响应；API Key 仅通过子进程环境变量传递，不进入命令行参数或日志。
 - **macOS Universal 辅助程序打包**：Universal 构建会同时合并 `cli-manager-daemon` 与 `cli-manager-codex-proxy` 的 Apple Silicon、Intel 产物，避免新增代理程序后 Universal 应用缺少对应架构二进制。
 - **跨平台 Tauri 构建配置**：`macos-private-api` 仅在 macOS 目标启用，Windows/Linux 的直接 Cargo 检查与 Codex proxy 端到端构建不再因 macOS 专属 feature 和平台配置不一致而中断。
-- **Windows Tauri 开发启动**：`npm run tauri dev` 会先构建随远程 Codex 托管使用的原生 app-server proxy，并继承指定的 Rust target，避免开发版运行时缺少同目录代理程序。
-- **SSH 显式地址直连**：未配置跳板机的手工地址连接不再读取无关的用户 `~/.ssh/config`，避免该文件 ACL/语法异常时在密码、Agent、私钥或交互认证前阻断连接；SSH Config 别名、跳板路由与用户明确选择的自定义配置文件继续按原逻辑生效。
+- **Windows Tauri 开发启动**：`npm run tauri dev` 会先构建随远程 Codex 托管使用的原生 app-server proxy，并同步 Tauri/Cargo runner 区域指定的 Rust target、release/profile 与 target-dir；第二个 `--` 后的应用参数不会影响 proxy 构建，避免开发版运行时缺少或读取错误目录的代理程序。
+- **SSH 显式地址直连**：未配置跳板机的手工地址连接在私钥、密码、凭据引用和交互认证模式下不再读取无关的用户 `~/.ssh/config`，避免该文件 ACL/语法异常在认证前阻断连接；Agent 与 SSH Config 模式继续读取默认配置，以保留 `IdentityAgent` 和 `Host *` 等设置。Config 别名、跳板路由与用户明确选择的自定义配置文件继续按原逻辑生效。
+- **后台探测进程树回收**：外部命令探测在 Windows 使用 Job Object、macOS/Linux 使用独立进程组；超时、等待失败或启动器提前退出时都会回收所属后代进程，避免真实 Codex 等后代继续运行或持有输出管道导致后台残留和等待卡死。
 - 修复在终端 Tab 右键重命名普通项目 Tab 时，误把项目名称和同项目所有已打开 Tab 一起改名的问题；现在 Tab 重命名只作用于当前终端会话。
 - 修复旧版历史索引数据库升级时，在补充 `scope_kind` 等字段之前提前创建依赖索引，导致刷新报错且会话无法打开的问题；现有索引数据会原地升级，无需用户手工删除缓存。
 - 修复 WebDAV 恢复、ZIP 导入及恢复回滚把 SQLite 事务拆分到连接池的多个连接上，可能触发 `database is locked` 的问题；数据库域恢复现由 Rust 在单连接事务中原子执行。

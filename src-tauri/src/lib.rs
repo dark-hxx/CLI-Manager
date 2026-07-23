@@ -17,6 +17,7 @@ mod git_watcher;
 pub mod hook_client;
 mod linux_graphics;
 mod log_rotation;
+mod process_job;
 pub mod pty;
 mod shell_resolver;
 mod ssh_agent_supply_chain;

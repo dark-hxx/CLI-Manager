@@ -95,8 +95,14 @@ pub fn run_helper_and_exit(args: &[String]) -> ! {
 pub fn run_shim_and_exit(args: &[String]) -> ! {
     let child_args = args
         .get(1..)
-        .ok_or_else(|| "missing Codex app-server arguments".to_string());
-    exit_after_proxy(child_args.and_then(run_proxy))
+        .ok_or_else(|| "missing Codex arguments".to_string());
+    exit_after_proxy(child_args.and_then(|child_args| {
+        if is_app_server_command(child_args) {
+            run_proxy(child_args)
+        } else {
+            run_passthrough(child_args)
+        }
+    }))
 }
 
 fn exit_after_proxy(result: Result<i32, String>) -> ! {
@@ -111,14 +117,11 @@ fn exit_after_proxy(result: Result<i32, String>) -> ! {
 }
 
 fn run_proxy(child_args: &[String]) -> Result<i32, String> {
-    if !child_args.iter().any(|arg| arg == "app-server") {
+    if !is_app_server_command(child_args) {
         return Err("refusing to proxy a non app-server Codex command".to_string());
     }
 
-    let launcher = env::var_os(CODEX_LAUNCHER_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| "real Codex launcher is unavailable".to_string())?;
+    let launcher = codex_launcher_from_environment()?;
     let expected_thread_id = env::var(EXPECTED_SESSION_ID_ENV)
         .ok()
         .map(|value| value.trim().to_string())
@@ -167,6 +170,27 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
         .wait()
         .map_err(|err| format!("wait for real Codex app-server failed: {err}"))?;
     Ok(status.code().unwrap_or(1))
+}
+
+fn is_app_server_command(child_args: &[String]) -> bool {
+    child_args.first().map(String::as_str) == Some("app-server")
+}
+
+fn run_passthrough(child_args: &[String]) -> Result<i32, String> {
+    let launcher = codex_launcher_from_environment()?;
+    let child_args =
+        build_codex_child_args(child_args, &CodexProviderOverrides::from_environment()?)?;
+    let status = codex_command(&launcher, &child_args)
+        .status()
+        .map_err(|err| format!("start real Codex command failed: {err}"))?;
+    Ok(status.code().unwrap_or(1))
+}
+
+fn codex_launcher_from_environment() -> Result<PathBuf, String> {
+    env::var_os(CODEX_LAUNCHER_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "real Codex launcher is unavailable".to_string())
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -597,6 +621,16 @@ mod tests {
             build_codex_child_args(&original, &CodexProviderOverrides::default()).unwrap(),
             original
         );
+    }
+
+    #[test]
+    fn only_the_first_argument_selects_app_server_proxying() {
+        assert!(is_app_server_command(&["app-server".to_string()]));
+        assert!(!is_app_server_command(&[
+            "--version".to_string(),
+            "app-server".to_string(),
+        ]));
+        assert!(!is_app_server_command(&[]));
     }
 
     #[test]

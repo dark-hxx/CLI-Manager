@@ -5,6 +5,8 @@ use crate::codex_app_server_proxy::{
     CODEX_MODEL_OVERRIDE_ENV, CODEX_REMOTE_PROVIDER_NAME, CODEX_WIRE_API_OVERRIDE_ENV,
     EXPECTED_SESSION_ID_ENV, PROXY_EXECUTABLE_ENV,
 };
+#[cfg(target_os = "windows")]
+use crate::process_job::ChildJob;
 use crate::shell_resolver::{output_with_timeout, silent_command};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -1731,6 +1733,26 @@ fn write_file_atomically_if_changed(
     write_file_atomically(path, payload, label)
 }
 
+#[cfg(unix)]
+fn write_executable_file_atomically_if_changed(
+    path: &Path,
+    payload: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    write_file_atomically_if_changed(path, payload, label)?;
+    let metadata =
+        fs::metadata(path).map_err(|err| format!("read {label} metadata failed: {err}"))?;
+    let mut permissions = metadata.permissions();
+    if permissions.mode() & 0o777 != 0o755 {
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)
+            .map_err(|err| format!("set {label} executable permissions failed: {err}"))?;
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 fn copy_file_atomically_if_changed(
     source: &Path,
@@ -2209,8 +2231,39 @@ fn resolve_codex_launcher(wrapper_dir: &Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn resolve_codex_launcher(_wrapper_dir: &Path) -> Result<PathBuf, String> {
-    Ok(PathBuf::from("codex"))
+fn resolve_codex_launcher(wrapper_dir: &Path) -> Result<PathBuf, String> {
+    let path_value = env::var_os("PATH").ok_or_else(|| "codex PATH is unavailable".to_string())?;
+    resolve_codex_launcher_from_path(wrapper_dir, &path_value)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_codex_launcher_from_path(
+    wrapper_dir: &Path,
+    path_value: &std::ffi::OsStr,
+) -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let wrapper = wrapper_dir.join("codex");
+    let canonical_wrapper = wrapper.canonicalize().ok();
+    for directory in env::split_paths(path_value) {
+        let candidate = directory.join("codex");
+        let Ok(metadata) = candidate.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            continue;
+        }
+        let canonical_candidate = candidate.canonicalize().unwrap_or(candidate);
+        if canonical_candidate == wrapper
+            || canonical_wrapper
+                .as_ref()
+                .is_some_and(|managed| managed == &canonical_candidate)
+        {
+            continue;
+        }
+        return Ok(canonical_candidate);
+    }
+    Err("Codex launcher was not found in PATH".to_string())
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -2312,7 +2365,11 @@ fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
         .map_err(|err| format!("create Codex wrapper directory failed: {err}"))?;
     let wrapper_path = wrapper_dir.join("codex");
     let payload = codex_profile_wrapper_payload();
-    write_file_atomically_if_changed(&wrapper_path, payload.as_bytes(), "Codex profile wrapper")?;
+    write_executable_file_atomically_if_changed(
+        &wrapper_path,
+        payload.as_bytes(),
+        "Codex profile wrapper",
+    )?;
     Ok(wrapper_path)
 }
 
@@ -3503,7 +3560,7 @@ impl CcConnectManager {
             .spawn()
             .map_err(|err| format!("start Weixin authorization failed: {err}"))?;
         #[cfg(target_os = "windows")]
-        let job = match ChildJob::assign(&child) {
+        let job = match ChildJob::assign(&child, "Weixin authorization") {
             Ok(job) => job,
             Err(err) => {
                 let _ = child.kill();
@@ -4121,7 +4178,7 @@ impl CcConnectManager {
             .spawn()
             .map_err(|err| format!("spawn cc-connect failed: {err}"))?;
         #[cfg(target_os = "windows")]
-        let job = match ChildJob::assign(&child) {
+        let job = match ChildJob::assign(&child, "cc-connect") {
             Ok(job) => job,
             Err(err) => {
                 let _ = child.kill();
@@ -4459,64 +4516,6 @@ pub(crate) fn redact_log_line(raw: &str, secrets: &[String]) -> String {
     value
 }
 
-#[cfg(target_os = "windows")]
-struct ChildJob(windows_sys::Win32::Foundation::HANDLE);
-#[cfg(target_os = "windows")]
-unsafe impl Send for ChildJob {}
-#[cfg(target_os = "windows")]
-impl ChildJob {
-    fn assign(child: &Child) -> Result<Self, String> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        };
-        unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return Err(format!(
-                    "create cc-connect job object failed: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &limits as *const _ as *const core::ffi::c_void,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-            {
-                let err = std::io::Error::last_os_error();
-                CloseHandle(job);
-                return Err(format!("configure cc-connect job object failed: {err}"));
-            }
-            if AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0 {
-                let err = std::io::Error::last_os_error();
-                CloseHandle(job);
-                return Err(format!("assign cc-connect process to job failed: {err}"));
-            }
-            Ok(Self(job))
-        }
-    }
-    fn terminate(&self) {
-        unsafe {
-            let _ = windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
-        }
-    }
-}
-#[cfg(target_os = "windows")]
-impl Drop for ChildJob {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.0);
-        }
-    }
-}
-
 #[tauri::command]
 pub async fn cc_connect_get_status(
     manager: State<'_, CcConnectManager>,
@@ -4739,6 +4738,52 @@ mod tests {
         assert!(!is_verified_binary_hash(
             "0000000000000000000000000000000000000000000000000000000000000000"
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_atomic_write_sets_and_repairs_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("codex");
+        let payload = b"#!/bin/sh\nexit 0\n";
+
+        write_executable_file_atomically_if_changed(&path, payload, "test wrapper").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&path, permissions).unwrap();
+        write_executable_file_atomically_if_changed(&path, payload, "test wrapper").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_codex_launcher_resolution_skips_the_managed_wrapper() {
+        let directory = tempfile::tempdir().unwrap();
+        let wrapper_dir = directory.path().join("managed");
+        let launcher_dir = directory.path().join("real");
+        fs::create_dir_all(&wrapper_dir).unwrap();
+        fs::create_dir_all(&launcher_dir).unwrap();
+        let wrapper = wrapper_dir.join("codex");
+        let launcher = launcher_dir.join("codex");
+        write_executable_file_atomically_if_changed(&wrapper, b"#!/bin/sh\nexit 0\n", "wrapper")
+            .unwrap();
+        write_executable_file_atomically_if_changed(&launcher, b"#!/bin/sh\nexit 0\n", "launcher")
+            .unwrap();
+        let path_value = env::join_paths([&wrapper_dir, &launcher_dir]).unwrap();
+
+        let resolved = resolve_codex_launcher_from_path(&wrapper_dir, &path_value).unwrap();
+
+        assert_eq!(resolved, launcher.canonicalize().unwrap());
     }
     #[test]
     fn allowlist_is_fail_closed_and_normalized() {

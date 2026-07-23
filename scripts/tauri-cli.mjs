@@ -19,22 +19,38 @@ function commandArgsContainConfig(argsToCheck) {
   );
 }
 
-function commandOptionValue(argsToCheck, option) {
-  for (let index = 0; index < argsToCheck.length; index += 1) {
-    const arg = argsToCheck[index];
-    if (arg === "--") break;
-    if (arg === option) return argsToCheck[index + 1] ?? null;
-    if (arg.startsWith(`${option}=`)) return arg.slice(option.length + 1);
-  }
-  return null;
-}
+function cargoBuildSelectionArgs(argsToCheck) {
+  const selectionArgs = [];
+  let separatorCount = 0;
 
-function commandArgsContain(argsToCheck, option) {
-  for (const arg of argsToCheck) {
-    if (arg === "--") break;
-    if (arg === option) return true;
+  for (let index = 1; index < argsToCheck.length; index += 1) {
+    const arg = argsToCheck[index];
+    if (arg === "--") {
+      separatorCount += 1;
+      if (separatorCount === 2) break;
+      continue;
+    }
+
+    if (arg === "--release") {
+      selectionArgs.push(arg);
+      continue;
+    }
+
+    const option = ["--target", "-t", "--profile", "--target-dir"].find(
+      (candidate) => arg === candidate || arg.startsWith(`${candidate}=`),
+    );
+    if (!option) continue;
+
+    const inlineValue = arg.startsWith(`${option}=`)
+      ? arg.slice(option.length + 1)
+      : null;
+    const value = inlineValue ?? argsToCheck[index + 1];
+    if (!value || value === "--") continue;
+    selectionArgs.push(option === "-t" ? "--target" : option, value);
+    if (inlineValue === null) index += 1;
   }
-  return false;
+
+  return selectionArgs;
 }
 
 function withDevConfig(argsToRun) {
@@ -101,10 +117,7 @@ function buildWindowsDevProxy(argsToRun) {
     "--bin",
     "cli-manager-codex-proxy",
   ];
-  const target = commandOptionValue(argsToRun, "--target")
-    ?? commandOptionValue(argsToRun, "-t");
-  if (target) cargoArgs.push("--target", target);
-  if (commandArgsContain(argsToRun, "--release")) cargoArgs.push("--release");
+  cargoArgs.push(...cargoBuildSelectionArgs(argsToRun));
 
   return new Promise((resolve) => {
     const child = spawn("cargo", cargoArgs, {

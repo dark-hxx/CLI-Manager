@@ -199,9 +199,15 @@ impl SshTransportSpec {
     fn append_connection_args(&self, args: &mut Vec<String>, one_shot: bool) {
         if !self.config_file.trim().is_empty() {
             args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
-        } else if self.config_alias.trim().is_empty() && self.jump_target.trim().is_empty() {
-            // Direct address-based hosts are fully described by CLI-Manager. Do not let an
-            // unrelated or invalid ~/.ssh/config block otherwise valid direct connections.
+        } else if self.config_alias.trim().is_empty()
+            && self.jump_target.trim().is_empty()
+            && matches!(
+                self.auth_mode.as_str(),
+                "identity_file" | "password_prompt" | "credential_ref" | "interactive"
+            )
+        {
+            // These modes fully describe authentication in CLI-Manager. Agent and ssh_config
+            // must retain the default Config for settings such as IdentityAgent and Host *.
             args.extend(["-F".to_string(), "none".to_string()]);
         }
         args.extend([
@@ -418,8 +424,8 @@ mod tests {
     }
 
     #[test]
-    fn explicit_address_connections_ignore_the_default_ssh_config() {
-        for mode in ["agent", "identity_file", "password_prompt", "interactive"] {
+    fn explicit_authentication_modes_ignore_the_default_ssh_config() {
+        for mode in ["identity_file", "password_prompt", "interactive"] {
             let mut value = spec(mode);
             value.jump_target.clear();
             for launch in [
@@ -443,6 +449,26 @@ mod tests {
         assert!(credential_args
             .windows(2)
             .any(|pair| pair == ["-F", "none"]));
+    }
+
+    #[test]
+    fn agent_and_ssh_config_modes_keep_the_default_config_for_explicit_addresses() {
+        for mode in ["agent", "ssh_config"] {
+            let mut value = spec(mode);
+            value.jump_target.clear();
+            for launch in [
+                value.build_interactive_launch("shell".into()).unwrap(),
+                value
+                    .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+                    .unwrap(),
+            ] {
+                assert!(
+                    !launch.args.iter().any(|arg| arg == "-F"),
+                    "mode={mode} args={:?}",
+                    launch.args
+                );
+            }
+        }
     }
 
     #[test]
