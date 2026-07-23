@@ -258,13 +258,19 @@ fn message_from_job(job: HookNotificationJob) -> Option<HookNotificationMessage>
     let id = Uuid::new_v4().to_string();
     let source = normalize_source(&job.source);
     let project = job
-        .cwd
+        .project
         .as_deref()
-        .and_then(|cwd| Path::new(cwd).file_name())
-        .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
-        .unwrap_or("Unknown Project")
-        .to_string();
+        .map(str::to_string)
+        .or_else(|| {
+            job.cwd
+                .as_deref()
+                .and_then(|cwd| Path::new(cwd).file_name())
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.trim().is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "Unknown Project".to_string());
     let time = local_time_text(job.timestamp.as_deref());
     let event_label = event_label(&job.event);
     let summary = event_summary(&job.event, &source, &project);
@@ -358,6 +364,7 @@ mod tests {
             source: "codex".to_string(),
             event: "Stop".to_string(),
             cwd: Some("C:\\work\\secret\\demo".to_string()),
+            project: None,
             timestamp: Some("2026-07-14T10:00:00Z".to_string()),
         })
         .unwrap();
@@ -376,6 +383,7 @@ mod tests {
             source: "claude".to_string(),
             event: "StopFailure".to_string(),
             cwd: None,
+            project: None,
             timestamp: Some("2026-07-14T11:35:35Z".to_string()),
         })
         .unwrap();
@@ -395,6 +403,7 @@ mod tests {
             source: "claude".to_string(),
             event: "PermissionRequest".to_string(),
             cwd: Some("C:\\work\\law-promotion".to_string()),
+            project: None,
             timestamp: None,
         })
         .unwrap();
@@ -408,11 +417,26 @@ mod tests {
     }
 
     #[test]
+    fn message_prefers_safe_project_label_when_cwd_is_redacted() {
+        let message = message_from_job(HookNotificationJob {
+            source: "codex".to_string(),
+            event: "Stop".to_string(),
+            cwd: None,
+            project: Some("remote-demo".to_string()),
+            timestamp: None,
+        })
+        .unwrap();
+        assert_eq!(message.project, "remote-demo");
+        assert!(message.body.contains("Codex - remote-demo"));
+    }
+
+    #[test]
     fn unsupported_event_is_ignored() {
         assert!(message_from_job(HookNotificationJob {
             source: "claude".to_string(),
             event: "ToolStart".to_string(),
             cwd: None,
+            project: None,
             timestamp: None,
         })
         .is_none());

@@ -16,6 +16,7 @@ pub struct HookNotificationJob {
     pub source: String,
     pub event: String,
     pub cwd: Option<String>,
+    pub project: Option<String>,
     pub timestamp: Option<String>,
 }
 

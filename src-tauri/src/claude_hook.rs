@@ -72,6 +72,7 @@ pub struct ClaudeHookPayload {
     environment_type: Option<String>,
     remote_host_id: Option<String>,
     remote_project_id: Option<String>,
+    remote_project_name: Option<String>,
     remote_transcript_ref: Option<String>,
     remote_agent_transcript_ref: Option<String>,
     remote_event_id: Option<String>,
@@ -87,15 +88,19 @@ impl ClaudeHookPayload {
         &self.event
     }
 
+    pub fn with_remote_project_name(mut self, project_name: String) -> Self {
+        self.remote_project_name =
+            (!project_name.trim().is_empty()).then(|| project_name.trim().to_string());
+        self
+    }
+
     pub fn to_notification_job(&self) -> HookNotificationJob {
+        let is_ssh = self.environment_type.as_deref() == Some("ssh");
         HookNotificationJob {
             source: self.source.clone(),
             event: self.event.clone(),
-            cwd: if self.environment_type.as_deref() == Some("ssh") {
-                None
-            } else {
-                self.cwd.clone()
-            },
+            cwd: (!is_ssh).then(|| self.cwd.clone()).flatten(),
+            project: is_ssh.then(|| self.remote_project_name.clone()).flatten(),
             timestamp: self.timestamp.clone(),
         }
     }
@@ -182,6 +187,7 @@ fn handle_stream(mut stream: TcpStream, sink: HookPayloadSink, token: &str) {
         environment_type: payload.environment_type,
         remote_host_id: payload.remote_host_id,
         remote_project_id: payload.remote_project_id,
+        remote_project_name: None,
         remote_transcript_ref: payload.remote_transcript_ref,
         remote_agent_transcript_ref: payload.remote_agent_transcript_ref,
         remote_event_id: payload.remote_event_id,
@@ -291,6 +297,7 @@ pub fn remote_hook_payload_from_spool(
         environment_type: request.environment_type,
         remote_host_id: request.remote_host_id,
         remote_project_id: request.remote_project_id,
+        remote_project_name: None,
         remote_transcript_ref: request.remote_transcript_ref,
         remote_agent_transcript_ref: request.remote_agent_transcript_ref,
         remote_event_id: request.remote_event_id,
@@ -486,8 +493,7 @@ mod remote_tests {
     use super::remote_hook_payload_from_spool;
     use serde_json::json;
 
-    #[test]
-    fn remote_hook_notification_job_omits_remote_cwd() {
+    fn remote_notification_job(source: &str) -> super::ClaudeHookPayload {
         let payload = remote_hook_payload_from_spool(&json!({
             "kind": "hookEvent",
             "eventId": "00000000-0000-4000-8000-000000000001",
@@ -495,12 +501,30 @@ mod remote_tests {
             "hostId": "host",
             "projectId": "project",
             "tabId": "00000000-0000-4000-8000-000000000002",
-            "source": "claude",
+            "source": source,
             "event": "Stop",
             "remoteCwd": "/srv/private-project",
             "occurredAt": 1
         }))
         .unwrap();
-        assert_eq!(payload.to_notification_job().cwd, None);
+        payload
+    }
+
+    #[test]
+    fn remote_claude_notification_omits_cwd_and_keeps_safe_project_label() {
+        let payload = remote_notification_job("claude")
+            .with_remote_project_name("Sidebar Project".to_string());
+        let job = payload.to_notification_job();
+        assert_eq!(job.cwd, None);
+        assert_eq!(job.project.as_deref(), Some("Sidebar Project"));
+    }
+
+    #[test]
+    fn remote_codex_notification_omits_cwd_and_keeps_safe_project_label() {
+        let payload = remote_notification_job("codex")
+            .with_remote_project_name("Sidebar Project".to_string());
+        let job = payload.to_notification_job();
+        assert_eq!(job.cwd, None);
+        assert_eq!(job.project.as_deref(), Some("Sidebar Project"));
     }
 }

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
+  Copy,
   Folder,
   FolderPlus,
   Import as ImportIcon,
@@ -13,6 +14,7 @@ import {
   Server,
   Terminal,
   Trash2,
+  X,
 } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
 import type {
@@ -23,8 +25,10 @@ import type {
 import { buildSshConnectionSpec } from "../../../lib/ssh";
 import { useSshHostStore } from "../../../stores/sshHostStore";
 import { useTerminalStore } from "../../../stores/terminalStore";
+import { useSshAgentIntegrationStore } from "../../../stores/sshAgentIntegrationStore";
 import { useAppConfirm } from "../../ui/useAppConfirm";
 import { useAppPrompt } from "../../ui/useAppPrompt";
+import { Button } from "../../ui/button";
 import { SshHostEditor } from "./SshHostEditor";
 import { SshCliIntegrationDialog } from "./SshCliIntegrationDialog";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
@@ -65,6 +69,14 @@ const ERROR_LABELS: Record<string, TranslationKey> = {
   ssh_config_file_not_found: "settings.sshHosts.import.error.configFileUnavailable",
 };
 
+const AGENT_INSTALL_PHASE_KEYS: Record<string, TranslationKey> = {
+  resolvingRelease: "settings.sshHosts.cliIntegration.agent.progress.resolvingRelease",
+  detectingRemote: "settings.sshHosts.cliIntegration.agent.progress.detectingRemote",
+  downloadingArtifact: "settings.sshHosts.cliIntegration.agent.progress.downloadingArtifact",
+  installingRemote: "settings.sshHosts.cliIntegration.agent.progress.installingRemote",
+  completed: "settings.sshHosts.cliIntegration.agent.progress.completed",
+};
+
 function formFromHost(host: SshHost): CreateSshHostInput { return { ...host }; }
 
 function hostFromForm(form: CreateSshHostInput, id: string): SshHost {
@@ -97,6 +109,8 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
   const createSession = useTerminalStore((state) => state.createSession);
   const terminalSessions = useTerminalStore((state) => state.sessions);
   const sessionStatuses = useTerminalStore((state) => state.sessionStatuses);
+  const agentInstallJobs = useSshAgentIntegrationStore((state) => state.agentInstallJobs);
+  const clearAgentInstallJob = useSshAgentIntegrationStore((state) => state.clearAgentInstallJob);
   const [editorOpen, setEditorOpen] = useState(false);
   const [integrationHost, setIntegrationHost] = useState<SshHost | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -312,6 +326,8 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
 
   const visibleError = error ? formatError(error) : null;
   const visibleLoadError = loadError ? t("settings.sshHosts.loadFailed", { error: formatError(loadError) }) : null;
+  const visibleAgentInstallJobs = Object.values(agentInstallJobs)
+    .sort((left, right) => right.updatedAt - left.updatedAt);
 
   return (
     <div className="space-y-4">
@@ -322,6 +338,33 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
         </div>
         <div className="flex items-center gap-2"><button className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold" onClick={() => void addGroup(null)}><FolderPlus className="h-4 w-4" />{t("settings.sshHosts.groupAdd")}</button><button className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold" onClick={() => setImportOpen(true)}><ImportIcon className="h-4 w-4" />{t("settings.sshHosts.import.action")}</button><button className="ui-button-primary flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold" onClick={() => openCreate(null)}><Plus className="h-4 w-4" />{t("settings.sshHosts.add")}</button></div>
       </div>
+      {visibleAgentInstallJobs.length > 0 && (
+        <section className="space-y-2 rounded-xl border border-border bg-surface-lowest p-3" aria-label={t("settings.sshHosts.cliIntegration.agent.queueTitle")}>
+          <div className="text-sm font-bold text-text-primary">{t("settings.sshHosts.cliIntegration.agent.queueTitle")}</div>
+          {visibleAgentInstallJobs.map((job) => {
+            const host = hosts.find((candidate) => candidate.id === job.hostId);
+            const phase = t(AGENT_INSTALL_PHASE_KEYS[job.phase] ?? AGENT_INSTALL_PHASE_KEYS.resolvingRelease);
+            return (
+              <div key={job.hostId} className="space-y-2 border-t border-border pt-2 first:border-t-0 first:pt-0">
+                <div className="flex items-center justify-between gap-3">
+                  <button type="button" className="min-w-0 text-left" onClick={() => host && setIntegrationHost(host)}>
+                    <div className="truncate text-sm font-medium text-text-primary">{host?.name ?? job.hostId}</div>
+                    <div className={job.status === "failed" ? "text-xs text-danger" : "text-xs text-text-muted"}>{job.status === "failed" ? t("settings.sshHosts.cliIntegration.agent.installFailed") : phase}</div>
+                  </button>
+                  <div className="flex items-center gap-1">
+                    {job.error && <Button type="button" size="icon" variant="ghost" title={t("common.copy")} aria-label={t("common.copy")} onClick={() => void navigator.clipboard.writeText(job.error)}><Copy className="h-4 w-4" /></Button>}
+                    {job.status !== "running" && <Button type="button" size="icon" variant="ghost" title={t("common.close")} aria-label={t("common.close")} onClick={() => clearAgentInstallJob(job.hostId)}><X className="h-4 w-4" /></Button>}
+                  </div>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-surface-high" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={job.progress}>
+                  <div className={job.status === "failed" ? "h-full rounded-full bg-danger" : "h-full rounded-full bg-primary transition-[width] duration-200"} style={{ width: job.progress + "%" }} />
+                </div>
+                {job.error && <div className="max-h-20 overflow-auto break-all rounded-md bg-danger/10 px-2 py-1 font-mono text-[11px] text-danger">{job.error}</div>}
+              </div>
+            );
+          })}
+        </section>
+      )}
       <div className="overflow-hidden rounded-2xl border border-border bg-surface-lowest">
         {!loaded ? <div className="p-8 text-center text-sm text-text-muted">{t("common.loading")}</div> : filteredHosts.length === 0 && groups.length === 0 ? (
           <div className="p-10 text-center"><Server className="mx-auto mb-3 h-8 w-8 text-text-muted" /><div className="font-bold text-text-primary">{t("settings.sshHosts.empty")}</div><div className="mt-1 text-xs text-text-muted">{t("settings.sshHosts.emptyDescription")}</div></div>

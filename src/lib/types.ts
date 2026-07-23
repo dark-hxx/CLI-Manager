@@ -132,6 +132,7 @@ export interface SshAgentInstallPreview {
   installRoot: string;
   installPath: string;
   currentVersion: string;
+  distributionSource: "bundled" | "remote";
 }
 
 export interface SshAgentOperationResult {
@@ -422,6 +423,7 @@ export interface TerminalSession {
   /** true 时启动命令由 XTermTerminal 在 initialTerminalOutput 写完后再发送。 */
   deferStartupUntilInitialOutput?: boolean;
   cliSessionId?: string;
+  remoteTranscriptRef?: string;
   remoteHistoryConsumerId?: string;
   remoteHistorySourceInstanceId?: string;
   /** 远程托管期间保留标签元数据，但本地不再持有 PTY。 */
@@ -572,6 +574,7 @@ export interface HistorySessionSummary {
   as_of?: number | null;
   remote_identity?: HistoryRemoteIdentity | null;
   read_only?: boolean;
+  usage?: HistorySessionUsage;
 }
 
 export interface HistoryMessage {

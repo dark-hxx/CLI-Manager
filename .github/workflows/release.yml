@@ -7,7 +7,86 @@ on:
       - "V*"
 
 jobs:
+  ssh-agent:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+
+      - name: Install dependencies
+        run: |
+          cargo install cargo-zigbuild --locked
+          npm ci
+
+      - name: Extract SSH Agent version
+        id: agent_version
+        shell: bash
+        run: |
+          VERSION="$(cargo metadata --no-deps --format-version 1 --manifest-path src-tauri/ssh-agent/Cargo.toml | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk).on("end", () => { const pkg = JSON.parse(input).packages.find(item => item.name === "cli-manager-ssh-agent"); if (!pkg) process.exit(1); process.stdout.write(pkg.version); });')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test SSH Agent
+        run: |
+          cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml
+          sh .github/scripts/test-install-ssh-agent.sh
+
+      - name: Build Linux SSH Agent artifacts
+        run: |
+          cargo zigbuild --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target x86_64-unknown-linux-gnu.2.17
+          cargo zigbuild --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target aarch64-unknown-linux-gnu.2.17
+
+      - name: Verify SSH Agent GLIBC baseline
+        shell: bash
+        run: |
+          for binary in \
+            src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
+            src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
+          do
+            MAX_GLIBC="$(readelf --version-info "$binary" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sed 's/^GLIBC_//' | sort -Vu | tail -1)"
+            test -n "$MAX_GLIBC"
+            test "$(printf '%s\n' 2.17 "$MAX_GLIBC" | sort -V | tail -1)" = "2.17" || {
+              echo "$binary requires GLIBC_$MAX_GLIBC; maximum supported version is GLIBC_2.17" >&2
+              exit 1
+            }
+          done
+
+      - name: Build signed release manifest
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node .github/scripts/build-ssh-agent-release.mjs \
+            "${{ steps.agent_version.outputs.version }}" \
+            "${{ github.ref_name }}" \
+            dist/ssh-agent \
+            src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
+            src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
+          npx tauri signer sign dist/ssh-agent/ssh-agent-release-manifest.json
+          cp scripts/install-ssh-agent.sh dist/ssh-agent/install-ssh-agent.sh
+
+      - name: Stage SSH Agent bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-agent-release
+          path: dist/ssh-agent/*
+          if-no-files-found: error
+
   build:
+    needs: ssh-agent
     permissions:
       contents: write
     strategy:
@@ -47,6 +126,25 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Download bundled SSH Agent
+        uses: actions/download-artifact@v4
+        with:
+          name: ssh-agent-release
+          path: src-tauri/resources/ssh-agent
+
+      - name: Verify bundled SSH Agent files
+        shell: bash
+        run: |
+          for required in \
+            latest.json \
+            cli-manager-ssh-agent-linux-x86_64 \
+            cli-manager-ssh-agent-linux-aarch64 \
+            ssh-agent-release-manifest.json \
+            ssh-agent-release-manifest.json.sig
+          do
+            test -f "src-tauri/resources/ssh-agent/$required" || exit 1
+          done
 
       - name: Extract version from tag
         id: version
@@ -110,65 +208,17 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
-  ssh-agent:
-    needs: build
+  publish:
+    needs: [build, ssh-agent]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Download SSH Agent release files
+        uses: actions/download-artifact@v4
         with:
-          node-version: lts/*
-          cache: npm
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          npm ci
-
-      - name: Extract version from tag
-        id: version
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/V}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Test SSH Agent
-        run: |
-          cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml
-          sh .github/scripts/test-install-ssh-agent.sh
-
-      - name: Build Linux SSH Agent artifacts
-        env:
-          CLI_MANAGER_SSH_AGENT_VERSION: ${{ steps.version.outputs.version }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: |
-          cargo build --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target x86_64-unknown-linux-gnu
-          cargo build --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target aarch64-unknown-linux-gnu
-
-      - name: Build signed release manifest
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          node .github/scripts/build-ssh-agent-release.mjs \
-            "${{ steps.version.outputs.version }}" \
-            "${{ github.ref_name }}" \
-            dist/ssh-agent \
-            src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
-            src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
-          npx tauri signer sign dist/ssh-agent/ssh-agent-release-manifest.json
-          cp scripts/install-ssh-agent.sh dist/ssh-agent/install-ssh-agent.sh
+          name: ssh-agent-release
+          path: dist/ssh-agent
 
       - name: Upload SSH Agent release files
         uses: softprops/action-gh-release@v2
@@ -199,4 +249,4 @@ jobs:
               exit 1
             }
           done
-          gh release edit "${GITHUB_REF_NAME}" --draft=false
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest

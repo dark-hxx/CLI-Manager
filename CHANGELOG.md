@@ -1,6 +1,6 @@
 # Changelog
 
-## [V1.3.1] - 2026-07-22
+## [V1.3.1] - 2026-07-23
 
 ### 新增
 - **供应商类型图标**：设置页的 cc-switch 供应商类型筛选现在复用项目 CLI 工具图标，Claude、Codex、Gemini、Grok Build、OpenCode 等类型可直接通过图标识别，未知类型使用统一兜底图标。
@@ -17,15 +17,22 @@
 - 修复 SSH Config 批量导入、主机/分组删除、CLI 配置目录保存及 Hook 集成记录把事务拆分到连接池不同连接，可能锁库或部分写入的问题；相关组合操作改由 Rust 单连接短事务执行，批量导入一次读取重复项，普通 SSH 操作不增加全局互斥。
 - 修复 SSH 远程历史轮询、历史页刷新和加载更多并发时，重复请求造成额外写入、旧 generation 或旧分页游标覆盖新 catalog 状态的问题；相同请求会合并执行，落库按来源 generation 与游标单调更新。
 
-## [V1.3.0] - 2026-07-20
-
 ### SSH
 
+- 修复切换到 SSH 项目后文件、Git 变更、会话历史与实时统计面板加载完成却不展示或反复闪烁的问题；受支持的远程面板不再因会话切换被本地能力守卫关闭。
+- 修复 SSH 项目 Tab 菜单与右侧工具栏“新建终端”重复执行项目 CLI 启动命令的问题；现在会在对应远程目录打开空 Shell。
+- 修复 SSH Claude/Codex Hook 的第三方通知使用当前目录名或 `Unknown Project` 的问题；通知项目名改为绑定终端对应的左侧菜单项目名，并由 daemon 校验绑定后注入。
+- 修复 SSH 实时统计重复加载整段远程会话历史、面板持续加载或闪烁的问题；Hook 绑定会话后按 session ID 与 transcript 引用直接读取单一会话，并隔离并发请求与过期结果。
+- 修复 SSH 项目会话历史与历史用量筛选退化为全局范围的问题；项目选择使用稳定项目 ID，查询使用 `remote_path`，统计再以远程 `source_instance_id` 隔离不同主机与配置根，同名路径和空本地路径不再导致多个远程项目同时选中。
 - SSH Claude/Codex 终端实时统计现复用同一 Agent history consumer 增量同步精确 session detail，并从现有远端 catalog 聚合今日项目用量；切换远端 Tab 不再调用本地 history、Git 分支或 Explorer API，断线时保留上次快照与缓存统计。
 - Agent bridge 协议升级到 `1.6`；SSH 项目文件面板新增只读远端浏览，通过复用 bridge 懒加载目录、搜索文件名或文本并预览 UTF-8 文本与图片；只读 Git 面板支持远端仓库、状态、Diff、分支和 upstream/ahead/behind/asOf。Agent 对路径、symlink、遍历、Diff 大小和 Git 外部扩展实施限制，UI/store 拒绝所有远程写入、网络、凭据、Worktree、外部 Explorer、external diff 与 textconv。
 - SSH Claude/Codex 项目现可在统一历史工作区按绑定项目读取远端会话：Agent 增量索引原生 JSONL，通过共享单写锁维护可重建派生索引；桌面端复用每主机 bridge，支持分页列表、全文搜索、按需详情/Diff、usage 摘要、删除 tombstone 与断线后的摘要缓存，不复制完整远端历史目录，也不把远端路径交给本地文件 API。
 - Agent bridge 协议升级到 `1.3`，详情使用 256 KiB payload 分块并保持 1 MiB frame 上限；桌面端校验 request ID、分块顺序、总数、聚合 64 MiB 上限和整次请求 deadline。远端来源身份稳定绑定 machine/user/source/config root，不随 Agent 重装变化。
 - Agent bridge 协议升级到 `1.4`，远端历史会话可在同一主机/用户/source/config root 上执行恢复前检查：重新确认原 JSONL、cwd 与 CLI 可用性，由 Rust 从结构化参数生成安全 resume 命令；同一客户端已有会话时直接跳转 Tab，其他 consumer 占用时阻止并发恢复，无匹配项目时可显式使用原远端目录创建 SSH terminal。
+
+## [V1.3.0] - 2026-07-20
+
+### SSH
 
 - SSH 主机新增 Claude/Codex“CLI 配置目录（Hook 与历史）”设置，SSH 项目可单独覆盖；新建、分屏、复制、恢复等统一启动链路会按“项目覆盖 -> 主机配置 -> CLI 原生默认”解析，并安全注入 `CLAUDE_CONFIG_DIR` 或 `CODEX_HOME`。自定义目录仅接受绝对 POSIX 路径或 `~/...`，保存配置不会安装 Agent 或修改远端 Hook。
 - 删除 SSH 主机时会先阻止活动终端和跳板机引用，再解除项目绑定；远端 Agent/Hook 不会被隐式卸载，已验证的远端集成身份保留为待重新绑定状态。

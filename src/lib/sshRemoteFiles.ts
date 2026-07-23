@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Project, ProjectFileContentMatch, ProjectFileEntry, ProjectFilePreviewKind } from "./types";
 import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "./sshAgentHistory";
+import { useBackgroundOperationStore } from "../stores/backgroundOperationStore";
+import type { TranslationKey } from "./i18n";
 
 interface RemoteFileEntry {
   name: string;
@@ -35,6 +37,31 @@ function toEntry(entry: RemoteFileEntry): ProjectFileEntry {
   };
 }
 
+async function runFileOperation<T>(
+  context: SshRemoteFileContext,
+  detailKey: TranslationKey,
+  action: () => Promise<T>,
+): Promise<T> {
+  const id = `remote-files:${context.consumerId}`;
+  const retry = () => { void runFileOperation(context, detailKey, action).catch(() => undefined); };
+  useBackgroundOperationStore.getState().start({
+    id,
+    kind: "remoteFiles",
+    titleKey: "backgroundOperations.remoteFiles.title",
+    detailKey,
+    contextLabel: context.rootPath,
+    retry,
+  });
+  try {
+    const result = await action();
+    useBackgroundOperationStore.getState().succeed(id);
+    return result;
+  } catch (error) {
+    useBackgroundOperationStore.getState().fail(id, error);
+    throw error;
+  }
+}
+
 export async function buildSshRemoteFileContext(project: Project): Promise<SshRemoteFileContext> {
   const history = await buildSshAgentHistoryContext(project);
   return {
@@ -51,12 +78,13 @@ export async function sshRemoteListDir(
   context: SshRemoteFileContext,
   relativePath = "",
 ): Promise<ProjectFileEntry[]> {
-  const response = await invoke<{ entries: RemoteFileEntry[] }>("ssh_remote_file_list", {
-    consumerId: context.consumerId,
-    sshLaunch: context.launch,
-    rootPath: context.rootPath,
-    relativePath,
-  });
+  const response = await runFileOperation(context, "backgroundOperations.remoteFiles.listing", () =>
+    invoke<{ entries: RemoteFileEntry[] }>("ssh_remote_file_list", {
+      consumerId: context.consumerId,
+      sshLaunch: context.launch,
+      rootPath: context.rootPath,
+      relativePath,
+    }));
   return (response.entries ?? []).map(toEntry);
 }
 
@@ -64,12 +92,13 @@ export async function sshRemoteReadFile(
   context: SshRemoteFileContext,
   relativePath: string,
 ): Promise<{ content: string; previewKind: ProjectFilePreviewKind; sizeBytes: number; modifiedMs: number | null }> {
-  const result = await invoke<RemoteFileRead>("ssh_remote_file_read", {
-    consumerId: context.consumerId,
-    sshLaunch: context.launch,
-    rootPath: context.rootPath,
-    relativePath,
-  });
+  const result = await runFileOperation(context, "backgroundOperations.remoteFiles.reading", () =>
+    invoke<RemoteFileRead>("ssh_remote_file_read", {
+      consumerId: context.consumerId,
+      sshLaunch: context.launch,
+      rootPath: context.rootPath,
+      relativePath,
+    }));
   return {
     content: result.content,
     previewKind: result.kind === "image" ? "image" : "text",
@@ -83,13 +112,14 @@ export async function sshRemoteSearch(
   query: string,
   content = false,
 ): Promise<ProjectFileEntry[]> {
-  const response = await invoke<{ entries: RemoteFileEntry[] }>("ssh_remote_file_search", {
-    consumerId: context.consumerId,
-    sshLaunch: context.launch,
-    rootPath: context.rootPath,
-    query,
-    content,
-  });
+  const response = await runFileOperation(context, "backgroundOperations.remoteFiles.searching", () =>
+    invoke<{ entries: RemoteFileEntry[] }>("ssh_remote_file_search", {
+      consumerId: context.consumerId,
+      sshLaunch: context.launch,
+      rootPath: context.rootPath,
+      query,
+      content,
+    }));
   return (response.entries ?? []).map(toEntry);
 }
 

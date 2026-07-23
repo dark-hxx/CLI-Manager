@@ -9,8 +9,9 @@ if (![version, tag, outputDir, x64Input, arm64Input].every(Boolean)) {
 if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
   throw new Error("invalid agent version");
 }
-if (tag !== `V${version}`) {
-  throw new Error("release tag must match the agent version");
+const desktopTag = /^V\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+if (tag !== `ssh-agent-v${version}` && !desktopTag.test(tag)) {
+  throw new Error("release tag must be a desktop V tag or match ssh-agent-v<version>");
 }
 
 await mkdir(outputDir, { recursive: true });
@@ -23,9 +24,11 @@ const [trustedKey, tauriConfigText, installerText] = await Promise.all([
 ]);
 const tauriConfig = JSON.parse(tauriConfigText);
 const updaterKey = Buffer.from(tauriConfig.plugins.updater.pubkey, "base64").toString("utf8");
-const publicKeyLine = trustedKey.trim().split(/\r?\n/)[1];
+const normalizeKey = (value) => value.replace(/\r\n/g, "\n").trim();
+const normalizedTrustedKey = normalizeKey(trustedKey);
+const publicKeyLine = normalizedTrustedKey.split("\n")[1];
 const installerKey = installerText.match(/^PUBLIC_KEY="([^"]+)"$/m)?.[1];
-if (updaterKey.trim() !== trustedKey.trim() || installerKey !== publicKeyLine) {
+if (normalizeKey(updaterKey) !== normalizedTrustedKey || installerKey !== publicKeyLine) {
   throw new Error("SSH Agent, installer, and Tauri updater public keys must match");
 }
 

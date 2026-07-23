@@ -171,6 +171,25 @@ pub(crate) fn spool_namespace(
     format!("{:x}", hasher.finalize())
 }
 
+#[cfg(any(unix, test))]
+const BRIDGE_RUNTIME_NAMESPACE_HEX_LENGTH: usize = 24;
+
+#[cfg(any(unix, test))]
+fn bridge_runtime_file_stem(namespace: &str) -> String {
+    let digest = format!("{:x}", Sha256::digest(namespace.as_bytes()));
+    format!("h-{}", &digest[..BRIDGE_RUNTIME_NAMESPACE_HEX_LENGTH])
+}
+
+#[cfg(any(unix, test))]
+pub(crate) fn bridge_socket_file_name(namespace: &str) -> String {
+    format!("{}.sock", bridge_runtime_file_stem(namespace))
+}
+
+#[cfg(any(unix, test))]
+pub(crate) fn bridge_pid_file_name(namespace: &str) -> String {
+    format!("{}.pid", bridge_runtime_file_stem(namespace))
+}
+
 fn namespace(binding: &HookBinding, installation_id: &str) -> String {
     spool_namespace(
         &binding.host_id,
@@ -619,7 +638,7 @@ pub(crate) fn ack_spool(
 #[cfg(unix)]
 fn notify_bridge(runtime_dir: &Path, namespace: &str, sequence: u64) {
     use std::os::unix::net::UnixDatagram;
-    let path = runtime_dir.join(format!("hook-{namespace}.sock"));
+    let path = runtime_dir.join(bridge_socket_file_name(namespace));
     if let Ok(socket) = UnixDatagram::unbound() {
         let _ = socket.send_to(sequence.to_string().as_bytes(), path);
     }
@@ -704,9 +723,9 @@ mod tests {
     #[cfg(unix)]
     use super::acquire_spool_lock;
     use super::{
-        ack_spool, append_spool_with_limits, build_event, read_spool_batch, spool_namespace,
-        validate_options, write_json_atomic, HookBinding, HookCommandOptions, HookRunResult,
-        SpoolMeta,
+        ack_spool, append_spool_with_limits, bridge_pid_file_name, bridge_socket_file_name,
+        build_event, read_spool_batch, spool_namespace, validate_options, write_json_atomic,
+        HookBinding, HookCommandOptions, HookRunResult, SpoolMeta,
     };
     use cli_manager_hook_schema::normalize_hook_input;
     use serde_json::json;
@@ -763,6 +782,25 @@ mod tests {
             base,
             spool_namespace("host-a", "client-a", "installation-b")
         );
+    }
+
+    #[test]
+    fn bridge_runtime_names_are_short_and_include_the_full_namespace() {
+        let namespace_a = format!("{}a", "0".repeat(63));
+        let namespace_b = format!("{}b", "0".repeat(63));
+        let socket_name = bridge_socket_file_name(&namespace_a);
+        let pid_name = bridge_pid_file_name(&namespace_a);
+
+        assert_ne!(socket_name, bridge_socket_file_name(&namespace_b));
+        assert_eq!(
+            socket_name.strip_suffix(".sock"),
+            pid_name.strip_suffix(".pid")
+        );
+        assert_eq!(socket_name.len(), 31);
+
+        let default_root_socket =
+            format!("/root/.local/state/cli-manager-ssh-agent/run/{socket_name}");
+        assert!(default_root_socket.len() < 108);
     }
 
     #[test]

@@ -434,6 +434,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const [diffFileChange, setDiffFileChange] = useState<HistoryFileChangeSummary | null>(null);
   const latestRef = useRef<HistorySessionDetail | null>(null);
   const lastPathRef = useRef<string | null>(null);
+  const sessionLoadInFlightRef = useRef(new Set<string>());
   const remoteHistoryContextRef = useRef<SshAgentHistoryContext | null>(null);
   const wasPanelActiveRef = useRef(false);
 
@@ -502,6 +503,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     : 0;
   // 已绑定 session 但用量仍为 0：可能 catalog 尚未索引到新文件，进入快速轮询 + 强制刷新。
   const waitingForUsage = Boolean(terminalSession?.cliSessionId) && (!tokensBound || boundUsageTotal === 0);
+  const waitingForRemoteSessionId = isSshProject && !terminalSession?.cliSessionId?.trim();
   const panelActive = open && visible;
 
   // 首次打开侧栏时再触发一次刷新，避开面板激活与历史源初始化同帧完成导致的空态停留。
@@ -518,26 +520,27 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
 
   // A6: 统一定时器调度 - 稳定后 10s；等待用量时 2s，尽快追上落盘的 Pi/Claude/Codex 会话。
   useEffect(() => {
-    if (!panelActive) return;
+    if (!panelActive || waitingForRemoteSessionId) return;
     const intervalMs = waitingForUsage ? WAITING_USAGE_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
     const timer = window.setInterval(() => {
       setPollTrigger((prev) => prev + 1);
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [panelActive, waitingForUsage]);
+  }, [panelActive, waitingForRemoteSessionId, waitingForUsage]);
 
   // 会话数据轮询：updated_at 未变化时跳过 jsonl 重解析
   // 多窗口隔离：scopeKey 含 activeSessionId(tabId)，不同终端窗口的数据各自独立缓存与查询
   useEffect(() => {
-    if (!panelActive || !lookupProjectPath) {
+    if (!panelActive || !lookupProjectPath || waitingForRemoteSessionId) {
       lastPathRef.current = null;
       latestRef.current = null;
       setLatestSession(null);
+      setLoadingSession(false);
       return;
     }
     // 切换 Tab（项目路径、CLI 来源、Tab ID 或 cliSessionId 变化）时按作用域换数据：
     // 命中内存缓存则先秒显缓存，无缓存才清空；随后后台刷新校正。
-    const scopeKey = `${activeSessionId}|${lookupProjectPath}|${sourceFilter ?? ""}|${terminalSession?.cliSessionId ?? ""}`;
+    const scopeKey = `${activeSessionId}|${lookupProjectPath}|${sourceFilter ?? ""}|${terminalSession?.cliSessionId ?? ""}|${terminalSession?.remoteTranscriptRef ?? ""}`;
     if (lastPathRef.current !== scopeKey) {
       lastPathRef.current = scopeKey;
       const cached = sessionDetailCache.get(scopeKey) ?? null;
@@ -545,9 +548,9 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       setLatestSession(cached);
       setUpdatedAt(cached ? Date.now() : null);
     }
-    let cancelled = false;
-
     const loadSession = async (initial: boolean) => {
+      if (sessionLoadInFlightRef.current.has(scopeKey)) return;
+      sessionLoadInFlightRef.current.add(scopeKey);
       if (initial && !latestRef.current) setLoadingSession(true);
       const current = latestRef.current;
       const prev = current
@@ -563,6 +566,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             remoteHistoryContextRef.current,
             prev,
             terminalSession?.cliSessionId,
+            terminalSession?.remoteTranscriptRef,
           );
           remoteHistoryContextRef.current = remote.context;
           result = remote.result;
@@ -579,7 +583,8 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       } catch {
         result = prev ? "unchanged" : null;
       }
-      if (cancelled) return;
+      sessionLoadInFlightRef.current.delete(scopeKey);
+      if (lastPathRef.current !== scopeKey) return;
       if (result !== "unchanged") {
         // 查找 miss 时不要清掉已有可用数据，避免侧栏 Token 卡片「闪一下归零再回来」。
         if (result === null && latestRef.current) {
@@ -598,36 +603,44 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     };
 
     void loadSession(true);
-
-    return () => {
-      cancelled = true;
-    };
     // activeSessionId 入依赖：切换 Tab 时立即重新核对最近会话（unchanged 时开销仅一次列表查询）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId, displayProjectPath, isSshProject, lookupProjectPath, panelActive, pollTrigger, project, project?.path, refreshSeq, sourceFilter, statsPanelRefreshSeq, terminalSession?.cliSessionId, terminalSession?.cwd, terminalSession?.projectId, waitingForUsage]);
+  }, [activeSessionId, displayProjectPath, isSshProject, lookupProjectPath, panelActive, pollTrigger, project, project?.path, refreshSeq, sourceFilter, statsPanelRefreshSeq, terminalSession?.cliSessionId, terminalSession?.cwd, terminalSession?.projectId, terminalSession?.remoteTranscriptRef, waitingForRemoteSessionId, waitingForUsage]);
 
   // 今日项目用量：会话数据变化时同步刷新（与终端 CLI 来源保持一致）
   // Issue #137：聚合主项目 + worktree 路径，主仓库 Tab 与 worktree Tab 看到同一套「今日项目」合计。
   useEffect(() => {
     if (!panelActive || !todayUsageScope) {
       setTodayStats(null);
+      setLoadingToday(false);
+      return;
+    }
+    if (isSshProject) {
+      setTodayStats(null);
+      setLoadingToday(false);
       return;
     }
     let cancelled = false;
     setLoadingToday(true);
-    void fetchTodayProjectStatsMerged(
-      todayUsageScope.projectKey,
-      sourceFilter,
-      todayUsageScope.projectPaths
-    ).then((result) => {
-      if (cancelled) return;
-      setTodayStats(result);
-      setLoadingToday(false);
-    });
+    const loadTodayStats = async () => {
+      try {
+        const result = await fetchTodayProjectStatsMerged(
+          todayUsageScope.projectKey,
+          sourceFilter,
+          todayUsageScope.projectPaths
+        );
+        if (!cancelled) setTodayStats(result);
+      } catch {
+        if (!cancelled) setTodayStats(null);
+      } finally {
+        if (!cancelled) setLoadingToday(false);
+      }
+    };
+    void loadTodayStats();
     return () => {
       cancelled = true;
     };
-  }, [isSshProject, latestSession?.updated_at, panelActive, sourceFilter, todayUsageScope]);
+  }, [isSshProject, latestSession?.updated_at, panelActive, project, sourceFilter, todayUsageScope]);
 
   // 空闲时数据轮询返回 unchanged 不会触发重渲染，需独立 tick 让头部相对时间文案随时间走字
   useEffect(() => {

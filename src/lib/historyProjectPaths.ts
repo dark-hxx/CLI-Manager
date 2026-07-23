@@ -1,6 +1,13 @@
+import type { Project } from "./types";
+
 export interface TodayProjectStatsScope {
   projectKey: string;
   projectPaths: string[];
+}
+
+export function resolveHistoryProjectPath(project: Project | null | undefined): string {
+  if (!project) return "";
+  return (project.environment_type === "ssh" ? project.remote_path : project.path).trim();
 }
 
 export function normalizeHistoryProjectPaths(paths: string[]): string[] {

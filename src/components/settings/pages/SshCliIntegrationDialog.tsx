@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { ArrowUp, ChevronRight, Copy, Download, FolderOpen, RefreshCw, RotateCcw, Save, Trash2, Undo2 } from "lucide-react";
 import { buildSshConnectionSpec } from "../../../lib/ssh";
 import {
@@ -17,6 +18,7 @@ import type {
   SshToolSource,
 } from "../../../lib/types";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
+import { useBackgroundOperationStore } from "../../../stores/backgroundOperationStore";
 import { useSshAgentIntegrationStore } from "../../../stores/sshAgentIntegrationStore";
 import { useProjectStore } from "../../../stores/projectStore";
 import { CliToolIcon } from "../../CliToolIcon";
@@ -38,6 +40,21 @@ interface Props {
 }
 
 const SOURCES: SshToolSource[] = ["claude", "codex"];
+const OFFICIAL_AGENT_MANIFEST_PATH = /^\/dark-hxx\/CLI-Manager\/releases\/(?:latest\/download|download\/[^/]+)\/ssh-agent-release-manifest\.json$/;
+
+function savedManifestInput(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    return url.hostname === "github.com" && OFFICIAL_AGENT_MANIFEST_PATH.test(url.pathname)
+      ? ""
+      : trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
 const AGENT_STATUS_KEYS: Record<string, TranslationKey> = {
   notChecked: "settings.sshHosts.cliIntegration.agent.status.notChecked",
   installed: "settings.sshHosts.cliIntegration.agent.status.installed",
@@ -71,6 +88,9 @@ const AGENT_CODE_KEYS: Record<string, TranslationKey> = {
   ssh_agent_release_target_missing: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_release_target_missing",
   ssh_agent_artifact_sha256_mismatch: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_artifact_sha256_mismatch",
   ssh_agent_artifact_size_mismatch: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_artifact_size_mismatch",
+  ssh_agent_bundled_resources_incomplete: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_bundled_resources_incomplete",
+  ssh_agent_bundled_resource_invalid: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_bundled_resource_invalid",
+  ssh_agent_hook_metadata_busy: "settings.sshHosts.cliIntegration.agent.code.ssh_agent_hook_metadata_busy",
   agent_install_locked: "settings.sshHosts.cliIntegration.agent.code.agent_install_locked",
   agent_downgrade_forbidden: "settings.sshHosts.cliIntegration.agent.code.agent_downgrade_forbidden",
   agent_launcher_conflict: "settings.sshHosts.cliIntegration.agent.code.agent_launcher_conflict",
@@ -95,6 +115,13 @@ const AGENT_CODE_KEYS: Record<string, TranslationKey> = {
   hook_config_locked: "settings.sshHosts.cliIntegration.hook.code.locked",
   hook_config_recovery_conflict: "settings.sshHosts.cliIntegration.hook.code.recoveryConflict",
   hook_config_root_changed: "settings.sshHosts.cliIntegration.hook.code.rootChanged",
+};
+const AGENT_INSTALL_PHASE_KEYS: Record<string, TranslationKey> = {
+  resolvingRelease: "settings.sshHosts.cliIntegration.agent.progress.resolvingRelease",
+  detectingRemote: "settings.sshHosts.cliIntegration.agent.progress.detectingRemote",
+  downloadingArtifact: "settings.sshHosts.cliIntegration.agent.progress.downloadingArtifact",
+  installingRemote: "settings.sshHosts.cliIntegration.agent.progress.installingRemote",
+  completed: "settings.sshHosts.cliIntegration.agent.progress.completed",
 };
 const HOOK_STATUS_KEYS: Record<string, TranslationKey> = {
   notChecked: "settings.sshHosts.cliIntegration.hook.status.notChecked",
@@ -121,6 +148,8 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   const saveHostPreferences = useSshAgentIntegrationStore((state) => state.saveHostPreferences);
   const recordAgentProbe = useSshAgentIntegrationStore((state) => state.recordAgentProbe);
   const recordAgentOperation = useSshAgentIntegrationStore((state) => state.recordAgentOperation);
+  const agentInstallJobs = useSshAgentIntegrationStore((state) => state.agentInstallJobs);
+  const updateAgentInstallJob = useSshAgentIntegrationStore((state) => state.updateAgentInstallJob);
   const integrations = useSshAgentIntegrationStore((state) => state.integrations);
   const recordHookReport = useSshAgentIntegrationStore((state) => state.recordHookReport);
   const projects = useProjectStore((state) => state.projects);
@@ -141,6 +170,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   const [allowHttp, setAllowHttp] = useState(false);
   const [agentOperation, setAgentOperation] = useState<"preview" | "install" | "rollback" | "uninstall" | null>(null);
   const [installPreview, setInstallPreview] = useState<SshAgentInstallPreview | null>(null);
+  const [installError, setInstallError] = useState("");
   const [allowDowngrade, setAllowDowngrade] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"rollback" | "uninstall" | null>(null);
   const [scriptCopied, setScriptCopied] = useState(false);
@@ -185,6 +215,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
     path: probeResult?.installPath || installation?.install_path || "",
     ready: (probeResult?.status ?? installation?.status) === "installed",
   }), [installation, probeResult]);
+  const activeInstallJob = host ? agentInstallJobs[host.id] ?? null : null;
 
   useEffect(() => {
     if (!open || !host) return;
@@ -206,6 +237,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
     setProbeResult(null);
     setProbeError("");
     setInstallPreview(null);
+    setInstallError("");
     setAllowDowngrade(false);
     setConfirmAction(null);
     setScriptCopied(false);
@@ -218,7 +250,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   useEffect(() => {
     if (!open) return;
     setAgentInstallDir(installation?.install_root ?? "");
-    setAgentManifestUrl(installation?.manifest_url ?? "");
+    setAgentManifestUrl(savedManifestInput(installation?.manifest_url));
   }, [installation?.host_id, installation?.install_root, installation?.manifest_url, open]);
 
   const agentErrorText = (value: unknown) => {
@@ -265,6 +297,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
         allowHttp,
       });
       setInstallPreview(preview);
+      setInstallError("");
       setAllowDowngrade(false);
     } catch (nextError) {
       setProbeError(agentErrorText(nextError));
@@ -307,9 +340,19 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
 
   const installAgent = async () => {
     if (!host || !installPreview) return;
+    if (useSshAgentIntegrationStore.getState().agentInstallJobs[host.id]?.status === "running") return;
     setAgentOperation("install");
     setProbeError("");
+    setInstallError("");
+    updateAgentInstallJob(host.id, { status: "running", phase: "resolvingRelease", progress: 0, error: "" });
+    let unlisten: (() => void) | null = null;
     try {
+      unlisten = await listen<{ phase: string; progress: number }>(
+        "ssh-agent-install-progress-" + host.id,
+        ({ payload }) => updateAgentInstallJob(host.id, {
+          status: "running", phase: payload.phase, progress: payload.progress, error: "",
+        }),
+      );
       const result = await invoke<SshAgentOperationResult>("ssh_agent_install", {
         hostId: host.id,
         spec: buildSshConnectionSpec(host, hosts),
@@ -319,10 +362,21 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
         allowDowngrade,
       });
       await applyAgentResult(result);
+      updateAgentInstallJob(host.id, { status: "succeeded", phase: "completed", progress: 100, error: "" });
       setInstallPreview(null);
     } catch (nextError) {
-      setProbeError(agentErrorText(nextError));
+      const message = agentErrorText(nextError);
+      setInstallError(message);
+      setProbeError(message);
+      const currentJob = useSshAgentIntegrationStore.getState().agentInstallJobs[host.id];
+      updateAgentInstallJob(host.id, {
+        status: "failed",
+        phase: currentJob?.phase ?? "resolvingRelease",
+        progress: currentJob?.progress ?? 0,
+        error: message,
+      });
     } finally {
+      unlisten?.();
       setAgentOperation(null);
     }
   };
@@ -431,6 +485,14 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
     scopeKind: "hostPrimary" | "projectOverride" = "hostPrimary",
   ) => {
     if (!host) return;
+    const operationId = `ssh-hook:${host.id}:${source}:${scopeKind}`;
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "sshHook",
+      titleKey: "backgroundOperations.sshHook.title",
+      detailKey: "backgroundOperations.sshHook.loading",
+      contextLabel: `${host.name} · ${source}`,
+    });
     setHookOperation({ source, action: "inspect" });
     setHookErrors((current) => ({ ...current, [source]: "" }));
     try {
@@ -441,7 +503,9 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       if (scopeKind === "hostPrimary") {
         setHookReports((current) => ({ ...current, [source]: report }));
       }
+      useBackgroundOperationStore.getState().succeed(operationId);
     } catch (nextError) {
+      useBackgroundOperationStore.getState().fail(operationId, nextError);
       setHookErrors((current) => ({ ...current, [source]: agentErrorText(nextError) }));
     } finally {
       setHookOperation(null);
@@ -456,6 +520,15 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
     expectedCanonicalRoot?: string,
     scopeKind: "hostPrimary" | "projectOverride" | "retainedRoot" = "hostPrimary",
   ) => {
+    if (!host) return;
+    const operationId = `ssh-hook:${host.id}:${source}:${scopeKind}`;
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "sshHook",
+      titleKey: "backgroundOperations.sshHook.title",
+      detailKey: "backgroundOperations.sshHook.loading",
+      contextLabel: `${host.name} · ${source}`,
+    });
     setHookOperation({ source, action: "preview" });
     setHookErrors((current) => ({ ...current, [source]: "" }));
     try {
@@ -465,7 +538,9 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
         expectedCanonicalRoot,
       });
       setHookPreview({ source, action, configuredRoot, integrationId, expectedCanonicalRoot, scopeKind, report });
+      useBackgroundOperationStore.getState().succeed(operationId);
     } catch (nextError) {
+      useBackgroundOperationStore.getState().fail(operationId, nextError);
       setHookErrors((current) => ({ ...current, [source]: agentErrorText(nextError) }));
     } finally {
       setHookOperation(null);
@@ -483,6 +558,14 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       scopeKind,
       report: preview,
     } = hookPreview;
+    const operationId = `ssh-hook:${host.id}:${source}:${scopeKind}`;
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "sshHook",
+      titleKey: "backgroundOperations.sshHook.title",
+      detailKey: "backgroundOperations.sshHook.loading",
+      contextLabel: `${host.name} · ${source}`,
+    });
     setHookOperation({ source, action: "apply" });
     setHookErrors((current) => ({ ...current, [source]: "" }));
     try {
@@ -504,7 +587,9 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
         setHookReports((current) => ({ ...current, [source]: report }));
       }
       setHookPreview(null);
+      useBackgroundOperationStore.getState().succeed(operationId);
     } catch (nextError) {
+      useBackgroundOperationStore.getState().fail(operationId, nextError);
       setHookErrors((current) => ({ ...current, [source]: agentErrorText(nextError) }));
     } finally {
       setHookOperation(null);
@@ -811,8 +896,8 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
         </DialogContent>
       </Dialog>
 
-      <Dialog open={installPreview !== null} onOpenChange={(nextOpen) => { if (!nextOpen && agentOperation !== "install") setInstallPreview(null); }}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-xl p-0" showCloseButton={agentOperation !== "install"}>
+      <Dialog open={installPreview !== null} onOpenChange={(nextOpen) => { if (!nextOpen) setInstallPreview(null); }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-xl p-0">
           <div className="border-b border-border px-5 py-4">
             <DialogTitle>{t("settings.sshHosts.cliIntegration.agent.previewTitle")}</DialogTitle>
             <DialogDescription>{t("settings.sshHosts.cliIntegration.agent.previewDescription")}</DialogDescription>
@@ -823,6 +908,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
               <div><span className="text-text-muted">{t("settings.sshHosts.cliIntegration.agent.versionLabel")}</span><div>{installPreview.version}</div></div>
               <div><span className="text-text-muted">{t("settings.sshHosts.cliIntegration.agent.targetLabel")}</span><div>{installPreview.target}</div></div>
               <div><span className="text-text-muted">{t("settings.sshHosts.cliIntegration.agent.size")}</span><div>{(installPreview.artifactSize / 1024 / 1024).toFixed(1)} MB</div></div>
+              <div><span className="text-text-muted">{t("settings.sshHosts.cliIntegration.agent.distributionSource")}</span><div>{t(`settings.sshHosts.cliIntegration.agent.distributionSource.${installPreview.distributionSource}` as TranslationKey)}</div></div>
               <div className="sm:col-span-2"><span className="text-text-muted">{t("settings.sshHosts.cliIntegration.agent.installRoot")}</span><div className="break-all font-mono text-xs">{installPreview.installRoot}</div></div>
               <div className="sm:col-span-2"><span className="text-text-muted">SHA-256</span><div className="break-all font-mono text-xs">{installPreview.artifactSha256}</div></div>
               <div className="sm:col-span-2"><span className="text-text-muted">Manifest</span><div className="break-all font-mono text-xs">{installPreview.manifestUrl}</div></div>
@@ -832,13 +918,25 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
                   <span>{t("settings.sshHosts.cliIntegration.agent.allowDowngrade")}</span>
                 </label>
               )}
+              {activeInstallJob?.status === "running" && (
+                <div className="space-y-2 border-t border-border pt-3 sm:col-span-2">
+                  <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
+                    <span>{t(AGENT_INSTALL_PHASE_KEYS[activeInstallJob.phase] ?? AGENT_INSTALL_PHASE_KEYS.resolvingRelease)}</span>
+                    <span>{activeInstallJob.progress}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-surface-high" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={activeInstallJob.progress}>
+                    <div className="h-full rounded-full bg-primary transition-[width] duration-200" style={{ width: activeInstallJob.progress + "%" }} />
+                  </div>
+                </div>
+              )}
+              {installError && <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger sm:col-span-2"><div className="mb-1 font-medium">{t("settings.sshHosts.cliIntegration.agent.installFailed")}</div><div className="break-all font-mono">{installError}</div></div>}
             </div>
           )}
           <DialogFooter className="border-t border-border px-5 py-4">
-            <Button type="button" variant="outline" onClick={() => setInstallPreview(null)} disabled={agentOperation === "install"}>{t("common.cancel")}</Button>
-            <Button type="button" onClick={() => void installAgent()} disabled={agentOperation === "install" || (installPreview?.action === "downgrade" && !allowDowngrade)}>
+            <Button type="button" variant="outline" onClick={() => setInstallPreview(null)}>{activeInstallJob?.status === "running" ? t("settings.sshHosts.cliIntegration.agent.backgroundInstall") : t("common.cancel")}</Button>
+            <Button type="button" onClick={() => void installAgent()} disabled={activeInstallJob?.status === "running" || (installPreview?.action === "downgrade" && !allowDowngrade)}>
               <Download className="h-4 w-4" />
-              {agentOperation === "install" ? t("settings.sshHosts.cliIntegration.agent.installing") : t("settings.sshHosts.cliIntegration.agent.confirmInstall")}
+              {activeInstallJob?.status === "running" ? t("settings.sshHosts.cliIntegration.agent.installing") : t("settings.sshHosts.cliIntegration.agent.confirmInstall")}
             </Button>
           </DialogFooter>
         </DialogContent>

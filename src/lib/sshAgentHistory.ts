@@ -10,6 +10,7 @@ export interface SshAgentHistoryLaunch extends SshConnectionSpecPayload {
   remotePath: string;
   clientInstanceId: string;
   projectId: string;
+  projectName: string;
   bridgeEpoch: string;
   agentPath: string;
   agentInstallationId: string;
@@ -84,6 +85,7 @@ export async function buildSshAgentHistoryContext(project: Project): Promise<Ssh
       remotePath: project.remote_path.trim(),
       clientInstanceId,
       projectId: project.id,
+      projectName: project.name,
       bridgeEpoch: crypto.randomUUID(),
       agentPath: installation.install_path,
       agentInstallationId: installation.installation_id,

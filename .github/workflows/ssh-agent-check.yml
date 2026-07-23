@@ -1,0 +1,68 @@
+name: SSH Agent Check
+
+on:
+  pull_request:
+    paths:
+      - "src-tauri/ssh-agent/**"
+      - "src-tauri/ssh-agent-public-key.txt"
+      - "src-tauri/tauri.conf.json"
+      - "scripts/install-ssh-agent.sh"
+      - ".github/scripts/build-ssh-agent-release.mjs"
+      - ".github/scripts/test-install-ssh-agent.sh"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/ssh-agent-check.yml"
+      - ".github/workflows/ssh-agent-release.yml"
+  push:
+    branches:
+      - master
+      - "feat/**"
+    paths:
+      - "src-tauri/ssh-agent/**"
+      - "src-tauri/ssh-agent-public-key.txt"
+      - "src-tauri/tauri.conf.json"
+      - "scripts/install-ssh-agent.sh"
+      - ".github/scripts/build-ssh-agent-release.mjs"
+      - ".github/scripts/test-install-ssh-agent.sh"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/ssh-agent-check.yml"
+      - ".github/workflows/ssh-agent-release.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+      - uses: goto-bus-stop/setup-zig@v2
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+      - name: Test Agent and installer
+        run: |
+          cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml
+          cargo build --manifest-path src-tauri/ssh-agent/Cargo.toml
+          sh -n scripts/install-ssh-agent.sh
+          sh .github/scripts/test-install-ssh-agent.sh
+          AGENT_VERSION="$(cargo metadata --no-deps --format-version 1 --manifest-path src-tauri/ssh-agent/Cargo.toml | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk).on("end", () => { const pkg = JSON.parse(input).packages.find(item => item.name === "cli-manager-ssh-agent"); if (!pkg) process.exit(1); process.stdout.write(pkg.version); });')"
+          node .github/scripts/build-ssh-agent-release.mjs \
+            "$AGENT_VERSION" "ssh-agent-v$AGENT_VERSION" \
+            src-tauri/ssh-agent/target/release-test \
+            src-tauri/ssh-agent/target/debug/cli-manager-ssh-agent \
+            src-tauri/ssh-agent/target/debug/cli-manager-ssh-agent
+      - name: Verify release ABI baseline
+        shell: bash
+        run: |
+          cargo zigbuild --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target x86_64-unknown-linux-gnu.2.17
+          cargo zigbuild --release --manifest-path src-tauri/ssh-agent/Cargo.toml --target aarch64-unknown-linux-gnu.2.17
+          for binary in \
+            src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
+            src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
+          do
+            MAX_GLIBC="$(readelf --version-info "$binary" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sed 's/^GLIBC_//' | sort -Vu | tail -1)"
+            test -n "$MAX_GLIBC"
+            test "$(printf '%s\n' 2.17 "$MAX_GLIBC" | sort -V | tail -1)" = "2.17" || {
+              echo "$binary requires GLIBC_$MAX_GLIBC; maximum supported version is GLIBC_2.17" >&2
+              exit 1
+            }
+          done

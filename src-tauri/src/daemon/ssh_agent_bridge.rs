@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::{Child, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::thread;
@@ -23,7 +23,7 @@ const MAX_CONCURRENT_BRIDGES: usize = 4;
 const MAX_CONCURRENT_CONNECTS: usize = 2;
 const MAX_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-const HISTORY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+const HISTORY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_HISTORY_DETAIL_CHUNKS: usize = 257;
 const MAX_HISTORY_DETAIL_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const HOOK_DRAIN_WAIT_MS: u64 = 2_000;
@@ -131,6 +131,9 @@ fn bridge_identity(plan: &SshLaunchPlan) -> String {
 struct BridgeControl {
     stop: AtomicBool,
     finished: AtomicBool,
+    connecting: AtomicBool,
+    connected: AtomicBool,
+    pending_requests: AtomicUsize,
     child: Mutex<Option<Child>>,
 }
 
@@ -139,8 +142,35 @@ impl BridgeControl {
         Self {
             stop: AtomicBool::new(false),
             finished: AtomicBool::new(false),
+            connecting: AtomicBool::new(true),
+            connected: AtomicBool::new(false),
+            pending_requests: AtomicUsize::new(0),
             child: Mutex::new(None),
         }
+    }
+
+    fn reserve(&self) {
+        self.pending_requests.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn try_reserve_idle(&self) -> bool {
+        if self.finished.load(Ordering::Acquire)
+            || (!self.connecting.load(Ordering::Acquire) && !self.connected.load(Ordering::Acquire))
+        {
+            return false;
+        }
+        self.pending_requests
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn release_request(&self) {
+        let released =
+            self.pending_requests
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                    pending.checked_sub(1)
+                });
+        debug_assert!(released.is_ok());
     }
 
     fn stop(&self) {
@@ -174,6 +204,107 @@ struct AgentBridgeRequest {
     kind: String,
     payload: Value,
     response: SyncSender<Result<Value, String>>,
+}
+
+struct BridgeHandle {
+    request_sender: SyncSender<AgentBridgeRequest>,
+    control: Arc<BridgeControl>,
+}
+
+impl BridgeHandle {
+    fn reserve(self) -> BridgeRequestReservation {
+        self.control.reserve();
+        BridgeRequestReservation {
+            request_sender: self.request_sender,
+            control: self.control,
+        }
+    }
+}
+
+struct BridgeRequestReservation {
+    request_sender: SyncSender<AgentBridgeRequest>,
+    control: Arc<BridgeControl>,
+}
+
+impl Drop for BridgeRequestReservation {
+    fn drop(&mut self) {
+        self.control.release_request();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BridgeLane {
+    Primary,
+    Readonly,
+}
+
+impl BridgeLane {
+    fn for_request(kind: &str) -> Self {
+        if matches!(
+            kind,
+            "fileList"
+                | "fileRead"
+                | "fileSearch"
+                | "gitListRepositories"
+                | "gitChanges"
+                | "gitDiff"
+                | "gitBranchStatus"
+                | "gitBranches"
+        ) {
+            Self::Readonly
+        } else {
+            Self::Primary
+        }
+    }
+}
+
+fn bridge_slot(host_id: &str, lane: BridgeLane) -> String {
+    match lane {
+        BridgeLane::Primary => host_id.to_string(),
+        BridgeLane::Readonly => format!("{host_id}\0readonly"),
+    }
+}
+
+fn bridge_plan(plan: &SshLaunchPlan, lane: BridgeLane) -> SshLaunchPlan {
+    let mut plan = plan.clone();
+    if lane == BridgeLane::Readonly {
+        plan.client_instance_id =
+            readonly_client_instance_id(&plan.host_id, &plan.client_instance_id);
+    }
+    plan
+}
+
+fn readonly_client_instance_id(host_id: &str, client_instance_id: &str) -> String {
+    let mut high = DefaultHasher::new();
+    "cli-manager-readonly-high".hash(&mut high);
+    host_id.hash(&mut high);
+    client_instance_id.hash(&mut high);
+
+    let mut low = DefaultHasher::new();
+    "cli-manager-readonly-low".hash(&mut low);
+    client_instance_id.hash(&mut low);
+    host_id.hash(&mut low);
+
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&high.finish().to_be_bytes());
+    bytes[8..].copy_from_slice(&low.finish().to_be_bytes());
+    // RFC 9562 UUIDv8: deterministic application-defined identity with RFC variant bits.
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let mut id = uuid::Uuid::from_bytes(bytes);
+    if id.to_string().eq_ignore_ascii_case(client_instance_id) {
+        bytes[15] ^= 1;
+        id = uuid::Uuid::from_bytes(bytes);
+    }
+    id.to_string()
+}
+
+fn response_timeout(kind: &str) -> Duration {
+    if kind.starts_with("history") {
+        HISTORY_RESPONSE_TIMEOUT
+    } else {
+        Duration::from_secs(60)
+    }
 }
 
 #[derive(Default)]
@@ -226,16 +357,17 @@ impl SshAgentBridgeManager {
     }
 
     pub fn ensure(&self, host: Weak<DaemonHost>, session_id: &str, plan: &SshLaunchPlan) {
-        let _ = self.ensure_bridge(host, plan, Some(session_id), None);
+        let _ = self.ensure_bridge(host, plan, BridgeLane::Primary, Some(session_id), None);
     }
 
     fn ensure_bridge(
         &self,
         host: Weak<DaemonHost>,
         plan: &SshLaunchPlan,
+        lane: BridgeLane,
         session_id: Option<&str>,
         consumer_id: Option<&str>,
-    ) -> Option<SyncSender<AgentBridgeRequest>> {
+    ) -> Option<BridgeHandle> {
         if plan.agent_path.is_empty()
             || plan.agent_installation_id.is_empty()
             || plan.agent_remote_machine_id.is_empty()
@@ -247,6 +379,7 @@ impl SshAgentBridgeManager {
             return None;
         }
         let identity = bridge_identity(plan);
+        let slot = bridge_slot(&plan.host_id, lane);
         let mut bridges = match self.bridges.lock() {
             Ok(bridges) => bridges,
             Err(_) => return None,
@@ -258,7 +391,7 @@ impl SshAgentBridgeManager {
             .map(|value| HashSet::from([value.to_string()]))
             .unwrap_or_default();
         let mut replaced_control = None;
-        if let Some(existing) = bridges.get_mut(&plan.host_id) {
+        if let Some(existing) = bridges.get_mut(&slot) {
             if existing.identity == identity && !existing.control.finished.load(Ordering::Acquire) {
                 if let Some(session_id) = session_id {
                     existing.sessions.insert(session_id.to_string());
@@ -266,7 +399,10 @@ impl SshAgentBridgeManager {
                 if let Some(consumer_id) = consumer_id {
                     existing.consumers.insert(consumer_id.to_string());
                 }
-                return Some(existing.request_sender.clone());
+                return Some(BridgeHandle {
+                    request_sender: existing.request_sender.clone(),
+                    control: Arc::clone(&existing.control),
+                });
             }
             sessions.extend(existing.sessions.iter().cloned());
             consumers.extend(existing.consumers.iter().cloned());
@@ -277,13 +413,13 @@ impl SshAgentBridgeManager {
         let thread_control = Arc::clone(&control);
         let thread_plan = plan.clone();
         bridges.insert(
-            plan.host_id.clone(),
+            slot,
             BridgeEntry {
                 identity,
                 sessions,
                 consumers,
                 request_sender: request_sender.clone(),
-                control,
+                control: Arc::clone(&control),
             },
         );
         drop(bridges);
@@ -291,7 +427,29 @@ impl SshAgentBridgeManager {
             replaced_control.stop();
         }
         thread::spawn(move || run_bridge_loop(host, thread_plan, thread_control, request_receiver));
-        Some(request_sender)
+        Some(BridgeHandle {
+            request_sender,
+            control,
+        })
+    }
+
+    fn try_reserve_primary(
+        &self,
+        host_id: &str,
+        identity: &str,
+        consumer_id: &str,
+    ) -> Option<BridgeRequestReservation> {
+        let slot = bridge_slot(host_id, BridgeLane::Primary);
+        let mut bridges = self.bridges.lock().ok()?;
+        let entry = bridges.get_mut(&slot)?;
+        if entry.identity != identity || !entry.control.try_reserve_idle() {
+            return None;
+        }
+        entry.consumers.insert(consumer_id.to_string());
+        Some(BridgeRequestReservation {
+            request_sender: entry.request_sender.clone(),
+            control: Arc::clone(&entry.control),
+        })
     }
 
     pub fn request(
@@ -346,20 +504,30 @@ impl SshAgentBridgeManager {
             None
         };
         let result = (|| {
-            let sender = self
-                .ensure_bridge(host, plan, None, Some(consumer_id))
-                .ok_or_else(|| "ssh_agent_identity_required".to_string())?;
+            let lane = BridgeLane::for_request(kind);
+            let reservation = if lane == BridgeLane::Readonly {
+                self.try_reserve_primary(&plan.host_id, &bridge_identity(plan), consumer_id)
+                    .or_else(|| {
+                        let request_plan = bridge_plan(plan, lane);
+                        self.ensure_bridge(host, &request_plan, lane, None, Some(consumer_id))
+                            .map(BridgeHandle::reserve)
+                    })
+            } else {
+                self.ensure_bridge(host, plan, lane, None, Some(consumer_id))
+                    .map(BridgeHandle::reserve)
+            }
+            .ok_or_else(|| "ssh_agent_identity_required".to_string())?;
             let (response_sender, response_receiver) = mpsc::sync_channel(1);
-            sender
+            let timeout = response_timeout(kind);
+            reservation
+                .request_sender
                 .send(AgentBridgeRequest {
                     kind: kind.to_string(),
                     payload,
                     response: response_sender,
                 })
                 .map_err(|_| "ssh_agent_bridge_request_queue_closed".to_string())?;
-            response_receiver
-                .recv_timeout(HISTORY_RESPONSE_TIMEOUT + RESPONSE_TIMEOUT)
-                .map_err(|_| "ssh_agent_bridge_response_timeout".to_string())?
+            receive_agent_response(&response_receiver, timeout + RESPONSE_TIMEOUT)
         })();
         if result.is_err() {
             if let (Some(claim_key), Ok(mut claims)) =
@@ -381,11 +549,12 @@ impl SshAgentBridgeManager {
             Ok(bridges) => bridges,
             Err(_) => return,
         };
-        let remove = bridges.get_mut(host_id).is_some_and(|entry| {
+        let slot = bridge_slot(host_id, BridgeLane::Primary);
+        let remove = bridges.get_mut(&slot).is_some_and(|entry| {
             entry.sessions.remove(session_id);
             entry.sessions.is_empty() && entry.consumers.is_empty()
         });
-        let removed = remove.then(|| bridges.remove(host_id)).flatten();
+        let removed = remove.then(|| bridges.remove(&slot)).flatten();
         drop(bridges);
         if let Some(entry) = removed {
             entry.control.stop();
@@ -398,15 +567,49 @@ impl SshAgentBridgeManager {
             Ok(bridges) => bridges,
             Err(_) => return,
         };
-        let remove = bridges.get_mut(host_id).is_some_and(|entry| {
-            entry.consumers.remove(consumer_id);
-            entry.sessions.is_empty() && entry.consumers.is_empty()
-        });
-        let removed = remove.then(|| bridges.remove(host_id)).flatten();
+        let mut consumer_ids = HashSet::from([consumer_id.to_string()]);
+        if let Some(suffix) = consumer_id.strip_prefix("history:") {
+            consumer_ids.insert(format!("files:{suffix}"));
+            consumer_ids.insert(format!("git:{suffix}"));
+        }
+        let mut removed = Vec::new();
+        for lane in [BridgeLane::Primary, BridgeLane::Readonly] {
+            let slot = bridge_slot(host_id, lane);
+            let remove = bridges.get_mut(&slot).is_some_and(|entry| {
+                entry
+                    .consumers
+                    .retain(|value| !consumer_ids.contains(value));
+                entry.sessions.is_empty() && entry.consumers.is_empty()
+            });
+            if remove {
+                if let Some(entry) = bridges.remove(&slot) {
+                    removed.push(entry);
+                }
+            }
+        }
         drop(bridges);
-        if let Some(entry) = removed {
+        for entry in removed {
             entry.control.stop();
         }
+    }
+}
+
+fn receive_agent_response(
+    receiver: &Receiver<Result<Value, String>>,
+    timeout: Duration,
+) -> Result<Value, String> {
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(RecvTimeoutError::Timeout) => Err("ssh_agent_bridge_response_timeout".to_string()),
+        Err(RecvTimeoutError::Disconnected) => {
+            Err("ssh_agent_bridge_response_channel_closed".to_string())
+        }
+    }
+}
+
+fn fail_pending_requests(receiver: &Receiver<AgentBridgeRequest>, error: &str) {
+    while let Ok(request) = receiver.try_recv() {
+        let _ = request.response.send(Err(error.to_string()));
     }
 }
 
@@ -764,6 +967,12 @@ fn run_bridge_loop(
     let Some(_bridge_permit) =
         CounterPermit::acquire(&BRIDGE_LIMIT, MAX_CONCURRENT_BRIDGES, &control)
     else {
+        let error = if control.stop.load(Ordering::Acquire) {
+            "ssh_agent_bridge_stopped"
+        } else {
+            "ssh_agent_bridge_capacity_exhausted"
+        };
+        fail_pending_requests(&request_receiver, error);
         control.finished.store(true, Ordering::Release);
         return;
     };
@@ -778,6 +987,7 @@ fn run_bridge_loop(
                     plan.host_id,
                     failure.code
                 );
+                fail_pending_requests(&request_receiver, &failure.code);
                 if permanent_bridge_error(&failure.code) {
                     break;
                 }
@@ -808,16 +1018,18 @@ fn run_bridge_once(
     dedup: &mut EventDedup,
     request_receiver: &Receiver<AgentBridgeRequest>,
 ) -> Result<(), BridgeRunError> {
+    control.connecting.store(true, Ordering::Release);
     let mut connected_at = None;
-    run_bridge_once_inner(
+    let result = run_bridge_once_inner(
         host,
         plan,
         control,
         dedup,
         request_receiver,
         &mut connected_at,
-    )
-    .map_err(|code| BridgeRunError {
+    );
+    control.connecting.store(false, Ordering::Release);
+    result.map_err(|code| BridgeRunError {
         code,
         connected_for: connected_at.map(|started: Instant| started.elapsed()),
     })
@@ -921,6 +1133,7 @@ fn run_bridge_once_inner(
         {
             return Err("ssh_agent_identity_changed".to_string());
         }
+        control.connected.store(true, Ordering::Release);
         *connected_at = Some(Instant::now());
         drop(connect_permit);
         let mut cursor = 0u64;
@@ -931,6 +1144,8 @@ fn run_bridge_once_inner(
                 Ok(agent_request) => {
                     let request_id = format!("agent-request-{request_number}");
                     request_number = request_number.saturating_add(1);
+                    let kind = agent_request.kind.clone();
+                    let started_at = Instant::now();
                     let result = request(
                         &mut writer,
                         &reader_receiver,
@@ -938,8 +1153,25 @@ fn run_bridge_once_inner(
                         &agent_request.kind,
                         agent_request.payload,
                         "response",
-                        HISTORY_RESPONSE_TIMEOUT,
+                        response_timeout(&kind),
                     );
+                    let elapsed = started_at.elapsed();
+                    if let Err(error) = &result {
+                        log::warn!(
+                            "SSH Agent request failed: host_id={} kind={} elapsed_ms={} error={}",
+                            plan.host_id,
+                            kind,
+                            elapsed.as_millis(),
+                            error
+                        );
+                    } else {
+                        log::debug!(
+                            "SSH Agent request completed: host_id={} kind={} elapsed_ms={}",
+                            plan.host_id,
+                            kind,
+                            elapsed.as_millis()
+                        );
+                    }
                     let disconnect = result
                         .as_ref()
                         .err()
@@ -1040,6 +1272,7 @@ fn run_bridge_once_inner(
         Ok(())
     })();
 
+    control.connected.store(false, Ordering::Release);
     drop(reader_receiver);
     control.terminate_current_child();
     let _ = reader_handle.join();
@@ -1059,10 +1292,12 @@ fn run_bridge_once_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        checked_response, classify_bridge_stderr, permanent_bridge_error, read_preamble,
-        receive_frame, request, request_error_requires_disconnect, retry_delay,
-        validate_hook_batch, BridgeControl, BridgeEntry, ClientFrame, CounterPermit, EventDedup,
-        PermitPool, ReaderMessage, ServerFrame, SshAgentBridgeManager, DEDUP_EVENT_IDS,
+        bridge_slot, checked_response, classify_bridge_stderr, fail_pending_requests,
+        permanent_bridge_error, read_preamble, readonly_client_instance_id, receive_agent_response,
+        receive_frame, request, request_error_requires_disconnect, response_timeout, retry_delay,
+        validate_hook_batch, AgentBridgeRequest, BridgeControl, BridgeEntry, BridgeLane,
+        ClientFrame, CounterPermit, EventDedup, PermitPool, ReaderMessage, ServerFrame,
+        SshAgentBridgeManager, DEDUP_EVENT_IDS,
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -1182,6 +1417,97 @@ mod tests {
         assert_eq!(
             receive_frame(&receiver, Duration::from_millis(1)).unwrap_err(),
             "ssh_agent_bridge_response_timeout"
+        );
+    }
+
+    #[test]
+    fn disconnected_response_channel_is_not_reported_as_a_timeout() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        drop(sender);
+        assert_eq!(
+            receive_agent_response(&receiver, Duration::from_secs(1)).unwrap_err(),
+            "ssh_agent_bridge_response_channel_closed"
+        );
+    }
+
+    #[test]
+    fn bridge_start_failure_is_forwarded_to_queued_requests() {
+        let (request_sender, request_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        request_sender
+            .send(AgentBridgeRequest {
+                kind: "fileList".to_string(),
+                payload: json!({}),
+                response: response_sender,
+            })
+            .unwrap();
+        fail_pending_requests(&request_receiver, "ssh_interactive_auth_required");
+        assert_eq!(
+            receive_agent_response(&response_receiver, Duration::from_secs(1)).unwrap_err(),
+            "ssh_interactive_auth_required"
+        );
+    }
+
+    #[test]
+    fn readonly_request_reuses_only_an_idle_matching_primary_bridge() {
+        let control = Arc::new(BridgeControl::new());
+        control.connecting.store(false, Ordering::Release);
+        control.connected.store(true, Ordering::Release);
+        let (request_sender, _request_receiver) = mpsc::sync_channel(1);
+        let manager = SshAgentBridgeManager {
+            bridges: std::sync::Mutex::new(HashMap::from([(
+                bridge_slot("host-1", BridgeLane::Primary),
+                BridgeEntry {
+                    identity: "identity-1".to_string(),
+                    sessions: HashSet::from(["session-1".to_string()]),
+                    consumers: HashSet::new(),
+                    request_sender,
+                    control: Arc::clone(&control),
+                },
+            )])),
+            resume_claims: std::sync::Mutex::new(HashMap::new()),
+        };
+
+        let reservation = manager
+            .try_reserve_primary("host-1", "identity-1", "files-1")
+            .unwrap();
+        assert_eq!(control.pending_requests.load(Ordering::Acquire), 1);
+        assert!(manager
+            .try_reserve_primary("host-1", "identity-1", "files-2")
+            .is_none());
+        assert!(manager
+            .try_reserve_primary("host-1", "identity-2", "files-2")
+            .is_none());
+        drop(reservation);
+        assert_eq!(control.pending_requests.load(Ordering::Acquire), 0);
+
+        let next = manager
+            .try_reserve_primary("host-1", "identity-1", "files-2")
+            .unwrap();
+        drop(next);
+        control.connected.store(false, Ordering::Release);
+        assert!(manager
+            .try_reserve_primary("host-1", "identity-1", "files-3")
+            .is_none());
+    }
+
+    #[test]
+    fn readonly_requests_use_an_isolated_bridge_identity() {
+        assert_eq!(BridgeLane::for_request("historySync"), BridgeLane::Primary);
+        assert_eq!(BridgeLane::for_request("fileList"), BridgeLane::Readonly);
+        assert_eq!(BridgeLane::for_request("gitChanges"), BridgeLane::Readonly);
+        assert!(response_timeout("historySync") > response_timeout("fileList"));
+
+        let readonly = readonly_client_instance_id("host-1", "client-1");
+        assert_ne!(readonly, "client-1");
+        assert_eq!(readonly, readonly_client_instance_id("host-1", "client-1"));
+        assert_eq!(
+            uuid::Uuid::parse_str(&readonly).unwrap().get_version_num(),
+            8
+        );
+        assert_ne!(
+            bridge_slot("host-1", BridgeLane::Primary),
+            bridge_slot("host-1", BridgeLane::Readonly)
         );
     }
 
@@ -1326,6 +1652,47 @@ mod tests {
         manager.release_consumer("host-1", "history-1");
         assert!(manager.bridges.lock().unwrap().is_empty());
         assert!(control.stop.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn releasing_history_consumer_also_releases_readonly_aliases() {
+        let primary_control = Arc::new(BridgeControl::new());
+        let readonly_control = Arc::new(BridgeControl::new());
+        let (primary_sender, _primary_receiver) = mpsc::sync_channel(1);
+        let (readonly_sender, _readonly_receiver) = mpsc::sync_channel(1);
+        let manager = SshAgentBridgeManager {
+            bridges: std::sync::Mutex::new(HashMap::from([
+                (
+                    bridge_slot("host-1", BridgeLane::Primary),
+                    BridgeEntry {
+                        identity: "primary".to_string(),
+                        sessions: HashSet::new(),
+                        consumers: HashSet::from(["history:client:host:codex:project".to_string()]),
+                        request_sender: primary_sender,
+                        control: Arc::clone(&primary_control),
+                    },
+                ),
+                (
+                    bridge_slot("host-1", BridgeLane::Readonly),
+                    BridgeEntry {
+                        identity: "readonly".to_string(),
+                        sessions: HashSet::new(),
+                        consumers: HashSet::from([
+                            "files:client:host:codex:project".to_string(),
+                            "git:client:host:codex:project".to_string(),
+                        ]),
+                        request_sender: readonly_sender,
+                        control: Arc::clone(&readonly_control),
+                    },
+                ),
+            ])),
+            resume_claims: std::sync::Mutex::new(HashMap::new()),
+        };
+
+        manager.release_consumer("host-1", "history:client:host:codex:project");
+        assert!(manager.bridges.lock().unwrap().is_empty());
+        assert!(primary_control.stop.load(Ordering::Acquire));
+        assert!(readonly_control.stop.load(Ordering::Acquire));
     }
 
     #[test]
