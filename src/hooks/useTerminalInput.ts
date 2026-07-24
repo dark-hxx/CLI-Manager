@@ -150,7 +150,7 @@ export interface UseTerminalInputResult {
   cancelAiSuggestionRefresh: () => void;
   scheduleSuggestionRefresh: () => void;
   updateSuggestionGhostPosition: () => void;
-  acceptSuggestion: () => boolean;
+  acceptSuggestion: (visibleSuffix?: string) => boolean;
   onCommandSubmitted: (command: string) => void;
   attachPasteAndDrop: (terminal: Terminal) => () => void;
   pasteText: (terminal: Terminal, text: string) => void;
@@ -194,7 +194,7 @@ export function useTerminalInput({
   const cancelAiSuggestionRefreshRef = useRef<() => void>(() => {});
   const scheduleSuggestionRefreshRef = useRef<() => void>(() => {});
   const updateSuggestionGhostPositionRef = useRef<() => void>(() => {});
-  const acceptSuggestionRef = useRef<() => boolean>(() => false);
+  const acceptSuggestionRef = useRef<(visibleSuffix?: string) => boolean>(() => false);
   const getInput = () => inputBufferRef.current;
 
   const resetSuggestionState = () => {
@@ -1060,12 +1060,13 @@ export function useTerminalInput({
       }, SUGGESTION_LOCAL_DEBOUNCE_MS);
     };
 
-    const acceptSuggestion = () => {
+    const acceptSuggestion = (visibleSuffix?: string) => {
       const suggestion = suggestionRef.current;
       const settings = useSettingsStore.getState();
-      if (!settings.terminalInputSuggestionsEnabled || !suggestion?.suffix) return false;
+      const suffix = suggestion?.suffix ?? visibleSuffix;
+      if (!settings.terminalInputSuggestionsEnabled || !suffix) return false;
       clearSuggestion();
-      forwardSuggestionInput(suggestion.suffix);
+      forwardSuggestionInput(suffix);
       settings.recordTerminalInputSuggestionUsage({ accepted: true });
       return true;
     };
@@ -1247,7 +1248,7 @@ export function useTerminalInput({
     cancelAiSuggestionRefresh: () => cancelAiSuggestionRefreshRef.current(),
     scheduleSuggestionRefresh: () => scheduleSuggestionRefreshRef.current(),
     updateSuggestionGhostPosition: () => updateSuggestionGhostPositionRef.current(),
-    acceptSuggestion: () => acceptSuggestionRef.current(),
+    acceptSuggestion: (visibleSuffix) => acceptSuggestionRef.current(visibleSuffix),
     onCommandSubmitted: (command) => {
       lastSubmittedCommandRef.current = command;
       suggestionContextCacheRef.current = null;

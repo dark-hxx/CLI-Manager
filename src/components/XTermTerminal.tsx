@@ -1381,7 +1381,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         !e.altKey &&
         !e.metaKey
       ) {
-        if (acceptSuggestion()) {
+        if (acceptSuggestion(suggestionGhost?.suffix)) {
           e.preventDefault();
           return false;
         }
