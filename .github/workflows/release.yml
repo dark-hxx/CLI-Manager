@@ -148,7 +148,6 @@ jobs:
         shell: bash
         run: |
           for required in \
-            latest.json \
             cli-manager-ssh-agent-linux-x86_64 \
             cli-manager-ssh-agent-linux-aarch64 \
             ssh-agent-release-manifest.json \
