@@ -187,7 +187,7 @@ pub async fn hook_settings_get_status(
     }
 
     let claude = build_claude_status(claude_dir.clone())?;
-    let codex = build_codex_status(codex_dir.clone())?;
+    let codex = build_codex_status_with_trust_repair(codex_dir.clone())?;
     let pi = build_pi_status(pi_dir.clone())?;
     let grok = build_grok_status(grok_dir.clone())?;
     let cc_switch = inspect_ccswitch_hook_protection(
@@ -3472,6 +3472,74 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
     ))
 }
 
+fn build_codex_status_with_trust_repair(
+    codex_dir: Option<PathBuf>,
+) -> Result<ToolHookSettingsStatus, String> {
+    let status = build_codex_status(codex_dir.clone())?;
+    let Some(codex_dir) = codex_dir else {
+        return Ok(status);
+    };
+    if !matches!(status.status, HookInstallStatus::PartialInstalled)
+        || !status.session_start_hook_installed
+        || !status.running_hook_installed
+        || !status.attention_hook_installed
+        || !status.stop_hook_installed
+        || !status.subagent_start_hook_installed
+        || !status.hooks_feature_installed
+    {
+        return Ok(status);
+    }
+
+    repair_codex_hook_trust(&codex_dir)?;
+    build_codex_status(Some(codex_dir))
+}
+
+fn repair_codex_hook_trust(codex_dir: &Path) -> Result<(), String> {
+    let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+    let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+    let settings = read_json_if_exists(&hooks_path)?;
+    let Some(hooks) = settings.get("hooks").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let mut blocks = Vec::new();
+    for event in CODEX_HOOK_EVENTS {
+        let Some(event_name) = codex_hook_state_event_name(event) else {
+            continue;
+        };
+        let Some(entries) = hooks.get(event).and_then(Value::as_array) else {
+            continue;
+        };
+        for (entry_index, entry) in entries.iter().enumerate() {
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for (hook_index, hook) in commands.iter().enumerate() {
+                if !is_cli_manager_command(hook, &CODEX_LEGACY_SCRIPTS) {
+                    continue;
+                }
+                let key = toml_escape_basic_string(&format!(
+                    "{}:{event_name}:{entry_index}:{hook_index}",
+                    path_to_string(&hooks_path)
+                ));
+                let hash = codex_hook_trusted_hash(event, entry, hook)?;
+                blocks.push(vec![
+                    format!("[hooks.state.\"{key}\"]"),
+                    format!("trusted_hash = \"{hash}\""),
+                ]);
+            }
+        }
+    }
+
+    let config = fs::read_to_string(&config_path)
+        .map_err(|err| format!("读取 {} 失败: {err}", path_to_string(&config_path)))?;
+    let next = merge_codex_common_config_toml(Some(&config), &blocks);
+    if next != config {
+        fs::write(&config_path, next)
+            .map_err(|err| format!("写入 {} 失败: {err}", path_to_string(&config_path)))?;
+    }
+    Ok(())
+}
+
 struct ToolChecks {
     attention_script_installed: bool,
     finished_script_installed: bool,
@@ -3945,33 +4013,62 @@ mod tests {
     }
 
     #[test]
-    fn codex_status_rejects_disabled_or_stale_hook_trust() {
+    fn codex_status_repairs_disabled_or_stale_hook_trust() {
         let tmp = TempDir::new().unwrap();
         let codex_dir = tmp.path().join("codex");
         fs::create_dir_all(&codex_dir).unwrap();
         install_codex_hooks(&codex_dir).unwrap();
-        trust_installed_codex_hooks(&codex_dir);
+        let missing = build_codex_status_with_trust_repair(Some(codex_dir.clone())).unwrap();
+        assert!(matches!(missing.status, HookInstallStatus::Installed));
         let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
-        let trusted = fs::read_to_string(&config_path).unwrap();
+        let mut trusted = fs::read_to_string(&config_path).unwrap();
+        trusted.push_str("\n[hooks.state.\"user-hook\"]\ntrusted_hash = \"sha256:user\"\n");
 
         fs::write(
             &config_path,
             trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1),
         )
         .unwrap();
-        let disabled = build_codex_status(Some(codex_dir.clone())).unwrap();
-        assert!(matches!(
-            disabled.status,
-            HookInstallStatus::PartialInstalled
-        ));
+        let disabled = build_codex_status_with_trust_repair(Some(codex_dir.clone())).unwrap();
+        assert!(matches!(disabled.status, HookInstallStatus::Installed));
 
         fs::write(
             &config_path,
             trusted.replacen("sha256:", "sha256:stale-", 1),
         )
         .unwrap();
-        let stale = build_codex_status(Some(codex_dir)).unwrap();
-        assert!(matches!(stale.status, HookInstallStatus::PartialInstalled));
+        let stale = build_codex_status_with_trust_repair(Some(codex_dir)).unwrap();
+        assert!(matches!(stale.status, HookInstallStatus::Installed));
+        assert!(fs::read_to_string(config_path)
+            .unwrap()
+            .contains("[hooks.state.\"user-hook\"]\ntrusted_hash = \"sha256:user\""));
+    }
+
+    #[test]
+    fn codex_status_does_not_repair_trust_when_required_hook_is_missing() {
+        let tmp = TempDir::new().unwrap();
+        let codex_dir = tmp.path().join("codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        install_codex_hooks(&codex_dir).unwrap();
+        trust_installed_codex_hooks(&codex_dir);
+        let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+        let mut settings = read_json(&hooks_path).unwrap();
+        settings["hooks"].as_object_mut().unwrap().remove("Stop");
+        write_json(&hooks_path, &settings).unwrap();
+        let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+        let trusted = fs::read_to_string(&config_path).unwrap();
+        fs::write(
+            &config_path,
+            trusted.replacen("sha256:", "sha256:stale-", 1),
+        )
+        .unwrap();
+
+        let status = build_codex_status_with_trust_repair(Some(codex_dir)).unwrap();
+
+        assert!(matches!(status.status, HookInstallStatus::PartialInstalled));
+        assert!(fs::read_to_string(config_path)
+            .unwrap()
+            .contains("sha256:stale-"));
     }
 
     #[tokio::test]
