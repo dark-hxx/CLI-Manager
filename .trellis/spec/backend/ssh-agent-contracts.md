@@ -167,8 +167,9 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Cancellation IDs are validated and held in a bounded 1024-entry registry. Unknown frame kinds return a versioned error without closing the bridge; invalid request IDs/kinds, oversized frames, contaminated preamble/frame streams, or malformed response identities close it.
 - Hook batches are accepted only when at most 128 records have strictly increasing sequences above the current cursor and the final sequence equals `latestSequence`; ACK must echo `accepted=true` and the exact sequence. Remote error codes are limited to 128 ASCII identifier bytes before logging.
 - Spool drain and ACK use bounded per-record streaming rather than loading the full 32 MiB file. A malformed or over-1-MiB record fails closed and preserves the original spool; ACK temporary files are removed on failure.
-- Remote history list/search/detail requests reuse the Host bridge and remain project-scoped. Agent cursors use `generation:offset`; full detail uses ordered 256-KiB chunks under the existing 1-MiB frame limit and a 64-MiB aggregate cap. Realtime detail may use a Hook-provided `remoteTranscriptRef` as an opaque Agent-side locator: the Agent must canonicalize it under the configured source root, require a regular `.jsonl` file, parse only that file, and reject a session-id or project-scope mismatch.
+- Remote history list/search/detail requests reuse the Host bridge and remain project-scoped. Agent cursors use `generation:offset`; full detail uses ordered 256-KiB chunks under the existing 1-MiB frame limit and a 64-MiB aggregate cap. Desktop `historyGet.remoteTranscriptRef` is always a non-null string on the wire; ordinary historical detail sends `""`, while realtime detail may send a Hook-provided opaque Agent-side locator. This preserves compatibility with published Agent `0.1.3`, whose request field is a Rust `String`; the Agent canonicalizes non-empty refs under the configured source root, requires a regular `.jsonl` file, parses only that file, and rejects a session-id or project-scope mismatch.
 - Desktop remote-history consumers validate installation/machine/user/source/config-root/source-instance identity on initial and continuation pages. Detail chunks additionally validate request identity, sequence, total, aggregate size, and one request deadline.
+- `sourceInstanceId` remains stable across Agent reinstall/upgrade because its identity is machine/user/source/config-root. The current RPC must still match the launch plan's `installationId`, but catalog apply treats `installationId` and Host binding as rotatable metadata and atomically replaces them after the stable source identity matches.
 - Resume preflight reopens the indexed artifact, validates the stable source identity, verifies the original JSONL is still readable, canonicalizes an enterable absolute POSIX cwd, checks the standard Claude/Codex executable, and returns structured resume args plus the canonical config-root environment override.
 - Agent uninstall returns `agent_managed_hooks_present` while any Agent Hook installation record remains. Hook uninstall does not delete the configured root, future history source identity, or unrelated Agent state.
 - If a custom config root was deleted externally, install/inspect still report it missing, but preview-uninstall/uninstall may recover exactly one matching canonical identity from the bounded Agent-owned record set and remove that stale record without recreating the directory. Retained-root cleanup also sends the previously validated `expectedCanonicalRoot`; if the configured path is a symlink that now resolves elsewhere, only an exact unique Agent record may route cleanup back to the old canonical root. Ambiguous, missing, invalid, or retargeted canonical records fail closed.
@@ -215,6 +216,8 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 | SSH stderr indicates interactive authentication or Host Key action | stop background retry with a stable sanitized code |
 | Hook batch sequence/latest/ACK mismatch | close bridge without advancing the cursor |
 | Remote continuation identity changes | `history_remote_identity_changed`; preserve the previous catalog rows |
+| Agent reinstall changes only `installationId` while machine/user/source/config-root stay stable | accept the same source instance and update catalog metadata atomically |
+| Ordinary `historyGet` has no Hook transcript reference | Desktop sends `remoteTranscriptRef: ""`, never JSON `null`; Agent resolves the session through its index |
 | Detail chunks are reordered, duplicated, oversized, or exceed the deadline | close/fail the request without caching partial detail |
 | Realtime transcript ref escapes the configured root, is not a regular `.jsonl`, or parses to another session/project | `history_artifact_*` / `history_session_identity_mismatch`; return no detail and do not fall back to discovery |
 | Resume source JSONL or cwd is missing | `remote_session_source_missing` / `remote_session_cwd_unavailable`; create no PTY |
@@ -264,6 +267,9 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Bad: relying only on WebView `<img>` sizing after a high-pixel image has already crossed the SSH bridge as Base64.
 - Good: an SSH terminal stats panel with a Hook session id and transcript ref reads only that bounded JSONL through the Agent, while stale/offline failures preserve the last bounded snapshot without local path fallback or full history discovery.
 - Good: deleting a Host either clears project/integration references and deletes the Host together, or rolls the entire operation back.
+- Good: an ordinary SSH history detail request has no Hook transcript ref, so Desktop sends `remoteTranscriptRef: ""`; Agent `0.1.3` deserializes the string and resolves the session through its published index.
+- Base: a realtime detail request has a Hook transcript ref; Desktop preserves the non-empty opaque string and Agent applies its existing root/type/session/project validation.
+- Bad: encode a missing `remoteTranscriptRef` as JSON `null`; Agent `0.1.3` declares the field as Rust `String`, so request deserialization fails with `history_request_invalid` before history lookup runs.
 - Good: two different SSH Hosts save preferences concurrently; SQLite coordinates only their short write sections and no application-wide CRUD mutex serializes them.
 - Base: two imports contain the same config alias; the later transaction observes the normalized existing alias and reports it as skipped.
 - Bad: issue `BEGIN IMMEDIATE`, updates, and `COMMIT` as separate `tauri-plugin-sql` calls and assume the pool preserves connection affinity.
@@ -299,6 +305,7 @@ Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum fra
 - Assert protocol minor 1 capability negotiation, bounded reader/response timeouts, global bridge/connect permits, retry jitter/reset classification, `bridge_already_active` takeover, heartbeat echo, cancellation bounds, and last-session shutdown.
 - Assert protocol minor 3 history capability negotiation, generation cursors, continuation identity, chunk ordering/size/deadline, detail LRU eviction, consumer release, and direct transcript-ref root/type/session/project confinement.
 - Assert protocol minor 4 resume capability and protocol minor 5 remote-file capability, structured Claude/Codex args, source/cwd validation, ownership claim/release, and implicit SSH Config username handling.
+- Assert Desktop `historyGet` payload encoding maps a missing transcript ref to the JSON string `""`, preserves a non-empty direct ref unchanged, and never emits JSON `null` for the Agent `String` field.
 - Assert remote file root/path confinement, symlink escape rejection, binary refusal, 1 MiB text and 5 MiB image limits, the exact 12,000,000-pixel boundary, video refusal, directory/search/visited limits, image data URLs, and UI/store read-only routing.
 - Assert protocol minor 7 and `gitFull`, dedicated Git-lane serialization and identity isolation, exact launch-root binding, strict per-RPC payloads, full Git mutation/network operations, write timeout/no-retry result-unknown handling, path/branch/patch validation, untracked symlink rejection, and SSH-pending fail-closed transport selection.
 - Assert `validate_relative("", true)` succeeds for the root repository, while `validate_relative("", false)` and empty file paths remain rejected.
@@ -327,6 +334,23 @@ transport.build_one_shot_launch(agent_probe_script, SshOneShotOptions::default()
 ```
 
 The shared transport owns authentication and routing; the caller owns whether the process is an interactive PTY or a bounded one-shot operation.
+
+### Wrong: map an absent Agent string field to JSON null
+
+```rust
+payload["remoteTranscriptRef"] = remote_transcript_ref
+    .map(Value::String)
+    .unwrap_or(Value::Null);
+```
+
+### Correct: normalize the optional Desktop value to the Agent wire type
+
+```rust
+payload["remoteTranscriptRef"] =
+    Value::String(remote_transcript_ref.unwrap_or_default());
+```
+
+The Desktop option expresses whether a direct locator is available; the Agent wire contract remains a non-null string, with `""` selecting indexed lookup.
 
 ### Wrong: treat an SSH Git request as local when the Agent context is not ready
 

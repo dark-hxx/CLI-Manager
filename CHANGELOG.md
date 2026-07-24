@@ -62,6 +62,8 @@
 - 修复 WebDAV 恢复、ZIP 导入及恢复回滚把 SQLite 事务拆分到连接池的多个连接上，可能触发 `database is locked` 的问题；数据库域恢复现由 Rust 在单连接事务中原子执行。
 - 修复 SSH Config 批量导入、主机/分组删除、CLI 配置目录保存及 Hook 集成记录把事务拆分到连接池不同连接，可能锁库或部分写入的问题；相关组合操作改由 Rust 单连接短事务执行，批量导入一次读取重复项，普通 SSH 操作不增加全局互斥。
 - 修复 SSH 远程历史轮询、历史页刷新和加载更多并发时，重复请求造成额外写入、旧 generation 或旧分页游标覆盖新 catalog 状态的问题；相同请求会合并执行，落库按来源 generation 与游标单调更新。
+- 修复升级或重装 SSH Agent 后立即打开远程会话历史时，catalog 将可轮换的 Agent `installationId` 误判为远程来源变化并返回 `history_remote_identity_changed` 的问题；machine/user/source/config-root 不变时会原子更新安装元数据，真正的远端来源变化仍拒绝覆盖旧缓存。
+- 修复 SSH 远程会话列表加载成功后，普通详情请求把缺失的 transcript 引用发送为 JSON `null`，导致已发布 Agent `0.1.3` 拒绝请求并返回 `history_request_invalid` 的问题；Desktop 现统一发送非 null 字符串，无需升级远端 Agent 即可打开详情。
 
 ### SSH
 

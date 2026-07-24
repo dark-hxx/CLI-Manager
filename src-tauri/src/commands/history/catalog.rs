@@ -2325,11 +2325,6 @@ async fn apply_remote_sync_with_conn(
             || row.try_get::<String, _>("transport_kind").ok().as_deref() != Some("ssh")
             || identity
                 .as_ref()
-                .and_then(|value| value.get("installationId"))
-                .and_then(Value::as_str)
-                != Some(result.installation_id.as_str())
-            || identity
-                .as_ref()
                 .and_then(|value| value.get("remoteMachineId"))
                 .and_then(Value::as_str)
                 != Some(result.remote_machine_id.as_str())
@@ -2374,15 +2369,12 @@ async fn apply_remote_sync_with_conn(
             .try_get::<Option<String>, _>("remote_identity_json")
             .map_err(|err| err.to_string())?
             .and_then(|value| serde_json::from_str::<Value>(&value).ok());
+        // installationId authenticates the live bridge but rotates when the Agent is reinstalled.
+        // The stable source identity is machine/user/source/config root, matching source_instance_id.
         let identity_matches = existing_identity.as_ref().is_some_and(|identity| {
-            [
-                "installationId",
-                "remoteMachineId",
-                "sshUser",
-                "configRootHash",
-            ]
-            .into_iter()
-            .all(|key| identity.get(key) == remote_identity.get(key))
+            ["remoteMachineId", "sshUser", "configRootHash"]
+                .into_iter()
+                .all(|key| identity.get(key) == remote_identity.get(key))
         });
         if row.try_get::<String, _>("source_id").ok().as_deref() != Some(result.source.as_str())
             || row.try_get::<String, _>("scope_kind").ok().as_deref() != Some("ssh")
@@ -4234,6 +4226,33 @@ mod tests {
                 .unwrap_err(),
             "history_remote_identity_changed"
         );
+    }
+
+    #[tokio::test]
+    async fn remote_sync_accepts_agent_installation_rotation_for_same_source_instance() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        let result = remote_sync_result();
+        apply_remote_sync_with_conn(&mut conn, "host-1", &result)
+            .await
+            .unwrap();
+
+        let mut rotated = result;
+        rotated.installation_id = "installation-2".to_string();
+        assert!(apply_remote_sync_with_conn(&mut conn, "host-2", &rotated)
+            .await
+            .unwrap());
+
+        let identity_json: String = sqlx::query_scalar(
+            "SELECT remote_identity_json FROM history_source_instances WHERE id = ?1",
+        )
+        .bind(&rotated.source_instance_id)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        let identity: Value = serde_json::from_str(&identity_json).unwrap();
+        assert_eq!(identity["installationId"], "installation-2");
+        assert_eq!(identity["hostId"], "host-2");
     }
 
     #[tokio::test]

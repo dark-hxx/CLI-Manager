@@ -1840,6 +1840,20 @@ fn remote_scope_payload(
     })
 }
 
+fn remote_history_get_payload(
+    source: &str,
+    configured_config_root: &str,
+    project_paths: Vec<String>,
+    source_session_id: String,
+    remote_transcript_ref: Option<String>,
+) -> Value {
+    let mut payload =
+        remote_scope_payload(source, configured_config_root, project_paths, None, Some(1));
+    payload["sourceSessionId"] = Value::String(source_session_id);
+    payload["remoteTranscriptRef"] = Value::String(remote_transcript_ref.unwrap_or_default());
+    payload
+}
+
 fn remote_error_code(error: &str) -> &str {
     error
         .split([':', ' '])
@@ -2060,20 +2074,13 @@ pub async fn history_remote_get_session(
             }
         }
     }
-    let payload = {
-        let mut payload = remote_scope_payload(
-            &source,
-            &configured_config_root,
-            project_paths,
-            None,
-            Some(1),
-        );
-        payload["sourceSessionId"] = Value::String(source_session_id.clone());
-        payload["remoteTranscriptRef"] = remote_transcript_ref
-            .map(Value::String)
-            .unwrap_or(Value::Null);
-        payload
-    };
+    let payload = remote_history_get_payload(
+        &source,
+        &configured_config_root,
+        project_paths,
+        source_session_id.clone(),
+        remote_transcript_ref,
+    );
     let client = daemon_bridge
         .get()
         .ok_or_else(|| "daemon_unavailable".to_string())?;
@@ -12389,6 +12396,31 @@ mod tests {
             )
             .unwrap_err(),
             "history_remote_identity_changed"
+        );
+    }
+
+    #[test]
+    fn remote_history_get_payload_encodes_missing_transcript_ref_as_empty_string() {
+        let payload = remote_history_get_payload(
+            "claude",
+            "~/.claude",
+            vec!["/work/project".to_string()],
+            "session-1".to_string(),
+            None,
+        );
+
+        assert_eq!(payload["remoteTranscriptRef"], Value::String(String::new()));
+
+        let direct_payload = remote_history_get_payload(
+            "claude",
+            "~/.claude",
+            vec!["/work/project".to_string()],
+            "session-1".to_string(),
+            Some("/home/dev/.claude/projects/session-1.jsonl".to_string()),
+        );
+        assert_eq!(
+            direct_payload["remoteTranscriptRef"],
+            Value::String("/home/dev/.claude/projects/session-1.jsonl".to_string())
         );
     }
 
