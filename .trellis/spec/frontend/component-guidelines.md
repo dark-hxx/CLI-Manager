@@ -1232,6 +1232,8 @@ if (sequence === "\x1b[?25l") {
 
 **Fix**: In `XTermTerminal`, keep the helper textarea pinned to xterm's offscreen default while not composing, but keep it at least `1x1`; xterm's IME fallback for active-IME punctuation reads textarea diffs after keyCode 229, and some IMEs drop the first character when the helper textarea is `0x0`. During IME composition, anchor `.composition-view` and `.xterm-helper-textarea` to xterm's current `buffer.active.cursorX/cursorY` when that cursor is on an input prompt. If a TUI redraw moves the cursor to a status/progress row during composition, fall back to the nearest visible prompt row instead of blindly trusting that redraw cursor. Prompt recognition must include Codex's `›` prompt in addition to common shell prompts such as `>`, `$`, `#`, and `PS>`. Do not scan only the bottom rows or force a bottom-row fallback: real input can sit above the bottom while the IME candidate window still needs to follow the visible input row. Reapply the frozen composition anchor after xterm render events, because xterm's own `CompositionHelper.updateCompositionElements()` can rewrite `.composition-view` and helper textarea positions from the live buffer cursor. After `compositionend`, pin the helper textarea offscreen again.
 
+**Composition-end timing**: xterm intentionally reads the final helper-textarea value from its own `setTimeout(0)` after `compositionend`, because WebKit/Chromium can update the committed candidate after the event listeners return. The application IME listener must defer helper-textarea re-anchoring, scroll restoration, and `scheduleFit(true)` to a later timer registered after xterm's listener. Cancel that deferred cleanup if another composition starts or the controller is disposed. Mutating textarea geometry synchronously in `compositionend` can make WKWebView commit only the final raw pinyin character.
+
 **Correct**:
 
 ```tsx
@@ -1258,6 +1260,7 @@ textarea.style.display = "none";
 - [ ] If a TUI status/progress redraw owns the current cursor during composition, the candidate window falls back to the nearest visible prompt row.
 - [ ] Normal keyboard input, Enter, and paste still reach the PTY.
 - [ ] Chinese/IME composition still positions the candidate window correctly.
+- [ ] `node --test scripts/terminalImeComposition.test.mjs` confirms composition cleanup stays behind xterm's deferred commit and is cancelled for a new composition/disposal.
 
 ### Common Mistake: Estimating xterm IME cell size from container bounds
 
