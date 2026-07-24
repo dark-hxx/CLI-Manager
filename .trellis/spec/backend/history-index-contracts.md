@@ -95,6 +95,7 @@ catalog::ensure_refresh(app, roots, false, false).await?;
 - Compatible upgrades preserve catalog rows. Destructive recreation remains limited to malformed or non-database files.
 - Schema initialization is idempotent; reopening an upgraded catalog must not rewrite or reject its schema.
 - Catalog opens must serialize schema initialization inside the process so compatibility `PRAGMA table_info` and `ALTER TABLE` steps cannot race across connections.
+- Foreign-key support indexes for cascades and `ON DELETE SET NULL` paths must be created and upgraded idempotently; deleting or replacing one history session must not scan unrelated `history_message_parts`, `history_tool_events`, or child session relation rows for every message.
 
 ### 4. Validation & Error Matrix
 
@@ -103,6 +104,7 @@ catalog::ensure_refresh(app, roots, false, false).await?;
 | Catalog file does not exist | Create the complete current schema. |
 | Older table lacks a newly required column | Add the column with its compatibility default before dependent DDL runs. |
 | Older index conflicts with the replacement index | Drop the obsolete index after columns exist, then create the replacement. |
+| Older schema lacks FK support indexes | Create the missing indexes in place and advance `user_version`; preserve all catalog rows. |
 | Catalog already has the current `user_version` | Return through the fast path without schema writes. |
 | Compatible upgrade statement fails | Return the error and do not advance `user_version`. |
 | Two connections first-open the same legacy catalog | Both opens succeed; only one compatibility upgrade runs at a time. |
@@ -118,6 +120,7 @@ catalog::ensure_refresh(app, roots, false, false).await?;
 - Build the previous-version source table and obsolete index in memory, set the old `user_version`, insert an active row, then call `ensure_schema`.
 - Assert the existing row survives with compatibility defaults, the replacement index exists and enforces uniqueness, and a second `ensure_schema` call succeeds.
 - Open one legacy catalog concurrently through two connections and assert both opens complete with the current schema version.
+- Simulate a previous catalog schema missing FK support indexes, run `ensure_schema`, and assert the indexes exist without dropping rows.
 - Force a metadata write failure and assert `user_version` remains at the previous version.
 - Keep fresh-schema tests and the focused `cargo test history --lib` suite passing.
 
@@ -147,17 +150,23 @@ create_scoped_index(conn).await?;
 ### 2. Signatures
 
 - `history_remote_sync(...) -> Result<Value, String>` returns the Agent sync payload plus `applied: boolean`.
+- Agent `HistoryScopeRequest.forceRefresh: boolean` is camel-case on the wire and defaults to `false` when older callers omit it.
 - `catalog::apply_remote_sync(host_id, result) -> Result<bool, String>` returns `false` only when persisted generation/cursor state is newer.
+- `ssh_db_record_history_source(input: SshHistorySourceInput) -> Result<(), String>` is the only write path for remote-history integration identity in `cli-manager.db`.
 - Frontend `requestRemoteHistorySync(context, options) -> Promise<SshRemoteHistorySyncResult>` owns keyed in-flight request reuse and integration metadata persistence.
 
 ### 3. Contracts
 
 - Remote `sourceInstanceId` is stable for `(remoteMachineId, sshUser, source, canonicalConfigRootHash)` and does not include `hostId`, project ID, client ID, or replaceable Agent installation ID.
 - The Agent owns one rebuildable index per `(source, configRootHash)`. Writers use an Agent-side cross-process lock whose directory, permissions, and owner record are acquired transactionally; readers reuse the published generation.
+- A non-forced sync with a compatible, complete index that covers every requested project path returns the requested page before acquiring the writer lock. It must not walk history directories or rewrite `index.json`.
+- Missing/incompatible/partial indexes, project-scope expansion, and `forceRefresh=true` enter incremental discovery. Discovery orders files by descending modification time; a refresh with no entry, scope, tombstone, or completeness-state change preserves the published generation and index file modification time.
 - JSONL indexing is append-aware and handles truncate, same-size rewrite, rotation, partial tails, tombstones, and project-scope expansion. A record larger than the 8 MiB read window is skipped with bounded cursor progress until its newline.
 - Agent cursors are `generation:offset`. A generation mismatch resets pagination to offset zero; desktop fetches 21 summaries to display 20 and requests the next Agent page only from load-more.
-- Desktop callers with identical host/source/root/project/cursor/limit inputs share one in-flight sync request, including the local integration metadata write. Different sources and cursor pages remain independent.
+- Desktop callers with identical host/source/root/project/cursor/limit/force-refresh inputs share one in-flight sync request, including the local integration metadata write. `consumerId` is not part of the key; the shared RPC uses a dedicated ephemeral bridge consumer released only after the request settles, so closing the first window cannot terminate another caller's shared request. Different sources, cursor pages, and refresh modes remain independent.
+- A non-empty Desktop cached page renders before one background forced refresh. A known source identity with no cached rows waits for a non-forced Agent page, allowing a compatible Agent index to serve the first page without a scan. Load-more is non-forced; manual refresh is forced.
 - Catalog apply obtains SQLite's short writer lease inside the transaction, then compares the persisted source generation and cursor offset. Lower generations and lower offsets in the same generation are ignored and reported as not applied; they must not replace session rows, source state, cursor, or frontend context.
+- Catalog input validation, numeric bounds, and JSON serialization complete before `BEGIN IMMEDIATE`. Main-database integration persistence uses WAL, a 15-second busy timeout, one connection, and one `BEGIN IMMEDIATE` transaction; the WebView must not write `ssh_agent_tool_integrations` directly.
 - Remote catalog coordination must not reuse the full local refresh mutex or add a process-wide SSH synchronization mutex. WAL reads remain concurrent; SQLite serializes only the actual write transaction.
 - The existing `history-catalog.db` stores remote summaries, usage facts, freshness, cursor, and identity. Summary materialization must remove persisted messages, tool events, file changes, and corresponding FTS rows.
 - Full remote detail is online-only and lives in a bounded in-memory LRU. Offline behavior guarantees cached list/summary/usage only, with explicit stale/disconnected state.
@@ -172,20 +181,27 @@ create_scoped_index(conn).await?;
 | Incoming generation is lower than persisted generation | return `applied=false`; preserve catalog and frontend context |
 | Incoming generation is equal and cursor offset is lower | return `applied=false`; preserve catalog and frontend context |
 | Incoming generation is newer or same-generation offset advances | apply the complete summary transaction and return `applied=true` |
-| Two callers use identical request inputs | share one remote RPC and one integration metadata write |
+| Complete compatible index, covered scope, `forceRefresh=false` | return the cached page without writer lock, directory discovery, generation change, or index write |
+| Partial index, expanded scope, or `forceRefresh=true` | run incremental discovery; tombstones only after complete discovery |
+| Two callers use identical result-affecting request inputs | share one remote RPC and one integration metadata write even when `consumerId` differs |
+| Catalog writer remains locked after its bounded wait | `history_catalog_busy`; preserve cached rows |
+| Main integration metadata remains locked after its bounded wait | `ssh_agent_history_metadata_busy`; preserve the committed catalog result and existing integration row |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: a stats poll and history refresh request the same first page concurrently and share one Promise.
+- Good: opening a project with cached summaries renders immediately, then a forced refresh finds no changes and leaves `index.json` untouched.
 - Good: page offset 20 commits before an older offset 10 response; offset 10 is ignored without blocking readers or another source.
 - Base: equal generation and equal cursor replay is idempotent and may reapply safely.
+- Base: Desktop cache is absent but the Agent has a complete index; the awaited non-forced first page returns without scanning.
 - Bad: guard all remote sources with `CATALOG_REFRESH_LOCK` or let an old response update `sync_cursor_json` after a new response.
+- Bad: key shared requests by `consumerId`, use that window's bridge consumer for the shared RPC, or write integration metadata through pooled frontend SQL calls.
 
 ### 6. Tests Required
 
-- Agent: append/partial/truncate/rewrite, project scope, tombstones, stable identity, lock cleanup/recovery, oversized-record progress, cursor reset, and full history suite.
-- Desktop: strict remote identity/continuation validation, numeric overflow, summary-only cleanup, pagination, stale generation/cursor rejection, detail chunk validation/deadline, LRU eviction, bridge consumer lifetime, and catalog tests.
-- Frontend: TypeScript check plus manual rapid project/filter switching to confirm stale list/search/detail requests cannot replace the current SSH context.
+- Agent: append/partial/truncate/rewrite, project scope, tombstones, stable identity, lock cleanup/recovery, oversized-record progress, cursor reset, complete-index reuse, unchanged no-write, recent-first discovery, and full history suite.
+- Desktop: strict remote identity/continuation validation, numeric overflow before transaction, summary-only cleanup, pagination, stale generation/cursor rejection, distinct busy error mapping, metadata idempotency/rollback, detail chunk validation/deadline, LRU eviction, bridge consumer lifetime, and catalog tests.
+- Frontend: TypeScript check plus manual rapid project/filter/window switching to confirm shared refresh survives the first consumer closing and stale list/search/detail requests cannot replace the current SSH context.
 
 ### 7. Wrong vs Correct
 

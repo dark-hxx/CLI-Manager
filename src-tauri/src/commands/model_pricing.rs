@@ -597,11 +597,7 @@ fn token_prefix_base_score(a: &[String], b: &[String]) -> Option<f64> {
     if a.is_empty() || b.is_empty() || a == b {
         return None;
     }
-    let (shorter, longer) = if a.len() <= b.len() {
-        (a, b)
-    } else {
-        (b, a)
-    };
+    let (shorter, longer) = if a.len() <= b.len() { (a, b) } else { (b, a) };
     if shorter.len() < 2 {
         return None;
     }
@@ -620,11 +616,7 @@ fn token_containment(a: &[String], b: &[String]) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
     }
-    let (shorter, longer) = if a.len() <= b.len() {
-        (a, b)
-    } else {
-        (b, a)
-    };
+    let (shorter, longer) = if a.len() <= b.len() { (a, b) } else { (b, a) };
     let longer_set: HashSet<&str> = longer.iter().map(String::as_str).collect();
     let hits = shorter
         .iter()
@@ -847,7 +839,9 @@ mod tests {
         assert!(ranked[0].score >= MIN_CANDIDATE_SCORE);
         assert!(!is_auto_match_kind(ranked[0].kind));
         assert_eq!(ranked[0].remote.source_model_id, "xai/grok-4.5");
-        assert!(ranked.iter().all(|item| item.remote.model != "unrelated/other-model"));
+        assert!(ranked
+            .iter()
+            .all(|item| item.remote.model != "unrelated/other-model"));
     }
 
     #[test]
@@ -855,9 +849,7 @@ mod tests {
         let remotes = vec![remote_price("provider/gpt-extra-suffix", "litellm")];
         // single shared token "gpt" must not become a base-prefix hit
         let ranked = rank_candidates("gpt", &remotes);
-        assert!(ranked
-            .iter()
-            .all(|item| item.kind != MatchKind::BasePrefix));
+        assert!(ranked.iter().all(|item| item.kind != MatchKind::BasePrefix));
     }
 
     #[test]

@@ -510,8 +510,8 @@ pub async fn hook_settings_install_pi(
     cc_switch_db_path: Option<String>,
     module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
-    let pi_dir = resolve_pi_dir(pi_selected_dir, true)?
-        .ok_or_else(|| "请先选择 Pi 配置目录".to_string())?;
+    let pi_dir =
+        resolve_pi_dir(pi_selected_dir, true)?.ok_or_else(|| "请先选择 Pi 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
     let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
@@ -554,8 +554,8 @@ pub async fn hook_settings_uninstall_pi(
     cc_switch_db_path: Option<String>,
     module: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
-    let pi_dir = resolve_pi_dir(pi_selected_dir, false)?
-        .ok_or_else(|| "未找到 Pi 配置目录".to_string())?;
+    let pi_dir =
+        resolve_pi_dir(pi_selected_dir, false)?.ok_or_else(|| "未找到 Pi 配置目录".to_string())?;
     let claude_dir = resolve_claude_dir(selected_dir, false)?;
     let codex_dir = resolve_codex_dir(codex_selected_dir, false)?;
     let grok_dir = resolve_grok_dir(grok_selected_dir, false)?;
@@ -587,7 +587,6 @@ pub async fn hook_settings_uninstall_pi(
         claude_auto_repaired: false,
     })
 }
-
 
 #[tauri::command]
 pub async fn hook_settings_install_grok(
@@ -682,7 +681,6 @@ pub async fn hook_settings_uninstall_grok(
 
 #[tauri::command]
 pub async fn hook_settings_select_dir(
-
     app: AppHandle,
     title: Option<String>,
 ) -> Result<Option<String>, String> {
@@ -2544,8 +2542,6 @@ fn disable_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("写入 {} 失败: {e}", path_to_string(&config_path)))
 }
 
-
-
 fn resolve_grok_dir(
     selected_dir: Option<String>,
     create_if_missing: bool,
@@ -2735,7 +2731,10 @@ fn set_toml_table_bool(content: &str, table: &str, key: &str, value: bool) -> St
             insert_index = index;
             break;
         }
-        if trimmed.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
+        if trimmed
+            .split_once('=')
+            .is_some_and(|(k, _)| k.trim() == key)
+        {
             key_line = Some(index);
             break;
         }
@@ -2764,7 +2763,7 @@ fn grok_cross_vendor_hooks_disabled(config_path: &Path) -> Result<bool, String> 
     };
     Ok(
         toml_table_bool(&content, "compat.claude", "hooks") == Some(false)
-            && toml_table_bool(&content, "compat.cursor", "hooks") == Some(false)
+            && toml_table_bool(&content, "compat.cursor", "hooks") == Some(false),
     )
 }
 
@@ -2971,7 +2970,6 @@ fn build_grok_status(grok_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus
     ))
 }
 
-
 fn resolve_pi_dir(
     selected_dir: Option<String>,
     create_if_missing: bool,
@@ -3002,7 +3000,9 @@ fn resolve_pi_dir(
 }
 
 fn pi_extension_path(pi_dir: &Path) -> PathBuf {
-    pi_dir.join(PI_EXTENSION_DIR_NAME).join(PI_EXTENSION_FILE_NAME)
+    pi_dir
+        .join(PI_EXTENSION_DIR_NAME)
+        .join(PI_EXTENSION_FILE_NAME)
 }
 
 fn pi_module_marker(module: PiHookModule) -> &'static str {
@@ -4381,9 +4381,13 @@ wsl = true
 "#;
         let merged = merge_common_config_codex_statusline(
             Some(raw),
-            &["model-with-reasoning".to_string(), "context-remaining".to_string()],
+            &[
+                "model-with-reasoning".to_string(),
+                "context-remaining".to_string(),
+            ],
         );
-        assert!(merged.contains("[tui]\nstatus_line = [\"model-with-reasoning\", \"context-remaining\"]"));
+        assert!(merged
+            .contains("[tui]\nstatus_line = [\"model-with-reasoning\", \"context-remaining\"]"));
         assert!(merged.contains("[features]\nhooks = true # CLI-Manager hook protection"));
         assert!(merged.contains("[windows]\nwsl = true"));
         assert!(merged.find("[tui]").unwrap() < merged.find("[features]").unwrap());
@@ -4828,7 +4832,6 @@ model_instructions_file = "./instruction.md"
         assert_eq!(error, PI_EXTENSION_CONFLICT_ERROR);
         assert_eq!(fs::read_to_string(extension_path).unwrap(), user_content);
     }
-
 
     #[cfg(windows)]
     #[test]

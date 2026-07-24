@@ -768,6 +768,10 @@ pub fn run() {
             }
             LogBuilder::new()
                 .level(log_level)
+                .level_for("h2", LevelFilter::Warn)
+                .level_for("hyper", LevelFilter::Warn)
+                .level_for("hyper_util", LevelFilter::Warn)
+                .level_for("reqwest", LevelFilter::Warn)
                 .level_for("sqlx", LevelFilter::Info)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
                 .targets(targets)
@@ -957,6 +961,7 @@ pub fn run() {
             commands::ssh_db::ssh_db_delete_group,
             commands::ssh_db::ssh_db_save_host_preferences,
             commands::ssh_db::ssh_db_record_hook_report,
+            commands::ssh_db::ssh_db_record_history_source,
             commands::ssh::ssh_check_path,
             commands::ssh::ssh_list_directories,
             commands::ssh_config::ssh_config_default_directory,

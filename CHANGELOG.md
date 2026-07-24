@@ -62,8 +62,15 @@
 - 修复 WebDAV 恢复、ZIP 导入及恢复回滚把 SQLite 事务拆分到连接池的多个连接上，可能触发 `database is locked` 的问题；数据库域恢复现由 Rust 在单连接事务中原子执行。
 - 修复 SSH Config 批量导入、主机/分组删除、CLI 配置目录保存及 Hook 集成记录把事务拆分到连接池不同连接，可能锁库或部分写入的问题；相关组合操作改由 Rust 单连接短事务执行，批量导入一次读取重复项，普通 SSH 操作不增加全局互斥。
 - 修复 SSH 远程历史轮询、历史页刷新和加载更多并发时，重复请求造成额外写入、旧 generation 或旧分页游标覆盖新 catalog 状态的问题；相同请求会合并执行，落库按来源 generation 与游标单调更新。
+- 修复 SSH 远程历史打开和翻页反复扫描远端目录、无变化仍重写索引，以及 catalog 与主库元数据并发写入时偶发 `database is locked` 的问题；已有完整索引直接分页，首次构建优先最近会话，本地缓存先展示再后台增量刷新，SQLite 写入统一为带 busy timeout 的 Rust 单连接短事务并返回分阶段错误码。
+- 修复本地历史 catalog 刷新接近完成时，删除旧会话行会因缺少外键支撑索引而长时间占用写锁，导致 SSH 远程历史落库返回 `history_catalog_busy` 的问题；现有 `history-catalog.db` 会原地升级补齐索引，无需手动删除缓存。
+- 修复从侧栏或历史项目筛选打开 SSH 项目时仍使用本地项目路径，导致远程项目历史未加载并混入本地收藏快照/旧会话的问题；远程历史列表现在只使用远程 sourceInstance 与远程项目路径，本地 favorite snapshot 不再补入 SSH 项目列表。
+- 修复同一历史会话存在 `C:\...` 与 `\\?\C:\...` 两种 key 时，取消收藏只更新其中一条导致收藏快照残留的问题；取消收藏会按 source + sessionId 清理全部路径变体。
+- 修复打开 SSH 项目历史用量统计时默认强制刷新历史索引并反复全量聚合，导致统计面板长时间读取、远程会话历史加载被拖慢的问题；远程统计现在默认读取已落库 catalog 与聚合缓存，只有手动刷新才强制同步，且按 `sourceInstanceId` 在 SQLite 层过滤。
+- 修复应用刚启动后直接打开 SSH 项目会话历史时，远程历史命令早于 PtyHost daemon 就绪并返回 `daemon_unavailable` 的问题；远程历史命令现在会等待 daemon 初始化，空结果会再执行一次强制远端刷新，历史面板刷新 SSH 项目时也不再弹出本地“没有找到可同步的 Codex/Claude 项目”提示。
 - 修复升级或重装 SSH Agent 后立即打开远程会话历史时，catalog 将可轮换的 Agent `installationId` 误判为远程来源变化并返回 `history_remote_identity_changed` 的问题；machine/user/source/config-root 不变时会原子更新安装元数据，真正的远端来源变化仍拒绝覆盖旧缓存。
 - 修复 SSH 远程会话列表加载成功后，普通详情请求把缺失的 transcript 引用发送为 JSON `null`，导致已发布 Agent `0.1.3` 拒绝请求并返回 `history_request_invalid` 的问题；Desktop 现统一发送非 null 字符串，无需升级远端 Agent 即可打开详情。
+- 降低第三方 HTTP/2 网络库在 debug 模式下的连接复位日志噪声，避免 GitHub 更新检查或连接池关闭时反复输出 `Connection::poll; IO error error=ConnectionReset`，应用自身调试日志仍保持可见。
 
 ### SSH
 

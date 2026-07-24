@@ -24,6 +24,7 @@ import { ProviderSwitchModal } from "../ProviderSwitchModal";
 import { WorktreeFinishDialog } from "../worktree/WorktreeFinishDialog";
 import { openWindowsTerminal } from "../../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../../lib/projectStartupCommand";
+import { resolveHistoryProjectPath } from "../../lib/historyProjectPaths";
 import { resolveCliToolHistorySourceId } from "../../lib/cliTools";
 import { shouldSidebarBootstrapProjects } from "../../lib/projectLoadPolicy";
 import { getProviderSwitchAppType, parseProjectEnvVars } from "../../lib/providerSwitching";
@@ -1365,7 +1366,7 @@ export function Sidebar({
       if (rejectUnsupportedCapability(project, "history")) return;
       void openHistory({
         sourceFilter: resolveHistorySourceFilter(project.cli_tool),
-        projectPath: project.path,
+        projectPath: resolveHistoryProjectPath(project),
         projectId: project.id,
       }).then(() => {
         triggerGlobalSearchFocus();

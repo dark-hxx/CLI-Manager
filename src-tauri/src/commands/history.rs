@@ -42,6 +42,8 @@ const CODEX_HISTORY_INDEX_TEXT_MAX_CHARS: usize = 4_000;
 const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 3;
 const HISTORY_INDEX_V2_ADAPTER_MODEL_VERSION: i64 = 1;
 const OPENCODE_SESSION_LOCATOR_MARKER: &str = "#session=";
+const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
+const DAEMON_READY_WAIT_INTERVAL: Duration = Duration::from_millis(100);
 
 fn estimate_history_detail_content_bytes(detail: &HistorySessionDetail) -> usize {
     let message_bytes: usize = detail
@@ -1861,6 +1863,20 @@ fn remote_error_code(error: &str) -> &str {
         .unwrap_or("history_remote_unavailable")
 }
 
+async fn wait_for_history_daemon(
+    daemon_bridge: &DaemonBridge,
+) -> Option<std::sync::Arc<crate::daemon::client::DaemonClient>> {
+    for attempt in 0..DAEMON_READY_WAIT_ATTEMPTS {
+        if let Some(client) = daemon_bridge.get() {
+            return Some(client);
+        }
+        if attempt + 1 < DAEMON_READY_WAIT_ATTEMPTS {
+            tokio::time::sleep(DAEMON_READY_WAIT_INTERVAL).await;
+        }
+    }
+    None
+}
+
 fn validate_remote_history_sync_result(
     plan: &SshLaunchPlan,
     source: &str,
@@ -1898,19 +1914,21 @@ pub async fn history_remote_sync(
     source_instance_id: Option<String>,
     cursor: Option<String>,
     limit: Option<usize>,
+    force_refresh: Option<bool>,
 ) -> Result<Value, String> {
     let source = source.trim().to_lowercase();
     validate_remote_history_plan(&ssh_launch, &source)?;
     let host_id = ssh_launch.host_id.clone();
-    let payload = remote_scope_payload(
+    let mut payload = remote_scope_payload(
         &source,
         &configured_config_root,
         project_paths,
         cursor,
         limit,
     );
-    let client = daemon_bridge
-        .get()
+    payload["forceRefresh"] = Value::Bool(force_refresh.unwrap_or(false));
+    let client = wait_for_history_daemon(&daemon_bridge)
+        .await
         .ok_or_else(|| "daemon_unavailable".to_string())?;
     let request_consumer_id = consumer_id.clone();
     let request_plan = ssh_launch.clone();
@@ -1947,6 +1965,7 @@ pub async fn history_remote_sync(
         if let Ok(mut cache) = remote_history_detail_cache().lock() {
             cache.invalidate_instance(&result.source_instance_id);
         }
+        invalidate_history_stats_caches();
     }
     let mut value = serde_json::to_value(result).map_err(|err| err.to_string())?;
     value["applied"] = Value::Bool(applied);
@@ -1995,8 +2014,8 @@ pub async fn history_remote_search(
         payload["query"] = Value::String(normalized_query.to_string());
         payload
     };
-    let client = daemon_bridge
-        .get()
+    let client = wait_for_history_daemon(&daemon_bridge)
+        .await
         .ok_or_else(|| "daemon_unavailable".to_string())?;
     let response = tokio::task::spawn_blocking(move || {
         client.ssh_agent_request(
@@ -2081,8 +2100,8 @@ pub async fn history_remote_get_session(
         source_session_id.clone(),
         remote_transcript_ref,
     );
-    let client = daemon_bridge
-        .get()
+    let client = wait_for_history_daemon(&daemon_bridge)
+        .await
         .ok_or_else(|| "daemon_unavailable".to_string())?;
     let response = tokio::task::spawn_blocking(move || {
         client.ssh_agent_request(consumer_id, ssh_launch, "historyGet".to_string(), payload)
@@ -2149,8 +2168,8 @@ pub async fn history_remote_resume_preflight(
     payload["expectedSourceInstanceId"] = Value::String(source_instance_id.clone());
     payload["expectedRemoteMachineId"] = Value::String(ssh_launch.agent_remote_machine_id.clone());
     payload["expectedSshUser"] = Value::String(ssh_launch.username.clone());
-    let client = daemon_bridge
-        .get()
+    let client = wait_for_history_daemon(&daemon_bridge)
+        .await
         .ok_or_else(|| "daemon_unavailable".to_string())?;
     let mut response = tokio::task::spawn_blocking(move || {
         client.ssh_agent_request(
@@ -2624,7 +2643,12 @@ pub async fn history_get_stats(
             .as_deref()
             .map(|source| source == "opencode")
             .unwrap_or(true);
-    let index = refresh_history_index_snapshot(&roots, force);
+    let index = if target_source_instance.is_some() {
+        None
+    } else {
+        Some(refresh_history_index_snapshot(&roots, force))
+    };
+    let index_generation = index.as_ref().map(|index| index.generation).unwrap_or(0);
     let cache_key = make_history_stats_aggregation_cache_key(
         &roots,
         source_filter.as_deref(),
@@ -2632,10 +2656,10 @@ pub async fn history_get_stats(
         &target_project_paths,
         target_source_instance.as_deref(),
         bounds,
-        index.generation,
+        index_generation,
     );
 
-    if !force && !include_opencode && target_source_instance.is_none() {
+    if !force && !include_opencode {
         if let Some(response) = stats_aggregation_cache_get(&cache_key) {
             log_history_stats_oom_diagnostic(
                 "history_get_stats_cache_hit",
@@ -2649,6 +2673,7 @@ pub async fn history_get_stats(
     let mut days = if target_source_instance.is_some() {
         BTreeMap::new()
     } else {
+        let index = index.expect("local stats require a history index");
         let daily_index_key = make_history_stats_daily_index_cache_key(
             &roots,
             source_filter.as_deref(),
@@ -2656,7 +2681,7 @@ pub async fn history_get_stats(
             &target_project_paths,
             target_source_instance.as_deref(),
             bounds,
-            index.generation,
+            index_generation,
         );
         let daily_index = if !force {
             stats_daily_index_cache_get(&daily_index_key).unwrap_or_else(|| {
@@ -2732,7 +2757,7 @@ pub async fn history_get_stats(
         &response,
         started_at.elapsed().as_millis(),
     );
-    if !include_opencode && target_source_instance.is_none() {
+    if !include_opencode {
         stats_aggregation_cache_set(cache_key, response.clone());
     }
     Ok(response)
@@ -4094,10 +4119,9 @@ fn apply_grok_summary_metadata(path: &Path, computed: &mut CachedSessionComputat
             computed.created_at = created;
         }
     }
-    if let Some(updated) = grok_summary_timestamp_ms(
-        &summary,
-        &["last_active_at", "updated_at", "updatedAt"],
-    ) {
+    if let Some(updated) =
+        grok_summary_timestamp_ms(&summary, &["last_active_at", "updated_at", "updatedAt"])
+    {
         if updated > computed.updated_at {
             computed.updated_at = updated;
         }
@@ -8542,8 +8566,13 @@ fn scan_grok_jsonl_session(
                     }
                 }
             }
-            "session_recap" | "plan" | "current_mode_update" | "hook_execution"
-            | "retry_state" | "task_backgrounded" | "task_completed" => {
+            "session_recap"
+            | "plan"
+            | "current_mode_update"
+            | "hook_execution"
+            | "retry_state"
+            | "task_backgrounded"
+            | "task_completed" => {
                 // Non-chat control events; flush any open text bubble only.
                 grok_flush_pending_message(
                     &mut pending_role,
@@ -8909,7 +8938,10 @@ fn apply_grok_turn_usage(
     if usage_total_tokens(token_scan) == 0 {
         return None;
     }
-    Some(usage_trend_point(token_scan, model.or_else(|| totals.model.clone())))
+    Some(usage_trend_point(
+        token_scan,
+        model.or_else(|| totals.model.clone()),
+    ))
 }
 
 fn grok_tool_message_text(update: &Value, name: &str) -> String {
@@ -11219,7 +11251,12 @@ fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
     // Pi 把 reasoning 单独记账；归入 output，避免实时统计少计思考 token。
     let reasoning = extract_u64_by_keys(
         map,
-        &["reasoning", "reasoning_tokens", "reasoningTokens", "thinking_tokens"],
+        &[
+            "reasoning",
+            "reasoning_tokens",
+            "reasoningTokens",
+            "thinking_tokens",
+        ],
     )
     .unwrap_or(0);
     output = output.saturating_add(reasoning);
@@ -12925,12 +12962,10 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].source, "grok");
         // project_key is the full normalized workspace path for display/filter fidelity.
-        assert!(
-            files[0]
-                .project_key
-                .to_lowercase()
-                .contains("business-center")
-        );
+        assert!(files[0]
+            .project_key
+            .to_lowercase()
+            .contains("business-center"));
 
         let (summary, stats, messages) = scan_session_detail(&path);
         assert_eq!(summary.session_id.as_deref(), Some("grok-session"));

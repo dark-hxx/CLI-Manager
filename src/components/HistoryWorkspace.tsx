@@ -596,11 +596,13 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const handleRefreshSessions = useCallback(() => {
     void (async () => {
       await refreshIndex();
-      await useExternalSessionSyncStore.getState().openManualDialog();
+      if (!remoteContext) {
+        await useExternalSessionSyncStore.getState().openManualDialog();
+      }
     })().catch((err) => {
       toast.error(t("history.toast.refreshFailed"), { description: String(err) });
     });
-  }, [refreshIndex, t]);
+  }, [refreshIndex, remoteContext, t]);
 
   const matchIndices = useMemo(() => {
     const query = debouncedSessionQuery.trim();

@@ -43,7 +43,12 @@ const AGENT_INSTALL_PHASE_KEYS: Record<string, TranslationKey> = {
 
 function resolveOperationError(error: string): { title: TranslationKey; hint: TranslationKey } {
   const normalized = error.toLowerCase();
-  if (normalized.includes("database is locked") || normalized.includes("ssh_agent_hook_metadata_busy")) {
+  if (
+    normalized.includes("database is locked")
+    || normalized.includes("ssh_agent_hook_metadata_busy")
+    || normalized.includes("ssh_agent_history_metadata_busy")
+    || normalized.includes("history_catalog_busy")
+  ) {
     return {
       title: "backgroundOperations.error.databaseBusy",
       hint: "backgroundOperations.error.databaseBusyHint",

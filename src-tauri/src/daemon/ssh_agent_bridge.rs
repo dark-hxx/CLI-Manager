@@ -705,6 +705,10 @@ fn request_error_requires_disconnect(error: &str) -> bool {
     error.starts_with("ssh_agent_bridge_")
 }
 
+fn bridge_failure_should_fail_pending(error: &str) -> bool {
+    error != "bridge_already_active"
+}
+
 impl Drop for SshAgentBridgeManager {
     fn drop(&mut self) {
         if let Ok(bridges) = self.bridges.get_mut() {
@@ -1079,7 +1083,9 @@ fn run_bridge_loop(
                     plan.host_id,
                     failure.code
                 );
-                fail_pending_requests(&request_receiver, &failure.code);
+                if bridge_failure_should_fail_pending(&failure.code) {
+                    fail_pending_requests(&request_receiver, &failure.code);
+                }
                 if permanent_bridge_error(&failure.code) {
                     break;
                 }
@@ -1399,12 +1405,12 @@ fn run_bridge_once_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_slot, checked_response, classify_bridge_stderr, fail_pending_requests,
-        permanent_bridge_error, read_preamble, readonly_client_instance_id, receive_agent_response,
-        receive_frame, request, request_error_requires_disconnect, response_timeout, retry_delay,
-        validate_hook_batch, AgentBridgeRequest, BridgeControl, BridgeEntry, BridgeLane,
-        ClientFrame, CounterPermit, EventDedup, PermitPool, ReaderMessage, ServerFrame,
-        SshAgentBridgeManager, DEDUP_EVENT_IDS,
+        bridge_failure_should_fail_pending, bridge_slot, checked_response, classify_bridge_stderr,
+        fail_pending_requests, permanent_bridge_error, read_preamble, readonly_client_instance_id,
+        receive_agent_response, receive_frame, request, request_error_requires_disconnect,
+        response_timeout, retry_delay, validate_hook_batch, AgentBridgeRequest, BridgeControl,
+        BridgeEntry, BridgeLane, ClientFrame, CounterPermit, EventDedup, PermitPool, ReaderMessage,
+        ServerFrame, SshAgentBridgeManager, DEDUP_EVENT_IDS,
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -1684,6 +1690,10 @@ mod tests {
     #[test]
     fn active_remote_bridge_is_retried_for_takeover() {
         assert!(!permanent_bridge_error("bridge_already_active"));
+        assert!(!bridge_failure_should_fail_pending("bridge_already_active"));
+        assert!(bridge_failure_should_fail_pending(
+            "ssh_agent_bridge_protocol_incompatible"
+        ));
         assert!(permanent_bridge_error(
             "ssh_agent_bridge_protocol_incompatible"
         ));

@@ -5,9 +5,8 @@ use crate::{
     MIGRATION_ADD_WORKTREE_ISOLATION_VERSION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_SQL,
-    MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION,
-    MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION, MIGRATION_CREATE_SSH_HOSTS_SQL,
-    MIGRATION_CREATE_SSH_HOSTS_VERSION,
+    MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION, MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
+    MIGRATION_CREATE_SSH_HOSTS_SQL, MIGRATION_CREATE_SSH_HOSTS_VERSION,
     MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
     MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
 };
@@ -89,8 +88,7 @@ const SSH_HOST_COLUMNS: [&str; 25] = [
     "created_at",
     "updated_at",
 ];
-const SSH_HOST_GROUP_COLUMNS: [&str; 5] =
-    ["id", "name", "parent_id", "sort_order", "created_at"];
+const SSH_HOST_GROUP_COLUMNS: [&str; 5] = ["id", "name", "parent_id", "sort_order", "created_at"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MigrationRow {
@@ -735,9 +733,7 @@ fn expected_migrations_for_features(
             sql: MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
         }),
         SchemaState::Absent => {}
-        SchemaState::Partial => {
-            return Err("migration_repair_partial_ssh_group_schema".to_string())
-        }
+        SchemaState::Partial => return Err("migration_repair_partial_ssh_group_schema".to_string()),
     }
 
     expected.sort_by_key(|migration| migration.version);
@@ -821,13 +817,13 @@ async fn rewrite_known_migration_rows_in_transaction(
         "DELETE FROM _sqlx_migrations
          WHERE version BETWEEN ?1 AND ?2 OR version IN (?3, ?4)",
     )
-        .bind(KNOWN_DRIFT_START_VERSION)
-        .bind(KNOWN_DRIFT_END_VERSION)
-        .bind(MIGRATION_CREATE_SSH_HOSTS_VERSION)
-        .bind(MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION)
-        .execute(&mut *conn)
-        .await
-        .map_err(|err| format!("migration_repair_delete_failed: {err}"))?;
+    .bind(KNOWN_DRIFT_START_VERSION)
+    .bind(KNOWN_DRIFT_END_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOSTS_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION)
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| format!("migration_repair_delete_failed: {err}"))?;
 
     for migration in expected {
         sqlx::query(

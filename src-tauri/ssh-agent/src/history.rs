@@ -33,6 +33,8 @@ pub struct HistoryScopeRequest {
     pub cursor: String,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -94,6 +96,10 @@ struct HistoryIndex {
     generation: u64,
     updated_at: i64,
     #[serde(default)]
+    discovery_complete: bool,
+    #[serde(default = "default_partial")]
+    partial: bool,
+    #[serde(default)]
     project_paths: BTreeSet<String>,
     entries: BTreeMap<String, HistoryIndexEntry>,
 }
@@ -142,63 +148,45 @@ impl Drop for IndexLock {
 }
 
 struct WalkResult {
-    files: Vec<PathBuf>,
+    files: Vec<DiscoveredFile>,
     complete: bool,
     warnings: Vec<String>,
+}
+
+struct DiscoveredFile {
+    path: PathBuf,
+    modified_ns: i128,
 }
 
 fn default_limit() -> usize {
     200
 }
 
-pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, String> {
-    let scope = resolve_scope(&request)?;
-    fs::create_dir_all(&scope.index_dir).map_err(|_| "history_index_dir_failed".to_string())?;
-    set_dir_permissions(&scope.index_dir)?;
-    let _lock = acquire_lock(&scope.index_dir)?;
-    let mut index = load_index(&scope)?;
-    let previous_project_count = index.project_paths.len();
-    // ponytail: scopes accumulate because the protocol has no authoritative cross-client unbind set;
-    // replace this union with per-client leases when remote index cleanup needs to be immediate.
-    index
-        .project_paths
-        .extend(scope.project_paths.iter().cloned());
-    let indexed_project_paths = index.project_paths.iter().cloned().collect::<Vec<_>>();
-    let discovery = discover_files(&scope);
-    let seen: BTreeSet<String> = discovery
-        .files
-        .iter()
-        .filter_map(|path| relative_string(&scope.canonical_root, path))
-        .collect();
-    let mut remaining_bytes = MAX_SCAN_BYTES;
-    let mut changed = index.project_paths.len() != previous_project_count;
-    let mut fully_indexed = true;
-    for path in &discovery.files {
-        let relative = relative_string(&scope.canonical_root, path)
-            .ok_or_else(|| "history_artifact_outside_root".to_string())?;
-        let outcome = update_entry(
-            &scope,
-            &mut index,
-            path,
-            &relative,
-            &mut remaining_bytes,
-            &indexed_project_paths,
-        )?;
-        changed |= outcome.changed;
-        fully_indexed &= outcome.complete;
-    }
+fn default_partial() -> bool {
+    true
+}
 
-    let discovery_complete = discovery.complete && fully_indexed;
-    let previous_entry_count = index.entries.len();
-    let tombstones = remove_missing_entries(&mut index, &seen, discovery_complete);
-    changed |= index.entries.len() != previous_entry_count;
-    if changed {
-        index.generation = index.generation.saturating_add(1);
-    }
-    index.updated_at = now_ms();
-    refresh_summaries(&scope, &mut index);
-    write_index(&scope, &index)?;
+fn can_reuse_published_index(
+    force_refresh: bool,
+    project_paths: &[String],
+    index: &HistoryIndex,
+) -> bool {
+    !force_refresh
+        && index.updated_at > 0
+        && !index.partial
+        && project_paths
+            .iter()
+            .all(|path| index.project_paths.contains(path))
+}
 
+fn sync_result(
+    request: &HistoryScopeRequest,
+    scope: &ResolvedScope,
+    index: &HistoryIndex,
+    as_of: i64,
+    tombstones: Vec<String>,
+    warnings: Vec<String>,
+) -> RemoteHistorySyncResult {
     let limit = request.limit.clamp(1, 1_000);
     let mut all_sessions: Vec<_> = index
         .entries
@@ -217,29 +205,109 @@ pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, Str
     let offset = sync_cursor_offset(&request.cursor, index.generation).min(total_sessions);
     let end = offset.saturating_add(limit).min(total_sessions);
     let sessions = all_sessions[offset..end].to_vec();
-    let has_more = end < total_sessions;
-    let partial = !discovery_complete || remaining_bytes == 0;
-    Ok(RemoteHistorySyncResult {
-        source_instance_id: scope.source_instance_id,
-        source: scope.source,
-        installation_id: scope.installation_id,
-        remote_machine_id: scope.remote_machine_id,
-        ssh_user: scope.ssh_user,
-        configured_config_root: scope.configured_root,
+
+    RemoteHistorySyncResult {
+        source_instance_id: scope.source_instance_id.clone(),
+        source: scope.source.clone(),
+        installation_id: scope.installation_id.clone(),
+        remote_machine_id: scope.remote_machine_id.clone(),
+        ssh_user: scope.ssh_user.clone(),
+        configured_config_root: scope.configured_root.clone(),
         canonical_config_root: path_text(&scope.canonical_root),
-        config_root_hash: scope.config_root_hash,
+        config_root_hash: scope.config_root_hash.clone(),
         generation: index.generation,
         cursor: format!("{}:{end}", index.generation),
-        has_more,
+        has_more: end < total_sessions,
         total_sessions,
-        freshness_state: if partial { "partial" } else { "fresh" }.to_string(),
-        as_of: index.updated_at,
-        discovery_complete,
-        partial,
+        freshness_state: if index.partial { "partial" } else { "fresh" }.to_string(),
+        as_of,
+        discovery_complete: index.discovery_complete,
+        partial: index.partial,
         sessions,
         tombstones: if offset == 0 { tombstones } else { Vec::new() },
-        warnings: discovery.warnings,
-    })
+        warnings,
+    }
+}
+
+pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, String> {
+    let scope = resolve_scope(&request)?;
+    fs::create_dir_all(&scope.index_dir).map_err(|_| "history_index_dir_failed".to_string())?;
+    set_dir_permissions(&scope.index_dir)?;
+    let published = load_index(&scope)?;
+    if can_reuse_published_index(request.force_refresh, &scope.project_paths, &published) {
+        return Ok(sync_result(
+            &request,
+            &scope,
+            &published,
+            published.updated_at,
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
+
+    let _lock = acquire_lock(&scope.index_dir)?;
+    let mut index = load_index(&scope)?;
+    let previous_project_count = index.project_paths.len();
+    // ponytail: scopes accumulate because the protocol has no authoritative cross-client unbind set;
+    // replace this union with per-client leases when remote index cleanup needs to be immediate.
+    index
+        .project_paths
+        .extend(scope.project_paths.iter().cloned());
+    let indexed_project_paths = index.project_paths.iter().cloned().collect::<Vec<_>>();
+    let discovery = discover_files(&scope);
+    let seen: BTreeSet<String> = discovery
+        .files
+        .iter()
+        .filter_map(|file| relative_string(&scope.canonical_root, &file.path))
+        .collect();
+    let mut remaining_bytes = MAX_SCAN_BYTES;
+    let mut changed = index.project_paths.len() != previous_project_count;
+    let mut fully_indexed = true;
+    for file in &discovery.files {
+        if remaining_bytes == 0 {
+            fully_indexed = false;
+            break;
+        }
+        let relative = relative_string(&scope.canonical_root, &file.path)
+            .ok_or_else(|| "history_artifact_outside_root".to_string())?;
+        let outcome = update_entry(
+            &scope,
+            &mut index,
+            &file.path,
+            &relative,
+            &mut remaining_bytes,
+            &indexed_project_paths,
+        )?;
+        changed |= outcome.changed;
+        fully_indexed &= outcome.complete;
+    }
+
+    let discovery_complete = discovery.complete && fully_indexed;
+    let previous_entry_count = index.entries.len();
+    let tombstones = remove_missing_entries(&mut index, &seen, discovery_complete);
+    changed |= index.entries.len() != previous_entry_count;
+    let partial = !discovery_complete;
+    let state_changed = index.discovery_complete != discovery_complete || index.partial != partial;
+    if changed {
+        index.generation = index.generation.saturating_add(1);
+        refresh_summaries(&scope, &mut index);
+    }
+    index.discovery_complete = discovery_complete;
+    index.partial = partial;
+    let scan_completed_at = now_ms();
+    if changed || state_changed {
+        index.updated_at = scan_completed_at;
+        write_index(&scope, &index)?;
+    }
+
+    Ok(sync_result(
+        &request,
+        &scope,
+        &index,
+        scan_completed_at,
+        tombstones,
+        discovery.warnings,
+    ))
 }
 
 fn sync_cursor_offset(cursor: &str, generation: u64) -> usize {
@@ -410,6 +478,7 @@ pub fn resume_preflight(
         project_paths: vec!["/".to_string()],
         cursor: String::new(),
         limit: 1,
+        force_refresh: false,
     })?;
     if !request.expected_source_instance_id.trim().is_empty()
         && request.expected_source_instance_id.trim() != scope.source_instance_id
@@ -848,7 +917,12 @@ fn discover_files(scope: &ResolvedScope) -> WalkResult {
         }
         walk_jsonl(&root, &scope.canonical_root, 0, &mut result);
     }
-    result.files.sort();
+    result.files.sort_by(|left, right| {
+        right
+            .modified_ns
+            .cmp(&left.modified_ns)
+            .then_with(|| left.path.cmp(&right.path))
+    });
     result
 }
 
@@ -895,7 +969,14 @@ fn walk_jsonl(path: &Path, canonical_root: &Path, depth: usize, result: &mut Wal
             continue;
         };
         if canonical.starts_with(canonical_root) {
-            result.files.push(canonical);
+            let Ok(metadata) = canonical.metadata() else {
+                result.complete = false;
+                continue;
+            };
+            result.files.push(DiscoveredFile {
+                modified_ns: file_modified_ns(&metadata),
+                path: canonical,
+            });
         } else {
             result.complete = false;
             result
@@ -938,6 +1019,8 @@ fn empty_index(scope: &ResolvedScope) -> HistoryIndex {
         config_root_hash: scope.config_root_hash.clone(),
         generation: 0,
         updated_at: 0,
+        discovery_complete: false,
+        partial: true,
         project_paths: BTreeSet::new(),
         entries: BTreeMap::new(),
     }
@@ -1224,11 +1307,12 @@ fn set_file_permissions(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_lock_with_stale_after, build_resume_args, complete_jsonl_bytes, detail_from_path,
-        empty_index, file_id, initialize_lock_dir, load_index, refresh_summaries, relative_string,
+        acquire_lock_with_stale_after, build_resume_args, can_reuse_published_index,
+        complete_jsonl_bytes, detail_from_path, discover_files, empty_index, file_id,
+        initialize_lock_dir, load_index, refresh_summaries, relative_string,
         remote_source_instance_id, remove_missing_entries, safe_transcript_ref, sync_cursor_offset,
-        update_entry, validate_project_path, validate_resume_cwd, ResolvedScope,
-        MAX_FILE_READ_BYTES, MAX_SCAN_BYTES,
+        update_entry, validate_project_path, validate_resume_cwd, HistoryScopeRequest,
+        ResolvedScope, MAX_FILE_READ_BYTES, MAX_SCAN_BYTES,
     };
     use std::collections::BTreeSet;
     use std::fs::{self, OpenOptions};
@@ -1341,6 +1425,77 @@ mod tests {
         assert_eq!(validate_project_path("/srv/app/").unwrap(), "/srv/app");
         assert!(validate_project_path("../srv/app").is_err());
         assert!(validate_project_path("/srv/../root").is_err());
+    }
+
+    #[test]
+    fn published_index_reuse_requires_complete_covered_scope() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let scope = test_scope(temp.path(), vec!["/srv/app".to_string()]);
+        let request = HistoryScopeRequest {
+            source: "claude".to_string(),
+            configured_config_root: scope.configured_root.clone(),
+            project_paths: scope.project_paths.clone(),
+            cursor: String::new(),
+            limit: 21,
+            force_refresh: false,
+        };
+        let mut index = empty_index(&scope);
+        index.updated_at = 1;
+        index.discovery_complete = true;
+        index.partial = false;
+        index.project_paths.insert("/srv/app".to_string());
+
+        assert!(can_reuse_published_index(
+            request.force_refresh,
+            &request.project_paths,
+            &index
+        ));
+
+        let mut forced = request;
+        forced.force_refresh = true;
+        assert!(!can_reuse_published_index(
+            forced.force_refresh,
+            &forced.project_paths,
+            &index
+        ));
+
+        forced.force_refresh = false;
+        forced.project_paths = vec!["/srv/other".to_string()];
+        assert!(!can_reuse_published_index(
+            forced.force_refresh,
+            &forced.project_paths,
+            &index
+        ));
+
+        forced.project_paths = vec!["/srv/app".to_string()];
+        index.partial = true;
+        assert!(!can_reuse_published_index(
+            forced.force_refresh,
+            &forced.project_paths,
+            &index
+        ));
+    }
+
+    #[test]
+    fn discovery_prioritizes_recent_history_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let directory = temp.path().join("projects").join("-srv-app");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("older.jsonl"), "{}\n").unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(directory.join("newer.jsonl"), "{}\n").unwrap();
+        let scope = test_scope(temp.path(), vec!["/srv/app".to_string()]);
+
+        let discovery = discover_files(&scope);
+
+        assert_eq!(discovery.files.len(), 2);
+        assert_eq!(
+            discovery.files[0]
+                .path
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("newer.jsonl")
+        );
     }
 
     #[test]

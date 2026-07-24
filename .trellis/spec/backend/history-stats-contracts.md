@@ -129,6 +129,8 @@ interface TerminalSession {
 - `history_get_stats.project_path` and `project_paths` filter by configured project paths and must use the same `session_matches_project_path` rules as `history_list_sessions`: Claude project-key normalization, WSL/UNC path variants, and metadata `cwd` matching for Codex. Multiple paths use OR semantics, while `project_key` remains conjunctive when also present.
 - Project selectors keep the configured `Project.id` as their UI identity. They resolve the query path from `Project.path` for local/WSL projects and `Project.remote_path` for SSH projects; an SSH project's empty local `path` must never mean "all projects" or select sibling SSH projects.
 - Selecting an SSH project in historical usage first synchronizes that project's remote catalog scope, then calls `history_get_stats` with both `remote_path` and the validated remote `source_instance_id`. Remote instance filtering excludes local facts and other hosts/config roots even when they expose the same path.
+- Opening SSH historical usage must not be a forced index rebuild. The frontend sends `force=false` by default; only explicit manual refresh may force remote sync. When `history_get_stats.source_instance_id` is present, the backend reads v2 catalog facts directly, skips `refresh_history_index_snapshot`, and filters by `history_sessions.source_instance_id` in SQL before Rust-side project-path matching.
+- Stats aggregation cache keys include `source_instance_id`; remote catalog stats may use aggregation cache when `force=false`. A successful `history_remote_sync` apply must invalidate stats caches so a newly applied remote generation is visible on the next stats read.
 - Realtime “today project usage” sends the parent project path plus all active Worktree paths in one `project_paths` request. Backend aggregation iterates each indexed session once, so overlapping parent/child paths cannot double count usage.
 - Stats aggregation and daily-index cache keys must include the canonical sorted/deduplicated project-path set, so ordering and duplicates reuse the same cache while different path sets remain isolated.
 - Heatmap-compatible buckets must include `sessions`, `messages`, `level`, and `session_refs`. Daily heatmap buckets use `day_start_utc`; hourly activity buckets use `hour_start_utc` plus `hour` so the frontend can render 24-hour drilldowns without guessing local bucket anchors.
@@ -179,6 +181,8 @@ interface TerminalSession {
 | `project_path` is empty or whitespace | Treat it as absent; do not filter by path. |
 | `project_path` points to a configured project with Claude/Codex history | Return only sessions matching that project path using `session_matches_project_path`. |
 | Two SSH projects have empty local paths or the same remote path on different source instances | Select exactly one by project ID and aggregate only its `source_instance_id + remote_path`. |
+| Opening SSH project historical usage without manual refresh | Uses cached/fast remote sync and catalog aggregation; must not force a remote index rebuild or refresh the local history index. |
+| Successful SSH remote history sync applies new catalog rows | Invalidates stats aggregation/daily caches before returning so the next stats read sees the new remote generation. |
 | `project_path` and `project_key` are both present | Apply both filters; do not OR them together. |
 | `project_paths` contains duplicates or differently ordered paths | Normalize, sort, and deduplicate before filtering and cache-key generation. |
 | Parent path contains a configured Worktree path | A session matching both paths contributes once. |
@@ -200,6 +204,7 @@ interface TerminalSession {
 - Good: a Claude session with input/output/cache usage and known model produces complete totals, cost, model distribution, daily trend, and per-session message token fields.
 - Good: a Codex session with multiple `token_count` events returns `token_trend` from cumulative high-water deltas, ignores temporary cumulative rollbacks, and two Codex windows in the same project show different realtime session details after their hook `sessionId` values arrive.
 - Good: an SSH Claude/Codex Hook binds `sessionId` plus `remoteTranscriptRef`; the realtime panel polls only that JSONL and stays mounted while slower prior requests finish.
+- Good: opening SSH historical usage for an already indexed project returns from `history-catalog.db` using `source_instance_id + remote_path`, reuses the aggregation cache on repeated opens, and does not scan local JSONL or force the remote Agent writer lock.
 - Good: a Codex `response_item` assistant message followed by a `token_count` event returns the assistant `HistoryMessage` with inherited timestamp and normalized per-turn `input_tokens` / `output_tokens` / `cache_read_tokens`.
 - Good: realtime Token Trend receives per-point model attribution and renders one continuous line with segment colors by model; hover tooltip shows the hovered point model.
 - Good: a history detail payload exposes `cwd` when the JSONL contains session metadata, allowing the frontend to create a resume terminal in the original project directory.
@@ -212,6 +217,7 @@ interface TerminalSession {
 - Good: TerminalStatsPanel on the main or Worktree tab sends the same parent + active Worktree path set and displays one deduplicated project total.
 - Base: a Codex session without model pricing still appears in stats with token totals and `unpriced_tokens`; a single-day stats view can map `hourly_activity` into 24 hourly trend and heatmap buckets.
 - Bad: frontend assumes a newly added numeric field is always present and renders `NaN` when older cached payloads omit it; realtime stats uses only project latest-session lookup and shows another window's current context.
+- Bad: a stats panel open passes `force=true` unconditionally, causing `history_get_stats` to rebuild indexes and repeatedly recompute fixed historical data.
 - Bad: realtime stats concatenates parent and child `token_trend` arrays directly or derives tool totals from merged `tool_events`, causing out-of-order trend points or inflated tool-call counts.
 - Bad: StatsPanel populates its dropdown from raw `history_list_stats_projects` values and sends those opaque keys for user-created project selection; this diverges from the left project tree and fails for path-normalized Claude/WSL/Codex sessions.
 - Bad: realtime today-usage reuses `latestSession.project_key` as the only filter after the session was found by Worktree path; the path context is lost and usage may be omitted.
@@ -234,6 +240,7 @@ interface TerminalSession {
   - Parser semantic changes that affect persisted scan output bump `HISTORY_INDEX_CACHE_VERSION`.
   - History stats single/multi-path filtering reuses `session_matches_project_path`, canonicalizes cache keys, and counts overlapping matches once.
   - V2 stats facts accept an optional source-instance filter and exclude all sibling local/remote instances when it is present.
+  - Remote source-instance stats do not refresh the local history index, can hit the aggregation cache, and cache invalidation happens after a successful `history_remote_sync` apply.
   - Tool event extraction returns bounded diagnostic rows for Claude `tool_use`, Codex `function_call`, `function_call_output`, and MCP end/error events without changing aggregate tool counts.
   - Claude explicit context-window fields populate `SessionStatsScan.context_window`; Claude usage without those fields keeps it `None`.
   - Same-session model switching keeps `dominant_model` unchanged for aggregate stats while exposing the latest model as `current_model`.

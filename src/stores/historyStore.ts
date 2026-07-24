@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getDb } from "../lib/db";
 import { createPerfMarker, logInfo, logWarn } from "../lib/logger";
-import { normalizeHistoryProjectPaths } from "../lib/historyProjectPaths";
+import { normalizeHistoryProjectPaths, resolveHistoryProjectPath } from "../lib/historyProjectPaths";
 import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../lib/sshAgentHistory";
 import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs, getHistoryPathArgsSync } from "../lib/historyPathArgs";
 import { useProjectStore } from "./projectStore";
@@ -178,6 +178,19 @@ interface StatsProjectOptionsCacheEntry {
 
 function effectiveProjectPathFilter(state: Pick<HistoryStore, "projectPathFilter" | "scopedProjectPathFilter">): string | null {
   return state.scopedProjectPathFilter ?? state.projectPathFilter;
+}
+
+function findHistoryProject(projects: Project[], projectId: string | null, projectPath: string | null): Project | undefined {
+  if (projectId) {
+    const byId = projects.find((item) => item.id === projectId);
+    if (byId) return byId;
+  }
+  const normalizedPath = projectPath?.trim();
+  if (!normalizedPath) return undefined;
+  return projects.find((item) => {
+    const historyPath = resolveHistoryProjectPath(item);
+    return historyPath === normalizedPath || item.path.trim() === normalizedPath || item.remote_path.trim() === normalizedPath;
+  });
 }
 
 function remoteSourceMatchesFilter(
@@ -764,13 +777,14 @@ export async function fetchRemoteHistoryStatsPayload(
 ): Promise<HistoryStatsPayload> {
   let context = await buildSshAgentHistoryContext(project);
   try {
-    context = await syncRemoteHistoryContext(context, { limit: 1000 });
+    const force = options.force ?? false;
+    context = await syncRemoteHistoryContext(context, { limit: 1000, forceRefresh: force });
     return await fetchHistoryStatsPayload({
       ...options,
       projectKey: null,
       projectPath: project.remote_path,
       sourceInstanceId: context.sourceInstanceId,
-      force: true,
+      force,
     });
   } finally {
     void invoke("history_remote_close", {
@@ -1010,7 +1024,7 @@ export async function fetchRemoteTodayProjectStats(
     rangeDays: null,
     startAt: todayStart.getTime(),
     endAt: Date.now(),
-    force: true,
+    force: false,
   });
   const stats = normalizeStats(raw);
   return {
@@ -1127,7 +1141,13 @@ function projectLastSegment(path: string): string {
 }
 
 function normalizeMetaPath(path: string): string {
-  return path.replace(/\\/g, "/");
+  let normalized = path.trim().replace(/\\/g, "/");
+  if (normalized.startsWith("//?/UNC/")) {
+    normalized = `//${normalized.slice("//?/UNC/".length)}`;
+  } else if (normalized.startsWith("//?/")) {
+    normalized = normalized.slice("//?/".length);
+  }
+  return normalized;
 }
 
 function snapshotMatchesFilters(
@@ -1360,6 +1380,14 @@ async function writeFavoriteSnapshot(sessionKey: string, detail: HistorySessionD
 async function deleteFavoriteSnapshot(sessionKey: string): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM session_favorite_snapshots WHERE session_key = $1", [sessionKey]);
+}
+
+async function deleteFavoriteSnapshotsForSession(source: HistorySource, sessionId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "DELETE FROM session_favorite_snapshots WHERE source = $1 AND session_id = $2",
+    [source, sessionId]
+  );
 }
 
 type HistoryEditOp = "edit" | "delete" | "insert" | "restore";
@@ -1658,23 +1686,47 @@ function ensureHistoryIndexListener(): Promise<void> {
 
 const remoteHistorySyncRequests = new Map<string, Promise<SshRemoteHistorySyncResult>>();
 
+interface RemoteHistorySyncOptions {
+  reset?: boolean;
+  limit?: number;
+  forceRefresh?: boolean;
+}
+
 async function requestRemoteHistorySync(
   context: SshAgentHistoryContext,
-  options: { reset?: boolean; limit?: number },
+  options: RemoteHistorySyncOptions,
 ): Promise<SshRemoteHistorySyncResult> {
+  const limit = options.limit ?? SESSION_PAGE_FETCH_LIMIT;
+  const cursor = options.reset ? null : context.cursor || null;
+  const forceRefresh = options.forceRefresh ?? false;
+  const key = JSON.stringify({
+    hostId: context.hostId,
+    source: context.source,
+    configuredConfigRoot: context.configuredConfigRoot,
+    projectPaths: [...context.projectPaths].sort(),
+    sourceInstanceId: context.sourceInstanceId || null,
+    cursor,
+    limit,
+    forceRefresh,
+    scopeKind: context.scopeKind,
+    installationId: context.launch.agentInstallationId,
+    remoteMachineId: context.launch.agentRemoteMachineId,
+    sshUser: context.launch.username,
+  });
+  const existing = remoteHistorySyncRequests.get(key);
+  if (existing) return existing;
+  const requestConsumerId = `history-sync:${crypto.randomUUID()}`;
   const args = {
-    consumerId: context.consumerId,
+    consumerId: requestConsumerId,
     sshLaunch: context.launch,
     source: context.source,
     configuredConfigRoot: context.configuredConfigRoot,
     projectPaths: context.projectPaths,
     sourceInstanceId: context.sourceInstanceId || null,
-    cursor: options.reset ? null : context.cursor || null,
-    limit: options.limit ?? SESSION_PAGE_FETCH_LIMIT,
+    cursor,
+    limit,
+    forceRefresh,
   };
-  const key = JSON.stringify({ ...args, hostId: context.hostId, scopeKind: context.scopeKind });
-  const existing = remoteHistorySyncRequests.get(key);
-  if (existing) return existing;
   const operationId = `remote-history:${context.consumerId}`;
   useBackgroundOperationStore.getState().start({
     id: operationId,
@@ -1702,13 +1754,17 @@ async function requestRemoteHistorySync(
   remoteHistorySyncRequests.set(key, request);
   void request.finally(() => {
     if (remoteHistorySyncRequests.get(key) === request) remoteHistorySyncRequests.delete(key);
+    void invoke("history_remote_close", {
+      hostId: context.hostId,
+      consumerId: requestConsumerId,
+    }).catch(() => undefined);
   }).catch(() => undefined);
   return request;
 }
 
 async function syncRemoteHistoryContext(
   context: SshAgentHistoryContext,
-  options: { reset?: boolean; limit?: number } = {},
+  options: RemoteHistorySyncOptions = {},
 ): Promise<SshAgentHistoryContext> {
   const result = await requestRemoteHistorySync(context, options);
   if (result.applied === false) return context;
@@ -1841,14 +1897,23 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     globalSearchRequestSeq += 1;
     const isCurrentOpenRequest = () => openRequestSeq === historyOpenRequestSeq;
     const nextSourceFilter = options?.sourceFilter ?? get().sourceFilter;
-    const nextProjectPathFilter = options?.projectPath?.trim() || null;
+    const requestedProjectPath = options?.projectPath?.trim() || null;
+    const requestedProjectId = options?.projectId?.trim() || null;
+    const projectStore = useProjectStore.getState();
+    if (!projectStore.loaded && (requestedProjectId || requestedProjectPath)) {
+      await projectStore.fetchAll("interactive");
+    }
+    const project = findHistoryProject(
+      useProjectStore.getState().projects,
+      requestedProjectId,
+      requestedProjectPath,
+    );
+    const resolvedProjectPath = resolveHistoryProjectPath(project);
+    const nextProjectPathFilter = resolvedProjectPath || requestedProjectPath;
     const nextProjectIdFilter = nextProjectPathFilter
-      ? (options?.projectId?.trim() || null)
+      ? (project?.id ?? requestedProjectId)
       : null;
     const nextScopedProjectPathFilter = options?.scopedProjectPath?.trim() || null;
-    const project = options?.projectId
-      ? useProjectStore.getState().projects.find((item) => item.id === options.projectId)
-      : undefined;
     const nextRemoteContext = project?.environment_type === "ssh"
       ? await buildSshAgentHistoryContext(project)
       : null;
@@ -1884,12 +1949,8 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     });
     try {
       if (nextRemoteContext) {
-        if (nextRemoteContext.sourceInstanceId) {
-          await get().loadSessions();
-          if (!isCurrentOpenRequest()) return;
-        }
-        try {
-          const synced = await syncRemoteHistoryContext(nextRemoteContext);
+        const refreshRemote = async (forceRefresh: boolean) => {
+          const synced = await syncRemoteHistoryContext(nextRemoteContext, { forceRefresh });
           if (!isCurrentOpenRequest()) {
             if (get().remoteContext?.consumerId !== nextRemoteContext.consumerId) {
               void invoke("history_remote_close", {
@@ -1913,7 +1974,8 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
             },
           });
           await get().loadSessions();
-        } catch (error) {
+        };
+        const markRemoteRefreshError = (error: unknown) => {
           if (!isCurrentOpenRequest()) return;
           set((state) => ({
             indexStatus: {
@@ -1924,7 +1986,23 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
               error: String(error),
             },
           }));
-          if (!nextRemoteContext.sourceInstanceId) throw error;
+        };
+        if (nextRemoteContext.sourceInstanceId) {
+          await get().loadSessions();
+          if (!isCurrentOpenRequest()) return;
+          if (get().sessions.length > 0) {
+            void refreshRemote(true).catch(markRemoteRefreshError);
+            return;
+          }
+        }
+        try {
+          await refreshRemote(false);
+          if (get().sessions.length === 0) {
+            await refreshRemote(true);
+          }
+        } catch (error) {
+          markRemoteRefreshError(error);
+          throw error;
         }
         return;
       }
@@ -2026,7 +2104,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       const allSummaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
       const summaries = allSummaries.slice(0, SESSION_PAGE_SIZE);
       const metaMap = await readMetaMap();
-      const sessions = await applyFavoriteSnapshots(summaries, metaMap, sourceFilter, projectPath);
+      const sessions = remoteContext
+        ? applyMeta(summaries, metaMap)
+        : await applyFavoriteSnapshots(summaries, metaMap, sourceFilter, projectPath);
       if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       const activeSessionKey = get().activeSessionKey;
       const activeExists = activeSessionKey
@@ -2136,7 +2216,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         sourceSessionKeys.add(key);
       }
       const metaMap = get().metaMap;
-      const sessions = await applyFavoriteSnapshots(Array.from(summaryMap.values()), metaMap, sourceFilter, projectPath, sourceSessionKeys);
+      const sessions = remoteContext
+        ? applyMeta(Array.from(summaryMap.values()), metaMap)
+        : await applyFavoriteSnapshots(Array.from(summaryMap.values()), metaMap, sourceFilter, projectPath, sourceSessionKeys);
       if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       set({
         sessions,
@@ -2186,7 +2268,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   refreshIndex: async () => {
     const remoteContext = get().remoteContext;
     if (remoteContext) {
-      const synced = await syncRemoteHistoryContext(remoteContext, { reset: true });
+      const synced = await syncRemoteHistoryContext(remoteContext, { reset: true, forceRefresh: true });
       set({
         remoteContext: synced,
         indexStatus: {
@@ -2714,6 +2796,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
     const db = await getDb();
     if (snapshotDetail) {
+      await deleteFavoriteSnapshotsForSession(session.source, session.session_id);
       await writeFavoriteSnapshot(sessionKey, snapshotDetail);
     }
     await db.execute(
@@ -2739,7 +2822,11 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       ]
     );
     if (patch.starred === false) {
-      await deleteFavoriteSnapshot(sessionKey);
+      await db.execute(
+        "UPDATE session_meta SET starred = 0, updated_at = $3 WHERE source = $1 AND session_id = $2",
+        [session.source, session.session_id, updatedAt]
+      );
+      await deleteFavoriteSnapshotsForSession(session.source, session.session_id);
     }
 
     const nextMeta: SessionMeta = {
@@ -2754,7 +2841,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       updated_at: updatedAt,
     };
 
-    const nextMetaMap = { ...get().metaMap, [sessionKey]: nextMeta };
+    const nextMetaMap = patch.starred === false ? await readMetaMap() : { ...get().metaMap, [sessionKey]: nextMeta };
     const sourceSessionKeys = new Set<string>();
     const visibleSessions = get().sessions.filter((item) => !(patch.starred === false && item.sessionKey === sessionKey && item.favoriteSnapshot));
     const summaries: HistorySessionSummary[] = visibleSessions.map((item) => {

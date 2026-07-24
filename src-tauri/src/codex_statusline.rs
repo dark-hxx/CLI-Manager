@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
-use crate::commands::hook_settings::{sync_ccswitch_codex_statusline, CcSwitchHookProtectionStatus};
+use crate::commands::hook_settings::{
+    sync_ccswitch_codex_statusline, CcSwitchHookProtectionStatus,
+};
 
 const CONFIG_FILE: &str = "config.toml";
 const TUI_TABLE: &str = "tui";

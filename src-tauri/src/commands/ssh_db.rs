@@ -5,9 +5,13 @@ use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
+
+const SSH_DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_HISTORY_IDENTITY_BYTES: usize = 256;
+const MAX_HISTORY_ROOT_BYTES: usize = 4096;
 
 static SSH_GROUP_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
 static SSH_GROUP_SCHEMA_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
@@ -23,7 +27,7 @@ async fn open_database() -> Result<SqliteConnection, String> {
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
-        .busy_timeout(Duration::from_secs(15));
+        .busy_timeout(SSH_DATABASE_BUSY_TIMEOUT);
     SqliteConnection::connect_with(&options)
         .await
         .map_err(|error| format!("ssh_database_open_failed: {error}"))
@@ -425,6 +429,195 @@ pub struct SshHookReportInput {
     scope_kind: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshHistorySourceInput {
+    host_id: String,
+    configured_root: String,
+    source: String,
+    scope_kind: String,
+    source_instance_id: String,
+    installation_id: String,
+    remote_machine_id: String,
+    ssh_user: String,
+    canonical_config_root: String,
+    config_root_hash: String,
+}
+
+fn current_time_millis() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
+fn is_sqlite_busy_error(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|database_error| database_error.code())
+        .is_some_and(|code| {
+            matches!(code.as_ref(), "SQLITE_BUSY" | "SQLITE_LOCKED")
+                || code
+                    .parse::<i32>()
+                    .is_ok_and(|value| matches!(value & 0xff, 5 | 6))
+        })
+}
+
+fn map_history_metadata_error(stage: &str, error: sqlx::Error) -> String {
+    if is_sqlite_busy_error(&error) {
+        "ssh_agent_history_metadata_busy".to_string()
+    } else {
+        format!("ssh_agent_history_metadata_{stage}_failed:{error}")
+    }
+}
+
+fn validate_history_source_input(input: &SshHistorySourceInput) -> Result<(), String> {
+    Uuid::parse_str(input.host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
+    Uuid::parse_str(input.installation_id.trim())
+        .map_err(|_| "ssh_agent_identity_required".to_string())?;
+    if !matches!(input.source.as_str(), "claude" | "codex") {
+        return Err("history_source_invalid".to_string());
+    }
+    if !matches!(input.scope_kind.as_str(), "hostPrimary" | "projectOverride") {
+        return Err("ssh_history_scope_invalid".to_string());
+    }
+    let source_hash = input
+        .source_instance_id
+        .strip_prefix("ssh-")
+        .unwrap_or_default();
+    if source_hash.len() != 64 || !source_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("history_remote_identity_invalid".to_string());
+    }
+    for value in [&input.remote_machine_id, &input.ssh_user] {
+        if value.trim().is_empty()
+            || value.len() > MAX_HISTORY_IDENTITY_BYTES
+            || value.contains(['\0', '\r', '\n'])
+        {
+            return Err("history_remote_identity_invalid".to_string());
+        }
+    }
+    let configured_root = input.configured_root.trim();
+    if configured_root.len() > MAX_HISTORY_ROOT_BYTES
+        || configured_root.contains(['\0', '\r', '\n'])
+        || (!configured_root.is_empty()
+            && crate::ssh_transport::validate_remote_home_path(configured_root).is_err())
+    {
+        return Err("ssh_tool_config_root_invalid".to_string());
+    }
+    let canonical_root = input.canonical_config_root.trim();
+    if !canonical_root.starts_with('/')
+        || canonical_root.len() > MAX_HISTORY_ROOT_BYTES
+        || crate::ssh_transport::validate_remote_home_path(canonical_root).is_err()
+    {
+        return Err("history_remote_identity_invalid".to_string());
+    }
+    if input.config_root_hash.len() != 64
+        || !input
+            .config_root_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("history_remote_identity_invalid".to_string());
+    }
+    Ok(())
+}
+
+async fn record_history_source_with_conn(
+    conn: &mut SqliteConnection,
+    input: &SshHistorySourceInput,
+) -> Result<(), String> {
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT integration_id FROM ssh_agent_tool_integrations
+         WHERE host_id = ?1 AND source = ?2 AND configured_root = ?3
+           AND scope_kind IN ('hostPrimary', 'projectOverride')
+         ORDER BY CASE WHEN scope_kind = ?4 THEN 0 ELSE 1 END
+         LIMIT 1",
+    )
+    .bind(input.host_id.trim())
+    .bind(&input.source)
+    .bind(input.configured_root.trim())
+    .bind(&input.scope_kind)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|error| map_history_metadata_error("read", error))?;
+    let checked_at = current_time_millis();
+    if let Some(integration_id) = existing {
+        sqlx::query(
+            "UPDATE ssh_agent_tool_integrations SET
+               installation_id = ?1, remote_machine_id = ?2, ssh_user = ?3,
+               canonical_root = ?4, config_root_hash = ?5,
+               history_source_instance_id = ?6, validation_state = 'valid',
+               cleanup_state = 'active', checked_at = ?7
+             WHERE integration_id = ?8",
+        )
+        .bind(&input.installation_id)
+        .bind(&input.remote_machine_id)
+        .bind(&input.ssh_user)
+        .bind(&input.canonical_config_root)
+        .bind(&input.config_root_hash)
+        .bind(&input.source_instance_id)
+        .bind(&checked_at)
+        .bind(integration_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|error| map_history_metadata_error("write", error))?;
+    } else {
+        sqlx::query(
+            "INSERT INTO ssh_agent_tool_integrations (
+               integration_id, host_id, installation_id, remote_machine_id, ssh_user,
+               source, scope_kind, configured_root, canonical_root, config_root_hash,
+               hook_record_json, history_source_instance_id, validation_state,
+               cleanup_state, checked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, '{}', ?11, 'valid', 'active', ?12)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(input.host_id.trim())
+        .bind(&input.installation_id)
+        .bind(&input.remote_machine_id)
+        .bind(&input.ssh_user)
+        .bind(&input.source)
+        .bind(&input.scope_kind)
+        .bind(input.configured_root.trim())
+        .bind(&input.canonical_config_root)
+        .bind(&input.config_root_hash)
+        .bind(&input.source_instance_id)
+        .bind(&checked_at)
+        .execute(&mut *conn)
+        .await
+        .map_err(|error| map_history_metadata_error("write", error))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ssh_db_record_history_source(input: SshHistorySourceInput) -> Result<(), String> {
+    validate_history_source_input(&input)?;
+    let options = SqliteConnectOptions::new()
+        .filename(crate::app_paths::db_path()?)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .foreign_keys(true)
+        .busy_timeout(SSH_DATABASE_BUSY_TIMEOUT);
+    let mut conn = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|error| map_history_metadata_error("open", error))?;
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut conn)
+        .await
+        .map_err(|error| map_history_metadata_error("begin", error))?;
+    let result = record_history_source_with_conn(&mut conn, &input).await;
+    if result.is_ok() {
+        sqlx::query("COMMIT")
+            .execute(&mut conn)
+            .await
+            .map_err(|error| map_history_metadata_error("commit", error))?;
+    } else {
+        let _ = sqlx::query("ROLLBACK").execute(&mut conn).await;
+    }
+    result
+}
+
 fn managed_entries(report: &str) -> u64 {
     serde_json::from_str::<Value>(report)
         .ok()
@@ -707,6 +900,121 @@ async fn update_integration(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HISTORY_HOST_ID: &str = "00000000-0000-4000-8000-000000000001";
+    const HISTORY_INSTALLATION_ID: &str = "00000000-0000-4000-8000-000000000002";
+
+    async fn history_database() -> SqliteConnection {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE ssh_agent_tool_integrations (
+               integration_id TEXT PRIMARY KEY,
+               host_id TEXT,
+               installation_id TEXT NOT NULL DEFAULT '',
+               remote_machine_id TEXT NOT NULL DEFAULT '',
+               ssh_user TEXT NOT NULL DEFAULT '',
+               source TEXT NOT NULL,
+               scope_kind TEXT NOT NULL DEFAULT 'hostPrimary',
+               configured_root TEXT NOT NULL DEFAULT '',
+               canonical_root TEXT NOT NULL DEFAULT '',
+               config_root_hash TEXT NOT NULL DEFAULT '',
+               hook_record_json TEXT NOT NULL DEFAULT '{}',
+               history_source_instance_id TEXT NOT NULL DEFAULT '',
+               validation_state TEXT NOT NULL DEFAULT 'unvalidated',
+               cleanup_state TEXT NOT NULL DEFAULT 'active',
+               checked_at TEXT NOT NULL DEFAULT ''
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        conn
+    }
+
+    fn history_source_input(source_hash: char) -> SshHistorySourceInput {
+        SshHistorySourceInput {
+            host_id: HISTORY_HOST_ID.to_string(),
+            configured_root: "~/.claude".to_string(),
+            source: "claude".to_string(),
+            scope_kind: "hostPrimary".to_string(),
+            source_instance_id: format!("ssh-{}", source_hash.to_string().repeat(64)),
+            installation_id: HISTORY_INSTALLATION_ID.to_string(),
+            remote_machine_id: "machine-1".to_string(),
+            ssh_user: "dev".to_string(),
+            canonical_config_root: "/home/dev/.claude".to_string(),
+            config_root_hash: "b".repeat(64),
+        }
+    }
+
+    #[test]
+    fn validates_remote_history_identity_before_database_access() {
+        let valid = history_source_input('a');
+        assert!(validate_history_source_input(&valid).is_ok());
+
+        let mut invalid = history_source_input('a');
+        invalid.source_instance_id = "session-1".to_string();
+        assert_eq!(
+            validate_history_source_input(&invalid).unwrap_err(),
+            "history_remote_identity_invalid"
+        );
+    }
+
+    #[tokio::test]
+    async fn records_remote_history_source_idempotently() {
+        let mut conn = history_database().await;
+        let first = history_source_input('a');
+        begin_immediate(&mut conn).await.unwrap();
+        let result = record_history_source_with_conn(&mut conn, &first).await;
+        finish_transaction(&mut conn, result).await.unwrap();
+
+        let second = history_source_input('c');
+        begin_immediate(&mut conn).await.unwrap();
+        let result = record_history_source_with_conn(&mut conn, &second).await;
+        finish_transaction(&mut conn, result).await.unwrap();
+
+        let rows = sqlx::query(
+            "SELECT history_source_instance_id, hook_record_json
+             FROM ssh_agent_tool_integrations",
+        )
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].get::<String, _>("history_source_instance_id"),
+            second.source_instance_id
+        );
+        assert_eq!(rows[0].get::<String, _>("hook_record_json"), "{}");
+    }
+
+    #[tokio::test]
+    async fn history_source_failure_rolls_back_existing_identity() {
+        let mut conn = history_database().await;
+        let first = history_source_input('a');
+        begin_immediate(&mut conn).await.unwrap();
+        let result = record_history_source_with_conn(&mut conn, &first).await;
+        finish_transaction(&mut conn, result).await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TRIGGER reject_history_identity
+             BEFORE UPDATE ON ssh_agent_tool_integrations
+             BEGIN SELECT RAISE(ABORT, 'rejected'); END;",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        begin_immediate(&mut conn).await.unwrap();
+        let result = record_history_source_with_conn(&mut conn, &history_source_input('c')).await;
+        assert!(finish_transaction(&mut conn, result).await.is_err());
+
+        let stored: String = sqlx::query_scalar(
+            "SELECT history_source_instance_id FROM ssh_agent_tool_integrations",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(stored, first.source_instance_id);
+    }
 
     #[tokio::test]
     async fn group_schema_upgrade_is_idempotent() {

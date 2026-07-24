@@ -10,13 +10,20 @@
 
 - SSH projects reuse the existing history workspace and source IDs (`claude` / `codex`); they do not introduce `ssh-claude` or `ssh-codex`.
 - The project supplies one Host/source/config-root/project-path context. Lists use cached catalog summaries first, then the Agent bridge; the first fetch requests 21 rows and displays 20.
+- A non-empty cached page renders immediately and starts one background forced refresh. A known remote identity with no cached rows still awaits a non-forced Agent page, so an already-published Agent index can answer without a scan. Manual refresh is forced; load-more is non-forced.
+- If the first non-forced Agent page still leaves an SSH project with no visible cached rows, the workspace may run one forced remote refresh to recover from a stale empty published index. This fallback is scoped to the active remote context and must not loop indefinitely.
+- Identical result-affecting sync inputs share one Promise even across different UI consumers. The RPC uses a request-owned bridge consumer rather than the first window's consumer, and releases it after settlement.
 - Load-more consumes cached rows first and only then advances the Agent `generation:offset` cursor. A generation change reloads from the first page instead of appending incompatible offsets.
 - Remote search requires the existing three-character minimum. Online search uses the Agent index; failure falls back only to cached summary matching and marks freshness stale/error.
 - Full messages, tool calls, sub-Agent records, and Diff are fetched on demand and retained only in the backend LRU. Offline detail is unavailable unless a separate explicit favorite snapshot exists.
 - Remote sessions are read-only: edit/delete are rejected, and remote paths never route to local file/Git/provider commands.
+- SSH remote lists must not merge local `session_favorite_snapshots` as missing-session fallbacks. Remote rows may apply ordinary `session_meta` display state, but the row set must come only from the remote source instance and remote project scope.
+- Local favorite metadata keys may differ by Windows path normalization such as `C:\...` vs `\\?\C:\...`; unfavoriting a local session must clear snapshots and starred state by source + session id, not only by the visible session key.
 - Resume first checks current SSH tabs by Host/source-instance/session identity. Otherwise it runs Agent preflight, offers only same-Host/source/config-root SSH projects, or an explicit original-remote-location option when no project matches.
 - The resume command is returned by Rust after validating structured Agent args; the WebView never interpolates a session ID into shell syntax. Project startup commands are replaced, normal project environment plus canonical `CLAUDE_CONFIG_DIR`/`CODEX_HOME` are retained, and provider overrides remain disabled.
 - Open/list/load-more/search/detail requests are generation-guarded. Results from a previous SSH project, filter, query, or selected session must not overwrite the current consumer, and stale `finally` handlers must not clear current loading state.
+- Opening a history workspace for an SSH project must resolve the maintained project to `remote_path` even when the caller supplies the desktop-local `project.path` or only a project id.
+- The History workspace refresh button must not open the external local Claude/Codex project-sync dialog while `remoteContext` is active. For SSH projects it means "refresh remote history", not "find local syncable projects".
 
 ### 3. Tests Required
 
