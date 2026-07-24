@@ -846,12 +846,12 @@
   width: min(320px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
   pointer-events: auto;
-  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  border: 1px solid var(--menu-border, color-mix(in srgb, var(--border) 40%, transparent));
   border-radius: 10px;
   padding: 10px;
-  color: var(--on-surface);
-  background-color: color-mix(in srgb, var(--surface-container-lowest) 94%, transparent);
-  box-shadow: 0 12px 30px color-mix(in srgb, var(--on-surface) 14%, transparent);
+  color: var(--menu-fg, var(--on-surface));
+  background-color: color-mix(in srgb, var(--menu-bg, var(--surface-container-lowest)) 96%, var(--menu-fg, var(--on-surface)) 4%);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--menu-bg, var(--surface-container-lowest)) 58%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
@@ -860,7 +860,7 @@
   min-width: 0;
   margin-bottom: 8px;
   overflow: hidden;
-  color: var(--on-surface);
+  color: var(--menu-fg, var(--on-surface));
   font-size: 12px;
   font-weight: 650;
   line-height: 1.35;
@@ -876,7 +876,7 @@
 
 .ui-terminal-tab-hover-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 88px minmax(0, 1fr);
   align-items: center;
   min-width: 0;
   gap: 8px;
@@ -884,23 +884,46 @@
   line-height: 1.4;
 }
 
-.ui-terminal-tab-hover-row span {
-  color: var(--on-surface-variant);
+.ui-terminal-tab-hover-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  color: color-mix(in srgb, var(--menu-fg, var(--on-surface-variant)) 68%, transparent);
   white-space: nowrap;
 }
 
-.ui-terminal-tab-hover-row strong {
+.ui-terminal-tab-hover-label > svg {
+  flex: none;
+}
+
+.ui-terminal-tab-hover-value {
+  display: flex;
+  align-items: center;
   min-width: 0;
   overflow: hidden;
-  color: var(--on-surface);
+  gap: 6px;
+  color: var(--menu-fg, var(--on-surface));
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.ui-terminal-tab-hover-value > span:last-child {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.ui-terminal-tab-hover-vendor {
+  display: inline-flex;
+  flex: none;
+  color: var(--menu-fg, var(--on-surface));
+}
+
 .ui-terminal-tab-hover-row-action {
-  grid-template-columns: 72px minmax(0, 1fr) 24px;
+  grid-template-columns: 88px minmax(0, 1fr) 24px;
 }
 
 .ui-terminal-tab-hover-copy {
@@ -910,14 +933,14 @@
   width: 22px;
   height: 22px;
   border-radius: 7px;
-  color: var(--on-surface-variant);
+  color: color-mix(in srgb, var(--menu-fg, var(--on-surface-variant)) 72%, transparent);
   transition: background-color var(--animate-duration-fast) var(--ease-standard), color var(--animate-duration-fast) var(--ease-standard);
 }
 
 .ui-terminal-tab-hover-copy:hover,
 .ui-terminal-tab-hover-copy:focus-visible {
-  color: var(--on-surface);
-  background-color: color-mix(in srgb, var(--interactive-hover-bg) 88%, transparent);
+  color: var(--menu-fg, var(--on-surface));
+  background-color: var(--menu-hover, color-mix(in srgb, var(--interactive-hover-bg) 88%, transparent));
   outline: none;
 }
 

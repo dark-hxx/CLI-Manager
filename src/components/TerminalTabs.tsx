@@ -2,6 +2,7 @@ import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState
 import { useShallow } from "zustand/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import type { LucideIcon } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -64,7 +65,7 @@ import { projectSupportsCapability, resolveProjectCapabilities, type ProjectCapa
 import { resolveCliToolHistorySourceId } from "../lib/cliTools";
 import { resolveHistoryProjectPath } from "../lib/historyProjectPaths";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
-import { Activity, Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check, Cpu, Cloud, Undo2 } from "./icons";
+import { Activity, Terminal, TerminalSquare, Sparkles, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, FolderOpen, Hash, Check, Cpu, Cloud, Undo2 } from "./icons";
 import { WorktreeIcon } from "./WorktreeIcon";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
@@ -244,6 +245,7 @@ const SSH_CONNECTION_STATE_COLORS: Record<NonNullable<TerminalSession["connectio
 interface TerminalTabHoverInfo {
   name: string;
   cli: string;
+  cliVendor: VendorKey | null;
   shell: string;
   project: string;
   path: string;
@@ -251,6 +253,16 @@ interface TerminalTabHoverInfo {
   sshHost?: string;
   connectionState?: TerminalSession["connectionState"];
   disconnectReason?: TerminalSession["disconnectReason"];
+}
+
+interface TerminalTabHoverRow {
+  key: string;
+  label: string;
+  value: string;
+  icon: LucideIcon;
+  vendor?: VendorKey | null;
+  copyValue?: string;
+  copyLabel?: string;
 }
 
 function isTerminalPaneDropEdge(value: string): value is TerminalPaneDropEdge {
@@ -326,6 +338,7 @@ function buildTerminalTabHoverInfo(session: TerminalSession, project?: Project):
     return {
       name: session.title.trim() || "Terminal",
       cli: "Subagent",
+      cliVendor: null,
       shell: "Transcript",
       project: project?.name.trim() || "\u672a\u7ed1\u5b9a\u9879\u76ee",
       path: session.cwd?.trim() || project?.path.trim() || "-",
@@ -336,6 +349,7 @@ function buildTerminalTabHoverInfo(session: TerminalSession, project?: Project):
     return {
       name: session.title.trim() || "同步记录",
       cli: "Synced History",
+      cliVendor: null,
       shell: formatShellLabel(session.shell ?? project?.shell),
       project: project?.name.trim() || session.syncedHistory?.title || "\u672a\u7ed1\u5b9a\u9879\u76ee",
       path: session.syncedHistory?.cwd || session.cwd?.trim() || project?.path.trim() || "-",
@@ -348,6 +362,7 @@ function buildTerminalTabHoverInfo(session: TerminalSession, project?: Project):
   return {
     name: session.title.trim() || "Terminal",
     cli: formatCliToolLabel(project?.cli_tool),
+    cliVendor: inferVendor(project?.cli_tool) ?? inferSessionVendor(session),
     shell: session.environmentType === "ssh" ? "SSH" : formatShellLabel(session.shell ?? project?.shell),
     project: project?.name.trim() || "\u672a\u7ed1\u5b9a\u9879\u76ee",
     path: session.remotePath?.trim() || session.cwd?.trim() || project?.remote_path.trim() || project?.path.trim() || "-",
@@ -459,6 +474,83 @@ interface SortableTabProps {
   menuStyle?: CSSProperties;
 }
 
+function useTerminalTabHoverCard(
+  tabElementRef: { current: HTMLElement | null },
+  disabled: boolean
+) {
+  const [hoverCardPosition, setHoverCardPosition] = useState<{ left: number; top: number } | null>(null);
+  const hoverOpenTimerRef = useRef<number | null>(null);
+  const hoverCloseTimerRef = useRef<number | null>(null);
+  const enabled = useSettingsStore((s) => s.terminalTabHoverInfoEnabled);
+
+  const clearHoverOpenTimer = useCallback(() => {
+    if (hoverOpenTimerRef.current === null) return;
+    window.clearTimeout(hoverOpenTimerRef.current);
+    hoverOpenTimerRef.current = null;
+  }, []);
+
+  const clearHoverCloseTimer = useCallback(() => {
+    if (hoverCloseTimerRef.current === null) return;
+    window.clearTimeout(hoverCloseTimerRef.current);
+    hoverCloseTimerRef.current = null;
+  }, []);
+
+  const hideHoverCard = useCallback(() => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    setHoverCardPosition(null);
+  }, [clearHoverCloseTimer, clearHoverOpenTimer]);
+
+  const keepHoverCardOpen = useCallback(() => {
+    clearHoverCloseTimer();
+  }, [clearHoverCloseTimer]);
+
+  const scheduleHideHoverCard = useCallback(() => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      hoverCloseTimerRef.current = null;
+      setHoverCardPosition(null);
+    }, TERMINAL_TAB_HOVER_CLOSE_DELAY_MS);
+  }, [clearHoverCloseTimer, clearHoverOpenTimer]);
+
+  const scheduleHoverCard = useCallback(() => {
+    if (!enabled || disabled) return;
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    hoverOpenTimerRef.current = window.setTimeout(() => {
+      hoverOpenTimerRef.current = null;
+      const rect = tabElementRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const maxLeft = Math.max(8, window.innerWidth - TERMINAL_TAB_HOVER_CARD_WIDTH - 8);
+      const maxTop = Math.max(8, window.innerHeight - TERMINAL_TAB_HOVER_CARD_ESTIMATED_HEIGHT - 8);
+      setHoverCardPosition({
+        left: clampNumber(rect.left, 8, maxLeft),
+        top: clampNumber(rect.bottom + 6, 8, maxTop),
+      });
+    }, TERMINAL_TAB_HOVER_DELAY_MS);
+  }, [clearHoverCloseTimer, clearHoverOpenTimer, disabled, enabled, tabElementRef]);
+
+  useEffect(() => () => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+  }, [clearHoverCloseTimer, clearHoverOpenTimer]);
+
+  useEffect(() => {
+    if (!enabled || disabled) hideHoverCard();
+  }, [disabled, enabled, hideHoverCard]);
+
+  return {
+    enabled,
+    hoverCardPosition,
+    hideHoverCard,
+    keepHoverCardOpen,
+    scheduleHideHoverCard,
+    scheduleHoverCard,
+  };
+}
+
 function SortableTab({
   id,
   paneId,
@@ -496,80 +588,15 @@ function SortableTab({
   const skipNextBlurSubmitRef = useRef(false);
   const statusLabel = t(TAB_NOTIFICATION_LABELS[notification]);
   const tabMinWidthClass = "min-w-[92px]";
-  const [hoverCardPosition, setHoverCardPosition] = useState<{ left: number; top: number } | null>(null);
   const [worktreePopoverOpen, setWorktreePopoverOpen] = useState(false);
-  const hoverOpenTimerRef = useRef<number | null>(null);
-  const hoverCloseTimerRef = useRef<number | null>(null);
-  const terminalTabHoverInfoEnabled = useSettingsStore((s) => s.terminalTabHoverInfoEnabled);
-
-  const clearHoverOpenTimer = useCallback(() => {
-    if (hoverOpenTimerRef.current === null) return;
-    window.clearTimeout(hoverOpenTimerRef.current);
-    hoverOpenTimerRef.current = null;
-  }, []);
-
-  const clearHoverCloseTimer = useCallback(() => {
-    if (hoverCloseTimerRef.current === null) return;
-    window.clearTimeout(hoverCloseTimerRef.current);
-    hoverCloseTimerRef.current = null;
-  }, []);
-
-  const hideHoverCard = useCallback(() => {
-    clearHoverOpenTimer();
-    clearHoverCloseTimer();
-    setHoverCardPosition(null);
-  }, [clearHoverCloseTimer, clearHoverOpenTimer]);
-
-  const keepHoverCardOpen = useCallback(() => {
-    clearHoverCloseTimer();
-  }, [clearHoverCloseTimer]);
-
-  const scheduleHideHoverCard = useCallback(() => {
-    clearHoverOpenTimer();
-    clearHoverCloseTimer();
-    hoverCloseTimerRef.current = window.setTimeout(() => {
-      hoverCloseTimerRef.current = null;
-      setHoverCardPosition(null);
-    }, TERMINAL_TAB_HOVER_CLOSE_DELAY_MS);
-  }, [clearHoverCloseTimer, clearHoverOpenTimer]);
-
-  const scheduleHoverCard = useCallback(() => {
-    if (!terminalTabHoverInfoEnabled || isEditing || isDragging) return;
-    clearHoverOpenTimer();
-    clearHoverCloseTimer();
-    hoverOpenTimerRef.current = window.setTimeout(() => {
-      hoverOpenTimerRef.current = null;
-      const rect = tabElementRef.current?.getBoundingClientRect();
-      if (!rect) return;
-
-      const maxLeft = Math.max(8, window.innerWidth - TERMINAL_TAB_HOVER_CARD_WIDTH - 8);
-      const maxTop = Math.max(8, window.innerHeight - TERMINAL_TAB_HOVER_CARD_ESTIMATED_HEIGHT - 8);
-      setHoverCardPosition({
-        left: clampNumber(rect.left, 8, maxLeft),
-        top: clampNumber(rect.bottom + 6, 8, maxTop),
-      });
-    }, TERMINAL_TAB_HOVER_DELAY_MS);
-  }, [clearHoverCloseTimer, clearHoverOpenTimer, isDragging, isEditing, terminalTabHoverInfoEnabled]);
-
-  const copySessionId = useCallback(() => {
-    void navigator.clipboard
-      .writeText(hoverInfo.sessionId)
-      .then(() => toast.success("Session ID \u5df2\u590d\u5236"))
-      .catch((err) => toast.error("\u590d\u5236\u5931\u8d25", { description: String(err) }));
-  }, [hoverInfo.sessionId]);
-
-  useEffect(() => () => {
-    clearHoverOpenTimer();
-    clearHoverCloseTimer();
-  }, [clearHoverCloseTimer, clearHoverOpenTimer]);
-
-  useEffect(() => {
-    if (isEditing || isDragging) hideHoverCard();
-  }, [hideHoverCard, isDragging, isEditing]);
-
-  useEffect(() => {
-    if (!terminalTabHoverInfoEnabled) hideHoverCard();
-  }, [hideHoverCard, terminalTabHoverInfoEnabled]);
+  const {
+    enabled: terminalTabHoverInfoEnabled,
+    hoverCardPosition,
+    hideHoverCard,
+    keepHoverCardOpen,
+    scheduleHideHoverCard,
+    scheduleHoverCard,
+  } = useTerminalTabHoverCard(tabElementRef, isEditing || isDragging);
 
   const submitEdit = useCallback(() => {
     const trimmed = editValue.trim();
@@ -742,7 +769,7 @@ function SortableTab({
       </ContextMenu>
       {terminalTabHoverInfoEnabled && hoverCardPosition && !isEditing && !isDragging && (
         <Portal>
-          <TerminalTabHoverCard info={hoverInfo} position={hoverCardPosition} onPointerEnter={keepHoverCardOpen} onPointerLeave={scheduleHideHoverCard} onCopySessionId={copySessionId} />
+          <TerminalTabHoverCard info={hoverInfo} position={hoverCardPosition} themeStyle={menuStyle} onPointerEnter={keepHoverCardOpen} onPointerLeave={scheduleHideHoverCard} />
         </Portal>
       )}
     </>
@@ -752,67 +779,105 @@ function SortableTab({
 function TerminalTabHoverCard({
   info,
   position,
+  themeStyle,
   onPointerEnter,
   onPointerLeave,
-  onCopySessionId,
 }: {
   info: TerminalTabHoverInfo;
   position: { left: number; top: number };
+  themeStyle?: CSSProperties;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
-  onCopySessionId: () => void;
 }) {
   const { t } = useI18n();
-  const rows = [
-    { label: "CLI", value: info.cli },
-    { label: "Shell", value: info.shell },
-    { label: t("termStats.project"), value: info.project },
-    { label: t("termStats.path"), value: info.path },
-    ...(info.sshHost ? [{ label: t("terminal.ssh.host"), value: info.sshHost }] : []),
+  const sessionIdPreview = formatSessionIdPreview(info.sessionId);
+  const rows: TerminalTabHoverRow[] = [
+    { key: "cli", label: "CLI", value: info.cli, icon: Sparkles, vendor: info.cliVendor },
+    { key: "shell", label: "Shell", value: info.shell, icon: TerminalSquare },
+    { key: "project", label: t("termStats.project"), value: info.project, icon: Folder },
+    {
+      key: "path",
+      label: t("termStats.path"),
+      value: info.path,
+      icon: FolderOpen,
+      copyValue: info.path,
+      copyLabel: t("terminal.tab.copyPath"),
+    },
+    ...(info.sshHost ? [{ key: "ssh-host", label: t("terminal.ssh.host"), value: info.sshHost, icon: Cloud }] : []),
     ...(info.connectionState ? [{
+      key: "connection-state",
       label: t("terminal.ssh.connectionState"),
       value: t(`terminal.ssh.connection.${info.connectionState}` as TranslationKey),
+      icon: Activity,
     }] : []),
     ...(info.disconnectReason ? [{
+      key: "disconnect-reason",
       label: t("terminal.ssh.disconnectReason"),
       value: t(`terminal.ssh.disconnect.${info.disconnectReason}` as TranslationKey),
+      icon: Activity,
     }] : []),
+    {
+      key: "session-id",
+      label: "Session ID",
+      value: sessionIdPreview,
+      icon: Hash,
+      copyValue: info.sessionId,
+      copyLabel: t("terminal.tab.copySessionId"),
+    },
   ];
-  const sessionIdPreview = formatSessionIdPreview(info.sessionId);
+  const copyValue = useCallback((value: string, label: string) => {
+    void navigator.clipboard
+      .writeText(value)
+      .then(() => toast.success(t("terminal.tab.copySuccess", { label })))
+      .catch((err) => toast.error(t("terminal.tab.copyFailed"), { description: String(err) }));
+  }, [t]);
 
   return (
     <div
       className="ui-terminal-tab-hover-card"
-      style={{ left: position.left, top: position.top }}
+      style={{ ...themeStyle, left: position.left, top: position.top }}
       role="tooltip"
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
       <div className="ui-terminal-tab-hover-title">{info.name}</div>
       <div className="ui-terminal-tab-hover-rows">
-        {rows.map((row) => (
-          <div key={row.label} className="ui-terminal-tab-hover-row">
-            <span>{row.label}</span>
-            <strong>{row.value}</strong>
-          </div>
-        ))}
-        <div className="ui-terminal-tab-hover-row ui-terminal-tab-hover-row-action">
-          <span>Session ID</span>
-          <strong>{sessionIdPreview}</strong>
-          <button
-            type="button"
-            className="ui-terminal-tab-hover-copy"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onCopySessionId();
-            }}
-            aria-label={t("terminal.tab.copySessionId")}
-            title={t("terminal.tab.copySessionId")}
-          >
-            <Copy size={12} strokeWidth={2} aria-hidden="true" />
-          </button>
-        </div>
+        {rows.map((row) => {
+          const RowIcon = row.icon;
+          const copyTarget = row.copyValue;
+          const copyLabel = row.copyLabel;
+          return (
+            <div key={row.key} className={`ui-terminal-tab-hover-row${copyTarget ? " ui-terminal-tab-hover-row-action" : ""}`}>
+              <span className="ui-terminal-tab-hover-label">
+                <RowIcon size={12} strokeWidth={1.8} aria-hidden="true" />
+                <span>{row.label}</span>
+              </span>
+              <strong className="ui-terminal-tab-hover-value">
+                {row.vendor && (
+                  <span className="ui-terminal-tab-hover-vendor" aria-hidden="true">
+                    <VendorIcon vendor={row.vendor} size={13} />
+                  </span>
+                )}
+                <span>{row.value}</span>
+              </strong>
+              {copyTarget && copyLabel && (
+                <button
+                  type="button"
+                  className="ui-terminal-tab-hover-copy"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    copyValue(copyTarget, row.label);
+                  }}
+                  aria-label={copyLabel}
+                  title={copyLabel}
+                >
+                  <Copy size={12} strokeWidth={2} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -822,6 +887,7 @@ function SortableWorkspanTab({
   title,
   notification,
   vendor,
+  hoverInfo,
   isActive,
   dragDisabled,
   renameDisabled,
@@ -835,6 +901,7 @@ function SortableWorkspanTab({
   title: string;
   notification: TabNotificationState;
   vendor?: VendorKey | null;
+  hoverInfo?: TerminalTabHoverInfo;
   isActive: boolean;
   dragDisabled: boolean;
   renameDisabled: boolean;
@@ -861,6 +928,14 @@ function SortableWorkspanTab({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const tabElementRef = useRef<HTMLDivElement | null>(null);
   const contextMenuPointRef = useRef<SplitPickerAnchor | null>(null);
+  const {
+    enabled: terminalTabHoverInfoEnabled,
+    hoverCardPosition,
+    hideHoverCard,
+    keepHoverCardOpen,
+    scheduleHideHoverCard,
+    scheduleHoverCard,
+  } = useTerminalTabHoverCard(tabElementRef, editing || isDragging || !hoverInfo);
   const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
   const style: CSSProperties = {
     transform: isDragging ? undefined : CSS.Transform.toString(horizontalTransform),
@@ -896,80 +971,97 @@ function SortableWorkspanTab({
     () => contextMenuPointRef.current ?? tabElementRef.current?.getBoundingClientRect(),
     []
   );
-
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          ref={setTabNodeRef}
-          style={style}
-          className="ui-interactive ui-tab-trigger ui-terminal-tab-item ui-workspan-tab mx-1 flex h-7 min-w-[104px] max-w-[200px] shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
-          data-workspan-id={workspan.id}
-          data-selected={isActive ? "true" : "false"}
-          onClick={onActivate}
-          onDoubleClick={(event) => {
-            event.stopPropagation();
-            startRename();
-          }}
-          onContextMenu={(event) => {
-            contextMenuPointRef.current = { x: event.clientX, y: event.clientY };
-          }}
-          {...sortableAttributes}
-          {...listeners}
-        >
-          <span
-            className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
-            data-pulsing={PULSING_TAB_STATES.has(notification) ? "true" : "false"}
-            style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification], color: TAB_NOTIFICATION_COLORS[notification] }}
-            aria-label={t(TAB_NOTIFICATION_LABELS[notification])}
-            role="status"
-          />
-          {vendor ? (
-            <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
-              <VendorIcon vendor={vendor} size={14} />
-            </span>
-          ) : (
-            <Terminal size={14} strokeWidth={1.8} aria-hidden="true" />
-          )}
-          {editing ? (
-            <input
-              ref={inputRef}
-              value={editValue}
-              onChange={(event) => setEditValue(event.target.value)}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.stopPropagation()}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === "Enter") submitRename();
-                if (event.key === "Escape") setEditing(false);
-              }}
-              onBlur={submitRename}
-              className="ui-input h-5 min-w-0 flex-1 rounded-md px-1.5 py-0 text-[12px] text-on-surface outline-none"
-              aria-label={t("terminal.tab.rename")}
-            />
-          ) : (
-            <span className="ui-terminal-tab-title min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
-          )}
-          <button
-            type="button"
-            className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onClose(event.currentTarget.getBoundingClientRect());
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            ref={setTabNodeRef}
+            style={style}
+            className="ui-interactive ui-tab-trigger ui-terminal-tab-item ui-workspan-tab mx-1 flex h-7 min-w-[104px] max-w-[200px] shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-[12px] font-medium"
+            data-workspan-id={workspan.id}
+            data-selected={isActive ? "true" : "false"}
+            onClick={() => {
+              hideHoverCard();
+              onActivate();
             }}
-            aria-label={t("terminal.workspan.close", { title })}
-            title={t("terminal.workspan.close", { title })}
+            onPointerEnter={scheduleHoverCard}
+            onPointerLeave={scheduleHideHoverCard}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              startRename();
+            }}
+            onContextMenu={(event) => {
+              hideHoverCard();
+              contextMenuPointRef.current = { x: event.clientX, y: event.clientY };
+            }}
+            {...sortableAttributes}
+            {...listeners}
           >
-            <X size={13} strokeWidth={2.2} aria-hidden="true" />
-          </button>
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="terminal-skin" style={menuStyle}>
-        {menuContent(getTabAnchor, startRename)}
-      </ContextMenuContent>
-    </ContextMenu>
+            <span
+              className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
+              data-pulsing={PULSING_TAB_STATES.has(notification) ? "true" : "false"}
+              style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification], color: TAB_NOTIFICATION_COLORS[notification] }}
+              aria-label={t(TAB_NOTIFICATION_LABELS[notification])}
+              role="status"
+            />
+            {vendor ? (
+              <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
+                <VendorIcon vendor={vendor} size={14} />
+              </span>
+            ) : (
+              <Terminal size={14} strokeWidth={1.8} aria-hidden="true" />
+            )}
+            {editing ? (
+              <input
+                ref={inputRef}
+                value={editValue}
+                onChange={(event) => setEditValue(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onContextMenu={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === "Enter") submitRename();
+                  if (event.key === "Escape") setEditing(false);
+                }}
+                onBlur={submitRename}
+                className="ui-input h-5 min-w-0 flex-1 rounded-md px-1.5 py-0 text-[12px] text-on-surface outline-none"
+                aria-label={t("terminal.tab.rename")}
+              />
+            ) : (
+              <span className="ui-terminal-tab-title min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
+            )}
+            <button
+              type="button"
+              className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-[background-color,color,opacity,box-shadow] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
+              onPointerEnter={hideHoverCard}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                hideHoverCard();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                hideHoverCard();
+                onClose(event.currentTarget.getBoundingClientRect());
+              }}
+              aria-label={t("terminal.workspan.close", { title })}
+              title={t("terminal.workspan.close", { title })}
+            >
+              <X size={13} strokeWidth={2.2} aria-hidden="true" />
+            </button>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="terminal-skin" style={menuStyle}>
+          {menuContent(getTabAnchor, startRename)}
+        </ContextMenuContent>
+      </ContextMenu>
+      {terminalTabHoverInfoEnabled && hoverInfo && hoverCardPosition && !editing && !isDragging && (
+        <Portal>
+          <TerminalTabHoverCard info={hoverInfo} position={hoverCardPosition} themeStyle={menuStyle} onPointerEnter={keepHoverCardOpen} onPointerLeave={scheduleHideHoverCard} />
+        </Portal>
+      )}
+    </>
   );
 }
 
@@ -4185,6 +4277,7 @@ export function TerminalTabs({
                           title={model.title}
                           notification={model.notification}
                           vendor={model.vendor}
+                          hoverInfo={model.singleSession ? buildTerminalTabHoverInfo(model.singleSession, model.singleSession.projectId ? projectById.get(model.singleSession.projectId) : undefined) : undefined}
                           isActive={model.workspan.id === effectiveActiveWorkspanId}
                           dragDisabled={hasScopedTerminalFilter}
                           renameDisabled={!model.singleSession}

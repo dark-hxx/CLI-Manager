@@ -1,5 +1,11 @@
 # Changelog
 
+## [TEMP]
+
+### 修复
+
+- **终端 Tab 悬浮信息**：开启对应设置后，默认单终端 Workspan 顶层 Tab 也会显示 CLI、Shell、项目、路径和 Session ID，不再因 Pane 内 Tab 被隐藏而失效；悬浮卡片背景、文字、边框和交互色跟随当前终端主题，各字段增加语义图标，Codex、Claude 等 CLI 显示对应厂商图标，路径与 Session ID 均可复制完整值。
+
 ## [V1.3.1] - 2026-07-23
 
 ### SSH
