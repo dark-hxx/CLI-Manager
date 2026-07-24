@@ -44,6 +44,9 @@ version bump unless the Agent itself changes.
 - [ ] It contains both Linux binaries, `ssh-agent-release-manifest.json`, its `.sig`, and
   `install-ssh-agent.sh`.
 - [ ] The manifest version equals `src-tauri/ssh-agent/Cargo.toml` and its URLs use the Agent Tag.
+- [ ] Before `tauri-action` runs, the downloaded desktop bundle requires only both Agent binaries,
+  `ssh-agent-release-manifest.json`, and its `.sig`; do not require updater `latest.json` there,
+  because Tauri generates it during the later desktop packaging step.
 - [ ] A desktop release still contains `latest.json`, updater signatures, and the bundled Agent
   manifest/signature/binaries before it is published.
 

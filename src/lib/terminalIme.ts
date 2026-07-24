@@ -60,6 +60,7 @@ export const attachTerminalIme = ({
   let helperTextareaAnchorRafId: number | null = null;
   let compositionAnchorRafId: number | null = null;
   let compositionAnchorTimeoutId: number | null = null;
+  let compositionEndCleanupTimerId: number | null = null;
   let compositionScrollLock: { element: HTMLElement; scrollTop: number; scrollLeft: number }[] = [];
   let compositionAnchorCell: { x: number; y: number } | null = null;
 
@@ -304,6 +305,10 @@ export const attachTerminalIme = ({
     lastImeProcessKeyAt = nowForImeInput();
   };
   const onCompositionStart = () => {
+    if (compositionEndCleanupTimerId !== null) {
+      window.clearTimeout(compositionEndCleanupTimerId);
+      compositionEndCleanupTimerId = null;
+    }
     isComposingRef.current = true;
     clearSuggestion();
     lastImeProcessKeyAt = -1;
@@ -320,11 +325,22 @@ export const attachTerminalIme = ({
   const onCompositionEnd = () => {
     isComposingRef.current = false;
     lastCompositionEndAt = nowForImeInput();
-    compositionAnchorCell = null;
-    onCompositionCommitted(textarea?.value ?? "");
-    scheduleCompositionScrollRestore();
-    scheduleHelperTextareaAnchorPin();
-    scheduleFit(true);
+    if (compositionEndCleanupTimerId !== null) {
+      window.clearTimeout(compositionEndCleanupTimerId);
+    }
+    // xterm finalizes IME text from the helper textarea in its own setTimeout(0).
+    // Our listener is registered after xterm's, so deferring the geometry reset
+    // lets xterm read the committed candidate before we resize or re-anchor the
+    // textarea. WKWebView can otherwise leave only the last raw pinyin letter.
+    compositionEndCleanupTimerId = window.setTimeout(() => {
+      compositionEndCleanupTimerId = null;
+      if (cancelled || isComposingRef.current) return;
+      compositionAnchorCell = null;
+      onCompositionCommitted(textarea?.value ?? "");
+      scheduleCompositionScrollRestore();
+      scheduleHelperTextareaAnchorPin();
+      scheduleFit(true);
+    }, 0);
   };
 
   scheduleHelperTextareaAnchorPin();
@@ -374,5 +390,6 @@ export const attachTerminalIme = ({
     if (helperTextareaAnchorRafId !== null) cancelAnimationFrame(helperTextareaAnchorRafId);
     if (compositionAnchorRafId !== null) cancelAnimationFrame(compositionAnchorRafId);
     if (compositionAnchorTimeoutId !== null) window.clearTimeout(compositionAnchorTimeoutId);
+    if (compositionEndCleanupTimerId !== null) window.clearTimeout(compositionEndCleanupTimerId);
   };
 };
