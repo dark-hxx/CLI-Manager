@@ -572,17 +572,27 @@ function shouldRefreshOpenFile(filePath: string, changedPaths?: string[]): boole
   return !changedPaths?.length || changedPaths.some((path) => changedPathAffectsFile(path, filePath));
 }
 
+function addDirectoryPathWithAncestors(paths: Set<string>, path: string): void {
+  paths.add("");
+  if (!path) return;
+  let current = "";
+  for (const segment of path.split("/")) {
+    if (!segment) continue;
+    current = current ? `${current}/${segment}` : segment;
+    paths.add(current);
+  }
+}
+
 function collectRefreshPaths(
   expandedPaths: Set<string>,
   openFiles: ActiveProjectFile[],
   changedPaths?: string[]
 ): string[] {
   if (!changedPaths?.length) {
-    return Array.from(new Set([
-      "",
-      ...expandedPaths,
-      ...openFiles.map((file) => parentPath(file.path)),
-    ])).sort((a, b) => pathDepth(a) - pathDepth(b));
+    const paths = new Set<string>();
+    for (const path of expandedPaths) addDirectoryPathWithAncestors(paths, path);
+    for (const file of openFiles) addDirectoryPathWithAncestors(paths, parentPath(file.path));
+    return Array.from(paths).sort((a, b) => pathDepth(a) - pathDepth(b));
   }
 
   const paths = new Set<string>();
@@ -592,10 +602,12 @@ function collectRefreshPaths(
       continue;
     }
     if (path === ".git" || path.startsWith(".git/")) continue;
-    paths.add(parentPath(path));
+    addDirectoryPathWithAncestors(paths, parentPath(path));
   }
   for (const file of openFiles) {
-    if (shouldRefreshOpenFile(file.path, changedPaths)) paths.add(parentPath(file.path));
+    if (shouldRefreshOpenFile(file.path, changedPaths)) {
+      addDirectoryPathWithAncestors(paths, parentPath(file.path));
+    }
   }
   return Array.from(paths).sort((a, b) => pathDepth(a) - pathDepth(b));
 }
