@@ -1759,7 +1759,12 @@ function PaneLeafView({
       )}
       <div
         className="ui-terminal-pane-content relative min-h-0 flex-1 overflow-hidden"
-        onMouseDownCapture={() => {
+        onPointerDownCapture={() => {
+          if (effectivePaneActiveSessionId && effectivePaneActiveSessionId !== useTerminalStore.getState().activeSessionId) {
+            onActivateSession(effectivePaneActiveSessionId);
+          }
+        }}
+        onFocusCapture={() => {
           if (effectivePaneActiveSessionId && effectivePaneActiveSessionId !== activeSessionId) {
             onActivateSession(effectivePaneActiveSessionId);
           }

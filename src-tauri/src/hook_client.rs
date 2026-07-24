@@ -9,11 +9,16 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::exit;
+use std::thread;
 use std::time::Duration;
 
 use cli_manager_hook_schema::{non_empty_trimmed, normalize_hook_input};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use uuid::Uuid;
+
+const NOTIFY_ATTEMPTS: usize = 2;
+const NOTIFY_RETRY_DELAY: Duration = Duration::from_millis(80);
 
 /// `main` 在初始化 Tauri runtime 之前调用本函数并退出，因此这里
 /// 不依赖任何 Tauri/WebView 状态，冷启动开销极小。
@@ -56,16 +61,8 @@ impl HookNotifyError {
 }
 
 fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
-    // 优先使用 PTY 注入的 tab 绑定；Grok/外部 CLI 缺少注入环境变量时回退到 daemon 发现文件。
-    let notify = resolve_notify_target().ok_or_else(|| {
-        if non_empty_env("CLI_MANAGER_NOTIFY_PORT").is_some() {
-            HookNotifyError::MissingToken
-        } else {
-            HookNotifyError::MissingPort
-        }
-    })?;
-    let tab_id = non_empty_env("CLI_MANAGER_TAB_ID")
-        .unwrap_or_else(|| format!("external:{source}"));
+    let tab_id =
+        non_empty_env("CLI_MANAGER_TAB_ID").unwrap_or_else(|| format!("external:{source}"));
 
     let mut stdin_raw = String::new();
     std::io::stdin()
@@ -118,34 +115,58 @@ fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
         "transcriptPath": normalized.transcript_path,
         "reasoningEffort": reasoning_effort,
         "wslDistroName": wsl_distro_name,
+        // 同一次 Hook 进程内的重试复用该 ID，daemon 可幂等去重。
+        "remoteEventId": Uuid::new_v4().to_string(),
     });
     let body = serde_json::to_vec(&payload).map_err(|_| HookNotifyError::PayloadSerialize)?;
 
-    post(&notify.port, &notify.token, &body)
+    let mut last_error = if non_empty_env("CLI_MANAGER_NOTIFY_PORT").is_some() {
+        HookNotifyError::MissingToken
+    } else {
+        HookNotifyError::MissingPort
+    };
+    for attempt in 0..NOTIFY_ATTEMPTS {
+        let targets = resolve_notify_targets();
+        for target in targets {
+            match post(&target.port, &target.token, &body) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = error,
+            }
+        }
+        if attempt + 1 < NOTIFY_ATTEMPTS {
+            thread::sleep(NOTIFY_RETRY_DELAY);
+        }
+    }
+    Err(last_error)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NotifyTarget {
     port: String,
     token: String,
 }
 
-fn resolve_notify_target() -> Option<NotifyTarget> {
+fn resolve_notify_targets() -> Vec<NotifyTarget> {
+    let mut targets = Vec::with_capacity(2);
     if let (Some(port), Some(token)) = (
         non_empty_env("CLI_MANAGER_NOTIFY_PORT"),
         non_empty_env("CLI_MANAGER_NOTIFY_TOKEN"),
     ) {
-        return Some(NotifyTarget { port, token });
+        targets.push(NotifyTarget { port, token });
     }
 
-    // Grok/external CLI often does not inherit PTY-injected env into hook children.
-    // Fall back to the same discovery files the app/daemon use.
-    let data_dir = crate::app_paths::cli_manager_data_dir().ok()?;
-    for name in ["daemon.dev.json", "daemon.json"] {
-        if let Some(target) = read_daemon_notify_target(&data_dir.join(name)) {
-            return Some(target);
+    // 外部 CLI 没有注入环境；旧终端也可能仍持有重启前的端口，始终补充当前 daemon 发现目标。
+    if let Ok(data_dir) = crate::app_paths::cli_manager_data_dir() {
+        for name in ["daemon.dev.json", "daemon.json"] {
+            if let Some(target) = read_daemon_notify_target(&data_dir.join(name)) {
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+                break;
+            }
         }
     }
-    None
+    targets
 }
 
 #[derive(Debug, Deserialize)]

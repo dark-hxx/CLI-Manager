@@ -35,6 +35,7 @@ import { useProjectStore } from "./projectStore";
 import { useSshHostStore } from "./sshHostStore";
 import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import { resolveCliSessionRebind } from "./terminalCliSession";
+import { inferHookBindingSource, resolveCliHookTarget } from "./terminalHookBinding";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "../lib/ssh";
 import { parseStoredSshHookReport, resolveSshToolSource } from "../lib/sshToolIntegration";
 import { getSshClientInstanceId } from "../lib/sshClientIdentity";
@@ -2145,17 +2146,68 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   },
 
   handleCliHookEvent: (payload) => {
+    const state = get();
     const rawTabId = payload.tabId;
-    const tabId = resolvePrimaryTabId(payload.tabId, get().splits);
-    if (!get().sessions.some((session) => session.id === tabId)) return null;
+    const primaryTabId = resolvePrimaryTabId(payload.tabId, state.splits);
+    const projectState = useProjectStore.getState();
+    const resolution = resolveCliHookTarget({
+      rawTabId,
+      primaryTabId,
+      source: payload.source,
+      cwd: payload.cwd,
+      sessionId: payload.sessionId,
+      wslDistroName: resolveHookWslDistroName(payload),
+      environmentType: payload.environmentType,
+      receivedAt: Date.now(),
+      candidates: state.sessions
+        .filter((session) => (session.kind ?? "pty") === "pty" && !session.remoteHandoff)
+        .map((session) => {
+          const project = session.projectId
+            ? projectState.projects.find((item) => item.id === session.projectId) ?? null
+            : findProjectByPath(projectState.projects, session.cwd);
+          const worktree = session.worktreeId
+            ? projectState.worktrees.find((item) => item.id === session.worktreeId) ?? null
+            : findWorktreeByPath(projectState.worktrees, session.cwd);
+          return {
+            id: session.id,
+            source: inferHookBindingSource(
+              `${session.cliTool ?? ""} ${session.startupCmd ?? ""} ${session.title ?? ""} ${project?.cli_tool ?? ""}`
+            ),
+            paths: [session.cwd, worktree?.path, project?.path].filter((path): path is string => Boolean(path?.trim())),
+            cliSessionId: session.cliSessionId,
+            environmentType: session.environmentType,
+            outputActivityAt: state.ptyOutputActivityAt[session.id],
+          };
+        }),
+    });
+    const tabId = resolution.tabId;
+    if (!tabId) {
+      logWarn("CLI hook target unresolved", {
+        source: payload.source ?? null,
+        event: payload.event,
+        rawTabId,
+        cwd: payload.cwd ?? null,
+        reason: resolution.reason,
+      });
+      return null;
+    }
+    if (resolution.reason !== "exact" && resolution.reason !== "legacy") {
+      logInfo("CLI hook target recovered", {
+        source: payload.source ?? null,
+        event: payload.event,
+        rawTabId,
+        tabId,
+        reason: resolution.reason,
+      });
+    }
     const cliSessionId = payload.sessionId?.trim();
     const remoteTranscriptRef = payload.environmentType === "ssh" ? payload.remoteTranscriptRef?.trim() : undefined;
     const cliReasoningEffort = payload.reasoningEffort?.trim();
     let boundNewCliSessionId = false;
-    if ((cliSessionId || remoteTranscriptRef || cliReasoningEffort) && get().sessions.some((session) => session.id === rawTabId)) {
+    if ((cliSessionId || remoteTranscriptRef || cliReasoningEffort) && get().sessions.some((session) => session.id === tabId)) {
       set((state) => ({
         sessions: state.sessions.map((session) => {
-          if (session.id !== rawTabId) return session;
+          if (session.id !== tabId) return session;
           const cliSessionRebind = resolveCliSessionRebind(session.cliSessionId, cliSessionId);
           if (cliSessionRebind.changed) {
             boundNewCliSessionId = true;

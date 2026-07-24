@@ -1,9 +1,9 @@
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -12,6 +12,33 @@ use crate::third_party_notification::HookNotificationJob;
 const REQUEST_PATH: &str = "/api/claude-hook";
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
+const RECENT_HOOK_EVENT_LIMIT: usize = 1024;
+
+#[derive(Default)]
+struct RecentHookEvents {
+    ids: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+impl RecentHookEvents {
+    fn accept(&mut self, event_id: Option<&str>) -> bool {
+        let Some(event_id) = event_id.map(str::trim).filter(|value| !value.is_empty()) else {
+            return true;
+        };
+        if self.ids.contains(event_id) {
+            return false;
+        }
+        let event_id = event_id.to_string();
+        self.ids.insert(event_id.clone());
+        self.order.push_back(event_id);
+        while self.order.len() > RECENT_HOOK_EVENT_LIMIT {
+            if let Some(expired) = self.order.pop_front() {
+                self.ids.remove(&expired);
+            }
+        }
+        true
+    }
+}
 
 /// hook 上报的消费出口：主进程实现为 Tauri 事件，daemon 实现为帧广播 + 缓存
 /// （Issue #123 Phase 2 复用点：HTTP 解析/校验逻辑两侧共享，只有出口不同）。
@@ -109,13 +136,15 @@ impl ClaudeHookPayload {
 /// 在给定 listener 上跑 hook HTTP 服务：解析/鉴权/校验后把 payload 交给 sink。
 /// daemon 与主进程共用（Issue #123 Phase 2）。
 pub fn spawn_hook_listener(listener: TcpListener, token: String, sink: HookPayloadSink) {
+    let recent_events = Arc::new(Mutex::new(RecentHookEvents::default()));
     thread::spawn(move || {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
                     let token = token.clone();
                     let sink = Arc::clone(&sink);
-                    thread::spawn(move || handle_stream(stream, sink, &token));
+                    let recent_events = Arc::clone(&recent_events);
+                    thread::spawn(move || handle_stream(stream, sink, &token, recent_events));
                 }
                 Err(err) => warn!("cli hook bridge accept failed: {}", err),
             }
@@ -123,7 +152,12 @@ pub fn spawn_hook_listener(listener: TcpListener, token: String, sink: HookPaylo
     });
 }
 
-fn handle_stream(mut stream: TcpStream, sink: HookPayloadSink, token: &str) {
+fn handle_stream(
+    mut stream: TcpStream,
+    sink: HookPayloadSink,
+    token: &str,
+    recent_events: Arc<Mutex<RecentHookEvents>>,
+) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let request = match read_request(&mut stream) {
         Ok(request) => request,
@@ -160,6 +194,15 @@ fn handle_stream(mut stream: TcpStream, sink: HookPayloadSink, token: &str) {
 
     if !is_valid_payload(&payload) {
         write_response(&mut stream, "400 Bad Request", "invalid payload");
+        return;
+    }
+
+    let accepted = recent_events
+        .lock()
+        .map(|mut recent| recent.accept(payload.remote_event_id.as_deref()))
+        .unwrap_or(true);
+    if !accepted {
+        write_response(&mut stream, "204 No Content", "");
         return;
     }
 
@@ -388,6 +431,13 @@ fn is_valid_payload(payload: &ClaudeHookRequest) -> bool {
     if tab_id.is_empty() || tab_id.len() > 128 {
         return false;
     }
+    if payload
+        .remote_event_id
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty() || value.len() > 128)
+    {
+        return false;
+    }
 
     match normalize_source(payload.source.as_deref()) {
         "claude" => matches!(
@@ -506,7 +556,10 @@ fn write_response(stream: &mut TcpStream, status: &str, body: &str) {
 
 #[cfg(test)]
 mod validation_tests {
-    use super::{is_valid_payload, normalize_source, ClaudeHookRequest};
+    use super::{
+        is_valid_payload, normalize_source, ClaudeHookRequest, RecentHookEvents,
+        RECENT_HOOK_EVENT_LIMIT,
+    };
     use serde_json::json;
 
     #[test]
@@ -549,6 +602,31 @@ mod validation_tests {
         }))
         .expect("test payload should deserialize");
 
+        assert!(!is_valid_payload(&request));
+    }
+
+    #[test]
+    fn deduplicates_bounded_hook_event_ids() {
+        let mut recent = RecentHookEvents::default();
+        assert!(recent.accept(Some("event-1")));
+        assert!(!recent.accept(Some("event-1")));
+        assert!(recent.accept(None));
+
+        for index in 0..=RECENT_HOOK_EVENT_LIMIT {
+            assert!(recent.accept(Some(&format!("event-{index}-next"))));
+        }
+        assert!(recent.accept(Some("event-1")));
+    }
+
+    #[test]
+    fn rejects_invalid_hook_event_id() {
+        let request: ClaudeHookRequest = serde_json::from_value(json!({
+            "tabId": "tab",
+            "source": "grok",
+            "event": "SessionStart",
+            "remoteEventId": ""
+        }))
+        .expect("test payload should deserialize");
         assert!(!is_valid_payload(&request));
     }
 }

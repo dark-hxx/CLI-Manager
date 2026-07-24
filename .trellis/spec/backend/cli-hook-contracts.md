@@ -71,6 +71,67 @@ match normalize_source(payload.source.as_deref()) {
 }
 ```
 
+## Scenario: Local Hook Retry, Deduplication, And Safe Tab Binding
+
+### 1. Scope / Trigger
+
+- Trigger: a local Hook may outlive its PTY environment, hit a transient daemon restart, or arrive from an external CLI without a current Tab ID.
+- Applies to: `hook_client`, local HTTP admission, frontend Hook target resolution, split panes, Workspan, Worktree, and WSL paths.
+
+### 2. Signatures
+
+```text
+remoteEventId: UUID string, optional for backward compatibility, 1..128 bytes when present
+resolveCliHookTarget(input) -> { tabId, reason } | null
+```
+
+### 3. Contracts
+
+- One Hook invocation creates one `remoteEventId`; every retry reuses that ID.
+- The client tries the complete PTY environment target first, then the current daemon discovery target when it differs, with two bounded attempts and no CLI-visible failure.
+- The receiver keeps a bounded recent-ID set and returns success for duplicates without invoking frontend or third-party sinks again. Legacy requests without an ID remain accepted and are not deduplicated.
+- Binding order is exact Tab ID, valid legacy primary mapping, existing session owner, unique source/path candidate, then one recently active candidate. Ambiguous candidates are rejected.
+- Windows drive and `/mnt/<drive>` paths compare as one local path; `\\wsl$`/`\\wsl.localhost` and Linux paths compare only within the same WSL distro. Local events never bind SSH tabs.
+- Realtime stats continue to query only an explicitly bound session ID; project-latest history is not a recovery mechanism.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Missing `remoteEventId` | Accept as legacy; do not deduplicate. |
+| Empty or longer than 128 bytes | HTTP 400; no sink delivery. |
+| Duplicate valid ID | HTTP success; zero additional sink deliveries. |
+| Stale PTY daemon target | Try current discovery target. |
+| One compatible local candidate | Bind and refresh stats. |
+| Multiple candidates without one recent PTY owner | Keep unbound and log a diagnostic. |
+| SSH candidate for local event | Exclude it. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: an old Grok process uses a stale port, discovery finds the current daemon, and its unique Worktree terminal binds.
+- Base: a current in-app terminal uses its exact Tab ID and keeps existing behavior.
+- Bad: two same-source panes exist and the event is assigned to the project-latest session; this risks cross-pane data leakage and is forbidden.
+
+### 6. Tests Required
+
+- Rust: duplicate IDs deliver once; invalid IDs are rejected; Hook receiver tests pass.
+- TypeScript/Node: exact priority, unique external binding, recent-output disambiguation, ambiguity refusal, Windows/WSL normalization, and SSH exclusion.
+- Run `npx tsc --noEmit`, Rust check/test, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+return candidates[0];
+```
+
+#### Correct
+
+```ts
+return candidates.length === 1 ? candidates[0] : null;
+```
+
 ## Scenario: Per-Tool Hook Bridge Enablement
 
 ### 1. Scope / Trigger
