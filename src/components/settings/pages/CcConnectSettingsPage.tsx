@@ -103,10 +103,7 @@ interface CcConnectStatus {
 }
 
 interface CcConnectHandoffNotificationStatus {
-  lastAttemptAtMs: number | null;
   lastSuccessAtMs: number | null;
-  lastEvent: string | null;
-  lastPlatform: PlatformKind | null;
   lastError: string | null;
 }
 
@@ -209,8 +206,6 @@ const BLOCKER_KEYS: Record<string, TranslationKey> = {
 };
 
 const WARNING_KEYS: Record<string, TranslationKey> = {
-  independent_sessions: "settings.ccConnect.warning.independentSessions",
-  current_user_permissions: "settings.ccConnect.warning.currentUserPermissions",
   credential_store_unavailable: "settings.ccConnect.warning.credentialStoreUnavailable",
   yolo_enabled: "settings.ccConnect.warning.yoloEnabled",
 };
@@ -882,6 +877,8 @@ export function CcConnectSettingsPage() {
     : status?.running
       ? t("settings.ccConnect.running")
       : t("settings.ccConnect.stopped");
+  const blockerCodes = status?.blockers ?? [];
+  const actionableWarningCodes = (status?.warnings ?? []).filter((code) => WARNING_KEYS[code]);
   const platformOptions = [
     { value: "telegram", label: t("settings.ccConnect.platformTelegram") },
     { value: "feishu", label: t("settings.ccConnect.platformFeishu") },
@@ -894,18 +891,6 @@ export function CcConnectSettingsPage() {
     weixin: "settings.ccConnect.allowFromWeixinHelp",
     wecom: "settings.ccConnect.allowFromWecomHelp",
   } satisfies Record<PlatformKind, TranslationKey>)[profile.platform];
-  const notificationEventKey = handoffNotificationStatus?.lastEvent
-    ? ({
-        progress: "settings.ccConnect.notifications.eventProgress",
-        permission: "settings.ccConnect.notifications.eventPermission",
-        completed: "settings.ccConnect.notifications.eventCompleted",
-        failed: "settings.ccConnect.notifications.eventFailed",
-        timed_out: "settings.ccConnect.notifications.eventTimedOut",
-      } satisfies Record<string, TranslationKey>)[handoffNotificationStatus.lastEvent]
-    : undefined;
-  const notificationPlatform = handoffNotificationStatus?.lastPlatform
-    ? platformOptions.find((option) => option.value === handoffNotificationStatus.lastPlatform)?.label
-    : null;
 
   return (
     <Stack gap="md" maw={1040}>
@@ -1057,14 +1042,6 @@ export function CcConnectSettingsPage() {
         <Text mt="sm" size="xs" c="var(--text-muted)">
           {t("settings.ccConnect.notifications.routeDescription")}
         </Text>
-        {handoffNotificationStatus?.lastAttemptAtMs ? (
-          <Text mt="xs" size="xs" c={handoffNotificationStatus.lastError ? "red" : "var(--text-muted)"} style={{ overflowWrap: "anywhere" }}>
-            {t("settings.ccConnect.notifications.lastDelivery")}: {formatTimestamp(handoffNotificationStatus.lastAttemptAtMs, language)}
-            {notificationPlatform ? ` · ${notificationPlatform}` : ""}
-            {notificationEventKey ? ` · ${t(notificationEventKey)}` : ""}
-            {handoffNotificationStatus.lastError ? ` · ${handoffNotificationStatus.lastError}` : ""}
-          </Text>
-        ) : null}
       </Card>
 
       <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
@@ -1237,12 +1214,12 @@ export function CcConnectSettingsPage() {
         </Group>
       </Card>
 
-      {(status?.blockers.length || status?.warnings.length) ? (
+      {(blockerCodes.length || actionableWarningCodes.length) ? (
         <Card className="border border-yellow-500/30 bg-yellow-500/10" p="md" radius="lg">
           <Group gap="xs"><AlertTriangle size={17} /><Text fw={700}>{t("settings.ccConnect.blockers.title")}</Text></Group>
           <Stack gap={6} mt="sm">
-            {status.blockers.map((code) => <Text key={code} size="xs">• {issueText(code, BLOCKER_KEYS)}</Text>)}
-            {status.warnings.map((code) => <Text key={code} size="xs" c="var(--text-muted)">• {issueText(code, WARNING_KEYS)}</Text>)}
+            {blockerCodes.map((code) => <Text key={code} size="xs">• {issueText(code, BLOCKER_KEYS)}</Text>)}
+            {actionableWarningCodes.map((code) => <Text key={code} size="xs" c="var(--text-muted)">• {issueText(code, WARNING_KEYS)}</Text>)}
           </Stack>
         </Card>
       ) : null}
