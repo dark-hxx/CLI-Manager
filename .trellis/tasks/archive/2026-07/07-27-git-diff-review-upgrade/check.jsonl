@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-27-git-diff-review-upgrade/prd.md","reason":"核对 9 个子任务与父任务验收标准"}
+{"file":".trellis/tasks/07-27-git-diff-review-upgrade/acceptance.md","reason":"统一功能、平台、架构和验证结论"}
+{"file":".trellis/spec/frontend/git-diff-viewer-contracts.md","reason":"核对前端职责与安全不变量"}
+{"file":".trellis/spec/backend/git-status-contracts.md","reason":"核对 Desktop/WSL 数据流"}
+{"file":".trellis/spec/backend/ssh-agent-contracts.md","reason":"核对 SSH 与旧 Agent 兼容"}

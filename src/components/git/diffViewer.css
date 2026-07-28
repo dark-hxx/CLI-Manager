@@ -1,8 +1,12 @@
 .diff-viewer-container {
+  --git-diff-gutter-width: 62px;
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-primary);
+}
+
+[data-git-diff-theme="application"] .diff-viewer-container {
   --git-diff-bg: #0a0a0a;
   --git-diff-gutter-bg: #151515;
   --git-diff-border: #262626;
@@ -16,6 +20,8 @@
   --git-diff-delete-bg: rgba(242, 94, 94, 0.12);
   --git-diff-delete-gutter-bg: rgba(242, 94, 94, 0.18);
   --git-diff-delete-decoration: rgba(242, 94, 94, 0.30);
+  --git-diff-selected-bg: rgba(245, 185, 66, 0.20);
+  --git-diff-selected-border: #f5b942;
   --git-token-comment: #6a6a6a;
   --git-token-punctuation: #9aa0a6;
   --git-token-keyword: #c792ea;
@@ -28,7 +34,7 @@
   --git-token-regex: #f78c6c;
 }
 
-[data-theme="light"] .diff-viewer-container {
+[data-git-diff-theme="application"][data-theme-mode="light"] .diff-viewer-container {
   --git-diff-bg: #fbfcfd;
   --git-diff-gutter-bg: #f2f5f8;
   --git-diff-border: #d7dde5;
@@ -42,6 +48,8 @@
   --git-diff-delete-bg: rgba(220, 38, 38, 0.10);
   --git-diff-delete-gutter-bg: rgba(220, 38, 38, 0.14);
   --git-diff-delete-decoration: rgba(220, 38, 38, 0.20);
+  --git-diff-selected-bg: rgba(180, 83, 9, 0.14);
+  --git-diff-selected-border: #92400e;
   --git-token-comment: #6b7280;
   --git-token-punctuation: #475569;
   --git-token-keyword: #7c3aed;
@@ -54,6 +62,193 @@
   --git-token-regex: #c2410c;
 }
 
+[data-git-diff-theme="terminal"][data-git-diff-tone="dark"] {
+  color-scheme: dark;
+}
+
+[data-git-diff-theme="terminal"][data-git-diff-tone="light"] {
+  color-scheme: light;
+}
+
+[data-git-diff-toolbar] {
+  color: var(--text-primary);
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-button,
+[data-git-diff-toolbar] .git-diff-toolbar-segment {
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-button:hover:not(:disabled),
+[data-git-diff-toolbar] .git-diff-toolbar-segment:hover:not(:disabled) {
+  background-color: var(--interactive-hover-bg);
+  color: var(--text-primary);
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-button:active:not(:disabled),
+[data-git-diff-toolbar] .git-diff-toolbar-segment:active:not(:disabled) {
+  background-color: var(--interactive-active-bg);
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-button[aria-pressed="true"],
+[data-git-diff-toolbar] .git-diff-toolbar-segment[aria-pressed="true"] {
+  border-color: var(--interactive-selected-border);
+  background-color: var(--interactive-selected-bg);
+  color: var(--text-primary);
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-button:disabled,
+[data-git-diff-toolbar] .git-diff-toolbar-segment:disabled {
+  color: var(--text-muted);
+  opacity: 0.42;
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-select {
+  border-color: var(--border);
+  background-color: var(--surface-container-lowest);
+  color: var(--text-primary);
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-select:hover:not(:disabled) {
+  border-color: var(--interactive-selected-border);
+  background-color: var(--interactive-hover-bg);
+}
+
+[data-git-diff-toolbar] .git-diff-toolbar-select option {
+  background-color: var(--surface-container-highest);
+  color: var(--text-primary);
+}
+
+.git-diff-scroll-container,
+.git-diff-horizontal-scrollbar {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 58%, transparent) var(--surface-container-lowest);
+}
+
+.git-diff-scroll-container {
+  scrollbar-gutter: stable;
+}
+
+.git-diff-scroll-container::-webkit-scrollbar,
+.git-diff-horizontal-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.git-diff-scroll-container::-webkit-scrollbar-track,
+.git-diff-horizontal-scrollbar::-webkit-scrollbar-track {
+  background: var(--surface-container-lowest);
+}
+
+.git-diff-scroll-container::-webkit-scrollbar-thumb,
+.git-diff-horizontal-scrollbar::-webkit-scrollbar-thumb {
+  border: 2px solid var(--surface-container-lowest);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 58%, transparent);
+}
+
+.git-diff-horizontal-scrollbar {
+  width: 100%;
+  height: 10px;
+  min-height: 10px;
+  overscroll-behavior-x: contain;
+}
+
+.git-diff-horizontal-scrollbar[data-overflow="false"] {
+  height: 0;
+  min-height: 0;
+}
+
+.git-diff-horizontal-measure {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  visibility: hidden;
+  padding-left: 0.5em;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  pointer-events: none;
+  white-space: pre;
+}
+
+[data-git-diff-wrap="true"] .diff-viewer-container .diff {
+  width: 100%;
+  table-layout: fixed;
+}
+
+[data-git-diff-wrap="true"] .diff-viewer-container .diff-code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-all;
+  word-wrap: break-word;
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff > colgroup {
+  display: none;
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-hunk {
+  display: block;
+  width: 100%;
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-line {
+  width: 100%;
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-unified .diff-line {
+  display: grid;
+  grid-template-columns:
+    var(--git-diff-gutter-width)
+    var(--git-diff-gutter-width)
+    minmax(0, 1fr);
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-split .diff-line {
+  display: grid;
+  grid-template-columns: var(--git-diff-gutter-width) minmax(0, 1fr);
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-split .diff-line-normal,
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-split .diff-line-compare,
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-split .diff-line-old-only,
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-split .diff-line-new-only {
+  grid-template-columns:
+    var(--git-diff-gutter-width)
+    minmax(0, 1fr)
+    var(--git-diff-gutter-width)
+    minmax(0, 1fr);
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-code {
+  position: relative;
+  display: block;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-wrap: normal;
+  white-space: pre;
+  word-break: normal;
+  word-wrap: normal;
+}
+
+[data-git-diff-wrap="false"] .diff-viewer-container .diff-code::after {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--git-diff-code-track-width, 100%);
+  height: 1px;
+  content: "";
+  pointer-events: none;
+}
+
 .diff-viewer-container .diff {
   border: none;
   background-color: var(--git-diff-bg);
@@ -61,10 +256,58 @@
 }
 
 .diff-viewer-container .diff-gutter {
-  min-width: 50px;
+  width: var(--git-diff-gutter-width);
+  min-width: var(--git-diff-gutter-width);
   user-select: none;
   background-color: var(--git-diff-gutter-bg);
   color: var(--git-diff-muted);
+}
+
+.diff-viewer-container .git-diff-gutter-button {
+  display: inline-flex;
+  min-height: 24px;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.diff-viewer-container .git-diff-gutter-marker {
+  width: 8px;
+  flex: 0 0 8px;
+  color: var(--git-diff-text);
+  font-weight: 700;
+  text-align: center;
+}
+
+.diff-viewer-container .git-diff-gutter-line {
+  min-width: 18px;
+  text-align: right;
+}
+
+.diff-viewer-container .git-diff-gutter-check-slot {
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  align-items: center;
+  justify-content: center;
+}
+
+.diff-viewer-container .git-diff-gutter-check {
+  stroke-width: 3;
+}
+
+.diff-viewer-container .git-diff-gutter-button:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: -2px;
 }
 
 .diff-viewer-container .diff-gutter-insert {
@@ -86,6 +329,18 @@
 
 .diff-viewer-container .diff-code-delete {
   background-color: var(--git-diff-delete-bg);
+}
+
+.diff-viewer-container .diff-gutter-selected,
+.diff-viewer-container .diff-code-selected {
+  background-color: var(--git-diff-selected-bg);
+  box-shadow: inset 0 0 0 1px var(--git-diff-selected-border);
+}
+
+.diff-viewer-container .diff-gutter-selected {
+  box-shadow:
+    inset 3px 0 0 var(--git-diff-selected-border),
+    inset 0 0 0 1px var(--git-diff-selected-border);
 }
 
 .diff-viewer-container .diff-hunk-header {

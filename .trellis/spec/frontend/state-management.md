@@ -476,6 +476,27 @@ const { sessions, activeSessionId } = useTerminalStore();
 
 ## Common Mistakes
 
+### Common Mistake: Reloading the file tree when only project metadata changes
+
+**Symptom**: Switching terminal tabs that point to the same directory resets the right-side file tree, including its expanded rows and scroll position.
+
+**Cause**: Treating a new `Project` object or a different project record id as a different file location and calling `fileExplorerStore.openProject` again.
+
+**Fix**: Make `openProject` idempotent by file location. Local contexts compare normalized paths. SSH contexts compare environment type, host id, and normalized remote root. When the location is unchanged, update project metadata only and preserve the loaded tree, open files, and remote consumer.
+
+```typescript
+if (isSameProjectFileLocation(current, project)) {
+  if (current !== project) set({ project });
+  return;
+}
+```
+
+**Tests Required**:
+
+- Assert same local paths with different project ids do not enter the root-listing path.
+- Assert same SSH host and remote root do not rebuild the remote file context.
+- Assert a different local path, Worktree path, SSH host, or remote root still reloads the tree.
+
 ### Common Mistake: Replacing a refreshed tree branch and dropping loaded descendants
 
 **Symptom**: A file tree folder is still marked expanded, but after moving/copying items the row collapses visually, the tree height changes, and the scroll container may jump toward the top.

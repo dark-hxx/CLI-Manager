@@ -1,4 +1,3 @@
-use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -14,8 +13,8 @@ const MAX_CHANGES: usize = 10_000;
 const MAX_PATHS: usize = 512;
 const MAX_PATH_BYTES: usize = 256 * 1024;
 const MAX_MESSAGE_BYTES: usize = 64 * 1024;
-const MAX_DIFF_BYTES: usize = 768 * 1024;
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const MAX_DIFF_BYTES: usize = 768 * 1024;
+pub(super) const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -38,17 +37,6 @@ pub struct RepoRequest {
     pub root_path: String,
     #[serde(default)]
     pub repo_path: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DiffRequest {
-    pub root_path: String,
-    #[serde(default)]
-    pub repo_path: String,
-    pub relative_path: String,
-    #[serde(default)]
-    pub status: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -186,13 +174,6 @@ pub struct GitChange {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitFileDiffPayload {
-    pub content: String,
-    pub can_revert_hunks: bool,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GitBranchStatus {
     pub branch: Option<String>,
     pub upstream: Option<String>,
@@ -213,9 +194,9 @@ pub struct GitBranchInfo {
     pub remote: Option<String>,
 }
 
-struct GitOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+pub(super) struct GitOutput {
+    pub(super) stdout: Vec<u8>,
+    pub(super) stderr: Vec<u8>,
 }
 
 fn invalid_text(value: &str) -> bool {
@@ -255,7 +236,7 @@ fn validate_relative(value: &str, allow_empty: bool) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-fn resolve_repo(root_path: &str, repo_path: &str) -> Result<(PathBuf, PathBuf), String> {
+pub(super) fn resolve_repo(root_path: &str, repo_path: &str) -> Result<(PathBuf, PathBuf), String> {
     let root = resolve_root(root_path)?;
     let relative = validate_relative(repo_path, true)?;
     let repo = root
@@ -268,7 +249,7 @@ fn resolve_repo(root_path: &str, repo_path: &str) -> Result<(PathBuf, PathBuf), 
     Ok((root, repo))
 }
 
-fn validate_file_path(repo: &Path, value: &str) -> Result<String, String> {
+pub(super) fn validate_file_path(repo: &Path, value: &str) -> Result<String, String> {
     let value = validate_relative(value, false)?;
     let candidate = repo.join(&value);
     let parent = candidate
@@ -341,7 +322,7 @@ fn command_args(repo: &Path, args: &[&str]) -> Vec<String> {
     result
 }
 
-fn run_git(
+pub(super) fn run_git(
     repo: &Path,
     args: &[&str],
     write: bool,
@@ -480,17 +461,6 @@ fn output_text(output: GitOutput) -> String {
     let mut text = String::from_utf8_lossy(&output.stdout).to_string();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     text.trim().to_string()
-}
-
-fn decode_diff_text(bytes: &[u8]) -> (String, bool) {
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        return (text.to_string(), true);
-    }
-    let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
-    detector.feed(bytes, true);
-    let encoding = detector.guess(None, Utf8Detection::Allow);
-    let (text, _, _) = encoding.decode(bytes);
-    (text.into_owned(), false)
 }
 
 fn parse_status(bytes: &[u8]) -> Result<Vec<GitChange>, String> {
@@ -758,88 +728,6 @@ fn branches(request: RepoRequest) -> Result<Vec<GitBranchInfo>, String> {
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(result)
-}
-
-fn validate_untracked_target(target: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(target).map_err(|_| "remote_git_file_read_failed")?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("remote_git_symlink_rejected".to_string());
-    }
-    Ok(())
-}
-
-fn diff(request: DiffRequest) -> Result<GitFileDiffPayload, String> {
-    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
-    let path = validate_file_path(&repo, &request.relative_path)?;
-    if matches!(request.status.as_str(), "U" | "??") {
-        let target = repo.join(&path);
-        validate_untracked_target(&target)?;
-        let bytes = fs::read(target).map_err(|_| "remote_git_file_read_failed")?;
-        if bytes.len() > MAX_DIFF_BYTES {
-            return Err("remote_git_diff_too_large".to_string());
-        }
-        if bytes.contains(&0) {
-            return Ok(GitFileDiffPayload {
-                content: format!(
-                    "diff --git a/{path} b/{path}\nnew file mode 100644\nBinary files /dev/null and b/{path} differ\n"
-                ),
-                can_revert_hunks: false,
-            });
-        }
-        let (text, _) = decode_diff_text(&bytes);
-        let lines = text.lines().count();
-        let mut content = format!("diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{lines} @@\n");
-        for line in text.lines() {
-            content.push('+');
-            content.push_str(line);
-            content.push('\n');
-        }
-        return Ok(GitFileDiffPayload {
-            content,
-            can_revert_hunks: false,
-        });
-    }
-    let output = run_git(
-        &repo,
-        &[
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            "HEAD",
-            "--",
-            &path,
-        ],
-        false,
-        READ_TIMEOUT,
-    )
-    .or_else(|_| {
-        run_git(
-            &repo,
-            &[
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                "--",
-                &path,
-            ],
-            false,
-            READ_TIMEOUT,
-        )
-    })?;
-    if output.stdout.len() > MAX_DIFF_BYTES {
-        return Err("remote_git_diff_too_large".to_string());
-    }
-    let (content, utf8) = decode_diff_text(&output.stdout);
-    let can_revert_hunks = utf8 && !output.stdout.windows(6).any(|part| part == b"Binary");
-    if content.is_empty() {
-        return Err("remote_git_diff_empty".to_string());
-    }
-    Ok(GitFileDiffPayload {
-        content,
-        can_revert_hunks,
-    })
 }
 
 fn list_repositories(request: ListRepositoriesRequest) -> Result<Vec<GitRepoInfo>, String> {
@@ -1338,7 +1226,10 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
             json!({ "changes": changes(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
         "gitDiff" => Ok(
-            json!({ "diff": diff(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+            json!({ "diff": crate::git_diff::legacy_diff(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
+        "gitDiffWithOptions" => Ok(
+            json!({ "diff": crate::git_diff::diff_with_options(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
         "gitBranchStatus" => Ok(
             json!({ "status": branch_status(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
@@ -1467,10 +1358,9 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        changes, dispatch, is_nested_repo_entry, parse_status, validate_patch, validate_relative,
-        validate_untracked_target, RepoRequest,
-    };
+    #[cfg(unix)]
+    use super::{changes, RepoRequest};
+    use super::{dispatch, is_nested_repo_entry, parse_status, validate_patch, validate_relative};
     use serde_json::json;
     #[test]
     fn paths_reject_traversal_and_windows_separators() {
@@ -1570,32 +1460,6 @@ mod tests {
             )
             .unwrap_err(),
             "remote_git_request_invalid"
-        );
-    }
-
-    #[test]
-    fn untracked_diff_rejects_directories() {
-        let root = tempfile::tempdir().unwrap();
-        let directory = root.path().join("nested");
-        std::fs::create_dir(&directory).unwrap();
-        assert_eq!(
-            validate_untracked_target(&directory).unwrap_err(),
-            "remote_git_symlink_rejected"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn untracked_diff_rejects_symlinks() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().unwrap();
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        let link = root.path().join("link.txt");
-        symlink(outside.path(), &link).unwrap();
-        assert_eq!(
-            validate_untracked_target(&link).unwrap_err(),
-            "remote_git_symlink_rejected"
         );
     }
 }

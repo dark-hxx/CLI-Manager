@@ -265,6 +265,7 @@ impl BridgeLane {
                 | "gitListRepositories"
                 | "gitChanges"
                 | "gitDiff"
+                | "gitDiffWithOptions"
                 | "gitBranchStatus"
                 | "gitBranches"
                 | "gitStage"
@@ -372,7 +373,12 @@ fn response_timeout(kind: &str) -> Duration {
         Duration::from_secs(150)
     } else if matches!(
         kind,
-        "gitListRepositories" | "gitChanges" | "gitDiff" | "gitBranchStatus" | "gitBranches"
+        "gitListRepositories"
+            | "gitChanges"
+            | "gitDiff"
+            | "gitDiffWithOptions"
+            | "gitBranchStatus"
+            | "gitBranches"
     ) {
         Duration::from_secs(40)
     } else if kind.starts_with("git") {
@@ -559,6 +565,7 @@ impl SshAgentBridgeManager {
                     | "gitListRepositories"
                     | "gitChanges"
                     | "gitDiff"
+                    | "gitDiffWithOptions"
                     | "gitBranchStatus"
                     | "gitBranches"
                     | "gitStage"
@@ -729,13 +736,32 @@ fn bridge_failure_should_fail_pending(error: &str) -> bool {
     error != "bridge_already_active"
 }
 
+fn required_capability(kind: &str) -> Option<&'static str> {
+    match kind {
+        "gitDiffWithOptions" => Some("gitDiffOptions"),
+        _ => None,
+    }
+}
+
 fn handle_agent_request(
     writer: &mut impl Write,
     reader_receiver: &Receiver<ReaderMessage>,
-    plan: &SshLaunchPlan,
+    host_id: &str,
     request_number: &mut u64,
+    capabilities: &[Value],
     agent_request: AgentBridgeRequest,
 ) -> Result<(), String> {
+    if let Some(required) = required_capability(&agent_request.kind) {
+        let supported = capabilities
+            .iter()
+            .any(|value| value.as_str() == Some(required));
+        if !supported {
+            let _ = agent_request
+                .response
+                .send(Err(format!("ssh_agent_capability_missing:{required}")));
+            return Ok(());
+        }
+    }
     let request_id = format!("agent-request-{}", *request_number);
     *request_number = request_number.saturating_add(1);
     let kind = agent_request.kind.clone();
@@ -753,7 +779,7 @@ fn handle_agent_request(
     if let Err(error) = &result {
         log::warn!(
             "SSH Agent request failed: host_id={} kind={} elapsed_ms={} error={}",
-            plan.host_id,
+            host_id,
             kind,
             elapsed.as_millis(),
             error
@@ -761,7 +787,7 @@ fn handle_agent_request(
     } else {
         log::debug!(
             "SSH Agent request completed: host_id={} kind={} elapsed_ms={}",
-            plan.host_id,
+            host_id,
             kind,
             elapsed.as_millis()
         );
@@ -1354,8 +1380,9 @@ fn run_bridge_once_inner(
                     handle_agent_request(
                         &mut writer,
                         &reader_receiver,
-                        plan,
+                        &plan.host_id,
                         &mut request_number,
+                        capabilities,
                         agent_request,
                     )?;
                     continue;
@@ -1369,8 +1396,9 @@ fn run_bridge_once_inner(
                     Ok(agent_request) => handle_agent_request(
                         &mut writer,
                         &reader_receiver,
-                        plan,
+                        &plan.host_id,
                         &mut request_number,
+                        capabilities,
                         agent_request,
                     )?,
                     Err(RecvTimeoutError::Timeout) => send_heartbeat_if_due(
@@ -1389,8 +1417,9 @@ fn run_bridge_once_inner(
                     Ok(agent_request) => handle_agent_request(
                         &mut writer,
                         &reader_receiver,
-                        plan,
+                        &plan.host_id,
                         &mut request_number,
+                        capabilities,
                         agent_request,
                     )?,
                     Err(RecvTimeoutError::Timeout) => send_heartbeat_if_due(
@@ -1499,11 +1528,11 @@ fn run_bridge_once_inner(
 mod tests {
     use super::{
         bridge_failure_should_fail_pending, bridge_slot, checked_response, classify_bridge_stderr,
-        fail_pending_requests, permanent_bridge_error, read_preamble, readonly_client_instance_id,
-        receive_agent_response, receive_frame, request, request_error_requires_disconnect,
-        response_timeout, retry_delay, validate_hook_batch, AgentBridgeRequest, BridgeControl,
-        BridgeEntry, BridgeLane, ClientFrame, CounterPermit, EventDedup, PermitPool, ReaderMessage,
-        ServerFrame, SshAgentBridgeManager, DEDUP_EVENT_IDS,
+        fail_pending_requests, handle_agent_request, permanent_bridge_error, read_preamble,
+        readonly_client_instance_id, receive_agent_response, receive_frame, request,
+        request_error_requires_disconnect, response_timeout, retry_delay, validate_hook_batch,
+        AgentBridgeRequest, BridgeControl, BridgeEntry, BridgeLane, ClientFrame, CounterPermit,
+        EventDedup, PermitPool, ReaderMessage, ServerFrame, SshAgentBridgeManager, DEDUP_EVENT_IDS,
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -1511,6 +1540,35 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::sync::{mpsc, Arc, OnceLock};
     use std::time::Duration;
+
+    #[test]
+    fn missing_diff_options_capability_is_rejected_before_request_write() {
+        let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        let mut writer = Vec::new();
+        let mut request_number = 7;
+
+        handle_agent_request(
+            &mut writer,
+            &reader_receiver,
+            "host-1",
+            &mut request_number,
+            &[],
+            AgentBridgeRequest {
+                kind: "gitDiffWithOptions".to_string(),
+                payload: json!({}),
+                response: response_sender,
+            },
+        )
+        .unwrap();
+
+        assert!(writer.is_empty());
+        assert_eq!(request_number, 7);
+        assert_eq!(
+            response_receiver.recv().unwrap().unwrap_err(),
+            "ssh_agent_capability_missing:gitDiffOptions"
+        );
+    }
 
     #[test]
     fn bridge_frames_require_matching_request_ids() {

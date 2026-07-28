@@ -40,6 +40,15 @@ export function isSameProjectFileContext(
 ): boolean {
   if (!left || !right || left.id !== right.id) return false;
 
+  return isSameProjectFileLocation(left, right);
+}
+
+export function isSameProjectFileLocation(
+  left: ProjectFileContext | null | undefined,
+  right: ProjectFileContext | null | undefined
+): boolean {
+  if (!left || !right) return false;
+
   const leftIsSsh = left.environment_type === "ssh";
   const rightIsSsh = right.environment_type === "ssh";
   if (leftIsSsh || rightIsSsh) {

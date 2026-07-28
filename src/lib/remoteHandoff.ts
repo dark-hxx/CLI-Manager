@@ -131,7 +131,6 @@ export function getRemoteHandoffEligibility(input: {
     && notification !== "failed"
     && processStatus !== "exited"
     && processStatus !== "error"
-    && project.environment_type !== "ssh"
   ) {
     return { eligible: false, reason: "task_state_unknown" };
   }

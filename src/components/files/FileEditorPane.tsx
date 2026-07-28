@@ -1,22 +1,28 @@
-import Editor, { type OnMount } from "@monaco-editor/react";
-import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { eventToCombo } from "../../hooks/useKeyboardShortcuts";
+import type { OnMount } from "@monaco-editor/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiAnchor, formatAiContextBlock, type AiTextSelection } from "../../lib/aiPathFormatter";
-import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n } from "../../lib/i18n";
 import type { GitFileChange, TerminalSession } from "../../lib/types";
 import { configureMonaco, languageFromPath } from "../../lib/monacoSetup";
+import { isSameProjectFileContext } from "../../lib/terminalProject";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useFileExplorerStore } from "../../stores/fileExplorerStore";
-import { MarkdownContent } from "../ui/MarkdownContent";
+import { useProjectStore } from "../../stores/projectStore";
+import {
+  createGitDiffWorkspaceContext,
+  EMPTY_GIT_DIFF_WORKSPACE,
+  resolveGitDiffProject,
+  useGitDiffWorkspaceStore,
+} from "../../stores/gitDiffWorkspaceStore";
 import { Button } from "../ui/button";
-import { ConfirmDialog } from "../ConfirmDialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../ui/dialog";
-import { Copy, FileCode, Image, Save, X } from "../icons";
-import { GitDiffViewer } from "../git/DiffViewerModal";
-import { STATUS_CONFIG } from "../git/GitStatusIcon";
+import { FileEditorContent } from "./FileEditorContent";
+import { FileEditorHeader } from "./FileEditorHeader";
+import { FileEditorTabs } from "./FileEditorTabs";
+import { clearEditorDecorations, useGitFileDecorations } from "./useGitFileDecorations";
+import { useFileEditorSearchNavigation } from "./useFileEditorSearchNavigation";
+import { useFileEditorShortcuts } from "./useFileEditorShortcuts";
 
 configureMonaco();
 
@@ -27,136 +33,9 @@ interface FileEditorPaneProps {
   onClose: () => void;
 }
 
-type PendingAction =
-  | { kind: "close-pane" }
-  | { kind: "close-file"; path: string }
-  | null;
+type PendingAction = { kind: "close-pane" } | { kind: "close-file"; path: string } | null;
 
 type MonacoEditor = Parameters<OnMount>[0];
-type GitLineChangeKind = "added" | "modified" | "deleted";
-
-interface GitLineMarker {
-  lineNumber: number;
-  kind: GitLineChangeKind;
-}
-
-interface GitFileDiffPayload {
-  content: string;
-  canRevertHunks: boolean;
-}
-
-function clearSearchDecorations(editor: MonacoEditor, decorationIdsRef: MutableRefObject<string[]>): void {
-  if (decorationIdsRef.current.length === 0) return;
-  decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, []);
-}
-
-function findLineTextColumn(line: string, lineText: string): { start: number; end: number } {
-  const needle = lineText.trim();
-  if (!needle) return { start: 1, end: Math.max(line.length + 1, 1) };
-  const index = line.indexOf(needle);
-  if (index === -1) return { start: 1, end: Math.max(line.length + 1, 1) };
-  return { start: index + 1, end: index + needle.length + 1 };
-}
-
-function findSearchColumn(line: string, searchQuery: string, fallbackLineText: string): { start: number; end: number } {
-  const needle = searchQuery.trim();
-  if (!needle) return findLineTextColumn(line, fallbackLineText);
-  const index = line.toLowerCase().indexOf(needle.toLowerCase());
-  if (index === -1) return findLineTextColumn(line, fallbackLineText);
-  return { start: index + 1, end: index + needle.length + 1 };
-}
-
-function openFindWidget(editor: MonacoEditor, searchQuery: string): void {
-  const query = searchQuery.trim();
-  const findWithArgs = editor.getAction("editor.actions.findWithArgs");
-  if (query && findWithArgs?.isSupported()) {
-    void findWithArgs.run({
-      searchString: query,
-      isRegex: false,
-      matchWholeWord: false,
-      isCaseSensitive: false,
-      findInSelection: false,
-    }).catch(() => {
-      void editor.getAction("actions.find")?.run();
-    });
-    return;
-  }
-  void editor.getAction("actions.find")?.run();
-}
-
-function clampLine(lineNumber: number, maxLine: number): number {
-  if (maxLine <= 0) return 1;
-  return Math.min(Math.max(lineNumber, 1), maxLine);
-}
-
-function parseGitDiffLineMarkers(diffText: string, maxLine: number): GitLineMarker[] {
-  const markers = new Map<number, GitLineChangeKind>();
-  const pendingDeletes: number[] = [];
-  let newLine = 0;
-
-  const priority: Record<GitLineChangeKind, number> = { deleted: 1, added: 2, modified: 3 };
-  const setMarker = (lineNumber: number, kind: GitLineChangeKind) => {
-    const line = clampLine(lineNumber, maxLine);
-    const current = markers.get(line);
-    if (!current || priority[kind] > priority[current]) markers.set(line, kind);
-  };
-  const flushDeletes = () => {
-    for (const line of pendingDeletes.splice(0)) {
-      setMarker(line, "deleted");
-    }
-  };
-
-  for (const line of diffText.split(/\r?\n/)) {
-    const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunk) {
-      flushDeletes();
-      newLine = Number.parseInt(hunk[1], 10);
-      continue;
-    }
-    if (newLine === 0 || line.startsWith("---") || line.startsWith("+++")) continue;
-
-    if (line.startsWith("-")) {
-      pendingDeletes.push(Math.max(newLine, 1));
-      continue;
-    }
-    if (line.startsWith("+")) {
-      setMarker(newLine, pendingDeletes.length > 0 ? "modified" : "added");
-      if (pendingDeletes.length > 0) pendingDeletes.shift();
-      newLine += 1;
-      continue;
-    }
-
-    flushDeletes();
-    if (line.startsWith(" ")) newLine += 1;
-  }
-
-  flushDeletes();
-  return Array.from(markers.entries()).map(([lineNumber, kind]) => ({ lineNumber, kind }));
-}
-
-function gitLineDecorationColor(kind: GitLineChangeKind): string {
-  if (kind === "added") return STATUS_CONFIG.A.color;
-  if (kind === "deleted") return STATUS_CONFIG.D.color;
-  return STATUS_CONFIG.M.color;
-}
-
-function makeGitLineDecorations(markers: GitLineMarker[]) {
-  return markers.map((marker) => ({
-    range: {
-      startLineNumber: marker.lineNumber,
-      startColumn: 1,
-      endLineNumber: marker.lineNumber,
-      endColumn: 1,
-    },
-    options: {
-      linesDecorationsClassName: `ui-file-editor-git-line-${marker.kind}`,
-      overviewRuler: {
-        color: gitLineDecorationColor(marker.kind),
-        position: 4,
-      },
-    },
-  }));
-}
 
 function isDarkHexColor(color: string): boolean {
   const raw = color.trim().replace(/^#/, "");
@@ -181,30 +60,39 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
   const project = useFileExplorerStore((s) => s.project);
   const openProject = useFileExplorerStore((s) => s.openProject);
   const openFiles = useFileExplorerStore((s) => s.openFiles);
-  const openDiffs = useFileExplorerStore((s) => s.openDiffs);
   const activeFilePath = useFileExplorerStore((s) => s.activeFilePath);
   const activeFile = useFileExplorerStore((s) => s.activeFile);
-  const activeDiff = useFileExplorerStore((s) => s.activeDiff);
   const searchQuery = useFileExplorerStore((s) => s.searchQuery);
   const gitChanges = useFileExplorerStore((s) => s.gitChanges);
   const searchNavigationTarget = useFileExplorerStore((s) => s.searchNavigationTarget);
   const setActiveFilePath = useFileExplorerStore((s) => s.setActiveFilePath);
-  const setActiveDiffPath = useFileExplorerStore((s) => s.setActiveDiffPath);
   const clearSearchNavigationTarget = useFileExplorerStore((s) => s.clearSearchNavigationTarget);
   const closeFile = useFileExplorerStore((s) => s.closeFile);
-  const closeDiff = useFileExplorerStore((s) => s.closeDiff);
-  const refreshVisibleState = useFileExplorerStore((s) => s.refreshVisibleState);
   const setActiveContent = useFileExplorerStore((s) => s.setActiveContent);
   const saveFile = useFileExplorerStore((s) => s.saveFile);
   const saveActiveFile = useFileExplorerStore((s) => s.saveActiveFile);
+  const projects = useProjectStore((s) => s.projects);
   const [previewMode, setPreviewMode] = useState<"source" | "preview">("source");
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
-  const [discardDiffTarget, setDiscardDiffTarget] = useState<{ path: string; name: string; status: string } | null>(null);
-  const ownsFileState = Boolean(project?.id && session.fileEditor?.projectId && project.id === session.fileEditor.projectId);
+  const sessionProject = session.fileEditor?.project ?? null;
+  const latestProject = sessionProject
+    ? projects.find((candidate) => candidate.id === sessionProject.id) ?? null
+    : null;
+  const editorProject = useMemo(
+    () => sessionProject ? resolveGitDiffProject(sessionProject, latestProject) : null,
+    [latestProject, sessionProject],
+  );
+  const diffContext = useMemo(
+    () => editorProject ? createGitDiffWorkspaceContext(editorProject) : null,
+    [editorProject],
+  );
+  const diffWorkspace = useGitDiffWorkspaceStore((state) => (
+    diffContext ? state.workspaces[diffContext.key] ?? EMPTY_GIT_DIFF_WORKSPACE : EMPTY_GIT_DIFF_WORKSPACE
+  ));
+  const activeDiff = diffWorkspace.tabs.find((tab) => tab.id === diffWorkspace.activeId) ?? null;
+  const ownsFileState = isSameProjectFileContext(project, editorProject);
   const visibleFiles = ownsFileState ? openFiles : [];
-  const visibleDiffs = ownsFileState ? openDiffs : [];
-  const visibleFile = ownsFileState ? activeFile : null;
-  const visibleDiff = ownsFileState ? activeDiff : null;
+  const visibleFile = ownsFileState && !activeDiff ? activeFile : null;
   const dirty = Boolean(visibleFile && visibleFile.content !== visibleFile.savedContent);
   const dirtyFiles = visibleFiles.filter((file) => file.content !== file.savedContent);
   const activeGitChange = useMemo<GitFileChange | null>(
@@ -222,11 +110,23 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     setEditorReadyNonce((value) => value + 1);
   }, []);
 
+  useGitFileDecorations({
+    editorRef,
+    decorationIdsRef: gitDecorationIdsRef,
+    editorReadyNonce,
+    project: editorProject,
+    change: activeGitChange,
+    filePath: visibleFile?.path ?? null,
+    previewKind: visibleFile?.previewKind ?? null,
+    previewMode,
+    modifiedMs: visibleFile?.modifiedMs,
+    sizeBytes: visibleFile?.sizeBytes,
+  });
+
   useEffect(() => {
-    const fileProject = session.fileEditor?.project;
-    if (!isActive || !project || !fileProject || project.id === fileProject.id) return;
-    void openProject(fileProject);
-  }, [isActive, openProject, project?.id, session.fileEditor?.project]);
+    if (!isActive || !editorProject || isSameProjectFileContext(project, editorProject)) return;
+    void openProject(editorProject);
+  }, [editorProject, isActive, openProject, project]);
 
   useEffect(() => {
     setPreviewMode("source");
@@ -235,116 +135,21 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    clearSearchDecorations(editor, searchDecorationIdsRef);
-    clearSearchDecorations(editor, gitDecorationIdsRef);
+    clearEditorDecorations(editor, searchDecorationIdsRef);
+    clearEditorDecorations(editor, gitDecorationIdsRef);
   }, [visibleFile?.path]);
 
-  useEffect(() => {
-    const editor = editorRef.current;
-    const model = editor?.getModel();
-    if (!editor || !model) return;
-
-    clearSearchDecorations(editor, gitDecorationIdsRef);
-    if (!project || !visibleFile || !activeGitChange) return;
-    if (visibleFile.previewKind !== "text" && visibleFile.previewKind !== "markdown") return;
-    if (visibleFile.previewKind === "markdown" && previewMode !== "source") return;
-
-    let cancelled = false;
-    void invoke<GitFileDiffPayload>("git_get_file_diff", {
-      projectPath: project.path,
-      filePath: visibleFile.path,
-      status: activeGitChange.status,
-    })
-      .then((payload) => {
-        if (cancelled || editorRef.current !== editor) return;
-        const currentModel = editor.getModel();
-        if (!currentModel) return;
-        const markers = parseGitDiffLineMarkers(payload.content, currentModel.getLineCount());
-        gitDecorationIdsRef.current = editor.deltaDecorations(
-          gitDecorationIdsRef.current,
-          makeGitLineDecorations(markers)
-        );
-      })
-      .catch((err) => {
-        if (!cancelled) debugConsoleWarn("[FileEditorPane] Failed to load git diff markers:", err);
-      });
-
-    return () => {
-      cancelled = true;
-      if (editorRef.current === editor) clearSearchDecorations(editor, gitDecorationIdsRef);
-    };
-  }, [
-    activeGitChange?.path,
-    activeGitChange?.status,
+  useFileEditorSearchNavigation({
+    editorRef,
+    decorationIdsRef: searchDecorationIdsRef,
     editorReadyNonce,
+    file: visibleFile,
     previewMode,
-    project?.path,
-    visibleFile?.modifiedMs,
-    visibleFile?.path,
-    visibleFile?.previewKind,
-    visibleFile?.sizeBytes,
-  ]);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || !visibleFile || !searchNavigationTarget) return;
-    if (visibleFile.path !== searchNavigationTarget.path) return;
-    if (visibleFile.previewKind !== "text" && visibleFile.previewKind !== "markdown") return;
-    if (visibleFile.previewKind === "markdown" && previewMode !== "source") {
-      setPreviewMode("source");
-      return;
-    }
-
-    const model = editor.getModel();
-    const lineNumber = Math.min(Math.max(searchNavigationTarget.lineNumber, 1), model?.getLineCount() ?? 1);
-    const line = model?.getLineContent(lineNumber) ?? "";
-    const requestedColumn = searchNavigationTarget.columnNumber;
-    const column = requestedColumn
-      ? {
-          start: Math.min(Math.max(requestedColumn, 1), Math.max(line.length + 1, 1)),
-          end: Math.min(Math.max(requestedColumn + 1, 1), Math.max(line.length + 1, 1)),
-        }
-      : searchNavigationTarget.source === "search"
-        ? findSearchColumn(line, searchQuery, searchNavigationTarget.lineText ?? "")
-        : { start: 1, end: Math.max(line.length + 1, 1) };
-
-    clearSearchDecorations(editor, searchDecorationIdsRef);
-    searchDecorationIdsRef.current = editor.deltaDecorations([], [
-      {
-        range: {
-          startLineNumber: lineNumber,
-          startColumn: 1,
-          endLineNumber: lineNumber,
-          endColumn: Math.max(line.length + 1, 1),
-        },
-        options: {
-          isWholeLine: true,
-          className: "ui-file-editor-search-line-highlight",
-        },
-      },
-      {
-        range: {
-          startLineNumber: lineNumber,
-          startColumn: column.start,
-          endLineNumber: lineNumber,
-          endColumn: column.end,
-        },
-        options: {
-          inlineClassName: "ui-file-editor-search-snippet-highlight",
-        },
-      },
-    ]);
-    editor.setSelection({
-      startLineNumber: lineNumber,
-      startColumn: column.start,
-      endLineNumber: lineNumber,
-      endColumn: column.end,
-    });
-    editor.revealLineInCenter(lineNumber);
-    editor.focus();
-    if (searchNavigationTarget.source === "search") openFindWidget(editor, searchQuery);
-    clearSearchNavigationTarget();
-  }, [clearSearchNavigationTarget, editorReadyNonce, previewMode, searchNavigationTarget, searchQuery, visibleFile]);
+    target: searchNavigationTarget,
+    searchQuery,
+    setPreviewMode,
+    onHandled: clearSearchNavigationTarget,
+  });
 
   const save = useCallback(async () => {
     if (!visibleFile || visibleFile.previewKind === "image") return;
@@ -381,30 +186,12 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     void copyAiText(formatAiContextBlock(project, visibleFile.path, selection), t("files.toast.aiContextCopied"));
   }, [getEditorSelection, previewMode, project, t, visibleFile]);
 
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (!isActive || !copyAiShortcut.trim()) return;
-      const target = event.target as HTMLElement | null;
-      if (!target?.closest(".ui-file-editor-pane")) return;
-      if (eventToCombo(event) !== copyAiShortcut) return;
-      event.preventDefault();
-      event.stopPropagation();
-      copyActiveAiPath();
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [copyActiveAiPath, copyAiShortcut, isActive]);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (!isActive) return;
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return;
-      event.preventDefault();
-      void save();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isActive, save]);
+  useFileEditorShortcuts({
+    active: isActive,
+    copyAiShortcut,
+    onCopyAiPath: copyActiveAiPath,
+    onSave: save,
+  });
 
   const requestClose = () => {
     if (dirtyFiles.length > 0) {
@@ -453,205 +240,44 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
     closeFile(path);
   };
 
-  const requestDiscardDiffFile = (path: string, name: string, status: string) => {
-    setDiscardDiffTarget({ path, name, status });
-  };
-
-  const discardDiffFile = async () => {
-    if (!project || !discardDiffTarget) return;
-    const target = discardDiffTarget;
-    setDiscardDiffTarget(null);
-    await invoke("git_discard_file", {
-      projectPath: project.path,
-      filePath: target.path,
-      status: target.status,
-    });
-    closeDiff(target.path);
-    await refreshVisibleState();
-  };
-
   return (
     <div className="ui-file-editor-pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      <div className="ui-file-editor-header flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface-container-low px-3">
-        <FileCode size={15} strokeWidth={1.8} className="text-on-surface-variant" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-semibold text-on-surface">
-            {visibleFile ? visibleFile.name : session.fileEditor?.projectName ?? project?.name ?? t("files.editor.titleFallback")}
-            {dirty ? " *" : ""}
-          </div>
-          <div className="truncate text-[10px] text-text-muted">
-            {visibleFile?.path ?? session.fileEditor?.projectPath ?? project?.path ?? t("files.editor.noFile")}
-          </div>
-        </div>
-        {visibleFile?.previewKind === "markdown" && (
-          <div className="ui-file-editor-segment flex rounded-md border border-border bg-surface-container-lowest p-0.5">
-            <button
-              type="button"
-              className="rounded px-2 py-1 text-[11px]"
-              data-active={previewMode === "source" ? "true" : "false"}
-              onClick={() => setPreviewMode("source")}
-            >
-              {t("files.editor.source")}
-            </button>
-            <button
-              type="button"
-              className="rounded px-2 py-1 text-[11px]"
-              data-active={previewMode === "preview" ? "true" : "false"}
-              onClick={() => setPreviewMode("preview")}
-            >
-              {t("files.editor.preview")}
-            </button>
-          </div>
-        )}
-        <Button size="sm" variant="outline" disabled={!visibleFile} onClick={copyActiveAiPath}>
-          <Copy size={13} />
-          {t("files.editor.aiPath")}
-        </Button>
-        <Button size="sm" variant="outline" disabled={!visibleFile} onClick={copyActiveAiContext}>
-          <Copy size={13} />
-          {t("files.editor.aiContext")}
-        </Button>
-        <Button size="sm" variant="outline" disabled={!dirty} onClick={() => void save()}>
-          <Save size={13} />
-          {t("common.save")}
-        </Button>
-        <button type="button" className="ui-icon-action" title={t("files.editor.close")} aria-label={t("files.editor.close")} onClick={requestClose}>
-          <X size={15} />
-        </button>
-      </div>
-
-      {(visibleFiles.length > 0 || visibleDiffs.length > 0) && (
-        <div className="ui-file-editor-tabs flex h-8 shrink-0 items-center overflow-x-auto border-b border-border bg-surface-container-lowest px-1">
-          {visibleFiles.map((file) => {
-            const isActiveFile = !visibleDiff && file.path === activeFilePath;
-            const isDirty = file.content !== file.savedContent;
-            return (
-              <div
-                key={file.path}
-                className="ui-file-editor-tab group flex h-7 max-w-[180px] shrink-0 items-center rounded-t text-[11px] text-on-surface-variant hover:bg-surface-container-high"
-                data-active={isActiveFile ? "true" : "false"}
-                style={isActiveFile ? { background: "var(--surface-container)", color: "var(--on-surface)" } : undefined}
-                title={file.path}
-              >
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 truncate px-2 text-left"
-                  onClick={() => setActiveFilePath(file.path)}
-                >
-                  {file.name}{isDirty ? " *" : ""}
-                </button>
-                <button
-                  type="button"
-                  className="mr-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-70 hover:bg-surface-container-highest hover:opacity-100"
-                  aria-label={t("files.editor.closeNamed", { name: file.name })}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    requestCloseFile(file.path);
-                  }}
-                >
-                  <X size={11} />
-                </button>
-              </div>
-            );
-          })}
-          {visibleDiffs.map((diff) => {
-            const isActiveDiff = visibleDiff?.path === diff.path;
-            return (
-              <div
-                key={`diff:${diff.path}`}
-                className="ui-file-editor-tab group flex h-7 max-w-[220px] shrink-0 items-center rounded-t text-[11px] text-on-surface-variant hover:bg-surface-container-high"
-                data-active={isActiveDiff ? "true" : "false"}
-                style={isActiveDiff ? { background: "var(--surface-container)", color: "var(--on-surface)" } : undefined}
-                title={diff.path}
-              >
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 truncate px-2 text-left"
-                  onClick={() => setActiveDiffPath(diff.path)}
-                >
-                  Diff: {diff.name}
-                </button>
-                <button
-                  type="button"
-                  className="mr-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-70 hover:bg-surface-container-highest hover:opacity-100"
-                  aria-label={t("files.editor.closeNamed", { name: `Diff: ${diff.name}` })}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeDiff(diff.path);
-                  }}
-                >
-                  <X size={11} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="ui-file-editor-body min-h-0 flex-1 overflow-hidden bg-surface">
-        {!visibleFile && !visibleDiff && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-text-muted">
-            <FileCode size={36} strokeWidth={1.2} />
-            <div className="text-sm">{t("files.editor.selectFromTree")}</div>
-          </div>
-        )}
-        {visibleDiff && project && (
-          <GitDiffViewer
-            projectPath={project.path}
-            filePath={visibleDiff.path}
-            fileName={visibleDiff.name}
-            status={visibleDiff.status}
-            onRequestDiscard={requestDiscardDiffFile}
-            onReverted={() => void refreshVisibleState()}
-            useTerminalTheme
-          />
-        )}
-        {!visibleDiff && visibleFile?.previewKind === "unsupported" && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-text-muted">
-            <FileCode size={36} strokeWidth={1.2} />
-            <div className="text-sm">{t("files.editor.unsupported")}</div>
-          </div>
-        )}
-        {!visibleDiff && visibleFile?.previewKind === "image" && visibleFile.image && (
-          <div className="ui-file-editor-image-preview flex h-full items-center justify-center overflow-auto bg-surface-container-lowest p-4">
-            <div className="flex max-h-full max-w-full flex-col items-center gap-3">
-              <img
-                src={`data:${visibleFile.image.mimeType};base64,${visibleFile.image.dataBase64}`}
-                alt={visibleFile.name}
-                className="max-h-[calc(100vh-180px)] max-w-full rounded border border-border object-contain"
-              />
-              <div className="flex items-center gap-2 text-xs text-text-muted">
-                <Image size={13} />
-                {(visibleFile.image.sizeBytes / 1024).toFixed(1)} KB
-              </div>
-            </div>
-          </div>
-        )}
-        {!visibleDiff && visibleFile && (visibleFile.previewKind === "text" || visibleFile.previewKind === "markdown") && (
-          visibleFile.previewKind === "markdown" && previewMode === "preview" ? (
-            <div className="ui-file-editor-markdown-preview h-full overflow-auto p-4">
-              <MarkdownContent content={visibleFile.content} variant="terminal" linkBehavior="preview" />
-            </div>
-          ) : (
-            <Editor
-              path={visibleFile.path}
-              value={visibleFile.content}
-              language={language}
-              theme={editorTheme}
-              onMount={handleEditorMount}
-              onChange={(value) => setActiveContent(value ?? "")}
-              options={{
-                automaticLayout: true,
-                fontSize: 13,
-                glyphMargin: true,
-                minimap: { enabled: true },
-                scrollBeyondLastLine: false,
-                wordWrap: "on",
-              }}
-            />
-          )
-        )}
-      </div>
+      <FileEditorHeader
+        title={activeDiff
+          ? t("git.diff.title", { fileName: activeDiff.fileName })
+          : visibleFile?.name ?? session.fileEditor?.projectName ?? project?.name ?? t("files.editor.titleFallback")}
+        path={activeDiff?.sourcePath ?? visibleFile?.path ?? session.fileEditor?.projectPath ?? project?.path ?? t("files.editor.noFile")}
+        dirty={dirty}
+        showMarkdownModes={visibleFile?.previewKind === "markdown"}
+        previewMode={previewMode}
+        canUseFileActions={Boolean(visibleFile)}
+        onPreviewModeChange={setPreviewMode}
+        onCopyAiPath={copyActiveAiPath}
+        onCopyAiContext={copyActiveAiContext}
+        onSave={() => void save()}
+        onClose={requestClose}
+      />
+      <FileEditorTabs
+        files={visibleFiles}
+        activeFilePath={activeFilePath}
+        activeDiff={activeDiff}
+        diffContext={diffContext}
+        diffWorkspace={diffWorkspace}
+        onActivateFile={setActiveFilePath}
+        onCloseFile={requestCloseFile}
+      />
+      <FileEditorContent
+        file={visibleFile}
+        activeDiff={activeDiff}
+        project={editorProject}
+        diffContext={diffContext}
+        diffWorkspace={diffWorkspace}
+        previewMode={previewMode}
+        language={language}
+        editorTheme={editorTheme}
+        onEditorMount={handleEditorMount}
+        onContentChange={setActiveContent}
+      />
 
       <Dialog open={pendingAction !== null} onOpenChange={(open) => { if (!open) setPendingAction(null); }}>
         <DialogContent className="max-w-[420px]">
@@ -668,16 +294,6 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <ConfirmDialog
-        open={!!discardDiffTarget}
-        title={t("git.confirm.revertTitle")}
-        message={discardDiffTarget ? t("git.confirm.revertMessage", { name: discardDiffTarget.name }) : undefined}
-        confirmText={t("git.confirm.revert")}
-        cancelText={t("common.cancel")}
-        danger
-        onConfirm={() => void discardDiffFile()}
-        onClose={() => setDiscardDiffTarget(null)}
-      />
     </div>
   );
 }

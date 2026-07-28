@@ -2,13 +2,12 @@ import { create } from "zustand";
 import { debugConsoleLog, debugConsoleWarn } from "../lib/debugConsole";
 import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy, GitBranchInfo } from "../lib/types";
 import { useSettingsStore } from "./settingsStore";
-import type { SshRemoteGitContext } from "../lib/sshRemoteGit";
 import {
-  createGitTransport,
   type GitFileDiffPayload,
   type GitRepositoryRef,
   type GitTransport,
 } from "../lib/gitTransport";
+import type { GitDiffOptions } from "../lib/gitDiffOptions";
 
 type GitStatusFilter = "all" | "M" | "A" | "D" | "U";
 
@@ -26,7 +25,7 @@ function isUntracked(status: string): boolean {
 }
 
 interface GitStore {
-  remoteContext: SshRemoteGitContext | null;
+  transport: GitTransport | null;
   remoteRequired: boolean;
   asOf: number | null;
   changes: GitFileChange[];
@@ -55,7 +54,8 @@ interface GitStore {
   repositories: GitRepoInfo[];
   /** 当前激活的子仓库绝对路径；null 表示项目根仓库。 */
   activeRepoPath: string | null;
-  setRemoteContext: (context: SshRemoteGitContext | null, remoteRequired?: boolean) => void;
+  setTransport: (transport: GitTransport | null, remoteRequired?: boolean) => void;
+  refreshIfContext: (contextKey: string) => Promise<void>;
 
   fetchChanges: (projectPath: string, silent?: boolean) => Promise<void>;
   fetchBranchStatus: (projectPath: string) => Promise<void>;
@@ -67,7 +67,7 @@ interface GitStore {
   discardFile: (filePath: string, status: string) => Promise<void>;
   discardAll: () => Promise<void>;
   deleteUntrackedPaths: (paths: string[]) => Promise<void>;
-  loadFileDiff: (filePath: string, status: string) => Promise<GitFileDiffPayload>;
+  loadFileDiff: (filePath: string, status: string, options?: GitDiffOptions) => Promise<GitFileDiffPayload>;
   revertHunk: (filePath: string, diffText: string, hunkIndex: number) => Promise<void>;
   revertLines: (filePath: string, diffText: string, selectedLines: { side: "old" | "new"; lineNumber: number }[]) => Promise<void>;
   stageFile: (filePath: string) => Promise<void>;
@@ -229,17 +229,16 @@ function currentTransport(projectPath?: string | null): GitTransport {
   const state = useGitStore.getState();
   const root = projectPath ?? state.currentProjectPath;
   if (!root) throw new Error("no_project");
-  return createGitTransport(root, state.remoteContext, state.remoteRequired);
+  if (!state.transport) {
+    throw new Error(state.remoteRequired ? "ssh_agent_context_unavailable" : "git_transport_unavailable");
+  }
+  return state.transport;
 }
 
 function requestStillCurrent(projectPath: string, repoPath: string, contextKey: string): boolean {
   const state = useGitStore.getState();
   if (state.currentProjectPath !== projectPath || effectiveRepoPath() !== repoPath) return false;
-  try {
-    return currentTransport(projectPath).contextKey === contextKey;
-  } catch {
-    return false;
-  }
+  return state.transport?.contextKey === contextKey;
 }
 
 async function refreshIfResultUnknown(projectPath: string, error: unknown): Promise<void> {
@@ -251,7 +250,7 @@ async function refreshIfResultUnknown(projectPath: string, error: unknown): Prom
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
-  remoteContext: null,
+  transport: null,
   remoteRequired: false,
   asOf: null,
   changes: [],
@@ -276,12 +275,12 @@ export const useGitStore = create<GitStore>((set, get) => ({
   statusFilter: "all",
   repositories: [],
   activeRepoPath: null,
-  setRemoteContext: (remoteContext, remoteRequired = remoteContext !== null) => set((state) => {
-    if (state.remoteRequired === remoteRequired && state.remoteContext?.contextKey === remoteContext?.contextKey) {
-      return { remoteContext };
+  setTransport: (transport, remoteRequired = transport?.remote ?? false) => set((state) => {
+    if (state.remoteRequired === remoteRequired && state.transport?.contextKey === transport?.contextKey) {
+      return { transport };
     }
     return {
-      remoteContext,
+      transport,
       remoteRequired,
       changes: [],
       tree: [],
@@ -295,6 +294,12 @@ export const useGitStore = create<GitStore>((set, get) => ({
       deselectedAdded: new Set<string>(),
     };
   }),
+
+  refreshIfContext: async (contextKey) => {
+    const state = get();
+    if (state.transport?.contextKey !== contextKey || !state.currentProjectPath) return;
+    await state.fetchChanges(state.currentProjectPath, true);
+  },
 
   fetchChanges: async (projectPath: string, silent = false) => {
     // 项目切换：清空子仓库激活态与列表，避免带着上个项目的 activeRepoPath 查错仓库。
@@ -500,11 +505,11 @@ export const useGitStore = create<GitStore>((set, get) => ({
     }
   },
 
-  loadFileDiff: async (filePath: string, status: string) => {
+  loadFileDiff: async (filePath: string, status: string, options?: GitDiffOptions) => {
     const { currentProjectPath } = get();
     const repoPath = effectiveRepoPath();
     if (!currentProjectPath || repoPath === null) throw new Error("no_project");
-    return (await currentTransport(currentProjectPath).getFileDiff(repoPath, filePath, status)).value;
+    return (await currentTransport(currentProjectPath).getFileDiff(repoPath, filePath, status, options)).value;
   },
 
   revertHunk: async (filePath: string, diffText: string, hunkIndex: number) => {
@@ -989,7 +994,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       statusFilter: "all",
       repositories: [],
       activeRepoPath: null,
-      remoteContext: null,
+      transport: null,
       remoteRequired: false,
       asOf: null,
     });

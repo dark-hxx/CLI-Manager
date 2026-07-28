@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import Editor from "@monaco-editor/react";
 import { configureMonaco } from "../../lib/monacoSetup";
 
@@ -22,8 +23,14 @@ const DIFF_EDITOR_OPTIONS = {
 interface MonacoDiffFallbackProps {
   value: string;
   theme: "vs" | "vs-dark";
+  wrapLines?: boolean;
 }
 
-export function MonacoDiffFallback({ value, theme }: MonacoDiffFallbackProps) {
-  return <Editor value={value} language="diff" theme={theme} options={DIFF_EDITOR_OPTIONS} />;
+export function MonacoDiffFallback({ value, theme, wrapLines = false }: MonacoDiffFallbackProps) {
+  const options = useMemo(() => ({
+    ...DIFF_EDITOR_OPTIONS,
+    wordWrap: wrapLines ? "on" as const : "off" as const,
+  }), [wrapLines]);
+
+  return <Editor value={value} language="diff" theme={theme} options={options} />;
 }

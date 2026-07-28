@@ -275,6 +275,7 @@ fn capabilities() -> Value {
         "gitListRepositories",
         "gitChanges",
         "gitDiff",
+        "gitDiffOptions",
         "gitBranchStatus",
         "gitBranches",
         "gitFull"
@@ -781,6 +782,7 @@ mod tests {
             "gitListRepositories",
             "gitChanges",
             "gitDiff",
+            "gitDiffOptions",
             "gitBranchStatus",
             "gitBranches",
             "gitFull",

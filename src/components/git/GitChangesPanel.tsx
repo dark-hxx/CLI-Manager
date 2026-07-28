@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -10,16 +10,16 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { GitChangesTree } from "./GitChangesTree";
 import { StageCheckbox, type StageState } from "./StageCheckbox";
 import { STATUS_CONFIG } from "./GitStatusIcon";
-import { DiffViewerModal } from "./DiffViewerModal";
+import { GitDiffReviewDialog } from "./diff/GitDiffReviewDialog";
+import { useGitDiffOpenWorkflow } from "./diff/useGitDiffOpenWorkflow";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { useFileExplorerStore } from "../../stores/fileExplorerStore";
-import { useTerminalStore } from "../../stores/terminalStore";
 import { TERM, EmptyHint, panelColorTint } from "../stats/termStatsUi";
 import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { findProjectByPath } from "../../lib/terminalProject";
 import type { GitTreeNode, GitPullStrategy, GitBranchInfo, Project } from "../../lib/types";
-import { buildSshRemoteGitContext } from "../../lib/sshRemoteGit";
+import { useGitTransportLease } from "../../hooks/useGitTransportLease";
+import { GIT_BACKGROUND_REFRESH_INTERVAL_MS } from "../../lib/gitRefreshPolicy";
 
 interface GitChangesPanelProps {
   open: boolean;
@@ -30,7 +30,6 @@ interface GitChangesPanelProps {
 }
 
 // 降级慢轮询间隔：仅当 fs-watcher 初始化失败（网络盘/WSL 等 notify 不可用）时启用。
-const FALLBACK_POLL_INTERVAL_MS = 15000;
 const FILTER_LABEL_HIDE_WIDTH = 260;
 const BRANCH_MENU_SECTION_LIMIT = 80;
 const TERMINAL_PANEL_SCROLLBAR_STYLE = {
@@ -324,11 +323,8 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     fetchBranches,
   } = useGitStore();
   const { gitGroupBy, update: updateSettings } = useSettingsStore();
-  const openFileProject = useFileExplorerStore((state) => state.openProject);
-  const openFile = useFileExplorerStore((state) => state.openFile);
-  const openFileEditorPane = useTerminalStore((state) => state.openFileEditorPane);
   const [diffModalOpen, setDiffModalOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<{ path: string; name: string; status: string } | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [confirmAllOpen, setConfirmAllOpen] = useState(false);
   const [discardTarget, setDiscardTarget] = useState<{ path: string; name: string; status: string } | null>(null);
   const [deleteUntrackedTarget, setDeleteUntrackedTarget] = useState<{ paths: string[]; name: string } | null>(null);
@@ -338,56 +334,63 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [groupByMenuOpen, setGroupByMenuOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
-  const [contextLoading, setContextLoading] = useState(false);
   const [hideFilterLabels, setHideFilterLabels] = useState(false);
   const filterRowRef = useRef<HTMLDivElement | null>(null);
   const panelActive = open && visible;
   const project = useMemo<Project | null>(() => (
     projectId ? projects.find((item) => item.id === projectId) ?? null : findProjectByPath(projects, projectPath)
   ), [projectId, projectPath, projects]);
-  const setRemoteContext = useGitStore((state) => state.setRemoteContext);
-  const remoteContext = useGitStore((state) => state.remoteContext);
+  const panelProject = useMemo<Project | null>(() => {
+    if (!project) return null;
+    if (project.environment_type === "ssh" || !projectPath) return project;
+    return project.path === projectPath ? project : { ...project, path: projectPath };
+  }, [project, projectPath]);
+  const setTransport = useGitStore((state) => state.setTransport);
+  const transport = useGitStore((state) => state.transport);
+  const {
+    lease: panelLease,
+    loading: contextLoading,
+    error: transportError,
+  } = useGitTransportLease(panelProject, panelActive && Boolean(projectPath));
   // 多仓库切换：根仓库显示项目目录名（取不到时回落「根仓库」文案），子仓库显示相对路径。
   const rootRepoLabel = projectPath?.split(/[\\/]/).filter(Boolean).pop() || t("git.repo.root");
   const activeRepo = activeRepoPath ? repositories.find((repo) => repo.absolutePath === activeRepoPath) : null;
   const activeRepoLabel = activeRepo?.relativePath || rootRepoLabel;
+  const diffOpenWorkflow = useGitDiffOpenWorkflow({
+    project: panelProject,
+    projectPath,
+    repositoryPath: activeRepoPath,
+    repositoryRelativePath: activeRepo?.relativePath,
+    changes,
+  });
 
   useEffect(() => {
-    if (panelActive && projectPath) {
-      if (projectId && !project) {
-        setContextLoading(false);
-        return;
-      }
-      let cancelled = false;
-      const remoteRequired = project?.environment_type === "ssh";
-      setContextLoading(true);
-      setRemoteContext(null, remoteRequired);
-      void (async () => {
-        try {
-          const nextRemoteContext = remoteRequired && project
-            ? await buildSshRemoteGitContext(project)
-            : null;
-          if (cancelled) return;
-          setRemoteContext(nextRemoteContext, remoteRequired);
-          fetchChanges(projectPath);
-          setContextLoading(false);
-          // 枚举项目根下的多仓库（面板打开 / 项目切换时刷新；fetchChanges 已先设定 currentProjectPath）。
-          void fetchRepositories(projectPath);
-          void fetchBranches(projectPath);
-        } catch (err) {
-          if (!cancelled) {
-            setContextLoading(false);
-            toast.error(formatGitNetError(t("git.title"), String(err), t));
-          }
-        }
-      })();
-      return () => { cancelled = true; };
-    } else if (!open) {
-      setContextLoading(false);
-      setRemoteContext(null);
-      reset();
+    if (!panelActive || !projectPath || !panelProject) {
+      setTransport(null, panelProject?.environment_type === "ssh");
+      if (!open) reset();
+      return;
     }
-  }, [panelActive, open, projectPath, project, fetchChanges, fetchRepositories, fetchBranches, reset, setRemoteContext, t]);
+    if (!panelLease) {
+      setTransport(null, panelProject.environment_type === "ssh");
+      return;
+    }
+
+    setTransport(panelLease.transport, panelProject.environment_type === "ssh");
+    fetchChanges(projectPath);
+    void fetchRepositories(projectPath);
+    void fetchBranches(projectPath);
+    return () => {
+      if (useGitStore.getState().transport?.contextKey === panelLease.contextKey) {
+        setTransport(null, panelProject.environment_type === "ssh");
+      }
+    };
+  }, [panelActive, open, projectPath, panelProject, panelLease, fetchChanges, fetchRepositories, fetchBranches, reset, setTransport]);
+
+  useEffect(() => {
+    if (transportError) {
+      toast.error(formatGitNetError(t("git.title"), String(transportError), t));
+    }
+  }, [t, transportError]);
 
   useEffect(() => {
     const filterRow = filterRowRef.current;
@@ -425,7 +428,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     };
     const startFallback = () => {
       if (fallbackTimer === undefined) {
-        fallbackTimer = window.setInterval(refreshIfActive, FALLBACK_POLL_INTERVAL_MS);
+        fallbackTimer = window.setInterval(refreshIfActive, GIT_BACKGROUND_REFRESH_INTERVAL_MS);
       }
     };
     const stopFallback = () => {
@@ -470,11 +473,11 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
 
   // 远程项目没有本地 watcher：仅在面板可见且窗口聚焦时低频刷新，重新聚焦立即同步。
   useEffect(() => {
-    if (!panelActive || !projectPath || project?.environment_type !== "ssh" || !remoteContext) return;
+    if (!panelActive || !projectPath || panelProject?.environment_type !== "ssh" || !transport?.remote) return;
     let disposed = false;
     const isActive = () => !disposed && document.visibilityState === "visible" && document.hasFocus();
     const refreshIfActive = () => { if (isActive()) void fetchChanges(projectPath, true); };
-    const timer = window.setInterval(refreshIfActive, FALLBACK_POLL_INTERVAL_MS);
+    const timer = window.setInterval(refreshIfActive, GIT_BACKGROUND_REFRESH_INTERVAL_MS);
     const onFocus = () => refreshIfActive();
     const onVisibility = () => { if (document.visibilityState === "visible") refreshIfActive(); };
     window.addEventListener("focus", onFocus);
@@ -485,7 +488,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [panelActive, projectPath, project?.environment_type, remoteContext, fetchChanges]);
+  }, [panelActive, projectPath, panelProject?.environment_type, transport?.contextKey, transport?.remote, fetchChanges]);
 
   const directoryPaths = useMemo(
     () => [...collectDirectoryPaths(tree, "tracked"), ...collectDirectoryPaths(untrackedTree, "untracked")],
@@ -510,29 +513,24 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
   };
 
   const handleFileClick = (filePath: string) => {
-    const fileName = filePath.split(/[\\/]/).pop() || filePath;
     const fileChange = changes.find(c => c.path === filePath);
     if (fileChange) {
-      setSelectedFile({ path: filePath, name: fileName, status: fileChange.status });
+      if (diffOpenWorkflow.openPreferredDiff(filePath)) return;
+      setSelectedFilePath(filePath);
       setDiffModalOpen(true);
     }
   };
 
-  const handleOpenSourceFile = async (filePath: string, status: string) => {
-    if (!project || status === "D") return;
-    const fileName = filePath.split(/[\\/]/).pop() || filePath;
-    try {
-      await openFileProject(project);
-      await openFile({ name: fileName, path: filePath, kind: "file", sizeBytes: 0 });
-      openFileEditorPane(project);
-    } catch (err) {
-      toast.error(t("files.toast.openFileFailed"), { description: String(err) });
-    }
+  const handleOpenSourceFile = (filePath: string, status: string) => {
+    void diffOpenWorkflow.openSourcePath(
+      diffOpenWorkflow.sourcePathForFile(filePath),
+      status,
+    );
   };
 
-  const handleRequestDiscard = (path: string, name: string, status: string) => {
+  const handleRequestDiscard = useCallback((path: string, name: string, status: string) => {
     setDiscardTarget({ path, name, status });
-  };
+  }, []);
 
   const handleRequestDeleteUntracked = (paths: string[], name: string) => {
     if (paths.length === 0) return;
@@ -1301,18 +1299,24 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       )}
 
       {/* Diff Modal：diff 请求指向生效仓库（激活的子仓库或项目根） */}
-      {selectedFile && projectPath && (
-        <DiffViewerModal
+      {selectedFilePath && projectPath && (
+        <GitDiffReviewDialog
           open={diffModalOpen}
           onClose={() => setDiffModalOpen(false)}
-          projectPath={activeRepoPath ?? projectPath}
-          filePath={selectedFile.path}
-          fileName={selectedFile.name}
-          status={selectedFile.status}
+          repositoryPath={activeRepoPath ?? (panelProject?.environment_type === "ssh" ? "" : projectPath)}
+          repositoryRelativePath={activeRepo?.relativePath}
+          tree={tree}
+          untrackedTree={untrackedTree}
+          statusFilter={statusFilter}
+          initialFilePath={selectedFilePath}
           loadDiff={loadFileDiff}
           revertHunk={revertHunk}
           revertLines={revertLines}
           onRequestDiscard={handleRequestDiscard}
+          onOpenSource={(target, lineNumber) => (
+            diffOpenWorkflow.openSourcePath(target.sourcePath, target.status, lineNumber)
+          )}
+          onPin={diffOpenWorkflow.pinDiff}
         />
       )}
 

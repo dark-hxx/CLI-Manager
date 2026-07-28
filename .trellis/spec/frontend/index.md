@@ -23,6 +23,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [History Session Contracts](./history-session-contracts.md) | History favorites, metadata, and snapshot fallback contracts | Active |
 | [Workspace Session Restore Contracts](./workspace-session-restore-contracts.md) | 关闭后恢复工作区终端会话：TUI 走 resume、shell 贴 scrollback、节流落盘与启动问询 | Active |
 | [Statusline Editor Contracts](./statusline-editor-contracts.md) | Claude/Codex 独立编辑状态、共享终端主题预览与响应式布局 | Active |
+| [Git Diff Viewer Contracts](./git-diff-viewer-contracts.md) | Shared snapshot/live data sources, target identity, and viewer responsibility boundaries | Active |
 
 ---
 

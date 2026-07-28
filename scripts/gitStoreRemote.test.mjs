@@ -61,6 +61,23 @@ test("SSH file context identity includes host and remote project root", () => {
   assert.match(terminalTabsSource, /filePanelProject\?\.remote_path/);
 });
 
+test("opening the same file location preserves the loaded tree", () => {
+  const locationStart = terminalProjectSource.indexOf("export function isSameProjectFileLocation");
+  const locationEnd = terminalProjectSource.indexOf("export function findWorktreeByPath", locationStart);
+  assert.ok(locationStart >= 0 && locationEnd > locationStart);
+
+  const locationComparison = terminalProjectSource.slice(locationStart, locationEnd);
+  assert.doesNotMatch(locationComparison, /left\.id !== right\.id/);
+  assert.match(locationComparison, /left\.ssh_host_id === right\.ssh_host_id/);
+  assert.match(locationComparison, /normalizeProjectPath\(left\.path\)/);
+
+  const openProjectStart = fileStoreSource.indexOf("openProject: async");
+  const openProjectEnd = fileStoreSource.indexOf("closeProject:", openProjectStart);
+  const openProject = fileStoreSource.slice(openProjectStart, openProjectEnd);
+  assert.match(openProject, /if \(isSameProjectFileLocation\(current, project\)\)/);
+  assert.match(openProject, /if \(current !== project\) set\(\{ project \}\);\s+return;/);
+});
+
 test("question Hook Agent has a new immutable release identity", () => {
-  assert.match(sshAgentManifestSource, /^version = "0\.1\.4"$/m);
+  assert.match(sshAgentManifestSource, /^version = "0\.1\.5"$/m);
 });

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/git-diff-viewer-contracts.md","reason":"父任务共享 Viewer、导航、固定页、交互和性能契约"}
+{"file":".trellis/spec/backend/git-status-contracts.md","reason":"Desktop/WSL Diff options、payload 和限制契约"}
+{"file":".trellis/spec/backend/ssh-agent-contracts.md","reason":"SSH Agent capability、兼容和大小边界"}
+{"file":".trellis/tasks/07-27-git-diff-review-upgrade/design.md","reason":"父任务统一架构与职责边界"}

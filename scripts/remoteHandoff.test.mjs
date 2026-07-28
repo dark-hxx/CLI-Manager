@@ -63,14 +63,18 @@ function eligibility(overrides = {}) {
 
 test("stopped SSH Codex sessions with unattended authentication can be handed off", () => {
   assert.deepEqual(eligibility(), { eligible: true, reason: null });
-  assert.deepEqual(eligibility({ notification: "none", processStatus: "running" }), {
+  assert.deepEqual(eligibility({ notification: "failed", processStatus: "running" }), {
+    eligible: true,
+    reason: null,
+  });
+  assert.deepEqual(eligibility({ notification: "none", processStatus: "exited" }), {
     eligible: true,
     reason: null,
   });
   assert.equal(handoff.getRemoteHandoffWorkDir(baseSession, sshProject), "/srv/project");
 });
 
-test("SSH sessions still reject known running states before backend preflight", () => {
+test("SSH sessions reject running and unknown states before backend preflight", () => {
   for (const notification of ["running", "attention"]) {
     assert.deepEqual(eligibility({ notification, processStatus: "running" }), {
       eligible: false,
@@ -86,6 +90,15 @@ test("SSH sessions still reject known running states before backend preflight", 
     session: { ...baseSession, cliSessionId: undefined },
     notification: "none",
     processStatus: "running",
+  }), { eligible: false, reason: "task_state_unknown" });
+  assert.deepEqual(eligibility({ notification: "none", processStatus: undefined }), {
+    eligible: false,
+    reason: "task_state_unknown",
+  });
+  assert.deepEqual(eligibility({
+    session: { ...baseSession, cliSessionId: undefined },
+    notification: "none",
+    processStatus: "exited",
   }), { eligible: false, reason: "missing_cli_session_id" });
 });
 

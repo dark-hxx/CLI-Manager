@@ -34,6 +34,10 @@ import {
 } from "../../lib/fileExplorerIgnore";
 import type { GitFileChange, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode } from "../../lib/types";
 import { isDefaultCollapsedDirectoryName, useFileExplorerStore } from "../../stores/fileExplorerStore";
+import {
+  createGitDiffWorkspaceContext,
+  useGitDiffWorkspaceStore,
+} from "../../stores/gitDiffWorkspaceStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { STATUS_CONFIG } from "../git/GitStatusIcon";
@@ -822,7 +826,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const setSearchMode = useFileExplorerStore((s) => s.setSearchMode);
   const setSearchQuery = useFileExplorerStore((s) => s.setSearchQuery);
   const openFile = useFileExplorerStore((s) => s.openFile);
-  const openDiff = useFileExplorerStore((s) => s.openDiff);
+  const openDiff = useGitDiffWorkspaceStore((s) => s.openTab);
   const openFileAtSearchMatch = useFileExplorerStore((s) => s.openFileAtSearchMatch);
   const openFileEditorPane = useTerminalStore((s) => s.openFileEditorPane);
   const createEntry = useFileExplorerStore((s) => s.createEntry);
@@ -1435,8 +1439,18 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   };
 
   const requestOpenDiff = useCallback((change: GitFileChange) => {
-    openDiff(change);
-    if (project) openFileEditorPane(project);
+    if (!project) return;
+    openDiff(createGitDiffWorkspaceContext(project), {
+      repositoryId: project.environment_type === "ssh" ? "" : project.path,
+      repositoryRelativePath: "",
+      filePath: change.path,
+      sourcePath: change.path,
+      fileName: change.path.split(/[/\\]/).pop() ?? change.path,
+      status: change.status,
+      additions: change.added,
+      deletions: change.deleted,
+    });
+    openFileEditorPane(project);
   }, [openDiff, openFileEditorPane, project]);
 
   const renderContentSearchRow = useCallback((match: ProjectFileContentMatch) => {

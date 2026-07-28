@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/git-diff-viewer-contracts.md","reason":"确认文本 Diff 与文件类型保持现状的既有契约"}
+{"file":".trellis/tasks/07-27-git-binary-image-diff-research/research.md","reason":"当前行为矩阵和 No-Go 依据"}
+{"file":".trellis/tasks/07-27-git-binary-image-diff-research/adr.md","reason":"保持文本文件类型边界的正式决策"}

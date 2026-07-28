@@ -34,6 +34,7 @@ import {
 import { useProjectStore } from "./projectStore";
 import { useSshHostStore } from "./sshHostStore";
 import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
+import { createGitDiffWorkspaceContext, useGitDiffWorkspaceStore } from "./gitDiffWorkspaceStore";
 import { resolveCliSessionRebind } from "./terminalCliSession";
 import { inferHookBindingSource, resolveCliHookTarget } from "./terminalHookBinding";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "../lib/ssh";
@@ -2147,6 +2148,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     } finally {
       releaseRemoteHistoryConsumer(closingSession);
       if (isFileEditor) {
+        const project = closingSession?.fileEditor?.project;
+        if (project) {
+          useGitDiffWorkspaceStore.getState().clearWorkspace(
+            createGitDiffWorkspaceContext(project).key,
+          );
+        }
         return;
       }
       if (isTranscript) {
@@ -2630,6 +2637,26 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const editorSessionId = createFileEditorSessionId(project.id);
     const existing = get().sessions.find((session) => session.id === editorSessionId);
     if (existing) {
+      const previousProject = existing.fileEditor?.project;
+      if (previousProject) {
+        const previousContext = createGitDiffWorkspaceContext(previousProject);
+        const nextContext = createGitDiffWorkspaceContext(project);
+        if (previousContext.key !== nextContext.key) {
+          useGitDiffWorkspaceStore.getState().clearWorkspace(previousContext.key);
+        }
+      }
+      const sessions = get().sessions.map((session) => session.id === editorSessionId ? {
+        ...session,
+        projectId: project.id,
+        title: `文件：${project.name}`,
+        fileEditor: {
+          projectId: project.id,
+          projectPath: project.path,
+          projectName: project.name,
+          project,
+        },
+      } : session);
+      set({ sessions });
       get().setActive(editorSessionId);
       return editorSessionId;
     }

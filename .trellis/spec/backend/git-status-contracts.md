@@ -50,13 +50,23 @@
 ```rust
 /// 尾部 '/' 且目录内存在 .git（目录或文件形式，覆盖 submodule/worktree gitlink）→ true
 fn is_nested_repo_entry(repo: &Repository, file_path: &str) -> bool
+```
 
 Git 文件 Diff 返回结构化展示结果：
 
 ```rust
-GitFileDiffPayload { content: String, can_revert_hunks: bool }
-git_get_file_diff(project_path: String, file_path: String, status: String) -> Result<GitFileDiffPayload, String>
-```
+GitFileDiffPayload {
+    content: String,
+    can_revert_hunks: bool,
+    byte_length: usize,
+    line_count: usize,
+}
+git_get_file_diff(
+    project_path: String,
+    file_path: String,
+    status: String,
+    options: Option<GitDiffOptions>,
+) -> Result<GitFileDiffPayload, String>
 ```
 
 ### Contracts
@@ -70,6 +80,9 @@ git_get_file_diff(project_path: String, file_path: String, status: String) -> Re
 - 已跟踪非 UTF-8 文本的 UI Diff 可强制按文本生成并按检测编码解码；`can_revert_hunks=false`，前端必须禁用行级/Hunk 级 Patch 回滚，但整文件回滚仍可用。
 - UTF-8 UI Diff 保持原 Patch 文本并返回 `can_revert_hunks=true`。
 - Worktree Snapshot/恢复继续使用原 `format_diff_to_text_allow_empty` Patch 链路，不得消费转码后的 UI Diff。
+- Desktop native 与 WSL UI Diff 必须在返回 WebView 前统一经过 `build_diff_payload`。最终 Patch 大于 768 KiB 或 20000 行时返回 `git_diff_too_large`，不得截断。
+- `byte_length` 使用 UTF-8 Patch 字节数，`line_count` 使用 Rust `str::lines()` 语义；Windows、Linux、macOS native 与 WSL CLI 输出必须一致。
+- 大 Diff 限制不改变文件类型支持：二进制、图片和其他非文本内容继续走既有拒绝或只读路径。
 
 ### Validation & Error Matrix
 
@@ -80,12 +93,15 @@ git_get_file_diff(project_path: String, file_path: String, status: String) -> Re
 | diff 请求路径为目录 | `Err("该条目是目录（可能为嵌套 Git 仓库），无法显示文件 diff")` |
 | 非 UTF-8 文本 Diff | 返回可读 `content`，`canRevertHunks=false` |
 | UTF-8 文本 Diff | 返回原 Patch `content`，`canRevertHunks=true` |
+| Patch 恰好为 768 KiB 或 20000 行 | 返回完整 payload 和精确元数据 |
+| Patch 超过 768 KiB 或 20000 行 | `Err("git_diff_too_large")`，不返回可回滚内容 |
 
 ### Tests
 
 - `commands::git::tests::collect_git_changes_skips_nested_repo_dir`（正例 + 反例）
 - `commands::git::tests::is_nested_repo_entry_detects_nested_repo_dir_only`
 - Agent `git::tests::changes_expands_untracked_directories_and_skips_nested_repositories`
+- `commands::git_diff::tests::payload_limits_are_inclusive_and_report_metadata`
 - 手工夹具：`D:\github\nested-git-test`（一级/二级嵌套仓库 + node_modules 假 .git）
 
 ### Wrong vs Correct
@@ -96,6 +112,14 @@ git_get_file_diff(project_path: String, file_path: String, status: String) -> Re
 
 // Correct: 普通目录展开到具体文件，随后仅过滤嵌套仓库目录条目。
 &["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+```
+
+```rust
+// Wrong: return an unbounded or truncated patch directly to the WebView.
+Ok(GitFileDiffPayload { content, can_revert_hunks })
+
+// Correct: every native/WSL display path shares the final payload gate.
+build_diff_payload(content, can_revert_hunks)
 ```
 
 ### 已知未覆盖（后续项）
@@ -452,4 +476,59 @@ if (!repoPath) return;
 
 // Correct: 只有 null 表示当前没有仓库。
 if (repoPath === null) return;
+```
+
+---
+
+## Git Transport Lease 与固定 Diff 生命周期合约
+
+### 1. Scope / Trigger
+
+- Git 面板或固定到编辑器的实时 Diff 需要创建、共享或释放 SSH Git context 时适用。
+
+### 2. Signatures
+
+```typescript
+acquireGitTransportLease(project: Project): Promise<GitTransportLease>;
+releaseSshRemoteGitContext(context: SshRemoteGitContext): Promise<void>;
+```
+
+### 3. Contracts
+
+- SSH lease identity 至少包含 project、host、remote path 和 Agent installation；同 identity 的并发消费者共享一个 Transport。
+- `release()` 必须幂等。只有最后一个消费者释放时才调用 `history_remote_close`；同 key 的下一次 acquire 必须等待前一次 dispose 完成。
+- Git 面板关闭只释放自身 lease，不得关闭仍被固定 Diff 使用的 SSH consumer。
+- 项目、Host、remote path 或 installation 变化后，旧异步结果不得写入新上下文。
+- SSH 根仓库继续使用合法空 `repositoryId === ""`，固定页不得将其当作 context 缺失。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| 多消费者并发 acquire 同一 key | 只创建一次 context，引用计数递增 |
+| 同一 lease 重复 release | no-op，不重复关闭 consumer |
+| 最后消费者 release | 调用一次 `history_remote_close` |
+| dispose 尚未完成时重新 acquire 同 key | 等待 dispose，再创建新 generation |
+| SSH context 构建失败 | acquire 失败并清理 registry entry，不回退本地 Git |
+
+### 5. Good / Base / Bad Cases
+
+- Good: 面板与固定页共享 SSH context，关闭面板后固定页仍能加载和回滚。
+- Base: local/WSL 复用相同 lease 机制，但 dispose 不调用远程 close。
+- Bad: 每个组件独立创建相同 consumer，并在任一组件卸载时无条件关闭。
+
+### 6. Tests Required
+
+- Node 测试覆盖并发 acquire、最终释放、重复释放和 release/acquire 排序。
+- SSH 回归测试覆盖根仓库空 id、面板关闭后固定页写操作和 context 切换隔离。
+- 提交前运行 `npx tsc --noEmit`、相关 Node 测试和 GitNexus `detect_changes`。
+
+### 7. Wrong vs Correct
+
+```typescript
+// Wrong: 组件卸载就直接关闭共享 consumer。
+await releaseSshRemoteGitContext(context);
+
+// Correct: 组件只释放 lease，由 registry 决定是否关闭最后一个 consumer。
+await lease.release();
 ```

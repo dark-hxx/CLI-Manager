@@ -13,8 +13,9 @@ import type {
 } from "../lib/types";
 import { logError, recordCrashActivity } from "../lib/logger";
 import { translateCurrent } from "../lib/i18n";
-import { isSameProjectFileContext } from "../lib/terminalProject";
+import { isSameProjectFileContext, isSameProjectFileLocation } from "../lib/terminalProject";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
+import { activateProjectFileSurface } from "./gitDiffWorkspaceStore";
 import {
   buildSshRemoteFileContext,
   releaseSshRemoteFileContext,
@@ -39,7 +40,7 @@ interface FileClipboard {
   name: string;
 }
 
-interface ActiveProjectFile {
+export interface ActiveProjectFile {
   path: string;
   name: string;
   previewKind: ProjectFilePreviewKind;
@@ -79,12 +80,6 @@ function fileSaveErrorMessage(error: unknown): string {
   return translateCurrent("files.error.saveFailed");
 }
 
-interface ActiveProjectDiff {
-  path: string;
-  name: string;
-  status: GitFileChange["status"];
-}
-
 interface FileSearchNavigationTarget {
   path: string;
   lineNumber: number;
@@ -108,9 +103,6 @@ interface FileExplorerStore {
   openFiles: ActiveProjectFile[];
   activeFilePath: string | null;
   activeFile: ActiveProjectFile | null;
-  openDiffs: ActiveProjectDiff[];
-  activeDiffPath: string | null;
-  activeDiff: ActiveProjectDiff | null;
   searchNavigationTarget: FileSearchNavigationTarget | null;
   gitChanges: GitFileChange[];
   clipboard: FileClipboard | null;
@@ -132,9 +124,6 @@ interface FileExplorerStore {
   clearSearchNavigationTarget: () => void;
   setActiveFilePath: (path: string) => void;
   closeFile: (path: string) => void;
-  openDiff: (change: GitFileChange) => void;
-  setActiveDiffPath: (path: string) => void;
-  closeDiff: (path: string) => void;
   setActiveContent: (content: string) => void;
   saveFile: (path: string) => Promise<void>;
   saveActiveFile: () => Promise<void>;
@@ -322,17 +311,6 @@ const remoteFileContextReleases = new Map<string, Promise<void>>();
 
 export function isDefaultCollapsedDirectoryName(name: string): boolean {
   return DEFAULT_COLLAPSED_DIRECTORY_NAME_SET.has(name.toLowerCase());
-}
-
-function isDefaultCollapsedPath(path: string): boolean {
-  if (!path) return false;
-  return path
-    .split("/")
-    .some(isDefaultCollapsedDirectoryName);
-}
-
-function pruneDefaultCollapsedPaths(paths: Set<string>): Set<string> {
-  return new Set(Array.from(paths).filter((path) => path === "" || !isDefaultCollapsedPath(path)));
 }
 
 function collapsePath(paths: Set<string>, targetPath: string): Set<string> {
@@ -569,21 +547,6 @@ function selectFallbackFile(files: ActiveProjectFile[], closedPath: string): Act
   return files[Math.min(closedIndex - 1, files.length - 1)];
 }
 
-function selectFallbackDiff(diffs: ActiveProjectDiff[], closedPath: string): ActiveProjectDiff | null {
-  if (diffs.length === 0) return null;
-  const closedIndex = diffs.findIndex((diff) => diff.path === closedPath);
-  if (closedIndex <= 0) return diffs[0];
-  return diffs[Math.min(closedIndex - 1, diffs.length - 1)];
-}
-
-function diffFromChange(change: GitFileChange): ActiveProjectDiff {
-  return {
-    path: change.path,
-    name: basename(change.path),
-    status: change.status,
-  };
-}
-
 function changedPathAffectsFile(changedPath: string, filePath: string): boolean {
   return changedPath === "" || changedPath === filePath || filePath.startsWith(`${changedPath}/`);
 }
@@ -682,9 +645,6 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   openFiles: [],
   activeFilePath: null,
   activeFile: null,
-  openDiffs: [],
-  activeDiffPath: null,
-  activeDiff: null,
   searchNavigationTarget: null,
   gitChanges: [],
   clipboard: null,
@@ -693,31 +653,32 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     if (!projectSupportsCapability(project, "files")) {
       throw new Error("remote_project_capability_unsupported:files");
     }
-    const requestSeq = ++openProjectRequestSeq;
     const current = get().project;
-    const keepCurrentProject = isSameProjectFileContext(current, project);
+    if (isSameProjectFileLocation(current, project)) {
+      if (current !== project) set({ project });
+      return;
+    }
+
+    const requestSeq = ++openProjectRequestSeq;
     const previousRemoteFileContext = get().remoteFileContext;
     set({
       project,
       remoteFileContext: null,
-      tree: keepCurrentProject ? get().tree : [],
+      tree: [],
       loading: true,
       searchMode: "files",
       searchQuery: "",
       searchResults: [],
       contentSearchResults: [],
       searchLoading: false,
-      expandedPaths: keepCurrentProject ? pruneDefaultCollapsedPaths(get().expandedPaths) : new Set([""]),
-      selectedTreePath: keepCurrentProject ? get().selectedTreePath : null,
-      openFiles: keepCurrentProject ? get().openFiles : [],
-      activeFilePath: keepCurrentProject ? get().activeFilePath : null,
-      activeFile: keepCurrentProject ? get().activeFile : null,
-      openDiffs: keepCurrentProject ? get().openDiffs : [],
-      activeDiffPath: keepCurrentProject ? get().activeDiffPath : null,
-      activeDiff: keepCurrentProject ? get().activeDiff : null,
-      searchNavigationTarget: keepCurrentProject ? get().searchNavigationTarget : null,
-      gitChanges: keepCurrentProject ? get().gitChanges : [],
-      clipboard: keepCurrentProject ? get().clipboard : null,
+      expandedPaths: new Set([""]),
+      selectedTreePath: null,
+      openFiles: [],
+      activeFilePath: null,
+      activeFile: null,
+      searchNavigationTarget: null,
+      gitChanges: [],
+      clipboard: null,
     });
     void releaseRemoteFileContext(previousRemoteFileContext);
     let remoteContext: SshRemoteFileContext | null = null;
@@ -767,9 +728,6 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       openFiles: [],
       activeFilePath: null,
       activeFile: null,
-      openDiffs: [],
-      activeDiffPath: null,
-      activeDiff: null,
       searchNavigationTarget: null,
       gitChanges: [],
       clipboard: null,
@@ -915,23 +873,12 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     const project = get().project;
     if (!project || project.environment_type === "ssh") {
       if (project?.environment_type === "ssh") {
-        set({ gitChanges: [], openDiffs: [], activeDiff: null, activeDiffPath: null });
+        set({ gitChanges: [] });
       }
       return;
     }
     const gitChanges = await fetchGitChanges(project.path);
-    const changeByPath = new Map(gitChanges.map((change) => [change.path, change]));
-    const openDiffs = get().openDiffs
-      .map((diff) => changeByPath.get(diff.path))
-      .filter((change): change is GitFileChange => Boolean(change))
-      .map(diffFromChange);
-    const activeDiff = openDiffs.find((diff) => diff.path === get().activeDiffPath) ?? openDiffs[0] ?? null;
-    set({
-      gitChanges,
-      openDiffs,
-      activeDiffPath: activeDiff?.path ?? null,
-      activeDiff,
-    });
+    set({ gitChanges });
   },
 
   loadDir: async (path) => {
@@ -1087,6 +1034,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   openFile: async (entry) => {
     const project = get().project;
     if (!project || entry.kind !== "file") return;
+    activateProjectFileSurface(project);
     recordCrashActivity("file.preview_open", {
       projectId: project.id,
       projectPath: project.path,
@@ -1097,7 +1045,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     });
     const existing = get().openFiles.find((file) => file.path === entry.path);
     if (existing) {
-      set({ activeFilePath: existing.path, activeFile: existing, activeDiffPath: null, activeDiff: null });
+      set({ activeFilePath: existing.path, activeFile: existing });
       return;
     }
 
@@ -1109,8 +1057,6 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         openFiles: [...get().openFiles, file],
         activeFilePath: file.path,
         activeFile: file,
-        activeDiffPath: null,
-        activeDiff: null,
       });
       if (errorMessage) {
         toast.warning(translateCurrent("files.toast.previewFailed"), { description: errorMessage });
@@ -1220,7 +1166,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   setActiveFilePath: (path) => {
     const file = get().openFiles.find((item) => item.path === path) ?? null;
     if (!file) return;
-    set({ activeFilePath: file.path, activeFile: file, activeDiffPath: null, activeDiff: null });
+    set({ activeFilePath: file.path, activeFile: file });
   },
 
   closeFile: (path) => {
@@ -1231,34 +1177,6 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       openFiles: remaining,
       activeFilePath: fallback?.path ?? null,
       activeFile: fallback,
-      ...(fallback ? { activeDiffPath: null, activeDiff: null } : {}),
-    });
-  },
-
-  openDiff: (change) => {
-    const diff = diffFromChange(change);
-    const exists = get().openDiffs.some((item) => item.path === diff.path);
-    set({
-      openDiffs: exists ? get().openDiffs.map((item) => item.path === diff.path ? diff : item) : [...get().openDiffs, diff],
-      activeDiffPath: diff.path,
-      activeDiff: diff,
-    });
-  },
-
-  setActiveDiffPath: (path) => {
-    const diff = get().openDiffs.find((item) => item.path === path) ?? null;
-    if (!diff) return;
-    set({ activeDiffPath: diff.path, activeDiff: diff });
-  },
-
-  closeDiff: (path) => {
-    const diffs = get().openDiffs;
-    const remaining = diffs.filter((diff) => diff.path !== path);
-    const fallback = get().activeDiffPath === path ? selectFallbackDiff(remaining, path) : get().activeDiff;
-    set({
-      openDiffs: remaining,
-      activeDiffPath: fallback?.path ?? null,
-      activeDiff: fallback,
     });
   },
 
