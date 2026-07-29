@@ -1880,3 +1880,36 @@ WebDAV 工作区快照现同步可移植 SSH 主机分组、主机档案及项�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 55: 修复折叠侧边栏项目悬浮提示
+
+**Date**: 2026-07-29
+**Task**: 修复折叠侧边栏项目悬浮提示
+**Branch**: `master`
+
+### Summary
+
+修复 issue #175：避免 Claude/Codex 厂商 SVG 内置标题覆盖折叠项目按钮的项目名称提示；同步 V1.3.3 Changelog 与功能清单，TypeScript 检查通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `926e2135` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

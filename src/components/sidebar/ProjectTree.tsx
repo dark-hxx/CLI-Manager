@@ -848,7 +848,9 @@ function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: s
       {status ? (
         <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[status] }} />
       ) : cliVendor ? (
-        <VendorIcon vendor={cliVendor} size={15} />
+        <span className="pointer-events-none" aria-hidden="true">
+          <VendorIcon vendor={cliVendor} size={15} />
+        </span>
       ) : (
         <Terminal size={15} strokeWidth={1.5} />
       )}
