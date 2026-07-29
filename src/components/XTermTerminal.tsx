@@ -47,7 +47,10 @@ import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
 import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
 import { getTerminalCellWidth } from "../lib/terminalCellWidth";
 import { copyTextToClipboard } from "../lib/systemClipboard";
-import { normalizeTerminalTuiComposerBackground } from "../lib/terminalTuiDisplay";
+import {
+  hasCodexTuiViewport,
+  normalizeTerminalTuiComposerBackground,
+} from "../lib/terminalTuiDisplay";
 import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
 import { wrapTerminalPasteTextForCtrlShiftV } from "../lib/terminalKeyboard";
 import {
@@ -653,16 +656,22 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       : null;
     return {
       projectTool: project?.cli_tool.trim().toLowerCase() ?? "",
+      sessionTool: session?.cliTool?.trim().toLowerCase() ?? "",
       startupCmd: session?.startupCmd ?? "",
       titleTool: session?.title.match(/\(([^()]*)\)\s*$/)?.[1]?.trim().toLowerCase() ?? "",
     };
   };
 
-  const isCodexSession = (context = getSessionToolContext()) => {
+  const isCodexSession = (
+    context = getSessionToolContext(),
+    runtimeTerminal?: Terminal,
+  ) => {
     return (
-      context.projectTool === "codex"
+      context.sessionTool === "codex"
+      || context.projectTool === "codex"
       || context.titleTool === "codex"
       || CODEX_COMMAND_PATTERN.test(context.startupCmd)
+      || (runtimeTerminal !== undefined && hasCodexTuiViewport(runtimeTerminal))
     );
   };
 
@@ -1351,7 +1360,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           e.preventDefault();
           if (matched) {
             markAttentionInputHandled();
-            const newlineData = isCodexSession() ? "\x1b\r" : "\n";
+            const newlineData = isCodexSession(getSessionToolContext(), terminal) ? "\x1b\r" : "\n";
             terminalProcessManager.write(sessionId, newlineData).catch((err) => reportPtyWriteError("newline", err));
           }
           return false;

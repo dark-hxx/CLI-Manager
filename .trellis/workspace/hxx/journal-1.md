@@ -1913,3 +1913,36 @@ WebDAV 工作区快照现同步可移植 SSH 主机分组、主机档案及项�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 56: 修复 Codex 换行与会话精确恢复
+
+**Date**: 2026-07-29
+**Task**: 修复 Codex 换行与会话精确恢复
+**Branch**: `master`
+
+### Summary
+
+修复 Codex 换行快捷键识别；历史继续对话创建时绑定明确会话 ID，并让 Hook 对账持久化快照，避免重启后多个 Tab 串到同一最近会话。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `342d526d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

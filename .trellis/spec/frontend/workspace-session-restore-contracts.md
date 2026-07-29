@@ -20,6 +20,8 @@
 - 节流落盘：`sessionSnapshotPersistence.ts` — `registerTerminalSnapshotSource(sessionId, serialize)` / `markTerminalSnapshotDirty(id)` / `flushTerminalSnapshotsNow()`。
 - 分流判定：`detectCliResumeKind(startupCmd, project) -> "codex" | "claude" | null`。
 - resume 拼接：`buildCliResumeStartupCommand(kind, cliSessionId, project)`，复用 `appendResumeCliArgs`（`projectStartupCommand.ts`）。
+- Hook 身份绑定：`terminalStore.handleCliHookEvent(payload)` 通过 `resolveCliSessionRebind(currentId, payload.sessionId)` 更新运行态 `TerminalSession.cliSessionId`，再用相同规则对账 `sessionStore.sessions` 中的持久化 ID；持久化快照缺失或不同时必须立即调用串行保存入口。
+- 历史继续对话：`HistoryWorkspace.resumeSession(...)` 在创建本地、WSL 或 SSH 终端时必须把当前选中历史记录的明确 Session ID 传给 `terminalStore.createSession(..., cliSessionId)`；不能只把 ID 放进一次性 `startupCmd`。
 
 ### 3. Contracts
 
@@ -29,6 +31,8 @@
     - 无 `cliSessionId` → 兜底续最近一次 `codex resume --no-alt-screen --last` / `claude --continue`
   - shell 会话：贴回 `initialTerminalOutput`（shell 不清屏，历史可见）。
 - `restoreSessions` 重建 session 时**必须保留 `cliSessionId`**——漏掉会导致落盘时 id 丢失、下次恢复只能走兜底。
+- 从历史记录“继续对话”新建的 Tab 在创建时就必须持有对应 `cliSessionId`。同一项目、同一 cwd 下创建多个不同历史会话时，每个 Tab 的身份必须保持独立，不得依赖后续 Hook 或 `--last` 猜测。
+- Hook 首次绑定或 `/clear` 后切换到新的非空 `cliSessionId` 时，本地、WSL 和 SSH 会话都必须立即保存更新后的完整 sessions 快照；不得只更新 Zustand 运行态内存。保存判断必须对账 `sessionStore.sessions`，不能只看运行态 ID 是否变化：HMR、旧事件或保存失败可能造成“运行态已有 ID、磁盘仍为空”。仅当持久化 ID 与 Hook ID 已一致时，本地会话才跳过写盘；SSH 原有远端身份元数据保存行为保持不变。
 - resume 命令必须经 `prepareStartupCommandForPty` + `formatStartupInputForPty` 包装，禁止裸写。
 - `appendResumeCliArgs` 在继承项目普通 CLI 参数前必须移除 `cli_args` 中已有的 `resume <id>`、`resume --no-alt-screen <id>`、`--resume <id>`、`--continue` 等会话选择片段；新命令中的目标 Session ID 只能出现一次，Provider 参数仍须保留并去重。
 - 持续保存：定时节流 10s(`SNAPSHOT_THROTTLE_MS`)，脏检测跳过无新输出的终端，单终端尾部限行 `SNAPSHOT_MAX_LINES=2000`，仅有真实 PTY 会话时启动定时器。正常退出且明确丢弃会话时，`flushTerminalSnapshotsNow()` 必须在 `TerminalProcessManager.closeAll()` 之前强制落盘最终画面。
@@ -47,6 +51,8 @@
 
 - startupCmd 含 `codex`/`claude` 整词 或 项目 `cli_tool` 匹配 → CLI 分支；否则 shell 分支。
 - CLI 会话 + 有合法 cliSessionId(trim 后非空) → resume `<id>`；否则 → `--last`/`--continue`。
+- Hook sessionId 首次出现或发生变化 → 更新运行态并立即排队保存；运行态 ID 相同但持久化 ID 缺失/不同 → 自愈保存；空 ID → 不覆盖；运行态和持久化 ID 都一致 → 不为本地会话新增保存。
+- 本地/WSL 历史继续对话 → `startupCmd` 与 `cliSessionId` 使用同一个选中历史 Session ID；SSH 分支继续使用预检确认后的 `sourceSessionId`。
 - 项目不存在 / 路径无效 → 跳过或 toast 警告，不 crash。
 - 快照序列化单个失败 → 标回脏下轮重试，不拖垮整轮落盘。
 - 无可恢复会话 → 不弹窗、不调用 `restoreSessions`、不空转定时器。
@@ -60,16 +66,24 @@
 ### 5. Good/Base/Bad Cases
 
 - Good: codex 会话关闭重开 → 走 `codex resume --no-alt-screen <id>`，CLI 自己重画上次对话且可继续。
+- Good: Hook 先绑定 ID，再关闭应用并恢复 → 快照保留该 ID，恢复命令不会漂移到 `--last`。
+- Good: 同一项目下分别继续历史会话 A、再新建会话 B，关闭并恢复 → 两个 Tab 分别恢复 A、B，不会都进入最近的 B。
 - Base: shell 会话关闭重开 → 贴回历史画面，可继续输入。
+- Base: 同一会话的 Stop/UserPromptSubmit 重复携带相同 ID，且 `sessionStore` 已持有该 ID → 本地会话不重复保存身份快照。
 - Base: 开发版启动时安装版存在 `sessions.json` → 不读取该文件，只检查 `sessions.dev.json`。
 - Base: 恢复开关关闭 → 当前环境快照被清理，启动不提示，SQLite 历史会话不受影响。
 - Bad: 给 codex/claude 会话贴 `initialTerminalOutput` 再裸重跑 → 历史被 TUI 重绘覆盖（本任务真机复现）。
 - Bad: `restoreSessions` 重建时漏带 `cliSessionId` → resume 永远走兜底 `--last`，可能续错会话。
+- Bad: Hook 只把 `cliSessionId` 写进 Zustand 内存，等待其他偶然保存路径 → 应用关闭时磁盘仍是旧快照，恢复可能续错最近会话。
+- Bad: 用运行态 `resolveCliSessionRebind(...).changed` 作为唯一保存条件 → 运行态/磁盘一旦分叉，相同 ID 的后续 Hook 永远不会修复磁盘。
+- Bad: 历史继续对话只生成 `codex resume <id>` 启动命令，却不给新 Tab 设置 `cliSessionId` → 首次运行看似正确，重启时快照只能生成 `--last` 并串到另一个最近会话。
 
 ### 6. Tests Required
 
 - `npx tsc --noEmit`（前端唯一静态校验）。
 - `node scripts/resumeCliArgs.test.mjs`（恢复参数去重、普通参数保留、Provider 参数单次追加）。
+- `node --test scripts/terminalCliSession.test.mjs`：断言首次绑定和 `/clear` 重绑返回 `changed=true`、运行态相同 ID 返回 `changed=false`、持久化 ID 缺失时仍返回 `changed=true`，并断言 Hook 对账 `sessionStore.sessions` 后接入串行保存且 Codex 恢复优先使用明确 ID。
+- `node --test scripts/historyResumeProject.test.mjs`：断言本地/WSL 项目匹配，并断言历史继续对话创建 Tab 时把所选 `session_id` 传入 `cliSessionId` 参数。
 - Rust：会话文件名选择测试必须断言安装环境为 `sessions.json`、开发环境为 `sessions.dev.json`。
 - 手动：`ask` 模式仅在启动时弹一次；确认后恢复，拒绝后再启动不再询问同批旧标签且 `session_meta` 不受影响；切换设置页不重复弹窗。
 - 手动：恢复弹窗在常规桌面宽度下提示语单行，缩窄窗口后自然收缩且无横向溢出；打开时焦点落在“恢复”，直接按 Enter 执行恢复；抽查其他确认弹窗保持原默认焦点和宽度。
@@ -86,6 +100,11 @@ restoredSession.initialTerminalOutput = ps.initialTerminalOutput;
 restoredSession.startupCmd = prepareStartupCommandForPty(ps.startupCmd, shell); // codex/claude
 ```
 
+```typescript
+// 只更新运行态内存，关闭应用后磁盘快照仍可能没有 id
+set({ sessions: sessionsWithBoundCliSessionId });
+```
+
 #### Correct
 
 ```typescript
@@ -96,6 +115,14 @@ if (kind) {
   restoredSession.cliSessionId = ps.cliSessionId; // 必须保留，否则下次恢复丢 id
 } else {
   restoredSession.initialTerminalOutput = ps.initialTerminalOutput; // shell 才贴
+}
+```
+
+```typescript
+const persisted = useSessionStore.getState().sessions.find((item) => item.id === tabId);
+const persistedRebind = resolveCliSessionRebind(persisted?.cliSessionId, payload.sessionId);
+if (persistedRebind.changed) {
+  void queueSshSessionPersistence(get().sessions); // 串行保存完整快照；本地/WSL/SSH 一致
 }
 ```
 

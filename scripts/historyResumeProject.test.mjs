@@ -13,6 +13,10 @@ const source = readFileSync(
   new URL("../src/lib/historyResumeProject.ts", import.meta.url),
   "utf8"
 );
+const historyWorkspaceSource = readFileSync(
+  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  "utf8"
+);
 const output = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -76,4 +80,31 @@ test("includes WSL projects, excludes SSH projects and sessions without cwd", ()
     ["wsl"]
   );
   assert.deepEqual(findLocalHistoryCwdProjects({ cwd: null }, projects), []);
+});
+
+test("local history resume binds the terminal tab to the selected CLI session", () => {
+  const resumeSessionStart = historyWorkspaceSource.indexOf(
+    "  const resumeSession = useCallback(async ("
+  );
+  const requestResumeStart = historyWorkspaceSource.indexOf(
+    "  const requestResume = useCallback(",
+    resumeSessionStart
+  );
+
+  assert.notEqual(resumeSessionStart, -1);
+  assert.notEqual(requestResumeStart, -1);
+  const localResumeStart = historyWorkspaceSource.indexOf(
+    "      const requestedShell =",
+    resumeSessionStart
+  );
+  assert.notEqual(localResumeStart, -1);
+  const localResumeBody = historyWorkspaceSource.slice(
+    localResumeStart,
+    requestResumeStart
+  );
+
+  assert.match(
+    localResumeBody,
+    /await createSession\([\s\S]*?worktree\?\.id,\s*undefined,\s*session\.session_id\.trim\(\),\s*\);/
+  );
 });

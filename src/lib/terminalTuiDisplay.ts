@@ -11,7 +11,8 @@ const CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG = 0xe7eefc;
 const TUI_COMPOSER_PRELUDE_ROWS = 1;
 const TUI_COMPOSER_CONTINUATION_ROWS = 4;
 const SLASH_COMMAND_MENU_LINE_PATTERN = /^\/[a-z0-9][a-z0-9:_-]*(?:\s|$)/i;
-const AI_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|claude\s+code|yolo\s+mode|mcp\s+(?:client|startup)|\/model\s+to\s+change)/i;
+const CODEX_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|\/model\s+to\s+change)/i;
+const OTHER_AI_TUI_VIEWPORT_PATTERN = /(?:claude\s+code|yolo\s+mode|mcp\s+(?:client|startup))/i;
 
 type MutableXtermCell = IBufferCell & {
   fg: number;
@@ -34,6 +35,15 @@ export interface TerminalTuiDisplayOptions {
   isLightTheme: boolean;
   isCodexSession: boolean;
   isClaudeSession: boolean;
+}
+
+export function hasCodexTuiViewport(terminal: Terminal): boolean {
+  const buffer = terminal.buffer.active;
+  for (let row = 0; row < terminal.rows; row += 1) {
+    const line = buffer.getLine(buffer.viewportY + row);
+    if (line && CODEX_TUI_VIEWPORT_PATTERN.test(line.translateToString(true))) return true;
+  }
+  return false;
 }
 
 export function normalizeTerminalTuiComposerBackground(
@@ -62,7 +72,9 @@ export function normalizeTerminalTuiComposerBackground(
   const hasKnownAiTuiSignature = () => {
     for (let row = minRow; row < terminal.rows; row += 1) {
       const line = getViewportLine(row);
-      if (line && AI_TUI_VIEWPORT_PATTERN.test(line.translateToString(true))) return true;
+      if (!line) continue;
+      const text = line.translateToString(true);
+      if (CODEX_TUI_VIEWPORT_PATTERN.test(text) || OTHER_AI_TUI_VIEWPORT_PATTERN.test(text)) return true;
     }
     return false;
   };

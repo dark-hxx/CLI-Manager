@@ -54,6 +54,47 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 
 **Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalResizeDebouncer.test.mjs scripts/terminalResizeRenderBarrier.test.mjs scripts/terminalSplitLayout.test.mjs scripts/terminalReflowPolicy.test.mjs`; manually verify background output, reconnect replay, rapid split/fullscreen shrink, equal text sharpness across adjacent panes, transparent terminal backgrounds, IME, WebGL fallback, and no duplicate output after daemon reconnect.
 
+### Convention: Terminal CLI-specific input uses immutable metadata plus bounded runtime detection
+
+**What**: Input behavior that differs by CLI must first use the `TerminalSession.cliTool` captured when the Agent terminal was created, then compatible project/title/startup metadata. A plain Shell that manually starts a CLI may use current viewport TUI signatures as a bounded runtime fallback.
+
+**Why**: Project records, Tab titles, and startup commands are not a complete runtime identity. A locally created terminal may intentionally omit `projectId`, and users may start Codex manually. Persisting a guessed runtime CLI back into the session is also unsafe because the process can exit back to the Shell.
+
+```typescript
+// Wrong: misses immutable session identity and manually launched CLIs.
+const codex = project.cli_tool === "codex" || CODEX_COMMAND_PATTERN.test(session.startupCmd);
+
+// Correct: stable metadata first; runtime fallback is limited to the current viewport.
+const codex = session.cliTool === "codex"
+  || project.cli_tool === "codex"
+  || matchesCodexStartupMetadata(session)
+  || hasCodexTuiViewport(terminal);
+```
+
+**Contracts**:
+
+- Configured shortcut matching remains authoritative; runtime detection chooses only the PTY byte sequence.
+- Codex multiline input uses `ESC + CR`; ordinary Shell and Claude input keep their existing sequence.
+- Runtime detection must inspect only the current viewport; off-viewport scrollback is historical evidence and must never establish current CLI identity.
+- Do not assume Codex uses the alternate buffer. Normal/alternate behavior depends on CLI version, launch arguments, and user configuration.
+- Project-managed Codex sessions should still prefer `TerminalSession.cliTool` or other immutable startup metadata over viewport text.
+- Do not introduce foreground-process IPC solely to infer this input behavior unless local, WSL, and SSH process ownership contracts are designed together.
+
+**Good/Base/Bad Cases**:
+
+- Good: a project Agent terminal remains identifiable after project metadata changes because its session captured `cliTool`.
+- Base: a normal Shell uses normal newline behavior; manually running `codex` in either normal or alternate buffer enables Codex newline encoding without requiring Hook installation.
+- Good: once Codex TUI signatures leave the current viewport, runtime fallback stops matching.
+- Bad: requiring `buffer.type === "alternate"`; `--no-alt-screen` and user configuration make legitimate Codex sessions stay in the normal buffer.
+- Bad: permanently setting `session.cliTool = "codex"` from viewport text or one Hook event without an authoritative exit transition.
+
+**Tests Required**:
+
+- Assert project-session detection reads `TerminalSession.cliTool`.
+- Assert visible normal- and alternate-buffer `OpenAI Codex` and `/model to change` signatures are recognized.
+- Assert ordinary Shell, Claude, and off-viewport Codex text are rejected.
+- Run `node --test scripts/terminalNewlineShortcut.test.mjs` and `npx tsc --noEmit`.
+
 ### Convention: OSC color-query normalization has no frontend PTY side effects
 
 **What**: Rust PTY owns live OSC 10/11 replies. Frontend normalization only removes residual queries from live, replay, and restored display text; it must not import the process manager or write a reply.

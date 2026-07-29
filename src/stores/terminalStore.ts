@@ -2346,9 +2346,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         }),
       }));
       const boundSession = get().sessions.find((session) => session.id === tabId);
-      if (boundSession?.environmentType === "ssh") {
+      const persistedSession = useSessionStore.getState().sessions.find((session) => session.id === tabId);
+      const persistedCliSessionRebind = resolveCliSessionRebind(persistedSession?.cliSessionId, cliSessionId);
+      if (persistedCliSessionRebind.changed || boundSession?.environmentType === "ssh") {
         void queueSshSessionPersistence(get().sessions).catch((error) => {
-          logWarn("Failed to persist SSH CLI session identity", {
+          logWarn("Failed to persist CLI session identity", {
             sessionId: tabId,
             error,
           });

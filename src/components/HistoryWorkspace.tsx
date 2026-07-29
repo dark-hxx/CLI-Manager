@@ -955,7 +955,9 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
         launchProject ? parseProjectEnvVars(launchProject) : undefined,
         shell,
         undefined,
-        worktree?.id
+        worktree?.id,
+        undefined,
+        session.session_id.trim(),
       );
       setResumeIntent(null);
       closeHistory();
