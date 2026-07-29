@@ -38,10 +38,10 @@ export function FileEditorHeader({
         <div className="truncate text-[10px] text-text-muted">{path}</div>
       </div>
       {showMarkdownModes && (
-        <div className="ui-file-editor-segment flex rounded-md border border-border bg-surface-container-lowest p-0.5">
+        <div className="ui-file-editor-segment flex h-7 rounded-md border border-border bg-surface-container-lowest p-0.5">
           <button
             type="button"
-            className="rounded px-2 py-1 text-[11px]"
+            className="h-full rounded px-2 text-[11px] leading-none"
             data-active={previewMode === "source" ? "true" : "false"}
             onClick={() => onPreviewModeChange("source")}
           >
@@ -49,7 +49,7 @@ export function FileEditorHeader({
           </button>
           <button
             type="button"
-            className="rounded px-2 py-1 text-[11px]"
+            className="h-full rounded px-2 text-[11px] leading-none"
             data-active={previewMode === "preview" ? "true" : "false"}
             onClick={() => onPreviewModeChange("preview")}
           >
