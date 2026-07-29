@@ -1,5 +1,11 @@
 # Changelog
 
+## [V1.3.3] - 2026-07-29
+
+### 修复
+
+- **SSH Agent Hook 动态数量校验**：主程序不再硬编码 Claude/Codex Hook 条目数量，改为校验 Agent 上报数量的非零、安全上限及已管理条目关系；兼容新增提问 Hook 的 Agent 和旧版 Agent，无需仅因 Hook 数量变化重新部署远端 Agent。
+
 ## [V1.3.2] - 2026-07-27
 
 ### 新增

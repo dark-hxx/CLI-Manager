@@ -20,6 +20,7 @@ const AGENT_PROBE_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_PROBE/1";
 const AGENT_ENV_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_ENV/1";
 const AGENT_OPERATION_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_OPERATION/1";
 const AGENT_HOOK_CONFIG_MAGIC: &str = "CLI_MANAGER_SSH_AGENT_HOOK_CONFIG/1";
+const MAX_AGENT_HOOK_ENTRIES: u32 = 64;
 const AGENT_PROTOCOL_MAJOR: u16 = 1;
 const AGENT_PROTOCOL_MINOR_REQUIRED: u16 = 6;
 const MAX_AGENT_PROBE_BANNER_BYTES: usize = 8 * 1024;
@@ -1063,8 +1064,8 @@ fn validate_agent_hook_report(
     {
         return Err("ssh_agent_hook_root_invalid".to_string());
     }
-    let required = if expected_source == "claude" { 11 } else { 6 };
-    if report.required_entries != required || report.managed_entries > required {
+    let required = report.required_entries;
+    if required == 0 || required > MAX_AGENT_HOOK_ENTRIES || report.managed_entries > required {
         return Err("ssh_agent_hook_count_invalid".to_string());
     }
     let expected_roles: HashSet<&str> = if expected_source == "claude" {
@@ -1928,6 +1929,7 @@ mod tests {
         read_bounded, result_from_agent_report, ssh_password_account, ssh_probe_command,
         validate_agent_hook_report, validate_remote_path, validate_spec, AgentDoctorProbe,
         AgentVersionProbe, ParsedAgentProbe, RemoteAgentEnvironment, SshConnectionSpec,
+        MAX_AGENT_HOOK_ENTRIES,
     };
     use cli_manager_hook_schema::{
         HookConfigChange, HookConfigFile, HookConfigReport, HookHistorySourceCandidate,
@@ -2220,8 +2222,8 @@ mod tests {
                 fingerprint: fingerprint.clone(),
                 exists: true,
             }],
-            managed_entries: 11,
-            required_entries: 11,
+            managed_entries: 12,
+            required_entries: 12,
             changes: vec![HookConfigChange {
                 role: "claudeSettings".to_string(),
                 canonical_path: "/home/dev/.claude/settings.json".to_string(),
@@ -2241,6 +2243,50 @@ mod tests {
             Some("/home/dev/.claude"),
         )
         .is_ok());
+        let mut invalid_count = report.clone();
+        invalid_count.required_entries = 0;
+        assert_eq!(
+            validate_agent_hook_report(
+                &invalid_count,
+                "previewUninstall",
+                "claude",
+                "00000000-0000-4000-8000-000000000001",
+                "machine",
+                "~/.claude",
+                Some("/home/dev/.claude"),
+            )
+            .unwrap_err(),
+            "ssh_agent_hook_count_invalid"
+        );
+        invalid_count.required_entries = MAX_AGENT_HOOK_ENTRIES + 1;
+        assert_eq!(
+            validate_agent_hook_report(
+                &invalid_count,
+                "previewUninstall",
+                "claude",
+                "00000000-0000-4000-8000-000000000001",
+                "machine",
+                "~/.claude",
+                Some("/home/dev/.claude"),
+            )
+            .unwrap_err(),
+            "ssh_agent_hook_count_invalid"
+        );
+        invalid_count.required_entries = 12;
+        invalid_count.managed_entries = 13;
+        assert_eq!(
+            validate_agent_hook_report(
+                &invalid_count,
+                "previewUninstall",
+                "claude",
+                "00000000-0000-4000-8000-000000000001",
+                "machine",
+                "~/.claude",
+                Some("/home/dev/.claude"),
+            )
+            .unwrap_err(),
+            "ssh_agent_hook_count_invalid"
+        );
         assert_eq!(
             validate_agent_hook_report(
                 &report,
@@ -2293,8 +2339,8 @@ mod tests {
                     exists: true,
                 },
             ],
-            managed_entries: 6,
-            required_entries: 6,
+            managed_entries: 7,
+            required_entries: 7,
             changes: vec![
                 HookConfigChange {
                     role: "codexHooks".to_string(),
@@ -2318,7 +2364,7 @@ mod tests {
                 configured_config_root: "~/.codex".to_string(),
                 canonical_config_root: "/home/dev/.codex".to_string(),
                 config_files: vec![duplicate.clone(), duplicate],
-                managed_entries: 6,
+                managed_entries: 7,
                 adapter_version: 1,
                 installed_at: 1,
                 history_source_candidate: HookHistorySourceCandidate {

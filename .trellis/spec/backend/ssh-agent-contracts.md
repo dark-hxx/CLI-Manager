@@ -168,6 +168,7 @@ GitFileDiffPayload {
 - Operation JSON is accepted only after strict marker, action, UUID, version, protocol, target, path, source, manifest URL, and SHA-256 validation. Arbitrary remote output is never persisted.
 - Hook config requests use the Host/tool `configuredConfigRoot`; empty means `$HOME/.claude` or `$HOME/.codex`. Inspect and preview never create directories. Confirmed install may create only a missing native default root; a missing custom root is rejected.
 - Hook reports return the configured and canonical roots, `configRootHash`, actual canonical config files, fingerprints, change actions, Agent installation/machine identity, and an installation record. The desktop validates every field before persisting `hook_record_json`.
+- Hook report `requiredEntries` is Agent-owned capability data, not a Desktop per-source constant. The Desktop accepts `1..=64`, requires `managedEntries <= requiredEntries`, and for an installed record requires its `managedEntries == requiredEntries`; this keeps old and new Agent Hook sets compatible without trusting unbounded remote counts.
 - A later inspect refresh preserves the last validated `HookInstallationRecord` for the same canonical root until explicit uninstall. Host-primary and project-override rows that resolve to the same Host/source/canonical root mirror the same Hook report so one physical installation cannot appear installed in one scope and absent in another.
 - Local Hook report persistence uses one backend-owned SQLite connection and one bounded transaction. Frontend SQL pool calls must not split `BEGIN`, mutations, and `COMMIT` across separate invocations. A failed root rotation or mirror update rolls back every affected integration row.
 - Claude JSON and Codex JSON/TOML are parsed structurally. Install normalizes only exact Agent-owned duplicates in place; uninstall removes only the exact path/source/event/owner/installation command. Unknown events and third-party fields, array order, matchers, symlinks, TOML comments, and user-owned `features.hooks = true` remain intact.
@@ -265,6 +266,7 @@ GitFileDiffPayload {
 | Another live Hook config transaction owns the root lock | `hook_config_locked` |
 | SSH multi-row write cannot obtain/commit its SQLite transaction | stable `ssh_database_begin_failed` / `ssh_database_commit_failed`; no partial mutation |
 | Hook report nested identity differs from top-level command input | `ssh_hook_report_invalid`; no write |
+| Hook report has zero or more than 64 required entries, or managed entries exceed required entries | `ssh_agent_hook_count_invalid`; no report persistence |
 | Explicit integration belongs to another source | `ssh_hook_integration_identity_changed`; no write |
 | SSH Config import exceeds 10000 hosts | `ssh_config_import_too_many_hosts`; no write |
 | Local Hook metadata remains write-locked after the bounded wait | `ssh_agent_hook_metadata_busy`; preserve all integration rows |
@@ -290,6 +292,8 @@ GitFileDiffPayload {
 - Good: a signed x64/aarch64 artifact is uploaded through stdin, self-checks from staging, atomically becomes `current`, and leaves the former version as `previous`.
 - Good: an existing custom install root is upgraded in place without needing to repeat `--install-dir` inside the Agent transaction.
 - Good: Claude and Codex Hooks use different roots; preview shows actual files, confirmation preserves third-party entries, and both tools can be removed independently.
+- Good: an Agent release adds a Hook template and increases `requiredEntries`; the Desktop accepts the bounded self-consistent report without a matching hardcoded count update.
+- Bad: hardcode Claude/Codex Hook counts in the Desktop validator; Agent template additions then make inspect, preview, and apply fail together.
 - Good: the desktop disconnects, events spool under the bound Host/client namespace, and reconnect replays each event at most once before ACK deletion.
 - Good: four Host bridges are connected, a fifth waits without starting SSH, and closing one Host releases a permit for the waiting Host.
 - Good: an SSH project file panel reuses its Host bridge, lists only canonical-root descendants, skips symlinks, and reads bounded UTF-8 text or supported image data URLs.
@@ -353,6 +357,7 @@ GitFileDiffPayload {
 - Assert manifest tampering, duplicate/unknown targets, HTTP opt-in, query/fragment rejection, target selection, size/SHA-256 mismatch, and bounded downloads.
 - Assert install path quoting, strict operation markers/metadata, semantic version actions, lock conflicts, default/custom roots, corrupt/missing discovery recovery, promote rollback, distinct previous versions, and transactional uninstall.
 - Assert Claude/Codex exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, user-owned Codex feature/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.
+- Assert Desktop Hook report validation accepts current and legacy positive entry counts, rejects zero and counts above 64, rejects `managedEntries > requiredEntries`, and requires installed-record counts to match the report.
 - Assert missing binding no-op, event allowlists, 1 MiB stdin bound, message redaction, Host/client/installation namespace isolation, stale lock recovery, monotonic meta rebuild, TTL/count/byte gap, streaming read/ACK, malformed-record preservation, monotonic batch/ACK validation, full-window event/gap dedup, and Claude/Codex remote notification cwd redaction plus trusted project-name propagation.
 - Run the POSIX installer smoke test for HTTPS dry-run, default HTTP rejection, explicit HTTP, custom install root, downgrade forwarding, and temporary-directory cleanup.
 - Compile the Agent for Linux `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` in addition to host tests.
@@ -391,6 +396,23 @@ payload["remoteTranscriptRef"] =
 ```
 
 The Desktop option expresses whether a direct locator is available; the Agent wire contract remains a non-null string, with `""` selecting indexed lookup.
+
+### Wrong: duplicate Agent Hook counts in the Desktop
+
+```rust
+let required = if source == "claude" { 11 } else { 6 };
+```
+
+### Correct: validate the Agent-owned count as bounded protocol data
+
+```rust
+let required = report.required_entries;
+if required == 0 || required > MAX_AGENT_HOOK_ENTRIES || report.managed_entries > required {
+    return Err("ssh_agent_hook_count_invalid".to_string());
+}
+```
+
+The Agent owns the Hook template list. The Desktop owns boundary validation and must not duplicate the list length.
 
 ### Wrong: add fields to the published legacy Git Diff payload
 
