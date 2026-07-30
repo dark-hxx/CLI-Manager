@@ -262,6 +262,10 @@ impl BridgeLane {
             "fileList"
                 | "fileRead"
                 | "fileSearch"
+                | "fileAttachBegin"
+                | "fileAttachChunk"
+                | "fileAttachFinish"
+                | "fileAttachAbort"
                 | "gitListRepositories"
                 | "gitChanges"
                 | "gitDiff"
@@ -562,6 +566,10 @@ impl SshAgentBridgeManager {
                     | "fileList"
                     | "fileRead"
                     | "fileSearch"
+                    | "fileAttachBegin"
+                    | "fileAttachChunk"
+                    | "fileAttachFinish"
+                    | "fileAttachAbort"
                     | "gitListRepositories"
                     | "gitChanges"
                     | "gitDiff"
@@ -739,6 +747,9 @@ fn bridge_failure_should_fail_pending(error: &str) -> bool {
 fn required_capability(kind: &str) -> Option<&'static str> {
     match kind {
         "gitDiffWithOptions" => Some("gitDiffOptions"),
+        "fileAttachBegin" | "fileAttachChunk" | "fileAttachFinish" | "fileAttachAbort" => {
+            Some("fileAttach")
+        }
         _ => None,
     }
 }
@@ -1530,9 +1541,10 @@ mod tests {
         bridge_failure_should_fail_pending, bridge_slot, checked_response, classify_bridge_stderr,
         fail_pending_requests, handle_agent_request, permanent_bridge_error, read_preamble,
         readonly_client_instance_id, receive_agent_response, receive_frame, request,
-        request_error_requires_disconnect, response_timeout, retry_delay, validate_hook_batch,
-        AgentBridgeRequest, BridgeControl, BridgeEntry, BridgeLane, ClientFrame, CounterPermit,
-        EventDedup, PermitPool, ReaderMessage, ServerFrame, SshAgentBridgeManager, DEDUP_EVENT_IDS,
+        request_error_requires_disconnect, required_capability, response_timeout, retry_delay,
+        validate_hook_batch, AgentBridgeRequest, BridgeControl, BridgeEntry, BridgeLane,
+        ClientFrame, CounterPermit, EventDedup, PermitPool, ReaderMessage, ServerFrame,
+        SshAgentBridgeManager, DEDUP_EVENT_IDS,
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -1567,6 +1579,35 @@ mod tests {
         assert_eq!(
             response_receiver.recv().unwrap().unwrap_err(),
             "ssh_agent_capability_missing:gitDiffOptions"
+        );
+    }
+
+    #[test]
+    fn missing_attachment_capability_is_rejected_before_request_write() {
+        let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        let mut writer = Vec::new();
+        let mut request_number = 9;
+
+        handle_agent_request(
+            &mut writer,
+            &reader_receiver,
+            "host-1",
+            &mut request_number,
+            &[],
+            AgentBridgeRequest {
+                kind: "fileAttachBegin".to_string(),
+                payload: json!({}),
+                response: response_sender,
+            },
+        )
+        .unwrap();
+
+        assert!(writer.is_empty());
+        assert_eq!(request_number, 9);
+        assert_eq!(
+            response_receiver.recv().unwrap().unwrap_err(),
+            "ssh_agent_capability_missing:fileAttach"
         );
     }
 
@@ -1765,7 +1806,12 @@ mod tests {
     fn readonly_requests_use_an_isolated_bridge_identity() {
         assert_eq!(BridgeLane::for_request("historySync"), BridgeLane::Primary);
         assert_eq!(BridgeLane::for_request("fileList"), BridgeLane::Readonly);
+        assert_eq!(
+            BridgeLane::for_request("fileAttachChunk"),
+            BridgeLane::Readonly
+        );
         assert_eq!(BridgeLane::for_request("gitChanges"), BridgeLane::Git);
+        assert_eq!(required_capability("fileAttachBegin"), Some("fileAttach"));
         assert!(!BridgeLane::Primary.is_request_driven());
         assert!(BridgeLane::Readonly.is_request_driven());
         assert!(BridgeLane::Git.is_request_driven());

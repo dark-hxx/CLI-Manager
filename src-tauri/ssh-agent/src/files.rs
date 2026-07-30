@@ -1,7 +1,14 @@
+use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
-use std::fs;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::env;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::layout::resolve_layout;
 
 const MAX_ENTRIES: usize = 500;
 const MAX_SEARCH_RESULTS: usize = 200;
@@ -10,6 +17,12 @@ const MAX_IMAGE_READ_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 12_000_000;
 const MAX_SEARCH_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_WALK_FILES: usize = 20_000;
+const MAX_ATTACHMENT_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_ATTACHMENT_CHUNK_BYTES: usize = 512 * 1024;
+const MAX_ATTACHMENT_CHUNK_BASE64_BYTES: usize = MAX_ATTACHMENT_CHUNK_BYTES.div_ceil(3) * 4;
+const MAX_ACTIVE_ATTACHMENT_UPLOADS: usize = 16;
+const ATTACHMENT_RETENTION: Duration = Duration::from_secs(48 * 60 * 60);
+const ATTACHMENT_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +48,48 @@ pub struct FileSearchRequest {
     pub content: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachBeginRequest {
+    pub session_id: String,
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachChunkRequest {
+    pub upload_id: String,
+    pub offset: u64,
+    pub data_base64: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachFinishRequest {
+    pub upload_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachAbortRequest {
+    pub upload_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachBeginResult {
+    pub upload_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachResult {
+    pub path: String,
+    pub size_bytes: u64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteFileEntry {
@@ -54,6 +109,352 @@ pub struct RemoteFileRead {
     pub size_bytes: u64,
     pub modified_ms: Option<i64>,
     pub truncated: bool,
+}
+
+struct PendingFileAttachment {
+    cache_root: PathBuf,
+    parent_dir: PathBuf,
+    temporary_path: PathBuf,
+    target_path: PathBuf,
+    file: File,
+    expected_size: u64,
+    written: u64,
+    expected_sha256: String,
+    hasher: Sha256,
+}
+
+#[derive(Default)]
+pub struct FileAttachmentUploads {
+    active: HashMap<String, PendingFileAttachment>,
+}
+
+impl FileAttachmentUploads {
+    pub fn begin(
+        &mut self,
+        request: FileAttachBeginRequest,
+    ) -> Result<FileAttachBeginResult, String> {
+        let root = attachment_cache_root()?;
+        self.begin_in_root(request, root)
+    }
+
+    fn begin_in_root(
+        &mut self,
+        request: FileAttachBeginRequest,
+        root: PathBuf,
+    ) -> Result<FileAttachBeginResult, String> {
+        if self.active.len() >= MAX_ACTIVE_ATTACHMENT_UPLOADS {
+            return Err("attachment_upload_limit_reached".to_string());
+        }
+        validate_attachment_session_id(&request.session_id)?;
+        if request.size_bytes == 0 {
+            return Err("attachment_empty".to_string());
+        }
+        if request.size_bytes > MAX_ATTACHMENT_BYTES {
+            return Err("attachment_too_large".to_string());
+        }
+        let extension = attachment_extension(&request.file_name)?;
+        let expected_sha256 = normalize_sha256(&request.sha256)?;
+        let cache_root = ensure_private_dir(&root)?;
+        cleanup_expired_attachments(&cache_root, ATTACHMENT_RETENTION)?;
+        let parent_dir = ensure_private_child_dir(&cache_root, &request.session_id)?;
+
+        for _ in 0..4 {
+            let upload_id = uuid::Uuid::new_v4().to_string();
+            let target_path = parent_dir.join(format!("{upload_id}.{extension}"));
+            let temporary_path = parent_dir.join(format!(".{upload_id}.upload.{extension}"));
+            let file = match OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary_path)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => return Err("attachment_create_failed".to_string()),
+            };
+            if let Err(error) = set_private_file_permissions(&temporary_path) {
+                drop(file);
+                let _ = fs::remove_file(&temporary_path);
+                return Err(error);
+            }
+            self.active.insert(
+                upload_id.clone(),
+                PendingFileAttachment {
+                    cache_root: cache_root.clone(),
+                    parent_dir: parent_dir.clone(),
+                    temporary_path,
+                    target_path,
+                    file,
+                    expected_size: request.size_bytes,
+                    written: 0,
+                    expected_sha256,
+                    hasher: Sha256::new(),
+                },
+            );
+            return Ok(FileAttachBeginResult { upload_id });
+        }
+        Err("attachment_create_failed".to_string())
+    }
+
+    pub fn append(&mut self, request: FileAttachChunkRequest) -> Result<u64, String> {
+        if request.data_base64.is_empty()
+            || request.data_base64.len() > MAX_ATTACHMENT_CHUNK_BASE64_BYTES
+        {
+            return Err("attachment_chunk_invalid".to_string());
+        }
+        let data = general_purpose::STANDARD
+            .decode(request.data_base64)
+            .map_err(|_| "attachment_chunk_invalid".to_string())?;
+        if data.is_empty() || data.len() > MAX_ATTACHMENT_CHUNK_BYTES {
+            return Err("attachment_chunk_invalid".to_string());
+        }
+        let pending = self
+            .active
+            .get_mut(&request.upload_id)
+            .ok_or_else(|| "attachment_upload_not_found".to_string())?;
+        if request.offset != pending.written {
+            return Err("attachment_chunk_offset_invalid".to_string());
+        }
+        let next_size = pending
+            .written
+            .checked_add(data.len() as u64)
+            .filter(|size| *size <= pending.expected_size)
+            .ok_or_else(|| "attachment_size_mismatch".to_string())?;
+        pending
+            .file
+            .write_all(&data)
+            .map_err(|_| "attachment_write_failed".to_string())?;
+        pending.hasher.update(&data);
+        pending.written = next_size;
+        Ok(next_size)
+    }
+
+    pub fn finish(&mut self, request: FileAttachFinishRequest) -> Result<FileAttachResult, String> {
+        let pending = self
+            .active
+            .remove(&request.upload_id)
+            .ok_or_else(|| "attachment_upload_not_found".to_string())?;
+        finish_attachment(pending)
+    }
+
+    pub fn abort(&mut self, request: FileAttachAbortRequest) -> bool {
+        let Some(pending) = self.active.remove(&request.upload_id) else {
+            return false;
+        };
+        drop(pending.file);
+        let _ = fs::remove_file(pending.temporary_path);
+        true
+    }
+}
+
+impl Drop for FileAttachmentUploads {
+    fn drop(&mut self) {
+        for (_, pending) in self.active.drain() {
+            drop(pending.file);
+            let _ = fs::remove_file(pending.temporary_path);
+        }
+    }
+}
+
+fn attachment_cache_root() -> Result<PathBuf, String> {
+    let layout = resolve_layout().map_err(str::to_string)?;
+    let cache_base = env::var_os("XDG_CACHE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| layout.home.join(".cache"));
+    if !cache_base.is_absolute() {
+        return Err("attachment_cache_root_invalid".to_string());
+    }
+    Ok(cache_base.join("cli-manager-ssh-agent").join("attachments"))
+}
+
+fn validate_attachment_session_id(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("attachment_session_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn attachment_extension(file_name: &str) -> Result<String, String> {
+    if file_name.is_empty() || file_name.len() > 255 || file_name.contains(['\0', '\r', '\n']) {
+        return Err("attachment_name_invalid".to_string());
+    }
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|value| ATTACHMENT_EXTENSIONS.contains(&value.as_str()))
+        .ok_or_else(|| "attachment_type_unsupported".to_string())?;
+    Ok(extension)
+}
+
+fn normalize_sha256(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("attachment_sha256_invalid".to_string());
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+fn ensure_private_dir(path: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(path).map_err(|_| "attachment_cache_create_failed".to_string())?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "attachment_cache_unavailable".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("attachment_cache_invalid".to_string());
+    }
+    set_private_dir_permissions(path)?;
+    path.canonicalize()
+        .map_err(|_| "attachment_cache_unavailable".to_string())
+}
+
+fn ensure_private_child_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
+    validate_attachment_session_id(name)?;
+    let path = root.join(name);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err("attachment_cache_invalid".to_string())
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(&path).map_err(|_| "attachment_cache_create_failed".to_string())?;
+        }
+        Err(_) => return Err("attachment_cache_unavailable".to_string()),
+    }
+    set_private_dir_permissions(&path)?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| "attachment_cache_unavailable".to_string())?;
+    if !canonical.starts_with(root) {
+        return Err("attachment_cache_invalid".to_string());
+    }
+    Ok(canonical)
+}
+
+#[cfg(unix)]
+fn set_private_dir_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|_| "attachment_permissions_failed".to_string())
+}
+
+#[cfg(not(unix))]
+fn set_private_dir_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|_| "attachment_permissions_failed".to_string())
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn finish_attachment(mut pending: PendingFileAttachment) -> Result<FileAttachResult, String> {
+    let temporary_path = pending.temporary_path.clone();
+    let result = (|| {
+        if pending.written != pending.expected_size {
+            return Err("attachment_size_mismatch".to_string());
+        }
+        pending
+            .file
+            .flush()
+            .and_then(|_| pending.file.sync_all())
+            .map_err(|_| "attachment_write_failed".to_string())?;
+        let actual_sha256 = format!("{:x}", pending.hasher.finalize());
+        if actual_sha256 != pending.expected_sha256 {
+            return Err("attachment_sha256_mismatch".to_string());
+        }
+        let (width, height) = image::image_dimensions(&temporary_path)
+            .map_err(|_| "attachment_image_invalid".to_string())?;
+        validate_image_pixel_count(width, height)?;
+
+        let parent = pending
+            .target_path
+            .parent()
+            .ok_or_else(|| "attachment_cache_invalid".to_string())?;
+        let metadata =
+            fs::symlink_metadata(parent).map_err(|_| "attachment_cache_unavailable".to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err("attachment_cache_invalid".to_string());
+        }
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|_| "attachment_cache_unavailable".to_string())?;
+        if canonical_parent != pending.parent_dir
+            || !canonical_parent.starts_with(&pending.cache_root)
+        {
+            return Err("attachment_cache_invalid".to_string());
+        }
+        if fs::symlink_metadata(&pending.target_path).is_ok() {
+            return Err("attachment_target_exists".to_string());
+        }
+        let path = pending
+            .target_path
+            .to_str()
+            .ok_or_else(|| "attachment_path_invalid".to_string())?
+            .to_string();
+        drop(pending.file);
+        fs::rename(&temporary_path, &pending.target_path)
+            .map_err(|_| "attachment_commit_failed".to_string())?;
+        Ok(FileAttachResult {
+            path,
+            size_bytes: pending.written,
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary_path);
+    }
+    result
+}
+
+fn cleanup_expired_attachments(root: &Path, retention: Duration) -> Result<(), String> {
+    let now = SystemTime::now();
+    for session in fs::read_dir(root).map_err(|_| "attachment_cleanup_failed".to_string())? {
+        let session = session.map_err(|_| "attachment_cleanup_failed".to_string())?;
+        let file_type = session
+            .file_type()
+            .map_err(|_| "attachment_cleanup_failed".to_string())?;
+        if file_type.is_symlink() || !file_type.is_dir() {
+            continue;
+        }
+        for entry in
+            fs::read_dir(session.path()).map_err(|_| "attachment_cleanup_failed".to_string())?
+        {
+            let entry = entry.map_err(|_| "attachment_cleanup_failed".to_string())?;
+            let file_type = entry
+                .file_type()
+                .map_err(|_| "attachment_cleanup_failed".to_string())?;
+            if file_type.is_symlink() || !file_type.is_file() {
+                continue;
+            }
+            let expired = entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age >= retention);
+            if expired {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+        if fs::read_dir(session.path())
+            .ok()
+            .is_some_and(|mut entries| entries.next().is_none())
+        {
+            let _ = fs::remove_dir(session.path());
+        }
+    }
+    Ok(())
 }
 
 pub fn list(request: FileListRequest) -> Result<Vec<RemoteFileEntry>, String> {
@@ -376,10 +777,39 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_encode, list, read, search, FileListRequest, FileReadRequest, FileSearchRequest,
-        MAX_ENTRIES, MAX_SEARCH_RESULTS, MAX_TEXT_READ_BYTES,
+        base64_encode, cleanup_expired_attachments, list, read, search, FileAttachAbortRequest,
+        FileAttachBeginRequest, FileAttachChunkRequest, FileAttachFinishRequest,
+        FileAttachmentUploads, FileListRequest, FileReadRequest, FileSearchRequest,
+        ATTACHMENT_RETENTION, MAX_ENTRIES, MAX_SEARCH_RESULTS, MAX_TEXT_READ_BYTES,
     };
+    use base64::{engine::general_purpose, Engine as _};
+    use sha2::{Digest, Sha256};
     use std::fs;
+
+    fn test_png(root: &std::path::Path) -> Vec<u8> {
+        let path = root.join("source.png");
+        image::save_buffer_with_format(
+            &path,
+            &[0, 0, 0, 0],
+            1,
+            1,
+            image::ColorType::Rgba8,
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        let bytes = fs::read(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        bytes
+    }
+
+    fn begin_request(bytes: &[u8]) -> FileAttachBeginRequest {
+        FileAttachBeginRequest {
+            session_id: "session-1".into(),
+            file_name: "screenshot.png".into(),
+            size_bytes: bytes.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        }
+    }
 
     #[test]
     fn base64_encoding_is_standard() {
@@ -518,5 +948,170 @@ mod tests {
             super::validate_image_pixel_count(4_000, 3_001).unwrap_err(),
             "image_dimensions_too_large"
         );
+    }
+
+    #[test]
+    fn attachment_upload_is_chunked_verified_and_committed_under_session_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = test_png(root.path());
+        let mut uploads = FileAttachmentUploads::default();
+        let upload_id = uploads
+            .begin_in_root(begin_request(&bytes), root.path().join("attachments"))
+            .unwrap()
+            .upload_id;
+        let split = bytes.len() / 2;
+        assert_eq!(
+            uploads
+                .append(FileAttachChunkRequest {
+                    upload_id: upload_id.clone(),
+                    offset: 0,
+                    data_base64: general_purpose::STANDARD.encode(&bytes[..split]),
+                })
+                .unwrap(),
+            split as u64
+        );
+        uploads
+            .append(FileAttachChunkRequest {
+                upload_id: upload_id.clone(),
+                offset: split as u64,
+                data_base64: general_purpose::STANDARD.encode(&bytes[split..]),
+            })
+            .unwrap();
+        let result = uploads
+            .finish(FileAttachFinishRequest { upload_id })
+            .unwrap();
+        let path = std::path::PathBuf::from(&result.path);
+        assert!(path.starts_with(
+            root.path()
+                .join("attachments/session-1")
+                .canonicalize()
+                .unwrap()
+        ));
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("png")
+        );
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        assert_eq!(result.size_bytes, bytes.len() as u64);
+
+        let path = std::path::PathBuf::from(result.path);
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
+            .unwrap();
+        cleanup_expired_attachments(&root.path().join("attachments"), ATTACHMENT_RETENTION)
+            .unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn attachment_upload_rejects_bad_metadata_and_removes_failed_content() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = test_png(root.path());
+        let mut uploads = FileAttachmentUploads::default();
+        let mut unsupported = begin_request(&bytes);
+        unsupported.file_name = "notes.txt".into();
+        assert_eq!(
+            uploads
+                .begin_in_root(unsupported, root.path().join("attachments"))
+                .unwrap_err(),
+            "attachment_type_unsupported"
+        );
+
+        let mut mismatched = begin_request(&bytes);
+        mismatched.sha256 = "0".repeat(64);
+        let upload_id = uploads
+            .begin_in_root(mismatched, root.path().join("attachments"))
+            .unwrap()
+            .upload_id;
+        uploads
+            .append(FileAttachChunkRequest {
+                upload_id: upload_id.clone(),
+                offset: 0,
+                data_base64: general_purpose::STANDARD.encode(&bytes),
+            })
+            .unwrap();
+        assert_eq!(
+            uploads
+                .finish(FileAttachFinishRequest { upload_id })
+                .unwrap_err(),
+            "attachment_sha256_mismatch"
+        );
+        assert!(fs::read_dir(root.path().join("attachments/session-1"))
+            .unwrap()
+            .next()
+            .is_none());
+
+        let invalid_image = b"not-an-image";
+        let upload_id = uploads
+            .begin_in_root(
+                begin_request(invalid_image),
+                root.path().join("attachments"),
+            )
+            .unwrap()
+            .upload_id;
+        uploads
+            .append(FileAttachChunkRequest {
+                upload_id: upload_id.clone(),
+                offset: 0,
+                data_base64: general_purpose::STANDARD.encode(invalid_image),
+            })
+            .unwrap();
+        assert_eq!(
+            uploads
+                .finish(FileAttachFinishRequest { upload_id })
+                .unwrap_err(),
+            "attachment_image_invalid"
+        );
+        assert!(fs::read_dir(root.path().join("attachments/session-1"))
+            .unwrap()
+            .next()
+            .is_none());
+    }
+
+    #[test]
+    fn attachment_upload_enforces_offsets_and_abort_removes_partial_file() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = test_png(root.path());
+        let mut uploads = FileAttachmentUploads::default();
+        let upload_id = uploads
+            .begin_in_root(begin_request(&bytes), root.path().join("attachments"))
+            .unwrap()
+            .upload_id;
+        assert_eq!(
+            uploads
+                .append(FileAttachChunkRequest {
+                    upload_id: upload_id.clone(),
+                    offset: 1,
+                    data_base64: general_purpose::STANDARD.encode(&bytes),
+                })
+                .unwrap_err(),
+            "attachment_chunk_offset_invalid"
+        );
+        assert!(uploads.abort(FileAttachAbortRequest { upload_id }));
+        assert!(fs::read_dir(root.path().join("attachments/session-1"))
+            .unwrap()
+            .next()
+            .is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attachment_upload_rejects_a_symlinked_session_cache() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let attachments = root.path().join("attachments");
+        fs::create_dir(&attachments).unwrap();
+        symlink(outside.path(), attachments.join("session-1")).unwrap();
+        let bytes = test_png(root.path());
+        let mut uploads = FileAttachmentUploads::default();
+        assert_eq!(
+            uploads
+                .begin_in_root(begin_request(&bytes), attachments)
+                .unwrap_err(),
+            "attachment_cache_invalid"
+        );
+        assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
     }
 }

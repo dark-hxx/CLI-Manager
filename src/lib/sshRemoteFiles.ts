@@ -74,11 +74,55 @@ export async function buildSshRemoteFileContext(project: Project): Promise<SshRe
   };
 }
 
+export type SshRemoteAttachmentInput =
+  | { kind: "data"; fileName: string; dataBase64: string }
+  | { kind: "localPath"; path: string };
+
 export async function releaseSshRemoteFileContext(context: SshRemoteFileContext): Promise<void> {
   await invoke("history_remote_close", {
     hostId: context.launch.hostId,
     consumerId: context.consumerId,
   });
+}
+
+export async function sshRemoteAttachFiles(
+  project: Project,
+  sessionId: string,
+  inputs: SshRemoteAttachmentInput[],
+): Promise<string[]> {
+  if (inputs.length === 0) return [];
+  const context = await buildSshRemoteFileContext(project);
+  context.consumerId = [
+    "attachments",
+    context.launch.clientInstanceId,
+    context.launch.hostId,
+    sessionId,
+    crypto.randomUUID(),
+  ].join(":");
+  try {
+    const paths: string[] = [];
+    for (const input of inputs) {
+      const common = {
+        consumerId: context.consumerId,
+        sshLaunch: context.launch,
+        sessionId,
+      };
+      const path = input.kind === "data"
+        ? await invoke<string>("ssh_remote_file_attach_data", {
+            ...common,
+            fileName: input.fileName,
+            dataBase64: input.dataBase64,
+          })
+        : await invoke<string>("ssh_remote_file_attach_path", {
+            ...common,
+            localPath: input.path,
+          });
+      paths.push(path);
+    }
+    return paths;
+  } finally {
+    await releaseSshRemoteFileContext(context).catch(() => undefined);
+  }
 }
 
 export async function sshRemoteListDir(

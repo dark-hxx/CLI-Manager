@@ -4,7 +4,7 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and daemon-owned protocol `1.8` bridges per active SSH Host. Protocol 1.5 file RPCs remain read-only; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, while protocol 1.8 adds negotiated Diff generation options. Realtime/historical stats remain separate stages.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and daemon-owned protocol `1.9` bridges per active SSH Host. Protocol 1.5 introduced read-only file RPCs; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, protocol 1.8 adds negotiated Diff generation options, and protocol 1.9 adds bounded terminal image attachments outside project roots. Realtime/historical stats remain separate stages.
 
 ### Agent Release Identity
 
@@ -19,6 +19,8 @@ The delivered scope includes explicit one-shot probe/install lifecycle, remote C
   `request_user_input` Hook templates plus Codex `Notification` runtime admission.
   Agent `0.1.5` reports protocol `1.8` and adds `gitDiffOptions` for fixed whitespace and
   context generation options; legacy `gitDiff` remains the `exact+3` compatibility path.
+  Agent `0.1.6` reports protocol `1.9` and adds the negotiated `fileAttach` capability for
+  chunked terminal image uploads into the remote user's XDG cache.
 - The independent Agent release tag is exactly `ssh-agent-v<agent-version>`. Its signed manifest
   must carry that Agent version and point only to assets on that same tag.
 - Independent Agent releases are GitHub prereleases with `make_latest: false`. The desktop
@@ -127,6 +129,10 @@ CLI_MANAGER_SSH_AGENT/1 <nonce>\n
 
 Frames use a four-byte big-endian length followed by UTF-8 JSON. The maximum frame size is 1 MiB.
 
+Protocol 1.9 terminal attachments use `fileAttachBegin`, `fileAttachChunk`,
+`fileAttachFinish`, and `fileAttachAbort`. Chunks contain at most 512 KiB before Base64 encoding,
+so every encoded request remains below the 1 MiB frame limit.
+
 Remote Git Diff responses contain:
 
 ```rust
@@ -153,6 +159,10 @@ GitFileDiffPayload {
 - A healthy Agent must report protocol major 1 and minor 4 or newer. Minor 1 advertises `heartbeat`, `requestCancellation`, and `boundedBackpressure`; minor 3 adds remote history RPCs and `historyDetailChunks`; minor 4 adds `historyResumePreflight`. Older minor versions remain upgradeable but are not marked usable by the current desktop.
 - The full remote Git panel additionally requires protocol minor 7 and the explicit `gitFull` capability; capability absence blocks Git only and never falls back to local Git commands or the read-only lane.
 - Non-default remote Diff generation uses `gitDiffWithOptions` and requires the protocol-minor-8 `gitDiffOptions` capability. The daemon checks the negotiated capability before frame serialization. Default `exact+3` must use legacy `gitDiff` without an `options` field so Agents `0.1.1` through `0.1.4` remain compatible.
+- SSH terminal image paste requires the protocol-minor-9 `fileAttach` capability. The daemon checks the capability before sending any attachment frame; older Agents keep all prior features and return an actionable upgrade error instead of receiving a desktop-local path.
+- Attachment upload is limited to PNG, JPG/JPEG, GIF, WebP, and BMP, 5 MiB per image, and 12 million pixels. Begin declares the byte length and SHA-256, chunks carry an exact monotonic offset, finish verifies length/hash/image dimensions, and commit uses a same-directory atomic rename. Abort, bridge shutdown, and failed finish remove partial files.
+- Remote attachments live at `${XDG_CACHE_HOME:-$HOME/.cache}/cli-manager-ssh-agent/attachments/<session-id>/<uuid>.<ext>`, with `0700` directories and `0600` files on Unix. They never enter the SSH project root. Upload admission performs bounded cleanup of files older than 48 hours without following symlinks.
+- Clipboard image objects, native clipboard file paths (including screenshot-tool temporary paths), context-menu paste, and native file drop all use the same SSH attachment transport. Local terminals retain the existing local attachment path. Internal remote file-explorer drags already carry remote references and must not be uploaded again.
 - Agent Diff options accept only whitespace `exact | ignore-eol | ignore-all` and context `3 | 10 | 20`. Invalid fields or values are rejected at deserialization/validation; non-exact payloads always set `canRevertHunks=false`.
 - Every tracked, untracked, legacy, and option-aware Agent Diff response passes through one final payload gate. More than 768 KiB or 20000 Rust `str::lines()` is `git_diff_too_large`; never return a truncated patch or partial-revert capability.
 - `byteLength` and `lineCount` are additive response fields. New Desktop builds derive them when an older Agent omits them, so this does not require a new request kind or capability.
@@ -351,6 +361,7 @@ GitFileDiffPayload {
 - Assert remote file root/path confinement, symlink escape rejection, binary refusal, 1 MiB text and 5 MiB image limits, the exact 12,000,000-pixel boundary, video refusal, directory/search/visited limits, image data URLs, request-driven read-only scheduling, primary Hook-poll exclusion, loaded-directory reuse, consumer release, and UI/store read-only routing.
 - Assert protocol minor 7 and `gitFull`, dedicated Git-lane serialization and identity isolation, exact launch-root binding, strict per-RPC payloads, full Git mutation/network operations, write timeout/no-retry result-unknown handling, path/branch/patch validation, untracked symlink rejection, and SSH-pending fail-closed transport selection.
 - Assert protocol minor 8 and `gitDiffOptions`, legacy `exact+3` payload compatibility, pre-serialization capability rejection, all three whitespace flags, 3/10/20 context values, invalid-option rejection, and non-exact partial-revert disablement.
+- Assert protocol minor 9 and `fileAttach`, image extension allowlisting, XDG cache/session confinement, chunk size and offset validation, size/pixel/SHA-256 verification, atomic commit, abort/drop cleanup, 48-hour expiry, old-Agent capability rejection, and local-versus-SSH paste routing.
 - Assert tracked/untracked payload metadata, inclusive 768 KiB and 20000-line boundaries, and stable `git_diff_too_large` parity with Desktop.
 - Assert `validate_relative("", true)` succeeds for the root repository, while `validate_relative("", false)` and empty file paths remain rejected.
 - Assert ordinary untracked directories expand to concrete files and nested repositories are excluded from the parent repository's change list.
