@@ -115,6 +115,22 @@ with:
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is optional and required only when the signing key was generated with a password.
 - The first version that includes updater support still requires manual installation; earlier releases without `latest.json` / `.sig` cannot be consumed by the official updater.
 
+R2-backed releases use one repository variable as the build-time source of truth:
+
+```text
+R2_PUBLIC_BASE_URL=https://downloads.example.com
+  -> TAURI_CONFIG.plugins.updater.endpoints[0]
+  -> VITE_R2_PUBLIC_BASE_URL
+  -> CLI_MANAGER_R2_AGENT_MANIFEST_URL
+  -> rendered install-ssh-agent.sh R2_PUBLIC_BASE_URL
+```
+
+- `R2_PUBLIC_BASE_URL` is required in release workflows and must be an HTTPS origin only: no credentials, path, query, or fragment. A trailing slash is normalized away.
+- `.github/scripts/r2-release-config.mjs` owns validation and derivation. Workflows must not duplicate an exact production hostname check.
+- `TAURI_CONFIG` overrides only updater endpoints during CI builds. The committed updater public key remains static in `tauri.conf.json` and must never come from an Actions variable.
+- `VITE_R2_PUBLIC_BASE_URL` and `CLI_MANAGER_R2_AGENT_MANIFEST_URL` are compile-time values. Local builds without them retain the committed compatibility origin.
+- GitHub Release remains the second updater endpoint and SSH Agent fallback.
+
 #### UX behavior
 
 - Startup update check may run silently after startup readiness; failures must not interrupt first screen or terminal restore.
@@ -141,6 +157,10 @@ with:
 | Active terminal count > 0 | Show strong warning with count before install/relaunch. |
 | User confirms install | Call `install()` then `relaunch()` only after confirmation. |
 | User chooses later | Keep downloaded/pending state when safe; do not close resources during active download/install. |
+| `R2_PUBLIC_BASE_URL` is missing | Fail the release before compiling or publishing artifacts. |
+| R2 URL is HTTP or contains credentials/path/query/fragment | Fail validation; do not generate `TAURI_CONFIG` or release artifacts. |
+| R2 URL ends with `/` | Normalize it to the origin before deriving endpoint and artifact URLs. |
+| Local non-release build has no R2 variable | Use the committed compatibility origin; keep GitHub fallback. |
 
 ### 5. Good/Base/Bad Cases
 
@@ -148,6 +168,9 @@ with:
 - Base: GitHub latest release lacks updater JSON; manual check shows failure and the Release fallback link, while terminal sessions continue unaffected.
 - Bad: checking `https://api.github.com/repos/.../releases/latest` and manually comparing `tag_name` for the auto-update path bypasses Tauri's signed updater contract.
 - Bad: granting `process:default` just to relaunch the app expands permissions beyond the updater UI need.
+- Good: changing the Repository Variable updates the next build's updater, Agent manifest, UI install command, and rendered installer together.
+- Base: an already-installed older build continues using its embedded old origin; keep that origin available or redirect it.
+- Bad: fetch an updater hostname from unsigned runtime configuration, or inject the updater public key from Actions variables.
 
 ### 6. Tests Required
 
@@ -164,6 +187,8 @@ with:
   - `src-tauri/capabilities/default.json` includes `updater:default` and `process:allow-restart`, not `process:default`.
   - `cargo check --manifest-path src-tauri/Cargo.toml` passes after plugin changes.
 - Release checks:
+  - `r2-release-config.test.mjs` rejects missing/HTTP/credential/path/query/fragment values and asserts all derived env values.
+  - Both release workflows run the shared configuration step before compilation and use the rendered installer.
   - GitHub Actions release has `TAURI_SIGNING_PRIVATE_KEY` available.
   - Published release includes `latest.json` and signature-backed updater artifacts.
 
@@ -187,6 +212,19 @@ if (update) {
   await update.install();
   await relaunch();
 }
+```
+
+#### Wrong: duplicate the current R2 hostname in workflow validation
+
+```bash
+test "$R2_PUBLIC_BASE_URL" = "https://current-host.example.com"
+```
+
+#### Correct: validate once and derive every build-time consumer
+
+```yaml
+- name: Configure R2 release
+  run: node .github/scripts/r2-release-config.mjs export-actions-env
 ```
 
 #### Wrong

@@ -46,7 +46,7 @@ try {
     script,
     input,
     output,
-    "https://github.bwm.de5.net",
+    "https://downloads.example.com",
     "V1.3.1",
   ]);
 
@@ -59,20 +59,23 @@ try {
   assert.match(sourceLatest.platforms["windows-x86_64"].url, /^https:\/\/github\.com\//);
   assert.equal(
     r2Latest.platforms["windows-x86_64"].url,
-    "https://github.bwm.de5.net/CLI-Manager/releases/V1.3.1/app.msi.zip",
+    "https://downloads.example.com/CLI-Manager/releases/V1.3.1/app.msi.zip",
   );
   assert.equal(r2Latest.platforms["windows-x86_64"].signature, "signed-updater-value");
   assert.equal(
     r2Agent.artifacts[0].url,
-    "https://github.bwm.de5.net/CLI-Manager/releases/V1.3.1/agent-x64",
+    "https://downloads.example.com/CLI-Manager/releases/V1.3.1/agent-x64",
   );
   assert.equal(await readFile(join(output, "app.msi.zip"), "utf8"), "desktop-asset");
 
   await assert.rejects(
     execFileAsync(process.execPath, [script, input, join(root, "invalid"), "http://mirror.invalid", "V1.3.1"]),
   );
+  await assert.rejects(
+    execFileAsync(process.execPath, [script, input, join(root, "nested"), "https://mirror.invalid/releases", "V1.3.1"]),
+  );
 
-  console.log("prepare R2 release test: 7 checks passed");
+  console.log("prepare R2 release test: 8 checks passed");
 } finally {
   await rm(root, { recursive: true, force: true });
 }

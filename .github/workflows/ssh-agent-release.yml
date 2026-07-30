@@ -6,6 +6,9 @@ on:
     tags:
       - "ssh-agent-v*"
 
+env:
+  R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
+
 concurrency:
   group: ssh-agent-release-${{ github.ref }}
   cancel-in-progress: false
@@ -24,6 +27,9 @@ jobs:
           node-version: lts/*
           cache: npm
 
+      - name: Configure R2 release
+        run: node .github/scripts/r2-release-config.mjs export-actions-env
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -38,7 +44,9 @@ jobs:
           npm ci
 
       - name: Test R2 release preparation
-        run: node .github/scripts/prepare-r2-release.test.mjs
+        run: |
+          node .github/scripts/r2-release-config.test.mjs
+          node .github/scripts/prepare-r2-release.test.mjs
 
       - name: Resolve and validate version
         id: version
@@ -92,7 +100,11 @@ jobs:
             src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
             src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
           npx tauri signer sign dist/ssh-agent/ssh-agent-release-manifest.json
-          cp scripts/install-ssh-agent.sh dist/ssh-agent/install-ssh-agent.sh
+          node .github/scripts/r2-release-config.mjs render-installer \
+            scripts/install-ssh-agent.sh \
+            dist/ssh-agent/install-ssh-agent.sh
+          sh -n dist/ssh-agent/install-ssh-agent.sh
+          grep -Fqx "R2_PUBLIC_BASE_URL=\"$R2_PUBLIC_BASE_URL\"" dist/ssh-agent/install-ssh-agent.sh
 
       - name: Upload SSH Agent artifact
         uses: actions/upload-artifact@v4
@@ -104,15 +116,10 @@ jobs:
       - name: Prepare R2 SSH Agent assets
         if: startsWith(github.ref, 'refs/tags/')
         env:
-          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: bash
         run: |
-          test "$R2_PUBLIC_BASE_URL" = "https://github.bwm.de5.net" || {
-            echo "R2_PUBLIC_BASE_URL must match the updater endpoint" >&2
-            exit 1
-          }
           rm -rf dist/ssh-agent-r2
           node .github/scripts/prepare-r2-release.mjs \
             dist/ssh-agent \
@@ -130,7 +137,6 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
-          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
         shell: bash
         run: |
           test -n "$R2_ACCOUNT_ID"
@@ -144,10 +150,11 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-all-errors \
             "$R2_PUBLIC_BASE_URL/$VERSION_PREFIX/ssh-agent-release-manifest.json" \
             --output /tmp/r2-agent-manifest.json
-          node - <<'NODE'
+          node - "$R2_PUBLIC_BASE_URL" <<'NODE'
           const fs = require("node:fs");
+          const base = process.argv[2];
           const manifest = JSON.parse(fs.readFileSync("/tmp/r2-agent-manifest.json", "utf8"));
-          if (!manifest.artifacts?.length || manifest.artifacts.some((artifact) => !artifact.url.startsWith("https://github.bwm.de5.net/"))) {
+          if (!manifest.artifacts?.length || manifest.artifacts.some((artifact) => !artifact.url.startsWith(`${base}/`))) {
             throw new Error("R2 Agent manifest contains a non-R2 artifact URL");
           }
           NODE

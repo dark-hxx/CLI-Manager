@@ -38,6 +38,10 @@ interface Props {
 const SOURCES: SshToolSource[] = ["claude", "codex"];
 const OFFICIAL_AGENT_MANIFEST_PATH = /^\/dark-hxx\/CLI-Manager\/releases\/(?:latest\/download|download\/[^/]+)\/ssh-agent-release-manifest\.json$/;
 const R2_AGENT_MANIFEST_PATH = "/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json";
+const DEFAULT_R2_PUBLIC_BASE_URL = "https://github.bwm.de5.net";
+const R2_PUBLIC_BASE_URL = (
+  import.meta.env.VITE_R2_PUBLIC_BASE_URL?.trim() || DEFAULT_R2_PUBLIC_BASE_URL
+).replace(/\/+$/, "");
 
 function savedManifestInput(value: string | null | undefined): string {
   const trimmed = value?.trim() ?? "";
@@ -45,7 +49,10 @@ function savedManifestInput(value: string | null | undefined): string {
   try {
     const url = new URL(trimmed);
     return (url.hostname === "github.com" && OFFICIAL_AGENT_MANIFEST_PATH.test(url.pathname))
-      || (url.hostname === "github.bwm.de5.net" && url.pathname === R2_AGENT_MANIFEST_PATH)
+      || (
+        (url.origin === R2_PUBLIC_BASE_URL || url.origin === DEFAULT_R2_PUBLIC_BASE_URL)
+        && url.pathname === R2_AGENT_MANIFEST_PATH
+      )
       ? ""
       : trimmed;
   } catch {
@@ -136,7 +143,7 @@ const HOOK_FILE_ROLE_KEYS: Record<string, TranslationKey> = {
   unknown: "settings.sshHosts.cliIntegration.hook.file.unknown",
 };
 
-const R2_INSTALL_SCRIPT_URL = "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/install-ssh-agent.sh";
+const R2_INSTALL_SCRIPT_URL = `${R2_PUBLIC_BASE_URL}/CLI-Manager/releases/ssh-agent/latest/install-ssh-agent.sh`;
 const GITHUB_INSTALL_SCRIPT_URL = "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/install-ssh-agent.sh";
 
 export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Props) {

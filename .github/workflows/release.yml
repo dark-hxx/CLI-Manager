@@ -6,6 +6,9 @@ on:
     tags:
       - "V*"
 
+env:
+  R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
+
 jobs:
   ssh-agent:
     runs-on: ubuntu-22.04
@@ -17,6 +20,9 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
+
+      - name: Configure R2 release
+        run: node .github/scripts/r2-release-config.mjs export-actions-env
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -32,7 +38,9 @@ jobs:
           npm ci
 
       - name: Test R2 release preparation
-        run: node .github/scripts/prepare-r2-release.test.mjs
+        run: |
+          node .github/scripts/r2-release-config.test.mjs
+          node .github/scripts/prepare-r2-release.test.mjs
 
       - name: Extract SSH Agent version
         id: agent_version
@@ -79,7 +87,11 @@ jobs:
             src-tauri/ssh-agent/target/x86_64-unknown-linux-gnu/release/cli-manager-ssh-agent \
             src-tauri/ssh-agent/target/aarch64-unknown-linux-gnu/release/cli-manager-ssh-agent
           npx tauri signer sign dist/ssh-agent/ssh-agent-release-manifest.json
-          cp scripts/install-ssh-agent.sh dist/ssh-agent/install-ssh-agent.sh
+          node .github/scripts/r2-release-config.mjs render-installer \
+            scripts/install-ssh-agent.sh \
+            dist/ssh-agent/install-ssh-agent.sh
+          sh -n dist/ssh-agent/install-ssh-agent.sh
+          grep -Fqx "R2_PUBLIC_BASE_URL=\"$R2_PUBLIC_BASE_URL\"" dist/ssh-agent/install-ssh-agent.sh
 
       - name: Stage SSH Agent bundle
         uses: actions/upload-artifact@v4
@@ -115,6 +127,9 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
+
+      - name: Configure R2 release
+        run: node .github/scripts/r2-release-config.mjs export-actions-env
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -232,6 +247,9 @@ jobs:
           node-version: lts/*
           cache: npm
 
+      - name: Configure R2 release
+        run: node .github/scripts/r2-release-config.mjs export-actions-env
+
       - name: Install dependencies
         run: npm ci
 
@@ -275,15 +293,10 @@ jobs:
       - name: Prepare R2 release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: bash
         run: |
-          test "$R2_PUBLIC_BASE_URL" = "https://github.bwm.de5.net" || {
-            echo "R2_PUBLIC_BASE_URL must match the updater endpoint" >&2
-            exit 1
-          }
           rm -rf dist/github-release dist/r2-release
           mkdir -p dist/github-release
           gh release download "$GITHUB_REF_NAME" \
@@ -338,7 +351,6 @@ jobs:
       - name: Verify R2 assets and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}
         shell: bash
         run: |
           curl --fail --silent --show-error --retry 5 --retry-all-errors \

@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { normalizeR2PublicBaseUrl } from "./r2-release-config.mjs";
 
 const [inputDir, outputDir, publicBaseUrl, tag] = process.argv.slice(2);
 
@@ -7,10 +8,7 @@ if (![inputDir, outputDir, publicBaseUrl, tag].every(Boolean)) {
   throw new Error("usage: prepare-r2-release.mjs <input-dir> <output-dir> <public-base-url> <tag>");
 }
 
-const baseUrl = new URL(publicBaseUrl.endsWith("/") ? publicBaseUrl : `${publicBaseUrl}/`);
-if (baseUrl.protocol !== "https:" || baseUrl.search || baseUrl.hash || baseUrl.username || baseUrl.password) {
-  throw new Error("R2 public base URL must be an HTTPS URL without credentials, query, or fragment");
-}
+const baseUrl = new URL(`${normalizeR2PublicBaseUrl(publicBaseUrl)}/`);
 
 const releaseUrl = (name) => new URL(`CLI-Manager/releases/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`, baseUrl).toString();
 

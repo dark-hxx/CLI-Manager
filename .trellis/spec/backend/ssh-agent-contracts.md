@@ -39,6 +39,9 @@ The delivered scope includes explicit one-shot probe/install lifecycle, remote C
   HTTPS redirect targets may contain CDN-generated temporary query signatures, but still require
   a host, reject credentials/fragments, and remain bounded to three redirects. Manifest Minisign
   and Agent SHA-256 verification remain mandatory after redirect resolution.
+- Release workflows derive the desktop default manifest, UI installer URL, signed manifest artifact
+  URLs, and rendered shell installer from the validated `R2_PUBLIC_BASE_URL` build variable. GitHub
+  Release remains the fixed fallback, while local non-release builds retain the committed R2 origin.
 
 ## 2. Signatures
 

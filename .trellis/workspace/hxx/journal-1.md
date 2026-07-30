@@ -1946,3 +1946,36 @@ WebDAV 工作区快照现同步可移植 SSH 主机分组、主机档案及项�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 57: 动态注入 R2 发布域名
+
+**Date**: 2026-07-29
+**Task**: 动态注入 R2 发布域名
+**Branch**: `master`
+
+### Summary
+
+将 R2_PUBLIC_BASE_URL 作为发布唯一配置源，构建时注入 Tauri updater、SSH Agent 和安装脚本，并补齐校验、测试与发布规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4f3e301` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

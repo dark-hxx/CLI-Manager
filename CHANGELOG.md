@@ -6,6 +6,10 @@
 
 - **SSH 终端图片粘贴**：SSH Agent `0.1.6` / protocol `1.9` 新增分块图片附件协议；Ctrl+V、右键粘贴、PixPin 等截图临时文件和原生拖拽会先上传到远端用户的 XDG 缓存，再向终端粘贴远程路径。图片不会写入项目目录，并具备格式、5 MiB、1200 万像素、SHA-256、权限和 48 小时清理限制；旧 Agent 会提示升级且不会回退粘贴本机路径。
 
+### 调整
+
+- **R2 发布域名动态注入**：GitHub Actions 的 `R2_PUBLIC_BASE_URL` 现在是桌面更新器、SSH Agent 清单、安装命令及发布脚本的唯一构建配置源；发布前统一校验 HTTPS Origin，并继续保留 GitHub Release 备用源与静态更新签名公钥，后续更换 R2 自定义域名无需全仓库替换。
+
 ### 修复
 
 - **SSH Agent Hook 动态数量校验**：主程序不再硬编码 Claude/Codex Hook 条目数量，改为校验 Agent 上报数量的非零、安全上限及已管理条目关系；兼容新增提问 Hook 的 Agent 和旧版 Agent，无需仅因 Hook 数量变化重新部署远端 Agent。

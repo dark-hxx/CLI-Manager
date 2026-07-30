@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const DEFAULT_MANIFEST_URL: &str =
-    "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json";
+    match option_env!("CLI_MANAGER_R2_AGENT_MANIFEST_URL") {
+        Some(url) => url,
+        None => "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json",
+    };
 pub const FALLBACK_MANIFEST_URL: &str =
     "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/ssh-agent-release-manifest.json";
 const TRUSTED_PUBLIC_KEY: &str = include_str!("../ssh-agent-public-key.txt");
@@ -444,7 +447,9 @@ mod tests {
     fn default_release_sources_prefer_r2_and_keep_github_fallback() {
         assert_eq!(
             DEFAULT_MANIFEST_URL,
-            "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json"
+            option_env!("CLI_MANAGER_R2_AGENT_MANIFEST_URL").unwrap_or(
+                "https://github.bwm.de5.net/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json"
+            )
         );
         assert_eq!(
             FALLBACK_MANIFEST_URL,
