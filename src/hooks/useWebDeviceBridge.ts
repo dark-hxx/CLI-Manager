@@ -159,6 +159,8 @@ function isManagementRejection(code: string) {
     || code === "path_outside_root"
     || code === "target_exists"
     || code === "worktree_missing"
+    || code === "desktop_ui_unavailable"
+    || code === "unsupported_operation_action"
     || code === "history_context_not_found";
 }
 

@@ -15,13 +15,22 @@ if (process.platform !== "win32") {
 
 const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "cli-manager-tauri-dev-proxy-"));
 const logPath = path.join(temporaryDirectory, "commands.log");
+const retryMarkerPath = path.join(temporaryDirectory, "locked-binary-retry.marker");
+const lockedBinaryPath = path.join(
+  repoRoot,
+  "src-tauri",
+  "target",
+  "debug",
+  "cli-manager.exe",
+);
 
 function writeCommand(name, body) {
   writeFileSync(path.join(temporaryDirectory, `${name}.cmd`), `@echo off\r\n${body}\r\n`, "utf8");
 }
 
-function runTauriCli(args, cargoExitCode = 0) {
+function runTauriCli(args, cargoExitCode = 0, extraEnv = {}) {
   writeFileSync(logPath, "", "utf8");
+  rmSync(retryMarkerPath, { force: true });
   const result = spawnSync(process.execPath, [tauriCliPath, ...args], {
     cwd: repoRoot,
     env: {
@@ -29,6 +38,9 @@ function runTauriCli(args, cargoExitCode = 0) {
       PATH: `${temporaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
       TAURI_CLI_DEV_PROXY_TEST_LOG: logPath,
       TAURI_CLI_DEV_PROXY_TEST_CARGO_EXIT_CODE: String(cargoExitCode),
+      TAURI_CLI_LOCKED_BINARY_RETRY_MARKER: retryMarkerPath,
+      TAURI_CLI_LOCKED_BINARY_PATH: lockedBinaryPath,
+      ...extraEnv,
     },
     encoding: "utf8",
     timeout: 30_000,
@@ -46,7 +58,19 @@ try {
     "cargo",
     `>> "%TAURI_CLI_DEV_PROXY_TEST_LOG%" echo cargo %*\r\nexit /b %TAURI_CLI_DEV_PROXY_TEST_CARGO_EXIT_CODE%`,
   );
-  writeCommand("tauri", `>> "%TAURI_CLI_DEV_PROXY_TEST_LOG%" echo tauri %*\r\nexit /b 0`);
+  writeCommand(
+    "tauri",
+    `if "%TAURI_CLI_LOCKED_BINARY_RETRY_TEST%"=="1" if not exist "%TAURI_CLI_LOCKED_BINARY_RETRY_MARKER%" (\r\n` +
+      `  > "%TAURI_CLI_LOCKED_BINARY_RETRY_MARKER%" echo retry\r\n` +
+      `  >> "%TAURI_CLI_DEV_PROXY_TEST_LOG%" echo error: failed to remove file \`%TAURI_CLI_LOCKED_BINARY_PATH%\`\r\n` +
+      `  >> "%TAURI_CLI_DEV_PROXY_TEST_LOG%" echo Caused by: os error 5\r\n` +
+      `  echo error: failed to remove file \`%TAURI_CLI_LOCKED_BINARY_PATH%\` 1>&2\r\n` +
+      `  echo Caused by: os error 5 1>&2\r\n` +
+      `  exit /b 1\r\n` +
+      `)\r\n` +
+      `>> "%TAURI_CLI_DEV_PROXY_TEST_LOG%" echo tauri %*\r\n` +
+      `exit /b 0`,
+  );
 
   const dev = runTauriCli(["dev", "--target", "x86_64-pc-windows-msvc"]);
   assert.equal(dev.status, 0, "tauri dev must succeed after the proxy build succeeds");
@@ -115,6 +139,18 @@ try {
   );
   assert.doesNotMatch(applicationArguments.lines[0], /ignored/);
 
+  const retryEnv = { TAURI_CLI_LOCKED_BINARY_RETRY_TEST: "1" };
+  const retryWithLock = runTauriCli(["dev"], 0, retryEnv);
+  assert.equal(retryWithLock.status, 0, "locked local dev binary must be recovered automatically");
+  assert.equal(
+    retryWithLock.lines.filter((line) => line.startsWith("tauri ")).length,
+    1,
+  );
+
+  const buildWithLock = runTauriCli(["build"], 0, retryEnv);
+  assert.equal(buildWithLock.status, 1, "locked binary recovery must stay limited to tauri dev");
+  assert.equal(buildWithLock.lines.filter((line) => line.startsWith("tauri ")).length, 0);
+
   const failedBuild = runTauriCli(["dev"], 23);
   assert.equal(failedBuild.status, 23, "proxy build failure must stop tauri dev");
   assert.equal(failedBuild.lines.length, 1);
@@ -124,7 +160,7 @@ try {
   assert.equal(build.status, 0);
   assert.deepEqual(build.lines, ["tauri build"]);
 
-  console.log("tauri dev proxy preparation test: 12 checks passed");
+  console.log("tauri dev proxy preparation test: 14 checks passed");
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

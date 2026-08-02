@@ -21,6 +21,8 @@ const ENABLED_OPERATION_KINDS: &[&str] = &[
     "conversation.start",
     "conversation.prompt",
     "project.tree.reorder",
+    "project.start",
+    "project.action",
     "ssh.hosts.list",
     "ssh.client_status",
     "ssh.test_connection",
@@ -563,7 +565,8 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "payload.prompt must be a non-empty string",
         ));
     }
-    if operation_requires_confirmation(&request.kind)
+    if (operation_requires_confirmation(&request.kind)
+        || project_action_requires_confirmation(&request.kind, payload))
         && payload.get("confirmed").and_then(Value::as_bool) != Some(true)
     {
         return Err(AppError::bad_request(
@@ -598,6 +601,25 @@ fn operation_capability(kind: &str) -> &'static str {
 
 fn operation_requires_confirmation(kind: &str) -> bool {
     CONFIRMED_OPERATION_KINDS.contains(&kind)
+}
+
+fn project_action_requires_confirmation(
+    kind: &str,
+    payload: &serde_json::Map<String, Value>,
+) -> bool {
+    if kind != "project.action" {
+        return false;
+    }
+    matches!(
+        payload.get("action").and_then(Value::as_str),
+        Some(
+            "project.delete"
+                | "group.delete"
+                | "worktree.discard"
+                | "worktree.finish"
+                | "group.stop"
+        )
+    )
 }
 
 fn operation_matches_request(operation: &OperationView, request: &CreateOperationRequest) -> bool {
@@ -673,6 +695,39 @@ mod tests {
             operation_capability("project.tree.reorder"),
             "project.management"
         );
+        assert!(validate_operation_request(&request(
+            "project.start",
+            serde_json::json!({
+                "targetType": "project",
+                "targetId": "project-1",
+                "launchMode": "internal"
+            }),
+        ))
+        .is_ok());
+        assert_eq!(operation_capability("project.start"), "project.management");
+    }
+
+    #[test]
+    fn project_action_destructive_operation_requires_confirmation() {
+        assert!(validate_operation_request(&request(
+            "project.action",
+            serde_json::json!({
+                "action": "project.delete",
+                "targetType": "project",
+                "targetId": "project-1"
+            }),
+        ))
+        .is_err());
+        assert!(validate_operation_request(&request(
+            "project.action",
+            serde_json::json!({
+                "action": "project.delete",
+                "targetType": "project",
+                "targetId": "project-1",
+                "confirmed": true
+            }),
+        ))
+        .is_ok());
     }
 
     #[test]

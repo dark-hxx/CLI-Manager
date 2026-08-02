@@ -2,14 +2,21 @@ import { invoke } from "@tauri-apps/api/core";
 import { useProjectStore } from "../stores/projectStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useSshHostStore } from "../stores/sshHostStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import { useWorktreeStore } from "../stores/worktreeStore";
 import type { CreateSshHostInput, Project, SshAuthMode, UpdateSshHostInput, WorktreeRecord } from "./types";
 import { buildSshConnectionSpec } from "./ssh";
-import { findProjectByPath, findWorktreeByPath } from "./terminalProject";
+import { findProjectByPath, findWorktreeByPath, projectWithWorktreeProviderOverrides } from "./terminalProject";
+import { resolveProjectStartupCommand } from "./projectStartupCommand";
+import { parseProjectEnvVars } from "./providerSwitching";
+import { openWindowsTerminal } from "./externalTerminal";
+import { requestWebDeviceAction, type WebDeviceActionTarget } from "./webDeviceActionBus";
 import { webDeviceApi, type WebDeviceOperation } from "./webDevice";
 
 const MANAGEMENT_KINDS = new Set([
   "project.tree.reorder",
+  "project.start",
+  "project.action",
   "ssh.hosts.list", "ssh.client_status", "ssh.test_connection", "ssh.check_path", "ssh.list_directories",
   "ssh.host.create", "ssh.host.update", "ssh.host.delete",
   "file.list", "file.search", "file.search_content", "file.create", "file.create_directory",
@@ -28,6 +35,16 @@ const CONFIRMED_KINDS = new Set([
   "hook.install", "hook.repair", "hook.uninstall",
 ]);
 
+const PROJECT_ACTIONS = new Set([
+  "project.openDirectory", "project.openFiles", "project.history", "project.clone", "project.edit", "project.rename", "project.provider", "project.delete",
+  "group.newChild", "group.addProject", "group.batchShell", "group.stop", "group.focus", "group.rename", "group.delete",
+  "worktree.openDirectory", "worktree.openFiles", "worktree.history", "worktree.provider", "worktree.installDeps", "worktree.finish", "worktree.discard",
+]);
+
+const PROJECT_ACTIONS_REQUIRING_CONFIRMATION = new Set([
+  "project.delete", "group.stop", "group.delete", "worktree.discard", "worktree.finish",
+]);
+
 const SAFE_SSH_AUTH_MODES = new Set<SshAuthMode>(["ssh_config", "agent", "password_prompt", "interactive"]);
 
 type Payload = Record<string, unknown>;
@@ -43,6 +60,24 @@ type ProjectTreeOrder = {
   itemId: string;
   targetParentId: string | null;
   orderedIds: string[];
+};
+
+type ProjectStartTargetType = "project" | "worktree" | "group" | "selection";
+
+type ProjectStartTarget = {
+  id: string;
+  project: Project;
+  worktree: WorktreeRecord | null;
+};
+
+type ProjectLaunch = {
+  project: Project;
+  worktree: WorktreeRecord | null;
+  cwd: string;
+  title: string;
+  startupCmd?: string;
+  envVars?: Record<string, string>;
+  shell?: string;
 };
 
 function managementError(code: string, message = code): never {
@@ -99,6 +134,12 @@ function stringArray(payload: Payload, key: string, maxItems = 500): string[] {
 function requireConfirmation(operation: WebDeviceOperation, payload: Payload) {
   if (CONFIRMED_KINDS.has(operation.kind) && payload.confirmed !== true) {
     managementError("operation_confirmation_required", "explicit confirmation is required");
+  }
+  if (operation.kind === "project.action") {
+    const action = typeof payload.action === "string" ? payload.action : "";
+    if (PROJECT_ACTIONS_REQUIRING_CONFIRMATION.has(action) && payload.confirmed !== true) {
+      managementError("operation_confirmation_required", "explicit confirmation is required");
+    }
   }
   if (operation.kind === "ssh.test_connection" && payload.acceptNewHostKey === true && payload.confirmed !== true) {
     managementError("operation_confirmation_required", "accepting a new SSH host key requires confirmation");
@@ -159,6 +200,167 @@ async function executeProjectTree(payload: Payload): Promise<unknown> {
   else await store.moveProjectToGroup(order.itemId, order.targetParentId);
   await useProjectStore.getState().reorderItems(order.targetParentId, order.orderedIds);
   return { reordered: true };
+}
+
+async function loadedProjectStore() {
+  const store = useProjectStore.getState();
+  if (!store.loaded) await store.fetchAll("startup");
+  return useProjectStore.getState();
+}
+
+function projectStartTargetType(payload: Payload): ProjectStartTargetType {
+  const targetType = requiredString(payload, "targetType", 16);
+  if (!new Set<ProjectStartTargetType>(["project", "worktree", "group", "selection"]).has(targetType as ProjectStartTargetType)) {
+    managementError("invalid_operation_payload", "targetType is invalid");
+  }
+  return targetType as ProjectStartTargetType;
+}
+
+async function resolveProjectStartTargets(payload: Payload): Promise<ProjectStartTarget[]> {
+  const store = await loadedProjectStore();
+  const targetType = projectStartTargetType(payload);
+  if (targetType === "project") {
+    const projectId = requiredString(payload, "targetId", 128);
+    const project = store.projects.find((item) => item.id === projectId);
+    if (!project) managementError("project_not_found", "project was not found");
+    return [{ id: project.id, project, worktree: null }];
+  }
+  if (targetType === "worktree") {
+    const worktreeId = requiredString(payload, "targetId", 128);
+    const worktree = store.worktrees.find((item) => item.id === worktreeId);
+    if (!worktree) managementError("worktree_not_found", "Worktree was not found");
+    if (worktree.status === "missing") managementError("worktree_missing", "target Worktree no longer exists");
+    const project = store.projects.find((item) => item.id === worktree.project_id);
+    if (!project) managementError("project_not_found", "Worktree project was not found");
+    return [{ id: worktree.id, project, worktree }];
+  }
+  if (targetType === "selection") {
+    const ids = stringArray(payload, "targetIds");
+    const projects = ids.map((id) => store.projects.find((item) => item.id === id));
+    if (projects.some((project) => !project)) managementError("project_not_found", "selected project was not found");
+    return projects.map((project) => ({ id: project!.id, project: project!, worktree: null }));
+  }
+
+  const groupId = requiredString(payload, "targetId", 128);
+  if (!store.groups.some((group) => group.id === groupId)) managementError("group_not_found", "group was not found");
+  const childMap = new Map<string | null, typeof store.groups>();
+  for (const group of store.groups) childMap.set(group.parent_id, [...(childMap.get(group.parent_id) ?? []), group]);
+  const groupIds = new Set<string>();
+  const visit = (id: string) => {
+    if (groupIds.has(id)) return;
+    groupIds.add(id);
+    for (const child of childMap.get(id) ?? []) visit(child.id);
+  };
+  visit(groupId);
+  return store.projects
+    .filter((project) => project.group_id !== null && groupIds.has(project.group_id))
+    .map((project) => ({ id: project.id, project, worktree: null }));
+}
+
+function projectLaunch(target: ProjectStartTarget): ProjectLaunch {
+  const project = target.worktree ? projectWithWorktreeProviderOverrides(target.project, target.worktree) : target.project;
+  const cwd = target.worktree?.path ?? (project.environment_type === "ssh" ? project.remote_path : project.path);
+  if (!cwd.trim()) managementError("project_path_required", "project path is not configured");
+  if (target.worktree?.status === "missing") managementError("worktree_missing", "target Worktree no longer exists");
+  return {
+    project,
+    worktree: target.worktree,
+    cwd,
+    title: target.worktree?.name ?? project.name,
+    startupCmd: resolveProjectStartupCommand(project, { includeCodexProviderProfile: false }),
+    envVars: parseProjectEnvVars(project),
+    shell: project.shell || undefined,
+  };
+}
+
+async function validateProjectStart(payload: Payload) {
+  const launchMode = requiredString(payload, "launchMode", 16);
+  if (!new Set(["internal", "external", "split"]).has(launchMode)) {
+    managementError("invalid_operation_payload", "launchMode is invalid");
+  }
+  const direction = optionalString(payload, "direction", 16);
+  if (direction && !new Set(["horizontal", "vertical"]).has(direction)) {
+    managementError("invalid_operation_payload", "direction is invalid");
+  }
+  const targets = await resolveProjectStartTargets(payload);
+  if (launchMode === "split" && targets.length !== 1) {
+    managementError("invalid_operation_payload", "split launch requires exactly one target");
+  }
+  if (launchMode === "external" && targets.some((target) => target.project.environment_type === "ssh")) {
+    managementError("ssh_project_unsupported", "external terminal launch is unavailable for SSH projects");
+  }
+}
+
+async function executeProjectStart(payload: Payload): Promise<unknown> {
+  const launchMode = requiredString(payload, "launchMode", 16) as "internal" | "external" | "split";
+  const direction = (optionalString(payload, "direction", 16) ?? "horizontal") as "horizontal" | "vertical";
+  const targets = await resolveProjectStartTargets(payload);
+  const launches = targets.map(projectLaunch);
+  if (launchMode === "external") {
+    await openWindowsTerminal(launches.map((launch) => ({
+      cwd: launch.cwd,
+      title: launch.title,
+      startupCmd: launch.startupCmd,
+      shell: launch.shell,
+    })));
+    return { launched: targets.map((target) => target.id), launchMode };
+  }
+  if (launchMode === "split") {
+    const activeSessionId = useTerminalStore.getState().activeSessionId;
+    if (!activeSessionId) managementError("active_session_required", "an active terminal is required for split launch");
+    const launch = launches[0]!;
+    if (launch.project.environment_type === "ssh") managementError("ssh_project_unsupported", "split launch is unavailable for SSH projects");
+    const sessionId = await useTerminalStore.getState().splitTerminal(activeSessionId, direction, {
+      projectId: launch.project.id,
+      cwd: launch.cwd,
+      title: launch.title,
+      startupCmd: launch.startupCmd,
+      envVars: launch.envVars,
+      shell: launch.shell,
+      worktreeId: launch.worktree?.id,
+    });
+    if (!sessionId) managementError("active_session_required", "the active terminal is no longer available");
+    return { launched: [targets[0]!.id], sessionIds: [sessionId], launchMode, direction };
+  }
+
+  const sessionIds: string[] = [];
+  for (const launch of launches) {
+    sessionIds.push(await useTerminalStore.getState().createSession(
+      launch.project.id,
+      launch.cwd,
+      launch.title,
+      launch.startupCmd,
+      launch.envVars,
+      launch.shell,
+      undefined,
+      launch.worktree?.id,
+      launch.project.ssh_host_id ?? undefined,
+    ));
+  }
+  return { launched: targets.map((target) => target.id), sessionIds, launchMode };
+}
+
+function projectActionTarget(payload: Payload): { action: string; targetType: WebDeviceActionTarget; targetId?: string; targetIds?: string[] } {
+  const action = requiredString(payload, "action", 64);
+  if (!PROJECT_ACTIONS.has(action)) managementError("unsupported_operation_action", `unsupported project action: ${action}`);
+  const targetType = requiredString(payload, "targetType", 16);
+  if (!new Set<WebDeviceActionTarget>(["project", "group", "worktree", "selection"]).has(targetType as WebDeviceActionTarget)) {
+    managementError("invalid_operation_payload", "targetType is invalid");
+  }
+  const expectedTargetType = action.split(".", 1)[0];
+  if (targetType !== expectedTargetType) {
+    managementError("invalid_operation_payload", "action target type does not match action");
+  }
+  return { action, targetType: targetType as WebDeviceActionTarget, targetId: requiredString(payload, "targetId", 128) };
+}
+
+async function validateProjectAction(payload: Payload) {
+  projectActionTarget(payload);
+  await loadedProjectStore();
+}
+
+async function executeProjectAction(payload: Payload): Promise<unknown> {
+  return requestWebDeviceAction(projectActionTarget(payload));
 }
 
 async function resolveLocalContext(payload: Payload): Promise<LocalContext> {
@@ -474,9 +676,20 @@ export async function validateWebManagementOperation(operation: WebDeviceOperati
   const payload = payloadObject(operation);
   requireConfirmation(operation, payload);
 
-  if (operation.kind.startsWith("project.")) {
+  if (operation.kind === "project.tree.reorder") {
     await projectTreeOrder(payload);
     return;
+  }
+  if (operation.kind === "project.start") {
+    await validateProjectStart(payload);
+    return;
+  }
+  if (operation.kind === "project.action") {
+    await validateProjectAction(payload);
+    return;
+  }
+  if (operation.kind.startsWith("project.")) {
+    managementError("unsupported_operation_kind", `unsupported operation kind: ${operation.kind}`);
   }
 
   if (operation.kind.startsWith("ssh.")) {
@@ -568,6 +781,7 @@ export function isWebManagementOperation(kind: string): boolean {
 
 export function webManagementOperationNeedsConfirmation(operation: WebDeviceOperation): boolean {
   if (CONFIRMED_KINDS.has(operation.kind)) return true;
+  if (operation.kind === "project.action") return false;
   const payload = operation.payload;
   return operation.kind === "ssh.test_connection"
     && Boolean(payload && typeof payload === "object" && !Array.isArray(payload) && (payload as Payload).acceptNewHostKey === true);
@@ -576,7 +790,9 @@ export function webManagementOperationNeedsConfirmation(operation: WebDeviceOper
 export async function executeWebManagementOperation(operation: WebDeviceOperation, validated = false): Promise<unknown> {
   if (!validated) await validateWebManagementOperation(operation);
   const payload = payloadObject(operation);
-  if (operation.kind.startsWith("project.")) return executeProjectTree(payload);
+  if (operation.kind === "project.tree.reorder") return executeProjectTree(payload);
+  if (operation.kind === "project.start") return executeProjectStart(payload);
+  if (operation.kind === "project.action") return executeProjectAction(payload);
   if (operation.kind.startsWith("ssh.")) return executeSsh(operation, payload);
   if (operation.kind.startsWith("file.")) return executeFile(operation, payload);
   if (operation.kind.startsWith("git.")) return executeGit(operation, payload);

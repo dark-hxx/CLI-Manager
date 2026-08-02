@@ -116,7 +116,12 @@ non-terminal -> canceled | timed_out
 - Pure validation failure or a desktop user denial may transition directly from `submitted/waiting_device` to `rejected`; no side effect may start first.
 - `payload.confirmed=true` records browser intent only. Dangerous management writes, Git Fetch, and SSH new-host-key acceptance must also receive a native desktop confirmation that cannot be forged by the remote browser. `project.tree.reorder` is the only confirmation-free metadata write: desktop validates the complete sibling ID set and group ancestry before persisting it.
 - `project.tree.reorder` carries `itemType`, `itemId`, nullable `targetParentId`, and the complete `orderedIds` for that level. Desktop is authoritative, rejects stale/missing/duplicate/colliding IDs and group cycles, then reuses the existing project Store move/reorder actions. Worktrees are never draggable.
+- Web project-tree context menus use two management kinds:
+  - `project.start`: `{targetType, targetId?, targetIds?, launchMode, direction?}` where `targetType` is `project|worktree|group|selection`, `launchMode` is `internal|external|split`, and `direction` is `horizontal|vertical` for split launch only. A single project/worktree/group quick-start button defaults to `internal`.
+  - `project.action`: `{action, targetType, targetId, confirmed?}`. The action prefix must match `targetType`; supported actions are the project/group/Worktree actions exposed by the desktop Sidebar, including directory/files/history/provider, rename/edit, clone, group creation/add/batch/focus/stop, Worktree dependency install/finish/discard, and delete actions.
+- `project.start` returns `{launched, sessionIds?, launchMode, direction?}`. `external` returns no session IDs; `split` accepts exactly one target. The desktop resolves every ID from its current Store, applies Worktree provider overrides, and only then creates an internal terminal or opens an external Windows Terminal.
 - Management operations execute serially in the desktop bridge. Files/Git/Worktree paths are resolved from registered desktop project/Worktree state, not from history presence or a browser-provided root.
+- The Web client sends IDs and display intent only; paths, environment variables, startup commands, provider credentials, and native confirmation state never cross from the browser. `project.action` is dispatched through the desktop Web action bus so existing Sidebar handlers remain the behavior authority.
 - Operation results use Web-specific DTOs: never return SSH credentials, identity/proxy paths, raw OpenSSH stderr, local Worktree paths, Hook config paths, or database paths.
 - Hook `status/test` always use `autoRepair=false`; Web cannot choose Hook directories.
 
@@ -133,6 +138,11 @@ non-terminal -> canceled | timed_out
 | Unknown user device | `device_not_found` |
 | Offline user device | `device_offline` |
 | Unsupported operation or blank prompt | `unsupported_operation_kind` / `invalid_operation_payload` |
+| Invalid project launch target/mode, missing ID, empty selection, or invalid split direction | `invalid_operation_payload` |
+| Project/group/Worktree ID is stale or Worktree is missing | `project_not_found` / `group_not_found` / `worktree_not_found` / `worktree_missing` |
+| Split launch contains more than one target | `invalid_operation_payload`; no session is created |
+| External launch targets an SSH project | `ssh_project_unsupported`; no terminal is opened |
+| Project action prefix does not match target type or action is not allowlisted | `invalid_operation_payload` / `unsupported_operation_action` |
 | Stale/invalid project tree order or group cycle | `project_tree_conflict` / `invalid_operation_payload`; no partial reorder |
 | Missing browser intent flag for a managed write | `operation_confirmation_required` before dispatch |
 | Desktop user rejects a managed write | Terminal `rejected` with no local side effect |
@@ -153,6 +163,8 @@ non-terminal -> canceled | timed_out
 - Good: online operation stays submitted until desktop accepted/running/final frames arrive.
 - Good: a desktop project with no history session still appears in the Web tree because project navigation comes from `workspace.projects`, not from `history_sessions`.
 - Good: Web project navigation never renders session rows; dragging a project or group writes through the desktop Store and the next workspace snapshot confirms the final order.
+- Good: right-click quick-start sends only a project/group/Worktree ID, and the desktop returns the created session IDs after resolving the current native project state.
+- Good: a dangerous context-menu action carries browser intent plus native confirmation; denial produces a terminal rejection without deleting or stopping anything.
 - Good: desktop groups and Worktrees preserve their IDs and hierarchy while only safe display/launch context fields cross the device boundary.
 - Good: installed and Dev clients run concurrently on one machine with different `clientId` values and the same `machineId`; reconnecting either client does not replace the other connection or workspace snapshot.
 - Base: dispatch races with a disconnect; operation becomes `waiting_device` and is resent after device reconnect.
@@ -169,6 +181,7 @@ non-terminal -> canceled | timed_out
 - Bad: treat `payload.confirmed` as authorization, expose native paths/SSH stderr in results, or remove a local operation before its server ACK.
 - Bad: overwrite `_sqlx_migrations.checksum` for an unknown mismatch or rerun an already-applied migration.
 - Bad: derive the Web project tree from history rows, or upload full desktop `Project` records containing `env_vars`, startup commands, credential references, or provider overrides.
+- Bad: let the browser send `cwd`, shell text, environment variables, or a direct delete command; the desktop must resolve the target ID and reuse the native Sidebar action handler.
 - Bad: accept a browser-provided partial sibling list, persist Web-only ordering, allow Worktree dragging, or move a group into itself/its descendants.
 
 ## 6. Tests Required
@@ -191,6 +204,8 @@ non-terminal -> canceled | timed_out
 - `npx tsc --noEmit` and `npm run build` for the desktop bridge and settings integration.
 - Contract review: Rust camelCase/snake_case payloads must match `apps/web/src/domain.ts` and `webClient.ts`.
 - Management contract review: server enabled kinds, desktop `MANAGEMENT_KINDS`, Web controls, capabilities, and confirmation sets must match exactly.
+- Project-tree contract tests must assert that `project.start` accepts ID-only project/group/Worktree/selection payloads, rejects SSH external launch and multi-target split launch, and returns session IDs only for internal/split launches.
+- Project-action contract tests must assert target/action prefix matching, allowlist rejection, native confirmation for destructive actions, and reuse of the desktop Sidebar behavior through the action bus.
 
 ## 7. Wrong vs Correct
 
@@ -248,5 +263,14 @@ await webDeviceApi.publishHistory(sessions, {
     ({ id, name, groupId, source, cwd, environmentType })),
   worktrees,
   updatedAt: Date.now(),
+});
+```
+
+```typescript
+// Correct: the browser sends an ID and launch intent; desktop state supplies cwd and startup details.
+await submit("project.start", {
+  targetType: "worktree",
+  targetId: worktreeId,
+  launchMode: "internal",
 });
 ```
