@@ -1732,3 +1732,33 @@ if (!isEdit && !isClone && trimmedCliArgs) {
 ```
 
 **Tests**: Run `npx tsc --noEmit` and `node --test scripts/cliArgsHistory.test.mjs`; assert the shared record block occurs after the edit/create persistence branch and before `onClose()`, and a query can find an item outside the unfiltered top 10 while its matching result remains limited to 10 entries.
+
+### Convention: Xterm-style hover scrollbars on non-xterm views use an overlay thumb
+
+**What**: A read-only transcript or other non-xterm view that must match the terminal scrollbar interaction should hide the browser-native scrollbar and render an absolutely positioned track/thumb. The scroll container remains the source of truth for `scrollTop`, `scrollHeight`, and wheel/touch scrolling; the overlay thumb mirrors those values and writes `scrollTop` only during drag.
+
+**Why**: `XTermTerminal` receives a real `.xterm-slider` from xterm.js, while a transcript's `overflow-y-auto` scrollbar is generated internally by WebView2/Chromium. Browser `::-webkit-scrollbar` hover behavior is platform-dependent and can change layout width, causing reflow and Pane jitter.
+
+**Correct**:
+
+```tsx
+<div className="relative min-h-0 flex-1">
+  <div ref={scrollRef} className="ui-terminal-native-scroll h-full overflow-y-auto">
+    {content}
+  </div>
+  <div className="ui-subagent-scrollbar" aria-hidden="true">
+    <div className="ui-subagent-scrollbar-thumb" onPointerDown={startThumbDrag} />
+  </div>
+</div>
+```
+
+**Wrong**:
+
+```css
+/* Do not rely on the browser scrollbar to behave like xterm's .xterm-slider. */
+.transcript::-webkit-scrollbar-thumb:hover {
+  width: 100%;
+}
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually verify the overlay thumb appears only when content overflows, starts narrow, expands on hover, follows wheel/trackpad scrolling, drags to the correct document position, and does not change the transcript Pane width or cause line-wrap jitter.

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n } from "../../lib/i18n";
 import { getTerminalTheme, isLightTerminalTheme } from "../../lib/terminalThemes";
@@ -57,6 +57,13 @@ const TRANSCRIPT_PARSE_MAX_CHARS = 2 * 1024 * 1024;
 const MAX_RENDERED_MESSAGES = 300;
 
 const EMPTY_MESSAGES: RenderedMessage[] = [];
+const MIN_SUBAGENT_SCROLLBAR_THUMB = 24;
+
+interface ScrollbarMetrics {
+  visible: boolean;
+  thumbHeight: number;
+  thumbTop: number;
+}
 
 /** 从 Claude transcript 的 message.content（string 或 block 数组）提取可读文本。 */
 function extractText(content: unknown): string {
@@ -272,19 +279,117 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
     return isLightTerminalTheme(terminalTheme) ? "light" : "dark";
   }, [darkThemePalette, lightThemePalette, resolvedTheme, terminalThemeName]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollContentRef = useRef<HTMLDivElement>(null);
+  const scrollbarTrackRef = useRef<HTMLDivElement>(null);
+  const scrollbarThumbRef = useRef<HTMLDivElement>(null);
+  const scrollbarDragRef = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
+  const [scrollbarDragging, setScrollbarDragging] = useState(false);
+  const [scrollbarVisible, setScrollbarVisible] = useState(false);
+  const scrollbarMetricsRef = useRef<ScrollbarMetrics>({ visible: false, thumbHeight: 0, thumbTop: 0 });
   const atBottomRef = useRef(true);
 
+  const syncScrollbar = useCallback(() => {
+    const scrollElement = scrollRef.current;
+    const trackElement = scrollbarTrackRef.current;
+    if (!scrollElement || !trackElement) return;
+
+    const viewportHeight = scrollElement.clientHeight;
+    const contentHeight = scrollElement.scrollHeight;
+    const trackHeight = trackElement.clientHeight;
+    const maxScrollTop = Math.max(0, contentHeight - viewportHeight);
+    const visible = viewportHeight > 0 && trackHeight > 0 && maxScrollTop > 1;
+    const thumbElement = scrollbarThumbRef.current;
+
+    if (!visible) {
+      scrollbarMetricsRef.current = { visible: false, thumbHeight: 0, thumbTop: 0 };
+      if (thumbElement) {
+        thumbElement.style.height = "0px";
+        thumbElement.style.transform = "translateY(0px)";
+      }
+      setScrollbarVisible((current) => (current ? false : current));
+      return;
+    }
+
+    const thumbHeight = Math.min(
+      trackHeight,
+      Math.max(MIN_SUBAGENT_SCROLLBAR_THUMB, Math.round(trackHeight * viewportHeight / contentHeight)),
+    );
+    const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+    const thumbTop = maxScrollTop > 0
+      ? Math.round((scrollElement.scrollTop / maxScrollTop) * maxThumbTop)
+      : 0;
+
+    scrollbarMetricsRef.current = { visible, thumbHeight, thumbTop };
+    if (thumbElement) {
+      thumbElement.style.height = `${thumbHeight}px`;
+      thumbElement.style.transform = `translateY(${thumbTop}px)`;
+    }
+    setScrollbarVisible((current) => (current === visible ? current : visible));
+  }, []);
+
   // 仅可见时跟随滚动；从隐藏切回可见且此前停在底部时补一次 scrollToBottom。
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isVisible) return;
     const el = scrollRef.current;
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [isVisible, messages]);
+    syncScrollbar();
+  }, [isVisible, messages, syncScrollbar]);
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current;
+    const contentElement = scrollContentRef.current;
+    if (!scrollElement) return;
+
+    const resizeObserver = new ResizeObserver(syncScrollbar);
+    resizeObserver.observe(scrollElement);
+    if (contentElement) resizeObserver.observe(contentElement);
+    syncScrollbar();
+    return () => resizeObserver.disconnect();
+  }, [syncScrollbar]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    syncScrollbar();
+  };
+
+  const handleScrollbarPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement || !scrollbarMetricsRef.current.visible) return;
+    event.preventDefault();
+    event.stopPropagation();
+    scrollbarDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startScrollTop: scrollElement.scrollTop,
+    };
+    setScrollbarDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleScrollbarPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = scrollbarDragRef.current;
+    const scrollElement = scrollRef.current;
+    const trackElement = scrollbarTrackRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !scrollElement || !trackElement) return;
+
+    const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+    const maxThumbTop = Math.max(1, trackElement.clientHeight - scrollbarMetricsRef.current.thumbHeight);
+    const nextScrollTop = drag.startScrollTop
+      + ((event.clientY - drag.startY) / maxThumbTop) * maxScrollTop;
+    scrollElement.scrollTop = Math.max(0, Math.min(maxScrollTop, nextScrollTop));
+    syncScrollbar();
+  };
+
+  const handleScrollbarPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = scrollbarDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    scrollbarDragRef.current = null;
+    setScrollbarDragging(false);
   };
 
   return (
@@ -312,40 +417,60 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
           {ended ? "已结束" : "● 运行中"}
         </span>
       </div>
-      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-auto px-3 py-2">
-        {messages.length === 0 ? (
-          <div className="mx-auto flex max-w-md flex-col items-center gap-2 py-10 text-center text-[11px]" style={{ color: TERM.dim }}>
-            {sourceKind === "pending" ? (
-              <>
-                <div style={{ color: TERM.blue }}>已捕获子 Agent 事件，正在等待独立 transcript。</div>
-                <div>CLI-Manager 只会按当前父会话关联发现对应 transcript，不会扫描无关终端输出。</div>
-              </>
-            ) : sourceKind === "parent-jsonl" ? (
-              <>
-                <div style={{ color: TERM.yellow }}>Claude Code 未暴露独立子 Agent transcript。</div>
-                <div>当前只检测到父会话 transcript；为避免重复显示主会话内容，此视图仅保留子任务状态。</div>
-              </>
-            ) : sourceKind === "lifecycle-only" ? (
-              <>
-                <div>Claude Code 当前没有暴露可读取的子 Agent transcript。</div>
-                <div>此视图仅显示启动、运行、完成或失败状态。</div>
-              </>
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollRef} onScroll={handleScroll} className="ui-terminal-native-scroll h-full min-h-0 overflow-x-hidden overflow-y-auto px-3 py-2">
+          <div ref={scrollContentRef}>
+            {messages.length === 0 ? (
+              <div className="mx-auto flex max-w-md flex-col items-center gap-2 py-10 text-center text-[11px]" style={{ color: TERM.dim }}>
+                {sourceKind === "pending" ? (
+                  <>
+                    <div style={{ color: TERM.blue }}>已捕获子 Agent 事件，正在等待独立 transcript。</div>
+                    <div>CLI-Manager 只会按当前父会话关联发现对应 transcript，不会扫描无关终端输出。</div>
+                  </>
+                ) : sourceKind === "parent-jsonl" ? (
+                  <>
+                    <div style={{ color: TERM.yellow }}>Claude Code 未暴露独立子 Agent transcript。</div>
+                    <div>当前只检测到父会话 transcript；为避免重复显示主会话内容，此视图仅保留子任务状态。</div>
+                  </>
+                ) : sourceKind === "lifecycle-only" ? (
+                  <>
+                    <div>Claude Code 当前没有暴露可读取的子 Agent transcript。</div>
+                    <div>此视图仅显示启动、运行、完成或失败状态。</div>
+                  </>
+                ) : (
+                  <div>等待子 Agent 输出…</div>
+                )}
+              </div>
             ) : (
-              <div>等待子 Agent 输出…</div>
+              <ul className="subagent-transcript-list">
+                {omittedCount > 0 && (
+                  <li className="py-1 text-center text-[10px]" style={{ color: TERM.dim }}>
+                    {t("subagentTranscript.omittedMessages", { count: omittedCount })}
+                  </li>
+                )}
+                {messages.map((m) => (
+                  <TranscriptMessageRow key={m.id} message={m} terminalCodeTheme={terminalCodeTheme} />
+                ))}
+              </ul>
             )}
           </div>
-        ) : (
-          <ul className="subagent-transcript-list">
-            {omittedCount > 0 && (
-              <li className="py-1 text-center text-[10px]" style={{ color: TERM.dim }}>
-                {t("subagentTranscript.omittedMessages", { count: omittedCount })}
-              </li>
-            )}
-            {messages.map((m) => (
-              <TranscriptMessageRow key={m.id} message={m} terminalCodeTheme={terminalCodeTheme} />
-            ))}
-          </ul>
-        )}
+        </div>
+        <div
+          ref={scrollbarTrackRef}
+          className="ui-subagent-scrollbar"
+          data-visible={scrollbarVisible ? "true" : "false"}
+          data-dragging={scrollbarDragging ? "true" : "false"}
+          aria-hidden="true"
+        >
+          <div
+            ref={scrollbarThumbRef}
+            className="ui-subagent-scrollbar-thumb"
+            onPointerDown={handleScrollbarPointerDown}
+            onPointerMove={handleScrollbarPointerMove}
+            onPointerUp={handleScrollbarPointerUp}
+            onPointerCancel={handleScrollbarPointerUp}
+          />
+        </div>
       </div>
     </div>
   );

@@ -1278,6 +1278,10 @@ function PaneTabBar({
     activeSessionId && paneSessionIds.includes(activeSessionId)
       ? activeSessionId
       : paneSessionIds[0] ?? null;
+  const activePaneSession = activePaneTabId
+    ? paneSessions.find((session) => session.id === activePaneTabId) ?? null
+    : null;
+  const isSubagentTranscript = activePaneSession?.kind === "subagent-transcript";
   const otherPanes = allPanes.filter((item) => item.id !== pane.id && item.sessionIds.length > 0);
   const paneFullscreenLabel = isPaneFullscreen
     ? t("terminal.toolbar.exitTerminalFullscreen")
@@ -1664,7 +1668,7 @@ function PaneTabBar({
       )}
       {variant === "pane" && (
         <div className="ui-terminal-actions flex shrink-0 items-center">
-          {isWorkspanSplit && activePaneTabId && (
+          {!isSubagentTranscript && isWorkspanSplit && activePaneTabId && (
             <button
               type="button"
               className="ui-focus-ring ui-icon-action"
@@ -1675,17 +1679,19 @@ function PaneTabBar({
               <Undo2 size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
           )}
-          <button
-            type="button"
-            className="ui-focus-ring ui-icon-action ui-action-fullscreen"
-            data-active={isPaneFullscreen ? "true" : "false"}
-            onClick={() => onTogglePaneFullscreen(pane.id)}
-            title={paneFullscreenLabel}
-            aria-label={paneFullscreenLabel}
-            aria-pressed={isPaneFullscreen}
-          >
-            {isPaneFullscreen ? <Minimize2 size={14} strokeWidth={1.8} /> : <Maximize2 size={14} strokeWidth={1.8} />}
-          </button>
+          {!isSubagentTranscript && (
+            <button
+              type="button"
+              className="ui-focus-ring ui-icon-action ui-action-fullscreen"
+              data-active={isPaneFullscreen ? "true" : "false"}
+              onClick={() => onTogglePaneFullscreen(pane.id)}
+              title={paneFullscreenLabel}
+              aria-label={paneFullscreenLabel}
+              aria-pressed={isPaneFullscreen}
+            >
+              {isPaneFullscreen ? <Minimize2 size={14} strokeWidth={1.8} /> : <Maximize2 size={14} strokeWidth={1.8} />}
+            </button>
+          )}
           {isWorkspanSplit && activePaneTabId && (
             <button
               type="button"
