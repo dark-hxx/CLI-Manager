@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "本任务是「加需求」通道:必须先过 §5 场景枚举再动手,design.md 的场景表就是按它产出的"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "改动集中在 FileNode / FileTreeRows 的 prop 设计与组件拆分,需遵循项目既有组件约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "删除死代码(AutoCollapsedGroupRow / splitAutoCollapsedEntries / showRelativePath)时需对照禁用模式与清理标准"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "要删除 expandedAutoCollapseGroups 本地 state 并调整 useMemo/useCallback 依赖,需遵循项目状态最小化约定"}

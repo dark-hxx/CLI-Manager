@@ -78,12 +78,10 @@ type DraggedFileEntry = Pick<ProjectFileEntry, "kind" | "name" | "path">;
 type Translate = ReturnType<typeof useI18n>["t"];
 
 const FILE_EXPLORER_ENTRY_MIME = "application/x-cli-manager-file-entry";
-interface AutoCollapseGroupState {
-  expandedGroupPaths: Set<string>;
+interface FileIgnoreState {
   ignoredPaths: Set<string>;
   /** Project .gitignore matcher, or the built-in fallback matcher. */
   ignoreMatcher: FileExplorerIgnoreMatcher;
-  toggleGroup: (parentPath: string) => void;
   ignorePath: (path: string) => void;
   unignorePath: (path: string) => void;
 }
@@ -203,46 +201,32 @@ function collectCompactDirectoryChain(entry: ProjectFileEntry): {
   return { suffixParts, leaf, chainPaths };
 }
 
-function splitAutoCollapsedEntries(
-  entries: ProjectFileEntry[],
-  ignoredPaths: Set<string>,
-  ignoreMatcher: FileExplorerIgnoreMatcher
-): {
-  normalEntries: ProjectFileEntry[];
-  collapsedEntries: ProjectFileEntry[];
-} {
-  const normalEntries: ProjectFileEntry[] = [];
-  const collapsedEntries: ProjectFileEntry[] = [];
+/**
+ * Issue #227：VCS 元数据始终不进文件树（JetBrains / VSCode 同样是隐藏而非淡化）。
+ * 不限 kind——git worktree 中 `.git` 是文件而不是目录。
+ */
+const ALWAYS_HIDDEN_ENTRY_NAMES = new Set([".git", ".hg", ".svn"]);
 
-  for (const entry of entries) {
-    const ruleIgnored = ignoreMatcher.ignores(entry.path, entry.kind === "directory");
-    // Issue #147：ignore 命中的文件直接隐藏；目录进入「已折叠」分组
-    if (entry.kind === "file" && ruleIgnored) {
-      continue;
-    }
-    if (
-      entry.kind === "directory"
-      && (isDefaultCollapsedDirectoryName(entry.name) || ignoredPaths.has(entry.path) || ruleIgnored)
-    ) {
-      collapsedEntries.push(entry);
-      continue;
-    }
+function isAlwaysHiddenEntry(entry: ProjectFileEntry): boolean {
+  return ALWAYS_HIDDEN_ENTRY_NAMES.has(entry.name.toLowerCase());
+}
 
-    if (entry.kind === "directory" && entry.children) {
-      const nested = splitAutoCollapsedEntries(entry.children, ignoredPaths, ignoreMatcher);
-      collapsedEntries.push(...nested.collapsedEntries);
-      normalEntries.push(
-        nested.collapsedEntries.length > 0
-          ? { ...entry, children: nested.normalEntries }
-          : entry
-      );
-      continue;
-    }
+/**
+ * Issue #227：忽略项不再抽离到「已折叠文件」分组，改为原位渲染 + 整行淡化。
+ * 判定集合与旧折叠谓词保持等价（默认折叠目录名 ∪ 手动忽略 ∪ ignore 规则命中），
+ * 另把 Issue #147 起被直接隐藏的 ignore 文件放回文件树。
+ */
+function isEntryIgnored(entry: ProjectFileEntry, state: FileIgnoreState): boolean {
+  if (entry.kind === "directory" && isDefaultCollapsedDirectoryName(entry.name)) return true;
+  if (state.ignoredPaths.has(entry.path)) return true;
+  return state.ignoreMatcher.ignores(entry.path, entry.kind === "directory");
+}
 
-    normalEntries.push(entry);
-  }
-
-  return { normalEntries, collapsedEntries };
+/** 过滤 VCS 元数据条目；绝大多数层级不含它们，此时返回原数组引用避免无谓的新数组。 */
+function visibleTreeEntries(entries: ProjectFileEntry[]): ProjectFileEntry[] {
+  return entries.some(isAlwaysHiddenEntry)
+    ? entries.filter((entry) => !isAlwaysHiddenEntry(entry))
+    : entries;
 }
 
 function parentPath(path: string): string {
@@ -342,41 +326,6 @@ function InlineRenameInput({
   );
 }
 
-function AutoCollapsedGroupRow({
-  depth,
-  count,
-  isOpen,
-  onToggle,
-}: {
-  depth: number;
-  count: number;
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <button
-      type="button"
-      className="ui-file-tooltip ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px] text-text-muted"
-      style={{ paddingLeft: 8 + depth * 14 }}
-      data-tooltip={isOpen ? t("files.autoCollapse.collapse") : t("files.autoCollapse.expand")}
-      onClick={onToggle}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-    >
-      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-        <ChevronRight size={12} style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }} />
-      </span>
-      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-        <Folder size={14} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{t("files.autoCollapse.count", { count })}</span>
-    </button>
-  );
-}
-
 function FileNode({
   entry,
   depth,
@@ -399,9 +348,9 @@ function FileNode({
   onFilePointerMove,
   onFilePointerUp,
   onFilePointerCancel,
-  autoCollapseGroups,
+  ignoreState,
   menuPortalContainer,
-  showRelativePath = false,
+  inheritedIgnored = false,
   readOnly = false,
 }: {
   entry: ProjectFileEntry;
@@ -425,9 +374,10 @@ function FileNode({
   onFilePointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
-  autoCollapseGroups: AutoCollapseGroupState;
+  ignoreState: FileIgnoreState;
   menuPortalContainer: HTMLDivElement | null;
-  showRelativePath?: boolean;
+  /** Issue #227：父级已判定为忽略时，整棵子树继承淡化。 */
+  inheritedIgnored?: boolean;
   readOnly?: boolean;
 }) {
   const { t } = useI18n();
@@ -448,7 +398,12 @@ function FileNode({
     : { suffixParts: [], leaf: entry, chainPaths: [entry.path] };
   const isOpen = isDir && expandedPaths.has(displayEntry.path);
   const isChainExpanded = isDir && chainPaths.some((path) => expandedPaths.has(path));
-  const isManuallyIgnored = isDir && autoCollapseGroups.ignoredPaths.has(entry.path);
+  const isManuallyIgnored = isDir && ignoreState.ignoredPaths.has(entry.path);
+  // Issue #227：紧凑目录链两端都要判定——`src/` 只含一个被忽略的 `generated/` 时
+  // 会合并成一行，此时链头正常而链尾被忽略。
+  const isIgnored = inheritedIgnored
+    || isEntryIgnored(entry, ignoreState)
+    || (isDir && displayEntry !== entry && isEntryIgnored(displayEntry, ignoreState));
   const icon = isDir ? getMaterialFolderIcon(entry.name, isOpen) : getMaterialFileIcon(entry.name);
   const paddingLeft = 8 + depth * 14;
   const displayStatus = getDisplayStatus(displayEntry);
@@ -483,7 +438,6 @@ function FileNode({
   const childRows = isDir && isOpen && displayEntry.children ? (
     <FileTreeRows
       entries={displayEntry.children}
-      parentPath={displayEntry.path}
       depth={depth + 1}
       getDisplayStatus={getDisplayStatus}
       getGitChange={getGitChange}
@@ -504,10 +458,10 @@ function FileNode({
       onFilePointerMove={onFilePointerMove}
       onFilePointerUp={onFilePointerUp}
       onFilePointerCancel={onFilePointerCancel}
-      autoCollapseGroups={autoCollapseGroups}
+      ignoreState={ignoreState}
       menuPortalContainer={menuPortalContainer}
       readOnly={readOnly}
-      renderAutoCollapsedGroup={false}
+      inheritedIgnored={isIgnored}
     />
   ) : null;
 
@@ -517,6 +471,7 @@ function FileNode({
         <div
           className="ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
           data-selected={activePath === displayEntry.path ? "true" : "false"}
+          data-ignored={isIgnored ? "true" : "false"}
           data-file-tree-path={displayEntry.path}
           style={{ paddingLeft }}
         >
@@ -546,6 +501,7 @@ function FileNode({
             tabIndex={0}
             className="ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
             data-selected={activePath === displayEntry.path ? "true" : "false"}
+            data-ignored={isIgnored ? "true" : "false"}
             data-file-tree-path={displayEntry.path}
             data-file-drop-target-path={displayEntry.kind === "directory" ? displayEntry.path : parentPath(displayEntry.path)}
             draggable={false}
@@ -584,7 +540,7 @@ function FileNode({
               className="flex min-w-0 flex-1 items-baseline gap-0.5 truncate"
               style={displayStatus ? { color: displayStatus.color } : undefined}
             >
-              <span className="truncate">{showRelativePath ? entry.path : entry.name}</span>
+              <span className="truncate">{entry.name}</span>
               {suffixParts.length > 0 && (
                 <span className="truncate text-[11px] font-normal text-text-muted">
                   /{suffixParts.join("/")}
@@ -615,12 +571,12 @@ function FileNode({
                 <Copy size={13} /> {t("files.menu.paste")}
               </ContextMenuItem>
               {isManuallyIgnored ? (
-                <ContextMenuItem onSelect={() => autoCollapseGroups.unignorePath(entry.path)}>
+                <ContextMenuItem onSelect={() => ignoreState.unignorePath(entry.path)}>
                   <X size={13} /> {t("files.menu.unignore")}
                 </ContextMenuItem>
               ) : (
                 <ContextMenuItem onSelect={() => {
-                  autoCollapseGroups.ignorePath(entry.path);
+                  ignoreState.ignorePath(entry.path);
                   if (isChainExpanded) collapseDir(entry.path);
                 }}>
                   <ChevronRight size={13} /> {t("files.menu.ignore")}
@@ -667,7 +623,6 @@ function FileNode({
 
 function FileTreeRows({
   entries,
-  parentPath,
   depth,
   getDisplayStatus,
   getGitChange,
@@ -688,13 +643,12 @@ function FileTreeRows({
   onFilePointerMove,
   onFilePointerUp,
   onFilePointerCancel,
-  autoCollapseGroups,
+  ignoreState,
   menuPortalContainer,
-  renderAutoCollapsedGroup,
+  inheritedIgnored = false,
   readOnly = false,
 }: {
   entries: ProjectFileEntry[];
-  parentPath: string;
   depth: number;
   getDisplayStatus: (entry: ProjectFileEntry) => FileDisplayStatus | null;
   getGitChange: (path: string) => GitFileChange | null;
@@ -715,19 +669,15 @@ function FileTreeRows({
   onFilePointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
-  autoCollapseGroups: AutoCollapseGroupState;
+  ignoreState: FileIgnoreState;
   menuPortalContainer: HTMLDivElement | null;
-  renderAutoCollapsedGroup: boolean;
+  /** Issue #227：父级已判定为忽略时，整棵子树继承淡化。 */
+  inheritedIgnored?: boolean;
   readOnly?: boolean;
 }) {
-  const { normalEntries, collapsedEntries } = renderAutoCollapsedGroup
-    ? splitAutoCollapsedEntries(entries, autoCollapseGroups.ignoredPaths, autoCollapseGroups.ignoreMatcher)
-    : { normalEntries: entries, collapsedEntries: [] };
-  const groupOpen = autoCollapseGroups.expandedGroupPaths.has(parentPath);
-
   return (
     <div>
-      {normalEntries.map((entry) => (
+      {visibleTreeEntries(entries).map((entry) => (
         <FileNode
           key={entry.path}
           entry={entry}
@@ -751,51 +701,12 @@ function FileTreeRows({
           onFilePointerMove={onFilePointerMove}
           onFilePointerUp={onFilePointerUp}
           onFilePointerCancel={onFilePointerCancel}
-          autoCollapseGroups={autoCollapseGroups}
+          ignoreState={ignoreState}
           menuPortalContainer={menuPortalContainer}
+          inheritedIgnored={inheritedIgnored}
           readOnly={readOnly}
         />
       ))}
-      {collapsedEntries.length > 0 && (
-        <>
-          <AutoCollapsedGroupRow
-            depth={depth}
-            count={collapsedEntries.length}
-            isOpen={groupOpen}
-            onToggle={() => autoCollapseGroups.toggleGroup(parentPath)}
-          />
-          {groupOpen && collapsedEntries.map((entry) => (
-            <FileNode
-              key={entry.path}
-              entry={entry}
-              depth={depth + 1}
-              getDisplayStatus={getDisplayStatus}
-              getGitChange={getGitChange}
-              onOpenFile={onOpenFile}
-              onOpenDiff={onOpenDiff}
-              onInput={onInput}
-              onConfirm={onConfirm}
-              renamingPath={renamingPath}
-              onRenameSubmit={onRenameSubmit}
-              onRenameCancel={onRenameCancel}
-              onFileKeyDown={onFileKeyDown}
-              onFileDragStart={onFileDragStart}
-              onFileDrag={onFileDrag}
-              onFileDragEnd={onFileDragEnd}
-              onFileDragOver={onFileDragOver}
-              onFileDrop={onFileDrop}
-              onFilePointerDown={onFilePointerDown}
-              onFilePointerMove={onFilePointerMove}
-              onFilePointerUp={onFilePointerUp}
-              onFilePointerCancel={onFilePointerCancel}
-              autoCollapseGroups={autoCollapseGroups}
-              menuPortalContainer={menuPortalContainer}
-              readOnly={readOnly}
-              showRelativePath
-            />
-          ))}
-        </>
-      )}
     </div>
   );
 }
@@ -836,7 +747,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const [inputValue, setInputValue] = useState("");
   const [renamingAction, setRenamingAction] = useState<RenameAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
-  const [expandedAutoCollapseGroups, setExpandedAutoCollapseGroups] = useState<Set<string>>(new Set());
   /** null = not loaded or unavailable; fallback rules remain active. */
   const [projectGitIgnoreMatcher, setProjectGitIgnoreMatcher] = useState<FileExplorerIgnoreMatcher | null>(null);
   const [gitIgnoreLoadState, setGitIgnoreLoadState] = useState<"idle" | "loaded" | "missing">("idle");
@@ -862,7 +772,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   }, []);
 
   useEffect(() => {
-    setExpandedAutoCollapseGroups(new Set());
     setSearchControlsVisible(false);
     setProjectGitIgnoreMatcher(null);
     setGitIgnoreLoadState("idle");
@@ -940,18 +849,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     [fileExplorerIgnoredPaths, project]
   );
 
-  const toggleAutoCollapseGroup = useCallback((parentPath: string) => {
-    setExpandedAutoCollapseGroups((current) => {
-      const next = new Set(current);
-      if (next.has(parentPath)) {
-        next.delete(parentPath);
-      } else {
-        next.add(parentPath);
-      }
-      return next;
-    });
-  }, []);
-
   const ignorePath = useCallback((path: string) => {
     if (!project) return;
     const current = useSettingsStore.getState().fileExplorerIgnoredPaths;
@@ -988,40 +885,18 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   useEffect(() => {
     if (!selectedTreePath) return;
-    const rootPath = selectedTreePath.split("/")[0];
-    const rootEntry = tree.find((entry) => entry.path === rootPath);
-    if (
-      rootEntry?.kind !== "directory"
-      || !(
-        isDefaultCollapsedDirectoryName(rootEntry.name)
-        || ignoredPaths.has(rootEntry.path)
-        || ignoreMatcher.ignores(rootEntry.path, true)
-      )
-    ) {
-      return;
-    }
-    setExpandedAutoCollapseGroups((current) => {
-      if (current.has("")) return current;
-      return new Set([...current, ""]);
-    });
-  }, [ignoreMatcher, ignoredPaths, selectedTreePath, tree]);
-
-  useEffect(() => {
-    if (!selectedTreePath) return;
     const escapedPath = typeof CSS !== "undefined" && typeof CSS.escape === "function"
       ? CSS.escape(selectedTreePath)
       : selectedTreePath.replace(/(["\\])/gu, "\\$1");
     document.querySelector<HTMLElement>(`[data-file-tree-path="${escapedPath}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [expandedAutoCollapseGroups, selectedTreePath, tree]);
+  }, [selectedTreePath, tree]);
 
-  const autoCollapseGroups = useMemo<AutoCollapseGroupState>(() => ({
-    expandedGroupPaths: expandedAutoCollapseGroups,
+  const ignoreState = useMemo<FileIgnoreState>(() => ({
     ignoredPaths,
     ignoreMatcher,
-    toggleGroup: toggleAutoCollapseGroup,
     ignorePath,
     unignorePath,
-  }), [expandedAutoCollapseGroups, ignoredPaths, ignoreMatcher, toggleAutoCollapseGroup, ignorePath, unignorePath]);
+  }), [ignoredPaths, ignoreMatcher, ignorePath, unignorePath]);
 
   const getDisplayStatus = useCallback((entry: ProjectFileEntry): FileDisplayStatus | null => {
     if (dirtyFilePaths.has(entry.path)) {
@@ -1395,6 +1270,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   const renderContentSearchRow = useCallback((match: ProjectFileContentMatch) => {
     if (!project) return null;
+    // Issue #227：搜索结果与文件树使用同一套淡化判定，避免「树里淡、搜索里亮」的割裂。
+    // match 必为文件，直接按路径判定，不构造伪 entry。
+    const matchIgnored = ignoreState.ignoredPaths.has(match.path)
+      || ignoreState.ignoreMatcher.ignores(match.path, false);
     return (
       <ContextMenu key={`${match.path}:${match.lineNumber}`}>
         <ContextMenuTrigger asChild>
@@ -1402,6 +1281,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             type="button"
             className="ui-file-tree-row flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[12px]"
             data-selected={activeFile?.path === match.path ? "true" : "false"}
+            data-ignored={matchIgnored ? "true" : "false"}
             onContextMenu={(event) => event.stopPropagation()}
             onClick={() => {
               void openFileAtSearchMatch(match);
@@ -1441,18 +1321,21 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, getGitChange, menuPortalContainer, openFileAtSearchMatch, openFileEditorPane, project, requestOpenDiff, t]);
+  }, [activeFile?.path, ignoreState, getGitChange, menuPortalContainer, openFileAtSearchMatch, openFileEditorPane, project, requestOpenDiff, t]);
 
   const renderSearchRow = useCallback((entry: ProjectFileEntry) => {
     if (!project) return null;
     const displayStatus = getDisplayStatus(entry);
     const gitChange = entry.kind === "file" ? getGitChange(entry.path) : null;
+    // Issue #227：搜索结果沿用文件树的淡化判定，保持两处表现一致。
+    const entryIgnored = isEntryIgnored(entry, ignoreState);
     if (renamingAction?.path === entry.path) {
       return (
         <div
           key={entry.path}
           className="ui-file-tree-row flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px]"
           data-selected={activeFile?.path === entry.path ? "true" : "false"}
+          data-ignored={entryIgnored ? "true" : "false"}
         >
           <img src={entry.kind === "directory" ? getMaterialFolderIcon(entry.name, false) : getMaterialFileIcon(entry.name)} alt="" width={16} height={16} />
           <InlineRenameInput
@@ -1471,6 +1354,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             tabIndex={0}
             className="ui-file-tree-row flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px]"
             data-selected={activeFile?.path === entry.path ? "true" : "false"}
+            data-ignored={entryIgnored ? "true" : "false"}
             data-file-drop-target-path={getDropTargetPath(entry)}
             draggable={false}
             onClick={(event) => {
@@ -1532,7 +1416,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, cancelRename, getDisplayStatus, getDropTargetPath, getGitChange, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, menuPortalContainer, openFile, project, renamingAction?.path, requestOpenDiff, submitRename, t]);
+  }, [activeFile?.path, ignoreState, cancelRename, getDisplayStatus, getDropTargetPath, getGitChange, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, menuPortalContainer, openFile, project, renamingAction?.path, requestOpenDiff, submitRename, t]);
 
   const copyRootAiTree = useCallback(() => {
     if (!project) return;
@@ -1568,7 +1452,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     return visibleRows.length > 0 ? (
       <FileTreeRows
         entries={visibleRows}
-        parentPath=""
         depth={0}
         getDisplayStatus={getDisplayStatus}
         getGitChange={getGitChange}
@@ -1589,16 +1472,15 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         onFilePointerMove={handleFilePointerMove}
         onFilePointerUp={handleFilePointerUp}
         onFilePointerCancel={handleFilePointerCancel}
-        autoCollapseGroups={autoCollapseGroups}
+        ignoreState={ignoreState}
         menuPortalContainer={menuPortalContainer}
         readOnly={readOnly}
-        renderAutoCollapsedGroup
       />
     ) : (
       <div className="px-3 py-8 text-center text-xs text-text-muted">{t("files.empty")}</div>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, tree.length, hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, getGitChange, requestOpenDiff, autoCollapseGroups, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, renamingAction?.path, submitRename, cancelRename, t]);
+  }, [loading, tree.length, hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, getGitChange, requestOpenDiff, ignoreState, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, renamingAction?.path, submitRename, cancelRename, t]);
 
   if (!project) return null;
 

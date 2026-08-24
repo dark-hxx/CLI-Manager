@@ -7713,6 +7713,18 @@
   box-shadow: inset 2px 0 0 var(--term-panel-cyan, #5AC8E0);
 }
 
+/* Issue #227：忽略项不再抽离到「已折叠文件」分组，改为原位显示 + 整行淡化
+   （JetBrains 风：文件名、图标、Git 状态徽标一起变淡）。
+   hover / 选中时提亮，否则透明度会吃掉选中反馈。 */
+.ui-file-tree-row[data-ignored="true"] {
+  opacity: 0.45;
+}
+
+.ui-file-tree-row[data-ignored="true"]:hover,
+.ui-file-tree-row[data-ignored="true"][data-selected="true"] {
+  opacity: 0.75;
+}
+
 .ui-file-drag-preview {
   position: fixed;
   top: 0;
