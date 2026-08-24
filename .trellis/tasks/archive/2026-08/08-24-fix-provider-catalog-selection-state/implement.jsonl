@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"Behavioral bug triage, root-cause statement, and touchpoint-discovery requirements."}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Required branch, product-record, and validation gates for an inline task."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component and user-facing UI conventions."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Local state ownership and update conventions."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend verification expectations."}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"Provider catalog selection and page-memory contract."}

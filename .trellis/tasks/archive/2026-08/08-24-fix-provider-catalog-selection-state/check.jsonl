@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"Verify the fix lands at the UI state boundary and does not patch a symptom downstream."}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Verify product records and required checks before completion."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify accessibility state and component behavior remain consistent."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend TypeScript quality gate."}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"Verify selection memory remains intact while residual card highlighting is removed."}
