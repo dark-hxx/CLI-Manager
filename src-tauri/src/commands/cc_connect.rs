@@ -990,8 +990,15 @@ fn trusted_binary_version(sha256: &str) -> Option<String> {
 }
 
 fn output_text(stdout: &[u8], stderr: &[u8]) -> String {
-    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    let decode = |bytes: &[u8]| {
+        crate::text_encoding::decode_text(bytes)
+            .map(|decoded| decoded.content)
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
+            .trim()
+            .to_string()
+    };
+    let stdout = decode(stdout);
+    let stderr = decode(stderr);
     if stdout.is_empty() {
         stderr
     } else {
@@ -6343,6 +6350,14 @@ mod tests {
             "zhangsan,lisi"
         );
         assert!(normalize_allow_from(CcConnectPlatform::Wecom, "*").is_err());
+    }
+
+    #[test]
+    fn process_output_decodes_utf8_and_gbk_diagnostics() {
+        assert_eq!(output_text(b"ready", b"ignored"), "ready");
+        let (encoded, _, had_errors) = encoding_rs::GBK.encode("系统找不到指定的路径。\r\n");
+        assert!(!had_errors);
+        assert_eq!(output_text(&[], &encoded), "系统找不到指定的路径。");
     }
 
     #[test]

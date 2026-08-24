@@ -20,6 +20,7 @@
 ### cc-connect 本机 Codex 启动器 PATH 解析
 
 - 本机解析 `codex` / `codex.exe` 时跳过 cc-connect 托管的 `remote-manager/bin`，避免 PATH 里的 wrapper 把自己当成真实启动器；Windows 仍按 `.exe/.cmd/.bat/.ps1` 在其余 PATH 项中查找。
+- 修复真实 Codex `.cmd/.bat` 启动器位于含空格、中文或 `\\?\` 扩展前缀的 Windows 路径时，远程 app-server 探针被 CMD 截断路径并启动失败的问题；批处理改用安全 `call` 边界并保留参数、stdin/stdout 与退出码。非 UTF-8 的中文系统错误也会按本地编码正确显示，不再出现乱码。
 
 ### cc-connect 微信授权
 

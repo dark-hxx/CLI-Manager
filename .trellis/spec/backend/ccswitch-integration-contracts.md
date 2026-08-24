@@ -426,6 +426,13 @@ env_key = "CLI_MANAGER_CODEX_PROVIDER_<hash>_API_KEY"
   resolve back to the wrapper and recurse. The Windows native shim proxies only when the
   first subcommand is `app-server`; all other Codex commands inherit stdio, receive the same
   Provider overrides, and return the real exit code.
+- **Windows script launcher boundary**: a real Codex `.cmd` / `.bat` launcher may live under a
+  path containing spaces or non-ASCII characters. Strip local/UNC `\\?\` prefixes before handing
+  the script to CMD, and use a fixed `cmd /d /s /c call` boundary so the quoted script path is not
+  split as the command. Continue rejecting command-composition metacharacters and CR/LF in script
+  values; valid quoted Codex `-c` overrides must remain supported. `.exe` launchers stay direct and
+  `.ps1` stays structured `powershell -File`. Probe diagnostics use UTF-8 when valid and the shared
+  legacy-encoding detector otherwise, so localized Windows errors remain readable.
 - **Unsafe TOML fallback**: if the raw TOML contains the resolved plaintext secret, do not
   copy it; fall back to the generated non-secret routing profile.
 - **Launch command**: for exact Codex projects with empty `startup_cmd`, the

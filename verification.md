@@ -1018,3 +1018,23 @@
 - `cargo test --manifest-path src-tauri/Cargo.toml commands::cc_connect::tests:: --lib`：59 项通过；新增覆盖无效其他平台草稿隔离、有效平台保留、无效旧微信 ID 重授权和常规严格校验。
 - `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
 - Trellis context 校验通过。GitNexus `detect-changes` 因当前会话未暴露 MCP、本机无缓存 CLI 而无法运行；已使用契约、调用点、全部 cc-connect 单元测试和最终 diff 降级复核。
+
+## Windows Codex 空格路径启动修复（2026-08-24）
+
+### 根因与发现清单
+
+- 根因位于 CLI-Manager 原生 Codex 代理与 Windows CMD 脚本启动器边界：`.cmd/.bat` 原先通过 `cmd.exe /d /c <launcher> ...` 传递，`\\?\D:\code path\...` 会被 CMD 截断为第一个空格前的命令，导致 app-server proxy probe 退出 1。该问题与 cc-connect 路径配置、Provider、平台凭据和网络无关。
+- `codex_app_server_proxy::codex_command` 现在对 shell 脚本移除本地盘/UNC verbatim 前缀，`.cmd/.bat` 使用固定 `cmd /d /s /c call` 入口；`.ps1` 保持结构化 `powershell -File`，`.exe` 保持直接启动。已有命令拼接元字符拒绝扩展到 CR/LF，合法带双引号的 Codex `-c` Provider 配置继续支持。
+- `cc_connect::output_text` 复用 `text_encoding::decode_text` 的 UTF-8 快路径与 legacy 编码探测，GBK 中文“系统找不到指定的路径”不再显示乱码；无法识别才 lossy 回退。
+- 真实代理 E2E 将 fake Codex `.cmd` 放入含空格与中文的目录，并以 `\\?\` 路径传入，覆盖 app-server、普通透传、Provider 参数、stdin/stdout、密钥不泄漏与退出码。
+- GitNexus MCP/CLI 未暴露且离线 npm 无缓存，已通过 cc-switch 契约、`rg`、调用链、Rust 单测和真实代理 E2E 降级复核。`codex_command` 影响所有本地 Codex 远程托管，风险 HIGH。
+
+### 验证结果
+
+- `cargo test --manifest-path src-tauri/Cargo.toml codex_app_server_proxy::tests --lib`：24 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml process_output_decodes_utf8_and_gbk_diagnostics --lib`：1 项通过。
+- `node scripts/codexAppServerProxy.e2e.test.mjs`：4 项通过，真实 Windows 代理二进制从 verbatim + 空格 + 中文目录启动 `.cmd`。
+- `cargo test --manifest-path src-tauri/Cargo.toml commands::cc_connect::tests:: --lib`：60 项通过，包含此前微信授权隔离回归。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
+- Trellis context 校验通过。GitNexus `detect-changes` 因 MCP/本机离线 CLI 不可用而降级，最终范围使用契约、调用链、Rust 全套 cc-connect 测试与真实代理 E2E 复核。
+- `npm run tauri:build:local -- --bundles nsis`：通过，仅生成 NSIS 安装包；SHA256 `CF929410CA2C602DB43927D33C23B1D77F52EF5104A422518F40F3AD278C0429`。
