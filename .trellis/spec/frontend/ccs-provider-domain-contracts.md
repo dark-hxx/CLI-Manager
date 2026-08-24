@@ -280,6 +280,10 @@ form must not hide URL, key or model in a generic configuration textarea.
 - Reopening the provider settings page restores the last app type, surface
   (catalog/Home/routing), detail tab, selected provider, and outer page scroll
   position from the in-memory page cache.
+- `selectedProviderId` remains the detail/cache identity, not a permanent list
+  selection. The catalog may render its selected card style and `aria-current`
+  only while that provider's detail dialog is open; closing the dialog must
+  remove the visual state without clearing the cached selection.
 - Failover queue rows render `isCurrent` as an explicit localized “In use”
   badge with the primary color, so the channel currently selected by routing is
   distinguishable from merely queued or ready providers.

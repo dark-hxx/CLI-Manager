@@ -364,7 +364,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
             allProviders={orderedCatalogProviders}
             failover={autoFailover ? failover : null}
             failoverBusy={Boolean(routingState.action)}
-            selectedProviderId={catalog.selectedProviderId}
+            selectedProviderId={detailOpened ? catalog.selectedProviderId : null}
             loading={catalog.loading}
             hasSearchQuery={Boolean(query)}
             busy={busy}
