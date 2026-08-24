@@ -1158,3 +1158,24 @@ Raised the provider delete confirmation above its parent modal and normalized sl
 ### Next Steps
 
 - PR #224 仍与 master 冲突；解决冲突并合并后，从上游 master 创建 ssh-agent-v0.1.10 标签。
+
+
+## Session 96: Fix file preview refresh and file tab menu
+
+**Date**: 2026-08-24
+**Task**: Fix file preview refresh and file tab menu
+**Branch**: `master`
+
+### Summary
+
+Fixed Markdown preview zoom, persistent local/WSL/SSH file refresh, Markdown table Diff token layout, and terminal-themed file tab close actions.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c6aa22d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
