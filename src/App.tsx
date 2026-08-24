@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
+import { ProjectFileRefreshController } from "./components/files/ProjectFileRefreshController";
 import { CommandPalette } from "./components/CommandPalette";
 import type { LucideIcon } from "lucide-react";
 import type { SettingsTab } from "./components/SettingsModal";
@@ -1739,6 +1740,7 @@ function App() {
 
   return (
     <div className="ui-workspace-shell flex h-screen flex-col">
+      <ProjectFileRefreshController />
       <a href="#main-content" className="skip-link">
         {t("app.skipToMain")}
       </a>

@@ -1,5 +1,5 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useEffect, useState, type WheelEvent as ReactWheelEvent } from "react";
+import { useEffect, useState, type CSSProperties, type WheelEvent as ReactWheelEvent } from "react";
 import { useI18n } from "../../lib/i18n";
 import { normalizeFontFamilyStack } from "../../lib/systemFonts";
 import type { Project } from "../../lib/types";
@@ -103,7 +103,11 @@ export function FileEditorContent({
         file.previewKind === "markdown" && previewMode === "preview" ? (
           <div
             className="ui-file-editor-markdown-preview h-full overflow-auto p-4"
-            style={{ fontFamily: effectiveUiFontFamily, fontSize }}
+            style={{
+              "--markdown-preview-font-size": `${fontSize}px`,
+              fontFamily: effectiveUiFontFamily,
+              fontSize,
+            } as CSSProperties & Record<"--markdown-preview-font-size", string>}
           >
             <MarkdownContent content={file.content} variant="terminal" linkBehavior="preview" />
           </div>

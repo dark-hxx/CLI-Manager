@@ -15,7 +15,6 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiRootTree, formatAiTree, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
-import { debugConsoleWarn } from "../../lib/debugConsole";
 import { POINTER_DRAG_START_PX } from "../../lib/dragInteraction";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import {
@@ -79,7 +78,6 @@ type DraggedFileEntry = Pick<ProjectFileEntry, "kind" | "name" | "path">;
 type Translate = ReturnType<typeof useI18n>["t"];
 
 const FILE_EXPLORER_ENTRY_MIME = "application/x-cli-manager-file-entry";
-const FILE_WATCH_REFRESH_DEBOUNCE_MS = 600;
 interface AutoCollapseGroupState {
   expandedGroupPaths: Set<string>;
   ignoredPaths: Set<string>;
@@ -129,7 +127,6 @@ const SEARCH_MODES: Array<{ value: ProjectFileSearchMode; labelKey: TranslationK
   { value: "files", labelKey: "files.search.modeFiles" },
   { value: "content", labelKey: "files.search.modeCode" },
 ];
-const FALLBACK_POLL_INTERVAL_MS = 15000;
 
 function getDisplayPathName(path: string): string {
   const normalized = path.trim().replace(/[\\/]+$/g, "");
@@ -822,7 +819,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const clipboard = useFileExplorerStore((s) => s.clipboard);
   const closeProject = useFileExplorerStore((s) => s.closeProject);
   const refresh = useFileExplorerStore((s) => s.refresh);
-  const refreshVisibleState = useFileExplorerStore((s) => s.refreshVisibleState);
   const setSearchMode = useFileExplorerStore((s) => s.setSearchMode);
   const setSearchQuery = useFileExplorerStore((s) => s.setSearchQuery);
   const openFile = useFileExplorerStore((s) => s.openFile);
@@ -909,45 +905,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    let fallbackTimer: number | undefined;
-    let refreshTimer: number | undefined;
-    let pendingChangedPaths: Set<string> | null | undefined;
-
-    const isActive = () => document.visibilityState === "visible" && document.hasFocus();
-    const refreshIfActive = (changedPaths?: string[]) => {
-      if (isActive()) void refreshVisibleState(changedPaths);
-    };
-    const scheduleRefreshIfActive = (changedPaths?: string[]) => {
-      if (!isActive()) return;
-      if (!changedPaths?.length) {
-        pendingChangedPaths = null;
-      } else if (pendingChangedPaths !== null) {
-        pendingChangedPaths ??= new Set<string>();
-        for (const path of changedPaths) pendingChangedPaths.add(path);
-      }
-      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = undefined;
-        const paths = pendingChangedPaths === null
-          ? undefined
-          : pendingChangedPaths
-            ? Array.from(pendingChangedPaths)
-            : undefined;
-        pendingChangedPaths = undefined;
-        refreshIfActive(paths);
-      }, FILE_WATCH_REFRESH_DEBOUNCE_MS);
-    };
-    const startFallback = () => {
-      if (fallbackTimer === undefined) {
-        fallbackTimer = window.setInterval(refreshIfActive, FALLBACK_POLL_INTERVAL_MS);
-      }
-    };
-    const stopFallback = () => {
-      if (fallbackTimer !== undefined) {
-        window.clearInterval(fallbackTimer);
-        fallbackTimer = undefined;
-      }
-    };
 
     void listen<{ projectPath: string; changedPaths?: string[] }>("project-files-changed", (event) => {
       if (disposed) return;
@@ -955,34 +912,16 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       if (includesProjectGitIgnoreChange(event.payload.changedPaths)) {
         setGitIgnoreRefreshSeq((current) => current + 1);
       }
-      scheduleRefreshIfActive(event.payload.changedPaths);
     }).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;
     });
 
-    void invoke("file_watch_start", { projectPath: project.path }).catch((err) => {
-      debugConsoleWarn("[FileExplorerSidebar] file_watch_start failed, falling back to polling:", err);
-      if (!disposed) startFallback();
-    });
-
-    const onFocus = () => refreshIfActive();
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") refreshIfActive();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-
     return () => {
       disposed = true;
-      stopFallback();
-      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
       if (unlisten) unlisten();
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-      void invoke("file_watch_stop", { projectPath: project.path }).catch(() => {});
     };
-  }, [project?.path, readOnly, refreshVisibleState]);
+  }, [project?.path, readOnly]);
 
   const hasSearchQuery = Boolean(searchQuery.trim());
 

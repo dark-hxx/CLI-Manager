@@ -2051,6 +2051,15 @@
   background-color: color-mix(in srgb, var(--menu-fg) 18%, transparent);
 }
 
+/* File-tab menus render in a body portal, so bind the shared terminal skin to
+   the root theme variables instead of inheriting a file-editor ancestor. */
+.context-menu.terminal-skin.ui-file-editor-tab-menu {
+  --menu-fg: var(--terminal-theme-foreground, #d8dee9);
+  --menu-bg: var(--terminal-theme-background, #0c0e10);
+  --menu-border: color-mix(in srgb, var(--terminal-theme-foreground, #d8dee9) 18%, transparent);
+  --menu-hover: color-mix(in srgb, var(--terminal-theme-foreground, #d8dee9) 12%, transparent);
+}
+
 .ui-split-project-picker {
   border-color: var(--menu-border);
   background-color: color-mix(in srgb, var(--menu-bg) 92%, transparent);
@@ -7850,6 +7859,7 @@
 }
 
 .ui-file-editor-markdown-preview .ui-markdown-terminal {
+  font-size: var(--markdown-preview-font-size, var(--font-size-ui));
   --md-text: var(--terminal-theme-foreground, #f8fafc);
   --md-muted: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 78%, var(--terminal-theme-muted, #64748b) 22%);
   --md-subtle: var(--file-editor-muted);
