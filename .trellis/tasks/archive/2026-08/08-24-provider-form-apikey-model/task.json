@@ -3,7 +3,7 @@
   "name": "provider-form-apikey-model",
   "title": "供应商弹框统一维护 apikey 与模型选择",
   "description": "把 baseUrl + apiKey + model 收敛到新增/编辑供应商同一弹框维护:新增态 apiKey 随供应商创建并自动激活;编辑态回显激活 key 且下拉可切换查看对象(不改激活);放宽 Rust FetchModelsInput 契约(provider_id 转 Option + 新增 api_key)使新增态即可获取模型;Claude 兜底模型改下拉框,候选来源 接口 > 已配置 > model_prices 表 > 同类供应商。关联 issue #214。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "hxx",
   "assignee": "hxx",
   "createdAt": "2026-08-24",
-  "completedAt": null,
+  "completedAt": "2026-08-25",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -23,6 +23,7 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "issue": "https://github.com/dark-hxx/CLI-Manager/issues/214"
+    "issue": "https://github.com/dark-hxx/CLI-Manager/issues/214",
+    "commit": "f96b4aab"
   }
 }

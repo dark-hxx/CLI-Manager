@@ -32,7 +32,7 @@
 - [x] 2.2 早退条件改为 `if (!options.apiKey?.trim() && !options.providerId)`
 - [x] 2.3 invoke payload 增加 `apiKey: options.apiKey?.trim() || undefined`
 - [x] 2.4 校验:`npx tsc --noEmit`
-- [ ] 2.5 **手工验证 IPC 契约**(design §2.1:编译器抓不到):`npm run tauri dev` → 任意已有供应商点「获取模型」→ 确认仍成功(即 AC6 不回归)
+- [x] 2.5 **手工验证 IPC 契约**(design §2.1:编译器抓不到):`npm run tauri dev` → 任意已有供应商点「获取模型」→ 确认仍成功(即 AC6 不回归)
 
 ---
 
@@ -98,17 +98,17 @@
 
 ## Step 8 · 全场景实机验证(按 AC 逐条)
 
-- [ ] 8.1 **AC1** 新增 Claude 供应商填 名称+baseUrl+apiKey → 保存 → 「API 密钥」Tab 有 1 个激活密钥,`activeKeyLabel` 非空
-- [ ] 8.2 **AC2** 新增态填 baseUrl+有效 apiKey → 「获取模型」可点 → 返回列表 → 兜底模型与 5 角色模型都能选到;**全程未保存**
-- [ ] 8.3 **AC3** 编辑 ≥2 key 的供应商 → 回显激活 key → 切到另一个 → 明文随之切换 → 保存 → **激活 key 未变**,被选中 key 的值已更新
-- [ ] 8.4 **AC4** 断网/填错 key 使取模型失败 → 兜底模型仍能从「已配置/价格表/其他供应商」选 → 也能手敲任意 ID 保存成功
-- [ ] 8.5 **AC5** 编辑 0 个 key 的供应商 → 下拉为空、输入框可填 → 保存后创建并激活第一个 key
-- [ ] 8.6 **AC6** 已有供应商(不填表单 apiKey)点「获取模型」→ 仍从激活 key 取,行为与改动前一致
-- [ ] 8.7 三个 appType 各过一遍新增+编辑(claude / codex / grokbuild)
-- [ ] 8.8 全局配置已应用的供应商:改 key 值 → 出现「密钥已变更,请重新预览并应用」;**不改 key 值只改别的字段 → 不应出现该提示**
-- [ ] 8.9 cc-switch 导入的 key(label `Imported from CC Switch`)在下拉中正常可选
-- [ ] 8.10 部分失败演练:构造 `provider_key_create` 失败(如超长 label)→ 确认不产生重复供应商
-- [ ] 8.11 `CLI_MANAGER_DEBUG=1` 跑一次取模型 → **`grep` 日志确认无明文密钥**(Step 1.2 的验证)
+- [x] 8.1 **AC1** 新增 Claude 供应商填 名称+baseUrl+apiKey → 保存 → 「API 密钥」Tab 有 1 个激活密钥,`activeKeyLabel` 非空
+- [x] 8.2 **AC2** 新增态填 baseUrl+有效 apiKey → 「获取模型」可点 → 返回列表 → 兜底模型与 5 角色模型都能选到;**全程未保存**
+- [x] 8.3 **AC3** 编辑 ≥2 key 的供应商 → 回显激活 key → 切到另一个 → 明文随之切换 → 保存 → **激活 key 未变**,被选中 key 的值已更新
+- [x] 8.4 **AC4** 断网/填错 key 使取模型失败 → 兜底模型仍能从「已配置/价格表/其他供应商」选 → 也能手敲任意 ID 保存成功
+- [x] 8.5 **AC5** 编辑 0 个 key 的供应商 → 下拉为空、输入框可填 → 保存后创建并激活第一个 key
+- [x] 8.6 **AC6** 已有供应商(不填表单 apiKey)点「获取模型」→ 仍从激活 key 取,行为与改动前一致
+- [x] 8.7 三个 appType 各过一遍新增+编辑(claude / codex / grokbuild)
+- [x] 8.8 全局配置已应用的供应商:改 key 值 → 出现「密钥已变更,请重新预览并应用」;**不改 key 值只改别的字段 → 不应出现该提示**
+- [x] 8.9 cc-switch 导入的 key(label `Imported from CC Switch`)在下拉中正常可选
+- [x] 8.10 部分失败演练:构造 `provider_key_create` 失败(如超长 label)→ 确认不产生重复供应商
+- [x] 8.11 `CLI_MANAGER_DEBUG=1` 跑一次取模型 → **`grep` 日志确认无明文密钥**(Step 1.2 的验证)
 
 ---
 
@@ -120,7 +120,7 @@
 - [x] 9.4 `detect_changes({scope:"compare", base_ref:"master"})` —— 确认影响面与 design §8 一致,无意外符号/执行流
 - [x] 9.5 更新 `CHANGELOG.md` 的 **`V1.3.8`** 小节(prd D2)
 - [x] 9.6 更新 `docs/功能清单.md` 对应功能小节
-- [ ] 9.7 提交(需用户确认后再 commit)
+- [x] 9.7 提交(需用户确认后再 commit)
 
 ---
 
@@ -129,3 +129,11 @@
 - **Step 3.5**:`stripOneM` / `hasOneM` / `withOneM` 目前是 `NativeClaudeConfigSection.tsx` 的模块内私有函数。提取到 `providerModelCandidates.ts` 还是新建共享 util —— 取决于 `impact` 结果;**不要复制两份实现**。
 
 > 用户已拍板项见 `prd.md` 的「已确认决策」D1–D4(apiKey 非必填 / 版本号 V1.3.8 / label 不校验唯一 / 下拉只切查看)。
+
+---
+
+## 完成记录
+
+- 提交:`f96b4aab feat(provider): maintain api key and model choice in one form`
+- Step 8 实机验证由用户在自己的构建上完成并确认通过;Grok 403 经比对确认为密钥/数据差异,非本任务代码问题,已为其留下 warn/debug 诊断日志。
+- 未覆盖:Rust「先判状态再解析」缺单测(需 mock HTTP server,dev-deps 仅有 tempfile,未擅自加依赖)。
