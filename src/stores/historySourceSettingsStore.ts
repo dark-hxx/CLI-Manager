@@ -104,6 +104,7 @@ async function loadSettingsWithLegacyMigration(s: Store): Promise<HistorySourceS
   const stored = normalizeSettingsMap(await s.get("historySourceSettings"));
   const claudeLegacy = instanceFromLegacyPath("claude", await s.get<string>("claudeHookConfigDir"));
   const codexLegacy = instanceFromLegacyPath("codex", await s.get<string>("codexHookConfigDir"));
+  const grokLegacy = instanceFromLegacyPath("grok", await s.get<string>("grokHookConfigDir"));
   let changed = false;
   if (claudeLegacy && stored.claude?.activeInstance?.locations.configRoot !== claudeLegacy.locations.configRoot) {
     stored.claude = { enabled: stored.claude?.enabled ?? true, activeInstance: claudeLegacy };
@@ -111,6 +112,10 @@ async function loadSettingsWithLegacyMigration(s: Store): Promise<HistorySourceS
   }
   if (codexLegacy && stored.codex?.activeInstance?.locations.configRoot !== codexLegacy.locations.configRoot) {
     stored.codex = { enabled: stored.codex?.enabled ?? true, activeInstance: codexLegacy };
+    changed = true;
+  }
+  if (grokLegacy && stored.grok?.activeInstance?.locations.sessionRoot !== grokLegacy.locations.sessionRoot) {
+    stored.grok = { enabled: stored.grok?.enabled ?? true, activeInstance: grokLegacy };
     changed = true;
   }
   if (changed) {
@@ -274,5 +279,10 @@ useSettingsStore.subscribe((state, previous) => {
     void useHistorySourceSettingsStore
       .getState()
       .syncHookConfigRoot("codex", state.codexHookConfigDir);
+  }
+  if (state.grokHookConfigDir !== previous.grokHookConfigDir) {
+    void useHistorySourceSettingsStore
+      .getState()
+      .syncHookConfigRoot("grok", state.grokHookConfigDir);
   }
 });

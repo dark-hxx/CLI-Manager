@@ -240,13 +240,14 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
       ...jsonReaderCapabilities,
       usage: "supported",
       resume: "supported",
+      delete: "supported",
       realtimeStats: "supported",
     },
     parserPlan: {
       stage: "native",
       batch: "batch-3",
       writer: "planned",
-      note: "Read-only parser for ~/.grok/sessions/*/*/updates.jsonl with summary.json metadata; resume via grok --resume / --continue; realtime stats via hook session bind.",
+      note: "Read-only parser for ~/.grok/sessions/*/*/updates.jsonl with summary.json metadata; resume via grok --resume / --continue; delete removes the session directory; realtime stats via hook session bind.",
     },
   },
   {

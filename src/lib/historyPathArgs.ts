@@ -22,6 +22,13 @@ function activeHistorySessionRoot(sourceId: "grok"): string | null {
   return sessionRoot || null;
 }
 
+function grokSessionRootFromHookDir(hookDir: string | null | undefined): string | null {
+  const trimmed = hookDir?.trim();
+  if (!trimmed) return null;
+  const separator = trimmed.includes("\\") ? "\\" : "/";
+  return `${trimmed.replace(/[\\/]+$/, "")}${separator}sessions`;
+}
+
 export async function ensureHistorySourceSettingsLoaded(): Promise<void> {
   const store = useHistorySourceSettingsStore.getState();
   if (store.loaded) return;
@@ -38,7 +45,7 @@ export function getHistoryPathArgsSync(): HistoryPathArgs {
   return {
     claudeConfigDir: (activeHistoryConfigRoot("claude") ?? settings.claudeHookConfigDir?.trim()) || null,
     codexConfigDir: (activeHistoryConfigRoot("codex") ?? settings.codexHookConfigDir?.trim()) || null,
-    grokSessionRoot: activeHistorySessionRoot("grok"),
+    grokSessionRoot: (activeHistorySessionRoot("grok") ?? grokSessionRootFromHookDir(settings.grokHookConfigDir)) || null,
     kimiConfigDir: (activeHistoryConfigRoot("kimi") ?? settings.kimiHookConfigDir?.trim()) || null,
   };
 }

@@ -1,6 +1,6 @@
 import type { CreateProjectInput, Project, TerminalSession } from "./types";
 import { detectCliResumeKind } from "../stores/terminalStore";
-import { isValidKimiSessionId, stripKimiResumeCliArgs, stripResumeCliArgs } from "./resumeCliArgs";
+import { isValidGrokSessionId, isValidKimiSessionId, stripKimiResumeCliArgs, stripResumeCliArgs } from "./resumeCliArgs";
 
 /**
  * Validate a CLI session id per resolveResumeCommand contract in
@@ -69,6 +69,7 @@ export function buildResumeCliArgs(
   const id = normalizeSessionId(sessionId);
   if (!id) return null;
   if (kind === "kimi" && !isValidKimiSessionId(id)) return null;
+  if (kind === "grok" && !isValidGrokSessionId(id)) return null;
   const base = kind === "kimi" ? stripKimiResumeCliArgs(sourceCliArgs) : stripResumeCliArgs(sourceCliArgs);
   const suffix =
     kind === "codex"
@@ -96,7 +97,8 @@ export function canSaveSessionToSidebar(
     project ?? undefined,
   );
   return kind !== null
-    && (kind !== "kimi" || isValidKimiSessionId(session.cliSessionId?.trim() ?? ""));
+    && (kind !== "kimi" || isValidKimiSessionId(session.cliSessionId?.trim() ?? ""))
+    && (kind !== "grok" || isValidGrokSessionId(session.cliSessionId?.trim() ?? ""));
 }
 
 /**

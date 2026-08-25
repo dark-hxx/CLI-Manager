@@ -404,6 +404,7 @@ useGitDiffOpenWorkflow(options): {
 
 - `settingsStore.gitDiffOpenMode` defaults to `dialog`; `gitDiffWrapLines` defaults to `true`. Both validate persisted input and belong to the `preferences` sync domain.
 - Application Diff tokens are scoped to `data-git-diff-theme="application"`. Terminal roots provide complete surface, text, semantic, interaction, selection, and syntax tokens; global application light selectors must not override them.
+- Refractor token class names are runtime syntax metadata, not Tailwind utility intent. Inside `.diff-code`, token spans must retain inline source-fragment layout even when a language grammar emits a class such as `table` that collides with a global utility.
 - Wrapped mode uses fixed-layout tables and `pre-wrap`. Unwrapped Split mode uses fixed gutter tracks plus equal `minmax(0, 1fr)` code tracks, while code cells use `white-space: pre` and one `GitDiffContent` horizontal scrollbar writes the same `scrollLeft` to both sides.
 - The Split center remains fixed during horizontal scrolling. Newly virtualized Hunk cells receive the current offset, and container or line-width changes recalculate the shared scroll range.
 - Hunk containers have no decorative border, radius, shadow, or overflow clipping. Changing wrap or view mode remeasures virtual Hunk heights.
@@ -437,6 +438,7 @@ useGitDiffOpenWorkflow(options): {
 
 - Assert settings defaults, validation, and sync classification.
 - Assert terminal/application selector isolation, toolbar interaction states, fixed nowrap Split tracks, synchronized virtual-cell offsets, Hunk remeasurement, and absence of the old framed container classes.
+- Assert Markdown table header, separator, and body token spans remain inline in wrapped and unwrapped Diff code cells; do not replace the source-code Diff with rendered Markdown HTML.
 - Assert pin/open routing and success-gated dialog close behavior.
 - Run the architecture limit test and assert each Diff responsibility module remains at most 300 lines with no environment-specific branching in the shared viewer.
 

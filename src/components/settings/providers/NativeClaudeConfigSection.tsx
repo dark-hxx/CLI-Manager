@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import {
+  Autocomplete,
   Checkbox,
   Divider,
   Group,
@@ -16,12 +18,18 @@ import type {
   NativeClaudeAuthField,
   NativeProviderClaudeConfig,
 } from "./nativeProviderTypes";
+import { modelOptionsFilter } from "./providerModelCandidates";
+import { hasOneM, stripOneM, withOneM } from "./providerModelValue";
+import { modelFetchErrorText } from "./providerModelFetchError";
 
 interface NativeClaudeConfigSectionProps {
   value: NativeProviderClaudeConfig;
   onChange: (value: NativeProviderClaudeConfig) => void;
   disabled?: boolean;
-  availableModels?: string[];
+  /** API 密钥字段，由表单弹框注入并渲染在本区标题之下。 */
+  keyField?: ReactNode;
+  /** 已摊平的分组模型候选（`Autocomplete` 的 `data`）。 */
+  modelData?: Array<{ group: string; items: string[] }>;
   fetchingModels?: boolean;
   modelFetchError?: string | null;
   onFetchModels?: () => void;
@@ -93,28 +101,12 @@ const API_FORMATS: Array<{ value: NativeClaudeApiFormat; labelKey: TranslationKe
   { value: "gemini_native", labelKey: "providerCatalog.claude.apiFormatGeminiNative" },
 ];
 
-function stripOneM(value: string): string {
-  const trimmed = value.trimEnd();
-  return trimmed.toLowerCase().endsWith("[1m]")
-    ? trimmed.slice(0, -4).trimEnd()
-    : trimmed;
-}
-
-function hasOneM(value: string): boolean {
-  return value.trimEnd().toLowerCase().endsWith("[1m]");
-}
-
-function withOneM(value: string, enabled: boolean): string {
-  const base = stripOneM(value).trim();
-  if (!base) return "";
-  return enabled ? `${base}[1M]` : base;
-}
-
 export function NativeClaudeConfigSection({
   value,
   onChange,
   disabled = false,
-  availableModels = [],
+  keyField,
+  modelData = [],
   fetchingModels = false,
   modelFetchError = null,
   onFetchModels,
@@ -157,6 +149,7 @@ export function NativeClaudeConfigSection({
     <Stack gap="sm" mt="xs">
       <Divider />
       <Text fw={600} size="sm">{t("providerCatalog.claude.advancedTitle")}</Text>
+      {keyField}
       <Select
         label={t("providerCatalog.claude.apiFormatLabel")}
         description={t("providerCatalog.claude.apiFormatDescription")}
@@ -214,7 +207,10 @@ export function NativeClaudeConfigSection({
           {t(fetchingModels ? "providerCatalog.models.fetching" : "providerCatalog.models.fetch")}
         </Button>
       </Group>
-      {modelFetchError && <Text size="xs" c="red">{t("providerCatalog.models.fetchFailed")}</Text>}
+      {modelFetchError && (() => {
+        const reason = modelFetchErrorText(modelFetchError);
+        return <Text size="xs" c="red">{t(reason.key, reason.params)}</Text>;
+      })()}
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-[96px_minmax(0,1fr)_minmax(0,1fr)_68px]">
         <Text size="xs" c="dimmed">{t("providerCatalog.claude.modelRole")}</Text>
@@ -239,24 +235,15 @@ export function NativeClaudeConfigSection({
             ) : (
               <TextInput value={t("providerCatalog.claude.hiddenFromModelMenu")} readOnly aria-label={t("providerCatalog.claude.hiddenFromModelMenu")} />
             )}
-            {availableModels.length > 0 ? (
-              <Select
-                value={modelBase || null}
-                data={availableModels}
-                searchable
-                clearable
-                disabled={disabled}
-                aria-label={t("providerCatalog.claude.requestModelFor", { role: t(role.labelKey) })}
-                onChange={(next) => updateRoleModel(role, next ?? "")}
-              />
-            ) : (
-              <TextInput
-                value={modelBase}
-                disabled={disabled}
-                aria-label={t("providerCatalog.claude.requestModelFor", { role: t(role.labelKey) })}
-                onChange={(event) => updateRoleModel(role, event.currentTarget.value)}
-              />
-            )}
+            <Autocomplete
+              value={modelBase}
+              data={modelData}
+              filter={modelOptionsFilter}
+              disabled={disabled}
+              placeholder={t("providerCatalog.claude.requestModelPlaceholder")}
+              aria-label={t("providerCatalog.claude.requestModelFor", { role: t(role.labelKey) })}
+              onChange={(next) => updateRoleModel(role, next)}
+            />
             {role.supportsOneM ? (
               <Checkbox
                 mt={7}
@@ -272,12 +259,15 @@ export function NativeClaudeConfigSection({
       })}
 
       <Divider mt="xs" />
-      <TextInput
+      <Autocomplete
         label={t("providerCatalog.claude.fallbackModel")}
         description={t("providerCatalog.claude.fallbackModelDescription")}
+        placeholder={t("providerCatalog.claude.requestModelPlaceholder")}
         value={stripOneM(value.model)}
+        data={modelData}
+        filter={modelOptionsFilter}
         disabled={disabled}
-        onChange={(event) => update({ model: withOneM(event.currentTarget.value, hasOneM(value.model)) })}
+        onChange={(next) => update({ model: withOneM(next, hasOneM(value.model)) })}
       />
       <Checkbox
         label={t("providerCatalog.claude.oneM")}

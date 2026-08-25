@@ -52,7 +52,7 @@ import { getSshClientInstanceId } from "../lib/sshClientIdentity";
 import { translateCurrent } from "../lib/i18n";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { buildRemoteHandoffResumeCommand } from "../lib/historyResumeCommand";
-import { isValidKimiSessionId } from "../lib/resumeCliArgs";
+import { isValidGrokSessionId, isValidKimiSessionId } from "../lib/resumeCliArgs";
 import {
   terminalProcessManager,
   type TerminalClaudeProviderLaunchConfig,
@@ -1176,7 +1176,7 @@ function buildCliResumeStartupCommand(
   }
   if (kind === "grok") {
     // Align with Claude: no --no-alt-screen by default. No id → cwd-scoped continue.
-    const base = hasValidId ? `grok --resume ${id}` : "grok --continue";
+    const base = hasValidId && isValidGrokSessionId(id) ? `grok --resume ${id}` : "grok --continue";
     return appendResumeCliArgs(base, "grok", project ?? null, options);
   }
   if (kind === "kimi") {
@@ -1271,7 +1271,7 @@ interface SshLaunchPayload extends SshConnectionSpecPayload {
   agentPath: string;
   agentInstallationId: string;
   agentRemoteMachineId: string;
-  toolSource: "" | "claude" | "codex" | "kimi";
+  toolSource: "" | "claude" | "codex" | "kimi" | "grok";
   environmentOverrides: Record<string, string>;
   initializationCommand: string | null;
   startupCommand: string | null;
@@ -1542,6 +1542,7 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
           claude: "CLAUDE_CONFIG_DIR",
           codex: "CODEX_HOME",
           kimi: "KIMI_CODE_HOME",
+          grok: "GROK_HOME",
         }[toolSource];
         resolvedEnvironmentOverrides[environmentKey] = effectiveConfigRoot;
       }

@@ -66,7 +66,7 @@ export function NativeProviderImportSection({ appType, providers, onCommitted }:
   const [preview, setPreview] = useState<NativeProviderImportPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [committing, setCommitting] = useState(false);
-  const [allowSecrets, setAllowSecrets] = useState(false);
+  const [allowSecrets, setAllowSecrets] = useState(true);
   const [allowUpdates, setAllowUpdates] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<NativeProviderImportIssue[]>([]);

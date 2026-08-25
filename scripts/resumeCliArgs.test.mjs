@@ -77,6 +77,7 @@ const historyResumeCommandPath = transpile(
 const {
   detectCodexLaunchSessionSelection,
   extractCodexResumeSessionId,
+  isValidGrokSessionId,
   stripResumeCliArgs,
 } = await import(
   pathToFileURL(join(tempDir, "resumeCliArgs.mjs")).href
@@ -274,6 +275,20 @@ test("saved-session CLI arguments reuse the same resume stripping rules", () => 
     buildResumeCliArgs("kimi", `--model k2 --session ${OLD_ID} -S ${OLD_ID} --continue`, NEW_ID),
     `--model k2 --session ${NEW_ID}`,
   );
+  assert.equal(
+    buildResumeCliArgs("grok", `--model grok --resume ${OLD_ID}`, NEW_ID),
+    `--model grok --resume ${NEW_ID}`,
+  );
+  assert.equal(buildResumeCliArgs("grok", "", "bad id"), null);
+});
+
+test("Grok session IDs reject path separators and shell metacharacters", () => {
+  assert.equal(isValidGrokSessionId("grok-session"), true);
+  assert.equal(isValidGrokSessionId(NEW_ID), true);
+  assert.equal(isValidGrokSessionId("a/b"), false);
+  assert.equal(isValidGrokSessionId("a\\b"), false);
+  assert.equal(isValidGrokSessionId("../x"), false);
+  assert.equal(isValidGrokSessionId("id;rm"), false);
 });
 
 test("Pi history resume uses --session and strips every conflicting selector", () => {
@@ -357,6 +372,14 @@ test("Kimi history source advertises local list delete resume and realtime stats
   assert.equal(kimi?.capabilities.delete, "supported");
   assert.equal(kimi?.capabilities.resume, "supported");
   assert.equal(kimi?.capabilities.realtimeStats, "supported");
+});
+
+test("Grok history source advertises local list delete resume and realtime stats", () => {
+  const grok = HISTORY_SOURCE_DESCRIPTOR_BY_ID.get("grok");
+  assert.equal(grok?.capabilities.list, "supported");
+  assert.equal(grok?.capabilities.delete, "supported");
+  assert.equal(grok?.capabilities.resume, "supported");
+  assert.equal(grok?.capabilities.realtimeStats, "supported");
 });
 
 test("Pi history source advertises local resume support", () => {

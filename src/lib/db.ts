@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import Database from "@tauri-apps/plugin-sql";
 import { getCliManagerDataPaths } from "./appPaths";
+import { logWarn } from "./logger";
 
 let db: Database | null = null;
 let dbLoadPromise: Promise<Database> | null = null;
 let migrationRepairPromise: Promise<void> | null = null;
 let pragmaApplied = false;
+let projectPathBackfillStarted = false;
 
 async function repairKnownMigrationDrift(): Promise<void> {
   if (!migrationRepairPromise) {
@@ -51,6 +53,15 @@ export async function getDb(): Promise<Database> {
       // PRAGMA 失败不应阻塞应用启动
       pragmaApplied = false;
     }
+  }
+  if (!projectPathBackfillStarted) {
+    projectPathBackfillStarted = true;
+    // Legacy request-log project paths can contain millions of rows. Start
+    // restart-safe short batches only after SQLx migrations and connection
+    // pragmas are ready; callers do not wait for the historical backfill.
+    void invoke("db_backfill_request_log_project_paths").catch((err) => {
+      logWarn("Request-log project-path background backfill failed", err);
+    });
   }
   return db;
 }

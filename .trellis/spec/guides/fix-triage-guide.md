@@ -124,10 +124,12 @@ This document does not restate those two; open them when needed.
 | Multi-session / Workspan | Single session / multiple sessions / switching across Workspans |
 | Focus-mode toggle | On / off |
 | Runtime environment | Local PowerShell/CMD/Pwsh / WSL / Bash |
-| Worktree | Main repo / Worktree subdirectory / Worktree directory already missing |
+| Worktree | Main repo / Worktree subdirectory / Worktree directory already missing / **`.git` is a *file*, not a directory** (inside a linked worktree) |
 | CLI Hook | Claude/Codex hook installed / not installed / only one installed |
 
 > This table is alive. Every time you hit "another bug caused by a scenario nobody thought of," add that dimension here (in the spirit of index.md's Contributing note).
+
+> Real case (issue #227): the file explorer hid `.git` via a name check gated on `entry.kind === "directory"`. Inside a linked git worktree `.git` is a **file**, so the gate silently failed and `.git` showed up in the tree. Any name-based check for VCS/tooling metadata must not assume the entry is a directory.
 
 ---
 

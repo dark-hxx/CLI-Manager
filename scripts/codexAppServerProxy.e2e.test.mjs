@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -173,8 +174,11 @@ const temporaryDirectory = mkdtempSync(
 );
 
 try {
-  const fakeCodexScript = path.join(temporaryDirectory, "fake-codex.mjs");
-  const fakeCodexCmd = path.join(temporaryDirectory, "codex.cmd");
+  const launcherDirectory = path.join(temporaryDirectory, "Codex Launcher With Spaces 中文");
+  mkdirSync(launcherDirectory, { recursive: true });
+  const fakeCodexScript = path.join(launcherDirectory, "fake-codex.mjs");
+  const fakeCodexCmd = path.join(launcherDirectory, "codex.cmd");
+  const verbatimFakeCodexCmd = `\\\\?\\${fakeCodexCmd}`;
   writeFileSync(
     fakeCodexScript,
     `import { writeFileSync } from "node:fs";
@@ -225,7 +229,7 @@ process.exitCode = Number(process.env.FAKE_CODEX_EXIT_CODE || "0");
   const providerCapture = path.join(temporaryDirectory, "provider.json");
   const withProvider = runProxy({
     proxyPath,
-    launcher: fakeCodexCmd,
+    launcher: verbatimFakeCodexCmd,
     childArgs: ["app-server", "--listen", "stdio://"],
     capturePath: providerCapture,
     provider: true,

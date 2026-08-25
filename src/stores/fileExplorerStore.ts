@@ -24,6 +24,7 @@ import {
   sshRemoteReadFile,
   sshRemoteSearch,
   type SshRemoteFileContext,
+  type SshRemoteFileOperationOptions,
 } from "../lib/sshRemoteFiles";
 
 type ClipboardMode = "copy" | "move";
@@ -94,6 +95,10 @@ interface ProjectFileEditorWorkspace {
   activeFilePath: string | null;
 }
 
+interface FileExplorerRefreshOptions {
+  silent?: boolean;
+}
+
 interface FileExplorerStore {
   project: Project | null;
   remoteFileContext: SshRemoteFileContext | null;
@@ -118,8 +123,8 @@ interface FileExplorerStore {
   getProjectEditorWorkspaces: (projectId: string) => ProjectFileEditorWorkspace[];
   clearProjectEditorWorkspaces: (projectId: string) => void;
   refresh: () => Promise<void>;
-  refreshVisibleState: (changedPaths?: string[]) => Promise<void>;
-  refreshVisibleStateOnce: (changedPaths?: string[]) => Promise<void>;
+  refreshVisibleState: (changedPaths?: string[], options?: FileExplorerRefreshOptions) => Promise<void>;
+  refreshVisibleStateOnce: (changedPaths?: string[], options?: FileExplorerRefreshOptions) => Promise<void>;
   refreshGitChanges: () => Promise<void>;
   loadDir: (path: string) => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
@@ -317,6 +322,7 @@ const inFlightGitChangeRequests = new Map<string, Promise<GitFileChange[]>>();
 const nonGitProjectPaths = new Set<string>();
 let refreshVisibleStateInFlight: Promise<void> | null = null;
 let pendingRefreshChangedPaths: Set<string> | null | undefined;
+let pendingRefreshOptions: FileExplorerRefreshOptions | undefined;
 const remoteFileContextReleases = new Map<string, Promise<void>>();
 
 export function isDefaultCollapsedDirectoryName(name: string): boolean {
@@ -453,12 +459,13 @@ async function loadProjectFile(
   project: Project,
   entry: Pick<ProjectFileEntry, "path" | "name" | "sizeBytes" | "modifiedMs">,
   remoteContext?: SshRemoteFileContext | null,
+  options?: SshRemoteFileOperationOptions,
 ): Promise<{ file: ActiveProjectFile; errorMessage?: string }> {
   try {
     const guardError = previewGuardError(entry.path, entry.sizeBytes);
     if (guardError) throw new Error(guardError);
     if (remoteContext) {
-      const remote = await sshRemoteReadFile(remoteContext, entry.path);
+      const remote = await sshRemoteReadFile(remoteContext, entry.path, options);
       if (remote.previewKind === "image") {
         const match = remote.content.match(/^data:([^;]+);base64,(.*)$/s);
         if (!match) throw new Error("remote_file_image_invalid");
@@ -660,6 +667,14 @@ function mergePendingRefreshPaths(changedPaths?: string[]): void {
   for (const path of changedPaths) pendingRefreshChangedPaths.add(path);
 }
 
+function mergePendingRefreshOptions(options?: FileExplorerRefreshOptions): void {
+  if (!options?.silent) {
+    pendingRefreshOptions = {};
+    return;
+  }
+  pendingRefreshOptions ??= { silent: true };
+}
+
 function remoteFileContextReleaseKey(context: SshRemoteFileContext): string {
   return `${context.launch.hostId}\0${context.consumerId}`;
 }
@@ -854,25 +869,30 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     await get().refreshVisibleState();
   },
 
-  refreshVisibleState: async (changedPaths) => {
+  refreshVisibleState: async (changedPaths, options) => {
     const normalizedChangedPaths = changedPaths
       ?.map(normalizeRelativeFilePath)
       .filter((path, index, paths) => paths.indexOf(path) === index);
 
     if (refreshVisibleStateInFlight) {
       mergePendingRefreshPaths(normalizedChangedPaths);
+      mergePendingRefreshOptions(options);
       await refreshVisibleStateInFlight;
       return;
     }
 
     refreshVisibleStateInFlight = (async () => {
       let nextChangedPaths = normalizedChangedPaths;
+      let nextOptions = options;
       while (true) {
-        await get().refreshVisibleStateOnce(nextChangedPaths);
+        await get().refreshVisibleStateOnce(nextChangedPaths, nextOptions);
         if (pendingRefreshChangedPaths === undefined) break;
         const pending = pendingRefreshChangedPaths;
+        const pendingOptions = pendingRefreshOptions;
         pendingRefreshChangedPaths = undefined;
+        pendingRefreshOptions = undefined;
         nextChangedPaths = pending === null ? undefined : Array.from(pending);
+        nextOptions = pendingOptions;
       }
     })().finally(() => {
       refreshVisibleStateInFlight = null;
@@ -881,7 +901,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     await refreshVisibleStateInFlight;
   },
 
-  refreshVisibleStateOnce: async (changedPaths) => {
+  refreshVisibleStateOnce: async (changedPaths, options) => {
     const state = get();
     const project = state.project;
     if (!project) return;
@@ -901,7 +921,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
           return {
             path,
             children: remoteFileContext
-              ? await sshRemoteListDir(remoteFileContext, path)
+              ? await sshRemoteListDir(remoteFileContext, path, options)
               : await listDir(project.path, path),
           };
         } catch (err) {
@@ -954,7 +974,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
           continue;
         }
 
-        const { file: refreshedFile } = await loadProjectFile(project, latestEntry, remoteFileContext);
+        const { file: refreshedFile } = await loadProjectFile(project, latestEntry, remoteFileContext, options);
         nextOpenFiles.push(refreshedFile);
       }
 

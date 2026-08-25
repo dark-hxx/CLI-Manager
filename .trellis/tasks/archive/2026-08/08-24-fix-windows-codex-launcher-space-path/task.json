@@ -1,0 +1,28 @@
+{
+  "id": "fix-windows-codex-launcher-space-path",
+  "name": "fix-windows-codex-launcher-space-path",
+  "title": "Fix Windows Codex launcher paths with spaces",
+  "description": "Make the managed Codex app-server proxy launch .cmd/.bat files from Windows paths containing spaces and extended path prefixes without weakening command-injection protections, and decode localized probe diagnostics correctly.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend,windows-process,cc-connect,codex-proxy",
+  "package": null,
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-08-24",
+  "completedAt": "2026-08-24",
+  "branch": "fix/windows-codex-launcher-space-path",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "changelogVersion": "TEMP"
+  }
+}

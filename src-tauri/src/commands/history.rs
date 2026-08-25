@@ -1818,13 +1818,15 @@ pub async fn history_delete_session(
     tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
             .with_kimi_config_dir(kimi_config_dir);
-        if !matches!(source.as_str(), "claude" | "codex" | "kimi") {
+        if !matches!(source.as_str(), "claude" | "codex" | "kimi" | "grok") {
             return Err("unsupported_history_mutation_source".to_string());
         }
         let file_ref = validate_session_file_ref(&file_path, &source, &project_key, &roots)?;
         ensure_source_mutation_unlocked(&source)?;
         if source == "kimi" {
             kimi::delete_kimi_session_tree(&file_ref, &kimi::resolve_kimi_history_root(&roots))?;
+        } else if source == "grok" {
+            delete_grok_session_tree(&file_ref, &resolve_grok_history_root(&roots))?;
         } else {
             delete_session_tree(&file_ref)?;
         }
@@ -7034,6 +7036,14 @@ fn collect_antigravity_session_files(root: &Path) -> Vec<SessionFileRef> {
 }
 
 fn collect_grok_session_files(root: &Path) -> Vec<SessionFileRef> {
+    let root_str = root.to_string_lossy();
+    if crate::wsl::is_wsl_config_dir(&root_str) {
+        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&root_str) {
+            return collect_wsl_grok_session_files(&linux_path, &distro);
+        }
+        warn!("[wsl] 路径检测为 WSL 但解析失败: {root_str}，不回退宿主递归");
+        return Vec::new();
+    }
     if !root.exists() {
         return Vec::new();
     }
@@ -7049,6 +7059,160 @@ fn collect_grok_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+fn collect_wsl_grok_session_files(linux_root: &str, distro: &str) -> Vec<SessionFileRef> {
+    wsl_find_session_files(linux_root, distro, "updates.jsonl", &|linux_path| {
+        grok_project_key_from_linux_path(linux_path)
+    })
+    .into_iter()
+    .filter(|hit| looks_like_grok_linux_updates(&hit.linux_path))
+    .map(|hit| {
+        let unc = crate::wsl::linux_to_unc_wsl_path(&hit.linux_path, distro);
+        remember_wsl_session_fingerprint(&unc, hit.fingerprint);
+        let path = PathBuf::from(unc);
+        SessionFileRef {
+            source: "grok".to_string(),
+            project_key: grok_project_key_from_path(&path),
+            path,
+        }
+    })
+    .collect()
+}
+
+fn looks_like_grok_linux_updates(linux_path: &str) -> bool {
+    let normalized = linux_path.trim_end_matches('/');
+    let Some((parent, name)) = normalized.rsplit_once('/') else {
+        return false;
+    };
+    if !name.eq_ignore_ascii_case("updates.jsonl") {
+        return false;
+    }
+    parent
+        .rsplit_once('/')
+        .is_some_and(|(workspace, session_id)| !workspace.is_empty() && !session_id.is_empty())
+}
+
+fn grok_project_key_from_linux_path(linux_path: &str) -> String {
+    linux_path
+        .trim_end_matches('/')
+        .rsplit_once('/')
+        .and_then(|(parent, _)| parent.rsplit_once('/'))
+        .map(|(_, session_id)| session_id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| "grok".to_string())
+}
+
+fn wsl_find_exact_grok_updates(
+    linux_root: &str,
+    distro: &str,
+    session_id: &str,
+) -> Option<PathBuf> {
+    let wsl_exe = crate::wsl::find_wsl_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "wsl.exe".to_string());
+    let path_pattern = format!("*/{session_id}/updates.jsonl");
+    let args = [
+        "-d",
+        distro,
+        "--exec",
+        "find",
+        linux_root,
+        "-path",
+        path_pattern.as_str(),
+        "-type",
+        "f",
+    ];
+    let (stdout, _) = wsl_command_text(&wsl_exe, &args).ok()?;
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| looks_like_grok_linux_updates(line))
+        .map(|linux_path| PathBuf::from(crate::wsl::linux_to_unc_wsl_path(linux_path, distro)))
+}
+
+fn grok_session_dir_from_updates(path: &Path) -> Option<PathBuf> {
+    looks_like_grok_updates_file(path).then(|| path.parent().map(Path::to_path_buf))?
+}
+
+fn is_valid_grok_session_id(session_id: &str) -> bool {
+    let session_id = session_id.trim();
+    if session_id.is_empty() || session_id.len() > 128 {
+        return false;
+    }
+    if session_id.contains(['/', '\\', '\0']) || session_id.contains("..") {
+        return false;
+    }
+    session_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+fn delete_grok_session_tree(file_ref: &SessionFileRef, home: &Path) -> Result<(), String> {
+    let backups_dir = default_backup_root()?;
+    delete_grok_session_tree_with_backup_root(file_ref, home, &backups_dir)
+}
+
+fn delete_grok_session_tree_with_backup_root(
+    file_ref: &SessionFileRef,
+    home: &Path,
+    backups_dir: &Path,
+) -> Result<(), String> {
+    let Some(session_dir) = grok_session_dir_from_updates(&file_ref.path) else {
+        return Err("invalid_session_file".to_string());
+    };
+    let canonical_home = home
+        .canonicalize()
+        .map_err(|_| "history_source_not_found".to_string())?;
+    let canonical_session = session_dir
+        .canonicalize()
+        .map_err(|_| format!("Session directory not found: {}", session_dir.display()))?;
+    if canonical_session == canonical_home
+        || canonical_session.parent() == Some(canonical_home.as_path())
+        || !path_within_history_scope(&canonical_session, &canonical_home)
+    {
+        return Err("session_file_outside_history_scope".to_string());
+    }
+    let session_id = canonical_session
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|id| is_valid_grok_session_id(id))
+        .ok_or_else(|| "invalid_session_file".to_string())?;
+
+    let updates = canonical_session.join("updates.jsonl");
+    let summary = canonical_session.join("summary.json");
+    let signals = canonical_session.join("signals.json");
+    let mut backups = Vec::new();
+    for path in [&updates, &summary, &signals] {
+        if path.exists() {
+            backups.push((
+                path.clone(),
+                create_file_backup_snapshot(
+                    path,
+                    backups_dir,
+                    "grok",
+                    &session_id,
+                    "sessionDelete",
+                )?,
+            ));
+        }
+    }
+
+    match fs::remove_dir_all(&canonical_session) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => {
+            for (path, backup) in backups.iter().rev() {
+                if let Err(restore_err) = fs::copy(backup, path) {
+                    let _ = lock_source_mutations("grok");
+                    return Err(format!(
+                        "manualRecoveryRequired: delete={err}; restore={restore_err}"
+                    ));
+                }
+            }
+            Err(format!("failedRolledBack: {err}"))
+        }
+    }
+}
+
 fn find_exact_grok_session_in_root(
     root: &Path,
     session_id: &str,
@@ -7061,6 +7225,35 @@ fn find_exact_grok_session_in_root(
     let target_project_path = project_path
         .map(normalize_history_path)
         .filter(|value| !value.is_empty());
+    let root_str = root.to_string_lossy();
+    if crate::wsl::is_wsl_config_dir(&root_str) {
+        let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&root_str) else {
+            warn!("[wsl] 路径检测为 WSL 但解析失败: {root_str}，跳过 Grok 精确直查");
+            return None;
+        };
+        let path = wsl_find_exact_grok_updates(&linux_path, &distro, session_id)?;
+        let file_ref = SessionFileRef {
+            source: "grok".to_string(),
+            project_key: grok_project_key_from_path(&path),
+            path: path.clone(),
+        };
+        if target_project_path
+            .as_deref()
+            .is_some_and(|target| !session_matches_project_path(&file_ref, target))
+        {
+            return None;
+        }
+        let fingerprint = session_file_fingerprint(&file_ref.path);
+        let computed = scan_session_computation(
+            &file_ref.path,
+            fingerprint.created_at,
+            fingerprint.updated_at,
+        );
+        if computed.session_id != session_id {
+            return None;
+        }
+        return Some(summary_from_computation(&file_ref, &computed));
+    }
     for workspace in read_dir_entries(root) {
         let path = workspace.path().join(session_id).join("updates.jsonl");
         if !looks_like_grok_updates_file(&path) {
@@ -14308,6 +14501,137 @@ mod tests {
         assert_eq!(iterated[0], "hello grok");
         assert_eq!(iterated[1], "hi there");
         assert!(iterated[2].contains("Read file"));
+    }
+
+    #[test]
+    fn grok_delete_removes_session_directory_inside_history_home() {
+        let temp_dir = TempDir::new().unwrap();
+        let home = temp_dir.path().join(".grok").join("sessions");
+        let session_dir = home.join("workspace").join("grok-session");
+        let path = session_dir.join("updates.jsonl");
+        write_text(
+            &session_dir.join("summary.json"),
+            &json!({ "info": { "id": "grok-session" } }).to_string(),
+        );
+        write_text(&path, "{}\n");
+        let file_ref = SessionFileRef {
+            source: "grok".to_string(),
+            project_key: "workspace".to_string(),
+            path: path.clone(),
+        };
+
+        delete_grok_session_tree_with_backup_root(
+            &file_ref,
+            &home,
+            &temp_dir.path().join("backups"),
+        )
+        .unwrap();
+        assert!(!path.exists());
+        assert!(!session_dir.exists());
+        assert!(home.exists());
+    }
+
+    #[test]
+    fn grok_delete_rejects_session_outside_history_home() {
+        let temp_dir = TempDir::new().unwrap();
+        let home = temp_dir.path().join(".grok").join("sessions");
+        std::fs::create_dir_all(&home).unwrap();
+        let outsider = temp_dir.path().join("outside").join("grok-session");
+        let path = outsider.join("updates.jsonl");
+        write_text(
+            &outsider.join("summary.json"),
+            &json!({ "info": { "id": "grok-session" } }).to_string(),
+        );
+        write_text(&path, "{}\n");
+        let file_ref = SessionFileRef {
+            source: "grok".to_string(),
+            project_key: "workspace".to_string(),
+            path,
+        };
+        let err = delete_grok_session_tree_with_backup_root(
+            &file_ref,
+            &home,
+            &temp_dir.path().join("backups"),
+        )
+        .unwrap_err();
+        assert_eq!(err, "session_file_outside_history_scope");
+    }
+
+    #[test]
+    fn grok_delete_rejects_session_at_history_home() {
+        let temp_dir = TempDir::new().unwrap();
+        let home = temp_dir.path().join(".grok").join("sessions");
+        let path = home.join("updates.jsonl");
+        write_text(
+            &home.join("summary.json"),
+            &json!({ "info": { "id": "sessions" } }).to_string(),
+        );
+        write_text(&path, "{}\n");
+        let file_ref = SessionFileRef {
+            source: "grok".to_string(),
+            project_key: "workspace".to_string(),
+            path,
+        };
+        let err = delete_grok_session_tree_with_backup_root(
+            &file_ref,
+            &home,
+            &temp_dir.path().join("backups"),
+        )
+        .unwrap_err();
+        assert_eq!(err, "session_file_outside_history_scope");
+        assert!(home.exists());
+    }
+
+    #[test]
+    fn grok_delete_rejects_workspace_directory_under_history_home() {
+        let temp_dir = TempDir::new().unwrap();
+        let home = temp_dir.path().join(".grok").join("sessions");
+        let workspace = home.join("workspace");
+        let path = workspace.join("updates.jsonl");
+        write_text(
+            &workspace.join("summary.json"),
+            &json!({ "info": { "id": "workspace" } }).to_string(),
+        );
+        write_text(&path, "{}\n");
+        let file_ref = SessionFileRef {
+            source: "grok".to_string(),
+            project_key: "workspace".to_string(),
+            path,
+        };
+        let err = delete_grok_session_tree_with_backup_root(
+            &file_ref,
+            &home,
+            &temp_dir.path().join("backups"),
+        )
+        .unwrap_err();
+        assert_eq!(err, "session_file_outside_history_scope");
+        assert!(workspace.exists());
+        assert!(home.exists());
+    }
+
+    #[test]
+    fn grok_linux_update_paths_do_not_use_host_path_parser() {
+        assert!(looks_like_grok_linux_updates(
+            "/home/u/.grok/sessions/workspace/abc-123/updates.jsonl"
+        ));
+        assert!(looks_like_grok_linux_updates(
+            r"/home/u/.grok/sessions/C:\github\CLI-Manager/abc-123/updates.jsonl"
+        ));
+        assert!(!looks_like_grok_linux_updates("updates.jsonl"));
+        assert!(!looks_like_grok_linux_updates("/updates.jsonl"));
+        assert!(!looks_like_grok_linux_updates("/tmp/updates.jsonl"));
+        assert_eq!(
+            grok_project_key_from_linux_path(
+                "/home/u/.grok/sessions/workspace/abc-123/updates.jsonl"
+            ),
+            "abc-123"
+        );
+        assert_eq!(
+            grok_project_key_from_linux_path(
+                r"/home/u/.grok/sessions/C:\github\CLI-Manager/abc-123/updates.jsonl"
+            ),
+            "abc-123"
+        );
     }
 
     #[test]

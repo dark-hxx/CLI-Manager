@@ -42,11 +42,12 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const SOURCES: SshToolSource[] = ["claude", "codex", "kimi"];
+const SOURCES: SshToolSource[] = ["claude", "codex", "kimi", "grok"];
 const SOURCE_METADATA = {
   claude: { label: "Claude", icon: "claude-code" },
   codex: { label: "Codex", icon: "codex" },
   kimi: { label: "Kimi Code", icon: "kimi" },
+  grok: { label: "Grok Build", icon: "grok" },
 } as const;
 const OFFICIAL_AGENT_MANIFEST_PATH = /^\/dark-hxx\/CLI-Manager\/releases\/(?:latest\/download|download\/[^/]+)\/ssh-agent-release-manifest\.json$/;
 const R2_AGENT_MANIFEST_PATH = "/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json";
@@ -157,6 +158,8 @@ const HOOK_FILE_ROLE_KEYS: Record<string, TranslationKey> = {
   codexHooks: "settings.sshHosts.cliIntegration.hook.file.codexHooks",
   codexFeature: "settings.sshHosts.cliIntegration.hook.file.codexFeature",
   kimiConfig: "settings.sshHosts.cliIntegration.hook.file.kimiConfig",
+  grokHooks: "settings.sshHosts.cliIntegration.hook.file.grokHooks",
+  grokCompat: "settings.sshHosts.cliIntegration.hook.file.grokCompat",
   unknown: "settings.sshHosts.cliIntegration.hook.file.unknown",
 };
 
@@ -177,7 +180,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   const recordHookReport = useSshAgentIntegrationStore((state) => state.recordHookReport);
   const projects = useProjectStore((state) => state.projects);
   const fetchProjects = useProjectStore((state) => state.fetchProjects);
-  const [roots, setRoots] = useState<Record<SshToolSource, string>>({ claude: "", codex: "", kimi: "" });
+  const [roots, setRoots] = useState<Record<SshToolSource, string>>({ claude: "", codex: "", kimi: "", grok: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pickerSource, setPickerSource] = useState<SshToolSource | null>(null);
@@ -263,6 +266,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       claude: hostPreferences.get("claude") ?? "",
       codex: hostPreferences.get("codex") ?? "",
       kimi: hostPreferences.get("kimi") ?? "",
+      grok: hostPreferences.get("grok") ?? "",
     });
     setError("");
   }, [host, hostPreferences, open]);

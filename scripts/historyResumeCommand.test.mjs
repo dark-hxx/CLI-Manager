@@ -26,6 +26,7 @@ writeFileSync(
 writeFileSync(
   join(tempDir, "resumeCliArgs.mjs"),
   `export const isValidKimiSessionId = (value) => /^[A-Za-z0-9_-]{1,128}$/.test(value);
+export const isValidGrokSessionId = (value) => /^[A-Za-z0-9_-]{1,128}$/.test(value);
 export const stripKimiResumeCliArgs = (value) => value ?? "";\n`,
   "utf8",
 );
@@ -92,6 +93,11 @@ test("Kimi shell metacharacters are never passed to the CLI", () => {
   assert.equal(buildHistoryResumeCommand({ source: "kimi", session_id: "01KIMI;calc" }), null);
 });
 
+test("Grok shell metacharacters are never passed to the CLI", () => {
+  assert.equal(buildHistoryResumeCommand({ source: "grok", session_id: "grok&calc" }), null);
+  assert.equal(buildHistoryResumeCommand({ source: "grok", session_id: "grok;calc" }), null);
+});
+
 test("OpenCode resume argument stripping handles separated, equals and quoted forms", () => {
   assert.equal(
     stripOpenCodeResumeCliArgs(
@@ -121,5 +127,9 @@ test("other history sources keep their existing command builders", () => {
   assert.equal(
     buildHistoryResumeCommand({ source: "kimi", session_id: "01KIMISESSIONID0000000001" }),
     "kimi --session 01KIMISESSIONID0000000001",
+  );
+  assert.equal(
+    buildHistoryResumeCommand({ source: "grok", session_id: "grok-session" }),
+    "grok --resume grok-session",
   );
 });

@@ -25,7 +25,7 @@ export type SshAuthMode =
 export type SshJumpMode = "none" | "host" | "proxy_jump";
 
 export type SshProxyType = "none" | "http" | "socks5" | "proxy_command";
-export type SshToolSource = "claude" | "codex" | "kimi";
+export type SshToolSource = "claude" | "codex" | "kimi" | "grok";
 export type SshHistorySource = Extract<SshToolSource, "claude" | "codex">;
 export type SshToolIntegrationScopeKind = "hostPrimary" | "projectOverride" | "retainedRoot";
 export type SshToolIntegrationValidationState =

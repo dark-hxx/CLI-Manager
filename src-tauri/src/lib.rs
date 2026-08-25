@@ -1654,6 +1654,7 @@ pub fn run() {
             app_open_devtools,
             app_paths::app_get_data_paths,
             commands::db_repair::db_repair_known_migration_drift,
+            commands::db_repair::db_backfill_request_log_project_paths,
             commands::fonts::list_system_fonts,
             commands::background::save_background_image,
             commands::background::cleanup_unused_backgrounds,

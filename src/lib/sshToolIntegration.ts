@@ -4,6 +4,7 @@ export const DEFAULT_SSH_TOOL_CONFIG_ROOT: Record<SshToolSource, string> = {
   claude: "$HOME/.claude",
   codex: "$HOME/.codex",
   kimi: "$HOME/.kimi-code",
+  grok: "$HOME/.grok",
 };
 
 function firstExecutableToken(command: string): string {
@@ -21,6 +22,7 @@ export function resolveSshToolSource(command: string | null | undefined): SshToo
   if (executable === "claude" || executable === "claude.exe") return "claude";
   if (executable === "codex" || executable === "codex.exe") return "codex";
   if (["kimi", "kimi.exe", "kimi.cmd", "kimi.ps1"].includes(executable ?? "")) return "kimi";
+  if (["grok", "grok.exe", "grok.cmd", "grok.ps1"].includes(executable ?? "")) return "grok";
   return null;
 }
 
@@ -43,11 +45,11 @@ export function parseStoredSshHookReport(value: string): SshRemoteHookConfigRepo
   try {
     const report = JSON.parse(value) as SshRemoteHookConfigReport;
     const historyCandidate = report?.installation?.historySourceCandidate;
-    const historyCandidateValid = report?.source === "kimi"
+    const historyCandidateValid = report?.source === "kimi" || report?.source === "grok"
       ? historyCandidate == null
       : report?.installation == null || historyCandidate?.source === report.source;
     return report
-      && ["claude", "codex", "kimi"].includes(report.source)
+      && ["claude", "codex", "kimi", "grok"].includes(report.source)
       && ["notInstalled", "partialInstalled", "outdated", "installed", "conflict"].includes(report.status)
       && Array.isArray(report.configFiles)
       && historyCandidateValid

@@ -568,6 +568,23 @@ fn build_codex_child_args(
 }
 
 #[cfg(target_os = "windows")]
+fn windows_shell_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = value.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn contains_unsupported_script_characters(value: &str) -> bool {
+    value.contains(['&', '|', '<', '>', '^', '%', '!', '\r', '\n'])
+}
+
+#[cfg(target_os = "windows")]
 fn codex_command(launcher: &Path, args: &[String]) -> Result<Command, String> {
     let extension = launcher
         .extension()
@@ -577,23 +594,30 @@ fn codex_command(launcher: &Path, args: &[String]) -> Result<Command, String> {
         extension.to_ascii_lowercase().as_str(),
         "cmd" | "bat" | "ps1"
     );
-    let launcher_value = launcher.to_string_lossy();
+    let shell_launcher = windows_shell_path(launcher);
+    let launcher_value = shell_launcher.to_string_lossy();
     if is_script
         && std::iter::once(launcher_value.as_ref())
             .chain(args.iter().map(String::as_str))
-            .any(|value| value.contains(['&', '|', '<', '>', '^', '%', '!']))
+            .any(contains_unsupported_script_characters)
     {
         return Err("Codex launcher contains unsupported script characters".to_string());
     }
     if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
         let mut command = silent_command("cmd.exe");
-        command.args(["/d", "/c"]).arg(launcher).args(args);
+        // `call` is the fixed first command after /c, so CMD honors Rust's
+        // quoting for a script path that contains spaces. Passing the script
+        // itself as the first /c token makes CMD strip/split its outer quotes.
+        command
+            .args(["/d", "/s", "/c", "call"])
+            .arg(&shell_launcher)
+            .args(args);
         Ok(command)
     } else if extension.eq_ignore_ascii_case("ps1") {
         let mut command = silent_command("powershell.exe");
         command
             .args(["-NoProfile", "-File"])
-            .arg(launcher)
+            .arg(&shell_launcher)
             .args(args);
         Ok(command)
     } else {
@@ -1245,6 +1269,34 @@ mod tests {
             "app-server".to_string(),
         ]));
         assert!(!is_app_server_command(&[]));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_launch_paths_drop_verbatim_prefixes() {
+        assert_eq!(
+            windows_shell_path(Path::new(r"\\?\D:\Code Space\codex.cmd")),
+            PathBuf::from(r"D:\Code Space\codex.cmd")
+        );
+        assert_eq!(
+            windows_shell_path(Path::new(r"\\?\UNC\server\share\codex.cmd")),
+            PathBuf::from(r"\\server\share\codex.cmd")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_launch_rejects_command_boundary_characters() {
+        for unsafe_value in [
+            r"D:\codex&more.cmd",
+            "D:\\codex\rbreak.cmd",
+            "model=gpt\nwhoami",
+        ] {
+            assert!(contains_unsupported_script_characters(unsafe_value));
+        }
+        assert!(!contains_unsupported_script_characters(
+            r"D:\Code Space\中文\codex.cmd"
+        ));
     }
 
     #[test]

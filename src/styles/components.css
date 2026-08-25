@@ -2051,6 +2051,15 @@
   background-color: color-mix(in srgb, var(--menu-fg) 18%, transparent);
 }
 
+/* File-tab menus render in a body portal, so bind the shared terminal skin to
+   the root theme variables instead of inheriting a file-editor ancestor. */
+.context-menu.terminal-skin.ui-file-editor-tab-menu {
+  --menu-fg: var(--terminal-theme-foreground, #d8dee9);
+  --menu-bg: var(--terminal-theme-background, #0c0e10);
+  --menu-border: color-mix(in srgb, var(--terminal-theme-foreground, #d8dee9) 18%, transparent);
+  --menu-hover: color-mix(in srgb, var(--terminal-theme-foreground, #d8dee9) 12%, transparent);
+}
+
 .ui-split-project-picker {
   border-color: var(--menu-border);
   background-color: color-mix(in srgb, var(--menu-bg) 92%, transparent);
@@ -7800,6 +7809,18 @@
   box-shadow: inset 2px 0 0 var(--term-panel-cyan, #5AC8E0);
 }
 
+/* Issue #227：忽略项不再抽离到「已折叠文件」分组，改为原位显示 + 整行淡化
+   （JetBrains 风：文件名、图标、Git 状态徽标一起变淡）。
+   hover / 选中时提亮，否则透明度会吃掉选中反馈。 */
+.ui-file-tree-row[data-ignored="true"] {
+  opacity: 0.45;
+}
+
+.ui-file-tree-row[data-ignored="true"]:hover,
+.ui-file-tree-row[data-ignored="true"][data-selected="true"] {
+  opacity: 0.75;
+}
+
 .ui-file-drag-preview {
   position: fixed;
   top: 0;
@@ -7946,6 +7967,7 @@
 }
 
 .ui-file-editor-markdown-preview .ui-markdown-terminal {
+  font-size: var(--markdown-preview-font-size, var(--font-size-ui));
   --md-text: var(--terminal-theme-foreground, #f8fafc);
   --md-muted: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 78%, var(--terminal-theme-muted, #64748b) 22%);
   --md-subtle: var(--file-editor-muted);

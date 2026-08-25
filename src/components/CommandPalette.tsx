@@ -100,7 +100,7 @@ export function CommandPalette() {
     result.push({
       id: "action:open-history",
       label: "打开历史会话",
-      description: `${sessionHistoryShortcutHint} · 查看 Claude / Codex 会话历史`,
+      description: `${sessionHistoryShortcutHint} · 查看 Claude / Codex / Kimi / Grok 会话历史`,
       category: "操作",
       action: () => {
         void useHistoryStore.getState().openHistory();

@@ -24,7 +24,7 @@ export interface UseNativeProviderCatalogResult {
   setSelectedProviderId: (providerId: string | null) => void;
   refresh: () => Promise<void>;
   refreshSelection: (providerId: string | null) => Promise<void>;
-  createProvider: (input: NativeProviderCreateInput) => Promise<void>;
+  createProvider: (input: NativeProviderCreateInput, initialApiKey?: string) => Promise<void>;
   updateProvider: (input: NativeProviderUpdateInput) => Promise<void>;
   updateDocument: (input: NativeProviderDocumentUpdateInput) => Promise<void>;
   duplicateProvider: (providerId: string, name?: string) => Promise<void>;
@@ -39,6 +39,22 @@ export interface UseNativeProviderCatalogResult {
   reorderKeys: (providerId: string, keyIds: string[]) => Promise<void>;
   revealKey: (providerId: string, keyId: string) => Promise<string>;
   clearError: () => void;
+}
+
+/** 随供应商一并创建的第一个密钥的名称。不做唯一性校验，允许与已有密钥重名。 */
+export const DEFAULT_INITIAL_KEY_LABEL = "default";
+
+/**
+ * 供应商已创建、但紧随其后的密钥创建失败。
+ *
+ * 单独建一个类型是为了让调用方能区分「整个新建失败」与「供应商建成了只差密钥」：
+ * 后者绝不能让用户重试新建，否则会多出一个重复供应商。
+ */
+export class ProviderKeyCreateAfterProviderError extends Error {
+  constructor(readonly providerId: string, readonly cause: unknown) {
+    super(providerErrorCode(cause));
+    this.name = "ProviderKeyCreateAfterProviderError";
+  }
 }
 
 /** 无历史选择时的默认供应商：优先全局启用的那个（`is_current`），否则列表第一个。 */
@@ -161,9 +177,30 @@ export function useNativeProviderCatalog(
     await fetchDetail(providerId);
   }, [fetchDetail, refresh, selectProvider]);
 
-  const createProvider = useCallback(async (input: NativeProviderCreateInput) => {
+  const createProvider = useCallback(async (input: NativeProviderCreateInput, initialApiKey?: string) => {
     await runAction("create-provider", async () => {
       const created = await invoke<NativeProviderDetail>("provider_catalog_create", { input });
+      const apiKey = initialApiKey?.trim();
+      if (!apiKey) {
+        // 密钥非必填：留空只建供应商，保留「先建壳、后补密钥」的用法。
+        await refreshSelection(created.card.id);
+        return;
+      }
+      try {
+        await invoke<NativeProviderKeySummary>("provider_key_create", {
+          input: {
+            providerId: created.card.id,
+            appType: input.appType,
+            label: DEFAULT_INITIAL_KEY_LABEL,
+            apiKey,
+            activate: true,
+          },
+        });
+      } catch (error) {
+        // 供应商已经落库了，密钥没建成。必须先把它刷进列表，否则用户重试提交会再建一个重复供应商。
+        await refreshSelection(created.card.id);
+        throw new ProviderKeyCreateAfterProviderError(created.card.id, error);
+      }
       await refreshSelection(created.card.id);
     });
   }, [refreshSelection, runAction]);

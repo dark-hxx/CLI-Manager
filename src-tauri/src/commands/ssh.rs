@@ -1044,6 +1044,7 @@ fn validate_hook_source(source: &str) -> Result<&str, String> {
         "claude" => Ok("claude"),
         "codex" => Ok("codex"),
         "kimi" => Ok("kimi"),
+        "grok" => Ok("grok"),
         _ => Err("hook_source_invalid".to_string()),
     }
 }
@@ -1172,6 +1173,7 @@ fn validate_agent_hook_report(
         "claude" => HashSet::from(["claudeSettings"]),
         "codex" => HashSet::from(["codexHooks", "codexFeature"]),
         "kimi" => HashSet::from(["kimiConfig"]),
+        "grok" => HashSet::from(["grokHooks", "grokCompat"]),
         _ => return Err("ssh_agent_hook_source_invalid".to_string()),
     };
     let mut files = HashSet::new();
@@ -1184,7 +1186,11 @@ fn validate_agent_hook_report(
             return Err("ssh_agent_hook_file_invalid".to_string());
         }
     }
-    let expected_file_count = if expected_source == "codex" { 2 } else { 1 };
+    let expected_file_count = if matches!(expected_source, "codex" | "grok") {
+        2
+    } else {
+        1
+    };
     if report.config_files.len() != expected_file_count {
         return Err("ssh_agent_hook_file_invalid".to_string());
     }
@@ -1223,7 +1229,7 @@ fn validate_agent_hook_report(
             report.source.as_str(),
             record.history_source_candidate.as_ref(),
         ) {
-            ("kimi", None) => true,
+            ("kimi" | "grok", None) => true,
             ("claude" | "codex", Some(candidate)) => {
                 candidate.source == report.source
                     && candidate.canonical_config_root == report.canonical_config_root
@@ -1851,6 +1857,7 @@ fn hook_request(
         "claude" => HashSet::from(["claudeSettings"]),
         "codex" => HashSet::from(["codexHooks", "codexFeature"]),
         "kimi" => HashSet::from(["kimiConfig"]),
+        "grok" => HashSet::from(["grokHooks", "grokCompat"]),
         _ => return Err("hook_source_invalid".to_string()),
     };
     let mut seen = HashSet::new();
@@ -2595,6 +2602,118 @@ mod tests {
                 installation_id,
                 "machine",
                 "~/.kimi-code",
+                None,
+            )
+            .unwrap_err(),
+            "ssh_agent_hook_record_invalid"
+        );
+    }
+
+    #[test]
+    fn grok_hook_report_accepts_optional_history_candidate_as_absent() {
+        let installation_id = "00000000-0000-4000-8000-000000000001";
+        let hooks_path = "/home/dev/.grok/hooks/cli-manager.json";
+        let config_path = "/home/dev/.grok/config.toml";
+        let hooks_fingerprint = "a".repeat(64);
+        let config_fingerprint = "c".repeat(64);
+        let report = HookConfigReport {
+            action: "installed".to_string(),
+            status: "installed".to_string(),
+            source: "grok".to_string(),
+            installation_id: installation_id.to_string(),
+            remote_machine_id: "machine".to_string(),
+            configured_config_root: "~/.grok".to_string(),
+            canonical_config_root: "/home/dev/.grok".to_string(),
+            config_root_hash: "b".repeat(64),
+            config_root_exists: true,
+            will_create_config_root: false,
+            config_files: vec![
+                HookConfigFile {
+                    role: "grokHooks".to_string(),
+                    canonical_path: hooks_path.to_string(),
+                    fingerprint: hooks_fingerprint.clone(),
+                    exists: true,
+                },
+                HookConfigFile {
+                    role: "grokCompat".to_string(),
+                    canonical_path: config_path.to_string(),
+                    fingerprint: config_fingerprint.clone(),
+                    exists: true,
+                },
+            ],
+            managed_entries: 11,
+            required_entries: 11,
+            changes: vec![
+                HookConfigChange {
+                    role: "grokHooks".to_string(),
+                    canonical_path: hooks_path.to_string(),
+                    before_fingerprint: "missing".to_string(),
+                    after_fingerprint: hooks_fingerprint.clone(),
+                    action: "create".to_string(),
+                },
+                HookConfigChange {
+                    role: "grokCompat".to_string(),
+                    canonical_path: config_path.to_string(),
+                    before_fingerprint: "missing".to_string(),
+                    after_fingerprint: config_fingerprint.clone(),
+                    action: "create".to_string(),
+                },
+            ],
+            installation: Some(HookInstallationRecord {
+                source: "grok".to_string(),
+                installation_id: installation_id.to_string(),
+                owner_id: format!("cli-manager-ssh-agent:{installation_id}"),
+                configured_config_root: "~/.grok".to_string(),
+                canonical_config_root: "/home/dev/.grok".to_string(),
+                config_files: vec![
+                    HookInstallationFile {
+                        role: "grokHooks".to_string(),
+                        canonical_path: hooks_path.to_string(),
+                        before_fingerprint: "missing".to_string(),
+                        after_fingerprint: hooks_fingerprint,
+                    },
+                    HookInstallationFile {
+                        role: "grokCompat".to_string(),
+                        canonical_path: config_path.to_string(),
+                        before_fingerprint: "missing".to_string(),
+                        after_fingerprint: config_fingerprint,
+                    },
+                ],
+                managed_entries: 11,
+                adapter_version: 1,
+                installed_at: 1,
+                history_source_candidate: None,
+            }),
+        };
+        validate_agent_hook_report(
+            &report,
+            "installed",
+            "grok",
+            installation_id,
+            "machine",
+            "~/.grok",
+            Some("/home/dev/.grok"),
+        )
+        .unwrap();
+
+        let mut invalid = report.clone();
+        invalid
+            .installation
+            .as_mut()
+            .unwrap()
+            .history_source_candidate = Some(HookHistorySourceCandidate {
+            source: "grok".to_string(),
+            canonical_config_root: "/home/dev/.grok".to_string(),
+            config_root_hash: "b".repeat(64),
+        });
+        assert_eq!(
+            validate_agent_hook_report(
+                &invalid,
+                "installed",
+                "grok",
+                installation_id,
+                "machine",
+                "~/.grok",
                 None,
             )
             .unwrap_err(),

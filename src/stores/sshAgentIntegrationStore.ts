@@ -99,8 +99,9 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
       claude: roots.claude.trim(),
       codex: roots.codex.trim(),
       kimi: roots.kimi.trim(),
+      grok: roots.grok.trim(),
     } satisfies Record<SshToolSource, string>;
-    for (const source of ["claude", "codex", "kimi"] as const) {
+    for (const source of ["claude", "codex", "kimi", "grok"] as const) {
       const validationError = validateSshToolConfigRoot(normalizedRoots[source]);
       if (validationError) throw new Error(validationError);
     }
@@ -109,6 +110,7 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
       claudeRoot: normalizedRoots.claude,
       codexRoot: normalizedRoots.codex,
       kimiRoot: normalizedRoots.kimi,
+      grokRoot: normalizedRoots.grok,
       updatedAt: Date.now().toString(),
     });
     await get().fetchAll();

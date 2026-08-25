@@ -33,8 +33,7 @@ interface FileEditorPaneProps {
   onClose: () => void;
 }
 
-type PendingAction = { kind: "close-pane" } | { kind: "close-file"; path: string } | null;
-
+type PendingAction = { closePane: boolean; paths: string[]; dirtyPaths: string[] } | null;
 type MonacoEditor = Parameters<OnMount>[0];
 
 function isDarkHexColor(color: string): boolean {
@@ -199,50 +198,46 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
   });
 
   const requestClose = () => {
+    const paths = visibleFiles.map((file) => file.path);
     if (dirtyFiles.length > 0) {
-      setPendingAction({ kind: "close-pane" });
+      setPendingAction({ closePane: true, paths, dirtyPaths: dirtyFiles.map((file) => file.path) });
       return;
     }
     onClose();
+  };
+
+  const closeFiles = (paths: string[]) => paths.forEach(closeFile);
+  const requestCloseFiles = (paths: string[]) => {
+    const targetFiles = visibleFiles.filter((file) => paths.includes(file.path));
+    if (targetFiles.length === 0) return;
+    const targetPaths = targetFiles.map((file) => file.path);
+    const dirtyPaths = targetFiles.filter((file) => file.content !== file.savedContent).map((file) => file.path);
+    if (dirtyPaths.length > 0) {
+      setPendingAction({ closePane: false, paths: targetPaths, dirtyPaths });
+      return;
+    }
+    closeFiles(targetPaths);
   };
 
   const discardAndRun = () => {
+    if (!pendingAction) return;
+    const { closePane, paths } = pendingAction;
     setPendingAction(null);
-    if (pendingAction?.kind === "close-file") {
-      closeFile(pendingAction.path);
-      return;
-    }
-    visibleFiles.forEach((file) => closeFile(file.path));
-    onClose();
+    closeFiles(paths);
+    if (closePane) onClose();
   };
 
   const saveAndRun = async () => {
+    if (!pendingAction) return;
     try {
-      if (pendingAction?.kind === "close-file") {
-        await saveFile(pendingAction.path);
-        closeFile(pendingAction.path);
-        setPendingAction(null);
-        return;
-      }
-      for (const file of dirtyFiles) {
-        await saveFile(file.path);
-      }
-      visibleFiles.forEach((file) => closeFile(file.path));
+      const { closePane, dirtyPaths, paths } = pendingAction;
+      for (const path of dirtyPaths) await saveFile(path);
+      closeFiles(paths);
       setPendingAction(null);
-      onClose();
+      if (closePane) onClose();
     } catch {
       // 保存失败时保持确认框和未保存文件不变。
     }
-  };
-
-  const requestCloseFile = (path: string) => {
-    const file = visibleFiles.find((item) => item.path === path);
-    if (!file) return;
-    if (file.content !== file.savedContent) {
-      setPendingAction({ kind: "close-file", path });
-      return;
-    }
-    closeFile(path);
   };
 
   return (
@@ -269,7 +264,7 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
         diffContext={diffContext}
         diffWorkspace={diffWorkspace}
         onActivateFile={setActiveFilePath}
-        onCloseFile={requestCloseFile}
+        onCloseFiles={requestCloseFiles}
       />
       <FileEditorContent
         file={visibleFile}
@@ -288,9 +283,9 @@ export function FileEditorPane({ session, isActive, terminalThemeBackground, onC
         <DialogContent className="max-w-[420px]">
           <DialogTitle>{t("files.editor.unsavedTitle")}</DialogTitle>
           <DialogDescription className="mt-2">
-            {pendingAction?.kind === "close-file"
+            {pendingAction?.dirtyPaths.length === 1
               ? t("files.editor.unsavedOne")
-              : t("files.editor.unsavedMany", { count: dirtyFiles.length })}
+              : t("files.editor.unsavedMany", { count: pendingAction?.dirtyPaths.length ?? 0 })}
           </DialogDescription>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPendingAction(null)}>{t("common.cancel")}</Button>

@@ -32,10 +32,20 @@ test("Kimi 命令和带引号路径解析为 Hook source", () => {
   assert.equal(DEFAULT_SSH_TOOL_CONFIG_ROOT.kimi, "$HOME/.kimi-code");
 });
 
+test("Grok 命令和带引号路径解析为 Hook source", () => {
+  assert.equal(resolveSshToolSource("grok"), "grok");
+  assert.equal(resolveSshToolSource("grok.exe --resume abc"), "grok");
+  assert.equal(resolveSshToolSource('"C:\\Program Files\\Grok\\grok.cmd" --continue'), "grok");
+  assert.equal(resolveSshToolSource("'/opt/Grok Build/grok' --continue"), "grok");
+  assert.equal(resolveSshToolSource('"/opt/Grok Build/grok --continue'), null);
+  assert.equal(DEFAULT_SSH_TOOL_CONFIG_ROOT.grok, "$HOME/.grok");
+});
+
 test("history resolver 只接受 Claude 和 Codex", () => {
   assert.equal(resolveSshHistorySource("claude"), "claude");
   assert.equal(resolveSshHistorySource("codex resume"), "codex");
   assert.equal(resolveSshHistorySource("kimi"), null);
+  assert.equal(resolveSshHistorySource("grok"), null);
 });
 
 function report(source, historySourceCandidate) {
@@ -59,4 +69,10 @@ test("stored Hook report 强制 Kimi 不携带 history candidate", () => {
   assert.equal(parseStoredSshHookReport(report("kimi", { source: null })), null);
   assert.equal(parseStoredSshHookReport(report("claude", { source: "claude" }))?.source, "claude");
   assert.equal(parseStoredSshHookReport(report("claude", null)), null);
+});
+
+test("stored Hook report 强制 Grok 不携带 history candidate", () => {
+  assert.equal(parseStoredSshHookReport(report("grok", null))?.source, "grok");
+  assert.equal(parseStoredSshHookReport(report("grok", { source: "grok" })), null);
+  assert.equal(parseStoredSshHookReport(report("grok", {})), null);
 });

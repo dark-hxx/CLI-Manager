@@ -27,6 +27,10 @@ export interface SshRemoteFileContext {
   rootPath: string;
 }
 
+export interface SshRemoteFileOperationOptions {
+  silent?: boolean;
+}
+
 function toEntry(entry: RemoteFileEntry): ProjectFileEntry {
   return {
     name: entry.name,
@@ -41,9 +45,12 @@ async function runFileOperation<T>(
   context: SshRemoteFileContext,
   detailKey: TranslationKey,
   action: () => Promise<T>,
+  options?: SshRemoteFileOperationOptions,
 ): Promise<T> {
+  if (options?.silent) return action();
+
   const id = `remote-files:${context.consumerId}`;
-  const retry = () => { void runFileOperation(context, detailKey, action).catch(() => undefined); };
+  const retry = () => { void runFileOperation(context, detailKey, action, options).catch(() => undefined); };
   useBackgroundOperationStore.getState().start({
     id,
     kind: "remoteFiles",
@@ -128,6 +135,7 @@ export async function sshRemoteAttachFiles(
 export async function sshRemoteListDir(
   context: SshRemoteFileContext,
   relativePath = "",
+  options?: SshRemoteFileOperationOptions,
 ): Promise<ProjectFileEntry[]> {
   const response = await runFileOperation(context, "backgroundOperations.remoteFiles.listing", () =>
     invoke<{ entries: RemoteFileEntry[] }>("ssh_remote_file_list", {
@@ -135,13 +143,14 @@ export async function sshRemoteListDir(
       sshLaunch: context.launch,
       rootPath: context.rootPath,
       relativePath,
-    }));
+    }), options);
   return (response.entries ?? []).map(toEntry);
 }
 
 export async function sshRemoteReadFile(
   context: SshRemoteFileContext,
   relativePath: string,
+  options?: SshRemoteFileOperationOptions,
 ): Promise<{ content: string; previewKind: ProjectFilePreviewKind; sizeBytes: number; modifiedMs: number | null }> {
   const result = await runFileOperation(context, "backgroundOperations.remoteFiles.reading", () =>
     invoke<RemoteFileRead>("ssh_remote_file_read", {
@@ -149,7 +158,7 @@ export async function sshRemoteReadFile(
       sshLaunch: context.launch,
       rootPath: context.rootPath,
       relativePath,
-    }));
+    }), options);
   return {
     content: result.content,
     previewKind: result.kind === "image" ? "image" : "text",

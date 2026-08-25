@@ -29,6 +29,7 @@ pub struct SshHostPreferencesPersistenceRequest {
     claude_root: String,
     codex_root: String,
     kimi_root: String,
+    grok_root: String,
 }
 
 #[derive(Debug)]
@@ -81,7 +82,10 @@ fn validate_request(request: &SshHookReportPersistenceRequest) -> Result<(), Str
     ) {
         return Err("ssh_hook_scope_kind_invalid".to_string());
     }
-    if !matches!(request.report.source.as_str(), "claude" | "codex" | "kimi") {
+    if !matches!(
+        request.report.source.as_str(),
+        "claude" | "codex" | "kimi" | "grok"
+    ) {
         return Err("hook_source_invalid".to_string());
     }
     Uuid::parse_str(request.report.installation_id.trim())
@@ -131,7 +135,7 @@ fn validate_request(request: &SshHookReportPersistenceRequest) -> Result<(), Str
             request.report.source.as_str(),
             installation.history_source_candidate.as_ref(),
         ) {
-            ("kimi", None) => true,
+            ("kimi" | "grok", None) => true,
             ("claude" | "codex", Some(candidate)) => {
                 candidate.source == request.report.source
                     && candidate.canonical_config_root == request.report.canonical_config_root
@@ -176,6 +180,7 @@ async fn persist_host_preferences(
     validate_preference_root(&request.claude_root)?;
     validate_preference_root(&request.codex_root)?;
     validate_preference_root(&request.kimi_root)?;
+    validate_preference_root(&request.grok_root)?;
 
     let mut transaction = connection
         .begin_with("BEGIN IMMEDIATE")
@@ -186,6 +191,7 @@ async fn persist_host_preferences(
         ("claude", request.claude_root.trim()),
         ("codex", request.codex_root.trim()),
         ("kimi", request.kimi_root.trim()),
+        ("grok", request.grok_root.trim()),
     ] {
         if root.is_empty() {
             sqlx::query("DELETE FROM ssh_host_tool_preferences WHERE host_id = ? AND source = ?")
@@ -596,12 +602,14 @@ mod tests {
         claude_root: &str,
         codex_root: &str,
         kimi_root: &str,
+        grok_root: &str,
     ) -> SshHostPreferencesPersistenceRequest {
         SshHostPreferencesPersistenceRequest {
             host_id: HOST_ID.to_string(),
             claude_root: claude_root.to_string(),
             codex_root: codex_root.to_string(),
             kimi_root: kimi_root.to_string(),
+            grok_root: grok_root.to_string(),
         }
     }
 
@@ -626,11 +634,11 @@ mod tests {
         let mut connection = database().await;
         persist_host_preferences(
             &mut connection,
-            preferences("~/.claude", "~/.codex", "~/.kimi-code"),
+            preferences("~/.claude", "~/.codex", "~/.kimi-code", "~/.grok"),
         )
         .await
         .unwrap();
-        persist_host_preferences(&mut connection, preferences("", "/srv/codex", ""))
+        persist_host_preferences(&mut connection, preferences("", "/srv/codex", "", ""))
             .await
             .unwrap();
 
@@ -650,7 +658,7 @@ mod tests {
         let mut connection = database().await;
         persist_host_preferences(
             &mut connection,
-            preferences("~/.claude", "~/.codex", "~/.kimi-code"),
+            preferences("~/.claude", "~/.codex", "~/.kimi-code", "~/.grok"),
         )
         .await
         .unwrap();
@@ -666,7 +674,7 @@ mod tests {
 
         assert!(persist_host_preferences(
             &mut connection,
-            preferences("/srv/claude", "/srv/codex", "/srv/kimi"),
+            preferences("/srv/claude", "/srv/codex", "/srv/kimi", "/srv/grok"),
         )
         .await
         .is_err());

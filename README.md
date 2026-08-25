@@ -143,14 +143,14 @@ When developing across multiple projects, you may run into these problems:
 | Gemini CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | GitHub Copilot CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Antigravity | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
-| Grok Build | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| Grok Build | 👁️ | 👁️ | 👁️ | 👁️ | — | ✅ | 👁️ | — | ✅ |
 | Pi | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | OpenCode | 👁️ | 👁️ | 👁️ | DB | — | ✅ | — | — | — |
 | Kiro | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Cursor | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Cline | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 
-> Statistics depend on the fields exposed by each source. Claude Code and Codex CLI provide the deepest integration, including Hook-driven live status, file-change Diff, message editing with audit / rollback, resume, and two-way session conversion.
+> Statistics depend on the fields exposed by each source. Claude Code and Codex CLI provide the deepest integration, including Hook-driven live status, file-change Diff, message editing with audit / rollback, resume, and two-way session conversion. Grok Build supports local/WSL resume, live stats, and session-directory delete; SSH Grok is CLI/Hook only, without remote history.
 
 ---
 

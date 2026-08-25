@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import refractor from "refractor/core.js";
+import markup from "refractor/lang/markup.js";
+import markdown from "refractor/lang/markdown.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+refractor.register(markup);
+refractor.register(markdown);
 
 const css = read("../src/components/git/diffViewer.css");
 const content = read("../src/components/git/diff/GitDiffContent.tsx");
@@ -45,3 +51,27 @@ test("nowrap mode keeps fixed columns and synchronizes one horizontal scrollbar"
   assert.match(hunkList, /virtualizer\.measure\(\)/);
   assert.doesNotMatch(hunkList, /rounded-lg|shadow-sm|overflow-hidden|className="[^"]*border/);
 });
+
+test("Markdown table tokens remain inline in wrapped and unwrapped Diff code cells", () => {
+  const markdownTable = [
+    "| Resource | Use for |",
+    "| --- | --- |",
+    "| gitnexus://repo/CLI-Manager/context | Codebase overview |",
+  ].join("\n");
+  const classNames = collectTokenClassNames(refractor.highlight(markdownTable, "markdown"));
+
+  assert.ok(classNames.includes("table"));
+  assert.ok(classNames.includes("table-header-row"));
+  assert.ok(classNames.includes("table-line"));
+  assert.ok(classNames.includes("table-data-rows"));
+  assert.match(css, /\.diff-viewer-container \.diff-code \.token\s*\{[\s\S]*?display:\s*inline;/);
+  assert.match(css, /\[data-git-diff-wrap="true"\][\s\S]*?\.diff-code/);
+  assert.match(css, /\[data-git-diff-wrap="false"\][\s\S]*?\.diff-code/);
+});
+
+function collectTokenClassNames(nodes) {
+  return nodes.flatMap((node) => [
+    ...(node.properties?.className ?? []),
+    ...(node.children ? collectTokenClassNames(node.children) : []),
+  ]);
+}

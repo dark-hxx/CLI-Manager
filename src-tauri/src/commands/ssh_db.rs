@@ -364,6 +364,7 @@ pub async fn ssh_db_save_host_preferences(
     claude_root: String,
     codex_root: String,
     kimi_root: String,
+    grok_root: String,
     updated_at: String,
 ) -> Result<(), String> {
     if host_id.trim().is_empty() {
@@ -377,6 +378,7 @@ pub async fn ssh_db_save_host_preferences(
         claude_root,
         codex_root,
         kimi_root,
+        grok_root,
         &updated_at,
     )
     .await;
@@ -389,12 +391,14 @@ async fn save_host_preferences_with_conn(
     claude_root: String,
     codex_root: String,
     kimi_root: String,
+    grok_root: String,
     updated_at: &str,
 ) -> Result<(), String> {
     for (source, root) in [
         ("claude", claude_root),
         ("codex", codex_root),
         ("kimi", kimi_root),
+        ("grok", grok_root),
     ] {
         if root.is_empty() {
             sqlx::query("DELETE FROM ssh_host_tool_preferences WHERE host_id = ?1 AND source = ?2")
@@ -645,7 +649,7 @@ pub async fn ssh_db_record_hook_report(input: SshHookReportInput) -> Result<(), 
     if input.ssh_user.trim().is_empty() {
         return Err("ssh_user_required".to_string());
     }
-    if !matches!(input.source.as_str(), "claude" | "codex" | "kimi") {
+    if !matches!(input.source.as_str(), "claude" | "codex" | "kimi" | "grok") {
         return Err("hook_source_invalid".to_string());
     }
     if !matches!(input.scope_kind.as_str(), "hostPrimary" | "projectOverride") {
@@ -690,7 +694,7 @@ fn valid_hook_history_candidate(report: &Value, source: &str) -> bool {
         return false;
     };
     match (source, installation.get("historySourceCandidate")) {
-        ("kimi", None | Some(Value::Null)) => true,
+        ("kimi" | "grok", None | Some(Value::Null)) => true,
         ("claude" | "codex", Some(Value::Object(candidate))) => {
             candidate.get("source").and_then(Value::as_str) == Some(source)
                 && candidate.get("canonicalConfigRoot").and_then(Value::as_str)
@@ -1022,6 +1026,12 @@ mod tests {
             validate_history_source_input(&kimi).unwrap_err(),
             "history_source_invalid"
         );
+        let mut grok = history_source_input('a');
+        grok.source = "grok".to_string();
+        assert_eq!(
+            validate_history_source_input(&grok).unwrap_err(),
+            "history_source_invalid"
+        );
     }
 
     #[tokio::test]
@@ -1148,6 +1158,7 @@ mod tests {
             "/home/dev/.claude".to_string(),
             "/home/dev/.codex".to_string(),
             "/home/dev/.kimi-code".to_string(),
+            "/home/dev/.grok".to_string(),
             "1",
         )
         .await;
