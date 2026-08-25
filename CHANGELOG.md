@@ -52,6 +52,11 @@
 ### cc-connect 本机 Codex 启动器 PATH 解析
 
 - 本机解析 `codex` / `codex.exe` 时跳过 cc-connect 托管的 `remote-manager/bin`，避免 PATH 里的 wrapper 把自己当成真实启动器；Windows 仍按 `.exe/.cmd/.bat/.ps1` 在其余 PATH 项中查找。
+- 修复真实 Codex `.cmd/.bat` 启动器位于含空格、中文或 `\\?\` 扩展前缀的 Windows 路径时，远程 app-server 探针被 CMD 截断路径并启动失败的问题；批处理改用安全 `call` 边界并保留参数、stdin/stdout 与退出码。非 UTF-8 的中文系统错误也会按本地编码正确显示，不再出现乱码。
+
+### cc-connect 微信授权
+
+- 修复 Telegram、飞书或企业微信存在“已启用但 allow_from 尚未填写”的设置草稿时，微信扫码授权在二维码生成前被全 Profile 校验阻止的问题；授权准备现在只隔离禁用无效的其他平台草稿，保留其输入和凭据，已完整配置的平台继续保持启用。微信旧 ID 无效时允许重新扫码，常规保存/连接仍严格拒绝任何启用但无明确用户 ID 的平台。
 
 ### 供应商与终端路径修复
 

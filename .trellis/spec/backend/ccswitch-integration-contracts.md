@@ -383,6 +383,13 @@ env_key = "CLI_MANAGER_CODEX_PROVIDER_<hash>_API_KEY"
   `/cli_manager_switch` selection is stored only as `runtimeProjectId` and is re-resolved from the
   current project/provider catalog on every launch; a missing or moved target falls back to the
   control workspace instead of failing with a stale-profile error.
+- **Weixin authorization profile isolation**: QR setup validates the selected Weixin platform and
+  common executable/project/proxy fields without requiring unfinished drafts for Telegram, Feishu,
+  or WeCom to be runnable. An enabled unrelated platform with an invalid `allow_from` is disabled in
+  the authorization result while retaining its values and credentials; valid enabled platforms stay
+  enabled. Empty or stale invalid Weixin IDs may be replaced by the scanned explicit `@im.wechat`
+  identity. Normal profile save/start remains fail-closed for every enabled platform, and setup output
+  must still contain a non-empty token plus an explicit Weixin user ID before credentials are saved.
 - **Legacy connection migration**: when no handoff owns the process, an old project-bound profile
   is migrated atomically to the control identity. Existing cc-connect session state plus Weixin
   `context_tokens.json` and `get_updates.buf` are copied without deleting the legacy files. An
@@ -419,6 +426,13 @@ env_key = "CLI_MANAGER_CODEX_PROVIDER_<hash>_API_KEY"
   resolve back to the wrapper and recurse. The Windows native shim proxies only when the
   first subcommand is `app-server`; all other Codex commands inherit stdio, receive the same
   Provider overrides, and return the real exit code.
+- **Windows script launcher boundary**: a real Codex `.cmd` / `.bat` launcher may live under a
+  path containing spaces or non-ASCII characters. Strip local/UNC `\\?\` prefixes before handing
+  the script to CMD, and use a fixed `cmd /d /s /c call` boundary so the quoted script path is not
+  split as the command. Continue rejecting command-composition metacharacters and CR/LF in script
+  values; valid quoted Codex `-c` overrides must remain supported. `.exe` launchers stay direct and
+  `.ps1` stays structured `powershell -File`. Probe diagnostics use UTF-8 when valid and the shared
+  legacy-encoding detector otherwise, so localized Windows errors remain readable.
 - **Unsafe TOML fallback**: if the raw TOML contains the resolved plaintext secret, do not
   copy it; fall back to the generated non-secret routing profile.
 - **Launch command**: for exact Codex projects with empty `startup_cmd`, the
