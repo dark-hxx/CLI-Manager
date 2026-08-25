@@ -1076,6 +1076,8 @@ export interface RequestLogItem {
   usage_status?: "complete" | "partial" | "missing" | "invalid" | "not_applicable";
   status_code?: number | null;
   outcome?: string;
+  error_code?: string | null;
+  error_detail?: string | null;
   duration_ms?: number;
   attempt_count?: number;
   degraded?: boolean;

@@ -101,6 +101,8 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
   const [detailOpened, setDetailOpened] = useState(false);
   const [documentDirty, setDocumentDirty] = useState(false);
   const pageRef = useRef<HTMLDivElement | null>(null);
+  const surfaceNavigationRef = useRef<HTMLDivElement | null>(null);
+  const detailCloseFocusRef = useRef(false);
   const catalog = useNativeProviderCatalog(appType);
   const commonConfig = useNativeProviderCommonConfig(appType);
   const routingState = useNativeProviderRouting();
@@ -220,6 +222,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
       if (!confirmed) return false;
     }
     setDocumentDirty(false);
+    detailCloseFocusRef.current = false;
     setDetailOpened(false);
     pageCache.appType = next;
     setAppType(next);
@@ -251,6 +254,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
     if (!confirmed) return;
     await catalog.deleteProvider(providerId);
     setDocumentDirty(false);
+    detailCloseFocusRef.current = true;
     setDetailOpened(false);
   };
 
@@ -285,11 +289,13 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
     // 离开目录 surface 会连带卸载详情弹窗；不清掉 opened 的话切回来会自动弹出。
     if (nextSurface !== "catalog") {
       setImportOpened(false);
+      detailCloseFocusRef.current = false;
       setDetailOpened(false);
     }
   };
 
   const handleProviderSelect = (providerId: string) => {
+    detailCloseFocusRef.current = false;
     catalog.setSelectedProviderId(providerId);
     setDetailOpened(true);
   };
@@ -316,13 +322,26 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
     void confirmDiscardDocument().then((confirmed) => {
       if (!confirmed) return;
       setDocumentDirty(false);
+      detailCloseFocusRef.current = true;
       setDetailOpened(false);
     });
   };
 
+  const focusCatalogPage = useCallback(() => {
+    if (!detailCloseFocusRef.current) return;
+    detailCloseFocusRef.current = false;
+    if (surface !== "catalog") return;
+    const navigation = surfaceNavigationRef.current;
+    if (!navigation?.isConnected) return;
+    const activeSurfaceControl = navigation.querySelector<HTMLInputElement>('input[type="radio"]:checked')
+      ?? navigation.querySelector<HTMLInputElement>('input[type="radio"]');
+    activeSurfaceControl?.focus({ preventScroll: true });
+  }, [surface]);
+
   return (
     <Stack ref={pageRef} gap="md">
       <SegmentedControl
+        ref={surfaceNavigationRef}
         value={surface}
         onChange={handleSurfaceChange}
         aria-label={t("providerCatalog.surfaceNavigation")}
@@ -388,6 +407,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
             detailView={detailView}
             onDetailViewChange={setDetailView}
             onClose={handleDetailClose}
+            onExitTransitionEnd={focusCatalogPage}
             onEdit={() => setFormMode("edit")}
             onDelete={(providerId) => ignoreProviderError(handleDeleteProvider(providerId))}
             onActivateKey={handleActivateKey}

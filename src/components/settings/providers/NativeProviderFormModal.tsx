@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Group, Modal, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
+import { Alert, Group, Modal, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { AlertTriangle } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeClaudeConfigSection } from "./NativeClaudeConfigSection";
 import { NativeProviderAdvancedConfigSection } from "./NativeProviderAdvancedConfigSection";
 import { NativeProviderCodeEditor } from "./NativeProviderCodeEditor";

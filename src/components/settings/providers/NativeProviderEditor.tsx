@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Badge, Button, Card, Group, Loader, Stack, Switch, Text } from "@mantine/core";
+import { Badge, Card, Group, Loader, Stack, Switch, Text } from "@mantine/core";
 import { ExternalLink, Pencil, Trash2 } from "lucide-react";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type {
   NativeProviderCommonConfig,
   NativeProviderDetail,
@@ -173,7 +174,7 @@ export function NativeProviderEditor({
           <Button size="compact-sm" variant="light" color="cliPrimary" leftSection={<Pencil size={14} />} onClick={onEdit}>
             {t("common.edit")}
           </Button>
-          <Button size="compact-sm" variant="subtle" color="red" leftSection={<Trash2 size={14} />} disabled={Boolean(action) || card.isCurrent} onClick={onDelete}>
+          <Button size="compact-sm" variant="light" color="red" leftSection={<Trash2 size={14} />} disabled={Boolean(action) || card.isCurrent} onClick={onDelete}>
             {t("common.delete")}
           </Button>
           {card.websiteUrl && (

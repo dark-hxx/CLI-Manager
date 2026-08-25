@@ -24,6 +24,7 @@ interface NativeProviderDetailModalProps {
   detailView: NativeProviderDetailView;
   onDetailViewChange: (view: NativeProviderDetailView) => void;
   onClose: () => void;
+  onExitTransitionEnd: () => void;
   onEdit: () => void;
   onDelete: (providerId: string) => void;
   onActivateKey: (keyId: string) => Promise<void>;
@@ -53,6 +54,7 @@ export function NativeProviderDetailModal({
   detailView,
   onDetailViewChange,
   onClose,
+  onExitTransitionEnd,
   onEdit,
   onDelete,
   onActivateKey,
@@ -67,6 +69,8 @@ export function NativeProviderDetailModal({
     <Modal
       opened={opened}
       onClose={onClose}
+      returnFocus={false}
+      onExitTransitionEnd={onExitTransitionEnd}
       centered
       size="min(1100px, 94vw)"
       title={

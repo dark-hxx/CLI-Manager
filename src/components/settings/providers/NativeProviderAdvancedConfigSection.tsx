@@ -1,5 +1,4 @@
 import {
-  Button,
   Divider,
   Group,
   Select,
@@ -9,6 +8,7 @@ import {
 } from "@mantine/core";
 import { LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeProviderCodeEditor } from "./NativeProviderCodeEditor";
 import type {
   NativeProviderAdvancedConfig,

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Badge, Button, Card, Collapse, Group, Stack, Text, UnstyledButton } from "@mantine/core";
+import { Alert, Badge, Card, Collapse, Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import { AlertTriangle, Check, ChevronDown, RefreshCw, Save, ShieldCheck } from "lucide-react";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type { NativeProviderAppType } from "./nativeProviderTypes";
 import type { UseNativeProviderCommonConfigResult } from "./useNativeProviderCommonConfig";
 import { NativeProviderCodeEditor } from "./NativeProviderCodeEditor";

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Accordion, Alert, Button, Group, NumberInput, Stack, Switch, Text } from "@mantine/core";
+import { Accordion, Alert, Group, NumberInput, Stack, Switch, Text } from "@mantine/core";
 import { RefreshCw, Route, Server } from "lucide-react";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type { NativeProviderAppType, NativeProviderHomeIdentity } from "./nativeProviderTypes";
 import type { UseNativeProviderRoutingResult } from "./useNativeProviderRouting";
 import { NativeProviderFailoverSection } from "./NativeProviderFailoverSection";

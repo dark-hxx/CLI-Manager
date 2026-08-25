@@ -1,8 +1,6 @@
 import { useState } from "react";
 import {
-  ActionIcon,
   Badge,
-  Button,
   Card,
   Group,
   Stack,
@@ -13,6 +11,7 @@ import {
 import { ChevronDown, ChevronUp, KeyRound, Pencil, Plus, Trash2, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { useAppConfirm } from "@/components/ui/useAppConfirm";
+import { NativeProviderActionIcon as ActionIcon, NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeProviderKeyFormModal } from "./NativeProviderKeyFormModal";
 import { NativeProviderKeyReplacementModal } from "./NativeProviderKeyReplacementModal";
 import { NativeProviderKeyRevealModal } from "./NativeProviderKeyRevealModal";

@@ -1,5 +1,6 @@
-import { Button, Modal, Stack, Text, TextInput } from "@mantine/core";
+import { Modal, Stack, Text, TextInput } from "@mantine/core";
 import { useI18n } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 
 interface NativeProviderKeyRevealModalProps {
   opened: boolean;

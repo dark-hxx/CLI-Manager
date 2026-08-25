@@ -1,5 +1,4 @@
 import {
-  Button,
   Checkbox,
   Divider,
   Group,
@@ -11,6 +10,7 @@ import {
 } from "@mantine/core";
 import { LoaderCircle, RefreshCw, Wand2 } from "lucide-react";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type {
   NativeClaudeApiFormat,
   NativeClaudeAuthField,
