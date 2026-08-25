@@ -46,6 +46,7 @@ import { logError } from "../../lib/logger";
 import { SidebarHeader, type ProjectListFilter } from "./SidebarHeader";
 import { ProjectTree } from "./ProjectTree";
 import { BatchShellDialog } from "./BatchShellDialog";
+import { NodeAppearancePanel } from "./NodeAppearancePanel";
 import { SidebarFooter } from "./SidebarFooter";
 import { groupSyncedExternalSessions } from "../../lib/externalSessionGrouping";
 import { FileExplorerSidebar } from "../files/FileExplorerSidebar";
@@ -58,6 +59,7 @@ import {
   FolderOpen,
   FolderPlus,
   ListClockIcon,
+  Palette,
   Pencil,
   Play,
   Plus,
@@ -248,6 +250,7 @@ export function Sidebar({
   const fetchAll = useProjectStore((s) => s.fetchAll);
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const createGroup = useProjectStore((s) => s.createGroup);
+  const updateGroupAppearance = useProjectStore((s) => s.updateGroupAppearance);
   const renameGroup = useProjectStore((s) => s.renameGroup);
   const deleteGroup = useProjectStore((s) => s.deleteGroup);
   const reorderItems = useProjectStore((s) => s.reorderItems);
@@ -565,6 +568,22 @@ export function Sidebar({
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const contextMenuOpenedAtRef = useRef(0);
   const contextMenuInternalScrollUntilRef = useRef(0);
+  // 右键菜单里的外观面板是内联展开（不再叠一层定位层），菜单每次重开都收起。
+  const [appearanceMenuOpen, setAppearanceMenuOpen] = useState(false);
+  const contextMenuGroup = useMemo(
+    () => (contextMenu?.kind === "group" ? groups.find((group) => group.id === contextMenu.groupId) : undefined),
+    [contextMenu, groups]
+  );
+  // contextMenu 里存的是打开菜单那一刻的 project 快照，改完外观后要用 store 里的最新值回显。
+  const contextMenuProject = useMemo(
+    () => (contextMenu?.kind === "project"
+      ? projects.find((project) => project.id === contextMenu.project.id) ?? contextMenu.project
+      : undefined),
+    [contextMenu, projects]
+  );
+  useEffect(() => {
+    setAppearanceMenuOpen(false);
+  }, [contextMenu]);
   // 菜单真实位置：渲染后按实测尺寸做翻转/钳制，避免写死高度导致溢出遮挡。
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
@@ -844,6 +863,8 @@ export function Sidebar({
     const handler = (e: Event) => {
       if (Date.now() - contextMenuOpenedAtRef.current < 120) return;
       if (e.type === "scroll" && Date.now() < contextMenuInternalScrollUntilRef.current) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("[data-node-appearance-picker]")) return;
       if (contextMenuRef.current && contextMenuRef.current.contains(e.target as Node)) return;
       setContextMenu(null);
     };
@@ -862,35 +883,78 @@ export function Sidebar({
     };
   }, [contextMenu]);
 
-  // 智能菜单定位：测量真实尺寸后翻转/钳制，不依赖魔法数字，避免底部溢出被遮挡。
+  // 智能菜单定位：测量真实尺寸后翻转/钳制；菜单内容展开时保留原位置，
+  // 只有确实放不下时才向视口内收敛，避免点击「外观标记」后菜单跳到窗口顶部。
   useLayoutEffect(() => {
     if (!contextMenu || !contextMenuRef.current) {
       setMenuPos(null);
       return;
     }
     const menu = contextMenuRef.current;
-    const rect = menu.getBoundingClientRect();
-    const { x: clickX, y: clickY } = contextMenu;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const margin = 8; // 视口边距
+    const updatePosition = () => {
+      if (!appearanceMenuOpen) {
+        // 外观面板关闭后恢复完整菜单测量，避免沿用上一次的内联 max-height。
+        menu.style.maxHeight = "";
+      }
+      const rect = menu.getBoundingClientRect();
+      // scrollHeight 保留被 max-height 截断前的完整内容高度，避免 ResizeObserver
+      // 在“设置 max-height / 清除 max-height”之间反复触发。
+      const contentHeight = Math.max(rect.height, menu.scrollHeight);
+      const { x: clickX, y: clickY } = contextMenu;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const margin = 8; // 视口边距
 
-    // 水平：右侧空间不足则翻到左侧
-    let left = clickX;
-    if (clickX + rect.width + margin > vw) {
-      left = Math.max(margin, clickX - rect.width);
-    }
-    left = Math.max(margin, Math.min(left, vw - rect.width - margin));
+      // 水平：右侧空间不足则翻到左侧
+      let left = clickX;
+      if (clickX + rect.width + margin > vw) {
+        left = Math.max(margin, clickX - rect.width);
+      }
+      left = Math.max(margin, Math.min(left, vw - rect.width - margin));
 
-    // 垂直：下方空间不足则翻到上方
-    let top = clickY;
-    if (clickY + rect.height + margin > vh) {
-      top = Math.max(margin, clickY - rect.height);
-    }
-    top = Math.max(margin, Math.min(top, vh - rect.height - margin));
+      let top = clickY;
+      if (appearanceMenuOpen && menuPos) {
+        // 展开面板时以展开前的位置为锚点。若完整菜单放不下，只向上收敛，
+        // 不再用 clickY - expandedHeight 把菜单整体翻到视口顶部。
+        const maxMenuHeight = Math.max(0, vh - margin * 2);
+        if (contentHeight > maxMenuHeight) {
+          menu.style.maxHeight = `${maxMenuHeight}px`;
+        } else {
+          menu.style.maxHeight = "";
+        }
+        const maxTop = Math.max(margin, vh - Math.min(contentHeight, maxMenuHeight) - margin);
+        top = Math.max(margin, Math.min(menuPos.top, maxTop));
+      } else {
+        // 初次打开时：下方空间不足则翻到上方。
+        if (clickY + contentHeight + margin > vh) {
+          top = Math.max(margin, clickY - contentHeight);
+        }
+        top = Math.max(margin, Math.min(top, vh - contentHeight - margin));
+      }
 
-    setMenuPos({ left, top });
-  }, [contextMenu]);
+      setMenuPos((previous) => (
+        previous?.left === left && previous.top === top ? previous : { left, top }
+      ));
+    };
+
+    let positionFrame: number | null = null;
+    const schedulePosition = () => {
+      if (positionFrame !== null) return;
+      positionFrame = window.requestAnimationFrame(() => {
+        positionFrame = null;
+        updatePosition();
+      });
+    };
+
+    updatePosition();
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedulePosition);
+    resizeObserver?.observe(menu);
+
+    return () => {
+      resizeObserver?.disconnect();
+      if (positionFrame !== null) window.cancelAnimationFrame(positionFrame);
+    };
+  }, [appearanceMenuOpen, contextMenu, menuPos]);
 
   // 把 sessions × statuses 预聚合成 Map<projectId, status>，从每节点 O(N) filter
   // 变成 O(1) lookup。原方案在 TreeNodeItem 中每行调用一次，叠加项目树 + 状态变化
@@ -1620,11 +1684,23 @@ export function Sidebar({
   );
 
   const handleCreateGroup = useCallback(
-    (parentId: string | null, name: string) => {
-      void createGroup({ name, parent_id: parentId });
+    (parentId: string | null, name: string, appearance?: { icon: string; color: string }) => {
+      void createGroup({ name, parent_id: parentId, icon: appearance?.icon, color: appearance?.color });
       setNewGroupParentId(null);
     },
     [createGroup]
+  );
+
+  const handleUpdateAppearance = useCallback(
+    (target: { kind: "group" | "project"; id: string }, next: { icon?: string; color?: string }) => {
+      const run = target.kind === "group"
+        ? updateGroupAppearance(target.id, next)
+        : updateProject(target.id, next);
+      void run.catch((err) => {
+        toast.error(t("sidebar.toast.appearanceUpdateFailed"), { description: String(err) });
+      });
+    },
+    [t, updateGroupAppearance, updateProject]
   );
 
   const handleCancelNewGroup = useCallback(() => {
@@ -1809,6 +1885,7 @@ export function Sidebar({
       onContextMenuWorktree: handleContextMenuWorktree,
       onContextMenuGroup: handleContextMenuGroup,
       onCreateGroup: handleCreateGroup,
+      onUpdateAppearance: handleUpdateAppearance,
       onCancelNewGroup: handleCancelNewGroup,
       toggleCollapsed,
       getProjectStatus,
@@ -1845,6 +1922,7 @@ export function Sidebar({
       handleContextMenuGroup,
       handleCreateGroup,
       handleCancelNewGroup,
+      handleUpdateAppearance,
       toggleCollapsed,
       getProjectStatus,
       getProjectTerminalCount,
@@ -2075,7 +2153,7 @@ export function Sidebar({
                 projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
                 terminalScope={terminalScope}
                 onSelectAllTerminalScope={handleSelectAllTerminalScope}
-                onCreateRootGroup={(name) => handleCreateGroup(null, name)}
+                onCreateRootGroup={(name, appearance) => handleCreateGroup(null, name, appearance)}
                 onCancelRootGroup={handleCancelNewGroup}
                 onQuickAddProject={() => {
                   ensureSidebarExpanded();
@@ -2116,6 +2194,12 @@ export function Sidebar({
             ref={contextMenuRef}
             role="menu"
             onMouseDown={(event) => {
+              // Radix Popover content is portalled, but its React event still bubbles
+              // through this menu. Only suppress native menu handling for nodes that
+              // are physically inside the context menu; otherwise Emoji Mart cannot
+              // receive its category-navigation clicks.
+              const target = event.target;
+              if (!(target instanceof Node) || !event.currentTarget.contains(target)) return;
               event.preventDefault();
               event.stopPropagation();
             }}
@@ -2312,6 +2396,24 @@ export function Sidebar({
                   <Settings size={14} strokeWidth={1.5} />
                   {t("sidebar.menu.edit")}
                 </button>
+                <button
+                  className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
+                  role="menuitem"
+                  aria-expanded={appearanceMenuOpen}
+                  onClick={() => setAppearanceMenuOpen((prev) => !prev)}
+                >
+                  <Palette size={14} strokeWidth={1.5} />
+                  {t("sidebar.menu.appearance")}
+                </button>
+                {appearanceMenuOpen && !showProjectBatchContextMenu && (
+                  <NodeAppearancePanel
+                    icon={contextMenuProject?.icon ?? ""}
+                    color={contextMenuProject?.color ?? ""}
+                    onChange={(next) => handleUpdateAppearance({ kind: "project", id: contextMenu.project.id }, next)}
+                    onAfterPick={() => setContextMenu(null)}
+                  />
+                )}
                 <div className="context-menu-separator" role="separator" />
                 {selectedProjectIds.size + selectedGroupIds.size > 1 && (
                   <button
@@ -2563,6 +2665,23 @@ export function Sidebar({
                   <Pencil size={14} strokeWidth={1.5} />
                   {t("sidebar.menu.rename")}
                 </button>
+                <button
+                  className="context-menu-item"
+                  role="menuitem"
+                  aria-expanded={appearanceMenuOpen}
+                  onClick={() => setAppearanceMenuOpen((prev) => !prev)}
+                >
+                  <Palette size={14} strokeWidth={1.5} />
+                  {t("sidebar.menu.appearance")}
+                </button>
+                {appearanceMenuOpen && (
+                  <NodeAppearancePanel
+                    icon={contextMenuGroup?.icon ?? ""}
+                    color={contextMenuGroup?.color ?? ""}
+                    onChange={(next) => handleUpdateAppearance({ kind: "group", id: contextMenu.groupId }, next)}
+                    onAfterPick={() => setContextMenu(null)}
+                  />
+                )}
                 {contextMenuGroupProjectIds && contextMenuGroupProjectIds.size > 1 && (
                   <button
                     className="context-menu-item"

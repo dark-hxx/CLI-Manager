@@ -33,7 +33,9 @@ export interface TreeActions {
   onOpenWorktree: (project: Project, worktree: WorktreeRecord) => void;
   onContextMenuWorktree: (e: ReactMouseEvent, project: Project, worktree: WorktreeRecord) => void;
   onContextMenuGroup: (e: ReactMouseEvent, groupId: string, groupName: string) => void;
-  onCreateGroup: (parentId: string | null, name: string) => void;
+  onCreateGroup: (parentId: string | null, name: string, appearance?: { icon: string; color: string }) => void;
+  /** 更新既有节点的外观标记；未传的字段保持不变。 */
+  onUpdateAppearance: (target: { kind: "group" | "project"; id: string }, next: { icon?: string; color?: string }) => void;
   onCancelNewGroup: () => void;
   toggleCollapsed: (id: string) => void;
   getProjectStatus: (projectId: string) => SessionStatus | null;

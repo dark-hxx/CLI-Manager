@@ -43,7 +43,7 @@ cd src-tauri && cargo test <test_name>   # 运行单个 Rust 测试
 - 前端在 `App.tsx` 监听该事件：`SessionStart`/`UserPromptSubmit` 仅用于绑定 sessionId 不弹 toast，其余事件弹通知。实时统计（CcusageStatsPanel）依赖 hook 上报的 sessionId，未安装 hook 时会引导去设置。
 
 ### 数据层
-- SQLite 通过 `tauri-plugin-sql`，**migrations 定义在 `lib.rs` 的 `migrations()`，当前到 v13**。新增表/列必须追加新的 `Migration`（只增不改，向后兼容），不要修改历史 migration。
+- SQLite 通过 `tauri-plugin-sql`，**migrations 定义在 `lib.rs` 的 `migrations()`，当前到 v33**。新增表/列必须追加新的 `Migration`（只增不改，向后兼容），不要修改历史 migration。`commands/db_repair.rs` 的漂移修复只覆盖 v13–v15 与两个 SSH 主机 migration（`KNOWN_DRIFT_START_VERSION` / `KNOWN_DRIFT_END_VERSION`），新增版本落在该窗口外时无需同步登记。
 - 前端用 `Database.load("sqlite:cli-manager.db")` 直接读写 SQLite（见 `src/lib/`）。表：`projects`、`groups`、`command_templates`、`command_history`、`session_meta`、`sync_meta`、`ccusage_cache`、`model_prices`。
 - 用户偏好（设置/主题/快捷键/同步配置等）走 `tauri-plugin-store`，由 `stores/settingsStore.ts` 管理，与 SQLite 分离。
 

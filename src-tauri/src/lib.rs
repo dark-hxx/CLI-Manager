@@ -797,6 +797,23 @@ pub(crate) const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL: &str = "
                           )
                    );
               ";
+/// 分组与项目的外观标记（issue #213）。空串表示"自动"：颜色按名称 hash 落到调色板，图标按节点类型回退。
+/// `icon` 存单个 emoji 字符或内置图标 key，`color` 只存调色板 token（不存任意 hex，保证主题适配）。
+const MIGRATION_ADD_NODE_APPEARANCE_VERSION: i64 = 33;
+const MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION: &str =
+    "add_node_appearance_to_groups_and_projects";
+const MIGRATION_ADD_NODE_APPEARANCE_SQL: &str = "
+                ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+                ALTER TABLE groups ADD COLUMN color TEXT NOT NULL DEFAULT '';
+                ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+                ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '';
+              ";
+/// 供 `commands::db_repair` 做"缺列自愈"用：外观列缺失时补列并按同一 checksum 登记 migration 33，
+/// 避免 sqlx 随后重放 `ADD COLUMN` 撞 `duplicate column name`。
+pub(crate) const NODE_APPEARANCE_MIGRATION_VERSION: i64 = MIGRATION_ADD_NODE_APPEARANCE_VERSION;
+pub(crate) const NODE_APPEARANCE_MIGRATION_DESCRIPTION: &str =
+    MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION;
+pub(crate) const NODE_APPEARANCE_MIGRATION_SQL: &str = MIGRATION_ADD_NODE_APPEARANCE_SQL;
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -1093,6 +1110,12 @@ fn migrations() -> Vec<Migration> {
             version: MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
             description: "backfill_request_log_project_path",
             sql: MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_ADD_NODE_APPEARANCE_VERSION,
+            description: MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION,
+            sql: MIGRATION_ADD_NODE_APPEARANCE_SQL,
             kind: MigrationKind::Up,
         },
     ]

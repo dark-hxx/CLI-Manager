@@ -1988,6 +1988,8 @@ if (!isEdit && !isClone && trimmedCliArgs) {
 
 **Why**: `XTermTerminal` receives a real `.xterm-slider` from xterm.js, while a transcript's `overflow-y-auto` scrollbar is generated internally by WebView2/Chromium. Browser `::-webkit-scrollbar` hover behavior is platform-dependent and can change layout width, causing reflow and Pane jitter.
 
+For a third-party picker rendered in an open Shadow DOM, hide the browser-native scrollbar inside the shadow root, but render the absolutely positioned track/thumb in the stable React-owned host container (not inside the third-party root or its ShadowRoot). Position it from the real scroll container's bounding rect. Wheel/trackpad scrolling must remain owned by the scroll container; the overlay is only a visual indicator and drag target. If the picker is mounted imperatively, parent-provided callbacks must be read through refs so routine parent rerenders (for example popover/menu positioning) do not recreate the picker and reset category navigation or scroll position.
+
 **Correct**:
 
 ```tsx

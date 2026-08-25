@@ -27,8 +27,10 @@ const BACKUP_RESTORE_DELETE_STATEMENTS: [&str; 7] = [
     "DELETE FROM groups",
     "DELETE FROM model_prices",
 ];
+// 列清单必须与 src/stores/syncStore.ts 的 buildBatchInsertStatements 调用逐字一致（含顺序）。
+// 任何一侧单独改动都会让恢复整批失败，因为 validate_backup_database_statement 是精确前缀匹配。
 const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 7] = [
-    ("groups", "id,name,parent_id,sort_order,created_at"),
+    ("groups", "id,name,parent_id,sort_order,icon,color,created_at"),
     (
         "ssh_host_groups",
         "id,name,parent_id,sort_order,created_at",
@@ -39,7 +41,7 @@ const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 7] = [
     ),
     (
         "projects",
-        "id,name,path,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,created_at,updated_at",
+        "id,name,path,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,icon,color,created_at,updated_at",
     ),
     (
         "worktrees",
@@ -549,6 +551,8 @@ mod tests {
                 name TEXT NOT NULL,
                 parent_id TEXT,
                 sort_order INTEGER NOT NULL,
+                icon TEXT NOT NULL DEFAULT '',
+                color TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             )",
         )
@@ -578,13 +582,15 @@ mod tests {
         let statements = [
             delete_groups_statement(),
             BackupDatabaseStatement {
-                sql: "INSERT INTO groups (id,name,parent_id,sort_order,created_at) VALUES ($1,$2,$3,$4,$5)"
+                sql: "INSERT INTO groups (id,name,parent_id,sort_order,icon,color,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)"
                     .to_string(),
                 values: vec![
                     Value::String("new".to_string()),
                     Value::String("New".to_string()),
                     Value::Null,
                     Value::Number(1.into()),
+                    Value::String("\u{1f680}".to_string()),
+                    Value::String("p3".to_string()),
                     Value::String("2".to_string()),
                 ],
             },
@@ -594,8 +600,8 @@ mod tests {
             .await
             .unwrap();
 
-        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
-            "SELECT id, name, sort_order, typeof(sort_order) FROM groups ORDER BY id",
+        let rows: Vec<(String, String, i64, String, String, String)> = sqlx::query_as(
+            "SELECT id, name, sort_order, typeof(sort_order), icon, color FROM groups ORDER BY id",
         )
         .fetch_all(&mut conn)
         .await
@@ -607,6 +613,8 @@ mod tests {
                 "New".to_string(),
                 1,
                 "integer".to_string(),
+                "\u{1f680}".to_string(),
+                "p3".to_string(),
             )]
         );
     }
@@ -674,6 +682,8 @@ mod tests {
                 ssh_host_id TEXT REFERENCES ssh_hosts(id),
                 remote_path TEXT NOT NULL,
                 cli_config_root TEXT NOT NULL,
+                icon TEXT NOT NULL DEFAULT '',
+                color TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )",
@@ -697,12 +707,14 @@ mod tests {
             },
             delete_groups_statement(),
             BackupDatabaseStatement {
-                sql: "INSERT INTO groups (id,name,parent_id,sort_order,created_at) VALUES ($1,$2,$3,$4,$5)".to_string(),
+                sql: "INSERT INTO groups (id,name,parent_id,sort_order,icon,color,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)".to_string(),
                 values: vec![
                     Value::String("project-group".to_string()),
                     Value::String("Projects".to_string()),
                     Value::Null,
                     Value::Number(0.into()),
+                    Value::String(String::new()),
+                    Value::String(String::new()),
                     Value::String("1".to_string()),
                 ],
             },
@@ -749,7 +761,7 @@ mod tests {
                 ],
             },
             BackupDatabaseStatement {
-                sql: "INSERT INTO projects (id,name,path,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)".to_string(),
+                sql: "INSERT INTO projects (id,name,path,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,icon,color,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)".to_string(),
                 values: vec![
                     Value::String("remote-project".to_string()),
                     Value::String("Remote Project".to_string()),
@@ -769,6 +781,8 @@ mod tests {
                     Value::String("ssh-host".to_string()),
                     Value::String("/srv/project".to_string()),
                     Value::String("".to_string()),
+                    Value::String("".to_string()),
+                    Value::String("p7".to_string()),
                     Value::String("1".to_string()),
                     Value::String("1".to_string()),
                 ],
@@ -805,18 +819,22 @@ mod tests {
         let statements = [
             delete_groups_statement(),
             BackupDatabaseStatement {
-                sql: "INSERT INTO groups (id,name,parent_id,sort_order,created_at) VALUES ($1,$2,$3,$4,$5),($6,$7,$8,$9,$10)"
+                sql: "INSERT INTO groups (id,name,parent_id,sort_order,icon,color,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7),($8,$9,$10,$11,$12,$13,$14)"
                     .to_string(),
                 values: vec![
                     Value::String("duplicate".to_string()),
                     Value::String("First".to_string()),
                     Value::Null,
                     Value::Number(1.into()),
+                    Value::String(String::new()),
+                    Value::String(String::new()),
                     Value::String("2".to_string()),
                     Value::String("duplicate".to_string()),
                     Value::String("Second".to_string()),
                     Value::Null,
                     Value::Number(2.into()),
+                    Value::String(String::new()),
+                    Value::String(String::new()),
                     Value::String("3".to_string()),
                 ],
             },

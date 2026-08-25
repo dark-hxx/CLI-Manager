@@ -9,7 +9,8 @@ use crate::{
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION, MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
     MIGRATION_CREATE_SSH_HOSTS_SQL, MIGRATION_CREATE_SSH_HOSTS_VERSION,
     MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
-    MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
+    MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION, NODE_APPEARANCE_MIGRATION_DESCRIPTION,
+    NODE_APPEARANCE_MIGRATION_SQL, NODE_APPEARANCE_MIGRATION_VERSION,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -172,6 +173,10 @@ pub async fn db_repair_known_migration_drift(
 
     let mut conn = open_cli_manager_db(&db_path).await?;
     let mut result = repair_known_migration_drift(&mut conn).await?;
+    if ensure_node_appearance_columns(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_node_appearance_columns");
+    }
     if defer_request_log_project_path_backfill(&mut conn).await? {
         result.repaired = true;
         result.status =
@@ -239,6 +244,95 @@ fn append_repair_status(current: &str, next: &str) -> String {
         next.to_string()
     } else {
         format!("{current};{next}")
+    }
+}
+
+/// 外观列缺失自愈（issue #213）。
+///
+/// migration 33 只做四条 `ADD COLUMN`。如果历史库出现"版本已登记但列不存在"或"列存在但版本未登记"
+/// 的漂移，前者会让外观读写一直报 `no such column: color`，后者会让 sqlx 重放 ALTER 撞
+/// `duplicate column name`。这里在每次打开数据库前主动把两种漂移都补齐：
+/// 缺列就补列，版本未登记时按同一 checksum 登记，让 sqlx 跳过重放。
+async fn ensure_node_appearance_columns(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
+        || !table_exists(conn, "groups").await?
+        || !table_exists(conn, "projects").await?
+    {
+        return Ok(false);
+    }
+
+    let group_columns = table_columns(conn, "groups").await?;
+    let project_columns = table_columns(conn, "projects").await?;
+    let mut missing: Vec<&str> = Vec::new();
+    if !group_columns.contains("icon") {
+        missing.push("ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    }
+    if !group_columns.contains("color") {
+        missing.push("ALTER TABLE groups ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+    }
+    if !project_columns.contains("icon") {
+        missing.push("ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    }
+    if !project_columns.contains("color") {
+        missing.push("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+    }
+
+    let already_registered: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("node_appearance_migration_query_failed: {err}"))?;
+
+    // 列齐全且版本已登记：正常状态，什么都不做。
+    if missing.is_empty() && already_registered != 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("node_appearance_repair_begin_failed: {err}"))?;
+    let result = async {
+        for statement in &missing {
+            sqlx::query(statement)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("node_appearance_repair_alter_failed: {err}"))?;
+        }
+        if already_registered == 0 {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+            .bind(NODE_APPEARANCE_MIGRATION_DESCRIPTION)
+            .bind(migration_checksum(NODE_APPEARANCE_MIGRATION_SQL))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("node_appearance_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("node_appearance_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
     }
 }
 
@@ -1306,6 +1400,7 @@ async fn table_columns(
     }
 
     let query = match table {
+        "groups" => "PRAGMA table_info(groups)",
         "projects" => "PRAGMA table_info(projects)",
         "session_favorite_snapshots" => "PRAGMA table_info(session_favorite_snapshots)",
         "worktrees" => "PRAGMA table_info(worktrees)",
@@ -2017,6 +2112,103 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    async fn create_appearance_drift_schema(conn: &mut SqliteConnection, with_columns: bool) {
+        let group_extra = if with_columns {
+            ", icon TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT ''"
+        } else {
+            ""
+        };
+        conn.execute(
+            format!("CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL{group_extra})")
+                .as_str(),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            format!("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL{group_extra})")
+                .as_str(),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn register_appearance_migration(conn: &mut SqliteConnection) {
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+                 (version, description, installed_on, success, checksum, execution_time)
+             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+        )
+        .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+        .bind(NODE_APPEARANCE_MIGRATION_DESCRIPTION)
+        .bind(migration_checksum(NODE_APPEARANCE_MIGRATION_SQL))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    async fn appearance_columns(conn: &mut SqliteConnection) -> (HashSet<String>, HashSet<String>) {
+        (
+            table_columns(conn, "groups").await.unwrap(),
+            table_columns(conn, "projects").await.unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn appearance_repair_adds_columns_when_migration_registered_but_columns_missing() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, false).await;
+        register_appearance_migration(&mut conn).await;
+
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+        let (groups, projects) = appearance_columns(&mut conn).await;
+        assert!(groups.contains("icon") && groups.contains("color"));
+        assert!(projects.contains("icon") && projects.contains("color"));
+
+        // 幂等：第二次不再改动。
+        assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn appearance_repair_registers_migration_when_columns_exist_but_version_missing() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, true).await;
+
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+        let registered: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?1 AND success = 1)",
+        )
+        .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(registered, 1);
+        assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn appearance_repair_applies_missing_columns_before_sqlx() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, false).await;
+
+        // 列缺失且版本未登记 —— 先在数据库打开前补齐，避免首次外观写入撞缺列。
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+        let (groups, projects) = appearance_columns(&mut conn).await;
+        assert!(groups.contains("icon") && groups.contains("color"));
+        assert!(projects.contains("icon") && projects.contains("color"));
+        let registered: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?1 AND success = 1)",
+        )
+        .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(registered, 1);
+        assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
     }
 
     async fn create_project_path_backfill_schema(conn: &mut SqliteConnection) {
