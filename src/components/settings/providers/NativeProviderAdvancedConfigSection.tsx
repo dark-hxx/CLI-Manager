@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Button,
   Divider,
@@ -15,12 +16,15 @@ import type {
   NativeProviderModelMapping,
 } from "./nativeProviderAdvancedConfig";
 import type { NativeProviderAppType } from "./nativeProviderTypes";
+import { modelFetchErrorText } from "./providerModelFetchError";
 
 interface NativeProviderAdvancedConfigSectionProps {
   appType: Extract<NativeProviderAppType, "codex" | "grokbuild">;
   value: NativeProviderAdvancedConfig;
   onChange: (value: NativeProviderAdvancedConfig) => void;
   disabled?: boolean;
+  /** API 密钥字段，由表单弹框注入并渲染在本区标题之下。 */
+  keyField?: ReactNode;
   availableModels?: string[];
   fetchingModels?: boolean;
   modelFetchError?: string | null;
@@ -42,6 +46,7 @@ export function NativeProviderAdvancedConfigSection({
   value,
   onChange,
   disabled = false,
+  keyField,
   availableModels = [],
   fetchingModels = false,
   modelFetchError = null,
@@ -68,6 +73,7 @@ export function NativeProviderAdvancedConfigSection({
         <Text fw={600} size="sm">{t("providerCatalog.compatibleAdvanced.title", { appType: appTypeLabel })}</Text>
         <Text size="xs" c="dimmed">{t("providerCatalog.compatibleAdvanced.description")}</Text>
       </Stack>
+      {keyField}
       <Select
         label={t("providerCatalog.compatibleAdvanced.upstreamFormat")}
         description={t("providerCatalog.compatibleAdvanced.upstreamFormatDescription")}
@@ -108,7 +114,10 @@ export function NativeProviderAdvancedConfigSection({
           {t(fetchingModels ? "providerCatalog.models.fetching" : "providerCatalog.models.fetch")}
         </Button>
       </Group>
-      {modelFetchError && <Text size="xs" c="red">{t("providerCatalog.models.fetchFailed")}</Text>}
+      {modelFetchError && (() => {
+        const reason = modelFetchErrorText(modelFetchError);
+        return <Text size="xs" c="red">{t(reason.key, reason.params)}</Text>;
+      })()}
       {value.modelMappings.map((mapping, index) => (
         <Group key={`${index}-${mapping.source}`} align="flex-end" wrap="nowrap">
           <TextInput
