@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 96
-- **Last Active**: 2026-08-24
+- **Total Sessions**: 97
+- **Last Active**: 2026-08-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1181 | Active |
+| `journal-2.md` | ~1202 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 97 | 2026-08-26 | History smart-title prompt and responsiveness | `65a6b5cf` | `master` |
 | 96 | 2026-08-24 | Fix file preview refresh and file tab menu | `9c6aa22d` | `master` |
 | 95 | 2026-08-21 | 修复 PR #224 Grok Hook 配置恢复 | `dde0f550`, `84326c38`, `e4c62bc2` | `agent/grok-ssh-hooks-history` |
 | 94 | 2026-08-21 | Fix provider dialog layering and terminal file navigation | `575f903e` | `master` |

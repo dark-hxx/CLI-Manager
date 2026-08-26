@@ -1179,3 +1179,24 @@ Fixed Markdown preview zoom, persistent local/WSL/SSH file refresh, Markdown tab
 ### Status
 
 [OK] **Completed**
+
+
+## Session 97: History smart-title prompt and responsiveness
+
+**Date**: 2026-08-26
+**Task**: History smart-title prompt and responsiveness
+**Branch**: `master`
+
+### Summary
+
+Added a global local smart-title prompt, persisted save feedback, non-blocking Provider execution, shared SQLite contention handling, and immediate generation loading feedback.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `65a6b5cf` | (see git log) |
+
+### Status
+
+[OK] **Completed**
