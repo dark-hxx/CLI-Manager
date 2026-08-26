@@ -51,6 +51,11 @@ import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderOpen, FolderP
 import { TERM } from "../stats/termStatsUi";
 import { TerminalPanelHeader } from "../terminal/TerminalPanelHeader";
 import { PathCopyMenu } from "../PathCopyMenu";
+import {
+  LiveServerFileMenuItem,
+  LiveServerRootMenuItem,
+  LiveServerStatusBridge,
+} from "./LiveServerMenuItems";
 
 interface FileExplorerSidebarProps {
   mode?: "sidebar" | "panel";
@@ -559,6 +564,7 @@ function FileNode({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem project={project} entry={displayEntry} />
           {!readOnly && isDir && (
             <>
               <ContextMenuItem onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
@@ -1305,6 +1311,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem
+            project={project}
+            entry={{ kind: "file", name: match.name, path: match.path }}
+          />
           {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, match.path, t)}>
             <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
           </ContextMenuItem>}
@@ -1398,6 +1408,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem project={project} entry={entry} />
         {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, entry.path, t)}>
           <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
         </ContextMenuItem>}
@@ -1584,6 +1595,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   return (
     <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
+      <LiveServerStatusBridge project={project} />
       {dragPreview && (
         <Portal>
           <div
@@ -1661,6 +1673,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           <ContextMenuItem onSelect={copyRootAiTree}>
             <Folder size={13} /> {t("files.menu.copyAiTree")}
           </ContextMenuItem>
+          <LiveServerRootMenuItem project={project} />
         </ContextMenuContent>
       </ContextMenu>
 

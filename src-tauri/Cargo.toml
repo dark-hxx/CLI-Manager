@@ -57,6 +57,8 @@ chrono = { version = "0.4", features = ["serde"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 quick-xml = "0.39.4"
 memchr = "2"
+mime_guess = "2"
+percent-encoding = "2"
 encoding_rs = "0.8.35"
 chardetng = "1.0.0"
 tauri-plugin-updater = "2"

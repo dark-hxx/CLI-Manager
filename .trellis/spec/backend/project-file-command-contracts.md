@@ -210,3 +210,54 @@ Frontend allows .ts → local or SSH reader still rejects .ts as video
 Frontend precheck, local is_video_path, and SSH is_video all treat .ts as text;
 binary or undecodable content is rejected by the existing decode guard.
 ```
+
+---
+
+## Scenario: Built-in Live Server
+
+### 1. Scope / Trigger
+
+- Trigger: a local project or Worktree `.html` / `.htm` context-menu action.
+- Boundary: Rust serves only canonical files below the selected project root; the frontend eligibility check is not a security boundary.
+- Non-goal: no framework command, dependency install, directory listing, backend proxy, SSH/WSL access, or external Live Server fallback.
+
+### 2. Signatures
+
+```rust
+live_server_start(project_path: String, relative_path: String) -> Result<LiveServerOpenResult, String>
+live_server_status(project_path: String) -> Result<Option<LiveServerSession>, String>
+live_server_stop(project_path: String) -> Result<bool, String>
+
+LiveServerSession { project_path: String, origin: String, port: u16 }
+LiveServerOpenResult { session: LiveServerSession, url: String, reused: bool }
+```
+
+### 3. Contracts
+
+- Bind exactly `127.0.0.1:0`; return the OS-assigned port and reuse one session per normalized project path.
+- Accept only `GET` and `HEAD`, require `Host: 127.0.0.1:<bound-port>`, and return `Cache-Control: no-store` plus `X-Content-Type-Options: nosniff`.
+- Reserve `/__cli_manager_live_server__/version`; injected HTML polls it every 400 ms and reloads after the debounced watcher advances the version.
+- Relative entry/request paths use forward slashes, reject absolute/current/parent/backslash segments, percent-decode before validation, and must canonicalize below the canonical root.
+- Start requires an existing `.html` / `.htm` file. Request `/` and in-root directories resolve to `index.html`; there is no directory listing.
+- MIME types come from `mime_guess`. HTML receives the reload client before a case-insensitive `</body>`, or appended when no close tag exists.
+- A 250 ms recursive watcher ignores VCS/generated high-churn directories. Stop drops the watcher and listener owner; `RunEvent::Exit` clears all sessions.
+- Browser-opener failure is returned to the UI as `browser_open_failed` after the backend session is recorded; no alternate browser/runtime is attempted.
+
+### 4. Validation & Error Matrix
+
+| Condition | Error / response |
+|---|---|
+| Invalid root | `root_not_absolute` / `root_canonicalize_failed` / `root_not_directory` |
+| Invalid relative entry | `path_contains_*` / `path_is_absolute` |
+| Missing or non-HTML entry | `entry_not_found` / `entry_not_html` |
+| Canonical escape | `path_outside_root` |
+| Listener or watcher setup failure | `listener_*` / `watcher_init_failed` / `watch_failed` |
+| Unexpected Host / method | HTTP `403` / `405` |
+| Missing served file | HTTP `404` |
+
+### 5. Required Tests
+
+- Validate Unicode/space URL encoding, nested index resolution, traversal/backslash rejection, and canonical containment.
+- Validate case-insensitive HTML injection with and without `</body>`.
+- Validate generated-directory watcher filtering and relevant in-root changes.
+- Start a real loopback listener; assert static response, exact Host behavior, same-root reuse, stop, and listener shutdown.

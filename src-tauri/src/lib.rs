@@ -16,6 +16,7 @@ mod file_watcher;
 mod git_watcher;
 pub mod hook_client;
 mod linux_graphics;
+mod live_server;
 mod log_rotation;
 mod process_job;
 pub(crate) mod provider;
@@ -1482,6 +1483,7 @@ pub fn run() {
         .manage(daemon::client::DaemonBridge::new())
         .manage(file_watcher::FileWatcherBridge::new())
         .manage(git_watcher::GitWatcherBridge::new())
+        .manage(live_server::LiveServerManager::new())
         .manage(commands::subagent_transcript::SubagentTranscriptBridge::new())
         .manage(commands::cc_connect::CcConnectManager::new())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -1572,6 +1574,9 @@ pub fn run() {
             commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::logging::resource_diagnostics_write,
+            commands::live_server::live_server_start,
+            commands::live_server::live_server_status,
+            commands::live_server::live_server_stop,
             commands::fs::clipboard_read_file_paths,
             commands::fs::check_paths_exist,
             commands::fs::file_get_path_kind,
@@ -1841,6 +1846,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = &event {
+                app.state::<live_server::LiveServerManager>().shutdown();
                 app.state::<commands::cc_connect::CcConnectManager>()
                     .shutdown();
                 crash_reporter::mark_graceful_exit();
