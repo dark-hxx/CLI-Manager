@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/history-index-contracts.md", "reason": "标题生成/持久化/取消的既有后端契约，异步化与身份改造都不能破坏它"}
+{"file": ".trellis/spec/frontend/history-session-contracts.md", "reason": "历史会话前端状态与事件刷新契约，新增 history-title-updated 监听要对齐"}
+{"file": ".trellis/tasks/08-24-history-title-async-cli-ua/research/cli-identity-capture.md", "reason": "claude/codex 真实 UA 与身份头抓包结论，UA 构造以此为准"}
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "场景维度清单，确认边界场景无遗漏"}

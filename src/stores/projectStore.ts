@@ -13,6 +13,7 @@ import {
 } from "../lib/providerSwitching";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey } from "../lib/shell";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
+import { normalizeNodeAccentToken, normalizeNodeIcon } from "../lib/nodeAppearance";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import type {
   Project, CreateProjectInput, UpdateProjectInput,
@@ -49,11 +50,23 @@ interface ProjectStore {
   batchUpdateProjectShell: (ids: string[], shell: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   createGroup: (input: CreateGroupInput) => Promise<Group>;
+  /** 只更新分组的外观列（icon / color），未传的字段保持不变。 */
+  updateGroupAppearance: (id: string, appearance: { icon?: string; color?: string }) => Promise<void>;
   renameGroup: (id: string, name: string) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
   reorderItems: (parentId: string | null, orderedIds: string[]) => Promise<void>;
   moveProjectToGroup: (projectId: string, targetGroupId: string | null) => Promise<void>;
   moveGroupToParent: (groupId: string, targetParentId: string | null) => Promise<void>;
+}
+
+/**
+ * 统计树节点下的项目数（含子分组递归，不计 Worktree）。
+ * 侧边栏折叠态徽章与展开态分组计数共用，保证两处口径一致。
+ */
+export function countProjectsInNode(node: TreeNode): number {
+  if (node.type === "project") return 1;
+  if (node.type === "worktree") return 0;
+  return node.children.reduce((sum, child) => sum + countProjectsInNode(child), 0);
 }
 
 function buildTree(groups: Group[], projects: Project[], search: string, worktrees: WorktreeRecord[] = []): TreeNode[] {
@@ -325,6 +338,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ssh_host_id: isSshProject ? input.ssh_host_id ?? null : null,
       remote_path: isSshProject ? input.remote_path?.trim() ?? "" : "",
       cli_config_root: cliConfigRoot,
+      icon: normalizeNodeIcon(input.icon),
+      color: normalizeNodeAccentToken(input.color),
       created_at: ts,
       updated_at: ts,
     };
@@ -333,9 +348,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
          id, name, path, group_name, group_id, sort_order,
          cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides,
          worktree_strategy, worktree_root, worktree_deps_prompt_enabled,
-         environment_type, ssh_host_id, remote_path, cli_config_root, created_at, updated_at
+         environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
       [
         project.id,
         project.name,
@@ -356,6 +371,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project.ssh_host_id,
         project.remote_path,
         project.cli_config_root,
+        project.icon,
+        project.color,
         project.created_at,
         project.updated_at,
       ]
@@ -381,6 +398,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (cliConfigRootError) throw new Error(cliConfigRootError);
       normalizedInput.cli_config_root = cliConfigRoot;
     }
+    // 外观列先归一化：同步来的脏 color / 非法 token 落成空串走自动配色，不写脏值进库。
+    if (input.icon !== undefined) normalizedInput.icon = normalizeNodeIcon(input.icon);
+    if (input.color !== undefined) normalizedInput.color = normalizeNodeAccentToken(input.color);
 
     for (const [key, val] of Object.entries(normalizedInput)) {
       if (val !== undefined) {
@@ -437,14 +457,39 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       name: input.name,
       parent_id: input.parent_id ?? null,
       sort_order: 0,
+      // 外观随建组的同一条 INSERT 落库：避免 "先 INSERT 再 UPDATE" 与 fetchAll 刷新交错造成颜色跳变。
+      icon: normalizeNodeIcon(input.icon),
+      color: normalizeNodeAccentToken(input.color),
       created_at: ts,
     };
     await db.execute(
-      `INSERT INTO groups (id, name, parent_id, sort_order, created_at) VALUES ($1, $2, $3, $4, $5)`,
-      [group.id, group.name, group.parent_id, group.sort_order, group.created_at]
+      `INSERT INTO groups (id, name, parent_id, sort_order, icon, color, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [group.id, group.name, group.parent_id, group.sort_order, group.icon, group.color, group.created_at]
     );
     await get().fetchAll();
     return group;
+  },
+
+  updateGroupAppearance: async (id, appearance) => {
+    const db = await getDb();
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    if (appearance.icon !== undefined) {
+      fields.push(`icon = $${idx}`);
+      values.push(normalizeNodeIcon(appearance.icon));
+      idx += 1;
+    }
+    if (appearance.color !== undefined) {
+      fields.push(`color = $${idx}`);
+      values.push(normalizeNodeAccentToken(appearance.color));
+      idx += 1;
+    }
+    if (fields.length === 0) return;
+    values.push(id);
+    // 只更新单行的外观列，不做整行重写：与并发的重命名 / 拖拽排序写入互不覆盖。
+    await db.execute(`UPDATE groups SET ${fields.join(", ")} WHERE id = $${idx}`, values);
+    await get().fetchAll();
   },
 
   renameGroup: async (id, name) => {

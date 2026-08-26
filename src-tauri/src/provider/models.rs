@@ -131,8 +131,16 @@ pub(crate) async fn fetch(input: FetchModelsInput) -> Result<FetchModelsResult, 
         "provider_fetch_models request: app_type={app_type} url={url} auth_header={auth_header} \
          api_format={api_format} api_key_field={api_key_field} key_source={key_source} \
          key={key_fingerprint} key_len={key_len}",
-        auth_header = if uses_x_api_key { "x-api-key" } else { "authorization: Bearer" },
-        key_source = if used_form_key { "form" } else { "stored_active" },
+        auth_header = if uses_x_api_key {
+            "x-api-key"
+        } else {
+            "authorization: Bearer"
+        },
+        key_source = if used_form_key {
+            "form"
+        } else {
+            "stored_active"
+        },
         key_fingerprint = fingerprint_key(&api_key),
         key_len = api_key.len(),
     );
@@ -341,6 +349,9 @@ mod tests {
         let printed = truncate_for_log(&format!("line1\nline2\n{long}"));
         assert!(printed.ends_with("…<truncated>"), "{printed}");
         assert!(!printed.contains('\n'), "{printed}");
-        assert_eq!(truncate_for_log("  {\"error\":\"forbidden\"}\n"), "{\"error\":\"forbidden\"}");
+        assert_eq!(
+            truncate_for_log("  {\"error\":\"forbidden\"}\n"),
+            "{\"error\":\"forbidden\"}"
+        );
     }
 }
