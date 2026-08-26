@@ -1,3 +1,21 @@
+# Grok TUI 鼠标点击恢复验证（2026-08-25）
+
+## 根因与发现清单
+
+- 根因位于宿主 xterm 鼠标策略：PR #212 将 `createTerminalMouseInteractionOptions` 的 `mouseEventsRequireAlt` 设为 `true`，TUI 开启鼠标协议后普通 click/drag/move 被宿主丢弃，Grok plan / 子 agent 点击无反应（#228）。
+- 修复落在同一常量，改回 `false`，使 TUI 直接接收未修饰鼠标报告；Shift 仍用于宿主选区。OSC 52 剪贴板路径不改。
+- 触点：`src/terminal/browser/TerminalMouseInteraction.ts`、`scripts/terminalMouseInteraction.test.mjs`、`src/components/XTermTerminal.tsx`（仅 spread 该 options，未改）。
+- 确认无关：`useTerminalOsc` / OSC 52 解析与写剪贴板、`Ctrl+Shift+C`、设置页开关。
+- 场景：本地 / WSL / SSH；Grok 及其他启用鼠标协议的 TUI；未开鼠标协议的普通 Shell 仍是宿主选区。
+
+## 验证结果
+
+- `node --test scripts/terminalMouseInteraction.test.mjs`：2 项通过。
+- `npx tsc --noEmit`、`git diff --check`：通过。
+- 未在 Windows Tauri 窗口对 Grok 做端到端手测。
+
+---
+
 # OSC 52 本机剪贴板验证（2026-08-17）
 
 ## 根因与发现清单
