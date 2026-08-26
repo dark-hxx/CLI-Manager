@@ -6,10 +6,11 @@ export type TerminalMouseInteractionOptions = Pick<
 >;
 
 /**
- * Host text selection is the default. Hold Alt to send click/drag to a
- * mouse-aware TUI so Grok/Claude/Codex cannot eat the selection on mouseup.
+ * Keep mouse-aware TUIs aligned with standard terminal behavior: the
+ * application receives unmodified mouse reports and Shift keeps text
+ * selection available in xterm.
  */
 export const createTerminalMouseInteractionOptions =
   (): TerminalMouseInteractionOptions => ({
-    mouseEventsRequireAlt: true,
+    mouseEventsRequireAlt: false,
   });
