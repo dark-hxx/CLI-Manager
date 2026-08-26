@@ -1692,3 +1692,24 @@ daemon 连接完成后自动协调持久化路由意图，复用手动启停逻�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 52: 修复供应商目录残留选中态
+
+**Date**: 2026-08-24
+**Task**: 修复供应商目录残留选中态
+**Branch**: `master`
+
+### Summary
+
+供应商详情关闭后仅清除目录视觉选中态，保留缓存选择用于重新进入详情；新增回归测试并更新供应商契约与 TEMP 产品记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `320d4d6f` | (see git log) |
+
+### Status
+
+[OK] **Completed**

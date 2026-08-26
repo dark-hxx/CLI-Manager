@@ -1,4 +1,4 @@
-import { Button, Group, Loader, Stack, Text } from "@mantine/core";
+import { Group, Loader, Stack, Text } from "@mantine/core";
 import {
   DndContext,
   KeyboardSensor,
@@ -18,6 +18,7 @@ import { FileDown, Plus, RefreshCw } from "lucide-react";
 import { useMemo } from "react";
 import { useI18n } from "@/lib/i18n";
 import { DND_ACTIVATION_CONSTRAINT } from "@/lib/dragInteraction";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeProviderCard } from "./NativeProviderCard";
 import type { NativeProviderCard as NativeProviderCardData, NativeProviderFailoverState } from "./nativeProviderTypes";
 

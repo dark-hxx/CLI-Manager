@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button, Group, Modal, PasswordInput, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
+import { Group, Modal, PasswordInput, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
 import { useI18n } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type {
   NativeProviderAppType,
   NativeProviderKeyCreateInput,

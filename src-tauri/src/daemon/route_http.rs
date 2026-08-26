@@ -23,6 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ERROR_DIAGNOSTIC_BODY_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const KEY_COOLDOWN_DEFAULT: Duration = Duration::from_secs(30);
 const KEY_COOLDOWN_MAX: Duration = Duration::from_secs(60);
@@ -217,6 +218,7 @@ struct HotSwitchCommit {
 struct UsageCommit {
     context: RouteUsageContext,
     status_code: Option<u16>,
+    initial_error_code: Option<&'static str>,
 }
 
 struct TimedBodyState<S> {
@@ -570,6 +572,11 @@ async fn forward_request(
         .get("stream")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    let error_capture_timeout = Duration::from_secs(if streaming {
+        failover_config.streaming_idle_timeout
+    } else {
+        failover_config.non_streaming_timeout
+    });
     let circuit_policy = CircuitPolicy {
         failure_threshold: failover_config.circuit_failure_threshold,
         success_threshold: failover_config.circuit_success_threshold,
@@ -629,7 +636,8 @@ async fn forward_request(
     let record_failed_attempt = |snapshot: &ProviderSnapshot,
                                  attempt_index: usize,
                                  status_code: Option<StatusCode>,
-                                 error_code: &'static str| {
+                                 error_code: &'static str,
+                                 capture: usage::UsageCapture| {
         if !usage_logging_enabled {
             return;
         }
@@ -651,7 +659,7 @@ async fn forward_request(
         tokio::task::spawn_local(async move {
             usage::record_route_usage_best_effort(
                 context,
-                usage::UsageCapture::default(),
+                capture,
                 status_code.map(|status| status.as_u16()),
                 "error",
                 Some(error_code),
@@ -898,6 +906,7 @@ async fn forward_request(
                         actual_attempt_index,
                         Some(StatusCode::GATEWAY_TIMEOUT),
                         "routing_upstream_timeout",
+                        usage::UsageCapture::default(),
                     );
                     break ProviderAttemptOutcome::Failure(
                         StatusCode::GATEWAY_TIMEOUT,
@@ -916,6 +925,7 @@ async fn forward_request(
                         actual_attempt_index,
                         Some(StatusCode::BAD_GATEWAY),
                         "routing_upstream_request_failed",
+                        usage::UsageCapture::default(),
                     );
                     break ProviderAttemptOutcome::Failure(
                         StatusCode::BAD_GATEWAY,
@@ -964,6 +974,7 @@ async fn forward_request(
                             actual_attempt_index,
                             Some(StatusCode::BAD_GATEWAY),
                             "routing_upstream_body_failed",
+                            usage::UsageCapture::default(),
                         );
                         break ProviderAttemptOutcome::Failure(
                             StatusCode::BAD_GATEWAY,
@@ -971,6 +982,9 @@ async fn forward_request(
                         );
                     }
                 };
+                let error_capture = usage_logging_enabled
+                    .then(|| capture_upstream_error_body(&error_body))
+                    .unwrap_or_default();
                 if should_read_anthropic_client_error {
                     if can_signature && is_thinking_signature_error(&error_body) {
                         remove_invalid_thinking_blocks(&mut provider_request);
@@ -982,6 +996,7 @@ async fn forward_request(
                             actual_attempt_index,
                             Some(response_status),
                             "routing_upstream_rectifier_retry",
+                            error_capture.clone(),
                         );
                         if actual_provider_attempts >= max_provider_attempts {
                             break ProviderAttemptOutcome::Failure(
@@ -1003,6 +1018,7 @@ async fn forward_request(
                             actual_attempt_index,
                             Some(response_status),
                             "routing_upstream_rectifier_retry",
+                            error_capture.clone(),
                         );
                         if actual_provider_attempts >= max_provider_attempts {
                             break ProviderAttemptOutcome::Failure(
@@ -1024,6 +1040,7 @@ async fn forward_request(
                         actual_attempt_index,
                         Some(response_status),
                         "routing_upstream_rectifier_retry",
+                        error_capture.clone(),
                     );
                     if actual_provider_attempts >= max_provider_attempts {
                         break ProviderAttemptOutcome::Failure(
@@ -1039,6 +1056,7 @@ async fn forward_request(
                         actual_attempt_index,
                         Some(response_status),
                         "routing_upstream_provider_failed",
+                        error_capture,
                     );
                     break ProviderAttemptOutcome::Failure(
                         StatusCode::BAD_GATEWAY,
@@ -1050,15 +1068,23 @@ async fn forward_request(
                     actual_attempt_index,
                     Some(response_status),
                     "routing_upstream_client_error",
+                    error_capture,
                 );
                 return Err((StatusCode::BAD_REQUEST, "routing_upstream_client_error"));
             }
             if classify_upstream_status(response.status()) == UpstreamErrorClass::Provider {
+                let status = response.status();
+                let capture = if usage_logging_enabled {
+                    capture_upstream_error_response(response, error_capture_timeout).await
+                } else {
+                    usage::UsageCapture::default()
+                };
                 record_failed_attempt(
                     &snapshot,
                     actual_attempt_index,
-                    Some(response.status()),
+                    Some(status),
                     "routing_upstream_provider_failed",
+                    capture,
                 );
                 break ProviderAttemptOutcome::Failure(
                     StatusCode::BAD_GATEWAY,
@@ -1077,11 +1103,17 @@ async fn forward_request(
             );
             let Some(next_key) = state.next_key(&snapshot.pool_id, &used_keys) else {
                 break if failover_config.auto_failover_enabled {
+                    let capture = if usage_logging_enabled {
+                        capture_upstream_error_response(response, error_capture_timeout).await
+                    } else {
+                        usage::UsageCapture::default()
+                    };
                     record_failed_attempt(
                         &snapshot,
                         actual_attempt_index,
                         Some(response_status),
                         "routing_provider_key_exhausted",
+                        capture,
                     );
                     ProviderAttemptOutcome::KeyExhausted
                 } else {
@@ -1090,22 +1122,34 @@ async fn forward_request(
             };
             if actual_provider_attempts >= max_provider_attempts {
                 break if failover_config.auto_failover_enabled {
+                    let capture = if usage_logging_enabled {
+                        capture_upstream_error_response(response, error_capture_timeout).await
+                    } else {
+                        usage::UsageCapture::default()
+                    };
                     record_failed_attempt(
                         &snapshot,
                         actual_attempt_index,
                         Some(response_status),
                         "routing_provider_key_exhausted",
+                        capture,
                     );
                     ProviderAttemptOutcome::KeyExhausted
                 } else {
                     ProviderAttemptOutcome::Response(response, actual_attempt_index)
                 };
             }
+            let capture = if usage_logging_enabled {
+                capture_upstream_error_response(response, error_capture_timeout).await
+            } else {
+                usage::UsageCapture::default()
+            };
             record_failed_attempt(
                 &snapshot,
                 actual_attempt_index,
                 Some(response_status),
                 "routing_upstream_key_retry",
+                capture,
             );
             used_keys.insert(next_key.id.clone());
             selected_key = next_key;
@@ -1241,7 +1285,8 @@ async fn forward_request(
                 log::warn!("routing hot switch failed: {error}");
             }
         }
-        if classify_upstream_status(status) == UpstreamErrorClass::Success {
+        let upstream_success = classify_upstream_status(status) == UpstreamErrorClass::Success;
+        if upstream_success {
             record_circuit_success(&state, &mut circuit_permit, circuit_policy);
         } else if let Some(permit) = circuit_permit.take() {
             state.circuits.release(permit);
@@ -1259,12 +1304,12 @@ async fn forward_request(
                     context,
                     capture,
                     Some(status.as_u16()),
-                    if classify_upstream_status(status) == UpstreamErrorClass::Success {
-                        "success"
+                    if upstream_success { "success" } else { "error" },
+                    if upstream_success {
+                        None
                     } else {
-                        "error"
+                        Some("routing_upstream_http_error")
                     },
-                    None,
                     duration_ms,
                 )
                 .await;
@@ -1322,6 +1367,11 @@ async fn forward_request(
                 selected_provider_name.clone(),
             ),
             status_code: Some(status.as_u16()),
+            initial_error_code: if classify_upstream_status(status) == UpstreamErrorClass::Success {
+                None
+            } else {
+                Some("routing_upstream_http_error")
+            },
         }),
     );
     let body = BodyExt::boxed(StreamBody::new(stream));
@@ -2158,6 +2208,40 @@ fn classify_upstream_status(status: StatusCode) -> UpstreamErrorClass {
     }
 }
 
+fn capture_upstream_error_body(body: &[u8]) -> usage::UsageCapture {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .map(|value| usage::parse_response_json(&value))
+        .unwrap_or_default()
+}
+
+async fn capture_upstream_error_response(
+    response: reqwest::Response,
+    timeout: Duration,
+) -> usage::UsageCapture {
+    let read = async move {
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let Ok(chunk) = chunk else {
+                break;
+            };
+            let remaining = MAX_ERROR_DIAGNOSTIC_BODY_BYTES.saturating_sub(body.len());
+            if remaining == 0 {
+                break;
+            }
+            let take = chunk.len().min(remaining);
+            body.extend_from_slice(&chunk[..take]);
+            if take < chunk.len() {
+                break;
+            }
+        }
+        capture_upstream_error_body(&body)
+    };
+    tokio::time::timeout(timeout, read)
+        .await
+        .unwrap_or_default()
+}
+
 fn record_circuit_success(
     state: &RouteState,
     permit: &mut Option<CircuitPermit>,
@@ -2366,6 +2450,13 @@ fn finish_usage_commit<S>(state: &mut TimedBodyState<S>, error_code: Option<&'st
         .take()
         .map(SseUsageCollector::finish)
         .unwrap_or_default();
+    let error_code = error_code
+        .or(commit.initial_error_code)
+        .or(if capture.failed {
+            Some("routing_upstream_stream_error")
+        } else {
+            None
+        });
     let outcome = if error_code.is_some() {
         "error"
     } else {
@@ -2629,6 +2720,19 @@ mod tests {
         assert_eq!(
             classify_upstream_status(StatusCode::OK),
             UpstreamErrorClass::Success
+        );
+    }
+
+    #[test]
+    fn provider_error_body_capture_uses_sanitized_error_details() {
+        let capture = capture_upstream_error_body(
+            br#"{"type":"error","error":{"message":"provider rejected token=private-token"},"request":"must not persist"}"#,
+        );
+
+        assert!(capture.failed);
+        assert_eq!(
+            capture.error_detail.as_deref(),
+            Some("provider rejected token=<redacted>")
         );
     }
 

@@ -739,6 +739,74 @@ pub(crate) const MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL: &str = r#"
                            AND NULLIF(TRIM(session.project_path), '') IS NOT NULL
                    );
               "#;
+pub(crate) const MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION: i64 = 33;
+pub(crate) const MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION: &str =
+    "add_route_usage_error_diagnostics";
+
+macro_rules! recreate_unified_usage_records_with_error_detail_sql {
+    () => {
+        r#"
+                DROP VIEW IF EXISTS unified_usage_records;
+                CREATE VIEW unified_usage_records AS
+                SELECT
+                    u.record_id AS request_id,
+                    u.source,
+                    COALESCE(u.project_key, '') AS project_key,
+                    COALESCE(u.project_path, '') AS project_path,
+                    COALESCE(u.session_id, '') AS session_id,
+                    COALESCE(u.file_path, '') AS file_path,
+                    u.event_index,
+                    u.started_at_ms AS timestamp_ms,
+                    COALESCE(u.outbound_model, u.response_model, u.requested_model, u.pricing_model) AS model,
+                    u.input_tokens,
+                    u.output_tokens,
+                    u.cache_read_tokens,
+                    u.cache_creation_tokens,
+                    u.data_source,
+                    u.provider_id,
+                    u.provider_name,
+                    u.requested_model,
+                    u.outbound_model,
+                    u.response_model,
+                    u.usage_status,
+                    u.status_code,
+                    u.outcome,
+                    u.error_code,
+                    u.error_detail,
+                    u.duration_ms,
+                    u.attempt_count,
+                    u.degraded
+                FROM usage_records u
+                WHERE u.data_source = 'route'
+                   OR NOT EXISTS (
+                        SELECT 1
+                        FROM usage_records r
+                        WHERE r.data_source = 'route'
+                          AND r.usage_status IN ('complete', 'partial')
+                          AND NULLIF(TRIM(r.session_id), '') IS NOT NULL
+                          AND r.source = u.source
+                          AND r.session_id = u.session_id
+                          AND COALESCE(r.completed_at_ms, r.started_at_ms)
+                              BETWEEN u.started_at_ms - 120000 AND u.started_at_ms + 120000
+                          AND LOWER(COALESCE(r.outbound_model, r.response_model, r.requested_model, ''))
+                              = LOWER(COALESCE(u.response_model, u.pricing_model, ''))
+                          AND r.output_tokens = u.output_tokens
+                          AND (
+                              r.input_tokens = u.input_tokens
+                              OR r.input_tokens = u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens
+                              OR u.input_tokens = r.input_tokens + r.cache_read_tokens + r.cache_creation_tokens
+                          )
+                   );
+              "#
+    };
+}
+
+pub(crate) const MIGRATION_RECREATE_UNIFIED_USAGE_RECORDS_WITH_ERROR_DETAIL_SQL: &str =
+    recreate_unified_usage_records_with_error_detail_sql!();
+pub(crate) const MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL: &str = concat!(
+    "ALTER TABLE usage_records ADD COLUMN error_detail TEXT;",
+    recreate_unified_usage_records_with_error_detail_sql!()
+);
 pub(crate) const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL: &str = "
                 CREATE INDEX IF NOT EXISTS idx_usage_records_route_dedup
                 ON usage_records(
@@ -799,7 +867,7 @@ pub(crate) const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL: &str = "
               ";
 /// 分组与项目的外观标记（issue #213）。空串表示"自动"：颜色按名称 hash 落到调色板，图标按节点类型回退。
 /// `icon` 存单个 emoji 字符或内置图标 key，`color` 只存调色板 token（不存任意 hex，保证主题适配）。
-const MIGRATION_ADD_NODE_APPEARANCE_VERSION: i64 = 33;
+const MIGRATION_ADD_NODE_APPEARANCE_VERSION: i64 = 34;
 const MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION: &str =
     "add_node_appearance_to_groups_and_projects";
 const MIGRATION_ADD_NODE_APPEARANCE_SQL: &str = "
@@ -808,7 +876,7 @@ const MIGRATION_ADD_NODE_APPEARANCE_SQL: &str = "
                 ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT '';
                 ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '';
               ";
-/// 供 `commands::db_repair` 做"缺列自愈"用：外观列缺失时补列并按同一 checksum 登记 migration 33，
+/// 供 `commands::db_repair` 做"缺列自愈"用：外观列缺失时补列并按同一 checksum 登记 migration 34，
 /// 避免 sqlx 随后重放 `ADD COLUMN` 撞 `duplicate column name`。
 pub(crate) const NODE_APPEARANCE_MIGRATION_VERSION: i64 = MIGRATION_ADD_NODE_APPEARANCE_VERSION;
 pub(crate) const NODE_APPEARANCE_MIGRATION_DESCRIPTION: &str =
@@ -1110,6 +1178,12 @@ fn migrations() -> Vec<Migration> {
             version: MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
             description: "backfill_request_log_project_path",
             sql: MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+            description: MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION,
+            sql: MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL,
             kind: MigrationKind::Up,
         },
         Migration {
@@ -2026,6 +2100,7 @@ mod provider_migration_tests {
         MIGRATION_CREATE_NATIVE_PROVIDERS_VERSION, MIGRATION_LEGACY_PROVIDERS_VERSION,
     };
     use crate::{
+        MIGRATION_ADD_NODE_APPEARANCE_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
         MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
         MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
         MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
@@ -2091,11 +2166,34 @@ mod provider_migration_tests {
         assert!(project_path_backfill
             .sql
             .contains("SELECT session.project_path"));
+        let error_detail_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+            .expect("route usage error detail migration must be registered");
+        assert_eq!(error_detail_migration.version, 33);
+        assert!(error_detail_migration
+            .sql
+            .contains("ALTER TABLE usage_records ADD COLUMN error_detail TEXT"));
+        assert!(error_detail_migration.sql.contains("u.error_code"));
+        assert!(error_detail_migration.sql.contains("u.error_detail"));
+        let node_appearance_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_NODE_APPEARANCE_VERSION)
+            .expect("node appearance migration must be registered");
+        assert_eq!(node_appearance_migration.version, 34);
+        assert!(node_appearance_migration
+            .sql
+            .contains("ALTER TABLE groups ADD COLUMN icon TEXT"));
+        assert!(node_appearance_migration
+            .sql
+            .contains("ALTER TABLE projects ADD COLUMN color TEXT"));
         assert!(title_migration.version < project_path_migration.version);
         assert!(project_path_migration.version < project_path_backfill.version);
+        assert!(project_path_backfill.version < error_detail_migration.version);
+        assert!(error_detail_migration.version < node_appearance_migration.version);
         assert!(registry
             .iter()
-            .all(|migration| migration.version <= project_path_backfill.version));
+            .all(|migration| migration.version <= node_appearance_migration.version));
         assert!(registry.iter().any(|migration| migration.version == 29
             && migration.description == "optimize_unified_usage_record_queries"));
     }
@@ -2104,8 +2202,9 @@ mod provider_migration_tests {
 #[cfg(test)]
 mod request_log_project_path_migration_tests {
     use super::{
-        MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL, MIGRATION_CREATE_REQUEST_LOGS_SQL,
-        MIGRATION_CREATE_USAGE_RECORDS_SQL, MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_SQL,
+        MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL, MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+        MIGRATION_CREATE_REQUEST_LOGS_SQL, MIGRATION_CREATE_USAGE_RECORDS_SQL,
+        MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_SQL,
     };
     use sqlx::{Connection, Row, SqliteConnection};
 
@@ -2193,5 +2292,47 @@ mod request_log_project_path_migration_tests {
         assert_eq!(project_path("route").as_deref(), Some("d:/work/project-a"));
         assert_eq!(project_path("ambiguous"), None);
         assert_eq!(project_path("existing").as_deref(), Some("keep/me"));
+    }
+
+    #[tokio::test]
+    async fn route_usage_error_detail_migration_preserves_legacy_rows_and_rebuilds_view() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_REQUEST_LOGS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_USAGE_RECORDS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO usage_records(
+                record_id, logical_request_id, data_source, source, error_code,
+                started_at_ms, created_at_ms, updated_at_ms
+             ) VALUES ('route-error', 'route-error', 'route', 'codex',
+                       'routing_upstream_timeout', 1, 1, 1)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        sqlx::raw_sql(MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        let row = sqlx::query(
+            "SELECT error_code, error_detail
+             FROM unified_usage_records
+             WHERE request_id = 'route-error'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            row.get::<Option<String>, _>("error_code").as_deref(),
+            Some("routing_upstream_timeout")
+        );
+        assert_eq!(row.get::<Option<String>, _>("error_detail"), None);
     }
 }

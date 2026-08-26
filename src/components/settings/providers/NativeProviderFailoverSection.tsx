@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { Accordion, ActionIcon, Alert, Button, Group, NumberInput, Radio, Stack, Switch, Text, Badge } from "@mantine/core";
+import { Accordion, Alert, Group, NumberInput, Radio, Stack, Switch, Text, Badge } from "@mantine/core";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowDown, ArrowLeftRight, ArrowUp, GripVertical, RotateCcw, Save } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { DND_ACTIVATION_CONSTRAINT, DND_SORTABLE_TRANSITION } from "@/lib/dragInteraction";
+import { NativeProviderActionIcon as ActionIcon, NativeProviderButton as Button } from "./NativeProviderButton";
 import type { NativeProviderAppType, NativeProviderFailoverConfig, NativeProviderFailoverProvider } from "./nativeProviderTypes";
 import { orderFailoverProviders } from "./providerFailoverOrder";
 import type { UseNativeProviderRoutingResult } from "./useNativeProviderRouting";

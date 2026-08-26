@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import {
   CalendarDays,
+  CircleAlert,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -21,7 +22,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
-import type { RequestLogFilters, RequestLogPage, RequestLogSource } from "../../lib/types";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import type { RequestLogFilters, RequestLogItem, RequestLogPage, RequestLogSource } from "../../lib/types";
 import { syncHistoryRequestLogs } from "../../stores/historyStore";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../lib/i18n";
 import { getHistoryPathArgs } from "../../lib/historyPathArgs";
@@ -37,6 +39,27 @@ const REQUEST_LOG_SOURCE_LABEL_KEYS: Record<RequestLogSource, TranslationKey> = 
   opencode: "requestLogs.source.opencode",
   grok: "requestLogs.source.grok",
 };
+
+const REQUEST_LOG_ERROR_CODE_LABEL_KEYS: Record<string, TranslationKey> = {
+  routing_upstream_http_error: "requestLogs.error.upstreamHttp",
+  routing_upstream_timeout: "requestLogs.error.upstreamTimeout",
+  routing_upstream_request_failed: "requestLogs.error.upstreamRequestFailed",
+  routing_upstream_body_failed: "requestLogs.error.upstreamBodyFailed",
+  routing_upstream_provider_failed: "requestLogs.error.upstreamProviderFailed",
+  routing_upstream_client_error: "requestLogs.error.upstreamClientError",
+  routing_upstream_stream_error: "requestLogs.error.upstreamStreamError",
+  routing_upstream_stream_timeout: "requestLogs.error.upstreamStreamTimeout",
+  routing_client_cancelled: "requestLogs.error.clientCancelled",
+  routing_provider_circuit_open: "requestLogs.error.providerCircuitOpen",
+  routing_provider_keys_cooling_down: "requestLogs.error.providerKeysCoolingDown",
+  routing_provider_keys_unavailable: "requestLogs.error.providerKeysUnavailable",
+  routing_provider_key_exhausted: "requestLogs.error.providerKeyExhausted",
+  routing_provider_endpoint_invalid: "requestLogs.error.providerEndpointInvalid",
+  routing_upstream_rectifier_retry: "requestLogs.error.upstreamRetry",
+  routing_upstream_key_retry: "requestLogs.error.upstreamKeyRetry",
+};
+
+type Translator = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
 type RequestLogSourceFilter = "all" | RequestLogSource;
 type RequestLogDatePreset = "today" | "last7Days" | "last30Days";
@@ -181,6 +204,26 @@ function outlierThreshold(values: number[]): number {
   return average * 2;
 }
 
+function isRouteError(item: RequestLogItem): boolean {
+  return item.data_source === "route" && (
+    item.outcome === "error" ||
+    item.outcome === "skipped" ||
+    Boolean(item.error_code) ||
+    Boolean(item.error_detail)
+  );
+}
+
+function requestLogErrorSummary(item: RequestLogItem, t: Translator): string {
+  const safeDetail = item.error_detail?.trim();
+  if (safeDetail) return safeDetail;
+  const codeLabel = item.error_code ? REQUEST_LOG_ERROR_CODE_LABEL_KEYS[item.error_code] : undefined;
+  if (codeLabel) return t(codeLabel);
+  if (typeof item.status_code === "number") {
+    return t("requestLogs.error.httpStatusSummary", { status: item.status_code });
+  }
+  return t("requestLogs.error.unknown");
+}
+
 export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsViewProps) {
   const { language, t } = useI18n();
   const [draft, setDraft] = useState<RequestLogDraftFilters>(() => defaultFilters());
@@ -190,6 +233,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [selectedError, setSelectedError] = useState<RequestLogItem | null>(null);
   const globalFiltersKey = JSON.stringify(globalFilters ?? null);
   const filters = useMemo(() => normalizeFilters(applied), [applied]);
   const draftFilters = useMemo(() => normalizeFilters(draft), [draft]);
@@ -226,6 +270,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
     [result?.data],
   );
   const advancedFilterCount = Number(Boolean(draft.model.trim())) + Number(Boolean(draft.session.trim()));
+  const selectedErrorSummary = selectedError ? requestLogErrorSummary(selectedError, t) : "";
 
   const applyFilters = () => {
     const next = normalizeFilters(draft);
@@ -458,6 +503,8 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                         : item.source === "grok"
                           ? "grok"
                           : null;
+                  const hasRouteError = isRouteError(item);
+                  const errorSummary = hasRouteError ? requestLogErrorSummary(item, t) : null;
                   return (
                     <tr
                       key={item.request_id}
@@ -556,12 +603,35 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-text-muted">
-                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                          <span className={`h-1.5 w-1.5 rounded-full ${item.usage_status === "complete" ? "bg-primary/55" : "bg-warning"}`} aria-hidden="true" />
-                          {item.usage_status === "complete"
-                            ? t(item.data_source === "route" ? "requestLogs.dataSource.route" : "requestLogs.status.recorded")
-                            : t(`requestLogs.usageStatus.${item.usage_status ?? "missing"}`)}
-                        </span>
+                        {hasRouteError && errorSummary ? (
+                          <div className="flex min-w-[180px] flex-col items-center gap-1">
+                            <span className="inline-flex max-w-full items-center gap-1.5 text-danger" title={errorSummary}>
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" aria-hidden="true" />
+                              <span className="truncate">{errorSummary}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedError(item);
+                              }}
+                              onDoubleClick={(event) => event.stopPropagation()}
+                              className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                              title={t("requestLogs.error.viewDetails")}
+                              aria-label={t("requestLogs.error.viewDetails")}
+                            >
+                              <CircleAlert size={12} aria-hidden="true" />
+                              {t("requestLogs.error.viewDetails")}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                            <span className={`h-1.5 w-1.5 rounded-full ${item.usage_status === "complete" ? "bg-primary/55" : "bg-warning"}`} aria-hidden="true" />
+                            {item.usage_status === "complete"
+                              ? t(item.data_source === "route" ? "requestLogs.dataSource.route" : "requestLogs.status.recorded")
+                              : t(`requestLogs.usageStatus.${item.usage_status ?? "missing"}`)}
+                          </span>
+                        )}
                         {item.degraded && <div className="mt-1 text-[10px] text-warning">{t("requestLogs.status.degraded", { count: item.attempt_count ?? 1 })}</div>}
                       </td>
                       <td className={`sticky right-0 px-3 py-2.5 text-center transition-colors group-hover:bg-bg-tertiary ${rowIndex % 2 === 0 ? "bg-bg-tertiary/20" : "bg-bg-secondary"}`}>
@@ -616,6 +686,54 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
           </div>
         </div>
       </Card>
+
+      <Dialog
+        open={selectedError !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedError(null);
+        }}
+      >
+        {selectedError && (
+          <DialogContent className="flex max-h-[80vh] w-[min(680px,calc(100vw-2rem))] max-w-[680px] flex-col overflow-hidden p-0" showCloseButton={false}>
+            <DialogHeader className="shrink-0 border-b border-border px-5 py-4">
+              <DialogTitle className="flex items-center gap-2 text-base text-text-primary">
+                <CircleAlert size={16} className="text-danger" aria-hidden="true" />
+                {t("requestLogs.error.dialogTitle")}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                {t("requestLogs.error.dialogDescription", { summary: selectedErrorSummary })}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              <section>
+                <h3 className="text-xs font-semibold text-text-secondary">{t("requestLogs.error.summary")}</h3>
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-text-primary">{selectedErrorSummary}</p>
+              </section>
+              <dl className="grid grid-cols-[minmax(92px,auto)_1fr] gap-x-3 gap-y-2 text-xs">
+                <dt className="text-text-muted">{t("requestLogs.error.provider")}</dt>
+                <dd className="min-w-0 break-words text-text-primary">{selectedError.provider_name ?? selectedError.provider_id ?? "—"}</dd>
+                <dt className="text-text-muted">{t("requestLogs.error.httpStatus")}</dt>
+                <dd className="text-text-primary">{selectedError.status_code ?? "—"}</dd>
+                <dt className="text-text-muted">{t("requestLogs.error.code")}</dt>
+                <dd className="min-w-0 break-all font-mono text-[11px] text-text-primary">{selectedError.error_code ?? "—"}</dd>
+              </dl>
+              <section>
+                <h3 className="text-xs font-semibold text-text-secondary">{t("requestLogs.error.detail")}</h3>
+                {selectedError.error_detail ? (
+                  <pre className="mt-1 max-h-[280px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-danger/25 bg-danger/5 p-3 font-mono text-[11px] leading-relaxed text-text-primary">{selectedError.error_detail}</pre>
+                ) : (
+                  <p className="mt-1 rounded-md border border-border bg-bg-tertiary/40 px-3 py-2 text-xs leading-relaxed text-text-muted">{t("requestLogs.error.noDetail")}</p>
+                )}
+              </section>
+            </div>
+            <DialogFooter className="shrink-0 border-t border-border bg-bg-secondary px-5 py-3">
+              <DialogClose asChild>
+                <Button variant="outline" size="sm">{t("common.close")}</Button>
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
     </div>
   );
 }

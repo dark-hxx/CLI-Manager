@@ -456,3 +456,93 @@ provider_index += 1; // actual_provider_attempts is unchanged
 
 Advance the candidate cursor, preserve the real retry budget, and reserve
 circuit failure accounting for requests that were sent upstream.
+
+---
+
+## Scenario: Routed request-log error diagnostics
+
+### 1. Scope / Trigger
+
+- Trigger: a change to routed failure recording, `usage_records`, `unified_usage_records`, `history_list_request_logs`, `RequestLogItem`, or the request-log status cell.
+- This is a storage-to-UI contract: losing either diagnostic field at the SQLite view, Rust serialization, TypeScript type, or React rendering boundary regresses failures to the generic `usage_status='not_applicable'` label.
+
+### 2. Signatures
+
+```sql
+-- nullable and additive; introduced by migration v33
+usage_records.error_code   TEXT NULL
+usage_records.error_detail TEXT NULL
+```
+
+```rust
+pub struct RequestLogItem {
+    // existing fields
+    error_code: Option<String>,
+    error_detail: Option<String>,
+}
+```
+
+```ts
+interface RequestLogItem {
+  error_code?: string | null;
+  error_detail?: string | null;
+}
+```
+
+### 3. Contracts
+
+- `unified_usage_records` and the request-log SELECT must expose both fields. They are context fields only: neither participates in billing, aggregation, or route/session de-duplication.
+- `error_code` is a stable local routing code. It is present for send failures, timeouts, skipped candidates, upstream HTTP failures, and stream failures where applicable.
+- `error_detail` is optional safe diagnostic text. Before persistence, extract only a scalar `error` or the allowlisted JSON fields `error.message`, `error.detail`, `error.error_description`, `error.reason`, top-level `message`, top-level `detail`, or top-level `error_description`.
+- Never serialize or store a full upstream body, request body, headers, provider key, or token. Normalize whitespace, redact credential assignments, Bearer values and recognizable API/JWT token shapes, and limit persisted detail to 1,024 Unicode characters. The router reads at most 64 KiB of a discarded upstream error response to find those allowlisted fields.
+- Provider errors and key/rectifier retry errors whose responses are discarded may capture this safe detail. Send failures, timeouts, circuit/key skips, or unreadable responses keep `error_detail=NULL` and rely on status/error code; do not invent an upstream message.
+- Legacy rows stay valid with both fields `NULL`; the v33 migration is additive and the usage-schema bootstrap must add the nullable column idempotently before recreating the final view. Because the detached routing daemon can open the database before the WebView SQL plugin, that bootstrap must atomically record the matching v33 SQLx migration checksum; otherwise the later plugin migration would attempt the same `ALTER TABLE` and fail.
+- UI error summaries prefer safe detail, then a localized known code, then HTTP-status or generic fallback. Only failed/skipped route rows (or route rows with either error field) replace the normal usage-status display. The details control must stop row double-click propagation and the dialog must remain dismissible with Escape.
+
+### 4. Validation & Error Matrix
+
+| Condition | Persisted fields | Request-log behavior |
+| --- | --- | --- |
+| Discarded upstream JSON error has an allowlisted message | Stable code + sanitized, capped detail | Show detail as summary and offer dialog |
+| Error response is malformed, too large before a parsable JSON object, or unreadable | Stable code/status, `error_detail=NULL` | Show localized code/status and explicit no-detail state |
+| Detail contains a Bearer/API key/token assignment | Redacted detail only | Never render the secret |
+| Pre-send skip, send failure, timeout, or client cancellation | Stable code/status, `error_detail=NULL` | Show localized route failure, not generic usage state |
+| Legacy route row predates v33 | Existing fields + nullable diagnostic fields | Preserve normal/known-code fallback without blank UI |
+| Successful route row lacks usage | Existing `usage_status='missing'` behavior | Do not turn it into an error dialog |
+
+### 5. Good/Base/Bad Cases
+
+- Good: an upstream 502 body containing `{ "error": { "message": "invalid token=..." } }` stores `routing_upstream_provider_failed` plus a redacted diagnostic; the list shows the useful summary and the dialog shows provider, HTTP status, code, and safe detail.
+- Good: a stream terminal `response.failed` event stores its sanitized message with `routing_upstream_stream_error`.
+- Base: an old timeout row has an error code but no detail; it shows the localized timeout label and the dialog clearly says no upstream detail was retained.
+- Bad: storing `response.text()` or a serialized JSON object as `error_detail`; upstream payloads can contain prompts, headers, secrets, or unrelated fields.
+- Bad: mapping all `not_applicable` rows to an error; successful records with absent usage and non-route/session fallback rows have distinct meanings.
+
+### 6. Tests Required
+
+- Rust unit tests cover allowlisted extraction, whitespace normalization, credential redaction, truncation, raw terminal SSE JSON, and discarded provider error-body capture.
+- Migration/bootstrap tests start from the pre-v33 usage schema, preserve legacy rows, add nullable `error_detail`, verify the recreated unified view emits both diagnostic fields, prove repeated bootstrap does not attempt a duplicate `ALTER TABLE`, and prove both the matching v33 and the full SQLx migration list skip the already bootstrapped column.
+- Request-log tests verify a newly stored code/detail round-trips through `history_list_request_logs` while legacy `NULL` fields remain `None`.
+- Frontend type/build checks verify optional diagnostic fields and both Chinese/English dialog keys compile.
+- Manual UI verification covers a route HTTP failure, a stream failure, an old/no-detail row, normal successful rows, long detail scrolling, the details button's double-click isolation, and Escape close.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let detail = response_text.to_string();
+record_route_usage(context, capture, status, "error", code, duration).await;
+```
+
+This treats an untrusted response body as a safe diagnostic and can persist credentials or prompts.
+
+#### Correct
+
+```rust
+let capture = capture_upstream_error_body(limited_error_body);
+// parse_response_json extracts only allowlisted fields, redacts, and caps detail.
+record_route_usage(context, capture, status, "error", Some(code), duration).await;
+```
+
+Capture a bounded discarded error response, preserve only the sanitized allowlisted field, and retain a stable code/status fallback when no safe detail exists.

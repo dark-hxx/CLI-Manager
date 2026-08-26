@@ -1,6 +1,5 @@
 import {
   Badge,
-  Button,
   Card,
   Group,
   SimpleGrid,
@@ -11,6 +10,7 @@ import { Copy, FolderOpen, Wrench } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useI18n } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type { NativeProviderAppType, NativeProviderEnvironmentReport } from "./nativeProviderTypes";
 import type { UseNativeProviderHomeResult } from "./useNativeProviderHome";
 import { PathItem } from "./NativeProviderPathItem";

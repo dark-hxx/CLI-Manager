@@ -1,8 +1,10 @@
 use crate::app_paths;
 use crate::{
     MIGRATION_ADD_CLI_ARGS_DESCRIPTION, MIGRATION_ADD_CLI_ARGS_SQL, MIGRATION_ADD_CLI_ARGS_VERSION,
-    MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION, MIGRATION_ADD_WORKTREE_ISOLATION_SQL,
-    MIGRATION_ADD_WORKTREE_ISOLATION_VERSION, MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+    MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION, MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL,
+    MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION, MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION,
+    MIGRATION_ADD_WORKTREE_ISOLATION_SQL, MIGRATION_ADD_WORKTREE_ISOLATION_VERSION,
+    MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
     MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_SQL,
@@ -173,6 +175,13 @@ pub async fn db_repair_known_migration_drift(
 
     let mut conn = open_cli_manager_db(&db_path).await?;
     let mut result = repair_known_migration_drift(&mut conn).await?;
+    if reconcile_legacy_node_appearance_v33_migration(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(
+            &result.status,
+            "reconciled_legacy_node_appearance_v33_migration",
+        );
+    }
     if ensure_node_appearance_columns(&mut conn).await? {
         result.repaired = true;
         result.status = append_repair_status(&result.status, "repaired_node_appearance_columns");
@@ -247,9 +256,63 @@ fn append_repair_status(current: &str, next: &str) -> String {
     }
 }
 
+/// 将本地旧版外观迁移 v33 迁移为远端的用量诊断 v33。
+///
+/// 两条分支曾独立占用 v33。仅把外观迁移改为 v34 会让已登记旧外观 v33 的数据库在 SQLx
+/// 校验 checksum 时启动失败。确认登记项确实是旧外观 SQL 后，先运行用量 schema bootstrap，
+/// 再把 v33 的登记项切换为用量诊断 SQL；随后由 v34 外观列修复登记当前外观迁移。
+async fn reconcile_legacy_node_appearance_v33_migration(
+    conn: &mut SqliteConnection,
+) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? {
+        return Ok(false);
+    }
+
+    let legacy_marker = sqlx::query(
+        "SELECT description, checksum
+         FROM _sqlx_migrations
+         WHERE version = ?1 AND success = 1
+         LIMIT 1",
+    )
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|err| format!("legacy_node_appearance_v33_query_failed: {err}"))?;
+    let Some(legacy_marker) = legacy_marker else {
+        return Ok(false);
+    };
+    let description: String = legacy_marker
+        .try_get("description")
+        .map_err(|err| format!("legacy_node_appearance_v33_description_failed: {err}"))?;
+    let checksum: Vec<u8> = legacy_marker
+        .try_get("checksum")
+        .map_err(|err| format!("legacy_node_appearance_v33_checksum_failed: {err}"))?;
+    if description != NODE_APPEARANCE_MIGRATION_DESCRIPTION
+        || checksum != migration_checksum(NODE_APPEARANCE_MIGRATION_SQL)
+    {
+        return Ok(false);
+    }
+
+    crate::usage_schema::ensure_usage_schema(conn)
+        .await
+        .map_err(|err| format!("legacy_node_appearance_v33_usage_schema_failed: {err}"))?;
+    sqlx::query(
+        "UPDATE _sqlx_migrations
+         SET description = ?1, checksum = ?2
+         WHERE version = ?3 AND success = 1",
+    )
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION)
+    .bind(migration_checksum(MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL))
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| format!("legacy_node_appearance_v33_update_failed: {err}"))?;
+    Ok(true)
+}
+
 /// 外观列缺失自愈（issue #213）。
 ///
-/// migration 33 只做四条 `ADD COLUMN`。如果历史库出现"版本已登记但列不存在"或"列存在但版本未登记"
+/// migration 34 只做四条 `ADD COLUMN`。如果历史库出现"版本已登记但列不存在"或"列存在但版本未登记"
 /// 的漂移，前者会让外观读写一直报 `no such column: color`，后者会让 sqlx 重放 ALTER 撞
 /// `duplicate column name`。这里在每次打开数据库前主动把两种漂移都补齐：
 /// 缺列就补列，版本未登记时按同一 checksum 登记，让 sqlx 跳过重放。
@@ -2148,6 +2211,20 @@ mod tests {
         .unwrap();
     }
 
+    async fn register_legacy_node_appearance_v33_migration(conn: &mut SqliteConnection) {
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+                 (version, description, installed_on, success, checksum, execution_time)
+             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+        )
+        .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+        .bind(NODE_APPEARANCE_MIGRATION_DESCRIPTION)
+        .bind(migration_checksum(NODE_APPEARANCE_MIGRATION_SQL))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
     async fn appearance_columns(conn: &mut SqliteConnection) -> (HashSet<String>, HashSet<String>) {
         (
             table_columns(conn, "groups").await.unwrap(),
@@ -2209,6 +2286,59 @@ mod tests {
         .unwrap();
         assert_eq!(registered, 1);
         assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn legacy_node_appearance_v33_migration_is_reconciled_before_sqlx_runs() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, true).await;
+        register_legacy_node_appearance_v33_migration(&mut conn).await;
+
+        assert!(reconcile_legacy_node_appearance_v33_migration(&mut conn)
+            .await
+            .unwrap());
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+
+        let usage_marker =
+            sqlx::query("SELECT description, checksum FROM _sqlx_migrations WHERE version = ?1")
+                .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(
+            usage_marker.try_get::<String, _>("description").unwrap(),
+            MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION
+        );
+        assert_eq!(
+            usage_marker.try_get::<Vec<u8>, _>("checksum").unwrap(),
+            migration_checksum(MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL)
+        );
+
+        let appearance_marker =
+            sqlx::query("SELECT description, checksum FROM _sqlx_migrations WHERE version = ?1")
+                .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(
+            appearance_marker
+                .try_get::<String, _>("description")
+                .unwrap(),
+            NODE_APPEARANCE_MIGRATION_DESCRIPTION
+        );
+        assert_eq!(
+            appearance_marker.try_get::<Vec<u8>, _>("checksum").unwrap(),
+            migration_checksum(NODE_APPEARANCE_MIGRATION_SQL)
+        );
+
+        let error_detail_columns: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name = 'error_detail'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(error_detail_columns, 1);
     }
 
     async fn create_project_path_backfill_schema(conn: &mut SqliteConnection) {

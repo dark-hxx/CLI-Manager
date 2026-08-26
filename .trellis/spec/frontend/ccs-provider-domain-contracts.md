@@ -280,6 +280,19 @@ form must not hide URL, key or model in a generic configuration textarea.
 - Reopening the provider settings page restores the last app type, surface
   (catalog/Home/routing), detail tab, selected provider, and outer page scroll
   position from the in-memory page cache.
+- `selectedProviderId` remains the detail/cache identity, not a permanent list
+  selection. The catalog may render its selected card style and `aria-current`
+  only while that provider's detail dialog is open; closing the dialog must
+  remove the visual state without clearing the cached selection.
+- Detail-modal focus return is separate from catalog selection. The detail
+  `Modal` must use `returnFocus={false}` and, after its exit transition, return
+  focus only for an accepted user/detail close to the connected checked radio
+  in the existing surface navigation. Gate that callback with a close ref and
+  clear the gate for app-type/surface transitions so an unmount cannot steal a
+  newer focus target. Do not add a focused `tabIndex={-1}` page wrapper, hide
+  `.ui-focus-ring`, or change `selectedProviderId` to suppress the returned-row
+  ring; the nested provider form retains normal focus return to the still-open
+  detail modal.
 - Failover queue rows render `isCurrent` as an explicit localized “In use”
   badge with the primary color, so the channel currently selected by routing is
   distinguishable from merely queued or ready providers.

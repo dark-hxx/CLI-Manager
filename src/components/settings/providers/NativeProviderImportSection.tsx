@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
-import { Alert, Badge, Button, Checkbox, Group, Select, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Badge, Checkbox, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import { AlertTriangle, Database, Eye, FileDown, RefreshCw } from "lucide-react";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { useProjectStore } from "@/stores/projectStore";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { issueScopeLabel } from "./nativeProviderImportDisplay";
 import {
   providerErrorCode,

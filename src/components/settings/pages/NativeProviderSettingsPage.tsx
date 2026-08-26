@@ -8,7 +8,10 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { NativeProviderCatalog } from "../providers/NativeProviderCatalog";
 import { NativeProviderCommonConfigSection } from "../providers/NativeProviderCommonConfigSection";
 import { NativeProviderDetailModal } from "../providers/NativeProviderDetailModal";
-import { NativeProviderFormModal } from "../providers/NativeProviderFormModal";
+import {
+  NativeProviderFormModal,
+  type NativeProviderFormKeyDraft,
+} from "../providers/NativeProviderFormModal";
 import { NativeProviderHomeSection } from "../providers/NativeProviderHomeSection";
 import { NativeProviderRoutingSection } from "../providers/NativeProviderRoutingSection";
 import { NativeProviderImportSection } from "../providers/NativeProviderImportSection";
@@ -18,7 +21,11 @@ import {
   DEFAULT_NATIVE_PROVIDER_DETAIL_VIEW,
   type NativeProviderDetailView,
 } from "../providers/nativeProviderDetailView";
-import { useNativeProviderCatalog } from "../providers/useNativeProviderCatalog";
+import {
+  DEFAULT_INITIAL_KEY_LABEL,
+  ProviderKeyCreateAfterProviderError,
+  useNativeProviderCatalog,
+} from "../providers/useNativeProviderCatalog";
 import { useNativeProviderCommonConfig } from "../providers/useNativeProviderCommonConfig";
 import { useNativeProviderHome } from "../providers/useNativeProviderHome";
 import { useNativeProviderRouting } from "../providers/useNativeProviderRouting";
@@ -101,6 +108,8 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
   const [detailOpened, setDetailOpened] = useState(false);
   const [documentDirty, setDocumentDirty] = useState(false);
   const pageRef = useRef<HTMLDivElement | null>(null);
+  const surfaceNavigationRef = useRef<HTMLDivElement | null>(null);
+  const detailCloseFocusRef = useRef(false);
   const catalog = useNativeProviderCatalog(appType);
   const commonConfig = useNativeProviderCommonConfig(appType);
   const routingState = useNativeProviderRouting();
@@ -220,6 +229,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
       if (!confirmed) return false;
     }
     setDocumentDirty(false);
+    detailCloseFocusRef.current = false;
     setDetailOpened(false);
     pageCache.appType = next;
     setAppType(next);
@@ -228,13 +238,47 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
     return true;
   };
 
-  const handleSaveProvider = async (input: NativeProviderCreateInput | NativeProviderUpdateInput) => {
+  const handleSaveProvider = async (
+    input: NativeProviderCreateInput | NativeProviderUpdateInput,
+    keyDraft: NativeProviderFormKeyDraft,
+  ) => {
+    const apiKey = keyDraft.apiKey.trim();
     if ("providerId" in input) {
       await catalog.updateProvider(input);
+      // 值没变就不写回：否则会白白把供应商推进「密钥已变更，需重新预览应用」状态。
+      if (keyDraft.changed && apiKey) {
+        if (keyDraft.selectedKeyId) {
+          await catalog.updateKey({
+            id: keyDraft.selectedKeyId,
+            providerId: input.providerId,
+            appType,
+            apiKey,
+          });
+        } else {
+          // 供应商原本没有任何密钥：这里补上第一个并激活。
+          await catalog.createKey({
+            providerId: input.providerId,
+            appType,
+            label: DEFAULT_INITIAL_KEY_LABEL,
+            apiKey,
+            activate: true,
+          });
+        }
+      }
     } else {
-      await catalog.createProvider(input);
-      // 新建的供应商会被自动选中，直接把详情弹窗带出来接着配密钥。
-      setDetailOpened(true);
+      try {
+        await catalog.createProvider(input, apiKey || undefined);
+      } catch (error) {
+        if (error instanceof ProviderKeyCreateAfterProviderError) {
+          // 供应商已建成、只差密钥：切到编辑态绑定它，避免用户重试新建时多造一个重复供应商。
+          catalog.setSelectedProviderId(error.providerId);
+          setFormMode("edit");
+          return;
+        }
+        throw error;
+      }
+      // 没填密钥时才把详情弹窗带出来，引导去「API 密钥」Tab 补配；填了就已经可用，不必打扰。
+      if (!apiKey) setDetailOpened(true);
     }
     setFormMode(null);
   };
@@ -251,6 +295,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
     if (!confirmed) return;
     await catalog.deleteProvider(providerId);
     setDocumentDirty(false);
+    detailCloseFocusRef.current = true;
     setDetailOpened(false);
   };
 
@@ -285,11 +330,13 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
     // 离开目录 surface 会连带卸载详情弹窗；不清掉 opened 的话切回来会自动弹出。
     if (nextSurface !== "catalog") {
       setImportOpened(false);
+      detailCloseFocusRef.current = false;
       setDetailOpened(false);
     }
   };
 
   const handleProviderSelect = (providerId: string) => {
+    detailCloseFocusRef.current = false;
     catalog.setSelectedProviderId(providerId);
     setDetailOpened(true);
   };
@@ -316,13 +363,26 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
     void confirmDiscardDocument().then((confirmed) => {
       if (!confirmed) return;
       setDocumentDirty(false);
+      detailCloseFocusRef.current = true;
       setDetailOpened(false);
     });
   };
 
+  const focusCatalogPage = useCallback(() => {
+    if (!detailCloseFocusRef.current) return;
+    detailCloseFocusRef.current = false;
+    if (surface !== "catalog") return;
+    const navigation = surfaceNavigationRef.current;
+    if (!navigation?.isConnected) return;
+    const activeSurfaceControl = navigation.querySelector<HTMLInputElement>('input[type="radio"]:checked')
+      ?? navigation.querySelector<HTMLInputElement>('input[type="radio"]');
+    activeSurfaceControl?.focus({ preventScroll: true });
+  }, [surface]);
+
   return (
     <Stack ref={pageRef} gap="md">
       <SegmentedControl
+        ref={surfaceNavigationRef}
         value={surface}
         onChange={handleSurfaceChange}
         aria-label={t("providerCatalog.surfaceNavigation")}
@@ -364,7 +424,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
             allProviders={orderedCatalogProviders}
             failover={autoFailover ? failover : null}
             failoverBusy={Boolean(routingState.action)}
-            selectedProviderId={catalog.selectedProviderId}
+            selectedProviderId={detailOpened ? catalog.selectedProviderId : null}
             loading={catalog.loading}
             hasSearchQuery={Boolean(query)}
             busy={busy}
@@ -388,6 +448,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
             detailView={detailView}
             onDetailViewChange={setDetailView}
             onClose={handleDetailClose}
+            onExitTransitionEnd={focusCatalogPage}
             onEdit={() => setFormMode("edit")}
             onDelete={(providerId) => ignoreProviderError(handleDeleteProvider(providerId))}
             onActivateKey={handleActivateKey}
@@ -419,6 +480,7 @@ export function NativeProviderSettingsPage({ searchValue }: NativeProviderSettin
         appType={appType}
         provider={formMode === "edit" ? selectedProvider : null}
         providerDetail={formMode === "edit" ? selectedDetail : null}
+        peerProviders={catalog.providers}
         loading={catalog.action === "create-provider" || catalog.action === "update-provider"}
         onClose={() => setFormMode(null)}
         onSubmit={handleSaveProvider}

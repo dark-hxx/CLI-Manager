@@ -1,7 +1,23 @@
-import { useEffect, useState } from "react";
-import { Alert, Button, Group, Modal, Stack, Switch, Text, TextInput, Textarea } from "@mantine/core";
-import { AlertTriangle } from "lucide-react";
-import { useI18n } from "@/lib/i18n";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  ActionIcon,
+  Alert,
+  Autocomplete,
+  Group,
+  Menu,
+  Modal,
+  PasswordInput,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+  Textarea,
+} from "@mantine/core";
+import { AlertTriangle, Check, KeyRound, LoaderCircle } from "lucide-react";
+import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { useModelPricingStore } from "@/stores/modelPricingStore";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeClaudeConfigSection } from "./NativeClaudeConfigSection";
 import { NativeProviderAdvancedConfigSection } from "./NativeProviderAdvancedConfigSection";
 import { NativeProviderCodeEditor } from "./NativeProviderCodeEditor";
@@ -28,6 +44,13 @@ import type {
   NativeProviderDetail,
   NativeProviderUpdateInput,
 } from "./nativeProviderTypes";
+import {
+  buildModelCandidates,
+  modelCandidatesToSelectData,
+  modelOptionsFilter,
+  priceTableModelsFor,
+  type ModelCandidateGroupId,
+} from "./providerModelCandidates";
 import { useNativeProviderModels } from "./useNativeProviderModels";
 
 export interface NativeProviderFormValues {
@@ -44,19 +67,46 @@ export interface NativeProviderFormValues {
   advanced: NativeProviderAdvancedConfig;
 }
 
+/**
+ * 弹框里维护的密钥草稿。
+ *
+ * 不并入 `NativeProviderFormValues`：密钥不参与 `providerConfig` 文档生成，
+ * 也不能被写进供应商配置文本里。
+ */
+export interface NativeProviderFormKeyDraft {
+  /** 输入框当前值（明文）。空串表示未填或已清空。 */
+  apiKey: string;
+  /** 编辑态下用户当前选中的 key；新增态、或供应商还没有任何 key 时为 null。 */
+  selectedKeyId: string | null;
+  /** 相对打开弹框时回显的基线是否发生变化——决定要不要写回，避免误触发「密钥已变更」。 */
+  changed: boolean;
+}
+
 interface NativeProviderFormModalProps {
   opened: boolean;
   mode: "create" | "edit";
   appType: NativeProviderAppType;
   provider: NativeProviderCard | null;
   providerDetail: NativeProviderDetail | null;
+  /** 同 appType 的其它供应商，用于兜底模型候选的第四路来源。 */
+  peerProviders?: NativeProviderCard[];
   loading: boolean;
   onClose: () => void;
-  onSubmit: (input: NativeProviderCreateInput | NativeProviderUpdateInput) => Promise<void>;
+  onSubmit: (
+    input: NativeProviderCreateInput | NativeProviderUpdateInput,
+    keyDraft: NativeProviderFormKeyDraft,
+  ) => Promise<void>;
 }
 
-const EMPTY_VALUES: NativeProviderFormValues = {
-  name: "",
+/** 候选分组 id → i18n key。分组文案留在组件侧，`buildModelCandidates` 只产出稳定 id。 */
+const MODEL_GROUP_LABEL_KEYS: Record<ModelCandidateGroupId, TranslationKey> = {
+  fetched: "providerCatalog.models.groupFetched",
+  configured: "providerCatalog.models.groupConfigured",
+  priceTable: "providerCatalog.models.groupPriceTable",
+  peerProviders: "providerCatalog.models.groupPeerProviders",
+};
+
+const EMPTY_VALUES: NativeProviderFormValues = {  name: "",
   baseUrl: "",
   model: "",
   apiFormat: "",
@@ -156,6 +206,7 @@ export function NativeProviderFormModal({
   appType,
   provider,
   providerDetail,
+  peerProviders = [],
   loading,
   onClose,
   onSubmit,
@@ -164,14 +215,66 @@ export function NativeProviderFormModal({
   const [values, setValues] = useState<NativeProviderFormValues>(EMPTY_VALUES);
   const [nameError, setNameError] = useState(false);
   const [providerConfigManual, setProviderConfigManual] = useState(false);
-  const { models: availableModels, loading: fetchingModels, error: modelFetchError, fetchModels } = useNativeProviderModels();
+  // 密钥草稿：apiKey 是输入框现值，revealedBaseline 是打开/切换时回显的原值。
+  // 少了 baseline 就无法区分「用户没动」与「用户改了」，会导致每次保存都误报密钥变更。
+  const [apiKey, setApiKey] = useState("");
+  const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  const [revealedBaseline, setRevealedBaseline] = useState("");
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState(false);
+  const {
+    models: availableModels,
+    loading: fetchingModels,
+    error: modelFetchError,
+    fetchModels,
+    reset: resetFetchedModels,
+  } = useNativeProviderModels();
+  const modelPrices = useModelPricingStore((state) => state.modelPrices);
+
+  // 取模型结果只属于它来自的那个供应商 + 那个地址。本弹框常挂载（Modal 关闭时组件不卸载），
+  // 不显式失效就会把 Grok 拉到的列表带到 Claude 的新建表单里，还挂着「接口返回」的分组名。
+  useEffect(() => {
+    resetFetchedModels();
+  }, [appType, opened, provider?.id, values.baseUrl, resetFetchedModels]);
+
+  const modelCandidates = useMemo(() => {
+    // 「已配置」取当前表单里所有模型字段：这样即使接口拉不到，用户也总能选回自己配过的值。
+    const configured = appType === "claude"
+      ? [
+          values.claudeConfig.model,
+          values.claudeConfig.defaultSonnetModel,
+          values.claudeConfig.defaultOpusModel,
+          values.claudeConfig.defaultFableModel,
+          values.claudeConfig.defaultHaikuModel,
+          values.claudeConfig.subagentModel,
+        ]
+      : [values.model];
+    return buildModelCandidates({
+      fetched: availableModels,
+      configured: [...configured, provider?.model ?? ""],
+      priceTableModels: priceTableModelsFor(appType, Object.keys(modelPrices)),
+      peerProviderModels: peerProviders
+        .filter((item) => item.id !== provider?.id)
+        .map((item) => item.model ?? ""),
+    });
+  }, [appType, availableModels, modelPrices, peerProviders, provider, values.claudeConfig, values.model]);
+
+  const modelSelectData = useMemo(
+    () => modelCandidatesToSelectData(modelCandidates, (id) => t(MODEL_GROUP_LABEL_KEYS[id])),
+    [modelCandidates, t],
+  );
   const configFormat = nativeProviderConfigFormat(appType);
   const configValid = isValidProviderConfigDocument(appType, values.providerConfig);
   const advancedConfigValid = appType === "claude" || isValidNativeProviderAdvancedConfig(values.advanced);
+  const providerKeys = providerDetail?.keys ?? [];
+  const hasUsableStoredKey = providerKeys.some((item) => item.isActive && item.enabled);
+  // 表单里填了密钥就能直接探测；否则退回到已存的激活密钥。两者皆无时后端拿不到密钥。
+  const canFetchModels = Boolean(values.baseUrl.trim()) && (Boolean(apiKey.trim()) || hasUsableStoredKey);
   const fetchProviderModels = () => fetchModels({
     appType,
     providerId: provider?.id,
     baseUrl: values.baseUrl,
+    apiKey,
     claude: appType === "claude" ? values.claudeConfig : undefined,
     apiFormat: appType === "claude" ? undefined : values.advanced.wireApi,
   });
@@ -182,8 +285,47 @@ export function NativeProviderFormModal({
       setValues(nextValues);
       setProviderConfigManual(hasStoredProviderConfig(appType, providerDetail?.settingsConfig ?? "{}"));
       setNameError(false);
+      // 编辑态默认落在激活密钥上；新增态从空白开始。
+      const activeKey = providerDetail?.keys.find((item) => item.isActive) ?? null;
+      setSelectedKeyId(mode === "edit" ? activeKey?.id ?? null : null);
+      setApiKey("");
+      setRevealedBaseline("");
+      setRevealError(false);
     }
-  }, [appType, opened, provider, providerDetail]);
+  }, [appType, mode, opened, provider, providerDetail]);
+
+  // 打开弹框或切换所选密钥时回显明文。
+  // 切换只是换查看对象，不调 provider_key_activate——激活状态由「API 密钥」Tab 负责。
+  useEffect(() => {
+    if (!opened || mode !== "edit" || !provider || !selectedKeyId) return;
+    let cancelled = false;
+    setRevealing(true);
+    setRevealError(false);
+    const loadKey = async () => {
+      try {
+        const revealed = await invoke<string>("provider_key_reveal", {
+          appType,
+          providerId: provider.id,
+          keyId: selectedKeyId,
+        });
+        if (cancelled) return;
+        setApiKey(revealed);
+        setRevealedBaseline(revealed);
+      } catch {
+        if (cancelled) return;
+        // 回显失败（如 keyring 不可用）不应堵住其余字段的编辑。
+        setRevealError(true);
+        setApiKey("");
+        setRevealedBaseline("");
+      } finally {
+        if (!cancelled) setRevealing(false);
+      }
+    };
+    void loadKey();
+    return () => {
+      cancelled = true;
+    };
+  }, [appType, mode, opened, provider, selectedKeyId]);
 
   const updateValue = <K extends keyof NativeProviderFormValues>(key: K, value: NativeProviderFormValues[K]) => {
     setValues((current) => {
@@ -234,6 +376,66 @@ export function NativeProviderFormModal({
     });
   };
 
+  const selectedKey = providerKeys.find((item) => item.id === selectedKeyId) ?? null;
+
+  // 密钥字段作为 slot 传进「高级选项」区渲染：两个 appType 分支共用同一份实现，不重复。
+  // 输入框占满整行让长密钥完整可见，切换密钥收成 rightSection 里的小图标菜单。
+  const keyField = mode === "edit" && providerKeys.length > 0 ? (
+    <TextInput
+      label={t("providerCatalog.apiKeyLabel")}
+      description={selectedKey
+        ? t("providerCatalog.keyEditingHint", { label: selectedKey.label })
+        : t("providerCatalog.keySelectHint")}
+      placeholder={t("providerCatalog.apiKeyKeepExisting")}
+      value={apiKey}
+      disabled={loading}
+      error={revealError ? t("providerCatalog.revealKeyFailed") : undefined}
+      rightSection={revealing ? (
+        <LoaderCircle size={14} className="animate-spin opacity-60" />
+      ) : (
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              disabled={loading}
+              aria-label={t("providerCatalog.keySelectLabel")}
+            >
+              <KeyRound size={14} />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label>{t("providerCatalog.keySelectHint")}</Menu.Label>
+            {providerKeys.map((item) => (
+              <Menu.Item
+                key={item.id}
+                leftSection={item.id === selectedKeyId ? <Check size={14} /> : <span className="inline-block w-[14px]" />}
+                onClick={() => setSelectedKeyId(item.id)}
+              >
+                {item.isActive
+                  ? t("providerCatalog.keySelectActiveOption", { label: item.label })
+                  : item.enabled
+                    ? item.label
+                    : t("providerCatalog.keySelectDisabledOption", { label: item.label })}
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
+      )}
+      onChange={(event) => setApiKey(event.currentTarget.value)}
+    />
+  ) : (
+    <PasswordInput
+      label={t("providerCatalog.apiKeyLabel")}
+      placeholder={t("providerCatalog.apiKeyOptionalPlaceholder")}
+      description={t("providerCatalog.apiKeyFirstKeyDescription")}
+      value={apiKey}
+      disabled={loading}
+      onChange={(event) => setApiKey(event.currentTarget.value)}
+    />
+  );
+
   const handleSubmit = async () => {
     const name = values.name.trim();
     if (!name) {
@@ -266,6 +468,12 @@ export function NativeProviderFormModal({
       claudeConfig: appType === "claude" ? values.claudeConfig : undefined,
     };
 
+    const keyDraft: NativeProviderFormKeyDraft = {
+      apiKey,
+      selectedKeyId,
+      changed: apiKey.trim() !== revealedBaseline.trim(),
+    };
+
     if (mode === "edit" && provider) {
       await onSubmit({
         ...common,
@@ -273,11 +481,11 @@ export function NativeProviderFormModal({
         model: model.trim(),
         apiFormat,
         providerId: provider.id,
-      });
+      }, keyDraft);
       return;
     }
 
-    await onSubmit(common);
+    await onSubmit(common, keyDraft);
   };
 
   return (
@@ -305,15 +513,17 @@ export function NativeProviderFormModal({
             value={values.baseUrl}
             onChange={(event) => updateValue("baseUrl", event.currentTarget.value)}
           />
-          <TextInput
+          <Autocomplete
             label={t("providerCatalog.modelLabel")}
             placeholder={t("providerCatalog.modelPlaceholder")}
             value={appType === "claude" ? values.claudeConfig.model : values.model}
-            onChange={(event) => {
+            data={modelSelectData}
+            filter={modelOptionsFilter}
+            onChange={(next) => {
               if (appType === "claude") {
-                updateClaudeConfig({ ...values.claudeConfig, model: event.currentTarget.value });
+                updateClaudeConfig({ ...values.claudeConfig, model: next });
               } else {
-                updateValue("model", event.currentTarget.value);
+                updateValue("model", next);
               }
             }}
           />
@@ -337,11 +547,12 @@ export function NativeProviderFormModal({
             value={values.claudeConfig}
             onChange={updateClaudeConfig}
             disabled={loading}
-            availableModels={availableModels}
+            keyField={keyField}
+            modelData={modelSelectData}
             fetchingModels={fetchingModels}
             modelFetchError={modelFetchError}
             onFetchModels={fetchProviderModels}
-            canFetchModels={Boolean(provider?.id)}
+            canFetchModels={canFetchModels}
           />
         )}
         {appType !== "claude" && (
@@ -350,11 +561,12 @@ export function NativeProviderFormModal({
             value={values.advanced}
             onChange={updateAdvanced}
             disabled={loading}
+            keyField={keyField}
             availableModels={availableModels}
             fetchingModels={fetchingModels}
             modelFetchError={modelFetchError}
             onFetchModels={fetchProviderModels}
-            canFetchModels={Boolean(provider?.id)}
+            canFetchModels={canFetchModels}
           />
         )}
         {!advancedConfigValid && (

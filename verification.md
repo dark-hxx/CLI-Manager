@@ -1003,3 +1003,38 @@
 - GitNexus `detect-changes` 无法执行：当前会话未暴露 MCP，本地无 CLI，`npx --offline` 也没有缓存包；已用契约、源码调用链、聚焦测试和最终 Git diff 完成降级范围复核。
 - 打包前未主动操作仍由已安装 CLI-Manager 使用的 3.3 GB 真实数据库，避免干扰当前会话；现场诊断阶段只执行只读 Schema、迁移状态、行数和日志检查。
 - 用户使用 NSIS 升级包对原 3.3 GB / 164 万行数据库完成真实升级启动冒烟，确认应用不再阻塞于 migration 32，测试通过。
+
+## 微信授权 Profile 隔离修复（2026-08-24）
+
+### 根因与发现清单
+
+- 根因位于微信授权专用配置与常规 cc-connect Profile 校验边界：`start_weixin_authorization` 在启动 setup 子进程前调用 `normalize_profile`，会校验所有已启用平台；任一 Telegram、飞书或企业微信草稿的 `allow_from` 为空都会提前返回 `allow_from must contain at least one explicit user ID`。
+- 新增 `prepare_weixin_authorization_platforms`：微信强制进入授权占位状态，旧微信 allowlist 无效时允许重新扫码；其他启用但 allowlist 无效的平台仅改为禁用并保留字段，配置有效的平台保持启用。随后仍复用严格 `normalize_profile` 校验公共字段，扫码完成后继续通过原 `parse_weixin_authorization_result` 强制 token 与 `@im.wechat` ID。
+- 常规保存/启动、代理、二进制检测、凭据存储、授权 TOML 协议和 cc-connect 源码均未放宽或修改；前端仍使用原 IPC 和错误展示。
+- GitNexus MCP/CLI 不可用且离线 npm 无缓存，已通过 cc-switch 契约、`rg`、源码、Git blame 和聚焦测试降级复核；影响仅限微信授权 Profile 准备及其结果保存，风险中等。
+
+### 验证结果
+
+- `cargo test --manifest-path src-tauri/Cargo.toml commands::cc_connect::tests:: --lib`：59 项通过；新增覆盖无效其他平台草稿隔离、有效平台保留、无效旧微信 ID 重授权和常规严格校验。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
+- Trellis context 校验通过。GitNexus `detect-changes` 因当前会话未暴露 MCP、本机无缓存 CLI 而无法运行；已使用契约、调用点、全部 cc-connect 单元测试和最终 diff 降级复核。
+
+## Windows Codex 空格路径启动修复（2026-08-24）
+
+### 根因与发现清单
+
+- 根因位于 CLI-Manager 原生 Codex 代理与 Windows CMD 脚本启动器边界：`.cmd/.bat` 原先通过 `cmd.exe /d /c <launcher> ...` 传递，`\\?\D:\code path\...` 会被 CMD 截断为第一个空格前的命令，导致 app-server proxy probe 退出 1。该问题与 cc-connect 路径配置、Provider、平台凭据和网络无关。
+- `codex_app_server_proxy::codex_command` 现在对 shell 脚本移除本地盘/UNC verbatim 前缀，`.cmd/.bat` 使用固定 `cmd /d /s /c call` 入口；`.ps1` 保持结构化 `powershell -File`，`.exe` 保持直接启动。已有命令拼接元字符拒绝扩展到 CR/LF，合法带双引号的 Codex `-c` Provider 配置继续支持。
+- `cc_connect::output_text` 复用 `text_encoding::decode_text` 的 UTF-8 快路径与 legacy 编码探测，GBK 中文“系统找不到指定的路径”不再显示乱码；无法识别才 lossy 回退。
+- 真实代理 E2E 将 fake Codex `.cmd` 放入含空格与中文的目录，并以 `\\?\` 路径传入，覆盖 app-server、普通透传、Provider 参数、stdin/stdout、密钥不泄漏与退出码。
+- GitNexus MCP/CLI 未暴露且离线 npm 无缓存，已通过 cc-switch 契约、`rg`、调用链、Rust 单测和真实代理 E2E 降级复核。`codex_command` 影响所有本地 Codex 远程托管，风险 HIGH。
+
+### 验证结果
+
+- `cargo test --manifest-path src-tauri/Cargo.toml codex_app_server_proxy::tests --lib`：24 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml process_output_decodes_utf8_and_gbk_diagnostics --lib`：1 项通过。
+- `node scripts/codexAppServerProxy.e2e.test.mjs`：4 项通过，真实 Windows 代理二进制从 verbatim + 空格 + 中文目录启动 `.cmd`。
+- `cargo test --manifest-path src-tauri/Cargo.toml commands::cc_connect::tests:: --lib`：60 项通过，包含此前微信授权隔离回归。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
+- Trellis context 校验通过。GitNexus `detect-changes` 因 MCP/本机离线 CLI 不可用而降级，最终范围使用契约、调用链、Rust 全套 cc-connect 测试与真实代理 E2E 复核。
+- `npm run tauri:build:local -- --bundles nsis`：通过，仅生成 NSIS 安装包；SHA256 `CF929410CA2C602DB43927D33C23B1D77F52EF5104A422518F40F3AD278C0429`。

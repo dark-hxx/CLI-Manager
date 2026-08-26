@@ -65,6 +65,8 @@ pub struct RequestLogItem {
     usage_status: String,
     status_code: Option<i64>,
     outcome: String,
+    error_code: Option<String>,
+    error_detail: Option<String>,
     duration_ms: i64,
     attempt_count: u64,
     degraded: bool,
@@ -935,7 +937,7 @@ async fn list_request_logs_with_connection(
             timestamp_ms, model, input_tokens, output_tokens, cache_read_tokens,
             cache_creation_tokens, data_source, provider_id, provider_name,
             requested_model, outbound_model, response_model, usage_status,
-            status_code, outcome, duration_ms, attempt_count, degraded
+            status_code, outcome, error_code, error_detail, duration_ms, attempt_count, degraded
          FROM unified_usage_records",
     );
     push_filters(&mut page_builder, &filters);
@@ -1013,6 +1015,8 @@ async fn list_request_logs_with_connection(
             outcome: row
                 .try_get("outcome")
                 .unwrap_or_else(|_| "success".to_string()),
+            error_code: row.try_get("error_code").unwrap_or(None),
+            error_detail: row.try_get("error_detail").unwrap_or(None),
             duration_ms: row.try_get("duration_ms").unwrap_or(0),
             attempt_count: row.try_get::<i64, _>("attempt_count").unwrap_or(1).max(1) as u64,
             degraded: row.try_get::<i64, _>("degraded").unwrap_or(0) != 0,
@@ -1312,6 +1316,12 @@ mod tests {
                 sqlx::query(statement).execute(&mut conn).await.unwrap();
             }
         }
+        for statement in crate::MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL.split(';') {
+            let statement = statement.trim();
+            if !statement.is_empty() {
+                sqlx::query(statement).execute(&mut conn).await.unwrap();
+            }
+        }
         conn
     }
 
@@ -1439,6 +1449,52 @@ mod tests {
         assert_eq!(page.summary.total_cache_creation_tokens, 1);
         assert!((page.summary.cache_hit_rate - (2.0 / 13.0)).abs() < f64::EPSILON);
         assert!(!page.data[0].session_available);
+    }
+
+    #[tokio::test]
+    async fn list_preserves_route_error_code_and_safe_detail_for_legacy_compatibility() {
+        let mut conn = test_connection().await;
+        sqlx::query(
+            "INSERT INTO usage_records(
+                record_id, logical_request_id, data_source, source, provider_name,
+                usage_status, status_code, outcome, error_code, error_detail,
+                started_at_ms, created_at_ms, updated_at_ms
+             ) VALUES
+                ('route-error', 'route-error', 'route', 'codex', 'Provider A',
+                 'not_applicable', 502, 'error', 'routing_upstream_http_error',
+                 'upstream rejected the request', 2000, 2000, 2000),
+                ('route-legacy', 'route-legacy', 'route', 'codex', 'Provider B',
+                 'not_applicable', 504, 'error', NULL, NULL, 1000, 1000, 1000)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let page =
+            list_request_logs_with_connection(&mut conn, RequestLogFilters::default(), 0, 20)
+                .await
+                .unwrap();
+        let modern = page
+            .data
+            .iter()
+            .find(|item| item.request_id == "route-error")
+            .expect("new route error row is listed");
+        let legacy = page
+            .data
+            .iter()
+            .find(|item| item.request_id == "route-legacy")
+            .expect("legacy route error row is listed");
+
+        assert_eq!(
+            modern.error_code.as_deref(),
+            Some("routing_upstream_http_error")
+        );
+        assert_eq!(
+            modern.error_detail.as_deref(),
+            Some("upstream rejected the request")
+        );
+        assert_eq!(legacy.error_code, None);
+        assert_eq!(legacy.error_detail, None);
     }
 
     #[tokio::test]

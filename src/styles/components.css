@@ -2660,6 +2660,102 @@
   color: #fff;
 }
 
+/* Provider Settings keeps Mantine's control behavior but uses the shared app button language. */
+.native-provider-control {
+  border: 0 !important;
+  border-radius: 10px !important;
+  font-weight: 400 !important;
+  box-shadow: none;
+  transition:
+    background-color var(--animate-duration-fast),
+    color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    opacity var(--animate-duration-fast) !important;
+}
+
+.native-provider-control:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--interactive-focus-ring) !important;
+}
+
+.native-provider-control--primary {
+  background: linear-gradient(135deg, var(--primary-gradient-start), var(--primary-gradient-end)) !important;
+  color: #fff !important;
+}
+
+.native-provider-control--primary:hover:not([data-disabled]):not(:disabled) {
+  filter: brightness(1.04);
+  color: #fff !important;
+}
+
+.native-provider-control--secondary {
+  background: var(--surface-container-high) !important;
+  color: var(--on-surface-variant) !important;
+}
+
+.native-provider-control--secondary:hover:not([data-disabled]):not(:disabled),
+.native-provider-control--ghost:hover:not([data-disabled]):not(:disabled),
+.native-provider-control--outline:hover:not([data-disabled]):not(:disabled) {
+  background: var(--interactive-hover-bg) !important;
+  color: var(--text-primary) !important;
+}
+
+.native-provider-control--soft-primary {
+  background: color-mix(in srgb, var(--primary) 13%, var(--surface-container-high) 87%) !important;
+  color: var(--primary) !important;
+}
+
+.native-provider-control--soft-primary:hover:not([data-disabled]):not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 20%, var(--surface-container-high) 80%) !important;
+}
+
+.native-provider-control--ghost {
+  background: transparent !important;
+  color: var(--on-surface-variant) !important;
+}
+
+.native-provider-control--outline {
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent) !important;
+  background: transparent !important;
+  color: var(--on-surface-variant) !important;
+}
+
+.native-provider-control--danger {
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+
+.native-provider-control--danger:hover:not([data-disabled]):not(:disabled),
+.native-provider-control--success:hover:not([data-disabled]):not(:disabled) {
+  filter: brightness(1.04);
+  color: #fff !important;
+}
+
+.native-provider-control--soft-danger {
+  background: color-mix(in srgb, var(--danger) 13%, var(--surface-container-high) 87%) !important;
+  color: var(--danger) !important;
+}
+
+.native-provider-control--ghost-danger {
+  background: transparent !important;
+  color: var(--danger) !important;
+}
+
+.native-provider-control--success {
+  background: var(--success) !important;
+  color: #fff !important;
+}
+
+.native-provider-control--soft-success {
+  background: color-mix(in srgb, var(--success) 13%, var(--surface-container-high) 87%) !important;
+  color: var(--success) !important;
+}
+
+.native-provider-control--ghost-success {
+  background: transparent !important;
+  color: var(--success) !important;
+}
+
 .ui-segmented {
   display: inline-flex;
   overflow: hidden;
@@ -8028,6 +8124,18 @@
   background-color: color-mix(in srgb, var(--term-panel-cyan, #5AC8E0) 26%, transparent);
   color: var(--term-panel-fg, #ececec);
   box-shadow: inset 2px 0 0 var(--term-panel-cyan, #5AC8E0);
+}
+
+/* Issue #227：忽略项不再抽离到「已折叠文件」分组，改为原位显示 + 整行淡化
+   （JetBrains 风：文件名、图标、Git 状态徽标一起变淡）。
+   hover / 选中时提亮，否则透明度会吃掉选中反馈。 */
+.ui-file-tree-row[data-ignored="true"] {
+  opacity: 0.45;
+}
+
+.ui-file-tree-row[data-ignored="true"]:hover,
+.ui-file-tree-row[data-ignored="true"][data-selected="true"] {
+  opacity: 0.75;
 }
 
 .ui-file-drag-preview {
