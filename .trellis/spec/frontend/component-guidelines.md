@@ -1547,6 +1547,21 @@ textarea.style.display = "none";
 - [ ] Chinese/IME composition still positions the candidate window correctly.
 - [ ] `node --test scripts/terminalImeAnchor.test.mjs scripts/terminalImeComposition.test.mjs` confirms real-cursor priority, prompt fallback, Process-key synchronous re-pinning, resize invalidation, composition cleanup ordering, and cancellation for a new composition/disposal.
 
+### Convention: Deduplicate macOS IME input at the shared forwarding boundary
+
+**What**: Keep terminal-input de-duplication in the one shared PTY forwarding path. Preserve the existing 80 ms exact cross-source rule for xterm onData versus native-text recovery. For macOS only, allow the IME controller to arm a short Process-key checkpoint from a helper-textarea keydown(229); while that checkpoint is live, reject only an exact non-ASCII onData re-emission.
+
+**Why**: WebKit IMEs can deliver input before keydown(229). xterm may emit that CJK payload directly and then emit it again from its deferred helper-textarea diff fallback. Both producer paths then look like onData, so a source-only rule cannot see the duplicate. PTY-side filtering is too late because it loses the browser event boundary and can erase intentional repeated input.
+
+**Contracts**:
+
+- The forwarding controller owns the last accepted payload and Process-key checkpoint; individual CLI views, PTY code, and output transforms must not implement competing text filters.
+- The IME DOM controller notifies the forwarding controller only after verifying that the Process key came from xterm's helper textarea. A new composition start clears the checkpoint.
+- Same-source matching is macOS-only, non-ASCII-only, exact-payload-only, and expires within the existing 400 ms Process-key recovery horizon. It must not become a general recent-input history filter.
+- A new composition must allow an intentional second commit of the same Chinese text. Windows, Linux, normal ASCII input, Enter, Backspace, paste, and the native recovery path retain their existing behavior.
+
+**Tests**: Run node --test scripts/terminalImeInputDedup.test.mjs scripts/terminalImeComposition.test.mjs and npx tsc --noEmit. Cover cross-source de-duplication, input-before-229 same-source re-emission, accumulated deferred payloads, composition reset, expiration, and disabled-platform behavior.
+
 ### Common Mistake: Estimating xterm IME cell size from container bounds
 
 **Symptom**: IME candidate popup or composition caret drifts on secondary monitors, mixed-DPI displays, or after display-scale changes even though the terminal prompt row detection is correct.

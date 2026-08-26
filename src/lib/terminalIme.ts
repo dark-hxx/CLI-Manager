@@ -46,6 +46,8 @@ export interface TerminalImeControllerOptions {
     fallbackFontSize: number,
   ) => TerminalCellSize;
   forwardNativeInput: (data: string) => void;
+  onImeProcessKey?: (at: number) => void;
+  onCompositionStarted?: () => void;
   clearSuggestion: () => void;
   updateSuggestionPosition: () => void;
   scheduleFit: (force?: boolean) => void;
@@ -64,6 +66,8 @@ export const attachTerminalIme = ({
   fontSize,
   getTerminalRenderedCellSize,
   forwardNativeInput,
+  onImeProcessKey,
+  onCompositionStarted,
   clearSuggestion,
   updateSuggestionPosition,
   scheduleFit,
@@ -275,13 +279,16 @@ export const attachTerminalIme = ({
   const onImeProcessKeyDown = (event: KeyboardEvent) => {
     if (!isHelperTextareaEvent(event) || event.keyCode !== IME_PROCESS_KEY_CODE || event.ctrlKey || event.altKey || event.metaKey) return;
     pinHelperTextareaAnchor();
-    lastImeProcessKeyAt = nowForImeInput();
+    const now = nowForImeInput();
+    lastImeProcessKeyAt = now;
+    onImeProcessKey?.(now);
   };
   const onCompositionStart = () => {
     if (compositionEndCleanupTimerId !== null) {
       window.clearTimeout(compositionEndCleanupTimerId);
       compositionEndCleanupTimerId = null;
     }
+    onCompositionStarted?.();
     isComposingRef.current = true;
     clearSuggestion();
     lastImeProcessKeyAt = -1;
