@@ -111,6 +111,8 @@ interface HistoryStore {
   focusedMessageSeq: number;
   metaMap: SessionMetaMap;
   generatedTitleMap: GeneratedTitleMap;
+  /** 当前 WebView 已发起、尚未收到最终标题结果的会话；不持久化。 */
+  smartTitleInFlightSessionKeys: Set<string>;
   focusGlobalSearchSeq: number;
   focusSessionSearchSeq: number;
   indexStatus: HistoryIndexStatus;
@@ -2222,6 +2224,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   focusedMessageSeq: 0,
   metaMap: {},
   generatedTitleMap: {},
+  smartTitleInFlightSessionKeys: new Set(),
   focusGlobalSearchSeq: 0,
   focusSessionSearchSeq: 0,
   indexStatus: { ...DEFAULT_HISTORY_INDEX_STATUS },
@@ -3423,6 +3426,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       throw new Error("history_title_pending");
     }
     smartTitleRequestKinds.set(sessionKey, triggerKind);
+    set((state) => ({
+      smartTitleInFlightSessionKeys: new Set(state.smartTitleInFlightSessionKeys).add(sessionKey),
+    }));
     try {
       const target = get().sessions.find((item) => item.sessionKey === sessionKey);
       if (!target) throw new Error("history_title_session_missing");
@@ -3480,6 +3486,12 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     } finally {
       if (smartTitleRequestKinds.get(sessionKey) === triggerKind) {
         smartTitleRequestKinds.delete(sessionKey);
+        set((state) => {
+          if (!state.smartTitleInFlightSessionKeys.has(sessionKey)) return {};
+          const smartTitleInFlightSessionKeys = new Set(state.smartTitleInFlightSessionKeys);
+          smartTitleInFlightSessionKeys.delete(sessionKey);
+          return { smartTitleInFlightSessionKeys };
+        });
       }
     }
   },

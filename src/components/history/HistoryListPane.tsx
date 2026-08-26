@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowRightLeft, Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, MessageSquare, RefreshCw, Search, Sparkles, Star, Terminal, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, LoaderCircle, MessageSquare, RefreshCw, Search, Sparkles, Star, Terminal, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistoryIndexStatus, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
@@ -78,6 +78,7 @@ interface HistoryListPaneProps {
   selectedCount: number;
   allVisibleSelected: boolean;
   selectedSessionKeys: Set<string>;
+  smartTitleInFlightSessionKeys: ReadonlySet<string>;
   onRefresh: () => void;
   onClose: () => void;
   smartTitleEnabled: boolean;
@@ -356,6 +357,7 @@ export function HistoryListPane({
   selectedCount,
   allVisibleSelected,
   selectedSessionKeys,
+  smartTitleInFlightSessionKeys,
   onRefresh,
   onClose,
   smartTitleEnabled,
@@ -1030,6 +1032,10 @@ export function HistoryListPane({
                 ? formatSessionListTitle(row.item.displayTitle, t("history.imagePlaceholder"))
                 : "";
             const sessionWorktree = row.type === "session" ? getSessionWorktree(row.item) : null;
+            const smartTitlePending = row.type === "session" && (
+              row.item.generatedTitle?.state === "pending"
+              || smartTitleInFlightSessionKeys.has(row.item.sessionKey)
+            );
             return (
               <div
                 key={virtualRow.key}
@@ -1174,11 +1180,11 @@ export function HistoryListPane({
                               </span>
                             )}
                             <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
-                            {row.item.generatedTitle?.state === "pending" && (
+                            {smartTitlePending && (
                               <span title={t("history.smartTitle.pending")}>
-                                <Sparkles
+                                <LoaderCircle
                                   size={12}
-                                  className="shrink-0 animate-pulse text-primary"
+                                  className="shrink-0 animate-spin text-primary"
                                   aria-label={t("history.smartTitle.pending")}
                                 />
                               </span>
@@ -1226,11 +1232,11 @@ export function HistoryListPane({
                               </span>
                             )}
                             <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
-                            {row.item.generatedTitle?.state === "pending" && (
+                            {smartTitlePending && (
                               <span title={t("history.smartTitle.pending")}>
-                                <Sparkles
+                                <LoaderCircle
                                   size={12}
-                                  className="shrink-0 animate-pulse text-primary"
+                                  className="shrink-0 animate-spin text-primary"
                                   aria-label={t("history.smartTitle.pending")}
                                 />
                               </span>
@@ -1313,11 +1319,15 @@ export function HistoryListPane({
                 className="context-menu-item"
                 role="menuitem"
                 onClick={handleContextMenuGenerateSmartTitle}
-                disabled={contextMenu.session.generatedTitle?.state === "pending"}
+                disabled={
+                  contextMenu.session.generatedTitle?.state === "pending"
+                  || smartTitleInFlightSessionKeys.has(contextMenu.session.sessionKey)
+                }
               >
                 <Sparkles size={13} aria-hidden="true" />
                 <span>
                   {contextMenu.session.generatedTitle?.state === "pending"
+                    || smartTitleInFlightSessionKeys.has(contextMenu.session.sessionKey)
                     ? t("history.smartTitle.pending")
                     : contextMenu.session.generatedTitle
                       ? t("history.smartTitle.regenerate")

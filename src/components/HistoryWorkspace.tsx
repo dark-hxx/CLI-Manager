@@ -213,6 +213,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
   const focusedMessageSeq = useHistoryStore((s) => s.focusedMessageSeq);
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
   const focusSessionSearchSeq = useHistoryStore((s) => s.focusSessionSearchSeq);
+  const smartTitleInFlightSessionKeys = useHistoryStore((s) => s.smartTitleInFlightSessionKeys);
   const closeHistory = useHistoryStore((s) => s.closeHistory);
   const openHistory = useHistoryStore((s) => s.openHistory);
   const setSourceFilter = useHistoryStore((s) => s.setSourceFilter);
@@ -1208,6 +1209,14 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
       toast.error(t("history.toast.smartTitleCandidateMissing"));
       return;
     }
+    if (code.includes("history_title_database_busy")) {
+      toast.error(t("history.toast.smartTitleDatabaseBusy"));
+      return;
+    }
+    if (code.startsWith("history_title_database_") || code.startsWith("history_title_schema_failed")) {
+      toast.error(t("history.toast.smartTitleLocalDataUnavailable"));
+      return;
+    }
     if (
       code.includes("history_title_remote_not_supported")
       || code.includes("history_title_remote_online_required")
@@ -1325,6 +1334,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
           selectedCount={selectedSessionKeys.size}
           allVisibleSelected={allVisibleSelected}
           selectedSessionKeys={selectedSessionKeys}
+          smartTitleInFlightSessionKeys={smartTitleInFlightSessionKeys}
           onRefresh={handleRefreshSessions}
           onClose={closeHistory}
           smartTitleEnabled={historySmartTitle.enabled}
@@ -1376,6 +1386,9 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
             activeView={activeView}
             activeSession={activeSession}
             loadingSessionDetail={loadingSessionDetail}
+            smartTitlePending={Boolean(
+              activeView && smartTitleInFlightSessionKeys.has(activeView.sessionKey),
+            )}
             aliasDraft={aliasDraft}
             tagsDraft={tagsDraft}
             tagSuggestions={tagSuggestions}

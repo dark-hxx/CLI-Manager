@@ -13,6 +13,7 @@ import {
   GitCompare,
   History,
   ListChecks,
+  LoaderCircle,
   Pencil,
   Sparkles,
   Square,
@@ -60,6 +61,7 @@ interface SessionDetailPaneProps {
   activeView: HistorySessionView | null;
   activeSession: HistorySessionDetail | null;
   loadingSessionDetail: boolean;
+  smartTitlePending: boolean;
   aliasDraft: string;
   tagsDraft: string;
   tagSuggestions: string[];
@@ -706,6 +708,7 @@ export function SessionDetailPane({
   activeView,
   activeSession,
   loadingSessionDetail,
+  smartTitlePending,
   aliasDraft,
   tagsDraft,
   tagSuggestions,
@@ -825,6 +828,7 @@ export function SessionDetailPane({
   }
 
   const sourceIcon = resolveHistorySourceIconKey(activeView.source);
+  const smartTitleGenerationPending = smartTitlePending || activeView.generatedTitle?.state === "pending";
 
   const copyText = (text: string, label: string) => {
     void navigator.clipboard
@@ -991,18 +995,31 @@ export function SessionDetailPane({
             <>
               <button
                 onClick={onGenerateSmartTitle}
-                disabled={loadingSessionDetail || !activeSession || activeView.generatedTitle?.state === "pending"}
+                disabled={loadingSessionDetail || !activeSession || smartTitleGenerationPending}
                 aria-label={t(
-                  activeView.generatedTitle
+                  smartTitleGenerationPending
+                    ? "history.smartTitle.pending"
+                    : activeView.generatedTitle
                     ? "history.smartTitle.regenerate"
                     : "history.smartTitle.generate",
                 )}
+                aria-busy={smartTitleGenerationPending || undefined}
                 className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
                 style={{ color: "var(--accent)" }}
-                title={t("history.smartTitle.generate")}
+                title={t(
+                  smartTitleGenerationPending
+                    ? "history.smartTitle.pending"
+                    : activeView.generatedTitle
+                      ? "history.smartTitle.regenerate"
+                      : "history.smartTitle.generate",
+                )}
               >
-                <Sparkles size={12} />
-                {activeView.generatedTitle?.state === "pending"
+                {smartTitleGenerationPending ? (
+                  <LoaderCircle size={12} className="animate-spin" />
+                ) : (
+                  <Sparkles size={12} />
+                )}
+                {smartTitleGenerationPending
                   ? t("history.smartTitle.pending")
                   : activeView.generatedTitle
                     ? t("history.smartTitle.regenerate")
@@ -1011,7 +1028,7 @@ export function SessionDetailPane({
               {activeView.generatedTitle?.title ? (
                 <button
                   onClick={onClearSmartTitle}
-                  disabled={loadingSessionDetail}
+                  disabled={loadingSessionDetail || smartTitleGenerationPending}
                   aria-label={t("history.smartTitle.clear")}
                   className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
                   title={t("history.smartTitle.clear")}

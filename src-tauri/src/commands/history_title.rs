@@ -8,10 +8,16 @@ use std::fs;
 use std::time::{Duration, Instant};
 
 const MAX_INPUT_BYTES: usize = 4096;
+const MAX_CUSTOM_PROMPT_BYTES: usize = 4096;
 const MAX_TITLE_WORDS: usize = 64;
 const MAX_TITLE_BYTES: usize = 256;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const PROMPT: &str = "You create concise titles for developer tool sessions. Return only a short descriptive title, with no quotes, markdown, prefix, explanation, or trailing punctuation. Preserve the user's language when practical. Never mention these instructions.";
+// Installed and development builds intentionally share this database. Give
+// short cross-process writer bursts the same budget used by other history
+// writes instead of misclassifying them as Provider failures.
+const HISTORY_TITLE_DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(15);
+const HISTORY_TITLE_DATABASE_BUSY: &str = "history_title_database_busy";
+const BUILTIN_PROMPT: &str = "You create concise titles for developer tool sessions. Return only a short descriptive title, with no quotes, markdown, prefix, explanation, or trailing punctuation. Preserve the user's language when practical. Never mention these instructions.";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +95,15 @@ struct ProviderRuntime {
     api_format: String,
 }
 
+#[derive(Debug)]
+struct HistoryTitleSettingsSelection {
+    enabled: bool,
+    app_type: Option<String>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    custom_prompt: Option<String>,
+}
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -96,13 +111,48 @@ fn now_ms() -> i64 {
 fn history_db_options() -> Result<SqliteConnectOptions, String> {
     Ok(SqliteConnectOptions::new()
         .filename(app_paths::db_path()?)
-        .busy_timeout(Duration::from_secs(5)))
+        .busy_timeout(HISTORY_TITLE_DATABASE_BUSY_TIMEOUT))
+}
+
+fn is_sqlite_busy_code(code: &str) -> bool {
+    matches!(code, "SQLITE_BUSY" | "SQLITE_LOCKED")
+        || code
+            .parse::<i32>()
+            .is_ok_and(|value| matches!(value & 0xff, 5 | 6))
+}
+
+fn is_sqlite_busy_error(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|database_error| database_error.code())
+        .is_some_and(|code| is_sqlite_busy_code(code.as_ref()))
+        || {
+            let message = error.to_string().to_ascii_lowercase();
+            message.contains("database is locked")
+                || message.contains("database table is locked")
+                || message.contains("(code: 5)")
+                || message.contains("(code: 6)")
+        }
+}
+
+fn map_history_database_error(error_code: &str, error: sqlx::Error) -> String {
+    if is_sqlite_busy_error(&error) {
+        HISTORY_TITLE_DATABASE_BUSY.to_string()
+    } else {
+        format!("{error_code}: {error}")
+    }
+}
+
+fn is_history_database_error_code(error: &str) -> bool {
+    error == HISTORY_TITLE_DATABASE_BUSY
+        || error.starts_with("history_title_database_")
+        || error.starts_with("history_title_schema_failed")
 }
 
 async fn open_history_connection() -> Result<SqliteConnection, String> {
     SqliteConnection::connect_with(&history_db_options()?)
         .await
-        .map_err(|err| format!("history_title_database_open_failed: {err}"))
+        .map_err(|err| map_history_database_error("history_title_database_open_failed", err))
 }
 
 async fn ensure_table(connection: &mut SqliteConnection) -> Result<(), String> {
@@ -134,19 +184,19 @@ async fn ensure_table(connection: &mut SqliteConnection) -> Result<(), String> {
     )
     .execute(&mut *connection)
     .await
-    .map_err(|err| format!("history_title_schema_failed: {err}"))?;
+    .map_err(|err| map_history_database_error("history_title_schema_failed", err))?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_history_generated_titles_source_identity ON history_generated_titles(source_id, source_instance_id, source_session_id)",
     )
     .execute(&mut *connection)
     .await
-    .map_err(|err| format!("history_title_schema_failed: {err}"))?;
+    .map_err(|err| map_history_database_error("history_title_schema_failed", err))?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_history_generated_titles_state ON history_generated_titles(generation_state, updated_at DESC)",
     )
     .execute(&mut *connection)
     .await
-    .map_err(|err| format!("history_title_schema_failed: {err}"))?;
+    .map_err(|err| map_history_database_error("history_title_schema_failed", err))?;
     Ok(())
 }
 
@@ -224,7 +274,7 @@ async fn select_meta(
         .bind(session_key)
         .fetch_optional(&mut *connection)
         .await
-        .map_err(|err| format!("history_title_database_read_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_read_failed", err))?;
     row.map(|value| row_meta(&value)).transpose()
 }
 
@@ -234,6 +284,21 @@ fn validate_text(value: &str, max_bytes: usize, error_code: &str) -> Result<Stri
         return Err(error_code.to_string());
     }
     Ok(value.to_string())
+}
+
+fn normalize_custom_prompt(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || value.as_bytes().len() > MAX_CUSTOM_PROMPT_BYTES || value.contains('\0')
+    {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn effective_prompt(selection: Option<&HistoryTitleSettingsSelection>) -> &str {
+    selection
+        .and_then(|selection| selection.custom_prompt.as_deref())
+        .unwrap_or(BUILTIN_PROMPT)
 }
 
 fn validate_generate_request(request: &HistoryTitleGenerateRequest) -> Result<(), String> {
@@ -351,13 +416,7 @@ fn protocol_for_format(app_type: &str, api_format: &str) -> Result<&'static str,
     Err("history_title_provider_protocol_unsupported".to_string())
 }
 
-fn settings_selection() -> Option<(
-    bool,
-    Option<i64>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-)> {
+fn settings_selection() -> Option<HistoryTitleSettingsSelection> {
     let path = app_paths::cli_manager_data_dir()
         .ok()?
         .join("settings.json");
@@ -368,7 +427,6 @@ fn settings_selection() -> Option<(
         .get("enabled")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let enabled_at = settings.get("enabledAt").and_then(Value::as_i64);
     let app_type = settings
         .get("providerAppType")
         .and_then(Value::as_str)
@@ -381,32 +439,44 @@ fn settings_selection() -> Option<(
         .get("modelId")
         .and_then(Value::as_str)
         .map(str::to_string);
-    Some((enabled, enabled_at, app_type, provider_id, model_id))
+    let custom_prompt =
+        normalize_custom_prompt(settings.get("customPrompt").and_then(Value::as_str));
+    Some(HistoryTitleSettingsSelection {
+        enabled,
+        app_type,
+        provider_id,
+        model_id,
+        custom_prompt,
+    })
 }
 
-fn validate_selection(request: &HistoryTitleGenerateRequest) -> Result<(), String> {
-    let Some((_enabled, _enabled_at, app_type, provider_id, model_id)) = settings_selection()
-    else {
+fn validate_selection(
+    selection: Option<&HistoryTitleSettingsSelection>,
+    request: &HistoryTitleGenerateRequest,
+) -> Result<(), String> {
+    let Some(selection) = selection else {
         return Ok(());
     };
-    if app_type.as_deref() != Some(request.provider_app_type.trim())
-        || provider_id.as_deref() != Some(request.provider_id.trim())
-        || model_id.as_deref() != Some(request.model_id.trim())
+    if selection.app_type.as_deref() != Some(request.provider_app_type.trim())
+        || selection.provider_id.as_deref() != Some(request.provider_id.trim())
+        || selection.model_id.as_deref() != Some(request.model_id.trim())
     {
         return Err("history_title_provider_selection_changed".to_string());
     }
     Ok(())
 }
 
-fn validate_automatic_enabled(request: &HistoryTitleGenerateRequest) -> Result<(), String> {
+fn validate_automatic_enabled(
+    selection: Option<&HistoryTitleSettingsSelection>,
+    request: &HistoryTitleGenerateRequest,
+) -> Result<(), String> {
     if request.trigger_kind != "automatic" {
         return Ok(());
     }
-    let Some((enabled, _enabled_at, _app_type, _provider_id, _model_id)) = settings_selection()
-    else {
+    let Some(selection) = selection else {
         return Err("history_title_auto_disabled".to_string());
     };
-    if enabled {
+    if selection.enabled {
         Ok(())
     } else {
         Err("history_title_auto_disabled".to_string())
@@ -675,7 +745,11 @@ fn session_key_log_hash(session_key: &str) -> String {
     format!("sha256:{}", &digest[..16])
 }
 
-async fn request_title(runtime: &ProviderRuntime, candidate: &str) -> Result<String, String> {
+async fn request_title(
+    runtime: &ProviderRuntime,
+    system_prompt: &str,
+    candidate: &str,
+) -> Result<String, String> {
     let started = Instant::now();
     let client = provider::network_client::configure_builder(reqwest::Client::builder())?
         .timeout(REQUEST_TIMEOUT)
@@ -714,7 +788,7 @@ async fn request_title(runtime: &ProviderRuntime, candidate: &str) -> Result<Str
         &runtime.base_url,
         &runtime.api_key,
         &runtime.model_id,
-        PROMPT,
+        system_prompt,
         candidate,
         64,
         REQUEST_TIMEOUT,
@@ -1068,14 +1142,14 @@ async fn reserve_request(
     let mut connection = open_history_connection().await?;
     ensure_table(&mut connection).await?;
     let mut transaction = connection
-        .begin()
+        .begin_with("BEGIN IMMEDIATE")
         .await
-        .map_err(|err| format!("history_title_database_begin_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_begin_failed", err))?;
     let existing = sqlx::query("SELECT * FROM history_generated_titles WHERE session_key = ?1")
         .bind(request.session_key.trim())
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(|err| format!("history_title_database_read_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_read_failed", err))?;
     let existing_meta = existing.as_ref().map(row_meta).transpose()?;
     if request.trigger_kind == "automatic" {
         if let Some(meta) = &existing_meta {
@@ -1107,7 +1181,7 @@ async fn reserve_request(
         .bind(request.session_key.trim())
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(|err| format!("history_title_database_read_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_read_failed", err))?;
         if alias.is_some_and(|value| !value.trim().is_empty()) {
             return Err("history_title_alias_pinned".to_string());
         }
@@ -1162,11 +1236,11 @@ async fn reserve_request(
     .bind(now)
     .execute(&mut *transaction)
     .await
-    .map_err(|err| format!("history_title_database_write_failed: {err}"))?;
+    .map_err(|err| map_history_database_error("history_title_database_write_failed", err))?;
     transaction
         .commit()
         .await
-        .map_err(|err| format!("history_title_database_commit_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_commit_failed", err))?;
     Ok((revision, None))
 }
 
@@ -1178,9 +1252,9 @@ async fn finish_request(
     let mut connection = open_history_connection().await?;
     ensure_table(&mut connection).await?;
     let mut transaction = connection
-        .begin()
+        .begin_with("BEGIN IMMEDIATE")
         .await
-        .map_err(|err| format!("history_title_database_begin_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_begin_failed", err))?;
     let now = now_ms();
     let pending = sqlx::query(
         "SELECT 1 FROM history_generated_titles
@@ -1193,12 +1267,13 @@ async fn finish_request(
     .bind(request.source_content_sha256.trim().to_ascii_lowercase())
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(|err| format!("history_title_database_read_failed: {err}"))?;
+    .map_err(|err| map_history_database_error("history_title_database_read_failed", err))?;
     if pending.is_none() {
         return Err("history_title_request_cancelled".to_string());
     }
 
-    let mut guard_error = validate_selection(request).err();
+    let selection = settings_selection();
+    let mut guard_error = validate_selection(selection.as_ref(), request).err();
     if request.trigger_kind == "automatic" {
         let alias = sqlx::query_scalar::<_, String>(
             "SELECT alias FROM session_meta WHERE session_key = ?1 LIMIT 1",
@@ -1206,11 +1281,14 @@ async fn finish_request(
         .bind(request.session_key.trim())
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(|err| format!("history_title_database_read_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_read_failed", err))?;
         if alias.is_some_and(|value| !value.trim().is_empty()) {
             guard_error = Some("history_title_alias_pinned".to_string());
         }
-        if !settings_selection().is_some_and(|selection| selection.0) {
+        if !selection
+            .as_ref()
+            .is_some_and(|selection| selection.enabled)
+        {
             guard_error = Some("history_title_auto_disabled".to_string());
         }
     }
@@ -1231,14 +1309,13 @@ async fn finish_request(
         .bind(request.source_content_sha256.trim().to_ascii_lowercase())
         .execute(&mut *transaction)
         .await
-        .map_err(|err| format!("history_title_database_write_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_write_failed", err))?;
         if changed.rows_affected() == 0 {
             return Err("history_title_request_cancelled".to_string());
         }
-        transaction
-            .commit()
-            .await
-            .map_err(|err| format!("history_title_database_commit_failed: {err}"))?;
+        transaction.commit().await.map_err(|err| {
+            map_history_database_error("history_title_database_commit_failed", err)
+        })?;
         return if request.trigger_kind == "automatic" {
             Err("history_title_request_cancelled".to_string())
         } else {
@@ -1263,7 +1340,7 @@ async fn finish_request(
             .bind(request.source_content_sha256.trim().to_ascii_lowercase())
             .execute(&mut *transaction)
             .await
-            .map_err(|err| format!("history_title_database_write_failed: {err}"))?;
+            .map_err(|err| map_history_database_error("history_title_database_write_failed", err))?;
             if changed.rows_affected() == 0 {
                 return Err("history_title_request_cancelled".to_string());
             }
@@ -1284,21 +1361,20 @@ async fn finish_request(
             .bind(request.source_content_sha256.trim().to_ascii_lowercase())
             .execute(&mut *transaction)
             .await
-            .map_err(|err| format!("history_title_database_write_failed: {err}"))?;
+            .map_err(|err| map_history_database_error("history_title_database_write_failed", err))?;
             if changed.rows_affected() == 0 {
                 return Err("history_title_request_cancelled".to_string());
             }
-            transaction
-                .commit()
-                .await
-                .map_err(|err| format!("history_title_database_commit_failed: {err}"))?;
+            transaction.commit().await.map_err(|err| {
+                map_history_database_error("history_title_database_commit_failed", err)
+            })?;
             return Err(error);
         }
     }
     transaction
         .commit()
         .await
-        .map_err(|err| format!("history_title_database_commit_failed: {err}"))?;
+        .map_err(|err| map_history_database_error("history_title_database_commit_failed", err))?;
     select_meta(&mut connection, request.session_key.trim())
         .await?
         .ok_or_else(|| "history_title_database_row_missing".to_string())
@@ -1348,26 +1424,43 @@ async fn history_title_list_providers_async() -> Result<Vec<HistoryTitleProvider
 }
 
 #[tauri::command]
-pub(crate) fn history_title_generate(
+pub(crate) async fn history_title_generate(
     request: HistoryTitleGenerateRequest,
 ) -> Result<HistoryGeneratedTitleMeta, String> {
-    tauri::async_runtime::block_on(history_title_generate_async(request))
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(history_title_generate_async(request))
+    })
+    .await
+    .map_err(|error| format!("history_title_task_failed: {error}"))?
 }
 
 async fn history_title_generate_async(
     request: HistoryTitleGenerateRequest,
 ) -> Result<HistoryGeneratedTitleMeta, String> {
     validate_generate_request(&request)?;
-    validate_selection(&request)?;
-    validate_automatic_enabled(&request)?;
+    let selection = settings_selection();
+    validate_selection(selection.as_ref(), &request)?;
+    validate_automatic_enabled(selection.as_ref(), &request)?;
     if !valid_app_type(request.provider_app_type.trim()) {
         return Err("history_title_provider_invalid".to_string());
     }
-    let (revision, existing) = reserve_request(&request).await?;
+    let session_key_hash = session_key_log_hash(&request.session_key);
+    let (revision, existing) = reserve_request(&request).await.map_err(|error| {
+        if is_history_database_error_code(&error) {
+            log::warn!(
+                target: "cli_manager::history_title",
+                "history.title.request.failure stage=reserve session_key_hash={} source={} trigger={} code={}",
+                session_key_hash,
+                request.source_id,
+                request.trigger_kind,
+                safe_error_code(&error)
+            );
+        }
+        error
+    })?;
     if let Some(existing) = existing {
         return Ok(existing);
     }
-    let session_key_hash = session_key_log_hash(&request.session_key);
     let runtime = match load_provider_runtime(
         request.provider_app_type.trim(),
         request.provider_id.trim(),
@@ -1392,7 +1485,12 @@ async fn history_title_generate_async(
             return finish_request(&request, revision, Err(error)).await;
         }
     };
-    let title = request_title(&runtime, request.candidate_text.trim()).await;
+    let title = request_title(
+        &runtime,
+        effective_prompt(selection.as_ref()),
+        request.candidate_text.trim(),
+    )
+    .await;
     match &title {
         Ok(title) => log::info!(
             target: "cli_manager::history_title",
@@ -1413,7 +1511,21 @@ async fn history_title_generate_async(
             safe_error_code(error)
         ),
     }
-    finish_request(&request, revision, title).await
+    let result = finish_request(&request, revision, title).await;
+    if let Err(error) = &result {
+        if is_history_database_error_code(error) {
+            log::warn!(
+                target: "cli_manager::history_title",
+                "history.title.request.failure stage=persist session_key_hash={} source={} trigger={} revision={} code={}",
+                session_key_hash,
+                request.source_id,
+                request.trigger_kind,
+                revision,
+                safe_error_code(error)
+            );
+        }
+    }
+    result
 }
 
 #[tauri::command]
@@ -1496,7 +1608,7 @@ async fn history_title_clear_async(
     .bind(now)
     .execute(&mut connection)
     .await
-    .map_err(|err| format!("history_title_database_write_failed: {err}"))?;
+    .map_err(|err| map_history_database_error("history_title_database_write_failed", err))?;
     select_meta(&mut connection, &session_key)
         .await?
         .ok_or_else(|| "history_title_database_row_missing".to_string())
@@ -1521,17 +1633,20 @@ async fn history_title_cancel_async(session_key: String) -> Result<(), String> {
     .bind(session_key)
     .execute(&mut connection)
     .await
-    .map_err(|err| format!("history_title_database_write_failed: {err}"))?;
+    .map_err(|err| map_history_database_error("history_title_database_write_failed", err))?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        provider_error_diagnostics, response_contains_tool_call, response_has_abnormal_finish,
-        safe_error_code, sanitize_title,
+        effective_prompt, is_sqlite_busy_code, normalize_custom_prompt, provider_error_diagnostics,
+        response_contains_tool_call, response_has_abnormal_finish, safe_error_code, sanitize_title,
+        HistoryTitleSettingsSelection, BUILTIN_PROMPT, HISTORY_TITLE_DATABASE_BUSY_TIMEOUT,
+        MAX_CUSTOM_PROMPT_BYTES,
     };
     use serde_json::json;
+    use std::time::Duration;
 
     #[test]
     fn title_sanitizer_removes_fences_and_caps_words() {
@@ -1552,6 +1667,38 @@ mod tests {
             sanitize_title("\u{1b}[31m\u{200b}修复登录\u{1b}[0m\n").unwrap(),
             "修复登录"
         );
+    }
+
+    #[test]
+    fn custom_prompt_normalization_trims_and_rejects_invalid_values() {
+        assert_eq!(
+            normalize_custom_prompt(Some("  Use imperative task titles.  ")).as_deref(),
+            Some("Use imperative task titles.")
+        );
+        assert_eq!(normalize_custom_prompt(Some("   ")), None);
+        assert_eq!(normalize_custom_prompt(Some("contains\0nul")), None);
+        let max_utf8_prompt = "\u{1f642}".repeat(MAX_CUSTOM_PROMPT_BYTES / 4);
+        assert_eq!(
+            normalize_custom_prompt(Some(&max_utf8_prompt)).as_deref(),
+            Some(max_utf8_prompt.as_str())
+        );
+        assert_eq!(
+            normalize_custom_prompt(Some(&(max_utf8_prompt + "x"))),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_prompt_uses_custom_value_or_builtin_fallback() {
+        let selection = HistoryTitleSettingsSelection {
+            enabled: true,
+            app_type: Some("codex".to_string()),
+            provider_id: Some("provider".to_string()),
+            model_id: Some("model".to_string()),
+            custom_prompt: Some("Use terse verbs.".to_string()),
+        };
+        assert_eq!(effective_prompt(Some(&selection)), "Use terse verbs.");
+        assert_eq!(effective_prompt(None), BUILTIN_PROMPT);
     }
 
     #[test]
@@ -1591,5 +1738,22 @@ mod tests {
             safe_error_code("history_title_request_http_401: provider detail"),
             "history_title_request_http_401"
         );
+    }
+
+    #[test]
+    fn title_persistence_recognizes_sqlite_busy_codes_and_uses_shared_write_timeout() {
+        for code in [
+            "5",
+            "6",
+            "261",
+            "262",
+            "517",
+            "SQLITE_BUSY",
+            "SQLITE_LOCKED",
+        ] {
+            assert!(is_sqlite_busy_code(code), "expected busy code: {code}");
+        }
+        assert!(!is_sqlite_busy_code("19"));
+        assert_eq!(HISTORY_TITLE_DATABASE_BUSY_TIMEOUT, Duration::from_secs(15));
     }
 }

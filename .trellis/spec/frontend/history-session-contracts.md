@@ -105,7 +105,13 @@ if (started) {
 - Trigger: changing history session display titles, aliases, generated-title actions, history settings, search-hit labels, prompt-library labels, or automatic title scheduling.
 - Goal: keep the parser source title immediately available while layering an optional local generated title without mutating the source summary.
 
-### 2. Contracts
+### 2. Signatures
+
+- Renderer settings retain `HistorySmartTitleSettings`, extended with `customPrompt: string`; an empty string means the built-in system instruction.
+- The IPC name remains `history_title_generate(request: HistoryTitleGenerateRequest)`, but its Rust entrypoint is `pub(crate) async fn history_title_generate(...)`. `HistoryTitleGenerateRequest` must not gain a prompt field.
+- There is no SQLite migration or Provider protocol signature change. The Rust command reads `historySmartTitle.customPrompt` from local `settings.json` and calls the existing `post_text_request(..., system_prompt, candidate, ...)` adapter.
+
+### 3. Contracts
 
 - `displayTitle` precedence is exactly `alias.trim() > generatedTitle.trim() > source title.trim() > session id`.
 - Generated-title metadata is hydrated from `history_generated_titles` together with session metadata and overlaid on local summaries, favorite snapshots, cached remote summaries, search hits, and prompt-library labels. `summary.title` remains the source title.
@@ -113,26 +119,106 @@ if (started) {
 - SSH sessions dispatch only after an online trusted detail is loaded; read-only local snapshots, summary-only cache, and offline detail never dispatch. Candidate extraction requires the first visible user text part and shares the Conversation classifier; injected context, tools, reasoning, metadata, empty, and attachment-only records do not qualify.
 - Automatic work is disabled by default, uses the persisted `enabledAt` watermark, is deduplicated by session key plus full candidate fingerprint, and is scheduled through one bounded FIFO queue. Disabling the setting cancels queued ownership and invalidates active automatic revisions.
 - The list toolbar and Settings -> History Sessions switch read and write the same persisted `historySmartTitle` object. Re-enabling records a new watermark; it does not reuse the previous one.
-- All generated-title actions use `useI18n()` keys for `zh-CN`/`en-US`; existing `zh-TW` fallback remains valid. Pending state is exposed through an icon/tooltip and disables duplicate generation without changing selection, filtering, or scroll position.
+- `historySmartTitle.customPrompt` is one global, local-only system instruction. The UI trims it before saving; missing, blank, NUL-containing, or over-4096-UTF-8-byte values normalize to `""`. The `historySmartTitle` sync classification remains `excluded`.
+- Prompt Save waits for the existing persisted settings update before showing its localized success toast. While that write is pending, Save/Restore cannot race; a write failure shows a localized failure toast and never reports success.
+- Rust snapshots settings at request start to validate the selected Provider/automatic state and select either the normalized custom prompt or the unchanged built-in fallback. The candidate remains a separate user/input field for Anthropic, Chat Completions, and Responses; it is never interpolated into the prompt. The completion guard takes a fresh snapshot only to preserve the existing provider-selection/automatic-disable result suppression.
+- `history_title_generate` must remain a Tauri async command and await a dedicated `spawn_blocking` worker for the existing non-`Send` title helper; do not wrap the Provider request in `tauri::async_runtime::block_on` inside a synchronous command. A slow Provider request must leave the renderer able to process normal interaction while the existing pending/duplicate guard remains authoritative.
+- `historyStore` records an in-memory `smartTitleInFlightSessionKeys` entry immediately after it accepts a manual or automatic generation request, before opening details, candidate extraction, or the Provider IPC wait. It removes that entry only when the same trigger still owns the session in `finally`, so a manual request replacing an automatic request cannot clear the newer loading state. This ephemeral set never changes persisted generated-title metadata or optimistically supplies a title.
+- Installed production and `npm run tauri dev` deliberately share the main SQLite database. Generated-title reserve and finish transactions must acquire the write lock with `BEGIN IMMEDIATE` before their read/write sequence and use the shared 15-second write-busy timeout. A remaining SQLite busy/locked result maps to the stable `history_title_database_busy` category, never to a Provider/network category.
+- All generated-title actions use `useI18n()` keys for `zh-CN`/`en-US`; existing `zh-TW` fallback remains valid. List and detail pending state combines persisted `generatedTitle.state === "pending"` with the in-flight set. The detail action shows the existing localized pending label with a loading icon, sets `aria-busy`, and disables repeat generation (and title clearing) without changing selection, filtering, or scroll position.
 
-### 3. Validation & Error Matrix
+### 4. Validation & Error Matrix
 
 | Condition | Required behavior |
 |---|---|
 | No generated row or generated request fails | Show alias/source/session-id fallback immediately; automatic failures are silent |
 | Manual title action has no/invalid Provider or model | Preserve the source fallback, show a localized actionable reason, and open Session History settings; never expose raw provider errors |
 | Manual title request fails after dispatch | Map the stable backend failure category to a localized safe toast; do not discard the error category or expose response/config content |
+| Shared SQLite is busy while production and development builds both run | Wait at the title persistence boundary; if the bounded wait is exhausted, retain source/alias fallback and show a localized local-database-busy toast rather than Provider/network guidance |
 | Alias saved while a request is pending | Cancel/invalidate ownership; late result cannot become visible or overwrite the alias |
 | Generated title cleared | Remove visible generated text, preserve source title, and suppress automatic work for the current fingerprint until explicit manual generation |
 | Search or Prompt Library contains a titled session | Use the same display precedence as the list/detail view |
 | Provider/model selection is invalid | Keep the saved selection diagnosable, prevent enabling when off, and allow disabling when already on |
+| `customPrompt` is missing, blank, manually malformed, contains NUL, or exceeds 4096 UTF-8 bytes | Save/use `""` and fall back to the built-in instruction; never send the malformed value |
+| Prompt draft is malformed in Settings | Keep it unsaved, show a localized field error, and leave the last persisted effective prompt intact |
+| Prompt Save succeeds or fails | Show success only after the setting write fulfills; while it is pending disable repeat actions; on failure leave the persisted prompt unchanged and do not show success |
+| Prompt changes while a request is in flight | The sent request uses its start snapshot; the existing completion guard may still suppress the result if provider selection/automatic state changed |
+| Provider request takes several seconds | Keep normal desktop interaction responsive; immediately show the localized loading state in the detail button and matching list row, then clear it when the active request settles; duplicate generation stays blocked |
 | Locale changes | New title/settings copy changes language without changing time formatting |
 
-### 4. Tests Required
+### 5. Good / Base / Bad Cases
+
+- Good: a saved 4096-byte-or-smaller custom prompt becomes the Provider system/instructions field while the first valid user message remains the separate candidate input.
+- Good: installed production and development builds both write the shared SQLite database; a short competing write clears within the 15-second bound and the title reservation/result persists without a second Provider request.
+- Base: an old settings file without `customPrompt`, or the user restoring default, produces the exact built-in behavior.
+- Bad: passing the prompt through `HistoryTitleGenerateRequest`, synchronizing it, or concatenating it with candidate text breaks renderer trust boundaries and protocol framing.
+- Bad: starting a deferred read transaction and then upgrading it to a write while another process writes; this can return SQLite busy/snapshot errors and must not be reported as a Provider, model, or network misconfiguration.
+
+### 6. Tests Required
 
 - Frontend type-check after store/component changes.
+- Rust unit tests for trim, blank, NUL, over-limit, custom selection, and built-in fallback; no real Provider call is required.
+- Source-contract test verifies the unchanged IPC request shape, settings migration/default, prompt editor controls, and backend-owned system prompt selection.
+- Source-contract test verifies the Tauri title-generation entrypoint is async and dispatches its non-`Send` helper with `spawn_blocking`; it also verifies Prompt success feedback follows the awaited settings write and an accepted title request creates/removes its local in-flight loading state.
+- Rust/source coverage verifies SQLite busy-code recognition, the 15-second bounded title-write wait, `BEGIN IMMEDIATE` write reservation, and the localized busy mapping.
 - Pure candidate/display tests for alias/generated/source/id precedence, Unicode-safe input truncation, injection markers, attachment-only records, old flat messages, and distinct source instances.
-- Manual desktop check for settings/toolbar synchronization, old-session manual generation, alias pin, clear suppression, automatic watermark, pending/restart behavior, and Chinese/English copy.
+- Manual desktop check for save/restore, settings/toolbar synchronization, old-session manual generation, alias pin, clear suppression, automatic watermark, pending/restart behavior, and Chinese/English copy.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+invoke("history_title_generate", { request: { ...request, customPrompt } });
+```
+
+#### Correct
+
+```rust
+let selection = settings_selection();
+let prompt = effective_prompt(selection.as_ref());
+request_title(&runtime, prompt, request.candidate_text.trim()).await;
+```
+
+#### Wrong shared-database persistence
+
+```rust
+let mut transaction = connection.begin().await?;
+let row = read_title_row(&mut transaction).await?;
+write_title_row(&mut transaction, row).await?;
+```
+
+#### Correct shared-database persistence
+
+```rust
+let mut transaction = connection.begin_with("BEGIN IMMEDIATE").await?;
+let row = read_title_row(&mut transaction).await?;
+write_title_row(&mut transaction, row).await?;
+```
+
+#### Wrong long-running command wrapper
+
+```rust
+#[tauri::command]
+pub(crate) fn history_title_generate(request: HistoryTitleGenerateRequest) -> Result<HistoryGeneratedTitleMeta, String> {
+    tauri::async_runtime::block_on(history_title_generate_async(request))
+}
+```
+
+#### Correct long-running command wrapper
+
+```rust
+#[tauri::command]
+pub(crate) async fn history_title_generate(
+    request: HistoryTitleGenerateRequest,
+) -> Result<HistoryGeneratedTitleMeta, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(history_title_generate_async(request))
+    })
+    .await
+    .map_err(|error| format!("history_title_task_failed: {error}"))?
+}
+```
 
 ## Scenario: SSH Remote History Workspace
 

@@ -41,6 +41,12 @@ import {
 } from "../lib/terminalPaneMarker";
 import type { HistorySmartTitleSettings } from "../lib/types";
 
+export const HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES = 4096;
+
+export function getHistorySmartTitleCustomPromptByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 export {
   DESKTOP_PET_SIZE_DEFAULT_PERCENT,
   DESKTOP_PET_SIZE_MAX_PERCENT,
@@ -524,6 +530,7 @@ const DEFAULTS: Settings = {
     providerId: null,
     modelId: null,
     enabledAt: null,
+    customPrompt: "",
   },
   collapsedGroupIds: [],
   useExternalTerminal: false,
@@ -791,6 +798,19 @@ function migrateLastSettingsTab(value: unknown): LastSettingsTab {
     : DEFAULTS.lastSettingsTab;
 }
 
+function migrateHistorySmartTitleCustomPrompt(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const prompt = value.trim();
+  if (
+    !prompt
+    || prompt.includes("\0")
+    || getHistorySmartTitleCustomPromptByteLength(prompt) > HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES
+  ) {
+    return "";
+  }
+  return prompt;
+}
+
 export function migrateHistorySmartTitleSettings(value: unknown): HistorySmartTitleSettings {
   const defaults = DEFAULTS.historySmartTitle;
   if (typeof value !== "object" || value === null) {
@@ -819,6 +839,7 @@ export function migrateHistorySmartTitleSettings(value: unknown): HistorySmartTi
     providerId,
     modelId,
     enabledAt,
+    customPrompt: migrateHistorySmartTitleCustomPrompt(raw.customPrompt),
   };
 }
 

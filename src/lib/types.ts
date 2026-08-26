@@ -910,6 +910,7 @@ export interface HistorySmartTitleSettings {
   providerId: string | null;
   modelId: string | null;
   enabledAt: number | null;
+  customPrompt: string;
 }
 
 export interface HistoryTitleProviderOption {

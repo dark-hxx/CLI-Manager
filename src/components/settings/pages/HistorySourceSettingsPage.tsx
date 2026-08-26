@@ -9,6 +9,7 @@ import {
   Stack,
   Switch,
   Text,
+  Textarea,
   TextInput,
   ThemeIcon,
 } from "@mantine/core";
@@ -28,7 +29,11 @@ import { getLanguageLocale, pickByLanguage, useI18n } from "../../../lib/i18n";
 import type { HistoryTitleProviderOption } from "../../../lib/types";
 import { useHistorySourceSettingsStore } from "../../../stores/historySourceSettingsStore";
 import { useHistoryStore } from "../../../stores/historyStore";
-import { useSettingsStore } from "../../../stores/settingsStore";
+import {
+  getHistorySmartTitleCustomPromptByteLength,
+  HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES,
+  useSettingsStore,
+} from "../../../stores/settingsStore";
 import { VendorIcon, inferVendor } from "../../VendorIcon";
 import { useAppConfirm } from "../../ui/useAppConfirm";
 
@@ -161,6 +166,8 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
   const [titleProviders, setTitleProviders] = useState<HistoryTitleProviderOption[]>([]);
   const [titleProvidersLoading, setTitleProvidersLoading] = useState(false);
   const [titleModelDraft, setTitleModelDraft] = useState("");
+  const [titlePromptDraft, setTitlePromptDraft] = useState("");
+  const [titlePromptSavingAction, setTitlePromptSavingAction] = useState<"save" | "restore" | null>(null);
 
   useEffect(() => {
     if (!loaded) void load();
@@ -472,6 +479,22 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
     setTitleModelDraft(historySmartTitle.modelId ?? "");
   }, [historySmartTitle.providerAppType, historySmartTitle.providerId, historySmartTitle.modelId]);
 
+  useEffect(() => {
+    setTitlePromptDraft(historySmartTitle.customPrompt);
+  }, [historySmartTitle.customPrompt]);
+
+  const titlePromptValue = titlePromptDraft.trim();
+  const titlePromptBytes = getHistorySmartTitleCustomPromptByteLength(titlePromptValue);
+  const titlePromptError = titlePromptDraft.includes("\0")
+    ? t("historySources.smartTitle.customPromptNul")
+    : titlePromptBytes > HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES
+      ? t("historySources.smartTitle.customPromptTooLong", {
+        max: HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES,
+      })
+      : null;
+  const titlePromptDirty = titlePromptValue !== historySmartTitle.customPrompt;
+  const titlePromptSaving = titlePromptSavingAction !== null;
+
   const handleTitleProviderChange = async (value: string | null) => {
     const provider = titleProviders.find(
       (item) => `${item.appType}:${item.providerId}` === value,
@@ -504,6 +527,41 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
     const modelId = titleModelDraft.trim() || null;
     if (modelId === historySmartTitle.modelId) return;
     await updateSetting("historySmartTitle", { ...historySmartTitle, modelId });
+  };
+
+  const persistTitlePrompt = async (
+    customPrompt: string,
+    action: "save" | "restore",
+  ): Promise<boolean> => {
+    if (titlePromptSaving) return false;
+    setTitlePromptSavingAction(action);
+    try {
+      await updateSetting("historySmartTitle", {
+        ...historySmartTitle,
+        customPrompt,
+      });
+      setTitlePromptDraft(customPrompt);
+      return true;
+    } catch {
+      toast.error(t("historySources.smartTitle.customPromptSaveFailed"));
+      return false;
+    } finally {
+      setTitlePromptSavingAction(null);
+    }
+  };
+
+  const handleSaveTitlePrompt = async () => {
+    if (titlePromptError || !titlePromptDirty) return;
+    if (await persistTitlePrompt(titlePromptValue, "save")) {
+      toast.success(t("historySources.smartTitle.customPromptSaved"));
+    }
+  };
+
+  const handleRestoreDefaultTitlePrompt = async () => {
+    if (!historySmartTitle.customPrompt && !titlePromptDraft) return;
+    if (await persistTitlePrompt("", "restore")) {
+      toast.success(t("historySources.smartTitle.customPromptRestored"));
+    }
   };
 
   return (
@@ -564,6 +622,44 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
             onBlur={() => void handleTitleModelBlur()}
             disabled={titleProvidersLoading || !selectedTitleProvider}
           />
+          <Textarea
+            label={t("historySources.smartTitle.customPrompt")}
+            description={t("historySources.smartTitle.customPromptDescription")}
+            placeholder={t("historySources.smartTitle.customPromptPlaceholder")}
+            value={titlePromptDraft}
+            onChange={(event) => setTitlePromptDraft(event.currentTarget.value)}
+            error={titlePromptError}
+            minRows={4}
+            autosize
+          />
+          <Group justify="space-between" align="center" gap="xs">
+            <Text size="xs" c="var(--on-surface-variant)">
+              {t("historySources.smartTitle.customPromptBytes", {
+                current: titlePromptBytes,
+                max: HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES,
+              })}
+            </Text>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                onClick={() => void handleSaveTitlePrompt()}
+                loading={titlePromptSavingAction === "save"}
+                disabled={titlePromptSaving || Boolean(titlePromptError) || !titlePromptDirty}
+              >
+                {t("historySources.smartTitle.saveCustomPrompt")}
+              </Button>
+              <Button
+                size="xs"
+                variant="default"
+                color="gray"
+                onClick={() => void handleRestoreDefaultTitlePrompt()}
+                loading={titlePromptSavingAction === "restore"}
+                disabled={titlePromptSaving || (!historySmartTitle.customPrompt && !titlePromptDraft)}
+              >
+                {t("historySources.smartTitle.restoreDefaultPrompt")}
+              </Button>
+            </Group>
+          </Group>
           {titleProviders.length === 0 ? (
             <Text size="xs" c="var(--on-surface-variant)">
               {t("historySources.smartTitle.noProvider")}
