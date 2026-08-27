@@ -84,6 +84,12 @@ async fn assert_http_contract(client: &reqwest::Client, result: &LiveServerOpenR
     let head = client.head(&result.url).send().await.unwrap();
     assert_eq!(head.status(), reqwest::StatusCode::OK);
     assert!(head.bytes().await.unwrap().is_empty());
+
+    let asset_url = format!("{}/asset.bin", result.session.origin);
+    let asset = client.get(asset_url).send().await.unwrap();
+    assert_eq!(asset.status(), reqwest::StatusCode::OK);
+    assert_eq!(asset.content_length(), None);
+    assert_eq!(asset.bytes().await.unwrap().len(), 1024 * 1024);
 }
 
 async fn assert_reload_changes(
@@ -92,9 +98,34 @@ async fn assert_reload_changes(
     root: &std::path::Path,
 ) {
     let initial = reload_version(client, session).await;
-    fs::write(root.join("styles.css"), "body { color: red; }").unwrap();
+    fs::write(root.join("src/styles.css"), "body { color: red; }").unwrap();
     let changed = wait_for_version_change(client, session, initial).await;
     assert!(changed > initial);
+}
+
+async fn assert_new_directory_changes_reload(
+    client: &reqwest::Client,
+    session: &LiveServerSession,
+    root: &std::path::Path,
+) {
+    fs::create_dir(root.join("dynamic")).unwrap();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let initial = reload_version(client, session).await;
+    fs::write(root.join("dynamic/asset.css"), "body { color: blue; }").unwrap();
+    let changed = wait_for_version_change(client, session, initial).await;
+    assert!(changed > initial);
+}
+
+async fn assert_ignored_changes_do_not_reload(
+    client: &reqwest::Client,
+    session: &LiveServerSession,
+    root: &std::path::Path,
+) {
+    let initial = reload_version(client, session).await;
+    fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    fs::write(root.join("node_modules/pkg/generated.js"), "ignored").unwrap();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(reload_version(client, session).await, initial);
 }
 
 #[tokio::test]
@@ -105,6 +136,8 @@ async fn starts_reuses_serves_and_stops_project_server() {
         "<html><body>ok</body></html>",
     )
     .unwrap();
+    fs::create_dir(temp.path().join("src")).unwrap();
+    fs::write(temp.path().join("asset.bin"), vec![0x7f; 1024 * 1024]).unwrap();
     let root = temp.path().to_str().unwrap().to_string();
     let manager = LiveServerManager::new();
 
@@ -124,6 +157,8 @@ async fn starts_reuses_serves_and_stops_project_server() {
         .build()
         .unwrap();
     assert_http_contract(&client, &first).await;
+    assert_ignored_changes_do_not_reload(&client, &first.session, temp.path()).await;
+    assert_new_directory_changes_reload(&client, &first.session, temp.path()).await;
     assert_reload_changes(&client, &first.session, temp.path()).await;
 
     assert_eq!(manager.status(root.clone()).unwrap(), Some(first.session));

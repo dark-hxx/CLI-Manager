@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use cap_std::{ambient_authority, fs::Dir};
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, CONTROLS};
 
 const HTML_EXTENSIONS: &[&str] = &["htm", "html"];
@@ -67,7 +68,31 @@ pub fn validate_start_request(
     })
 }
 
-pub fn resolve_request_file(root: &Path, request_path: &str) -> Result<PathBuf, String> {
+/// Opens the canonical project root and keeps the resulting directory handle as
+/// the authority for all subsequent requests.  The handle pins the directory
+/// entry, so replacing the root path after this point cannot redirect a request
+/// to a different tree.
+pub fn open_root_dir(root: &Path) -> Result<Dir, String> {
+    let directory = Dir::open_ambient_dir(root, ambient_authority())
+        .map_err(|error| format!("root_canonicalize_failed: {error}"))?;
+
+    // `root` was canonicalized during start-up.  Re-check the path *after* the
+    // handle is opened so a replacement of the root with a symlink/junction
+    // before the open cannot silently change the served tree.
+    let observed = root
+        .canonicalize()
+        .map_err(|error| format!("root_canonicalize_failed: {error}"))?;
+    if observed != root {
+        return Err("path_outside_root".to_string());
+    }
+
+    Ok(directory)
+}
+
+/// Resolves an HTTP URL path to a safe path relative to the capability root.
+/// No ambient filesystem access occurs here; the caller must open the returned
+/// path through the `Dir` returned by [`open_root_dir`].
+pub fn resolve_request_path(request_path: &str) -> Result<PathBuf, String> {
     let decoded = decode_request_path(request_path)?;
     let relative = if decoded.is_empty() {
         "index.html".to_string()
@@ -77,17 +102,7 @@ pub fn resolve_request_file(root: &Path, request_path: &str) -> Result<PathBuf, 
         decoded
     };
     validate_relative_path(&relative)?;
-
-    let candidate = root.join(&relative);
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|_| "request_file_not_found".to_string())?;
-    let resolved = resolve_directory_index(canonical)?;
-    ensure_within_root(root, &resolved)?;
-    if !resolved.is_file() {
-        return Err("request_file_not_found".to_string());
-    }
-    Ok(resolved)
+    Ok(PathBuf::from(relative))
 }
 
 pub fn build_page_url(origin: &str, relative_path: &str) -> String {
@@ -153,16 +168,6 @@ fn decode_request_path(request_path: &str) -> Result<String, String> {
         .decode_utf8()
         .map(|value| value.into_owned())
         .map_err(|_| "invalid_url_encoding".to_string())
-}
-
-fn resolve_directory_index(canonical: PathBuf) -> Result<PathBuf, String> {
-    if !canonical.is_dir() {
-        return Ok(canonical);
-    }
-    canonical
-        .join("index.html")
-        .canonicalize()
-        .map_err(|_| "request_file_not_found".to_string())
 }
 
 fn ensure_within_root(root: &Path, path: &Path) -> Result<(), String> {

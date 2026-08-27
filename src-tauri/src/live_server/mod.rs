@@ -120,8 +120,8 @@ fn start_server(project_path: &str, root: std::path::PathBuf) -> Result<RunningL
         .map_err(|error| format!("listener_address_failed: {error}"))?;
     let session = make_session(project_path, address.port());
     let version = Arc::new(AtomicU64::new(INITIAL_RELOAD_VERSION));
-    let watcher = LiveReloadWatcher::start(&root, Arc::clone(&version))?;
-    let context = LiveServerHttpContext::new(root, version, address.port());
+    let context = LiveServerHttpContext::new(&root, Arc::clone(&version), address.port())?;
+    let watcher = LiveReloadWatcher::start(&root, version)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let task = tauri::async_runtime::spawn(http::serve(listener, context, shutdown_rx));
 
