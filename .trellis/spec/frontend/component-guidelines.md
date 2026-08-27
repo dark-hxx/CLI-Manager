@@ -1646,6 +1646,31 @@ If a CLI draws large opaque panels or status rows over a terminal background ima
 
 Do not keep WebGL enabled while a terminal background image is active. The default renderer is the safer path for transparent backgrounds and xterm buffer-attr corrections; WebGL can preserve or redraw opaque TUI cells in ways that make Codex/Ratatui panels appear as black blocks.
 
+On a light terminal theme, a CLI that renders with its own dark theme paints message blocks that outlive every prompt-row heuristic: the submitted prompt scrolls up out of the composer area, and the Claude light-theme pass only covers patch rows plus the app-owned slash-menu highlight. Erase those blocks by resolved cell color instead of by row shape:
+
+- Gate the pass on theme brightness plus session identity (a Claude or Pi context), and accept a latched AI TUI signature as the plain-shell fallback for a CLI started by hand. Never require the latch: the welcome banner that sets it scrolls away while the black block keeps coming back.
+- Resolve what xterm will actually paint before judging a cell: RGB attrs directly, palette attrs through the active theme's ANSI entries with the xterm 256 cube and gray ramp as fallback, and never default-background cells — the terminal theme owns those, no CLI does.
+- Clear only near-neutral dark backgrounds (relative luminance <= 0.28 and chroma <= 96) so colored badges, diff markers, and light selection highlights survive the pass.
+- Require several dark cells on the row (>= 4). A one- or two-cell dark background is a TUI block cursor, not a painted block.
+- Do not clear the foreground here. Light themes run with `minimumContrastRatio: 6`, so xterm re-derives a readable foreground once the dark background is gone; clearing it would also discard configured TUI user/assistant colors.
+
+### Convention: Terminal-side preview panels share one theme resolver
+
+**What**: The Markdown preview, subagent transcript, session replay, and the in-terminal Git diff viewer resolve their colors through `useTerminalPreviewTheme()` (backed by `src/lib/terminalPreviewTheme.ts`). Panels must not call `getTerminalTheme()` / `isLightTerminalTheme()` themselves, and must not read `terminalThemeName` + the two palettes to re-derive brightness.
+
+**Why**: These panels follow the terminal theme by default but can be pinned to an independent preset (`terminalPreviewThemeName`, `follow-terminal` when unset). Every panel that judges brightness on its own drifts out of the family the first time that setting is used — and one of them silently kept following the *app* theme for code blocks before this was centralized.
+
+**Contracts**:
+
+- `resolveTerminalPreviewTheme()` owns the follow-vs-independent decision, brightness, and the panel CSS variable scope. Anything that is not a known preset id — a stale value from settings sync, a renamed preset — resolves to "follow the terminal", never to a broken panel.
+- A panel re-themes its subtree by putting `panelStyle` on its own root, not by writing global `--term-panel-*`. `App.tsx` keeps owning the global variables for terminal-side chrome (stats, providers, resources, tab bar); those must not move with the preview theme.
+- `TERM.*` from `termStatsUi` are `var(--term-panel-*)` references, so the local scope is enough — do not resolve colors in JS and inline them.
+- The terminal's custom text-color override applies only while following the terminal; an independently chosen preset keeps its own foreground.
+- Code-block brightness comes from the resolver's `tone`. When a caller needs the terminal code theme without terminal link behavior, pass `linkBehavior="preview"` explicitly — `MarkdownContent` derives it from `variant` otherwise.
+- The settings library grid is one component (`TerminalThemePresetGrid`); tone filtering, search, and the terminal library's auto/system special case stay in the host section.
+
+**Tests**: `node --test scripts/terminalPreviewTheme.test.mjs scripts/gitDiffThemeWorkflow.test.mjs` plus `npx tsc --noEmit`; manually verify follow mode against a light and a dark terminal theme, then an independent preset of the opposite brightness across all four panels.
+
 ### Convention: Click-based terminal cursor relocation is unsupported
 
 **What**: Clicking terminal content does not reposition the PTY line-editor cursor. The application must not register a click handler that emits cursor-movement sequences.

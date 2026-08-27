@@ -1,4 +1,5 @@
 import type { ITheme } from "@xterm/xterm";
+import { getRelativeLuminance, hexToRgb } from "./terminalColor";
 
 export type TerminalThemeGroupId = "cool" | "warm" | "nature" | "pink-purple" | "high-contrast" | "light-office";
 
@@ -36,24 +37,6 @@ function normalizeHexColor(value: string | undefined): string | null {
     return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
   }
   return value.toLowerCase();
-}
-
-function hexToRgb(value: string | undefined): [number, number, number] | null {
-  const normalized = normalizeHexColor(value);
-  if (!normalized) return null;
-  return [
-    Number.parseInt(normalized.slice(1, 3), 16),
-    Number.parseInt(normalized.slice(3, 5), 16),
-    Number.parseInt(normalized.slice(5, 7), 16),
-  ];
-}
-
-function getRelativeLuminance([r, g, b]: [number, number, number]): number {
-  const [srgbR, srgbG, srgbB] = [r, g, b].map((channel) => {
-    const value = channel / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * srgbR + 0.7152 * srgbG + 0.0722 * srgbB;
 }
 
 export function isLightTerminalTheme(theme: ITheme): boolean {
@@ -1503,6 +1486,10 @@ export function resolveAutoTerminalThemeId(
   darkPalette: DarkTerminalPalette = "night-indigo"
 ): string {
   return resolvedTheme === "dark" ? resolveAutoDarkThemeId(darkPalette) : resolveAutoLightThemeId(lightPalette);
+}
+
+export function isKnownTerminalThemePreset(themeName: string): boolean {
+  return themePresetMap.has(themeName);
 }
 
 export function resolveTerminalThemeId(

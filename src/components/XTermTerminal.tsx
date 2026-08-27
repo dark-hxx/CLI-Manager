@@ -2143,7 +2143,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
             sessionId={sessionId}
             open={markdownPreviewOpen}
             onClose={() => setMarkdownPreviewOpen(false)}
-            terminalTheme={terminalTheme}
           />
         </div>
       </div>

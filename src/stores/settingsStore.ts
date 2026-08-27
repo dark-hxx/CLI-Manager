@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
-import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
+import { isKnownTerminalThemePreset, resolveAutoTerminalThemeId } from "../lib/terminalThemes";
+import { FOLLOW_TERMINAL_PREVIEW_THEME } from "../lib/terminalPreviewTheme";
 import { backgroundImageExists } from "../lib/assetUrl";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey } from "../lib/shell";
 import { getCliManagerDataPaths } from "../lib/appPaths";
@@ -126,7 +127,7 @@ export type SystemResourceCardKey =
   | "processes";
 export type TerminalPanelWidthKey = "merged" | "stats" | "git" | "replay" | "files" | "systemResources" | "providers";
 export type TerminalPanelWidthSettings = Record<TerminalPanelWidthKey, number>;
-export type TerminalSettingsSectionKey = "behavior" | "paneMarker" | "shells" | "themes" | "background";
+export type TerminalSettingsSectionKey = "behavior" | "paneMarker" | "shells" | "themes" | "previewTheme" | "background";
 export type TerminalSettingsSectionsExpanded = Record<TerminalSettingsSectionKey, boolean>;
 export type HookSettingsSectionKey = "toast" | "notifications" | "claude" | "codex" | "kimi" | "pi" | "grok";
 export type HookSettingsSectionsExpanded = Record<HookSettingsSectionKey, boolean>;
@@ -154,6 +155,7 @@ export const TERMINAL_SETTINGS_SECTION_KEYS: readonly TerminalSettingsSectionKey
   "paneMarker",
   "shells",
   "themes",
+  "previewTheme",
   "background",
 ];
 export const TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT: TerminalSettingsSectionsExpanded = {
@@ -161,6 +163,7 @@ export const TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT: TerminalSettingsSectio
   paneMarker: false,
   shells: false,
   themes: false,
+  previewTheme: false,
   background: false,
 };
 export const HOOK_SETTINGS_SECTION_KEYS: readonly HookSettingsSectionKey[] = [
@@ -376,6 +379,8 @@ export interface Settings {
   debugMode: boolean;
   terminalThemeMode: TerminalThemeMode;
   terminalThemeName: string;
+  /** 终端右侧预览面板主题：`follow-terminal` 跟随终端，其余为终端主题库预设 id。 */
+  terminalPreviewThemeName: string;
   sidebarDensity: SidebarDensity;
   sidebarProjectFilterVisible: boolean;
   viewMode: ViewMode;
@@ -537,6 +542,7 @@ const DEFAULTS: Settings = {
   debugMode: false,
   terminalThemeMode: "independent",
   terminalThemeName: "forestNightDark",
+  terminalPreviewThemeName: FOLLOW_TERMINAL_PREVIEW_THEME,
   sidebarDensity: "comfortable",
   sidebarProjectFilterVisible: false,
   viewMode: "standard",
@@ -1299,6 +1305,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     entries.terminalThemeName = terminalThemeName;
     entries.terminalThemeMode = terminalThemeMode;
+
+    const storedTerminalPreviewThemeName = entries.terminalPreviewThemeName;
+    const terminalPreviewThemeName =
+      typeof storedTerminalPreviewThemeName === "string"
+      && (storedTerminalPreviewThemeName === FOLLOW_TERMINAL_PREVIEW_THEME
+        || isKnownTerminalThemePreset(storedTerminalPreviewThemeName))
+        ? storedTerminalPreviewThemeName
+        : DEFAULTS.terminalPreviewThemeName;
+    entries.terminalPreviewThemeName = terminalPreviewThemeName;
+    if (
+      storedTerminalPreviewThemeName !== undefined
+      && storedTerminalPreviewThemeName !== terminalPreviewThemeName
+    ) {
+      persistSetting("terminalPreviewThemeName", terminalPreviewThemeName);
+    }
 
     if (
       entries.uiTextColor !== undefined &&

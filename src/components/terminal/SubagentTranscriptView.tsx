@@ -1,8 +1,7 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n } from "../../lib/i18n";
-import { getTerminalTheme, isLightTerminalTheme } from "../../lib/terminalThemes";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { useTerminalPreviewTheme } from "../../hooks/useTerminalPreviewTheme";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { MarkdownContent } from "../ui/MarkdownContent";
 import { TERM } from "../stats/termStatsUi";
@@ -214,10 +213,7 @@ const TranscriptMessageRow = memo(function TranscriptMessageRow({ message, termi
  */
 export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
   const { t } = useI18n();
-  const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
-  const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
-  const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
-  const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
+  const { tone: terminalCodeTheme, panelStyle } = useTerminalPreviewTheme();
   // 隐藏时返回 undefined（稳定值）：转录追加不再触发本组件重渲染。
   const transcript = useTerminalStore((s) => (isVisible ? s.subagentTranscripts[sessionId] : undefined));
   // header 状态用独立原始值 selector 订阅，隐藏时也保持正确。
@@ -269,15 +265,6 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
   const messages = parseSnapshot?.messages ?? EMPTY_MESSAGES;
   const omittedCount = parseSnapshot?.omittedCount ?? 0;
 
-  const terminalCodeTheme = useMemo<"light" | "dark">(() => {
-    const terminalTheme = getTerminalTheme(
-      terminalThemeName,
-      resolvedTheme,
-      lightThemePalette,
-      darkThemePalette
-    );
-    return isLightTerminalTheme(terminalTheme) ? "light" : "dark";
-  }, [darkThemePalette, lightThemePalette, resolvedTheme, terminalThemeName]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContentRef = useRef<HTMLDivElement>(null);
   const scrollbarTrackRef = useRef<HTMLDivElement>(null);
@@ -395,7 +382,7 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
   return (
     <div
       className="subagent-transcript-shell flex h-full min-h-0 flex-col text-xs"
-      style={{ backgroundColor: TERM.bg, color: TERM.fg }}
+      style={{ ...panelStyle, backgroundColor: TERM.bg, color: TERM.fg }}
     >
       <div
         className="flex items-center gap-2 px-3 py-1.5"

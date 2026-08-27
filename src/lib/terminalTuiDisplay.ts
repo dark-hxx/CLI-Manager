@@ -1,4 +1,5 @@
 import type { IBufferCell, IBufferLine, Terminal } from "@xterm/xterm";
+import { isXtermCellDarkBlockBackground } from "./terminalColor";
 import {
   TUI_BORDER_PREFIX_PATTERN,
   TUI_COMPOSER_PROMPT_PATTERN,
@@ -12,6 +13,8 @@ const CLAUDE_LIGHT_SLASH_MENU_SELECTED_BG = 0xe7eefc;
 const TUI_COMPOSER_PRELUDE_ROWS = 1;
 const TUI_COMPOSER_CONTINUATION_ROWS = 4;
 const SLASH_COMMAND_MENU_LINE_PATTERN = /^\/[a-z0-9][a-z0-9:_-]*(?:\s|$)/i;
+// A single dark cell can be a TUI block cursor; a painted block always spans several.
+const DARK_BLOCK_MIN_CELLS = 4;
 const CODEX_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|\/model\s+to\s+change)/i;
 const OTHER_AI_TUI_VIEWPORT_PATTERN = /(?:claude\s+code|yolo\s+mode)/i;
 
@@ -37,6 +40,11 @@ export interface TerminalTuiDisplayOptions {
   isTuiSession: boolean;
   isCodexSession: boolean;
   isClaudeSession: boolean;
+  /**
+   * Erase dark backgrounds a dark-theme CLI paints on a light terminal, wherever they
+   * land in the visible viewport. Independent of the TUI viewport-signature latch.
+   */
+  shouldEraseDarkBlocks?: boolean;
   terminalTextColor?: string;
   tuiUserColor?: string;
   tuiAssistantColor?: string;
@@ -88,6 +96,7 @@ export function normalizeTerminalTuiComposerBackground(
     isTuiSession,
     isCodexSession,
     isClaudeSession,
+    shouldEraseDarkBlocks = false,
     terminalTextColor,
     tuiUserColor,
     tuiAssistantColor,
@@ -102,6 +111,8 @@ export function normalizeTerminalTuiComposerBackground(
   const hasConfiguredTuiColors = configuredTuiUserColor !== null || configuredTuiAssistantColor !== null;
   const useBroadViewportNormalization = isTransparent || (isCodexSession && isLightTheme);
   const useClaudeLightPatchNormalization = !useBroadViewportNormalization && isClaudeSession && isLightTheme;
+  const useDarkBlockErase = !useBroadViewportNormalization && shouldEraseDarkBlocks;
+  const paletteTheme = useDarkBlockErase ? terminal.options.theme : undefined;
   const getViewportLine = (row: number) => buffer.getLine(buffer.viewportY + row);
   const getBufferLine = (row: number) => buffer.getLine(row);
   const normalizePromptText = (line: IBufferLine) => (
@@ -116,10 +127,14 @@ export function normalizeTerminalTuiComposerBackground(
     let hasExplicitBackground = false;
     let inverseCells = 0;
     let hasInverse = false;
+    let darkBlockCells = 0;
     for (let x = 0; x < limit; x += 1) {
       const cell = line.getCell(x, probeCell);
       if (!cell) continue;
       if (cell.getBgColorMode() !== 0) hasExplicitBackground = true;
+      if (useDarkBlockErase && isXtermCellDarkBlockBackground(probeCell.bg, paletteTheme)) {
+        darkBlockCells += 1;
+      }
       if (cell.isInverse() !== 0) {
         hasInverse = true;
         inverseCells += 1;
@@ -128,6 +143,7 @@ export function normalizeTerminalTuiComposerBackground(
     return {
       hasExplicitBackground,
       hasInverse,
+      darkBlockCells,
       hasWideInverse: inverseCells >= Math.max(4, Math.floor(terminal.cols * 0.25)),
     };
   };
@@ -145,6 +161,28 @@ export function normalizeTerminalTuiComposerBackground(
       const nextBg = probeCell.bg & ~XTERM_BG_COLOR_MASK;
       const fgWithoutColor = clearForeground ? probeCell.fg & ~XTERM_BG_COLOR_MASK : probeCell.fg;
       const nextFg = clearInverse ? fgWithoutColor & ~XTERM_INVERSE_FLAG : fgWithoutColor;
+      if (nextBg === probeCell.bg && nextFg === probeCell.fg) continue;
+      probeCell.bg = nextBg;
+      probeCell.fg = nextFg;
+      mutableLine.setCell(x, probeCell);
+      changed = true;
+    }
+    return changed;
+  };
+
+  // Clears only the cells a dark-theme CLI painted dark, so light highlights, colored
+  // badges, and an isolated inverse software cursor survive on a light terminal.
+  const clearDarkBlockCells = (line: IBufferLine, clearInverse: boolean) => {
+    const mutableLine = (line as XtermBufferLineApiView)._line;
+    if (!mutableLine) return false;
+    const limit = Math.min(terminal.cols, mutableLine.length);
+    let changed = false;
+    for (let x = 0; x < limit; x += 1) {
+      mutableLine.loadCell(x, probeCell);
+      const nextBg = isXtermCellDarkBlockBackground(probeCell.bg, paletteTheme)
+        ? probeCell.bg & ~XTERM_BG_COLOR_MASK
+        : probeCell.bg;
+      const nextFg = clearInverse ? probeCell.fg & ~XTERM_INVERSE_FLAG : probeCell.fg;
       if (nextBg === probeCell.bg && nextFg === probeCell.fg) continue;
       probeCell.bg = nextBg;
       probeCell.fg = nextFg;
@@ -254,6 +292,18 @@ export function normalizeTerminalTuiComposerBackground(
     }
   };
 
+  const eraseDarkBlockBackgrounds = () => {
+    for (let row = minRow; row < terminal.rows; row += 1) {
+      const line = getViewportLine(row);
+      if (!line) continue;
+      const backgroundState = getLineBackgroundState(line);
+      const hasDarkBlock = backgroundState.darkBlockCells >= DARK_BLOCK_MIN_CELLS;
+      if (!hasDarkBlock && !backgroundState.hasWideInverse) continue;
+      if (!clearDarkBlockCells(line, backgroundState.hasWideInverse)) continue;
+      markChangedRow(row);
+    }
+  };
+
   const needsTuiDetection = shouldNormalize || hasConfiguredTuiColors;
   const detectedTuiSession = isTuiSession || (needsTuiDetection && hasKnownAiTuiSignature());
   const userColor = detectedTuiSession ? configuredTuiUserColor : null;
@@ -337,6 +387,15 @@ export function normalizeTerminalTuiComposerBackground(
       markChangedRow(row);
     }
     syncClaudeLightSlashMenuHighlights();
+    if (useDarkBlockErase) eraseDarkBlockBackgrounds();
+    if (lastChangedRow >= firstChangedRow) {
+      terminal.refresh(firstChangedRow, lastChangedRow);
+    }
+    return;
+  }
+
+  if (useDarkBlockErase) {
+    eraseDarkBlockBackgrounds();
     if (lastChangedRow >= firstChangedRow) {
       terminal.refresh(firstChangedRow, lastChangedRow);
     }

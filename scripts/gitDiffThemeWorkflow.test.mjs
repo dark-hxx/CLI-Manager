@@ -20,7 +20,8 @@ const horizontalScroll = read("../src/components/git/diff/useGitDiffHorizontalSc
 
 test("terminal Diff tokens are isolated from the application light theme", () => {
   assert.match(viewer, /data-git-diff-theme=\{useTerminalTheme \? "terminal" : "application"\}/);
-  assert.match(viewer, /isLightTerminalTheme/);
+  assert.match(viewer, /useTerminalPreviewTheme/);
+  assert.match(viewer, /useTerminalTheme \? terminalPreviewTone : resolvedTheme/);
   assert.match(css, /\[data-git-diff-theme="application"\]\[data-theme-mode="light"\]/);
   assert.doesNotMatch(css, /\[data-theme="light"\] \.diff-viewer-container/);
   assert.match(theme, /"--text-secondary"/);

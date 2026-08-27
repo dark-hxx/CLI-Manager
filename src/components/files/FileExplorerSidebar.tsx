@@ -1456,25 +1456,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
       {terminalFileDragPreview}
       <LiveServerStatusBridge project={project} />
-      {dragPreview && (
-        <Portal>
-          <div
-            ref={dragPreviewElementRef}
-            className="ui-file-drag-preview"
-            style={{
-              width: dragPreview.source.width,
-              transform: `translate3d(${dragPreview.x}px, ${dragPreview.y}px, 0)`,
-            }}
-            aria-hidden="true"
-          >
-            <div
-              className={dragPreview.source.className}
-              style={dragPreview.source.paddingLeft ? { paddingLeft: dragPreview.source.paddingLeft } : undefined}
-              dangerouslySetInnerHTML={{ __html: dragPreview.source.html }}
-            />
-          </div>
-        </Portal>
-      )}
       {mode === "panel" ? (
         <>
           <TerminalPanelHeader

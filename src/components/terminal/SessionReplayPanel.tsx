@@ -39,6 +39,7 @@ import {
 import { ConfirmDialog } from "../ConfirmDialog";
 import { DiffModal } from "../history/DiffModal";
 import { SessionTranscriptContent } from "../history/SessionTranscriptContent";
+import { useTerminalPreviewTheme } from "../../hooks/useTerminalPreviewTheme";
 import { EmptyHint, HeaderPill, TERM_PANEL, panelColorTint } from "../stats/termStatsUi";
 import {
   buildReplayProgressModel,
@@ -349,6 +350,7 @@ function SnapshotActions({
 
 function ConversationDetail({ turn }: { turn: ReplayProgressTurn }) {
   const { t } = useI18n();
+  const { tone: previewCodeTheme } = useTerminalPreviewTheme();
   const [open, setOpen] = useState(false);
   const finalResponse = turn.assistantMessages[turn.assistantMessages.length - 1]?.content ?? turn.response;
 
@@ -372,14 +374,24 @@ function ConversationDetail({ turn }: { turn: ReplayProgressTurn }) {
             <div className="mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]" style={{ color: TERM_PANEL.green }}>
               {t("aiReplay.progress.userPrompt")}
             </div>
-            <SessionTranscriptContent content={turn.prompt} />
+            <SessionTranscriptContent
+              content={turn.prompt}
+              variant="terminal"
+              terminalCodeTheme={previewCodeTheme}
+              linkBehavior="preview"
+            />
           </div>
           {finalResponse ? (
             <div>
               <div className="mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]" style={{ color: TERM_PANEL.cyan }}>
                 {t("aiReplay.progress.aiResponse")}
               </div>
-              <SessionTranscriptContent content={finalResponse} />
+              <SessionTranscriptContent
+                content={finalResponse}
+                variant="terminal"
+                terminalCodeTheme={previewCodeTheme}
+                linkBehavior="preview"
+              />
             </div>
           ) : (
             <div className="text-[10px]" style={{ color: TERM_PANEL.dim }}>
@@ -699,6 +711,7 @@ function RawLogView({ events, language }: { events: ReplayEvent[]; language: str
 
 export function SessionReplayPanel({ activeSessionId, open, visible = true }: SessionReplayPanelProps) {
   const { t, language } = useI18n();
+  const { panelStyle } = useTerminalPreviewTheme();
   const sessions = useReplayStore((state) => state.sessions);
   const eventsBySession = useReplayStore((state) => state.eventsBySession);
   const selectedSessionKey = useReplayStore((state) => state.selectedSessionKey);
@@ -950,6 +963,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden font-mono"
       style={{
+        ...panelStyle,
         backgroundColor: TERM_PANEL.bg,
         "--ui-scrollbar-thumb": TERM_PANEL.border,
         "--ui-scrollbar-track": TERM_PANEL.bg,
