@@ -18,6 +18,7 @@ pub mod history_edit;
 pub mod history_sources;
 pub mod history_title;
 pub mod hook_settings;
+pub mod live_server;
 pub mod logging;
 pub mod model_pricing;
 pub mod opencode_hook;
