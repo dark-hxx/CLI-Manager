@@ -1,6 +1,6 @@
 # CLI-Manager
 
-> **语言**：简体中文 | [English](README.md)
+> **语言**：简体中文 | [English](README.en-US.md)
 
 <div align="center">
 
@@ -21,11 +21,40 @@
 
 ---
 
+## ❤️ 赞助商
+
+<p align="center">
+<a href="https://fluxionai.space/register?source=github&campaign=climanager">
+<img src="docs/img/sponsor/fluxion-ai-banner.png" width="100%" alt="Fluxion AI：AI 模型统一接入与管理平台" />
+</a>
+</p>
+
+<table>
+<tr>
+<td width="18%" align="center">
+<a href="https://fluxionai.space/register?source=github&campaign=climanager">
+<img src="docs/img/sponsor/fluxion-ai-logo.jpg" width="96" alt="Fluxion AI 标志" />
+</a>
+</td>
+<td width="82%">
+
+### [Fluxion AI](https://fluxionai.space/register?source=github&campaign=climanager)
+
+**一个入口，接入并管理全球主流 AI 模型**
+
+Fluxion AI 面向个人开发者、技术团队与企业，通过统一 API 接入全球主流 AI 模型，以多线路调度提升可用性，并集中管理模型质量、使用情况与费用。灵活的线路与计费方案带来更具竞争力的调用成本，实时价格与每笔消费公开可查。
+
+[访问 Fluxion AI →](https://fluxionai.space/register?source=github&campaign=climanager)
+
+</td>
+</tr>
+</table>
+
 ## 💡 项目简介
 
 CLI-Manager 是一款专注于 **AI CLI 工作流增强**的桌面应用，将本地与 SSH 终端、多项目管理、Claude Code / Codex 深度集成、多来源历史、Git Worktree 隔离和手机协作连接到同一工作台。
 
-> **平台支持**：Windows（完整测试） | macOS / Linux（实验性支持，欢迎反馈）
+> **平台支持**：Windows（完整测试） | macOS（完整测试） | Linux（实验性支持，欢迎反馈）
 
 ### 🎯 为什么选择 CLI-Manager？
 
@@ -141,11 +170,11 @@ CLI-Manager 是一款专注于 **AI CLI 工作流增强**的桌面应用，将�
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Claude Code | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Codex CLI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Grok Build | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Gemini CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | GitHub Copilot CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Antigravity | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
-| Grok Build | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
-| Pi | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | OpenCode | 👁️ | 👁️ | 👁️ | DB | — | — | — | — | — |
 | Kiro | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Cursor | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
@@ -371,7 +400,7 @@ CLI-Manager 的定位是一个**可长期使用的 AI CLI 工作台**：把本�
 | 对比点 | CLI-Manager | Orca | cmux |
 |---|---|---|---|
 | 核心定位 | 跨项目、本地 / SSH 终端、历史、统计和配置的一体化长期 AI CLI 工作台 | 在隔离 Worktree 中进行多 Agent 编排、结果比较与合并 | 面向 Agent pane、通知和可编程界面的原生 macOS 终端工作区 |
-| 桌面平台 | Windows 完整测试；macOS / Linux 实验支持 | macOS / Windows / Linux | macOS |
+| 桌面平台 | Windows / macOS 完整测试；Linux 实验支持 | macOS / Windows / Linux | macOS |
 | 远程工作流 | 内置 SSH 远程项目 / 终端，并可通过 cc-connect 在 Telegram / 飞书手机端对话 | SSH Worktree 与远程编排工作流 | 通过 SSH / tmux 组合远程终端工作流 |
 | 会话历史 | 解析 11 类来源，统一浏览、搜索、筛选、标签、收藏和统计 | 侧重账号、用量、通知与 AI Diff 等能力 | 会话恢复、通知面板与工作区元数据 |
 | 深度历史操作 | Claude / Codex Diff、文件变更、消息编辑 / 删除、审计撤回、恢复会话和双向互转 | 公开定位中不是核心方向 | 公开定位中不是核心方向 |
@@ -704,11 +733,27 @@ cd src-tauri && cargo test
 ---
 
 ## 💬 交流讨论
-<p align="center">
-  <img src="docs/img/wechat.jpg" width="280" alt="作者个人微信二维码" />
-  <br>
-  <sub>作者个人微信二维码，添加好友时请备注 <code>cli-manager</code></sub>
-</p>
+
+<div align="center">
+<table>
+<tr>
+<th align="center">作者个人微信</th>
+<th align="center">CLI-Manager 微信群</th>
+</tr>
+<tr>
+<td align="center">
+  <img src="docs/img/wechat.jpg" height="280" alt="作者个人微信二维码" />
+</td>
+<td align="center">
+  <img src="docs/img/wechat-group-qr.png" height="280" alt="CLI-Manager 微信群组二维码" />
+</td>
+</tr>
+<tr>
+<td align="center"><sub>添加好友时请备注 <code>cli-manager</code></sub></td>
+<td align="center"><sub>欢迎加入交流</sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
