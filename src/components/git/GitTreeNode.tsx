@@ -1,5 +1,8 @@
 import { ChevronRight, Undo2, Check, Minus, FileCode, Trash2 } from "../icons";
-import type { GitTreeNode, GitFileChange, Project } from "../../lib/types";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import { isTerminalFilePointerDragClickHandled, type TerminalFileDragSource } from "../../hooks/useTerminalFilePointerDrag";
+import type { TerminalFileDragProject } from "../../lib/terminalFileDrag";
+import type { GitTreeNode, GitFileChange } from "../../lib/types";
 import { GitStatusIcon } from "./GitStatusIcon";
 import { useGitStore } from "../../stores/gitStore";
 import { TERM, panelColorTint } from "../stats/termStatsUi";
@@ -39,7 +42,7 @@ function collectCompactDirectoryChain(node: GitTreeNode): { suffixParts: string[
 }
 
 interface GitTreeNodeProps {
-  project: Pick<Project, "name" | "path" | "remote_path" | "environment_type"> | null;
+  project: TerminalFileDragProject | null;
   node: GitTreeNode;
   depth: number;
   treeId: string;
@@ -49,9 +52,13 @@ interface GitTreeNodeProps {
   onRequestDeleteUntracked: (paths: string[], name: string) => void;
   onToggleStage: (filePath: string, staged: boolean) => void;
   onToggleStagePaths: (paths: string[], allStaged: boolean) => void;
+  onFilePointerDown: (event: ReactPointerEvent<HTMLElement>, source: TerminalFileDragSource) => void;
+  onFilePointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onFilePointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+  onFilePointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
-export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick, onOpenSourceFile, onRequestDiscard, onRequestDeleteUntracked, onToggleStage, onToggleStagePaths }: GitTreeNodeProps) {
+export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick, onOpenSourceFile, onRequestDiscard, onRequestDeleteUntracked, onToggleStage, onToggleStagePaths, onFilePointerDown, onFilePointerMove, onFilePointerUp, onFilePointerCancel }: GitTreeNodeProps) {
   const { t } = useI18n();
   const { collapsedDirs, toggleDir, selectedUntracked, toggleUntrackedSelection, deselectedAdded, toggleAddedDeselection, setAddedDeselection } = useGitStore();
   // 折叠 key 按分区前缀隔离：已跟踪树与未跟踪树同名目录互不影响。
@@ -100,10 +107,21 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
         <ContextMenuTrigger asChild>
           <div
             className="group flex items-center gap-1.5 rounded py-0.5 px-1 cursor-pointer text-[13px]"
+            draggable={false}
             style={{ paddingLeft: indentPx, backgroundColor: "transparent" }}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = panelColorTint(TERM.cyan, 13))}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-            onClick={() => onFileClick(node.path)}
+            onPointerDown={(event) => {
+              if (event.target instanceof Element && event.target.closest("button")) return;
+              onFilePointerDown(event, { path: node.path, kind: "file" });
+            }}
+            onPointerMove={onFilePointerMove}
+            onPointerUp={onFilePointerUp}
+            onPointerCancel={onFilePointerCancel}
+            onClick={(event) => {
+              if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
+              onFileClick(node.path);
+            }}
           >
             {/* 占位对齐：文件行无 chevron，补一个等宽占位让复选框列与目录行对齐 */}
             <span className="inline-flex shrink-0" style={{ width: 10 }} aria-hidden="true" />
@@ -145,6 +163,7 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
               width={14}
               height={14}
               className="shrink-0"
+              draggable={false}
               style={{ objectFit: "contain" }}
             />
             <span className="flex-1 truncate" style={{ color: fileNameColor }}>{node.name}</span>
@@ -295,12 +314,23 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
         <ContextMenuTrigger asChild>
           <div
             className="flex items-center gap-1.5 rounded py-0.5 px-1 hover:bg-opacity-10 cursor-pointer text-[13px]"
+            draggable={false}
             style={{
               paddingLeft: indentPx,
               backgroundColor: "transparent",
               fontWeight: isModuleRoot ? 600 : 500,
             }}
-            onClick={() => toggleDir(displayCollapseKey)}
+            onPointerDown={(event) => {
+              if (event.target instanceof Element && event.target.closest("button")) return;
+              onFilePointerDown(event, { path: displayNode.path, kind: "directory" });
+            }}
+            onPointerMove={onFilePointerMove}
+            onPointerUp={onFilePointerUp}
+            onPointerCancel={onFilePointerCancel}
+            onClick={(event) => {
+              if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
+              toggleDir(displayCollapseKey);
+            }}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = panelColorTint(TERM.cyan, 13))}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
           >
@@ -326,6 +356,7 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
               width={14}
               height={14}
               className="shrink-0"
+              draggable={false}
               style={{ objectFit: "contain" }}
             />
             <span className="flex min-w-0 flex-1 items-baseline gap-1 truncate">
@@ -387,7 +418,23 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
       {!displayCollapsed && hasChildren && (
         <div>
           {displayNode.children!.map((child) => (
-            <GitTreeNodeComponent key={child.path} project={project} node={child} depth={depth + 1} treeId={treeId} onFileClick={onFileClick} onOpenSourceFile={onOpenSourceFile} onRequestDiscard={onRequestDiscard} onRequestDeleteUntracked={onRequestDeleteUntracked} onToggleStage={onToggleStage} onToggleStagePaths={onToggleStagePaths} />
+            <GitTreeNodeComponent
+              key={child.path}
+              project={project}
+              node={child}
+              depth={depth + 1}
+              treeId={treeId}
+              onFileClick={onFileClick}
+              onOpenSourceFile={onOpenSourceFile}
+              onRequestDiscard={onRequestDiscard}
+              onRequestDeleteUntracked={onRequestDeleteUntracked}
+              onToggleStage={onToggleStage}
+              onToggleStagePaths={onToggleStagePaths}
+              onFilePointerDown={onFilePointerDown}
+              onFilePointerMove={onFilePointerMove}
+              onFilePointerUp={onFilePointerUp}
+              onFilePointerCancel={onFilePointerCancel}
+            />
           ))}
         </div>
       )}

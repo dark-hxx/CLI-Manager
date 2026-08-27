@@ -1730,23 +1730,29 @@ invoke("pty_write", { sessionId, data });
 - [ ] CMD still accepts normal paste and Enter behavior.
 - [ ] Browser text/image paste, app-internal file drag, and system file drop all focus the intended visible terminal only once.
 
-### Scenario: File explorer path actions and cross-project terminal drag
+### Scenario: File path actions and cross-project terminal drag
 
 #### 1. Scope / Trigger
 
-- Trigger: the file explorer adds relative/absolute path copy actions and sends a file or directory to an in-app terminal through drag-and-drop.
-- Boundary: the file explorer is the producer, `terminalFileDrag` is the in-memory/DataTransfer contract, and `useTerminalInput` resolves the payload for the target terminal session.
+- Trigger: the file explorer or Git Changes tree sends a project file or directory to an in-app terminal through drag-and-drop.
+- Boundary: source rows use `useTerminalFilePointerDrag`; `terminalFileDrag` owns the in-memory/DataTransfer contract; `useTerminalInput` resolves the payload for the target terminal session.
 
 #### 2. Signatures
 
 - `formatRelativeProjectFilePath(relativePath, kind)` returns the normalized project-relative path.
 - `formatAbsoluteProjectFilePath(project, relativePath, kind)` joins the local project root or SSH `remote_path` with the relative path.
+- `TerminalFileDragProject` is the minimum project root accepted by `createTerminalFileDragPayload(project, relativePath, kind)`; it includes the project identity, local/remote roots, environment, SSH host, and CLI tool.
 - `TerminalFileDragPayload` contains `text`, `absolutePath`, and `source` (`id`, `path`, `remote_path`, `environment_type`, `ssh_host_id`).
 - `TERMINAL_FILE_DRAG_MIME` carries the serialized payload across the browser drag boundary.
 - A registered terminal drop zone accepts `paste(payload)`, not a pre-resolved string.
+- `useTerminalFilePointerDrag({ project, onDropOutsideTerminal? })` returns pointer handlers and the portal preview. Sources supply `{ path, kind }`.
 
 #### 3. Contracts
 
+- The file explorer and Git Changes tree may provide files and directories. Git rows must use `gitTreeProject`, whose root is the active Git repository rather than an enclosing project/worktree root.
+- File Explorer and Git Changes tree must share `useTerminalFilePointerDrag`; producers must not duplicate pointer threshold, preview, drop-zone, or click-suppression state.
+- The hook begins a drag only after `POINTER_DRAG_START_PX`, builds `TerminalFileDragPayload`, updates the registered terminal drop-zone point, and commits through `commitTerminalFileDragDrop()`.
+- File/directory-row action buttons (stage, discard, delete) are not drag handles. A completed pointer drag suppresses the source row's subsequent click once.
 - The source keeps the existing CLI-specific relative drag text for same-location drops.
 - The target compares the source location with its current project/worktree location using `isSameProjectFileLocation`.
 - Same project location uses `payload.text`; a different project, worktree, SSH host, or SSH remote root uses `payload.absolutePath`.
@@ -1757,6 +1763,11 @@ invoke("pty_write", { sessionId, data });
 
 | Condition | Behavior |
 | --- | --- |
+| No source project, non-primary pointer, or modifier-held pointer | Do not begin a terminal-file drag |
+| Pointer movement below `POINTER_DRAG_START_PX` | Preserve the normal source-row click |
+| Pointer starts on a Git row action button | Preserve the action and do not begin a drag |
+| Drop over a registered terminal | Commit the payload, paste once, focus that terminal, and suppress file-panel project sync once |
+| Drop outside a terminal | Run the source's optional outside-drop behavior, then clear the in-memory drag |
 | Same local/WSL root | Paste the relative drag text |
 | Different local/WSL root or worktree | Paste the source absolute path |
 | Same SSH host and remote root | Paste the relative drag text |
@@ -1766,29 +1777,30 @@ invoke("pty_write", { sessionId, data });
 
 #### 5. Good / Base / Bad Cases
 
-- Good: a file from project B is dropped into project A in a split pane and the terminal receives B's absolute path.
-- Base: a file from the current project's file panel is dropped into another pane for the same project and keeps the existing relative CLI format.
+- Good: a modified or untracked Git file or directory from repository B is dropped into project A in a split pane and the terminal receives B's absolute path.
+- Base: a file or directory from the current project's file panel or Git Changes tree is dropped into another pane for the same project and keeps the existing relative CLI format, with a trailing slash for directories.
+- Bad: giving Git Changes its own pointer-drag implementation; source panels drift in threshold, preview, or terminal drop behavior.
 - Bad: resolving the path when the drag starts and storing only one string; the target pane cannot detect that the source and target roots differ.
 - Bad: comparing only project IDs; two worktrees or two SSH roots can have different filesystem locations while sharing a project identity.
 
 #### 6. Tests Required
 
 - Static regression test asserts all file explorer context-menu variants expose both copy actions.
-- Static regression test asserts the drag payload includes source context, absolute fallback data, and the custom MIME field.
+- Static regression test asserts file explorer and Git Changes both route through `useTerminalFilePointerDrag`, with Git rows excluding action buttons and suppressing a post-drag click.
+- Static regression test asserts the shared drag payload includes source context, absolute fallback data, and the custom MIME field.
 - Static regression test asserts terminal drop resolution uses project/worktree location comparison and absolute fallback.
 - `npx tsc --noEmit` must cover the payload, drop-zone callback, and i18n keys.
-- Manually verify same-project pane, cross-project pane, cross-worktree pane, local/WSL, SSH same-root, SSH different-root, directory drag, and both `zh-CN`/`en-US` UI languages.
+- Manually verify file-explorer file/directory and Git file/directory drags (including modified and untracked trees) for same-project pane, cross-project pane, cross-worktree pane, local/WSL, SSH same-root, SSH different-root, and both `zh-CN`/`en-US` UI languages.
 
 #### 7. Wrong vs Correct
 
 ```tsx
-// Wrong: the target terminal cannot distinguish project B from project A.
-beginTerminalFileDrag(relativeText);
-dropZone.paste(relativeText);
+// Wrong: Git Changes owns a second drag lifecycle and can drift from the file explorer.
+onPointerMove={() => beginTerminalFileDrag(payload)};
 
-// Correct: resolve at the target boundary using the source and target roots.
-beginTerminalFileDrag({ text: relativeText, absolutePath, source });
-dropZone.paste(payload);
+// Correct: every source shares the payload, threshold, preview, and terminal commit contract.
+const drag = useTerminalFilePointerDrag({ project: gitTreeProject });
+onPointerDown={(event) => drag.handlePointerDown(event, { path: node.path, kind: "file" })};
 ```
 
 ### Convention: Terminal input selection state stays in the Input controller

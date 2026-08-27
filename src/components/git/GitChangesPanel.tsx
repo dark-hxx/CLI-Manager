@@ -7,6 +7,7 @@ import { RefreshCw, GitBranch, Undo2, Files, FilePen, FilePlus, FileMinus, GitCo
 import { useGitStore } from "../../stores/gitStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useTerminalFilePointerDrag } from "../../hooks/useTerminalFilePointerDrag";
 import { GitChangesTree } from "./GitChangesTree";
 import { StageCheckbox, type StageState } from "./StageCheckbox";
 import { STATUS_CONFIG } from "./GitStatusIcon";
@@ -353,6 +354,15 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     }
     return panelProject.path === activeRepoPath ? panelProject : { ...panelProject, path: activeRepoPath };
   }, [activeRepoPath, panelProject]);
+  const {
+    handlePointerDown: handleTerminalFilePointerDown,
+    handlePointerMove: handleGitFilePointerMove,
+    handlePointerUp: handleGitFilePointerUp,
+    handlePointerCancel: handleGitFilePointerCancel,
+    preview: terminalFileDragPreview,
+  } = useTerminalFilePointerDrag({
+    project: gitTreeProject,
+  });
   const setTransport = useGitStore((state) => state.setTransport);
   const transport = useGitStore((state) => state.transport);
   const {
@@ -781,6 +791,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       className={panelClassName}
       style={{ backgroundColor: TERM.bg, ...TERMINAL_PANEL_SCROLLBAR_STYLE }}
     >
+      {terminalFileDragPreview}
       <TerminalPanelHeader
         icon={<GitBranch size={13} strokeWidth={2} />}
         accent={TERM.yellow}
@@ -1059,6 +1070,10 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
                   onRequestDeleteUntracked={handleRequestDeleteUntracked}
                   onToggleStage={handleToggleStage}
                   onToggleStagePaths={handleToggleStagePaths}
+                  onFilePointerDown={handleTerminalFilePointerDown}
+                  onFilePointerMove={handleGitFilePointerMove}
+                  onFilePointerUp={handleGitFilePointerUp}
+                  onFilePointerCancel={handleGitFilePointerCancel}
                 />
               </div>
             )}
@@ -1078,6 +1093,10 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
                   onRequestDeleteUntracked={handleRequestDeleteUntracked}
                   onToggleStage={handleToggleStage}
                   onToggleStagePaths={handleToggleStagePaths}
+                  onFilePointerDown={handleTerminalFilePointerDown}
+                  onFilePointerMove={handleGitFilePointerMove}
+                  onFilePointerUp={handleGitFilePointerUp}
+                  onFilePointerCancel={handleGitFilePointerCancel}
                 />
               </div>
             )}

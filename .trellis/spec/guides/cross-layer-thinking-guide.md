@@ -79,7 +79,13 @@ contract. Trace it through source parsing, cache/catalog persistence, API
 serialization, frontend normalization, and tree construction. Keep provider
 specific path inference only as an explicit compatibility fallback.
 
-### Mistake 5: Misclassifying local persistence contention as a remote failure
+### Mistake 5: Letting a drag source resolve its target terminal path
+
+**Bad**: A file source panel inserts one relative path string itself. A different project, Worktree, SSH host, or remote root terminal then cannot distinguish the source filesystem location.
+
+**Good**: The source creates `TerminalFileDragPayload { text, absolutePath, source }`; the registered terminal drop zone delivers that payload to `useTerminalInput`, which compares source and target locations before choosing relative text or absolute fallback. All source panels share `useTerminalFilePointerDrag`; only the target owns the location decision.
+
+### Mistake 6: Misclassifying local persistence contention as a remote failure
 
 **Bad**: A Tauri command reserves or updates a shared SQLite row with a
 deferred read-then-write transaction. When another supported app process owns
@@ -93,7 +99,7 @@ busy/locked codes to one stable local-persistence error, and lets the frontend
 render a separate localized retry message. Do not change the supported
 production-plus-development shared-data contract merely to hide contention.
 
-### Mistake 6: Treating a WebView Promise as sufficient async isolation
+### Mistake 7: Treating a WebView Promise as sufficient async isolation
 
 **Bad**: The frontend calls `invoke(...)` without awaiting it in an event
 handler, but the Rust entrypoint is a synchronous `#[tauri::command] fn` that
@@ -108,7 +114,7 @@ put that wait back in the synchronous IPC handler. Keep the command name and
 payload stable, retain the existing pending/duplicate guard, and add a
 source-level regression assertion for the execution boundary.
 
-### Mistake 7: Using a terminal IPC response as the loading signal
+### Mistake 8: Using a terminal IPC response as the loading signal
 
 **Bad**: A store keeps a non-reactive duplicate-request `Map`, while a component
 only displays loading when terminal metadata returned by `await invoke(...)`
