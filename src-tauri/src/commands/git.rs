@@ -16,6 +16,9 @@ const OOM_PATCH_WARN_BYTES: usize = MAX_WORKTREE_PATCH_BYTES;
 const OOM_SNAPSHOT_PATCH_RETURN_MAX_BYTES: usize = MAX_WORKTREE_PATCH_BYTES;
 const OOM_SNAPSHOT_FILES_WARN_COUNT: usize = 500;
 const WSL_GIT_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// 「目录不是 Git 仓库」的稳定错误码，native/libgit2 与 WSL 链路共用。
+/// 前端据此渲染友好空态并缓存非 Git 结果；权限、所有权等失败不得归入该码。
+pub(super) const NOT_GIT_REPOSITORY_CODE: &str = "not_git_repository";
 
 static WORKTREE_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 // libgit2 的所有权校验开关是进程级状态。所有仓库打开都经过这把锁，避免
@@ -59,6 +62,23 @@ fn log_worktree_snapshot_oom_diagnostic(
     }
 }
 
+/// libgit2 打开仓库失败的错误映射。
+///
+/// `NotFound` 表示路径存在但没有 Git 仓库，映射为稳定错误码前缀供上层统一识别；
+/// 其余错误（所有权误判、权限不足、仓库损坏等）保留原始描述，避免误判成「不是仓库」
+/// 而让面板显示空态、掩盖真实故障。
+fn format_open_repo_error(error: &git2::Error) -> String {
+    if error.code() == git2::ErrorCode::NotFound {
+        return format!("{NOT_GIT_REPOSITORY_CODE}: 打开 Git 仓库失败: {error}");
+    }
+    format!("打开 Git 仓库失败: {error}")
+}
+
+/// 判定错误串是否表示「目录不是 Git 仓库」：稳定错误码或 shell-out Git 的原生文案。
+pub(super) fn is_not_git_repository_error(message: &str) -> bool {
+    message.contains(NOT_GIT_REPOSITORY_CODE) || is_not_git_repository_output(message)
+}
+
 /// 打开 Git 仓库的统一入口，兼容 WSL UNC 路径。
 ///
 /// libgit2 在 Windows 上会校验仓库路径所有权，WSL UNC 路径（`\\wsl.localhost\...`）
@@ -78,7 +98,7 @@ pub(super) fn open_git_repo<P: AsRef<Path>>(path: P) -> Result<Repository, Strin
             let is_wsl_path = crate::wsl::is_wsl_config_dir(&path_str);
             let is_owner_error = first_err.code() == git2::ErrorCode::Owner;
             if !is_wsl_path && !is_owner_error {
-                return Err(format!("打开 Git 仓库失败: {first_err}"));
+                return Err(format_open_repo_error(&first_err));
             }
             log::debug!(
                 "[git] 首次打开失败，临时关闭所有权验证后重试: path={} wsl={} owner_error={} error={first_err}",
@@ -95,7 +115,7 @@ pub(super) fn open_git_repo<P: AsRef<Path>>(path: P) -> Result<Repository, Strin
     let result = unsafe {
         git2::opts::set_verify_owner_validation(false)
             .map_err(|e| format!("设置 git2 选项失败: {e}"))
-            .and_then(|_| Repository::open(path).map_err(|e| format!("打开 Git 仓库失败: {e}")))
+            .and_then(|_| Repository::open(path).map_err(|e| format_open_repo_error(&e)))
     };
     // 立即恢复所有权验证
     if let Err(e) = unsafe { git2::opts::set_verify_owner_validation(true) } {
@@ -249,7 +269,16 @@ fn git_get_changes_native(
     log::debug!("[git_get_changes] 路径存在，尝试打开 Git 仓库");
 
     let repo = open_git_repo(path).map_err(|e| {
-        let err_msg = format!("不是 Git 仓库或无法访问: {}", e);
+        // 目录不是 Git 仓库是正常场景（用户打开普通目录），返回稳定错误码让前端渲染友好空态；
+        // 所有权/权限等真实故障继续暴露原始错误，避免被当成「不是仓库」而丢掉排查线索。
+        if is_not_git_repository_error(&e) {
+            log::debug!(
+                "[git_get_changes] 目录不是 Git 仓库: project_path={}",
+                project_path
+            );
+            return NOT_GIT_REPOSITORY_CODE.to_string();
+        }
+        let err_msg = format!("Git 仓库无法访问: {}", e);
         log::error!("[git_get_changes] {}", err_msg);
         err_msg
     })?;
@@ -2655,13 +2684,14 @@ pub async fn git_watch_stop(bridge: State<'_, GitWatcherBridge>) -> Result<(), S
 mod tests {
     use super::{
         build_reverse_hunk_patch, build_reverse_lines_patch, build_worktree_snapshot,
-        build_wsl_git_command_args, collect_git_changes_from_repo, git_delete_untracked_paths,
-        git_fork_worktree_snapshot, git_get_file_diff, git_restore_worktree_snapshot,
-        is_nested_repo_entry, is_no_stash_created, is_not_git_repository_output,
+        build_wsl_git_command_args, collect_git_changes_from_repo, format_open_repo_error,
+        git_delete_untracked_paths, git_fork_worktree_snapshot, git_get_changes_native,
+        git_get_file_diff, git_restore_worktree_snapshot, is_nested_repo_entry,
+        is_no_stash_created, is_not_git_repository_error, is_not_git_repository_output,
         parse_wsl_git_status, parse_wsl_numstat, remove_untracked_snapshot_file,
         scan_git_repository_paths, should_skip_diff_line_stats, validate_branch_name,
         validate_repo_relative_path, validate_snapshot_branch_name,
-        GIT_DIFF_LINE_STATS_STATUS_LIMIT, MAX_WORKTREE_PATCH_BYTES,
+        GIT_DIFF_LINE_STATS_STATUS_LIMIT, MAX_WORKTREE_PATCH_BYTES, NOT_GIT_REPOSITORY_CODE,
     };
     use git2::{IndexAddOption, Repository, Signature};
     use std::fs;
@@ -2978,6 +3008,50 @@ mod tests {
         assert!(!is_not_git_repository_output(
             "fatal: detected dubious ownership in repository"
         ));
+    }
+
+    #[test]
+    fn maps_libgit2_not_found_to_stable_non_repository_code() {
+        let not_found = git2::Error::new(
+            git2::ErrorCode::NotFound,
+            git2::ErrorClass::Repository,
+            "could not find repository at 'F:\\github\\demo'",
+        );
+        let mapped = format_open_repo_error(&not_found);
+        assert!(is_not_git_repository_error(&mapped));
+        assert!(mapped.starts_with(NOT_GIT_REPOSITORY_CODE));
+
+        // 所有权误判、权限不足等真实故障不得被归类成「不是 Git 仓库」。
+        let owner_error = git2::Error::new(
+            git2::ErrorCode::Owner,
+            git2::ErrorClass::Config,
+            "detected dubious ownership in repository",
+        );
+        let owner_mapped = format_open_repo_error(&owner_error);
+        assert!(!is_not_git_repository_error(&owner_mapped));
+        assert!(owner_mapped.contains("detected dubious ownership"));
+    }
+
+    #[test]
+    fn native_git_changes_reports_stable_code_for_plain_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("plain.txt"), "no repo here\n").unwrap();
+
+        let error =
+            git_get_changes_native(&temp.path().to_string_lossy(), std::time::Instant::now())
+                .expect_err("普通目录必须返回非 Git 仓库错误");
+
+        assert_eq!(error, NOT_GIT_REPOSITORY_CODE);
+    }
+
+    #[test]
+    fn native_git_changes_succeeds_inside_repository() {
+        let (_temp, repo_path) = init_temp_repo();
+
+        let changes = git_get_changes_native(&repo_path, std::time::Instant::now())
+            .expect("仓库路径必须正常返回变更列表");
+
+        assert!(changes.is_empty());
     }
 
     #[test]
