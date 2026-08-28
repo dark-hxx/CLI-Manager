@@ -75,7 +75,7 @@ const cancelGlobalTerminalWrite = (token: symbol) => {
   }
 };
 
-type NormalizeTerminalOutput = (text: string) => string;
+type NormalizeTerminalOutput = (text: string, options?: { applyOsc52?: boolean }) => string;
 type TransformTerminalOutput = (text: string) => string;
 type AfterTerminalWrite = (terminal: Terminal) => void;
 
@@ -389,7 +389,9 @@ export function useTerminalDisplay({
     const queuePayload = (delivery: TerminalOutputDelivery, markSnapshotDirty: boolean) => {
       const payload = delivery.frame;
       const rawText = textDecoder.decode(payload.data, { stream: true });
-      const text = normalizeOutputRef.current(rawText);
+      const text = normalizeOutputRef.current(rawText, {
+        applyOsc52: payload.kind !== "replay" && payload.kind !== "reset",
+      });
       outputDiagnosticsRef?.current?.onFrame(payload, rawText, text);
       if (!text && payload.kind !== "replay" && payload.kind !== "reset") {
         delivery.commit(rawText.length);
@@ -440,7 +442,7 @@ export function useTerminalDisplay({
             terminal.resize(entry.cols, entry.rows);
           }
           const rawText = textDecoder.decode(entry.data, { stream: true });
-          const text = normalizeOutputRef.current(rawText);
+          const text = normalizeOutputRef.current(rawText, { applyOsc52: false });
           outputDiagnosticsRef?.current?.onFrame(entry, rawText, text);
           if (!text) {
             terminalProcessManager.acknowledgeOutput(sessionId, entry.sequence, 0);

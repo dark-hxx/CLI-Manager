@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"实现 Pi 兼容职责拆分时遵循"}
-{"file":".trellis/spec/frontend/history-session-contracts.md","reason":"实现本地 resume 与候选选择时遵循"}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"实现 PTY 环境能力默认值时遵循"}

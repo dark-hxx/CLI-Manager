@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import refractor from "refractor/core.js";
+import markup from "refractor/lang/markup.js";
+import markdown from "refractor/lang/markdown.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+refractor.register(markup);
+refractor.register(markdown);
 
 const css = read("../src/components/git/diffViewer.css");
 const content = read("../src/components/git/diff/GitDiffContent.tsx");
@@ -14,7 +20,8 @@ const horizontalScroll = read("../src/components/git/diff/useGitDiffHorizontalSc
 
 test("terminal Diff tokens are isolated from the application light theme", () => {
   assert.match(viewer, /data-git-diff-theme=\{useTerminalTheme \? "terminal" : "application"\}/);
-  assert.match(viewer, /isLightTerminalTheme/);
+  assert.match(viewer, /useTerminalPreviewTheme/);
+  assert.match(viewer, /useTerminalTheme \? terminalPreviewTone : resolvedTheme/);
   assert.match(css, /\[data-git-diff-theme="application"\]\[data-theme-mode="light"\]/);
   assert.doesNotMatch(css, /\[data-theme="light"\] \.diff-viewer-container/);
   assert.match(theme, /"--text-secondary"/);
@@ -45,3 +52,27 @@ test("nowrap mode keeps fixed columns and synchronizes one horizontal scrollbar"
   assert.match(hunkList, /virtualizer\.measure\(\)/);
   assert.doesNotMatch(hunkList, /rounded-lg|shadow-sm|overflow-hidden|className="[^"]*border/);
 });
+
+test("Markdown table tokens remain inline in wrapped and unwrapped Diff code cells", () => {
+  const markdownTable = [
+    "| Resource | Use for |",
+    "| --- | --- |",
+    "| gitnexus://repo/CLI-Manager/context | Codebase overview |",
+  ].join("\n");
+  const classNames = collectTokenClassNames(refractor.highlight(markdownTable, "markdown"));
+
+  assert.ok(classNames.includes("table"));
+  assert.ok(classNames.includes("table-header-row"));
+  assert.ok(classNames.includes("table-line"));
+  assert.ok(classNames.includes("table-data-rows"));
+  assert.match(css, /\.diff-viewer-container \.diff-code \.token\s*\{[\s\S]*?display:\s*inline;/);
+  assert.match(css, /\[data-git-diff-wrap="true"\][\s\S]*?\.diff-code/);
+  assert.match(css, /\[data-git-diff-wrap="false"\][\s\S]*?\.diff-code/);
+});
+
+function collectTokenClassNames(nodes) {
+  return nodes.flatMap((node) => [
+    ...(node.properties?.className ?? []),
+    ...(node.children ? collectTokenClassNames(node.children) : []),
+  ]);
+}

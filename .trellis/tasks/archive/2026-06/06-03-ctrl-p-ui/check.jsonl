@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查组件改动是否保持既有模式"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端质量要求和禁用模式"}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"检查 TypeScript 类型安全"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否复用现有组件/样式而非重复造轮子"}

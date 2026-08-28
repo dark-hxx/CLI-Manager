@@ -1,7 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发入口 + Pre-Development Checklist + Quality Check，主任务改的是 React/TS store 与组件"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "本任务核心改动是 sessionStore/terminalStore(Zustand)，须遵循项目状态管理约定"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端代码标准与禁止模式，实现时须遵守（无 ESLint，tsc 是唯一静态校验）"}
-{"file": ".trellis/spec/backend/app-startup-contracts.md", "reason": "启动链路合约：init() 时序里的无条件 clear() 是本任务要条件化的核心点"}
-{"file": ".trellis/spec/backend/app-data-persistence-contracts.md", "reason": "稳定数据路径与 store 持久化合约；工作区快照落盘走 sessionsStorePath"}
-{"file": ".trellis/spec/backend/terminal-runtime-monitoring-contracts.md", "reason": "PTY env keys / tab 运行时状态映射；恢复时 attach 新 PTY 并重跑 startupCmd 涉及此合约"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "恢复功能跨前端 store 与后端 PTY 多层，须过一遍跨层数据流思考"}

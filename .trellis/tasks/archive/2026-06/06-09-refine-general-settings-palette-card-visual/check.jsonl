@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Confirm the adjustment does not change settings contracts"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Confirm required typecheck and manual visual verification notes"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Confirm no duplicated or over-abstracted UI code was introduced"}

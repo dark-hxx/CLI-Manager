@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-22-git/prd.md","reason":"Acceptance criteria for verifying directory chain compression behavior."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review component behavior, state preservation, and UI consistency."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check TypeScript correctness and avoid unsafe type workarounds."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Quality checklist and validation expectations."}

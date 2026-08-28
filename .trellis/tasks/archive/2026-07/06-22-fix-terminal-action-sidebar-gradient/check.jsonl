@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check styling fix follows existing frontend component conventions."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check static verification and manual UI verification notes are complete."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check the fix reused existing scoped CSS override pattern instead of adding broad new styles."}

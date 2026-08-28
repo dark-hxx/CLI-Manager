@@ -17,8 +17,11 @@
 ### 3. Contracts
 
 - The catalog DB is derived and rebuildable; never store it in `cli-manager.db` or treat it as user-authored data.
-- List requests query cached summaries first and schedule fingerprint-based background refresh.
+- List requests query cached summaries first and schedule fingerprint-based background refresh. Catalog collection includes local/WSL Kimi Code `sessions/<workDirKey>/<sessionId>/agents/main/wire.jsonl` using the same `HistoryRoots.kimi_config_dir` / `$KIMI_CODE_HOME` / `~/.kimi-code` resolution as the disk collectors; nested `agents/agent-*` wires stay out of the catalog.
 - A realtime lookup scoped to `source=grok`, an exact UUID session ID, `limit=1`, and `offset=0` may bypass a catalog miss by checking only `<grok-root>/sessions/<workspace>/<session-id>/updates.jsonl`; it must validate the UUID before joining paths and still honor the optional project path.
+- A realtime lookup scoped to `source=kimi`, a valid Kimi session ID, `limit=1`, and `offset=0` may bypass a catalog miss by checking `session_index.jsonl` and `<kimi-home>/sessions/<workDirKey>/<session-id>/agents/main/wire.jsonl`. Apply matching valid index records in file order: the latest active record wins, a latest `{sessionId, deleted:true}` record clears it, and a malformed non-deletion record is ignored instead of masking the previous state. An active record must carry string `sessionDir` and `workDir`; `sessionDir` must be absolute, remain inside `<kimi-home>/sessions`, and end with the same session ID. The ID must be 1–128 characters of `[A-Za-z0-9_-]` with no `/`, `\`, NUL, or `..`; validate history/state/Hook IDs again before constructing a shell resume command. Honor the optional project path. Legacy `~/.kimi` is never scanned.
+- Kimi deletion preserves the upstream append-only index protocol: append one newline-terminated tombstone with one `write_all`, prefixing a separator newline in the same buffer when the existing file has a partial tail, then remove the validated session directory. Never read/filter/replace the entire shared index. Catalog and exact lookup must honor a final tombstone even when a residual directory still exists. If directory removal fails, append the previous active record as best-effort compensation; a failed tombstone append must leave the directory untouched.
+- Grok deletion removes the validated session directory under `<grok-root>/sessions/<workspace>/<session-id>` after backing up `updates.jsonl`, `summary.json`, and `signals.json` when present. The session id must be 1–128 characters of `[A-Za-z0-9_-]` with no `/`, `\`, NUL, or `..`. Paths must remain inside the Grok history home and must not be the history home itself or a direct child of it. Directory removal failure must not claim success and should restore backed-up files when possible. SSH Grok history remains unsupported. WSL UNC inventory uses `wsl.exe find -name updates.jsonl` and does not fall back to host recursion.
 - Realtime forced refresh uses `history_refresh_index(..., wait=false)`. A large derived catalog rebuild must never hold the panel's single-flight polling request; later polls consume the direct Grok result or refreshed catalog.
 - Opening history must schedule the same TTL-governed refresh even when the frontend reuses its in-memory list.
 - Search requires at least three Unicode characters and uses FTS5 trigram literal matching; user text must be quoted/escaped before `MATCH`.
@@ -39,6 +42,7 @@
 | Catalog refresh fails | Keep previous rows and emit `phase=error`; never delete source JSONL. |
 | Catalog DB is malformed | Recreate only the derived catalog and rebuild. |
 | Exact Grok UUID is absent from catalog but exists on disk | Return that session directly without scanning every transcript or falling back to the project's latest session. |
+| Exact Kimi session ID is absent from catalog but exists on disk | Return that session directly without scanning every transcript or falling back to the project's latest session. |
 
 ### 5. Good/Base/Bad Cases
 
@@ -46,6 +50,7 @@
 - Good: typing a three-character code fragment queries FTS without reading transcript files.
 - Base: the first install has no legacy cache, so progress and partial results appear until indexing completes.
 - Bad: calling `refresh_history_index()` or `iter_session_messages_filtered()` for every keystroke.
+- Bad: collecting catalog files for Claude/Codex/Grok/Pi but omitting Kimi, so the history workspace list stays empty while realtime exact lookup still works.
 - Bad: storing the FTS cache in the main user database or clearing usable rows after a transient scan error.
 
 ### 6. Tests Required
@@ -53,7 +58,7 @@
 - Rust: FTS schema/triggers support Chinese and ASCII trigram matches; literal quoting handles embedded quotes.
 - Rust: unchanged fingerprints skip parsing; changed and deleted files update only their own rows.
 - Rust: project/source filters and pagination preserve existing command behavior.
-- Rust: exact Grok UUID lookup finds the matching workspace session, rejects a different project path, and rejects non-UUID traversal input.
+- Rust: exact Kimi session lookup finds the matching workspace session, rejects a different project path and traversal input, applies latest-wins/tombstone index records without letting malformed lines mask valid state, and rejects escaped or mismatched `sessionDir`; catalog file collection includes the main `wire.jsonl` and excludes nested subagent wires. Delete tests assert an appended tombstone rather than disappearance of historical index lines. Frontend resume tests reject Kimi IDs containing shell metacharacters.
 - Frontend: stale searches cannot overwrite the newest query; one/two-character input does not invoke search.
 - Run `cargo test history --lib`, `cargo check`, and `npx tsc --noEmit`.
 
@@ -72,6 +77,71 @@ for entry in refresh_history_index(&roots) {
 ```rust
 let hits = catalog::search_sessions(&roots, &query, source, project_path, limit).await?;
 catalog::ensure_refresh(app, roots, false, false).await?;
+```
+
+## Scenario: Compact FTS catalog schema upgrade
+
+### 1. Scope / Trigger
+
+- Trigger: changing the rebuildable `history-catalog.db` FTS storage mode or reclaiming catalog fragmentation.
+- Goal: prevent trigram index pages and repeated replacement freelist pages from growing far beyond the indexed message text.
+
+### 2. Signatures
+
+- `ensure_schema(conn: &mut SqliteConnection) -> Result<(), String>` remains the catalog schema entry point.
+- `fts_trigram_query(query: &str) -> String` creates an `AND` expression of overlapping literal trigrams.
+- Schema version advances from 5 to 6 after the FTS rebuild and metadata update complete.
+
+### 3. Contracts
+
+- Fresh catalogs create both FTS5 tables with `detail='none'` and `tokenize='trigram case_sensitive 0'`.
+- Existing v5 catalogs drop/recreate both FTS tables and their three maintenance triggers, rebuild from the ordinary message tables, then run one `VACUUM`.
+- The v5→v6 rebuild runs for `0 < user_version < 6`; catalogs reporting `user_version >= 6` must still inspect both FTS `sqlite_master.sql` definitions and rebuild when either table is missing `detail='none'`. Fresh creation must not perform a redundant rebuild or vacuum.
+- `detail='none'` cannot evaluate the existing multi-token phrase query or provide `snippet()`. Search must bind overlapping trigrams to FTS with `AND`, then apply a case-insensitive contiguous `instr()` filter against the ordinary message content and derive a bounded prefix snippet from that content.
+- Schema/version metadata is written only after all upgrade operations succeed. The catalog remains a derived cache; source history files are never modified.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Fresh catalog | Create compact FTS directly; do not rebuild/vacuum again |
+| Existing v5 catalog | Preserve message rows, rebuild both FTS tables, compact pages, advance to v6 |
+| `user_version >= 6` but either FTS table has the legacy detail mode | Rebuild both FTS tables and restore their triggers before serving the catalog |
+| English or Chinese query of at least 3 characters | Return contiguous matches with the existing result fields |
+| Query contains quotes | Escape each trigram as a bound FTS literal; never interpolate user input |
+| FTS rebuild or metadata update fails | Return the error and do not report the new schema version |
+| Normal incremental insert/update/delete | Triggers keep FTS synchronized; do not run full `VACUUM` per refresh |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `history` becomes `"his" AND "ist" AND "sto" AND "tor" AND "ory"`, then the ordinary table verifies the contiguous match.
+- Base: a three-character Chinese query is one trigram and continues to match normally.
+- Bad: use `snippet()` or bind the complete phrase directly with `detail='none'`; SQLite rejects phrase evaluation because positional detail is absent.
+- Bad: run `VACUUM` after every changed transcript; large history refreshes become blocking maintenance operations.
+
+### 6. Tests Required
+
+- Assert fresh schema triggers support Chinese and English trigram matches.
+- Build a v5 FTS schema, call `ensure_schema`, and assert `detail='none'`, message preservation, both language matches, and `user_version=6`.
+- Assert search merging still returns V2 and legacy message hits with bounded content snippets.
+- Run `cargo test history --lib`, `cargo fmt -- --check`, and `cargo check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+WHERE history_messages_fts MATCH ?
+// bind: "history"
+// SELECT snippet(history_messages_fts, ...)
+```
+
+#### Correct
+
+```rust
+WHERE history_messages_fts MATCH ?
+  AND instr(lower(m.display_content), lower(?)) > 0
+// bind: "his" AND "ist" AND "sto" AND "tor" AND "ory"
 ```
 
 ## Scenario: Bound Terminal Markdown Preview Freshness
@@ -357,3 +427,112 @@ let deleted = delete_session_tree_with_backup_root(&file_ref, &backups_dir)?;
 // Backup restore still refuses to overwrite while the source CLI is active.
 let plan = build_file_restore_plan(&file_ref.path, &backups_dir, Some(&file_ref.source));
 ```
+
+## Scenario: OpenCode SQLite history deletion
+
+### 1. Scope / Trigger
+
+- Trigger: extending `history_delete_session(...)` to an OpenCode session, or changing OpenCode locator validation, writable SQLite access, or post-delete catalog invalidation.
+- Goal: delete exactly one selected OpenCode session without treating its database locator as a removable file or allowing a partial dependent-row deletion.
+
+### 2. Signatures
+
+- Tauri command remains `history_delete_session(file_path, claude_config_dir, codex_config_dir, grok_session_root, source, project_key) -> Result<(), String>`.
+- OpenCode internal mutation path remains `delete_opencode_session_from_locator(file_path)` followed by `delete_opencode_session_from_database(db_path, session_id)`.
+- The OpenCode locator format is `<default-opencode-db>#session=<session-id>`.
+
+### 3. Contracts
+
+- `source="opencode"` accepts only the configured default OpenCode database path and a session ID matching `ses_` plus one or more ASCII alphanumeric characters. The locator is an address, never a file targeted for deletion.
+- Preserve `ensure_source_mutation_unlocked("opencode")`: it blocks unresolved manual-recovery locks, but explicit deletion does not use a source-wide running-process check.
+- Open the existing database for write with `create_if_missing(false)`, validate the `session`, `message`, and `part` tables, then use bound parameters in one transaction.
+- Delete rows in dependency order: `part.session_id`, `message.session_id`, then `session.id`. Exactly one target `session` row must be affected; otherwise roll back and return `session_file_not_indexed`.
+- Commit before calling `invalidate_history_caches()`. A failed validation, query, rollback, or commit must leave cache invalidation and the selected session's persisted rows untouched.
+- Claude/Codex retain their file-tree backup/delete behavior; do not route OpenCode through `validate_session_file_ref`, `delete_session_tree`, or file backup snapshots.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Locator lacks `#session=` or has an invalid/non-`ses_` ID | `invalid_session_file`; no database open |
+| Locator database differs from the default OpenCode database | `session_file_outside_history_scope`; no database open |
+| Manual-recovery lock exists for OpenCode | `history_source_manual_recovery_required`; no write |
+| Database is missing | `opencode_database_not_found`; no file creation |
+| Required table is absent | `opencode_schema_unsupported`; no write |
+| Target session does not exist | Roll back dependent deletes and return `session_file_not_indexed` |
+| SQLite remains busy or a delete/commit fails | Return the database error; transaction is not committed |
+| Valid target and schema | Commit target-only deletion, then invalidate history caches |
+
+### 5. Good / Base / Bad Cases
+
+- Good: deleting `ses_delete` removes only its parts, messages, and session row while `ses_keep` remains readable.
+- Good: a stale locator for a missing session has orphan-like dependent test rows; the target-row check rolls back and preserves those rows.
+- Base: Claude/Codex deletion continues through the existing backup-and-file-tree path.
+- Bad: pass the OpenCode locator to `delete_session_tree`; it targets the shared database file and would delete every OpenCode session.
+- Bad: commit child deletes before verifying the selected session row; malformed/stale locators could leave partial data loss.
+
+### 6. Tests Required
+
+- Rust: valid and malformed OpenCode locators accept only `ses_` plus ASCII alphanumeric IDs.
+- Rust: a temporary SQLite fixture proves target `part → message → session` deletion, second-session preservation, and rollback when the session row is missing.
+- Rust: run `cargo test history --lib`, `cargo fmt -- --check`, and `cargo check`.
+- Frontend: run `npx tsc --noEmit` and OpenCode history/remote-handoff command regression tests; deletion uses the existing IPC signature.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let file_ref = validate_session_file_ref(&file_path, "opencode", &project_key, &roots)?;
+delete_session_tree(&file_ref)?;
+```
+
+#### Correct
+
+```rust
+let (db_path, session_id) = parse_opencode_session_locator(file_path)
+    .ok_or_else(|| "invalid_session_file".to_string())?;
+delete_opencode_session_from_database(&db_path, &session_id).await?;
+invalidate_history_caches(); // only after commit
+```
+
+## Scenario: Local generated history titles
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing the optional smart title provider command, generated-title persistence, title request protocols, or history deletion/recovery.
+- Goal: keep model-derived titles in the user metadata database with a strict provider-secret boundary; the history catalog and third-party transcripts remain untouched.
+
+### 2. Signatures
+
+- SQLite table: `history_generated_titles(session_key PRIMARY KEY, source identity, generated_title, generation_state, generation_revision, trigger_kind, source fingerprint, provider composite identity, failure_code, suppression state, timestamps)`.
+- Tauri commands: `history_title_list_providers`, `history_title_generate`, `history_title_clear`, and `history_title_cancel`.
+- Generate requests contain session/source identity, trigger, expected full candidate fingerprint, bounded candidate input, bounded-input fingerprint, and non-secret provider/model identifiers. They never contain API keys, OAuth tokens, base URLs, or raw provider documents.
+
+### 3. Contracts
+
+- Migration v30 is additive and authoritative. Frontend `CREATE TABLE IF NOT EXISTS` is only a compatibility repair; catalog rebuild/reset does not touch this table.
+- Provider resolution is Rust-only through the Native Provider repository/runtime and the existing network client policy. Readiness returns redacted cards and stable reason codes only.
+- Supported request protocols are Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses. Requests are non-streaming, text-only, have no tools/reasoning, bounded input/output/body/timeout, and do not log prompt, raw output, key, or endpoint secrets.
+- Auxiliary text requests share one backend protocol helper with command suggestions. For OpenAI Responses compatibility gateways, `input` is a plain string (not a nested `input_text` message array); endpoint joining must not duplicate `/v1` or a complete endpoint.
+- HTTP/request failures keep stable backend categories (timeout, rate limit, HTTP status, response-format/empty output) so the frontend can localize safe diagnostics without exposing response bodies or provider configuration.
+- Reservation increments a monotonic revision and writes `pending`. Commit requires the same revision, source identity/fingerprint, pending state, current provider selection, and (for automatic work) an empty alias and enabled setting. Zero affected rows is stale/cancelled and never overwrites a newer result.
+- Manual reservation may run for old sessions and with an alias; alias only affects display. Manual generation clears matching automatic suppression. Clear invalidates pending work, removes generated text, and suppresses the current fingerprint until explicit manual generation.
+- Pending rows are normalized to `failed/interrupted` during frontend history metadata initialization and are never auto-dispatched after restart. Cancelled automatic work is retained as a failed attempt, preventing a background retry for the same fingerprint.
+- Deleting a local session removes its generated-title row; provider deletion/disable does not remove already successful local titles. SSH may use these commands only after the desktop has loaded an online trusted detail; the command writes local metadata and never writes remotely.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Missing/disabled/keyless/invalid/unsupported provider | Return a stable redacted failure code and persist failure state; never expose credentials |
+| 429, timeout, non-2xx, oversized/invalid response, tool call, abnormal finish, or empty title | Persist a safe failure code and retain any previous generated title |
+| Alias added, clear, delete, provider switch, or switch-off while request is in flight | Revision/CAS or commit guard rejects the late result |
+| Candidate exceeds 4096 UTF-8 bytes | Hash the normalized complete text, send only a Unicode-safe bounded prefix, and validate the bounded-input fingerprint |
+| Catalog rebuild or WebDAV sync | Generated-title rows remain local and unchanged |
+
+### 5. Tests Required
+
+- Migration registry uniqueness/order and table/index presence.
+- Sanitizer/protocol tests for controls, bidi/invisible characters, CJK/emoji, tools, abnormal finish, malformed/empty response, and bounded output.
+- Targeted Rust tests plus `cargo check`; verify no secret/prompt/raw response reaches frontend state or logs.

@@ -28,6 +28,8 @@ pub struct SshHostPreferencesPersistenceRequest {
     host_id: String,
     claude_root: String,
     codex_root: String,
+    kimi_root: String,
+    grok_root: String,
 }
 
 #[derive(Debug)]
@@ -80,7 +82,10 @@ fn validate_request(request: &SshHookReportPersistenceRequest) -> Result<(), Str
     ) {
         return Err("ssh_hook_scope_kind_invalid".to_string());
     }
-    if !matches!(request.report.source.as_str(), "claude" | "codex") {
+    if !matches!(
+        request.report.source.as_str(),
+        "claude" | "codex" | "kimi" | "grok"
+    ) {
         return Err("hook_source_invalid".to_string());
     }
     Uuid::parse_str(request.report.installation_id.trim())
@@ -125,6 +130,23 @@ fn validate_request(request: &SshHookReportPersistenceRequest) -> Result<(), Str
     {
         return Err("hook_config_root_hash_invalid".to_string());
     }
+    if let Some(installation) = request.report.installation.as_ref() {
+        let history_valid = match (
+            request.report.source.as_str(),
+            installation.history_source_candidate.as_ref(),
+        ) {
+            ("kimi" | "grok", None) => true,
+            ("claude" | "codex", Some(candidate)) => {
+                candidate.source == request.report.source
+                    && candidate.canonical_config_root == request.report.canonical_config_root
+                    && candidate.config_root_hash == request.report.config_root_hash
+            }
+            _ => false,
+        };
+        if !history_valid {
+            return Err("ssh_agent_hook_record_invalid".to_string());
+        }
+    }
     let serialized = serde_json::to_vec(&request.report)
         .map_err(|error| format!("ssh_agent_hook_metadata_serialize_failed:{error}"))?;
     if serialized.len() > MAX_HOOK_REPORT_BYTES {
@@ -157,6 +179,8 @@ async fn persist_host_preferences(
     Uuid::parse_str(host_id).map_err(|_| "ssh_host_id_invalid".to_string())?;
     validate_preference_root(&request.claude_root)?;
     validate_preference_root(&request.codex_root)?;
+    validate_preference_root(&request.kimi_root)?;
+    validate_preference_root(&request.grok_root)?;
 
     let mut transaction = connection
         .begin_with("BEGIN IMMEDIATE")
@@ -166,6 +190,8 @@ async fn persist_host_preferences(
     for (source, root) in [
         ("claude", request.claude_root.trim()),
         ("codex", request.codex_root.trim()),
+        ("kimi", request.kimi_root.trim()),
+        ("grok", request.grok_root.trim()),
     ] {
         if root.is_empty() {
             sqlx::query("DELETE FROM ssh_host_tool_preferences WHERE host_id = ? AND source = ?")
@@ -572,11 +598,18 @@ mod tests {
         }
     }
 
-    fn preferences(claude_root: &str, codex_root: &str) -> SshHostPreferencesPersistenceRequest {
+    fn preferences(
+        claude_root: &str,
+        codex_root: &str,
+        kimi_root: &str,
+        grok_root: &str,
+    ) -> SshHostPreferencesPersistenceRequest {
         SshHostPreferencesPersistenceRequest {
             host_id: HOST_ID.to_string(),
             claude_root: claude_root.to_string(),
             codex_root: codex_root.to_string(),
+            kimi_root: kimi_root.to_string(),
+            grok_root: grok_root.to_string(),
         }
     }
 
@@ -599,10 +632,13 @@ mod tests {
     #[tokio::test]
     async fn saves_and_deletes_host_preferences_in_one_transaction() {
         let mut connection = database().await;
-        persist_host_preferences(&mut connection, preferences("~/.claude", "~/.codex"))
-            .await
-            .unwrap();
-        persist_host_preferences(&mut connection, preferences("", "/srv/codex"))
+        persist_host_preferences(
+            &mut connection,
+            preferences("~/.claude", "~/.codex", "~/.kimi-code", "~/.grok"),
+        )
+        .await
+        .unwrap();
+        persist_host_preferences(&mut connection, preferences("", "/srv/codex", "", ""))
             .await
             .unwrap();
 
@@ -620,9 +656,12 @@ mod tests {
     #[tokio::test]
     async fn rolls_back_all_host_preferences_when_one_write_fails() {
         let mut connection = database().await;
-        persist_host_preferences(&mut connection, preferences("~/.claude", "~/.codex"))
-            .await
-            .unwrap();
+        persist_host_preferences(
+            &mut connection,
+            preferences("~/.claude", "~/.codex", "~/.kimi-code", "~/.grok"),
+        )
+        .await
+        .unwrap();
         sqlx::raw_sql(
             "CREATE TRIGGER reject_codex_preference
              BEFORE UPDATE ON ssh_host_tool_preferences
@@ -635,7 +674,7 @@ mod tests {
 
         assert!(persist_host_preferences(
             &mut connection,
-            preferences("/srv/claude", "/srv/codex"),
+            preferences("/srv/claude", "/srv/codex", "/srv/kimi", "/srv/grok"),
         )
         .await
         .is_err());

@@ -37,6 +37,7 @@ export const getSshClientInstanceId = () => "client-1";
 `);
 writeModule("sshToolIntegration.mjs", `
 export const resolveSshToolSource = (value) => value === "claude" || value === "codex" ? value : null;
+export const resolveSshHistorySource = resolveSshToolSource;
 `);
 writeModule("sshHostStore.mjs", `
 const state = {

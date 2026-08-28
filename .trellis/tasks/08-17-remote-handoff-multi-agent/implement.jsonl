@@ -1,0 +1,10 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"Mandatory new-feature scenario enumeration and discovery gate."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Agent identity crosses desktop pet, frontend IPC, Rust process config, persistent handoff and Hook notifications."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing Agent detection, resume commands, Provider snapshots and Hook normalization."}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Requires branch reporting, TEMP changelog, feature inventory and final verification."}
+{"file":".trellis/spec/backend/ccswitch-integration-contracts.md","reason":"Defines managed cc-connect launch, Provider secret boundary and project-neutral connection profile."}
+{"file":".trellis/spec/backend/ssh-remote-terminal-contracts.md","reason":"Preserve existing SSH Codex-only handoff and reject non-Codex SSH in this phase."}
+{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Defines normalized multi-Agent Hook identity and disabled/missing Hook behavior."}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Claude/Codex Provider composite identity, snapshot and secret ownership rules."}
+{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Handoff eligibility depends on authoritative stopped/running terminal state."}
+{"file":".trellis/tasks/08-17-remote-handoff-multi-agent/research/current-code-touchpoints.md","reason":"Current Codex assumptions, reusable symbols and installed cc-connect capability evidence."}

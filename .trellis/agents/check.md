@@ -25,7 +25,6 @@ Before reviewing, read in this order:
 1. **Get the diff** — `git diff` / `git diff --staged` for uncommitted changes
 2. **Review against task artifacts** — does the diff satisfy `prd.md` (and `design.md` / `implement.md` if present)?
 3. **Review against specs** — naming, structure, type safety, error handling, conventions in `.trellis/spec/`
-4. **Verify triage output** — per `.trellis/spec/guides/fix-triage-guide.md`: if the task was a root-cause fix, does the diff address the stated root cause (not a symptom-layer patch), and are all discovery-list touch points actually changed? If a new feature or state-related fix, were the §5 scenario dimensions enumerated, not just the one reproduced case?
 4. **Self-fix** — when an issue is mechanical and small, fix it directly with the editing tools you have
 5. **Run verification** — project lint and typecheck on the changed scope
 6. **Report** — concrete findings with `file:line` citations and what was fixed vs. what is open
@@ -42,12 +41,11 @@ The supervising main session owns commits. Report the post-fix state; do not com
 
 1. Run `git diff --name-only` and `git diff` to scope the changes
 2. Read the task artifacts and relevant spec files
-3. **Verify triage output** — per `.trellis/spec/guides/fix-triage-guide.md`: for a root-cause fix, confirm the root-cause statement holds and the fix is at the right layer (not a symptom-layer patch), and that every touchpoint in the discovery list was actually changed; if the root-cause statement carries a state qualifier, confirm the scenario matrix (§5) was enumerated. For a new feature, confirm scenario coverage. A missing or unsatisfied discovery list is an issue, not a pass.
-4. For each issue:
+3. For each issue:
    - If mechanical (lint nit, missing type, wrong import, dead branch) → fix in-place
    - If a design/judgment issue → record and report, do not silently rewrite
-5. Run the project's lint and typecheck on the changed scope after self-fixes
-6. Report
+4. Run the project's lint and typecheck on the changed scope after self-fixes
+5. Report
 
 ## Report Format
 

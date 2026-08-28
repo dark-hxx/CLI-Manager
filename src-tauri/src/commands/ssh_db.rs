@@ -363,6 +363,8 @@ pub async fn ssh_db_save_host_preferences(
     host_id: String,
     claude_root: String,
     codex_root: String,
+    kimi_root: String,
+    grok_root: String,
     updated_at: String,
 ) -> Result<(), String> {
     if host_id.trim().is_empty() {
@@ -370,9 +372,16 @@ pub async fn ssh_db_save_host_preferences(
     }
     let mut conn = open_database().await?;
     begin_immediate(&mut conn).await?;
-    let result =
-        save_host_preferences_with_conn(&mut conn, &host_id, claude_root, codex_root, &updated_at)
-            .await;
+    let result = save_host_preferences_with_conn(
+        &mut conn,
+        &host_id,
+        claude_root,
+        codex_root,
+        kimi_root,
+        grok_root,
+        &updated_at,
+    )
+    .await;
     finish_transaction(&mut conn, result).await
 }
 
@@ -381,9 +390,16 @@ async fn save_host_preferences_with_conn(
     host_id: &str,
     claude_root: String,
     codex_root: String,
+    kimi_root: String,
+    grok_root: String,
     updated_at: &str,
 ) -> Result<(), String> {
-    for (source, root) in [("claude", claude_root), ("codex", codex_root)] {
+    for (source, root) in [
+        ("claude", claude_root),
+        ("codex", codex_root),
+        ("kimi", kimi_root),
+        ("grok", grok_root),
+    ] {
         if root.is_empty() {
             sqlx::query("DELETE FROM ssh_host_tool_preferences WHERE host_id = ?1 AND source = ?2")
                 .bind(host_id)
@@ -633,7 +649,7 @@ pub async fn ssh_db_record_hook_report(input: SshHookReportInput) -> Result<(), 
     if input.ssh_user.trim().is_empty() {
         return Err("ssh_user_required".to_string());
     }
-    if !matches!(input.source.as_str(), "claude" | "codex") {
+    if !matches!(input.source.as_str(), "claude" | "codex" | "kimi" | "grok") {
         return Err("hook_source_invalid".to_string());
     }
     if !matches!(input.scope_kind.as_str(), "hostPrimary" | "projectOverride") {
@@ -658,10 +674,36 @@ pub async fn ssh_db_record_hook_report(input: SshHookReportInput) -> Result<(), 
     {
         return Err("ssh_hook_report_invalid".to_string());
     }
+    if !valid_hook_history_candidate(&input.report, &input.source) {
+        return Err("ssh_hook_report_invalid".to_string());
+    }
     let mut conn = open_database().await?;
     begin_immediate(&mut conn).await?;
     let result = record_hook_report_with_conn(&mut conn, input).await;
     finish_transaction(&mut conn, result).await
+}
+
+fn valid_hook_history_candidate(report: &Value, source: &str) -> bool {
+    let Some(installation) = report.get("installation") else {
+        return true;
+    };
+    if installation.is_null() {
+        return true;
+    }
+    let Some(installation) = installation.as_object() else {
+        return false;
+    };
+    match (source, installation.get("historySourceCandidate")) {
+        ("kimi" | "grok", None | Some(Value::Null)) => true,
+        ("claude" | "codex", Some(Value::Object(candidate))) => {
+            candidate.get("source").and_then(Value::as_str) == Some(source)
+                && candidate.get("canonicalConfigRoot").and_then(Value::as_str)
+                    == report.get("canonicalConfigRoot").and_then(Value::as_str)
+                && candidate.get("configRootHash").and_then(Value::as_str)
+                    == report.get("configRootHash").and_then(Value::as_str)
+        }
+        _ => false,
+    }
 }
 
 async fn record_hook_report_with_conn(
@@ -904,6 +946,26 @@ mod tests {
     const HISTORY_HOST_ID: &str = "00000000-0000-4000-8000-000000000001";
     const HISTORY_INSTALLATION_ID: &str = "00000000-0000-4000-8000-000000000002";
 
+    #[test]
+    fn kimi_installation_record_omits_history_candidate() {
+        let report = serde_json::json!({
+            "canonicalConfigRoot": "/home/dev/.kimi-code",
+            "configRootHash": "hash",
+            "installation": {
+                "source": "kimi"
+            }
+        });
+        assert!(valid_hook_history_candidate(&report, "kimi"));
+
+        let mut invalid = report;
+        invalid["installation"]["historySourceCandidate"] = serde_json::json!({
+            "source": "kimi",
+            "canonicalConfigRoot": "/home/dev/.kimi-code",
+            "configRootHash": "hash"
+        });
+        assert!(!valid_hook_history_candidate(&invalid, "kimi"));
+    }
+
     async fn history_database() -> SqliteConnection {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
@@ -956,6 +1018,19 @@ mod tests {
         assert_eq!(
             validate_history_source_input(&invalid).unwrap_err(),
             "history_remote_identity_invalid"
+        );
+
+        let mut kimi = history_source_input('a');
+        kimi.source = "kimi".to_string();
+        assert_eq!(
+            validate_history_source_input(&kimi).unwrap_err(),
+            "history_source_invalid"
+        );
+        let mut grok = history_source_input('a');
+        grok.source = "grok".to_string();
+        assert_eq!(
+            validate_history_source_input(&grok).unwrap_err(),
+            "history_source_invalid"
         );
     }
 
@@ -1082,6 +1157,8 @@ mod tests {
             "host-1",
             "/home/dev/.claude".to_string(),
             "/home/dev/.codex".to_string(),
+            "/home/dev/.kimi-code".to_string(),
+            "/home/dev/.grok".to_string(),
             "1",
         )
         .await;

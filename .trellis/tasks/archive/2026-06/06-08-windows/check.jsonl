@@ -1,3 +1,0 @@
-{"file":".trellis/tasks/06-08-windows/research/xterm-bracketed-paste-windows.md","reason":"Research already confirmed current paste path bypasses xterm paste handling and differs from xterm's CR/bracketed-paste behavior; this is the key evidence for the paste bug."}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Need the terminal runtime contract to distinguish PowerShell runtime behavior from paste/input handling and avoid conflating the two fixes."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Need xterm-specific component guidance, especially construction-time options like windowsPty and avoiding terminal recreation."}

@@ -45,15 +45,28 @@ test.after(() => {
 
 writeFileSync(join(tempDir, "terminalTuiDisplay.mjs"), `
 export let normalizeCalls = 0;
-export function resetNormalizeCalls() { normalizeCalls = 0; }
+export let lastNormalizeOptions = null;
+export let knownAiTuiViewport = false;
+export function resetNormalizeCalls() { normalizeCalls = 0; lastNormalizeOptions = null; }
+export function setKnownAiTuiViewport(value) { knownAiTuiViewport = value; }
 export function hasCodexTuiViewport() { return false; }
-export function hasKnownAiTuiViewport() { return false; }
+export function hasKnownAiTuiViewport() { return knownAiTuiViewport; }
 export function hasTuiComposerPromptViewport() { return false; }
-export function normalizeTerminalTuiComposerBackground() { normalizeCalls += 1; }
+export function normalizeTerminalTuiComposerBackground(terminal, options) {
+  normalizeCalls += 1;
+  lastNormalizeOptions = options;
+}
 `);
 writeFileSync(join(tempDir, "TerminalCliContext.mjs"), `
-export function isClaudeTerminalContext() { return false; }
+export let claudeContext = false;
+export let piContext = false;
+export function setDetectedContexts({ claude = false, pi = false } = {}) {
+  claudeContext = claude;
+  piContext = pi;
+}
+export function isClaudeTerminalContext() { return claudeContext; }
 export function isCodexTerminalContext() { return false; }
+export function isPiTerminalContext() { return piContext; }
 `);
 
 const source = readFileSync(new URL("../src/lib/terminalTuiColorSync.ts", import.meta.url), "utf8");
@@ -71,6 +84,7 @@ writeFileSync(modulePath, transpiled, "utf8");
 
 const { createTerminalTuiColorSyncController } = await import(pathToFileURL(modulePath).href);
 const tuiDisplayStub = await import(pathToFileURL(join(tempDir, "terminalTuiDisplay.mjs")).href);
+const cliContextStub = await import(pathToFileURL(join(tempDir, "TerminalCliContext.mjs")).href);
 
 function createOptions() {
   return {
@@ -114,4 +128,50 @@ test("hidden terminal skips scheduled TUI color scanning until it becomes visibl
   controller.schedule({});
   flushNextAnimationFrame();
   assert.equal(tuiDisplayStub.normalizeCalls, 1);
+});
+
+test("light theme Claude and Pi sessions request dark block erasure without a TUI signature", (t) => {
+  tuiDisplayStub.resetNormalizeCalls();
+  cliContextStub.setDetectedContexts({ pi: true });
+  t.after(() => cliContextStub.setDetectedContexts());
+  const options = { ...createOptions(), isVisible: true, isLightTheme: true };
+  const controller = createTerminalTuiColorSyncController(() => options);
+  t.after(() => controller.dispose());
+
+  controller.normalize({});
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.shouldEraseDarkBlocks, true);
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.shouldNormalize, true);
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.isClaudeSession, false);
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.isTuiSession, false);
+
+  cliContextStub.setDetectedContexts({ claude: true });
+  controller.normalize({});
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.shouldEraseDarkBlocks, true);
+});
+
+test("light theme plain shell erases dark blocks once an AI TUI signature is latched", (t) => {
+  tuiDisplayStub.resetNormalizeCalls();
+  tuiDisplayStub.setKnownAiTuiViewport(true);
+  t.after(() => tuiDisplayStub.setKnownAiTuiViewport(false));
+  const options = { ...createOptions(), isVisible: true, isLightTheme: true };
+  const controller = createTerminalTuiColorSyncController(() => options);
+  t.after(() => controller.dispose());
+
+  controller.normalize({});
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.shouldEraseDarkBlocks, true);
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.isCodexSession, false);
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.isClaudeSession, false);
+});
+
+test("dark theme sessions keep normalization off for Claude and Pi", (t) => {
+  tuiDisplayStub.resetNormalizeCalls();
+  cliContextStub.setDetectedContexts({ pi: true });
+  t.after(() => cliContextStub.setDetectedContexts());
+  const options = { ...createOptions(), isVisible: true };
+  const controller = createTerminalTuiColorSyncController(() => options);
+  t.after(() => controller.dispose());
+
+  controller.normalize({});
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.shouldEraseDarkBlocks, false);
+  assert.equal(tuiDisplayStub.lastNormalizeOptions.shouldNormalize, false);
 });

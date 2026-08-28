@@ -1,3 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "远程目录是用户输入的路径片段，需 sanitize（去 ../反斜杠/前导斜杠）参照安全清单的字符串校验层"}
-{"file": "src-tauri/src/sync/mod.rs", "reason": "路径常量 SYNC_DEVICES_DIR_PATH/LEGACY_SYNC_FILE_PATH 与 device_sync_file_path/sanitize_device_name 所在处，需参数化为可配置根目录"}

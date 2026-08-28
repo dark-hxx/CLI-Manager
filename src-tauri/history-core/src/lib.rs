@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PARSER_VERSION: u32 = 1;
+pub const PARSER_VERSION: u32 = 3;
 pub const INDEX_SCHEMA_VERSION: u32 = 2;
 const SEARCH_TEXT_LIMIT: usize = 16 * 1024;
 const TITLE_LIMIT: usize = 240;
@@ -90,9 +90,22 @@ pub struct RemoteHistorySessionSummary {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RemoteHistoryMessagePart {
+    pub kind: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteHistoryMessage {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<RemoteHistoryMessagePart>,
     pub timestamp: Option<String>,
     pub model: Option<String>,
     pub input_tokens: Option<u64>,
@@ -205,7 +218,7 @@ pub fn apply_jsonl_line(
         *state.model_hits.entry(model.clone()).or_default() += 1;
         state.current_model = Some(model.clone());
     }
-    if let Some((role, content)) = parse_message(&value) {
+    if let Some((role, content, _)) = parse_message(&value) {
         state.message_count = state.message_count.saturating_add(1);
         append_search_text(&mut state.search_text, &content);
         let excerpt = excerpt(&content, TITLE_LIMIT);
@@ -344,10 +357,17 @@ pub fn parse_detail(
             continue;
         };
         let message_index = messages.len();
-        if let Some((role, content)) = parse_message(&value) {
+        if let Some((role, content, parts)) = parse_message(&value) {
             messages.push(RemoteHistoryMessage {
                 role,
                 content: truncate_chars(&content, CONTENT_LIMIT),
+                parts: parts
+                    .into_iter()
+                    .map(|mut part| {
+                        part.content = truncate_chars(&part.content, CONTENT_LIMIT);
+                        part
+                    })
+                    .collect(),
                 timestamp: timestamp_text(&value),
                 model: deep_string(
                     &value,
@@ -409,7 +429,7 @@ pub fn claude_project_key(path: &str) -> String {
     normalize_remote_path(path).replace('/', "-")
 }
 
-fn parse_message(value: &Value) -> Option<(String, String)> {
+fn parse_message(value: &Value) -> Option<(String, String, Vec<RemoteHistoryMessagePart>)> {
     let root_type = value
         .get("type")
         .and_then(Value::as_str)
@@ -420,8 +440,14 @@ fn parse_message(value: &Value) -> Option<(String, String)> {
             .get("role")
             .and_then(Value::as_str)
             .unwrap_or(root_type);
-        let content = content_text(message.get("content")?)?;
-        return Some((normalize_role(role), content));
+        let content_value = message.get("content")?;
+        let mut role = normalize_role(role);
+        if role == "user" && content_items_are_tool_results(content_value) {
+            role = "tool".to_string();
+        }
+        let content = content_text(content_value)?;
+        let parts = content_parts(content_value, &role, &content);
+        return Some((role, content, parts));
     }
     let payload = value.get("payload")?;
     let payload_type = payload
@@ -433,15 +459,20 @@ fn parse_message(value: &Value) -> Option<(String, String)> {
             .get("message")
             .or_else(|| payload.get("text"))
             .and_then(content_text)?;
-        return Some(("user".to_string(), content));
+        let role = "user".to_string();
+        let parts = vec![fallback_part(&role, &content)];
+        return Some((role, content, parts));
     }
     if root_type == "response_item" && payload_type == "message" {
         let role = payload
             .get("role")
             .and_then(Value::as_str)
             .unwrap_or("assistant");
-        let content = content_text(payload.get("content")?)?;
-        return Some((normalize_role(role), content));
+        let role = normalize_role(role);
+        let content_value = payload.get("content")?;
+        let content = content_text(content_value)?;
+        let parts = content_parts(content_value, &role, &content);
+        return Some((role, content, parts));
     }
     None
 }
@@ -468,6 +499,144 @@ fn content_text(value: &Value) -> Option<String> {
             .or_else(|| value.get("content"))
             .and_then(content_text),
         _ => None,
+    }
+}
+
+fn content_items_are_tool_results(value: &Value) -> bool {
+    value.as_array().is_some_and(|items| {
+        !items.is_empty()
+            && items.iter().all(|item| {
+                matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some("tool_result" | "toolResult")
+                )
+            })
+    })
+}
+
+fn injected_prompt(content: &str) -> bool {
+    let lower = content.trim_start().to_ascii_lowercase();
+    let first_line = lower
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_start_matches('#')
+        .trim();
+    first_line.starts_with("agents.md instructions for ")
+        || first_line.starts_with("base directory for this skill:")
+        || first_line.starts_with("base directory for this skill ")
+        || first_line.starts_with("system prompt")
+        || first_line.starts_with("developer instructions")
+        || lower.starts_with("<system-reminder")
+        || lower.starts_with("<codex_internal_context")
+        || lower.starts_with("<session-context")
+        || lower.contains("<skills_instructions")
+        || lower.contains("<permissions instructions")
+        || lower.contains("<environment_context>")
+        || lower.contains("<collaboration_mode>")
+        || lower.contains("<workflow-state:")
+        || lower.contains("### available skills")
+}
+
+fn fallback_part_kind(role: &str, content: &str) -> &'static str {
+    if injected_prompt(content) {
+        return "system";
+    }
+    match role {
+        "user" | "assistant" => "text",
+        "tool" => "tool_result",
+        "system" => "system",
+        _ => "unknown",
+    }
+}
+
+fn fallback_part(role: &str, content: &str) -> RemoteHistoryMessagePart {
+    RemoteHistoryMessagePart {
+        kind: fallback_part_kind(role, content).to_string(),
+        content: content.to_string(),
+        tool_name: None,
+        call_id: None,
+    }
+}
+
+fn part_kind(value: &Value, role: &str, content: &str) -> &'static str {
+    let kind = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    match kind.as_str() {
+        "text" | "input_text" | "output_text" => fallback_part_kind(role, content),
+        "thinking" | "reasoning" | "reasoning_summary" | "analysis" => "reasoning",
+        "tool_use" | "tool_call" | "toolcall" | "function_call" | "custom_tool_call"
+        | "mcp_tool_call" => "tool_call",
+        "tool_result"
+        | "toolresult"
+        | "function_call_output"
+        | "custom_tool_call_output"
+        | "mcp_tool_call_output" => "tool_result",
+        "system" | "developer" => "system",
+        "metadata" | "session_meta" | "turn_context" => "metadata",
+        "" => fallback_part_kind(role, content),
+        _ => "unknown",
+    }
+}
+
+fn part_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key))
+        .find_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn part_content(value: &Value) -> Option<String> {
+    content_text(value).or_else(|| {
+        [
+            "thinking",
+            "reasoning",
+            "input",
+            "arguments",
+            "output",
+            "result",
+        ]
+        .into_iter()
+        .filter_map(|key| value.get(key))
+        .find_map(|payload| match payload {
+            Value::String(text) => non_empty(text),
+            other => serde_json::to_string(other)
+                .ok()
+                .and_then(|text| non_empty(&text)),
+        })
+    })
+}
+
+fn content_parts(value: &Value, role: &str, flat_content: &str) -> Vec<RemoteHistoryMessagePart> {
+    let values: Vec<&Value> = match value {
+        Value::Array(items) => items.iter().collect(),
+        other => vec![other],
+    };
+    let parts: Vec<RemoteHistoryMessagePart> = values
+        .into_iter()
+        .filter_map(|part| {
+            let content = part_content(part)?;
+            Some(RemoteHistoryMessagePart {
+                kind: part_kind(part, role, &content).to_string(),
+                content,
+                tool_name: part_string(part, &["name", "tool_name", "toolName"]),
+                call_id: part_string(
+                    part,
+                    &["call_id", "callId", "tool_use_id", "toolUseId", "id"],
+                ),
+            })
+        })
+        .collect();
+    if parts.is_empty() {
+        vec![fallback_part(role, flat_content)]
+    } else {
+        parts
     }
 }
 
@@ -734,7 +903,7 @@ fn normalize_role(value: &str) -> String {
         "user".to_string()
     } else if lower.contains("tool") {
         "tool".to_string()
-    } else if lower.contains("system") {
+    } else if lower.contains("developer") || lower.contains("system") {
         "system".to_string()
     } else {
         "assistant".to_string()
@@ -767,7 +936,9 @@ fn non_empty(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_jsonl_line, parse_detail, path_matches_scope, ParserState};
+    use super::{
+        apply_jsonl_line, parse_detail, path_matches_scope, ParserState, RemoteHistoryMessage,
+    };
 
     #[test]
     fn claude_duplicate_usage_is_counted_once() {
@@ -817,6 +988,93 @@ mod tests {
             "artifact"
         );
         assert_eq!(detail.messages[0].content, "hello");
+    }
+
+    #[test]
+    fn detail_preserves_remote_message_part_kinds() {
+        let detail = parse_detail(
+            "claude",
+            "instance",
+            "artifact",
+            "fallback",
+            "project",
+            1,
+            2,
+            3,
+            vec![r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"inspect"},{"type":"text","text":"done"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"README.md"}}]}}"#.to_string()],
+        );
+
+        assert_eq!(detail.messages[0].parts.len(), 3);
+        assert_eq!(detail.messages[0].parts[0].kind, "reasoning");
+        assert_eq!(detail.messages[0].parts[1].kind, "text");
+        assert_eq!(detail.messages[0].parts[2].kind, "tool_call");
+        assert_eq!(
+            detail.messages[0].parts[2].tool_name.as_deref(),
+            Some("Read")
+        );
+    }
+
+    #[test]
+    fn old_remote_message_payload_defaults_parts_to_empty() {
+        let message: RemoteHistoryMessage = serde_json::from_str(
+            r#"{"role":"user","content":"hello","timestamp":null,"model":null,"inputTokens":null,"outputTokens":null,"cacheReadTokens":null,"cacheCreationTokens":null,"lineIndex":0}"#,
+        )
+        .unwrap();
+
+        assert!(message.parts.is_empty());
+    }
+
+    #[test]
+    fn developer_messages_are_normalized_as_system() {
+        let line = r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<skills_instructions>internal context</skills_instructions>"}]}}"#;
+        let detail = parse_detail(
+            "codex",
+            "instance",
+            "artifact",
+            "fallback",
+            "project",
+            1,
+            2,
+            3,
+            vec![line.to_string()],
+        );
+
+        assert_eq!(detail.messages[0].role, "system");
+        assert_eq!(detail.messages[0].parts[0].kind, "system");
+    }
+
+    #[test]
+    fn embedded_codex_context_is_classified_as_system_part() {
+        let detail = parse_detail(
+            "codex",
+            "instance",
+            "artifact",
+            "fallback",
+            "project",
+            1,
+            2,
+            3,
+            vec![r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<permissions instructions>internal context</permissions instructions>\n### Available skills\n- browser"}]}}"#.to_string()],
+        );
+
+        assert_eq!(detail.messages[0].parts[0].kind, "system");
+    }
+
+    #[test]
+    fn skill_directory_context_is_classified_as_system_part() {
+        let detail = parse_detail(
+            "claude",
+            "instance",
+            "artifact",
+            "fallback",
+            "project",
+            1,
+            2,
+            3,
+            vec![r#"{"type":"user","message":{"role":"user","content":"Base directory for this skill: F:\\github\\CLI-Manager\\.claude\\skills\\trellis-update-spec\n\n# Update Code-Spec"}}"#.to_string()],
+        );
+
+        assert_eq!(detail.messages[0].parts[0].kind, "system");
     }
 
     #[test]

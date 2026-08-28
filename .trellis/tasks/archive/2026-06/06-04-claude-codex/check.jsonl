@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"verify frontend cache keys and settings-derived history arguments stay synchronized after path changes"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"check all history/statistics/search/detail flows use the same directory contract"}
-{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"review persisted user-selected directories as untrusted paths at the Tauri boundary"}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"check invoke payload additions remain typed and null-safe"}

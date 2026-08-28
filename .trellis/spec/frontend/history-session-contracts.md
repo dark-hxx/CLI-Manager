@@ -1,5 +1,225 @@
 # History Session Contracts
 
+## Scenario: Conversation View and Structured Message Parts
+
+### 1. Scope / Trigger
+
+- Trigger: changing history message parsing, V2 catalog materialization, SSH detail payloads, favorite snapshots, session detail tabs, search jumps, or list-row open behavior.
+- Goal: make the default conversation review readable without weakening the complete transcript/audit path.
+
+### 2. Signatures
+
+- Frontend message field: `HistoryMessage.parts?: HistoryMessagePart[]`.
+- Part kinds: `text | tool_call | tool_result | reasoning | system | metadata | unknown`.
+- Part fields: `kind`, `content`, optional `tool_name`, optional `call_id`.
+- Local/WSL Rust payload: `HistoryMessage.parts` serialized as camel-case and omitted only when empty.
+- SSH payload: `RemoteHistoryMessage.parts` defaults to an empty list during deserialization for protocol compatibility.
+- V2 catalog: `history_message_parts(message_id, part_index, kind, text_content, tool_call_id, tool_name, ...)` preserves parsed parts beside `history_messages.display_content`.
+
+### 3. Contracts
+
+- Keep `HistoryMessage.content` and original message indices stable. Search, edit, conversion, snapshots, file-change/tool-event links, and the Transcript tab still use the flat message contract.
+- The Conversation tab is the default. It displays only non-empty `text` parts from `user`/`assistant` messages as bubbles; system/developer injections, tool records, reasoning, metadata, and other roles are omitted from this view.
+- The Transcript tab remains the complete audit path for omitted non-text parts. The Conversation view must not fabricate a placeholder or empty bubble when a message has no visible text.
+- The Transcript tab remains independent and complete, including long-message folding and local message edit/delete/insert actions.
+- Every visible Conversation row exposes the same message action toolbar as Transcript. Copy uses the original message's editable text when available (otherwise flat content); edit, insert, and delete are exposed only when the original message satisfies the existing local-editability predicate.
+- When existing batch-selection mode is active, Conversation hides its single-message toolbar just as Transcript does; it must not create a competing mutation path.
+- Conversation edit/insert must first pass the existing edit-warning gate. Only after approval may the view switch to Transcript, where the original message index opens the existing edit/insert form. A rejected gate keeps the Conversation view active. Delete remains on the existing confirmation/mutation path without a forced view switch.
+- Search scans both flat `content` and part `content`. A hit in a collapsed part, or a jump from Timeline/Changes/Tools/Subtasks, switches to Conversation, opens the relevant detail section, and keeps the original message index as the coordinate.
+- When `parts` is absent or empty, the frontend conservatively maps user/assistant to `text`, tool to `tool_result`, system/injected prompts to `system`, and other roles to `unknown`.
+- Prompt injection detection must inspect the whole normalized content, not only its first line. Codex/agent user records can start with ordinary headings such as `SKILLS` and contain `<skills_instructions>`, `<permissions instructions>`, `<environment_context>`, `<collaboration_mode>`, `[workflow-state:...]`, or `### Available skills` later in the same block; these markers classify the part as `system`.
+- Local, WSL, and SSH use the same kind names. SSH remains read-only and this view contract never routes remote messages into local mutation commands.
+- V2 catalog writes every parsed part and rehydrates it in `part_index` order. Old catalog rows without part records fall back from role/content; parser version changes must invalidate/rebuild derived rows when classification changes.
+- Outside batch selection, the complete session row is one keyboard-accessible open target. Tree toggles, selection checkboxes, delete, and other explicit actions stop propagation. The existing detail request sequence remains the last-request-wins boundary.
+- Every virtualized Conversation row must expose the configured index attribute (`data-index`) on the same node passed to `measureElement`; otherwise expanded details keep the estimate height and overlap or leave blank gaps. Conversation rows reuse the Transcript avatar/stack/bubble layout so visible text and detail sections share the same geometry.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| New payload contains valid non-empty parts | Normalize and render exact kinds in source order |
+| Unknown/empty/malformed part | Ignore malformed part; if no valid parts remain, use role fallback |
+| Old favorite snapshot has no parts | Render through role fallback; never show an empty conversation |
+| Old V2 catalog row has no `history_message_parts` | Rehydrate one fallback part from role/content |
+| Search matches only hidden reasoning/tool/system text | Mark the original message index, expand the detail section, and center it |
+| Rapidly click two session rows | Select/load the second target; the first response cannot replace it |
+| Click tree toggle/delete/selection checkbox | Perform only that explicit action; do not open the session |
+| Conversation action targets a non-editable, SSH, or snapshot message | Show copy only; never expose a local mutation action |
+| Conversation edit/insert warning is rejected | Keep Conversation selected and do not create an edit/insert form |
+| Conversation edit/insert warning is approved | Switch to Transcript and open the existing form at the original message index |
+
+### 5. Good/Base/Bad Cases
+
+- Good: one assistant record contains reasoning, visible text, and a tool call; Conversation shows the answer and one expandable details section while Transcript stays byte-for-byte compatible at the message level.
+- Base: an old snapshot has only `role="user"` and `content`; Conversation displays it as ordinary text.
+- Good: consecutive system/tool/reasoning records disappear from Conversation while the same records remain available in Transcript.
+- Good: a visible local assistant row offers four actions; copy uses the original message content, while edit/insert switches to the existing Transcript form only after the warning is approved.
+- Base: a visible SSH or favorite-snapshot row offers copy but no mutation action.
+- Bad: derive Conversation only from role after structured parts exist, because mixed reasoning/tool content would remain merged into the visible answer.
+- Bad: remove or filter messages in the backend, because message-index links from Diff/Tools would shift.
+- Bad: classify only a user block whose first line says `Agents.md instructions for ...`; this leaks injected context that begins with a normal heading into the visible conversation.
+- Bad: render every `user`/`assistant` record as visible text without checking its parts; embedded system/developer context then appears as a user prompt.
+- Bad: measure a virtualized Conversation row without its `data-index`, or render detail-only rows outside the avatar/stack wrapper; expansion then produces stale heights or a layout unlike the Transcript tab.
+- Bad: render a second editing form in Conversation, which duplicates the established Transcript mutation path and risks index/form behavior drift.
+
+### 6. Tests Required
+
+- Rust parser tests: Claude/Codex mixed blocks classify text, tool call/result, reasoning, and injected system content while preserving flat content.
+- Rust parser tests: embedded Codex context markers and `developer` response messages classify as `system` for both local and SSH parsers.
+- SSH history-core tests: exact kind parity and missing-parts deserialization compatibility.
+- V2 catalog test: write/read `history_message_parts` in order and fall back for rows without parts.
+- Frontend regression: default Conversation plus independent Transcript, adjacent-detail grouping, old snapshot fallback, hidden search/jump expansion, whole-row click, and action propagation; verify the shared toolbar exposes copy for every visible row, limits mutations to local editable rows, and switches to the original-index Transcript form only after gate approval.
+- Run `npx tsc --noEmit`, focused Node history tests, `cargo test history --lib`, `cargo fmt -- --check`, and `cargo check`.
+- Manual desktop verification: Local/WSL/SSH, main checkout/Worktree, parent/subagent tree, batch selection, rapid row switching, keyboard opening, and `zh-CN`/`zh-TW`/`en-US` copy with 24-hour time.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+// Hides tool/reasoning by deleting messages and shifts every message-index link.
+const conversation = messages.filter((message) => message.role !== "tool");
+```
+
+#### Correct
+
+```typescript
+// Preserve message coordinates; classify parts only in the render projection.
+const rows = buildConversationRows(messages);
+const targetRow = rows.find((row) => row.messageIndices.includes(messageIndex));
+```
+
+#### Correct conversation-action transition
+
+```typescript
+const started = await startEditMessage(row.messageIndex, row.message);
+if (started) {
+  onDetailViewChange("transcript");
+}
+```
+
+## Scenario: Two-stage local smart history titles
+
+### 1. Scope / Trigger
+
+- Trigger: changing history session display titles, aliases, generated-title actions, history settings, search-hit labels, prompt-library labels, or automatic title scheduling.
+- Goal: keep the parser source title immediately available while layering an optional local generated title without mutating the source summary.
+
+### 2. Signatures
+
+- Renderer settings retain `HistorySmartTitleSettings`, extended with `customPrompt: string`; an empty string means the built-in system instruction.
+- The IPC name remains `history_title_generate(request: HistoryTitleGenerateRequest)`, but its Rust entrypoint is `pub(crate) async fn history_title_generate(...)`. `HistoryTitleGenerateRequest` must not gain a prompt field.
+- There is no SQLite migration or Provider protocol signature change. The Rust command reads `historySmartTitle.customPrompt` from local `settings.json` and calls the existing `post_text_request(..., system_prompt, candidate, ...)` adapter.
+
+### 3. Contracts
+
+- `displayTitle` precedence is exactly `alias.trim() > generatedTitle.trim() > source title.trim() > session id`.
+- Generated-title metadata is hydrated from `history_generated_titles` together with session metadata and overlaid on local summaries, favorite snapshots, cached remote summaries, search hits, and prompt-library labels. `summary.title` remains the source title.
+- Manual generation is allowed for old sessions and sessions with an alias. Alias remains the visible pin; a successful manual result is retained as the hidden fallback until the alias is cleared.
+- SSH sessions dispatch only after an online trusted detail is loaded; read-only local snapshots, summary-only cache, and offline detail never dispatch. Candidate extraction requires the first visible user text part and shares the Conversation classifier; injected context, tools, reasoning, metadata, empty, and attachment-only records do not qualify.
+- Automatic work is disabled by default, uses the persisted `enabledAt` watermark, is deduplicated by session key plus full candidate fingerprint, and is scheduled through one bounded FIFO queue. Disabling the setting cancels queued ownership and invalidates active automatic revisions.
+- The list toolbar and Settings -> History Sessions switch read and write the same persisted `historySmartTitle` object. Re-enabling records a new watermark; it does not reuse the previous one.
+- `historySmartTitle.customPrompt` is one global, local-only system instruction. The UI trims it before saving; missing, blank, NUL-containing, or over-4096-UTF-8-byte values normalize to `""`. The `historySmartTitle` sync classification remains `excluded`.
+- Prompt Save waits for the existing persisted settings update before showing its localized success toast. While that write is pending, Save/Restore cannot race; a write failure shows a localized failure toast and never reports success.
+- Rust snapshots settings at request start to validate the selected Provider/automatic state and select either the normalized custom prompt or the unchanged built-in fallback. The candidate remains a separate user/input field for Anthropic, Chat Completions, and Responses; it is never interpolated into the prompt. The completion guard takes a fresh snapshot only to preserve the existing provider-selection/automatic-disable result suppression.
+- `history_title_generate` must remain a Tauri async command and await a dedicated `spawn_blocking` worker for the existing non-`Send` title helper; do not wrap the Provider request in `tauri::async_runtime::block_on` inside a synchronous command. A slow Provider request must leave the renderer able to process normal interaction while the existing pending/duplicate guard remains authoritative.
+- `historyStore` records an in-memory `smartTitleInFlightSessionKeys` entry immediately after it accepts a manual or automatic generation request, before opening details, candidate extraction, or the Provider IPC wait. It removes that entry only when the same trigger still owns the session in `finally`, so a manual request replacing an automatic request cannot clear the newer loading state. This ephemeral set never changes persisted generated-title metadata or optimistically supplies a title.
+- Installed production and `npm run tauri dev` deliberately share the main SQLite database. Generated-title reserve and finish transactions must acquire the write lock with `BEGIN IMMEDIATE` before their read/write sequence and use the shared 15-second write-busy timeout. A remaining SQLite busy/locked result maps to the stable `history_title_database_busy` category, never to a Provider/network category.
+- All generated-title actions use `useI18n()` keys for `zh-CN`/`en-US`; existing `zh-TW` fallback remains valid. List and detail pending state combines persisted `generatedTitle.state === "pending"` with the in-flight set. The detail action shows the existing localized pending label with a loading icon, sets `aria-busy`, and disables repeat generation (and title clearing) without changing selection, filtering, or scroll position.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| No generated row or generated request fails | Show alias/source/session-id fallback immediately; automatic failures are silent |
+| Manual title action has no/invalid Provider or model | Preserve the source fallback, show a localized actionable reason, and open Session History settings; never expose raw provider errors |
+| Manual title request fails after dispatch | Map the stable backend failure category to a localized safe toast; do not discard the error category or expose response/config content |
+| Shared SQLite is busy while production and development builds both run | Wait at the title persistence boundary; if the bounded wait is exhausted, retain source/alias fallback and show a localized local-database-busy toast rather than Provider/network guidance |
+| Alias saved while a request is pending | Cancel/invalidate ownership; late result cannot become visible or overwrite the alias |
+| Generated title cleared | Remove visible generated text, preserve source title, and suppress automatic work for the current fingerprint until explicit manual generation |
+| Search or Prompt Library contains a titled session | Use the same display precedence as the list/detail view |
+| Provider/model selection is invalid | Keep the saved selection diagnosable, prevent enabling when off, and allow disabling when already on |
+| `customPrompt` is missing, blank, manually malformed, contains NUL, or exceeds 4096 UTF-8 bytes | Save/use `""` and fall back to the built-in instruction; never send the malformed value |
+| Prompt draft is malformed in Settings | Keep it unsaved, show a localized field error, and leave the last persisted effective prompt intact |
+| Prompt Save succeeds or fails | Show success only after the setting write fulfills; while it is pending disable repeat actions; on failure leave the persisted prompt unchanged and do not show success |
+| Prompt changes while a request is in flight | The sent request uses its start snapshot; the existing completion guard may still suppress the result if provider selection/automatic state changed |
+| Provider request takes several seconds | Keep normal desktop interaction responsive; immediately show the localized loading state in the detail button and matching list row, then clear it when the active request settles; duplicate generation stays blocked |
+| Locale changes | New title/settings copy changes language without changing time formatting |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a saved 4096-byte-or-smaller custom prompt becomes the Provider system/instructions field while the first valid user message remains the separate candidate input.
+- Good: installed production and development builds both write the shared SQLite database; a short competing write clears within the 15-second bound and the title reservation/result persists without a second Provider request.
+- Base: an old settings file without `customPrompt`, or the user restoring default, produces the exact built-in behavior.
+- Bad: passing the prompt through `HistoryTitleGenerateRequest`, synchronizing it, or concatenating it with candidate text breaks renderer trust boundaries and protocol framing.
+- Bad: starting a deferred read transaction and then upgrading it to a write while another process writes; this can return SQLite busy/snapshot errors and must not be reported as a Provider, model, or network misconfiguration.
+
+### 6. Tests Required
+
+- Frontend type-check after store/component changes.
+- Rust unit tests for trim, blank, NUL, over-limit, custom selection, and built-in fallback; no real Provider call is required.
+- Source-contract test verifies the unchanged IPC request shape, settings migration/default, prompt editor controls, and backend-owned system prompt selection.
+- Source-contract test verifies the Tauri title-generation entrypoint is async and dispatches its non-`Send` helper with `spawn_blocking`; it also verifies Prompt success feedback follows the awaited settings write and an accepted title request creates/removes its local in-flight loading state.
+- Rust/source coverage verifies SQLite busy-code recognition, the 15-second bounded title-write wait, `BEGIN IMMEDIATE` write reservation, and the localized busy mapping.
+- Pure candidate/display tests for alias/generated/source/id precedence, Unicode-safe input truncation, injection markers, attachment-only records, old flat messages, and distinct source instances.
+- Manual desktop check for save/restore, settings/toolbar synchronization, old-session manual generation, alias pin, clear suppression, automatic watermark, pending/restart behavior, and Chinese/English copy.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+invoke("history_title_generate", { request: { ...request, customPrompt } });
+```
+
+#### Correct
+
+```rust
+let selection = settings_selection();
+let prompt = effective_prompt(selection.as_ref());
+request_title(&runtime, prompt, request.candidate_text.trim()).await;
+```
+
+#### Wrong shared-database persistence
+
+```rust
+let mut transaction = connection.begin().await?;
+let row = read_title_row(&mut transaction).await?;
+write_title_row(&mut transaction, row).await?;
+```
+
+#### Correct shared-database persistence
+
+```rust
+let mut transaction = connection.begin_with("BEGIN IMMEDIATE").await?;
+let row = read_title_row(&mut transaction).await?;
+write_title_row(&mut transaction, row).await?;
+```
+
+#### Wrong long-running command wrapper
+
+```rust
+#[tauri::command]
+pub(crate) fn history_title_generate(request: HistoryTitleGenerateRequest) -> Result<HistoryGeneratedTitleMeta, String> {
+    tauri::async_runtime::block_on(history_title_generate_async(request))
+}
+```
+
+#### Correct long-running command wrapper
+
+```rust
+#[tauri::command]
+pub(crate) async fn history_title_generate(
+    request: HistoryTitleGenerateRequest,
+) -> Result<HistoryGeneratedTitleMeta, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(history_title_generate_async(request))
+    })
+    .await
+    .map_err(|error| format!("history_title_task_failed: {error}"))?
+}
+```
+
 ## Scenario: SSH Remote History Workspace
 
 ### 1. Scope / Trigger
@@ -31,6 +251,70 @@
 - Manually switch rapidly between two SSH projects and between sessions while list/search/detail requests are in flight; only the latest context may render.
 - Verify exact project resume, multiple same-Host project selection, original remote location, current-client Tab jump, active-elsewhere refusal, missing source/cwd, custom config root, and Hook-not-installed behavior.
 - Disconnect after a successful sync and verify cached summaries remain visible with stale/offline state while uncached detail stays unavailable.
+
+## Scenario: SSH History Capability Aligns With the Remote Bridge
+
+### 1. Scope / Trigger
+
+- Trigger: changing SSH project capabilities, supported remote history CLI sources, or a project/terminal history entry point.
+- Goal: prevent an unsupported SSH CLI from reaching `buildSshAgentHistoryContext()` and exposing its internal `history_remote_source_required` guard to the user.
+
+### 2. Signatures
+
+- SSH source resolver: `resolveSshToolSource(command: string | null | undefined): SshToolSource | null`.
+- Capability gate: `projectSupportsCapability(project, "history"): boolean`.
+- UI reason helpers: `isSshHistorySourceUnsupported(project)` and `isSshGrokHistoryUnsupported(project)`.
+- Defensive bridge guard: `buildSshAgentHistoryContext(project)`.
+
+### 3. Contracts
+
+- SSH `history` is available only when `resolveSshToolSource(project.cli_tool)` resolves to the currently bridge-supported Claude or Codex source.
+- SSH Grok Build, another unsupported SSH CLI, and an SSH project without a configured CLI all have `history=false`; this does not alter `statistics` or unrelated project capabilities.
+- Local and WSL Kimi Code keep native history (list/delete/resume/realtime stats under `$KIMI_CODE_HOME` / `~/.kimi-code`). SSH Kimi uses the generic unsupported SSH-history prompt.
+- Local and WSL Grok Build keep their native history capability. Do not infer remote support from the local history-source registry.
+- Sidebar and terminal-toolbar history entry points must stop at the capability gate. Grok uses the localized `remoteCapabilities.grokHistoryUnsupportedTitle`; another unsupported SSH CLI uses the generic SSH-history title and description.
+- `history_remote_source_required` remains a defensive bridge error for non-UI callers. Normal UI interactions must not reach it.
+- `HistoryWorkspace` must derive its selectable project list from `projectSupportsCapability(project, "history")`; do not add a second Grok-only filter.
+
+### 4. Validation & Error Matrix
+
+| Condition | Capability / UI result |
+| --- | --- |
+| SSH Claude or Codex command | `history=true`; existing remote bridge opens |
+| SSH Grok Build command | `history=false`; show Grok localized unavailable toast; do not open the bridge |
+| SSH unsupported or empty CLI command | `history=false`; show generic SSH CLI unavailable toast |
+| Local or WSL Grok Build | `history=true`; retain existing native history flow |
+| Direct invalid bridge caller | `history_remote_source_required` remains a defensive error |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the sidebar and terminal toolbar both show the same Grok-specific toast and leave the current workspace unchanged.
+- Base: an unsupported SSH OpenCode project receives the generic message instead of being mislabeled as Grok.
+- Good: SSH Claude/Codex and local/WSL Grok continue to pass the same capability API.
+- Bad: leave `SSH_CAPABILITIES.history=true` for every SSH project and catch `history_remote_source_required` separately in each caller.
+- Bad: disable every Grok history flow, including local/WSL, because the SSH bridge has not implemented Grok.
+
+### 6. Tests Required
+
+- Run `node --test scripts/projectCapabilities.test.mjs` and assert SSH Claude/Codex allow history, SSH Grok/unsupported/empty CLI deny it, local/WSL Grok remain allowed, and SSH Grok statistics remain unchanged.
+- Assert both project history entry components use the shared helper and i18n keys.
+- Run `node --test scripts/sshRemoteFileContext.test.mjs`, `npx tsc --noEmit`, and `npm run build`.
+- Manually verify both sidebar and terminal-toolbar entries in `zh-CN` and `en-US`; no raw internal error may be shown.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const SSH_CAPABILITIES = { history: true };
+await buildSshAgentHistoryContext(project);
+```
+
+#### Correct
+
+```typescript
+if (capability === "history" && isSshHistorySourceUnsupported(project)) return false;
+```
 
 ## Scenario: Favorite Session Snapshots
 

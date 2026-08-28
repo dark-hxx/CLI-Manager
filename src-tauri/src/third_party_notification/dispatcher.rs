@@ -325,6 +325,8 @@ fn normalize_source(value: &str) -> String {
     match value {
         "codex" => "Codex".to_string(),
         "claude" => "Claude Code".to_string(),
+        "kimi" => "Kimi Code".to_string(),
+        "grok" => "Grok Build".to_string(),
         other if !other.trim().is_empty() => other.trim().to_string(),
         _ => "CLI".to_string(),
     }
@@ -359,6 +361,7 @@ fn event_summary(event: &str, source: &str, project: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
     fn message_uses_cwd_basename_only() {
         let message = message_from_job(HookNotificationJob {
@@ -398,6 +401,7 @@ mod tests {
             .ends_with("📌 内容：Claude Code - Unknown Project 执行失败"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn permission_request_mentions_approval_action() {
         let message = message_from_job(HookNotificationJob {

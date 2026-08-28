@@ -1,4 +1,4 @@
-export type HookBindingSource = "claude" | "codex" | "pi" | "grok" | "opencode";
+export type HookBindingSource = "claude" | "codex" | "kimi" | "pi" | "grok" | "opencode";
 
 export interface HookTargetCandidate {
   id: string;
@@ -20,6 +20,7 @@ export function inferHookBindingSource(value: string): HookBindingSource | null 
   const lower = value.toLowerCase();
   if (/\bcodex\b/.test(lower)) return "codex";
   if (/\bclaude\b/.test(lower)) return "claude";
+  if (/\bkimi(?:\.(?:cmd|exe|ps1))?\b/.test(lower)) return "kimi";
   if (/\bgrok\b/.test(lower)) return "grok";
   if (/\bopencode\b/.test(lower)) return "opencode";
   if (/(?:^|\s)pi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i.test(value)) return "pi";

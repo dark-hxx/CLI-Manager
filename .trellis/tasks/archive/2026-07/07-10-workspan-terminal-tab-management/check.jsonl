@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查拖拽预览、挂载稳定性和 i18n"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"检查 Workspan 唯一归属、镜像与持久化"}
-{"file":".trellis/spec/frontend/workspace-session-restore-contracts.md","reason":"检查恢复流程不回归"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查类型与人工验证清单"}

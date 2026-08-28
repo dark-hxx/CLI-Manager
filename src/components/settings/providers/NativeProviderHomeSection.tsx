@@ -1,7 +1,6 @@
 import {
   Alert,
   Badge,
-  Button,
   Card,
   Group,
   Select,
@@ -28,6 +27,7 @@ import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { useHistorySourceSettingsStore } from "@/stores/historySourceSettingsStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { CliToolIcon } from "../../CliToolIcon";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeProviderEnvironmentSection } from "./NativeProviderEnvironmentSection";
 import { NativeProviderGlobalSection } from "./NativeProviderGlobalSection";
 import { PathItem } from "./NativeProviderPathItem";

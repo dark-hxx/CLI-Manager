@@ -1,5 +1,0 @@
-{"type":"spec","path":"CLAUDE.md","reason":"项目整体架构、模块索引、IPC 命令摘要"}
-{"type":"spec","path":"src/stores/historyStore.ts","reason":"fetchLatestProjectSessionDetail 函数实现、历史会话查询逻辑"}
-{"type":"spec","path":"src/components/terminal/TerminalStatsPanel.tsx","reason":"实时统计面板组件、轮询逻辑、切换 Tab 时的数据清空"}
-{"type":"spec","path":"src/stores/terminalStore.ts","reason":"TerminalSession 类型定义、cliSessionId 更新逻辑、handleCliHookEvent"}
-{"type":"spec","path":"src/lib/types.ts","reason":"TerminalSession、HistorySessionDetail 等类型定义"}

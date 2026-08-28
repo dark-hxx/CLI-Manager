@@ -6,14 +6,16 @@ use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{provider::network_client, shell_resolver::silent_command};
+use crate::{
+    provider::{auxiliary_text, network_client},
+    shell_resolver::silent_command,
+};
 
 const MODEL_TEST_TIMEOUT_SECS: u64 = 4;
 const MODEL_TEST_SLOW_THRESHOLD_MS: u64 = 1500;
 const SUGGESTION_TIMEOUT_MS: u64 = 1600;
 const MAX_TEXT_FIELD_CHARS: usize = 4_000;
 const MAX_CONTEXT_ITEMS: usize = 12;
-const MAX_RESPONSE_BODY_BYTES: usize = 128 * 1024;
 const PATH_SUGGESTION_DEFAULT_LIMIT: usize = 24;
 const PATH_SUGGESTION_MAX_LIMIT: usize = 64;
 
@@ -502,17 +504,7 @@ fn shared_client() -> Result<reqwest::Client, String> {
 }
 
 fn endpoint_url(base_url: &str, versioned_path: &str) -> String {
-    let base = base_url.trim().trim_end_matches('/');
-    let path = versioned_path.trim().trim_start_matches('/');
-    if base.ends_with(&format!("/{path}")) {
-        return base.to_string();
-    }
-    if let Some(rest) = path.strip_prefix("v1/") {
-        if base.ends_with("/v1") {
-            return format!("{base}/{rest}");
-        }
-    }
-    format!("{base}/{path}")
+    auxiliary_text::endpoint_url(base_url, versioned_path)
 }
 
 fn detect_api_type(base_url: &str) -> CommandSuggestionApiType {
@@ -574,141 +566,23 @@ async fn post_model_request(
     max_tokens: u16,
     timeout: Duration,
 ) -> Result<(u16, String), String> {
-    match api_type {
-        CommandSuggestionApiType::ChatCompletions => {
-            post_chat_completion(
-                client,
-                base_url,
-                api_key,
-                model,
-                system_prompt,
-                user_prompt,
-                max_tokens,
-                timeout,
-            )
-            .await
-        }
-        CommandSuggestionApiType::Responses => {
-            post_responses(
-                client,
-                base_url,
-                api_key,
-                model,
-                system_prompt,
-                user_prompt,
-                max_tokens,
-                timeout,
-            )
-            .await
-        }
-    }
-}
-
-async fn post_chat_completion(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-    max_tokens: u16,
-    timeout: Duration,
-) -> Result<(u16, String), String> {
-    let response = client
-        .post(endpoint_url(base_url, "v1/chat/completions"))
-        .timeout(timeout)
-        .header("content-type", "application/json")
-        .header("authorization", format!("Bearer {api_key}"))
-        .json(&chat_completion_body(
-            model,
-            system_prompt,
-            user_prompt,
-            max_tokens,
-        ))
-        .send()
-        .await
-        .map_err(map_request_error)?;
-    let status = response.status().as_u16();
-    let body = read_limited_response_body(response).await?;
-    Ok((status, body))
-}
-
-async fn post_responses(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    instructions: &str,
-    input: &str,
-    max_tokens: u16,
-    timeout: Duration,
-) -> Result<(u16, String), String> {
-    let response = client
-        .post(endpoint_url(base_url, "v1/responses"))
-        .timeout(timeout)
-        .header("content-type", "application/json")
-        .header("authorization", format!("Bearer {api_key}"))
-        .json(&responses_body(model, instructions, input, max_tokens))
-        .send()
-        .await
-        .map_err(map_request_error)?;
-    let status = response.status().as_u16();
-    let body = read_limited_response_body(response).await?;
-    Ok((status, body))
-}
-
-async fn read_limited_response_body(response: reqwest::Response) -> Result<String, String> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BODY_BYTES as u64)
-    {
-        return Err("model_response_too_large".to_string());
-    }
-    let bytes = response.bytes().await.map_err(map_request_error)?;
-    if bytes.len() > MAX_RESPONSE_BODY_BYTES {
-        return Err("model_response_too_large".to_string());
-    }
-    std::str::from_utf8(bytes.as_ref())
-        .map(str::to_string)
-        .map_err(|_| "model_response_not_utf8".to_string())
-}
-
-fn chat_completion_body(
-    model: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-    max_tokens: u16,
-) -> Value {
-    let mut messages = Vec::new();
-    let system_prompt = system_prompt.trim();
-    if !system_prompt.is_empty() {
-        messages.push(serde_json::json!({ "role": "system", "content": system_prompt }));
-    }
-    messages.push(serde_json::json!({ "role": "user", "content": user_prompt }));
-
-    serde_json::json!({
-        "model": model.trim(),
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "stream": false
-    })
-}
-
-fn responses_body(model: &str, instructions: &str, input: &str, max_tokens: u16) -> Value {
-    let mut body = serde_json::Map::new();
-    body.insert("model".to_string(), serde_json::json!(model.trim()));
-    body.insert("input".to_string(), serde_json::json!(input));
-    body.insert(
-        "max_output_tokens".to_string(),
-        serde_json::json!(max_tokens),
-    );
-    body.insert("stream".to_string(), Value::Bool(false));
-    body.insert("store".to_string(), Value::Bool(false));
-    let instructions = instructions.trim();
-    if !instructions.is_empty() {
-        body.insert("instructions".to_string(), serde_json::json!(instructions));
-    }
-    Value::Object(body)
+    let protocol = match api_type {
+        CommandSuggestionApiType::ChatCompletions => auxiliary_text::AuxiliaryTextProtocol::Chat,
+        CommandSuggestionApiType::Responses => auxiliary_text::AuxiliaryTextProtocol::Responses,
+    };
+    auxiliary_text::post_text_request(
+        client,
+        protocol,
+        base_url,
+        api_key,
+        model,
+        system_prompt,
+        user_prompt,
+        max_tokens,
+        timeout,
+    )
+    .await
+    .map_err(map_auxiliary_error)
 }
 
 fn build_user_prompt(request: &CommandSuggestionGenerateRequest) -> String {
@@ -795,18 +669,8 @@ fn extract_command(value: &Value, api_type: CommandSuggestionApiType) -> Option<
 }
 
 fn extract_chat_command(value: &Value) -> Option<String> {
-    let content = value
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| {
-            choice
-                .get("message")
-                .and_then(|message| message.get("content"))
-                .and_then(Value::as_str)
-                .or_else(|| choice.get("text").and_then(Value::as_str))
-        })?
-        .trim();
+    let content =
+        auxiliary_text::response_text(value, auxiliary_text::AuxiliaryTextProtocol::Chat)?.trim();
     if content.is_empty() {
         return None;
     }
@@ -814,32 +678,12 @@ fn extract_chat_command(value: &Value) -> Option<String> {
 }
 
 fn extract_responses_command(value: &Value) -> Option<String> {
-    if let Some(output_text) = value.get("output_text").and_then(Value::as_str) {
-        let output_text = output_text.trim();
-        if !output_text.is_empty() {
-            return parse_command_content(output_text);
-        }
-    }
-
-    let output = value.get("output").and_then(Value::as_array)?;
-    for item in output {
-        let Some(content) = item.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for part in content {
-            if part.get("type").and_then(Value::as_str) != Some("output_text") {
-                continue;
-            }
-            let Some(text) = part.get("text").and_then(Value::as_str) else {
-                continue;
-            };
-            let text = text.trim();
-            if !text.is_empty() {
-                return parse_command_content(text);
-            }
-        }
-    }
-    None
+    let text =
+        auxiliary_text::response_text(value, auxiliary_text::AuxiliaryTextProtocol::Responses)?
+            .trim();
+    (!text.is_empty())
+        .then(|| parse_command_content(text))
+        .flatten()
 }
 
 fn parse_command_content(content: &str) -> Option<String> {
@@ -901,6 +745,19 @@ fn map_request_error(err: reqwest::Error) -> String {
         format!("Connection failed: {err}")
     } else {
         err.to_string()
+    }
+}
+
+fn map_auxiliary_error(error: auxiliary_text::AuxiliaryTextError) -> String {
+    match error {
+        auxiliary_text::AuxiliaryTextError::Request(error)
+        | auxiliary_text::AuxiliaryTextError::ResponseRead(error) => map_request_error(error),
+        auxiliary_text::AuxiliaryTextError::ResponseTooLarge => {
+            "model_response_too_large".to_string()
+        }
+        auxiliary_text::AuxiliaryTextError::ResponseInvalidUtf8 => {
+            "model_response_not_utf8".to_string()
+        }
     }
 }
 
@@ -968,7 +825,7 @@ mod tests {
 
     #[test]
     fn minimal_model_test_bodies_avoid_optional_sampling_params() {
-        let chat = chat_completion_body("model-a", "", "ping", 16);
+        let chat = auxiliary_text::chat_completion_body("model-a", "", "ping", 16);
         assert!(chat.get("temperature").is_none());
         let messages = chat.get("messages").and_then(Value::as_array).unwrap();
         assert_eq!(messages.len(), 1);
@@ -977,7 +834,7 @@ mod tests {
             Some("user")
         );
 
-        let responses = responses_body("model-a", "", "ping", 16);
+        let responses = auxiliary_text::responses_body("model-a", "", "ping", 16);
         assert!(responses.get("temperature").is_none());
         assert!(responses.get("instructions").is_none());
     }

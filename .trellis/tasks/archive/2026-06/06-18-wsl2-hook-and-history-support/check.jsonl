@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/backend/history-stats-contracts.md", "reason": "校验双 key 匹配不破坏既有项目过滤/会话标识语义"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "校验对 WSL .claude 写入安全、可逆、不破坏用户其他 hook"}

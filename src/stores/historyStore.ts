@@ -3,16 +3,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getDb } from "../lib/db";
 import { createPerfMarker, logInfo, logWarn } from "../lib/logger";
+import { queryClient } from "../lib/queryClient";
 import { normalizeHistoryProjectPaths, resolveHistoryProjectPath } from "../lib/historyProjectPaths";
 import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../lib/sshAgentHistory";
 import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs, getHistoryPathArgsSync } from "../lib/historyPathArgs";
 import { inferSubagentParentSessionId } from "../lib/historySubagents";
 import { sameHistorySessionIdentity } from "../lib/historySessionIdentity";
+import { extractHistoryTitleCandidate, resolveHistoryDisplayTitle } from "../lib/historyTitle";
 import { useProjectStore } from "./projectStore";
+import { useSettingsStore } from "./settingsStore";
 import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import { useBackgroundOperationStore } from "./backgroundOperationStore";
 import type {
   HistoryBackupStatus,
+  HistoryGeneratedTitleMeta,
+  HistoryGeneratedTitleState,
+  HistoryGeneratedTitleTrigger,
   HistoryEditAuditEntry,
   HistoryFileChangeOperation,
   HistoryFileChangeSummary,
@@ -24,6 +30,7 @@ import type {
   HistorySessionSummary,
   HistorySessionRef,
   HistorySessionView,
+  HistoryTitleCandidate,
   HistoryStatsDailySeriesItem,
   HistoryStatsHeatmapDay,
   HistoryStatsHourlyActivityItem,
@@ -50,6 +57,7 @@ import type {
 } from "../lib/types";
 
 type SessionMetaMap = Record<string, SessionMeta>;
+type GeneratedTitleMap = Record<string, HistoryGeneratedTitleMeta>;
 
 interface MetaPatchInput {
   alias?: string;
@@ -63,6 +71,10 @@ interface OpenHistoryOptions {
   /** 左侧/入口选中的具体项目 id；仅用于 UI 高亮，会话过滤仍按 path。 */
   projectId?: string | null;
   scopedProjectPath?: string | null;
+}
+
+interface OpenSessionOptions {
+  requireLiveDetail?: boolean;
 }
 
 interface HistoryStore {
@@ -98,6 +110,9 @@ interface HistoryStore {
   focusedMessageIndex: number | null;
   focusedMessageSeq: number;
   metaMap: SessionMetaMap;
+  generatedTitleMap: GeneratedTitleMap;
+  /** 当前 WebView 已发起、尚未收到最终标题结果的会话；不持久化。 */
+  smartTitleInFlightSessionKeys: Set<string>;
   focusGlobalSearchSeq: number;
   focusSessionSearchSeq: number;
   indexStatus: HistoryIndexStatus;
@@ -113,7 +128,7 @@ interface HistoryStore {
   loadIndexStatus: () => Promise<void>;
   refreshIndex: () => Promise<void>;
   addConvertedSession: (summary: unknown, detail: unknown) => string;
-  openSession: (sessionKey: string) => Promise<void>;
+  openSession: (sessionKey: string, options?: OpenSessionOptions) => Promise<void>;
   openSearchHit: (hit: HistorySearchHit) => Promise<void>;
   deleteSession: (sessionKey: string) => Promise<void>;
   setGlobalQuery: (query: string) => void;
@@ -138,6 +153,9 @@ interface HistoryStore {
   openSessionAtMessage: (sessionKey: string, messageIndex: number) => Promise<void>;
   clearFocusedMessage: () => void;
   updateMeta: (sessionKey: string, patch: MetaPatchInput) => Promise<void>;
+  cancelAutomaticSmartTitles: () => void;
+  generateSmartTitle: (sessionKey: string, triggerKind?: HistoryGeneratedTitleTrigger) => Promise<void>;
+  clearSmartTitle: (sessionKey: string) => Promise<void>;
   updateMessage: (sessionKey: string, message: HistoryMessage, newText: string) => Promise<void>;
   deleteMessage: (sessionKey: string, message: HistoryMessage) => Promise<void>;
   deleteMessages: (sessionKey: string, messages: HistoryMessage[]) => Promise<void>;
@@ -343,9 +361,27 @@ function normalizeDetail(raw: unknown): HistorySessionDetail {
     const m = msg as Record<string, unknown>;
     const rawLineIndex = m.line_index ?? m.lineIndex;
     const rawEditableText = m.editable_text ?? m.editableText;
+    const rawParts = Array.isArray(m.parts) ? m.parts : [];
+    const parts = rawParts.flatMap((part) => {
+      if (!part || typeof part !== "object") return [];
+      const value = part as Record<string, unknown>;
+      const kind = asString(value.kind);
+      if (!["text", "tool_call", "tool_result", "reasoning", "system", "metadata", "unknown"].includes(kind)) {
+        return [];
+      }
+      const content = asString(value.content);
+      if (!content.trim()) return [];
+      return [{
+        kind: kind as NonNullable<HistoryMessage["parts"]>[number]["kind"],
+        content,
+        tool_name: asString(value.tool_name ?? value.toolName) || undefined,
+        call_id: asString(value.call_id ?? value.callId) || undefined,
+      }];
+    });
     return {
       role: normalizeRole(m.role),
       content: asString(m.content),
+      parts: parts.length > 0 ? parts : undefined,
       timestamp: asString(m.timestamp ?? "") || null,
       model: asString(m.model ?? "") || undefined,
       input_tokens: asNumber(m.input_tokens ?? m.inputTokens),
@@ -772,19 +808,24 @@ export interface FetchHistoryRequestLogStatsOptions {
   force?: boolean;
 }
 
-let requestLogSyncPromise: Promise<unknown> | null = null;
+let requestLogSyncPromise: Promise<RequestLogSyncResult> | null = null;
+
+function requestLogSyncChanged(result: RequestLogSyncResult): boolean {
+  return result.changed_files > 0 || result.removed_files > 0 || result.written_rows > 0;
+}
+
+function invalidateRequestLogQueries(): void {
+  void queryClient.invalidateQueries({ queryKey: ["historyRequestLogs"] });
+  void queryClient.invalidateQueries({ queryKey: ["historyRequestLogStats"] });
+}
+
+function invalidateHistoryStatsQueries(): void {
+  void queryClient.invalidateQueries({ queryKey: ["historyStats"] });
+}
 
 export async function syncHistoryRequestLogs(force = false): Promise<RequestLogSyncResult> {
   if (requestLogSyncPromise && !force) {
-    await requestLogSyncPromise;
-    return {
-      scanned_files: 0,
-      changed_files: 0,
-      removed_files: 0,
-      written_rows: 0,
-      failed_files: 0,
-      synced_at_ms: 0,
-    };
+    return requestLogSyncPromise;
   }
   const pathArgs = await getHistoryPathArgs();
   const promise = invoke<RequestLogSyncResult>("history_sync_request_logs", {
@@ -793,7 +834,10 @@ export async function syncHistoryRequestLogs(force = false): Promise<RequestLogS
   });
   requestLogSyncPromise = promise;
   try {
-    return await promise;
+    const result = await promise;
+    if (requestLogSyncChanged(result)) invalidateRequestLogQueries();
+    invalidateHistoryStatsQueries();
+    return result;
   } finally {
     if (requestLogSyncPromise === promise) requestLogSyncPromise = null;
   }
@@ -802,7 +846,6 @@ export async function syncHistoryRequestLogs(force = false): Promise<RequestLogS
 export async function fetchHistoryRequestLogStats(
   options: FetchHistoryRequestLogStatsOptions,
 ): Promise<RequestLogStatsPayload> {
-  await syncHistoryRequestLogs(options.force ?? false);
   const filters = {
     source: normalizeSourceFilter(options.sourceFilter),
     project_key: options.projectKey?.trim() || null,
@@ -1046,7 +1089,6 @@ export async function fetchTodayProjectStats(
   const normalizedProjectPaths = normalizeHistoryProjectPaths(projectPaths ?? []);
   const hasProjectPaths = normalizedProjectPaths.length > 0;
   try {
-    await syncHistoryRequestLogs(false);
     const raw = await invoke<unknown>("history_get_stats", {
       source: source ?? null,
       ...(await getHistoryPathArgs()),
@@ -1297,8 +1339,8 @@ function normalizeRequestLogStats(raw: unknown): RequestLogStatsPayload {
 }
 
 function getHistoryPathCacheKey(): string {
-  const { claudeConfigDir, codexConfigDir } = getHistoryPathArgsSync();
-  return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}`;
+  const { claudeConfigDir, codexConfigDir, grokSessionRoot, kimiConfigDir } = getHistoryPathArgsSync();
+  return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}|${grokSessionRoot ?? "__default__"}|${kimiConfigDir ?? "__default__"}`;
 }
 
 function makeSessionKey(
@@ -1391,11 +1433,15 @@ function parseTags(tagsJson: string): string[] {
   return [];
 }
 
-function toView(summary: HistorySessionSummary, meta?: SessionMeta): HistorySessionView {
+function toViewWithGeneratedTitle(
+  summary: HistorySessionSummary,
+  meta?: SessionMeta,
+  generatedTitle?: HistoryGeneratedTitleMeta,
+): HistorySessionView {
   const alias = meta?.alias ?? "";
   const starred = meta ? meta.starred === 1 : false;
   const tags = meta ? parseTags(meta.tags_json) : [];
-  const displayTitle = alias.trim() || summary.title;
+  const displayTitle = resolveHistoryDisplayTitle(alias, generatedTitle?.title, summary.title, summary.session_id);
   return {
     ...summary,
     sessionKey: summarySessionKey(summary),
@@ -1403,10 +1449,15 @@ function toView(summary: HistorySessionSummary, meta?: SessionMeta): HistorySess
     starred,
     tags,
     displayTitle,
+    generatedTitle,
   };
 }
 
-function applyMeta(summaries: HistorySessionSummary[], metaMap: SessionMetaMap): HistorySessionView[] {
+function applyMeta(
+  summaries: HistorySessionSummary[],
+  metaMap: SessionMetaMap,
+  generatedTitleMap: GeneratedTitleMap = {},
+): HistorySessionView[] {
   const metaBySourceSession = new Map<string, SessionMeta>();
   const metaBySourcePath = new Map<string, SessionMeta>();
   for (const meta of Object.values(metaMap)) {
@@ -1428,7 +1479,7 @@ function applyMeta(summaries: HistorySessionSummary[], metaMap: SessionMetaMap):
         ? undefined
         : metaBySourceSession.get(`${source}:${summary.session_id}`)) ??
       metaBySourcePath.get(`${source}:${normalizeMetaPath(summary.file_path)}`);
-    return toView(summary, meta);
+    return toViewWithGeneratedTitle(summary, meta, generatedTitleMap[key]);
   });
   return sortSessionViews(views);
 }
@@ -1471,6 +1522,76 @@ async function readMetaMap(): Promise<SessionMetaMap> {
   const result: SessionMetaMap = {};
   for (const row of rows) {
     result[row.session_key] = row;
+  }
+  return result;
+}
+
+function normalizeGeneratedTitleState(value: unknown): HistoryGeneratedTitleState {
+  return value === "pending" || value === "succeeded" || value === "failed" ? value : "idle";
+}
+
+function normalizeGeneratedTitleMeta(raw: unknown): HistoryGeneratedTitleMeta | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Record<string, unknown>;
+  const sessionKey = asString(rec.sessionKey ?? rec.session_key).trim();
+  const sourceId = asString(rec.sourceId ?? rec.source_id).trim() as HistorySource;
+  const sourceInstanceId = asString(rec.sourceInstanceId ?? rec.source_instance_id);
+  const sourceSessionId = asString(rec.sourceSessionId ?? rec.source_session_id);
+  if (!sessionKey || !sourceId || !sourceInstanceId || !sourceSessionId) return null;
+  const triggerRaw = asString(rec.triggerKind ?? rec.trigger_kind);
+  return {
+    sessionKey,
+    sourceId,
+    sourceInstanceId,
+    sourceSessionId,
+    transportKind: asString(rec.transportKind ?? rec.transport_kind) || "local",
+    title: (rec.title ?? rec.generatedTitle ?? rec.generated_title) == null
+      ? null
+      : asString(rec.title ?? rec.generatedTitle ?? rec.generated_title),
+    state: normalizeGeneratedTitleState(rec.state ?? rec.generationState ?? rec.generation_state),
+    revision: asNumber(rec.revision ?? rec.generationRevision ?? rec.generation_revision),
+    triggerKind: triggerRaw === "automatic" || triggerRaw === "manual" ? triggerRaw : null,
+    sourceMessageIdentity: (rec.sourceMessageIdentity ?? rec.source_message_identity) == null
+      ? null
+      : asString(rec.sourceMessageIdentity ?? rec.source_message_identity),
+    sourceContentSha256: (rec.sourceContentSha256 ?? rec.source_content_sha256) == null
+      ? null
+      : asString(rec.sourceContentSha256 ?? rec.source_content_sha256),
+    providerAppType: (rec.providerAppType ?? rec.provider_app_type) == null
+      ? null
+      : asString(rec.providerAppType ?? rec.provider_app_type),
+    providerId: (rec.providerId ?? rec.provider_id) == null
+      ? null
+      : asString(rec.providerId ?? rec.provider_id),
+    modelId: (rec.modelId ?? rec.model_id) == null
+      ? null
+      : asString(rec.modelId ?? rec.model_id),
+    failureCode: (rec.failureCode ?? rec.failure_code) == null
+      ? null
+      : asString(rec.failureCode ?? rec.failure_code),
+    autoSuppressed: rec.autoSuppressed === true || rec.auto_suppressed === 1 || rec.auto_suppressed === "1",
+    suppressedFingerprint: (rec.suppressedFingerprint ?? rec.suppressed_fingerprint) == null
+      ? null
+      : asString(rec.suppressedFingerprint ?? rec.suppressed_fingerprint),
+    requestedAt: (rec.requestedAt ?? rec.requested_at) == null
+      ? null
+      : asNumber(rec.requestedAt ?? rec.requested_at),
+    completedAt: (rec.completedAt ?? rec.completed_at) == null
+      ? null
+      : asNumber(rec.completedAt ?? rec.completed_at),
+    updatedAt: asNumber(rec.updatedAt ?? rec.updated_at),
+  };
+}
+
+async function readGeneratedTitleMap(): Promise<GeneratedTitleMap> {
+  const db = await getDb();
+  const rows = await db.select<unknown[]>(
+    "SELECT * FROM history_generated_titles ORDER BY updated_at DESC",
+  );
+  const result: GeneratedTitleMap = {};
+  for (const row of rows) {
+    const meta = normalizeGeneratedTitleMeta(row);
+    if (meta) result[meta.sessionKey] = meta;
   }
   return result;
 }
@@ -1679,7 +1800,12 @@ function mergeDetailIntoSessions(
             title: detail.title,
             updated_at: detail.updated_at,
             message_count: detail.message_count,
-            displayTitle: item.alias.trim() || detail.title,
+            displayTitle: resolveHistoryDisplayTitle(
+              item.alias,
+              item.generatedTitle?.title,
+              detail.title,
+              detail.session_id,
+            ),
           }
         : item
     )
@@ -1803,7 +1929,8 @@ async function applyFavoriteSnapshots(
   metaMap: SessionMetaMap,
   sourceFilter: HistorySourceFilter,
   projectPathFilter: string | null,
-  sourceSessionKeys?: Set<string>
+  sourceSessionKeys?: Set<string>,
+  generatedTitleMap: GeneratedTitleMap = {},
 ): Promise<HistorySessionView[]> {
   const summaryMap = new Map<string, HistorySessionSummary>();
   for (const summary of summaries) {
@@ -1819,7 +1946,7 @@ async function applyFavoriteSnapshots(
     }
   }
 
-  return applyMeta(Array.from(summaryMap.values()), metaMap).map((session) =>
+  return applyMeta(Array.from(summaryMap.values()), metaMap, generatedTitleMap).map((session) =>
     snapshotKeys.has(session.sessionKey) && !sourceKeys.has(session.sessionKey)
       ? { ...session, favoriteSnapshot: true }
       : session
@@ -1966,6 +2093,104 @@ async function syncRemoteHistoryContext(
   };
 }
 
+function titleSourceIdentity(session: HistorySessionView): {
+  sourceId: string;
+  sourceInstanceId: string;
+  sourceSessionId: string;
+  transportKind: string;
+} {
+  const ref = session.session_ref;
+  return {
+    sourceId: ref?.sourceId ?? session.source,
+    sourceInstanceId: ref?.sourceInstanceId ?? session.file_path,
+    sourceSessionId: ref?.sourceSessionId ?? session.session_id,
+    transportKind: ref?.transportKind ?? "local",
+  };
+}
+
+function generatedTitleView(
+  view: HistorySessionView,
+  generatedTitle: HistoryGeneratedTitleMeta | undefined,
+): HistorySessionView {
+  return {
+    ...view,
+    generatedTitle,
+    displayTitle: resolveHistoryDisplayTitle(
+      view.alias,
+      generatedTitle?.title,
+      view.title,
+      view.session_id,
+    ),
+  };
+}
+
+function normalizeGeneratedTitleResponse(raw: unknown): HistoryGeneratedTitleMeta | null {
+  const rec = raw && typeof raw === "object" && "meta" in raw
+    ? (raw as Record<string, unknown>).meta
+    : raw;
+  return normalizeGeneratedTitleMeta(rec);
+}
+
+const automaticTitleQueueKeys = new Set<string>();
+let automaticTitleQueue: Promise<void> = Promise.resolve();
+const smartTitleRequestKinds = new Map<string, HistoryGeneratedTitleTrigger>();
+const MAX_AUTOMATIC_TITLE_QUEUE_LENGTH = 32;
+
+function historyTimestampMs(value: number): number {
+  return value > 0 && value < 100_000_000_000 ? value * 1000 : value;
+}
+
+function queueAutomaticTitle(session: HistorySessionView): void {
+  const settings = useSettingsStore.getState().historySmartTitle;
+  if (!settings.enabled || !settings.enabledAt || historyTimestampMs(session.created_at) < settings.enabledAt) return;
+  if (session.read_only && session.session_ref?.transportKind !== "ssh") return;
+  if (automaticTitleQueueKeys.has(session.sessionKey)) return;
+  if (automaticTitleQueueKeys.size >= MAX_AUTOMATIC_TITLE_QUEUE_LENGTH) {
+    logWarn("history.smartTitle.queueFull", { limit: MAX_AUTOMATIC_TITLE_QUEUE_LENGTH });
+    return;
+  }
+  automaticTitleQueueKeys.add(session.sessionKey);
+  automaticTitleQueue = automaticTitleQueue
+    .then(async () => {
+      try {
+        if (!automaticTitleQueueKeys.has(session.sessionKey)) return;
+        await useHistoryStore.getState().generateSmartTitle(session.sessionKey, "automatic");
+      } catch (error) {
+        // 自动触发失败不打扰用户；后端已把失败与 revision 持久化，避免重复请求。
+        logWarn("history.smartTitle.autoFailed", { sessionKey: session.sessionKey, error: String(error) });
+      } finally {
+        automaticTitleQueueKeys.delete(session.sessionKey);
+      }
+    })
+    .catch((error) => {
+      automaticTitleQueueKeys.delete(session.sessionKey);
+      logWarn("history.smartTitle.queueFailed", { sessionKey: session.sessionKey, error: String(error) });
+    });
+}
+
+async function cancelAutomaticTitle(sessionKey: string): Promise<void> {
+  const activeAutomaticRequest = smartTitleRequestKinds.get(sessionKey) === "automatic";
+  const queued = automaticTitleQueueKeys.delete(sessionKey);
+  if (!queued && !activeAutomaticRequest) return;
+  try {
+    await invoke("history_title_cancel", { sessionKey });
+  } catch (error) {
+    if (queued) automaticTitleQueueKeys.add(sessionKey);
+    logWarn("history.smartTitle.cancelFailed", { sessionKey, error: String(error) });
+    throw new Error("history_title_cancel_failed");
+  }
+}
+
+function cancelAutomaticTitleQueue(): void {
+  const sessionKeys = [...automaticTitleQueueKeys];
+  automaticTitleQueueKeys.clear();
+  for (const sessionKey of sessionKeys) {
+    void invoke("history_title_cancel", { sessionKey }).catch((error) => {
+      logWarn("history.smartTitle.cancelFailed", { sessionKey, error: String(error) });
+    });
+  }
+}
+
 export const useHistoryStore = create<HistoryStore>((set, get) => ({
   isOpen: false,
   loadingSessions: false,
@@ -1998,6 +2223,8 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   focusedMessageIndex: null,
   focusedMessageSeq: 0,
   metaMap: {},
+  generatedTitleMap: {},
+  smartTitleInFlightSessionKeys: new Set(),
   focusGlobalSearchSeq: 0,
   focusSessionSearchSeq: 0,
   indexStatus: { ...DEFAULT_HISTORY_INDEX_STATUS },
@@ -2026,6 +2253,43 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         );
         await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_session_meta_updated ON session_meta(updated_at DESC)"
+        );
+        await db.execute(`
+      CREATE TABLE IF NOT EXISTS history_generated_titles (
+        session_key             TEXT PRIMARY KEY,
+        source_id               TEXT NOT NULL,
+        source_instance_id      TEXT NOT NULL DEFAULT '',
+        source_session_id       TEXT NOT NULL,
+        transport_kind          TEXT NOT NULL DEFAULT 'local',
+        generated_title         TEXT,
+        generation_state        TEXT NOT NULL DEFAULT 'idle'
+                                CHECK (generation_state IN ('idle','pending','succeeded','failed')),
+        generation_revision     INTEGER NOT NULL DEFAULT 0,
+        trigger_kind            TEXT
+                                CHECK (trigger_kind IS NULL OR trigger_kind IN ('automatic','manual')),
+        source_message_identity TEXT,
+        source_content_sha256   TEXT,
+        provider_app_type       TEXT,
+        provider_id             TEXT,
+        model_id                TEXT,
+        failure_code            TEXT,
+        auto_suppressed         INTEGER NOT NULL DEFAULT 0 CHECK (auto_suppressed IN (0,1)),
+        suppressed_fingerprint  TEXT,
+        requested_at            INTEGER,
+        completed_at            INTEGER,
+        updated_at              INTEGER NOT NULL
+      )
+        `);
+        await db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_history_generated_titles_source_identity ON history_generated_titles(source_id, source_instance_id, source_session_id)"
+        );
+        await db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_history_generated_titles_state ON history_generated_titles(generation_state, updated_at DESC)"
+        );
+        // 应用异常退出后不允许把未完成请求当作可自动重试任务。
+        await db.execute(
+      "UPDATE history_generated_titles SET generation_state = 'failed', failure_code = 'interrupted', updated_at = $1 WHERE generation_state = 'pending'",
+          [Date.now()]
         );
         await db.execute(`
       CREATE TABLE IF NOT EXISTS session_favorite_snapshots (
@@ -2304,9 +2568,10 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       const allSummaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
       const summaries = allSummaries.slice(0, sessionLimit);
       const metaMap = await readMetaMap();
+      const generatedTitleMap = await readGeneratedTitleMap();
       const sessions = remoteContext
-        ? applyMeta(summaries, metaMap)
-        : await applyFavoriteSnapshots(summaries, metaMap, sourceFilter, projectPath);
+        ? applyMeta(summaries, metaMap, generatedTitleMap)
+        : await applyFavoriteSnapshots(summaries, metaMap, sourceFilter, projectPath, undefined, generatedTitleMap);
       if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       const activeSessionKey = get().activeSessionKey;
       const activeExists = activeSessionKey
@@ -2316,6 +2581,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       set({
         sessions,
         metaMap,
+        generatedTitleMap,
         hasMoreSessions: allSummaries.length > sessionLimit,
         sessionListOffset: summaries.length,
         sessionsIndexGeneration: get().indexStatus.generation,
@@ -2416,9 +2682,17 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         sourceSessionKeys.add(key);
       }
       const metaMap = get().metaMap;
+      const generatedTitleMap = get().generatedTitleMap;
       const sessions = remoteContext
-        ? applyMeta(Array.from(summaryMap.values()), metaMap)
-        : await applyFavoriteSnapshots(Array.from(summaryMap.values()), metaMap, sourceFilter, projectPath, sourceSessionKeys);
+        ? applyMeta(Array.from(summaryMap.values()), metaMap, generatedTitleMap)
+        : await applyFavoriteSnapshots(
+          Array.from(summaryMap.values()),
+          metaMap,
+          sourceFilter,
+          projectPath,
+          sourceSessionKeys,
+          generatedTitleMap,
+        );
       if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       set({
         sessions,
@@ -2512,7 +2786,11 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       throw new Error("history_conversion_detail_mismatch");
     }
     const sessionKey = summarySessionKey(normalized);
-    const nextView = toView(normalized, get().metaMap[sessionKey]);
+    const nextView = toViewWithGeneratedTitle(
+      normalized,
+      get().metaMap[sessionKey],
+      get().generatedTitleMap[sessionKey],
+    );
     sessionDetailRequestSeq += 1;
     set((state) => ({
       sessions: sortSessionViews([
@@ -2531,7 +2809,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     return sessionKey;
   },
 
-  openSession: async (sessionKey) => {
+  openSession: async (sessionKey, options = {}) => {
     const requestSeq = ++sessionDetailRequestSeq;
     const stopPerf = createPerfMarker("history.session.detail", { sessionKey });
     const target = get().sessions.find((item) => item.sessionKey === sessionKey);
@@ -2545,6 +2823,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       loadingSessionDetail: true,
       focusedMessageIndex: null,
     });
+    let detailFromSnapshot = false;
     try {
       try {
         const remoteContext = get().remoteContext;
@@ -2571,12 +2850,18 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         if (!sameHistorySessionIdentity(target, detail)) {
           throw new Error("history_session_identity_mismatch");
         }
-        if (requestSeq === sessionDetailRequestSeq) set({ activeSession: detail });
+        if (requestSeq === sessionDetailRequestSeq) {
+          set({ activeSession: detail });
+          const currentView = get().sessions.find((item) => item.sessionKey === sessionKey);
+          if (currentView && !detailFromSnapshot) queueAutomaticTitle(currentView);
+        }
       } catch (err) {
+        if (options.requireLiveDetail) throw err;
         const snapshot = await readFavoriteSnapshotDetail(sessionKey);
         if (!snapshot) throw err;
         logWarn("history.favoriteSnapshot.fallback", { sessionKey, error: String(err) });
         if (!sameHistorySessionIdentity(target, snapshot)) throw err;
+        detailFromSnapshot = true;
         if (requestSeq === sessionDetailRequestSeq) set({ activeSession: snapshot });
       }
     } finally {
@@ -2651,7 +2936,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       if (requestSeq !== sessionDetailRequestSeq) return;
       set({
         activeSession: detail,
-        sessions: applyMeta(summaries, metaMap),
+        sessions: applyMeta(summaries, metaMap, get().generatedTitleMap),
       });
     } finally {
       if (requestSeq === sessionDetailRequestSeq) set({ loadingSessionDetail: false });
@@ -2691,18 +2976,22 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     const db = await getDb();
     for (const key of removedSessionKeys) {
       await db.execute("DELETE FROM session_meta WHERE session_key = $1", [key]);
+      await db.execute("DELETE FROM history_generated_titles WHERE session_key = $1", [key]);
       await deleteFavoriteSnapshot(key);
     }
 
     const sessions = get().sessions.filter((item) => !removedSessionKeys.has(item.sessionKey));
     const metaMap = { ...get().metaMap };
+    const generatedTitleMap = { ...get().generatedTitleMap };
     for (const key of removedSessionKeys) delete metaMap[key];
+    for (const key of removedSessionKeys) delete generatedTitleMap[key];
     const currentActiveKey = get().activeSessionKey;
     const activeWasDeleted = currentActiveKey !== null && removedSessionKeys.has(currentActiveKey);
     const nextActiveKey = activeWasDeleted ? sessions[0]?.sessionKey ?? null : currentActiveKey;
     set({
       sessions,
       metaMap,
+      generatedTitleMap,
       activeSessionKey: nextActiveKey,
       activeSession: activeWasDeleted ? null : get().activeSession,
       searchHits: get().searchHits.filter((hit) => !removedSessionKeys.has(hitSessionKey(hit))),
@@ -2794,7 +3083,15 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
           limit: DEFAULT_SEARCH_LIMIT,
         });
       }
-      const hits = (hitsRaw ?? []).map((item) => normalizeHit(item));
+      const hits = (hitsRaw ?? []).map((item) => normalizeHit(item)).map((hit) => {
+        const sessionKey = hitSessionKey(hit);
+        const meta = get().metaMap[sessionKey];
+        const generated = get().generatedTitleMap[sessionKey];
+        return {
+          ...hit,
+          title: resolveHistoryDisplayTitle(meta?.alias, generated?.title, hit.title, hit.session_id),
+        };
+      });
       if (requestSeq === globalSearchRequestSeq) {
         set({ searchHits: hits });
       }
@@ -3066,6 +3363,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       );
       await deleteFavoriteSnapshotsForSession(session.source, session.session_id);
     }
+    if (alias) {
+      await invoke("history_title_cancel", { sessionKey });
+    }
 
     const nextMeta: SessionMeta = {
       session_key: sessionKey,
@@ -3080,6 +3380,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     };
 
     const nextMetaMap = patch.starred === false ? await readMetaMap() : { ...get().metaMap, [sessionKey]: nextMeta };
+    const generatedTitleMap = get().generatedTitleMap;
     const sourceSessionKeys = new Set<string>();
     const visibleSessions = get().sessions.filter((item) => !(patch.starred === false && item.sessionKey === sessionKey && item.favoriteSnapshot));
     const summaries: HistorySessionSummary[] = visibleSessions.map((item) => {
@@ -3098,8 +3399,125 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         branch: item.branch,
       };
     });
-    const sessions = await applyFavoriteSnapshots(summaries, nextMetaMap, get().sourceFilter, effectiveProjectPathFilter(get()), sourceSessionKeys);
+    const sessions = await applyFavoriteSnapshots(
+      summaries,
+      nextMetaMap,
+      get().sourceFilter,
+      effectiveProjectPathFilter(get()),
+      sourceSessionKeys,
+      generatedTitleMap,
+    );
     set({ metaMap: nextMetaMap, sessions });
+  },
+
+  cancelAutomaticSmartTitles: () => {
+    cancelAutomaticTitleQueue();
+  },
+
+  generateSmartTitle: async (sessionKey, triggerKind = "manual") => {
+    if (triggerKind === "automatic" && !useSettingsStore.getState().historySmartTitle.enabled) {
+      throw new Error("history_title_auto_disabled");
+    }
+    const activeTrigger = smartTitleRequestKinds.get(sessionKey);
+    if (triggerKind === "manual" && activeTrigger === "automatic") {
+      await cancelAutomaticTitle(sessionKey);
+      smartTitleRequestKinds.delete(sessionKey);
+    } else if (activeTrigger) {
+      throw new Error("history_title_pending");
+    }
+    smartTitleRequestKinds.set(sessionKey, triggerKind);
+    set((state) => ({
+      smartTitleInFlightSessionKeys: new Set(state.smartTitleInFlightSessionKeys).add(sessionKey),
+    }));
+    try {
+      const target = get().sessions.find((item) => item.sessionKey === sessionKey);
+      if (!target) throw new Error("history_title_session_missing");
+      const identity = titleSourceIdentity(target);
+      if (identity.transportKind !== "ssh" && target.read_only) {
+        throw new Error("history_title_remote_not_supported");
+      }
+      if (
+        identity.transportKind === "ssh"
+        && (!get().remoteContext || get().remoteContext?.sourceInstanceId !== identity.sourceInstanceId)
+      ) {
+        throw new Error("history_title_remote_online_required");
+      }
+      const requireLiveDetail = identity.transportKind === "ssh";
+      if (requireLiveDetail || get().activeSessionKey !== sessionKey || !get().activeSession) {
+        await get().openSession(sessionKey, { requireLiveDetail });
+      }
+      const detail = get().activeSessionKey === sessionKey ? get().activeSession : null;
+      if (!detail) throw new Error("history_title_detail_missing");
+      const candidate: HistoryTitleCandidate | null = await extractHistoryTitleCandidate(detail, sessionKey);
+      if (!candidate) throw new Error("history_title_candidate_missing");
+
+      const selection = useSettingsStore.getState().historySmartTitle;
+      if (triggerKind === "automatic" && !selection.enabled) {
+        throw new Error("history_title_auto_disabled");
+      }
+      if (!selection.providerAppType || !selection.providerId || !selection.modelId) {
+        throw new Error("history_title_provider_not_selected");
+      }
+      const raw = await invoke<unknown>("history_title_generate", {
+        request: {
+          sessionKey,
+          sourceId: identity.sourceId,
+          sourceInstanceId: identity.sourceInstanceId,
+          sourceSessionId: identity.sourceSessionId,
+          transportKind: identity.transportKind,
+          sourceMessageIdentity: candidate.identity,
+          sourceContentSha256: candidate.contentSha256,
+          candidateTextSha256: candidate.inputContentSha256,
+          candidateText: candidate.text,
+          triggerKind,
+          providerAppType: selection.providerAppType,
+          providerId: selection.providerId,
+          modelId: selection.modelId,
+        },
+      });
+      const meta = normalizeGeneratedTitleResponse(raw);
+      if (!meta) throw new Error("history_title_invalid_response");
+      set((state) => ({
+        generatedTitleMap: { ...state.generatedTitleMap, [sessionKey]: meta },
+        sessions: state.sessions.map((view) =>
+          view.sessionKey === sessionKey ? generatedTitleView(view, meta) : view
+        ),
+      }));
+    } finally {
+      if (smartTitleRequestKinds.get(sessionKey) === triggerKind) {
+        smartTitleRequestKinds.delete(sessionKey);
+        set((state) => {
+          if (!state.smartTitleInFlightSessionKeys.has(sessionKey)) return {};
+          const smartTitleInFlightSessionKeys = new Set(state.smartTitleInFlightSessionKeys);
+          smartTitleInFlightSessionKeys.delete(sessionKey);
+          return { smartTitleInFlightSessionKeys };
+        });
+      }
+    }
+  },
+
+  clearSmartTitle: async (sessionKey) => {
+    const target = get().sessions.find((item) => item.sessionKey === sessionKey);
+    if (!target) throw new Error("history_title_session_missing");
+    const identity = titleSourceIdentity(target);
+    const raw = await invoke<unknown>("history_title_clear", {
+      request: {
+        sessionKey,
+        sourceId: identity.sourceId,
+        sourceInstanceId: identity.sourceInstanceId,
+        sourceSessionId: identity.sourceSessionId,
+        transportKind: identity.transportKind,
+        sourceContentSha256: get().generatedTitleMap[sessionKey]?.sourceContentSha256 ?? null,
+      },
+    });
+    const meta = normalizeGeneratedTitleResponse(raw);
+    if (!meta) throw new Error("history_title_invalid_response");
+    set((state) => ({
+      generatedTitleMap: { ...state.generatedTitleMap, [sessionKey]: meta },
+      sessions: state.sessions.map((view) =>
+        view.sessionKey === sessionKey ? generatedTitleView(view, meta) : view
+      ),
+    }));
   },
 
   updateMessage: async (sessionKey, message, newText) => {

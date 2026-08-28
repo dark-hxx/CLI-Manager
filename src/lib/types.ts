@@ -5,6 +5,10 @@ export interface Group {
   name: string;
   parent_id: string | null;
   sort_order: number;
+  /** 外观标记：单个 emoji 字符或内置图标 key；空串表示回退默认文件夹图标。 */
+  icon: string;
+  /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
+  color: string;
   created_at: string;
 }
 
@@ -25,7 +29,8 @@ export type SshAuthMode =
 export type SshJumpMode = "none" | "host" | "proxy_jump";
 
 export type SshProxyType = "none" | "http" | "socks5" | "proxy_command";
-export type SshToolSource = "claude" | "codex";
+export type SshToolSource = "claude" | "codex" | "kimi" | "grok";
+export type SshHistorySource = Extract<SshToolSource, "claude" | "codex">;
 export type SshToolIntegrationScopeKind = "hostPrimary" | "projectOverride" | "retainedRoot";
 export type SshToolIntegrationValidationState =
   | "unvalidated"
@@ -135,6 +140,18 @@ export interface SshAgentInstallPreview {
   distributionSource: "bundled" | "remote";
 }
 
+export interface SshAgentAvailableRelease {
+  action: "install" | "upgrade" | "reinstall" | "downgrade";
+  manifestUrl: string;
+  channel: string;
+  version: string;
+  protocolMin: number;
+  protocolMax: number;
+  publishedAt: string;
+  currentVersion: string;
+  distributionSource: "bundled" | "remote";
+}
+
 export interface SshAgentOperationResult {
   action: "installed" | "updated" | "rolledBack" | "uninstalled" | "purged";
   installationId: string;
@@ -200,11 +217,11 @@ export interface SshRemoteHookInstallationRecord {
   managedEntries: number;
   adapterVersion: number;
   installedAt: number;
-  historySourceCandidate: {
-    source: SshToolSource;
+  historySourceCandidate?: {
+    source: SshHistorySource;
     canonicalConfigRoot: string;
     configRootHash: string;
-  };
+  } | null;
 }
 
 export interface SshRemoteHookConfigReport {
@@ -305,6 +322,10 @@ export interface Project {
   ssh_host_id: string | null;
   remote_path: string;
   cli_config_root: string;
+  /** 外观标记：单个 emoji 字符或内置图标 key；空串表示按节点类型回退默认图标。 */
+  icon: string;
+  /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
+  color: string;
   created_at: string;
   updated_at: string;
 }
@@ -327,6 +348,8 @@ export interface CreateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  icon?: string;
+  color?: string;
 }
 
 export interface UpdateProjectInput {
@@ -348,6 +371,8 @@ export interface UpdateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  icon?: string;
+  color?: string;
 }
 
 export type TerminalScope =
@@ -359,6 +384,8 @@ export type TerminalScope =
 export interface CreateGroupInput {
   name: string;
   parent_id?: string | null;
+  icon?: string;
+  color?: string;
 }
 
 export type TreeNode =
@@ -407,6 +434,7 @@ export type RemoteHandoffPhase = "pending" | "active" | "cancelling" | "recovery
 
 export interface RemoteHandoffSessionState {
   phase: RemoteHandoffPhase;
+  agent?: import("./remoteHandoff").RemoteHandoffAgent;
   cliSessionId: string;
   projectName: string;
   workDir: string;
@@ -602,9 +630,27 @@ export interface HistorySessionSummary {
   usage?: HistorySessionUsage;
 }
 
+export type HistoryMessagePartKind =
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "reasoning"
+  | "system"
+  | "metadata"
+  | "unknown";
+
+export interface HistoryMessagePart {
+  kind: HistoryMessagePartKind;
+  content: string;
+  tool_name?: string;
+  call_id?: string;
+}
+
 export interface HistoryMessage {
   role: string;
   content: string;
+  /** 可选结构化内容；旧快照缺失时由前端按 role 保守回退。 */
+  parts?: HistoryMessagePart[];
   timestamp?: string | null;
   model?: string;
   input_tokens?: number;
@@ -733,7 +779,7 @@ export interface HistorySearchHit {
 
 export interface SshRemoteHistorySyncResult {
   sourceInstanceId: string;
-  source: SshToolSource;
+  source: SshHistorySource;
   installationId: string;
   remoteMachineId: string;
   sshUser: string;
@@ -755,7 +801,7 @@ export interface SshRemoteHistorySyncResult {
 }
 
 export interface SshRemoteResumePreflight {
-  source: SshToolSource;
+  source: SshHistorySource;
   sourceSessionId: string;
   sourceInstanceId: string;
   installationId: string;
@@ -825,12 +871,65 @@ export interface SessionFavoriteSnapshot {
   snapshot_at: string;
 }
 
+export type HistoryGeneratedTitleState = "idle" | "pending" | "succeeded" | "failed";
+export type HistoryGeneratedTitleTrigger = "automatic" | "manual";
+
+export interface HistoryGeneratedTitleMeta {
+  sessionKey: string;
+  sourceId: HistorySource;
+  sourceInstanceId: string;
+  sourceSessionId: string;
+  transportKind: string;
+  title: string | null;
+  state: HistoryGeneratedTitleState;
+  revision: number;
+  triggerKind: HistoryGeneratedTitleTrigger | null;
+  sourceMessageIdentity: string | null;
+  sourceContentSha256: string | null;
+  providerAppType: string | null;
+  providerId: string | null;
+  modelId: string | null;
+  failureCode: string | null;
+  autoSuppressed: boolean;
+  suppressedFingerprint: string | null;
+  requestedAt: number | null;
+  completedAt: number | null;
+  updatedAt: number;
+}
+
+export interface HistoryTitleCandidate {
+  text: string;
+  identity: string;
+  contentSha256: string;
+  inputContentSha256: string;
+}
+
+export interface HistorySmartTitleSettings {
+  enabled: boolean;
+  providerAppType: "claude" | "codex" | "grokbuild" | null;
+  providerId: string | null;
+  modelId: string | null;
+  enabledAt: number | null;
+  customPrompt: string;
+}
+
+export interface HistoryTitleProviderOption {
+  appType: "claude" | "codex" | "grokbuild";
+  providerId: string;
+  providerName: string;
+  modelId: string | null;
+  apiFormat: string | null;
+  ready: boolean;
+  reasonCode: string | null;
+}
+
 export interface HistorySessionView extends HistorySessionSummary {
   sessionKey: string;
   alias: string;
   starred: boolean;
   tags: string[];
   displayTitle: string;
+  generatedTitle?: HistoryGeneratedTitleMeta;
   favoriteSnapshot?: boolean;
 }
 
@@ -989,9 +1088,11 @@ export interface RequestLogItem {
   requested_model?: string | null;
   outbound_model?: string | null;
   response_model?: string | null;
-  usage_status?: "complete" | "partial" | "missing" | "invalid";
+  usage_status?: "complete" | "partial" | "missing" | "invalid" | "not_applicable";
   status_code?: number | null;
   outcome?: string;
+  error_code?: string | null;
+  error_detail?: string | null;
   duration_ms?: number;
   attempt_count?: number;
   degraded?: boolean;

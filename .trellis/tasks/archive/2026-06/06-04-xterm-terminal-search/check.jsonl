@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check frontend quality expectations after implementation."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check implementation stays minimal and avoids unnecessary abstraction."}

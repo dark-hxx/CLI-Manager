@@ -173,14 +173,14 @@ CLI-Manager 是一款专注于 **AI CLI 工作流增强**的桌面应用，将�
 | Gemini CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | GitHub Copilot CLI | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Antigravity | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
-| Grok Build | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| OpenCode | 👁️ | 👁️ | 👁️ | DB | — | — | — | — | — |
+| Grok Build | 👁️ | 👁️ | 👁️ | 👁️ | — | ✅ | 👁️ | — | ✅ |
+| Pi | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
+| OpenCode | 👁️ | 👁️ | 👁️ | DB | — | ✅ | — | — | — |
 | Kiro | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Cursor | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 | Cline | 👁️ | 👁️ | 👁️ | 👁️ | — | — | — | — | — |
 
-> 统计能力取决于各来源实际记录的字段。Claude Code 与 Codex CLI 集成最深，额外支持 Hook 实时状态、文件变更 Diff、带审计与撤回的消息编辑、恢复会话以及双向会话互转。
+> Statistics depend on the fields exposed by each source. Claude Code and Codex CLI provide the deepest integration, including Hook-driven live status, file-change Diff, message editing with audit / rollback, resume, and two-way session conversion. Grok Build supports local/WSL resume, live stats, and session-directory delete; SSH Grok is CLI/Hook only, without remote history.
 
 ---
 

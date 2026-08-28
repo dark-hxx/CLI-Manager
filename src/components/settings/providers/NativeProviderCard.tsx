@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Group, Menu, Stack, Switch, Text, Tooltip } from "@mantine/core";
+import { Badge, Group, Menu, Stack, Switch, Text, Tooltip } from "@mantine/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useState, type CSSProperties } from "react";
@@ -6,6 +6,7 @@ import { ArrowDown, ArrowUp, Boxes, Check, ChevronDown, ChevronUp, Copy, GripVer
 import { useI18n } from "@/lib/i18n";
 import { DND_SORTABLE_TRANSITION } from "@/lib/dragInteraction";
 import { VendorIcon, inferVendor } from "../../VendorIcon";
+import { NativeProviderActionIcon as ActionIcon } from "./NativeProviderButton";
 import type { NativeProviderCard as NativeProviderCardData, NativeProviderFailoverProvider } from "./nativeProviderTypes";
 
 interface NativeProviderCardFailoverState {

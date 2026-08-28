@@ -62,79 +62,7 @@ fn status_for(root: &Path) -> Result<OpenCodeHookStatus, String> {
 }
 
 fn plugin_source() -> String {
-    format!(
-        r#"// {marker}
-// Managed by CLI-Manager. Reinstall from the Agent Capabilities panel.
-
-const MARKER = "{marker}";
-const lastStatus = new Map();
-
-function nonEmpty(value) {{
-  const text = typeof value === "string" ? value.trim() : "";
-  return text || null;
-}}
-
-function sessionIdOf(event) {{
-  const properties = event?.properties ?? {{}};
-  return nonEmpty(properties?.info?.id)
-    ?? nonEmpty(properties?.sessionID)
-    ?? nonEmpty(properties?.sessionId)
-    ?? nonEmpty(properties?.id);
-}}
-
-function mappedEvent(event) {{
-  const type = nonEmpty(event?.type);
-  if (type === "session.created") return "SessionStart";
-  if (type === "session.idle") return "Stop";
-  if (type === "session.error") return "StopFailure";
-  if (type !== "session.status" && type !== "session.updated") return null;
-  const status = nonEmpty(event?.properties?.status?.type)
-    ?? nonEmpty(event?.properties?.status)
-    ?? nonEmpty(event?.properties?.info?.status);
-  if (status === "busy" || status === "running") return "UserPromptSubmit";
-  if (status === "idle") return "Stop";
-  if (status === "error" || status === "failed") return "StopFailure";
-  return null;
-}}
-
-async function post(event, sessionId) {{
-  const tabId = nonEmpty(process.env.CLI_MANAGER_TAB_ID);
-  const port = nonEmpty(process.env.CLI_MANAGER_NOTIFY_PORT);
-  const token = nonEmpty(process.env.CLI_MANAGER_NOTIFY_TOKEN);
-  if (!tabId || !port || !token || !sessionId) return;
-  const dedupKey = `${{sessionId}}:${{event}}`;
-  if (lastStatus.get(sessionId) === dedupKey) return;
-  lastStatus.set(sessionId, dedupKey);
-  try {{
-    await fetch(`http://127.0.0.1:${{port}}/api/claude-hook`, {{
-      method: "POST",
-      headers: {{ Authorization: `Bearer ${{token}}`, "Content-Type": "application/json" }},
-      body: JSON.stringify({{
-        tabId,
-        source: "opencode",
-        event,
-        sessionId,
-        cwd: process.cwd(),
-        timestamp: new Date().toISOString(),
-      }}),
-    }});
-  }} catch {{
-    // Session telemetry must never interrupt OpenCode.
-  }}
-}}
-
-export const CliManagerSessionBridge = async () => ({{
-  event: async (input) => {{
-    const event = input?.event ?? input;
-    const mapped = mappedEvent(event);
-    if (mapped) await post(mapped, sessionIdOf(event));
-  }},
-}});
-
-void MARKER;
-"#,
-        marker = PLUGIN_MARKER,
-    )
+    include_str!("../../resources/opencode/cli-manager-hook.js").to_string()
 }
 
 #[tauri::command]
@@ -176,6 +104,7 @@ mod tests {
         let source = plugin_source();
         assert!(source.contains("session.created"));
         assert!(source.contains("session.status"));
+        assert!(source.contains("session.deleted"));
         assert!(source.contains("source: \"opencode\""));
         assert!(!source.contains("CLI_MANAGER_NOTIFY_TOKEN="));
     }

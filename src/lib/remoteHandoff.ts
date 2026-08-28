@@ -1,14 +1,49 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Project, SshHost, TerminalSession, WorktreeRecord } from "./types";
 import type { SessionStatus, TabNotificationState } from "../stores/terminalStore";
+import { resolveAgentRuntimeKind } from "./agentCapabilities";
 
 export const REMOTE_HANDOFF_START_REQUEST_EVENT = "remote-handoff-start-request";
 export const REMOTE_HANDOFF_CANCEL_REQUEST_EVENT = "remote-handoff-cancel-request";
 
 export type CcConnectPlatform = "telegram" | "feishu" | "weixin" | "wecom";
 export type CcConnectHandoffTransport = "local" | "ssh";
+export type RemoteHandoffAgent = "claude" | "codex" | "pi" | "opencode";
+
+const REMOTE_HANDOFF_AGENTS = new Set<RemoteHandoffAgent>([
+  "claude",
+  "codex",
+  "pi",
+  "opencode",
+]);
+
+function asRemoteHandoffAgent(value: string | null | undefined): RemoteHandoffAgent | null {
+  const kind = resolveAgentRuntimeKind(value);
+  return kind && REMOTE_HANDOFF_AGENTS.has(kind as RemoteHandoffAgent)
+    ? kind as RemoteHandoffAgent
+    : null;
+}
+
+export function resolveRemoteHandoffAgent(
+  session: TerminalSession,
+  project: Project | undefined,
+): { agent: RemoteHandoffAgent | null; mismatch: boolean } {
+  const projectKind = asRemoteHandoffAgent(project?.cli_tool);
+  const sessionKind = resolveAgentRuntimeKind(session.cliTool)
+    ?? resolveAgentRuntimeKind(session.startupCmd);
+  // The registered project is authoritative. Session metadata is only
+  // corroborating evidence because the backend excludes unsupported projects.
+  if (!projectKind) {
+    return { agent: null, mismatch: false };
+  }
+  if (sessionKind && projectKind !== sessionKind) {
+    return { agent: null, mismatch: true };
+  }
+  return { agent: projectKind, mismatch: false };
+}
 
 export interface CcConnectHandoffInfo {
+  agent: RemoteHandoffAgent;
   localSessionId: string;
   cliSessionId: string;
   projectId: string;
@@ -33,6 +68,7 @@ export interface CcConnectHandoffStatus {
 }
 
 export interface CcConnectHandoffStartRequest {
+  agent: RemoteHandoffAgent;
   localSessionId: string;
   cliSessionId: string;
   platform: CcConnectPlatform;
@@ -54,7 +90,9 @@ export interface CcConnectHandoffPlatformTarget {
 export type RemoteHandoffEligibilityReason =
   | "already_handed_off"
   | "another_session_handed_off"
-  | "codex_only"
+  | "unsupported_agent"
+  | "agent_mismatch"
+  | "ssh_agent_unsupported"
   | "missing_cli_session_id"
   | "missing_project"
   | "missing_work_dir"
@@ -70,12 +108,6 @@ export type RemoteHandoffEligibilityReason =
 export interface RemoteHandoffEligibility {
   eligible: boolean;
   reason: RemoteHandoffEligibilityReason | null;
-}
-
-export function isCodexSession(session: TerminalSession, project: Project | undefined): boolean {
-  const configured = project?.cli_tool.trim().toLowerCase() ?? "";
-  if (configured === "codex" || configured.includes("codex")) return true;
-  return /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i.test(session.startupCmd?.trim() ?? "");
 }
 
 export function getRemoteHandoffWorkDir(
@@ -102,7 +134,9 @@ export function getRemoteHandoffEligibility(input: {
   if (activeHandoff) return { eligible: false, reason: "another_session_handed_off" };
   if ((session.kind ?? "pty") !== "pty") return { eligible: false, reason: "unsupported_session" };
   if (!project) return { eligible: false, reason: "missing_project" };
-  if (!isCodexSession(session, project)) return { eligible: false, reason: "codex_only" };
+  const agentResolution = resolveRemoteHandoffAgent(session, project);
+  if (agentResolution.mismatch) return { eligible: false, reason: "agent_mismatch" };
+  if (!agentResolution.agent) return { eligible: false, reason: "unsupported_agent" };
   if (project.environment_type === "wsl") {
     return { eligible: false, reason: "path_unsupported" };
   }
@@ -110,6 +144,9 @@ export function getRemoteHandoffEligibility(input: {
     return { eligible: false, reason: "missing_work_dir" };
   }
   if (project.environment_type === "ssh") {
+    if (agentResolution.agent !== "codex") {
+      return { eligible: false, reason: "ssh_agent_unsupported" };
+    }
     if (session.worktreeId) {
       return { eligible: false, reason: "ssh_worktree_unsupported" };
     }

@@ -62,7 +62,13 @@ import { WorktreeFinishDialog } from "./worktree/WorktreeFinishDialog";
 import { FileExplorerSidebar } from "./files/FileExplorerSidebar";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
-import { projectSupportsCapability, resolveProjectCapabilities, type ProjectCapability } from "../lib/projectCapabilities";
+import {
+  isSshGrokHistoryUnsupported,
+  isSshHistorySourceUnsupported,
+  projectSupportsCapability,
+  resolveProjectCapabilities,
+  type ProjectCapability,
+} from "../lib/projectCapabilities";
 import { resolveCliToolHistorySourceId, resolveCliToolIconKey, type CliToolIconKey } from "../lib/cliTools";
 import { resolveHistoryProjectPath } from "../lib/historyProjectPaths";
 import { resolveAgentRuntimeKind } from "../lib/agentCapabilities";
@@ -112,6 +118,7 @@ import {
   TERMINAL_FILE_NAVIGATION_REQUEST_EVENT,
   type TerminalFileNavigationRequest,
 } from "../lib/terminalFileNavigation";
+import { consumeTerminalFileDragPanelSyncSuppression } from "../lib/terminalFileDrag";
 import {
   resolveTerminalPaneMarker,
   type TerminalPaneMarkerSettings,
@@ -668,6 +675,13 @@ function SortableTab({
             hideHoverCard();
             onActivate();
           }}
+          onAuxClick={(event) => {
+            if (event.button !== 1 || isEditing || isDragging) return;
+            event.preventDefault();
+            event.stopPropagation();
+            hideHoverCard();
+            onClose(event.currentTarget.getBoundingClientRect());
+          }}
           onPointerEnter={scheduleHoverCard}
           onPointerLeave={scheduleHideHoverCard}
           onContextMenu={(event) => {
@@ -691,7 +705,7 @@ function SortableTab({
             </span>
           ) : cliToolIcon ? (
             <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
-              <CliToolIcon icon={cliToolIcon} size={14} />
+              <CliToolIcon icon={cliToolIcon} size={14} className="text-current" />
             </span>
           ) : null}
           {worktree && (
@@ -1010,6 +1024,13 @@ function SortableWorkspanTab({
               hideHoverCard();
               onActivate();
             }}
+            onAuxClick={(event) => {
+              if (event.button !== 1 || editing || isDragging) return;
+              event.preventDefault();
+              event.stopPropagation();
+              hideHoverCard();
+              onClose(event.currentTarget.getBoundingClientRect());
+            }}
             onPointerEnter={scheduleHoverCard}
             onPointerLeave={scheduleHideHoverCard}
             onDoubleClick={(event) => {
@@ -1036,7 +1057,7 @@ function SortableWorkspanTab({
               </span>
             ) : cliToolIcon ? (
               <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
-                <CliToolIcon icon={cliToolIcon} size={14} />
+                <CliToolIcon icon={cliToolIcon} size={14} className="text-current" />
               </span>
             ) : (
               <Terminal size={14} strokeWidth={1.8} aria-hidden="true" />
@@ -1129,7 +1150,7 @@ function DragOverlayTab({
         </span>
       ) : cliToolIcon ? (
         <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
-          <CliToolIcon icon={cliToolIcon} size={14} />
+          <CliToolIcon icon={cliToolIcon} size={14} className="text-current" />
         </span>
       ) : null}
       <span className="ui-terminal-tab-title min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
@@ -2445,6 +2466,7 @@ interface TerminalTabsProps {
   projectScopedTerminalViewEnabled?: boolean;
   terminalScope?: TerminalScope;
   onOpenProviderSettings?: () => void;
+  onOpenHistorySettings?: () => void;
 }
 
 export function TerminalTabs({
@@ -2453,6 +2475,7 @@ export function TerminalTabs({
   projectScopedTerminalViewEnabled = false,
   terminalScope = ALL_TERMINALS_SCOPE,
   onOpenProviderSettings,
+  onOpenHistorySettings,
 }: TerminalTabsProps = {}) {
   const { t } = useI18n();
   const { prompt, promptDialog } = useAppPrompt();
@@ -2593,8 +2616,16 @@ export function TerminalTabs({
   const worktreeById = useMemo(() => new Map(worktrees.map((worktree) => [worktree.id, worktree])), [worktrees]);
   const rejectUnsupportedCapability = useCallback((project: Project | null | undefined, capability: ProjectCapability) => {
     if (projectSupportsCapability(project, capability)) return false;
-    toast.info(t("remoteCapabilities.unsupportedTitle"), {
-      description: t("remoteCapabilities.unsupportedDescription"),
+    const sshHistoryUnsupported = capability === "history" && isSshHistorySourceUnsupported(project);
+    const title = sshHistoryUnsupported
+      ? isSshGrokHistoryUnsupported(project)
+        ? t("remoteCapabilities.grokHistoryUnsupportedTitle")
+        : t("remoteCapabilities.sshHistoryUnsupportedTitle")
+      : t("remoteCapabilities.unsupportedTitle");
+    toast.info(title, {
+      description: sshHistoryUnsupported
+        ? t("remoteCapabilities.sshHistoryUnsupportedDescription")
+        : t("remoteCapabilities.unsupportedDescription"),
     });
     return true;
   }, [t]);
@@ -3306,6 +3337,7 @@ export function TerminalTabs({
         invoke<{
         claude: { status: string };
         codex: { status: string };
+        kimi: { status: string };
         pi: { status: string };
         grok: { status: string };
         }>(
@@ -3313,6 +3345,7 @@ export function TerminalTabs({
         {
           selectedDir: settings.claudeHookConfigDir?.trim() || null,
           codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
+          kimiSelectedDir: settings.kimiHookConfigDir?.trim() || null,
           piSelectedDir: settings.piHookConfigDir?.trim() || null,
           grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
           ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
@@ -3325,6 +3358,7 @@ export function TerminalTabs({
         openCodeStatus.status === "installed" ||
         (settings.claudeHookBridgeEnabled && hookStatus.claude.status === "installed") ||
         (settings.codexHookBridgeEnabled && hookStatus.codex.status === "installed") ||
+        (settings.kimiHookBridgeEnabled && hookStatus.kimi.status === "installed") ||
         (settings.piHookBridgeEnabled && hookStatus.pi.status === "installed") ||
         (settings.grokHookBridgeEnabled && hookStatus.grok.status === "installed");
       if (!hasEnabledInstalledHook) {
@@ -3487,7 +3521,9 @@ export function TerminalTabs({
   }, [closeHistory, panelSession, projectById, rejectUnsupportedCapability, replayPanelActive, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const syncFilePanelProject = useCallback(async (project: Project) => {
+    const preserveCurrentFilePanel = consumeTerminalFileDragPanelSyncSuppression();
     if (rejectUnsupportedCapability(project, "files")) return false;
+    if (preserveCurrentFilePanel) return true;
     try {
       const sameFileContext = isSameProjectFileContext(
         useFileExplorerStore.getState().project,
@@ -4440,7 +4476,7 @@ export function TerminalTabs({
             style={{ display: historyActive ? "block" : "none" }}
           >
             <Suspense fallback={null}>
-              <HistoryWorkspace active={historyActive} />
+              <HistoryWorkspace active={historyActive} onOpenSettings={onOpenHistorySettings} />
             </Suspense>
           </div>
         )}

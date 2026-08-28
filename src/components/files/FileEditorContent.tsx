@@ -1,5 +1,7 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
+import { useEffect, useState, type CSSProperties, type WheelEvent as ReactWheelEvent } from "react";
 import { useI18n } from "../../lib/i18n";
+import { normalizeFontFamilyStack } from "../../lib/systemFonts";
 import type { Project } from "../../lib/types";
 import type { ActiveProjectFile } from "../../stores/fileExplorerStore";
 import type {
@@ -9,7 +11,12 @@ import type {
 } from "../../stores/gitDiffWorkspaceStore";
 import { GitDiffEditorHost } from "../git/diff/GitDiffEditorHost";
 import { FileCode, Image } from "../icons";
+import { FontSizeControl, useFontSizeControlVisibility } from "../ui/FontSizeControl";
 import { MarkdownContent } from "../ui/MarkdownContent";
+import { useSettingsStore } from "../../stores/settingsStore";
+
+const FILE_PREVIEW_FONT_SIZE_MIN = 8;
+const FILE_PREVIEW_FONT_SIZE_MAX = 32;
 
 interface FileEditorContentProps {
   file: ActiveProjectFile | null;
@@ -37,8 +44,31 @@ export function FileEditorContent({
   onContentChange,
 }: FileEditorContentProps) {
   const { t } = useI18n();
+  const uiFontFamily = useSettingsStore((state) => state.uiFontFamily);
+  const uiFontSize = useSettingsStore((state) => state.uiFontSize);
+  const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
+  const [fontSize, setFontSize] = useState(uiFontSize);
+  const { fontSizeControlVisible, showFontSizeControl } = useFontSizeControlVisibility();
+  const previewableText = file?.previewKind === "text" || file?.previewKind === "markdown";
+
+  useEffect(() => setFontSize(uiFontSize), [uiFontSize]);
+
+  const handlePreviewWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!previewableText || !event.ctrlKey || event.deltaY === 0) return;
+    event.preventDefault();
+    showFontSizeControl();
+    const direction = event.deltaY < 0 ? 1 : -1;
+    setFontSize((current) => Math.min(
+      FILE_PREVIEW_FONT_SIZE_MAX,
+      Math.max(FILE_PREVIEW_FONT_SIZE_MIN, current + direction),
+    ));
+  };
+
   return (
-    <div className="ui-file-editor-body min-h-0 flex-1 overflow-hidden bg-surface">
+    <div
+      className="ui-file-editor-body relative min-h-0 flex-1 overflow-hidden bg-surface"
+      onWheelCapture={handlePreviewWheel}
+    >
       {!file && !activeDiff && (
         <div className="flex h-full flex-col items-center justify-center gap-2 text-text-muted">
           <FileCode size={36} strokeWidth={1.2} />
@@ -71,7 +101,14 @@ export function FileEditorContent({
       )}
       {file && (file.previewKind === "text" || file.previewKind === "markdown") && (
         file.previewKind === "markdown" && previewMode === "preview" ? (
-          <div className="ui-file-editor-markdown-preview h-full overflow-auto p-4">
+          <div
+            className="ui-file-editor-markdown-preview h-full overflow-auto p-4"
+            style={{
+              "--markdown-preview-font-size": `${fontSize}px`,
+              fontFamily: effectiveUiFontFamily,
+              fontSize,
+            } as CSSProperties & Record<"--markdown-preview-font-size", string>}
+          >
             <MarkdownContent content={file.content} variant="terminal" linkBehavior="preview" />
           </div>
         ) : (
@@ -84,7 +121,8 @@ export function FileEditorContent({
             onChange={(value) => onContentChange(value ?? "")}
             options={{
               automaticLayout: true,
-              fontSize: 13,
+              fontFamily: effectiveUiFontFamily,
+              fontSize,
               glyphMargin: true,
               minimap: { enabled: true },
               scrollBeyondLastLine: false,
@@ -92,6 +130,19 @@ export function FileEditorContent({
             }}
           />
         )
+      )}
+      {previewableText && fontSizeControlVisible && (
+        <FontSizeControl
+          fontSize={fontSize}
+          defaultFontSize={uiFontSize}
+          min={FILE_PREVIEW_FONT_SIZE_MIN}
+          max={FILE_PREVIEW_FONT_SIZE_MAX}
+          onChange={(next) => {
+            showFontSizeControl();
+            setFontSize(next);
+          }}
+          className="absolute bottom-3 right-3 z-20"
+        />
       )}
     </div>
   );

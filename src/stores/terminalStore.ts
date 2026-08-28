@@ -51,6 +51,8 @@ import { parseStoredSshHookReport, resolveSshToolSource } from "../lib/sshToolIn
 import { getSshClientInstanceId } from "../lib/sshClientIdentity";
 import { translateCurrent } from "../lib/i18n";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
+import { buildRemoteHandoffResumeCommand } from "../lib/historyResumeCommand";
+import { isValidGrokSessionId, isValidKimiSessionId } from "../lib/resumeCliArgs";
 import {
   terminalProcessManager,
   type TerminalClaudeProviderLaunchConfig,
@@ -98,7 +100,7 @@ import {
 } from "./terminalWorkspan";
 
 export type SessionStatus = "running" | "exited" | "error";
-export type CliHookSource = "claude" | "codex" | "pi" | "grok" | "opencode";
+export type CliHookSource = "claude" | "codex" | "kimi" | "pi" | "grok" | "opencode";
 export type CliHookEventName =
   | "SessionStart"
   | "UserPromptSubmit"
@@ -106,6 +108,8 @@ export type CliHookEventName =
   | "Stop"
   | "StopFailure"
   | "PermissionRequest"
+  | "PermissionResult"
+  | "Interrupt"
   | "SubagentStart"
   | "SubagentStop"
   | "AgentToolStart"
@@ -203,6 +207,7 @@ export interface CliHookPayload {
   agentType?: string | null;
   agentTranscriptPath?: string | null;
   transcriptPath?: string | null;
+  transcriptBytes?: number | null;
   reasoningEffort?: string | null;
   wslDistroName?: string | null;
   environmentType?: "ssh" | null;
@@ -246,12 +251,13 @@ export interface SplitTerminalOptions {
 }
 
 interface HookToolStatus {
-  status: "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
+  status: "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
 }
 
 interface HookSettingsStatusPayload {
   claude: HookToolStatus;
   codex: HookToolStatus;
+  kimi: HookToolStatus;
   pi: HookToolStatus;
   grok: HookToolStatus;
   claudeAutoRepaired?: boolean;
@@ -989,6 +995,8 @@ function mapCliHookEvent(event: CliHookEventName): TabNotificationState | null {
   // idle_prompt（需要用户介入）会送达
   if (event === "Notification") return "attention";
   if (event === "PermissionRequest") return "attention";
+  if (event === "PermissionResult") return "running";
+  if (event === "Interrupt") return "none";
   if (event === "StopFailure") return "failed";
   if (event === "Stop") return "done";
   return null;
@@ -1124,13 +1132,14 @@ function prepareStartupCommandForPty(command: string | undefined, shell: ShellKe
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const GROK_COMMAND_PATTERN = /(?:^|\s)grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const KIMI_COMMAND_PATTERN = /(?:^|\s)kimi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 
 // 恢复会话时判定它是否为 codex/claude/grok 这类 TUI CLI 会话。判定依据 = startupCmd 文本 + 项目 cli_tool 配置。
 // 判不出（如普通 pwsh/bash）返回 null，走 shell 分支（静态贴回 scrollback）。
 export function detectCliResumeKind(
   startupCmd: string | undefined,
   project: Project | undefined
-): "claude" | "codex" | "grok" | null {
+): "claude" | "codex" | "grok" | "kimi" | null {
   const cmd = startupCmd?.trim() ?? "";
   const projectKind = project ? getProviderSwitchAppType(project) : null;
   const cliTool = project?.cli_tool?.trim().toLowerCase() ?? "";
@@ -1144,6 +1153,9 @@ export function detectCliResumeKind(
   if (cliTool.includes("grok") || GROK_COMMAND_PATTERN.test(cmd)) {
     return "grok";
   }
+  if (cliTool.includes("kimi") || KIMI_COMMAND_PATTERN.test(cmd)) {
+    return "kimi";
+  }
   return null;
 }
 
@@ -1151,7 +1163,7 @@ export function detectCliResumeKind(
 // 定位整屏重绘，会盖掉我们贴回的历史文本（见 research/tui-startup-clear-sequences.md），因此改由 CLI
 // 自己 resume 重画上次对话。有 cliSessionId 走带 id 的 resume；无 id 兜底续最近一次（用户已拍板）。
 function buildCliResumeStartupCommand(
-  kind: "claude" | "codex" | "grok",
+  kind: "claude" | "codex" | "grok" | "kimi",
   cliSessionId: string | undefined,
   project: Project | undefined,
   options: { includeProviderOverrides?: boolean } = {},
@@ -1164,8 +1176,14 @@ function buildCliResumeStartupCommand(
   }
   if (kind === "grok") {
     // Align with Claude: no --no-alt-screen by default. No id → cwd-scoped continue.
-    const base = hasValidId ? `grok --resume ${id}` : "grok --continue";
+    const base = hasValidId && isValidGrokSessionId(id) ? `grok --resume ${id}` : "grok --continue";
     return appendResumeCliArgs(base, "grok", project ?? null, options);
+  }
+  if (kind === "kimi") {
+    const base = hasValidId && isValidKimiSessionId(id)
+      ? `kimi --session ${id}`
+      : "kimi --continue";
+    return appendResumeCliArgs(base, "kimi", project ?? null, options);
   }
   const base = hasValidId ? `claude --resume ${id}` : "claude --continue";
   return appendResumeCliArgs(base, "claude", project ?? null, options);
@@ -1195,6 +1213,7 @@ export interface DetachedPtyLaunchOptions {
   envVars?: Record<string, string> | null;
   shell?: string | null;
   providerSnapshot?: NativeProviderLaunchSnapshot | null;
+  providerId?: string | null;
 }
 
 export interface DetachedPtyLaunchResult {
@@ -1252,7 +1271,7 @@ interface SshLaunchPayload extends SshConnectionSpecPayload {
   agentPath: string;
   agentInstallationId: string;
   agentRemoteMachineId: string;
-  toolSource: "" | "claude" | "codex";
+  toolSource: "" | "claude" | "codex" | "kimi" | "grok";
   environmentOverrides: Record<string, string>;
   initializationCommand: string | null;
   startupCommand: string | null;
@@ -1317,6 +1336,7 @@ async function shouldEnableHookEnv(): Promise<boolean> {
   if (
     !settings.claudeHookBridgeEnabled &&
     !settings.codexHookBridgeEnabled &&
+    !settings.kimiHookBridgeEnabled &&
     !settings.piHookBridgeEnabled &&
     !settings.grokHookBridgeEnabled
   ) {
@@ -1326,6 +1346,7 @@ async function shouldEnableHookEnv(): Promise<boolean> {
     const status = await invoke<HookSettingsStatusPayload>("hook_settings_get_status", {
       selectedDir: settings.claudeHookConfigDir?.trim() || null,
       codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
+      kimiSelectedDir: settings.kimiHookConfigDir?.trim() || null,
       piSelectedDir: settings.piHookConfigDir?.trim() || null,
       grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
       ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
@@ -1334,6 +1355,7 @@ async function shouldEnableHookEnv(): Promise<boolean> {
     return openCodeInstalled || (
       (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
       (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
+      (settings.kimiHookBridgeEnabled && status.kimi.status === "installed") ||
       (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
       (settings.grokHookBridgeEnabled && status.grok.status === "installed")
     );
@@ -1381,6 +1403,7 @@ async function prepareProviderLaunchSnapshot(
   startupCmd: string | null | undefined,
   worktreeId?: string,
   persistedSnapshot?: NativeProviderLaunchSnapshot | null,
+  providerId?: string | null,
 ): Promise<ProviderLaunchSnapshotResponse | null> {
   if (persistedSnapshot) releaseProviderSnapshot(persistedSnapshot);
   const appType = project ? getProviderSwitchAppType(project) : null;
@@ -1392,7 +1415,7 @@ async function prepareProviderLaunchSnapshot(
       appType,
       projectId: project.id,
       worktreeId: worktreeId ?? null,
-      providerId: null,
+      providerId: providerId?.trim() || null,
     },
   });
 }
@@ -1515,7 +1538,12 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
       )?.configured_root.trim();
       const effectiveConfigRoot = project?.cli_config_root.trim() || hostConfiguredRoot || "";
       if (effectiveConfigRoot) {
-        const environmentKey = toolSource === "claude" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+        const environmentKey = {
+          claude: "CLAUDE_CONFIG_DIR",
+          codex: "CODEX_HOME",
+          kimi: "KIMI_CODE_HOME",
+          grok: "GROK_HOME",
+        }[toolSource];
         resolvedEnvironmentOverrides[environmentKey] = effectiveConfigRoot;
       }
       const hookIntegration = integrationState.integrations.find((candidate) => (
@@ -1581,6 +1609,7 @@ async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: OsPlatfor
     resolvedStartupCmd,
     options.worktreeId,
     options.providerSnapshot,
+    options.providerId,
   );
   const providerConfigs = buildNativeProviderLaunchConfigs(
     providerSnapshot,
@@ -1839,51 +1868,20 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }
 
     const os = await getOsPlatform();
-    let resumeProject = project;
+    const resumeProject = project;
     const recordedProviderId = lockedSession.remoteHandoff.providerId?.trim() || null;
     // 与 restoreSessions 一致：不复用持久化快照（可能已 release/GC，也不反映当前覆盖状态），
     // 一律 release 后按当前 scope 重新解析；recordedProviderId 非空时作为显式恢复。
-    releaseProviderSnapshot(lockedSession.providerSnapshot);
-    let providerSnapshot: ProviderLaunchSnapshotResponse | null = null;
-    let providerConfigs = {
-      claudeProvider: null as TerminalClaudeProviderLaunchConfig | null,
-      codexProvider: null as TerminalCodexProviderLaunchConfig | null,
-      grokProvider: null as TerminalGrokProviderLaunchConfig | null,
-    };
-    if (!sshHandoff) {
-      providerSnapshot = await invoke<ProviderLaunchSnapshotResponse | null>(
-        "provider_scope_prepare",
-        {
-          input: {
-            appType: "codex",
-            projectId: lockedSession.projectId ?? project.id,
-            worktreeId: lockedSession.worktreeId ?? null,
-            providerId: recordedProviderId,
-          },
-        },
-      );
+    const handoffAgent = lockedSession.remoteHandoff.agent ?? "codex";
+    if (sshHandoff && handoffAgent !== "codex") {
+      throw new Error("handoff_ssh_agent_unsupported");
     }
-    if (!sshHandoff) {
-      providerConfigs = buildNativeProviderLaunchConfigs(
-        providerSnapshot,
-      );
-    }
-    let resumeCommand = buildCliResumeStartupCommand(
-      "codex",
-      lockedSession.remoteHandoff.cliSessionId || lockedSession.cliSessionId,
+    const resumeCommand = buildRemoteHandoffResumeCommand(
+      handoffAgent,
+      lockedSession.remoteHandoff.cliSessionId || lockedSession.cliSessionId || "",
       resumeProject,
-      providerSnapshot ? { includeProviderOverrides: false } : {},
     );
-    if (!sshHandoff && providerSnapshot?.appType === "codex") {
-      const scopedResumeCommand = providerSnapshot.codexProfileName
-        ? withCodexProfile(resumeCommand, providerSnapshot.codexProfileName)
-        : withCodexConfigOverrides(resumeCommand, providerSnapshot.configOverrides);
-      if (!scopedResumeCommand) {
-        releaseProviderSnapshot(providerSnapshot);
-        throw new Error("provider_codex_command_unsupported");
-      }
-      resumeCommand = scopedResumeCommand;
-    }
+    if (!resumeCommand) throw new Error("remote_handoff_session_id_invalid");
     const launch: ResolvedPtyLaunch = sshHandoff
       ? await resolvePtyLaunch({
           projectId: project.id,
@@ -1893,32 +1891,18 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           envVars: lockedSession.envVars,
           shell: null,
         }, os)
-      : (() : ResolvedPtyLaunch => {
-          const resolvedShell = resolveShellForPty(lockedSession.shell, true, os);
-          return {
-            shell: resolvedShell,
-            startupCmd: prepareStartupCommandForPty(
-              resumeCommand,
-              normalizeShellKey(resolvedShell) ?? null
-            ),
-            startupHandledByLaunch: false,
-            providerSnapshot,
-            invokeArgs: {
-              cwd: lockedSession.remoteHandoff?.workDir || lockedSession.cwd || null,
-              envVars: buildPtyEnvVars(lockedSession.envVars ?? null, resolvedShell),
-              shell: resolvedShell,
-              hookEnvEnabled: false,
-              claudeProvider: providerConfigs.claudeProvider,
-              codexProvider: providerConfigs.codexProvider,
-              grokProvider: providerConfigs.grokProvider,
-              terminalColors: getCurrentTerminalColors(),
-              sshLaunch: null,
-            },
-          };
-        })();
-    if (!sshHandoff) {
-      launch.invokeArgs.hookEnvEnabled = await shouldEnableHookEnv();
-    }
+      : await resolvePtyLaunch({
+          projectId: project.id,
+          worktreeId: lockedSession.worktreeId,
+          cwd: lockedSession.remoteHandoff.workDir || lockedSession.cwd || null,
+          startupCmd: resumeCommand,
+          envVars: lockedSession.envVars,
+          shell: lockedSession.shell,
+          providerSnapshot: lockedSession.providerSnapshot,
+          providerId: handoffAgent === "claude" || handoffAgent === "codex"
+            ? recordedProviderId
+            : null,
+        }, os);
     const newSessionId = await terminalProcessManager.create(launch.invokeArgs);
     const replacement: TerminalSession = {
       ...lockedSession,
@@ -2005,8 +1989,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           newSessionId,
           formatStartupInputForPty(launch.startupCmd as string, shellKey),
         ).catch((err) => {
-          logError("Failed to resume remotely handed-off Codex session", {
+          logError("Failed to resume remotely handed-off Agent session", {
             sessionId: newSessionId,
+            agent: handoffAgent,
             err,
           });
         });
@@ -2515,6 +2500,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       boundNewCliSessionId ||
       payload.event === "Stop" ||
       payload.event === "StopFailure" ||
+      payload.event === "Interrupt" ||
       payload.event === "UserPromptSubmit"
     ) {
       set((state) => ({ statsPanelRefreshSeq: state.statsPanelRefreshSeq + 1 }));

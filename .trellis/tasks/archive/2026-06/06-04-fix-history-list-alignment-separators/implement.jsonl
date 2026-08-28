@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend task entry point and applicable guideline index."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality constraints for hot UI/history paths."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component conventions and UI behavior constraints."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared Trellis thinking guide index and pre-modification rule."}

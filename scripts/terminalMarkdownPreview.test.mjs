@@ -14,6 +14,10 @@ const terminalSource = readFileSync(
   new URL("../src/components/XTermTerminal.tsx", import.meta.url),
   "utf8",
 );
+const terminalTabsSource = readFileSync(
+  new URL("../src/components/TerminalTabs.tsx", import.meta.url),
+  "utf8",
+);
 const i18nSource = readFileSync(
   new URL("../src/lib/i18n.ts", import.meta.url),
   "utf8",
@@ -57,7 +61,27 @@ test("markdown preview supports themed answer scrolling, wheel zoom, and restore
   assert.match(previewSource, /@radix-ui\/react-select/);
   assert.match(previewSource, /ui-thin-scroll max-h-\[220px\]/);
   assert.match(previewSource, /event\.ctrlKey \&\& !event\.metaKey|!event\.ctrlKey \|\| !event\.metaKey/);
-  assert.match(previewSource, /MARKDOWN_PREVIEW_FONT_SCALE_MIN/);
+  assert.match(previewSource, /MARKDOWN_PREVIEW_FONT_SIZE_MIN/);
+  assert.match(previewSource, /onWheel=\{handlePreviewWheel\}/);
+  assert.match(previewSource, /<FontSizeControl/);
   assert.match(terminalSource, /const markdownPreviewCanOpen = markdownPreviewSupported\s*&&\s*Boolean\(terminalSession\?\.cliSessionId\?\.trim\(\)\);/);
   assert.doesNotMatch(terminalSource, /markdownPreviewHookStatus/);
+});
+
+test("configured CLI terminals keep a preview control and recognize every history source", () => {
+  assert.doesNotMatch(previewSource, /PREVIEW_SOURCES/);
+  assert.match(previewSource, /value\): value is HistorySource => value !== null/);
+  assert.match(terminalSource, /const markdownPreviewButtonVisible = Boolean\(/);
+  assert.match(terminalSource, /terminalSession\?\.isAgentSession/);
+  assert.match(terminalSource, /\{markdownPreviewButtonVisible && \(/);
+});
+
+test("middle mouse closes session and Workspan tabs through the existing close flow", () => {
+  const middleClickHandlers = terminalTabsSource.split("onAuxClick={(event) => {").slice(1);
+  assert.equal(middleClickHandlers.length, 2);
+  for (const handler of middleClickHandlers) {
+    assert.match(handler, /event\.button !== 1/);
+    assert.match(handler, /event\.preventDefault\(\)/);
+    assert.match(handler, /onClose\(event\.currentTarget\.getBoundingClientRect\(\)\)/);
+  }
 });

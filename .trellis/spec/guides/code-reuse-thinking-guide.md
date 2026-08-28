@@ -58,6 +58,18 @@ grep -r "keyword" .
 
 **Good**: Single source of truth, import everywhere
 
+### Pattern 4: Source-panel interaction lifecycles
+
+**Problem**: Two panels can expose the same user action while each owns its own pointer threshold, preview, cleanup, and target delivery code. The behavior works initially, then one source silently misses later fixes.
+
+**Good**: For application-internal file-to-terminal drags, every source panel must use `useTerminalFilePointerDrag`. The shared hook owns the pointer threshold, payload creation, rAF preview, terminal drop-zone commit, cleanup, and post-drag click suppression. Source panels provide only their `{ path, kind }` item and any source-specific non-terminal drop callback.
+
+**Checklist**:
+
+- [ ] When adding a new file-path source, enumerate existing source panels before adding handlers.
+- [ ] Keep target path resolution in `useTerminalInput`; do not fork it per producer.
+- [ ] Git Changes and File Explorer supply file/directory descriptors; File Explorer additionally supplies its tree-move callback and Git Changes supplies its active repository root.
+
 ---
 
 ## When to Abstract

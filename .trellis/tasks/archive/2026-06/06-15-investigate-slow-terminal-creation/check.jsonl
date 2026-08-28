@@ -1,2 +1,0 @@
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Check that default-off change preserves monitoring opt-in contract and does not break shell status event handling."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check settings copy/change follows Mantine/settings conventions and does not recreate terminals unnecessarily."}

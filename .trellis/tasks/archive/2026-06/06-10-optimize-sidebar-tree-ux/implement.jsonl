@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "侧边栏树组件与右键菜单改动需遵循组件拆分、样式与交互规范"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "collapsedIds 持久化到 settingsStore，需遵循 Zustand store 与 tauri-plugin-store 持久化模式"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "改动完成后的 typecheck 与质量要求"}

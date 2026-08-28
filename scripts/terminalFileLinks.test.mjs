@@ -10,6 +10,7 @@ const transpiled = ts.transpileModule(source, {
 const {
   findTerminalFileLinks,
   findTerminalRelativeFileLinks,
+  resolveTerminalFileSystemPath,
   terminalStringRangeToBufferColumns,
 } = await import(`data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`);
 
@@ -26,6 +27,14 @@ test("absolute file links preserve line locations with diagnostic suffixes", () 
   assert.equal(match.path, String.raw`D:\repo\src\main.ts`);
   assert.equal(match.lineNumber, 12);
   assert.equal(match.columnNumber, 3);
+});
+
+test("slash-prefixed Windows file links retain their target path", () => {
+  const path = "/F:/github/smart-home/demo3/knx-workspace/initial-quote-v1/project.knxproj";
+  const [match] = findTerminalFileLinks(path);
+
+  assert.equal(match.path, path);
+  assert.equal(resolveTerminalFileSystemPath(match.path), path.slice(1));
 });
 
 test("relative file links strip trailing source symbols", () => {

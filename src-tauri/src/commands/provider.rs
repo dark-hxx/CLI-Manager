@@ -347,7 +347,13 @@ pub fn provider_scope_release_snapshot(snapshot_id: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn provider_scope_gc_snapshots(active_snapshot_ids: Vec<String>) -> Result<(), String> {
+pub fn provider_scope_gc_snapshots(mut active_snapshot_ids: Vec<String>) -> Result<(), String> {
+    if let Some(snapshot_id) = crate::commands::cc_connect::handoff::active_provider_snapshot_id()?
+    {
+        active_snapshot_ids.push(snapshot_id);
+    }
+    active_snapshot_ids.sort();
+    active_snapshot_ids.dedup();
     block_on(scope::garbage_collect_snapshots(active_snapshot_ids))
 }
 

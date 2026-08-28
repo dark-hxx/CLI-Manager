@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"Settings shortcuts are persisted in Zustand + tauri-plugin-store; use migration/default merge conventions."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Command palette and settings UI changes should follow existing component conventions and avoid unnecessary id churn."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"ShortcutAction / KeyboardShortcutMap changes must remain type-safe."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend UI changes should use static/build checks and list manual desktop verification instead of auto-starting the app."}

@@ -1,6 +1,7 @@
-import { Box, Button, Group } from "@mantine/core";
+import { Box, Group } from "@mantine/core";
 import { useRef } from "react";
 import { CliToolIcon } from "../../CliToolIcon";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type { NativeProviderAppType } from "./nativeProviderTypes";
 
 interface NativeProviderTypeTabsProps {

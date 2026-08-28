@@ -1,17 +1,21 @@
 import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors, type CollisionDetection, type DragStartEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Project, TerminalScope, TreeNode as TNode } from "../../lib/types";
-import type { SessionStatus } from "../../stores/terminalStore";
 import { SidebarSkeleton } from "../ui/Skeleton";
 import { EmptyState } from "../ui/EmptyState";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
 import { Folder, Plus, Terminal } from "../icons";
-import { VendorIcon, inferVendor } from "../VendorIcon";
+import { CliToolIcon } from "../CliToolIcon";
 import { WorktreeIcon } from "../WorktreeIcon";
 import { TreeNodeItem } from "./TreeNodeItem";
+import { NewGroupRow } from "./NewGroupRow";
+import { NodeAppearanceIcon } from "../NodeAppearanceIcon";
+import { resolveNodeAppearance } from "../../lib/nodeAppearance";
 import { useTreeActions, worktreeListCollapseId, type TreeActions } from "./TreeContext";
 import { useI18n } from "../../lib/i18n";
+import { countProjectsInNode } from "../../stores/projectStore";
+import { resolveCliToolIconKey } from "../../lib/cliTools";
 import { DND_ACTIVATION_CONSTRAINT } from "../../lib/dragInteraction";
 
 interface ProjectTreeProps {
@@ -24,7 +28,7 @@ interface ProjectTreeProps {
   projectScopedTerminalViewEnabled: boolean;
   terminalScope: TerminalScope;
   onSelectAllTerminalScope: () => void;
-  onCreateRootGroup: (name: string) => void;
+  onCreateRootGroup: (name: string, appearance?: { icon: string; color: string }) => void;
   onCancelRootGroup: () => void;
   onQuickAddProject: () => void;
   onRetry: () => void;
@@ -33,18 +37,6 @@ interface ProjectTreeProps {
   onClearProjectFilter?: () => void;
   suppressEmptyState?: boolean;
   embedded?: boolean;
-}
-
-const STATUS_COLORS: Record<SessionStatus, string> = {
-  running: "#9ece6a",
-  exited: "#ff9e64",
-  error: "#f7768e",
-};
-
-function countProjects(node: TNode): number {
-  if (node.type === "project") return 1;
-  if (node.type === "worktree") return 0;
-  return node.children.reduce((sum, child) => sum + countProjects(child), 0);
 }
 
 interface VisibleTreeNode {
@@ -638,29 +630,11 @@ export function ProjectTree({
   return (
     <div className={`${embedded ? "" : "flex h-full flex-col overflow-y-auto"} overflow-x-hidden ${density === "compact" ? "px-1 pb-1.5 pt-0.5" : "px-1.5 pb-2 pt-1"}`}>
       {newGroupParentId === "__root__" && (
-        <div className={`flex items-center px-2 ${density === "compact" ? "gap-1 py-1" : "gap-1.5 py-1.5"}`}>
-          <span className="shrink-0 text-accent">
-            <Folder size={16} strokeWidth={1.5} />
-          </span>
-          <input
-            ref={(ref) => {
-              ref?.focus();
-            }}
-            className="ui-tree-inline-input ui-focus-ring h-8 flex-1 px-2 text-xs text-on-surface outline-none"
-            onBlur={(e) => {
-              const value = e.currentTarget.value.trim();
-              if (value) onCreateRootGroup(value);
-              else onCancelRootGroup();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const value = e.currentTarget.value.trim();
-                if (value) onCreateRootGroup(value);
-                else onCancelRootGroup();
-              }
-              if (e.key === "Escape") onCancelRootGroup();
-            }}
-            onClick={(e) => e.stopPropagation()}
+        <div className="px-2">
+          <NewGroupRow
+            compact={density === "compact"}
+            onCreate={(name, appearance) => onCreateRootGroup(name, appearance)}
+            onCancel={onCancelRootGroup}
           />
         </div>
       )}
@@ -831,29 +805,30 @@ function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: s
   const actions = useTreeActions();
   if (node.type !== "project") return null;
   const p = node.project;
-  const status = actions.getProjectStatus(p.id);
   const terminalCount = actions.getProjectTerminalCount(p.id);
   const selected = actions.selectedId === p.id || actions.selectedProjectIds.has(p.id);
-  const cliVendor = p.cli_tool ? inferVendor(p.cli_tool) : null;
+  const appearance = resolveNodeAppearance({ icon: p.icon, color: p.color });
   return (
     <button
       className={`ui-tree-collapsed-item relative my-0.5 flex ${sizeClass} items-center justify-center rounded-xl transition-colors`}
       data-selected={selected ? "true" : "false"}
+      style={(appearance.hasColor ? { "--node-accent": appearance.colorVar } : {}) as CSSProperties}
       title={p.name}
       aria-label={t("sidebar.tree.openProject", { name: p.name })}
       onPointerDownCapture={preventSecondaryPointerFocus}
-      onClick={() => actions.onOpenProject(p)}
+      onClick={(event) => actions.onSelectProject(event, p)}
+      onDoubleClick={() => actions.onOpenProject(p)}
       onContextMenu={(e) => actions.onContextMenuProject(e, p)}
     >
-      {status ? (
-        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[status] }} />
-      ) : cliVendor ? (
-        <span className="pointer-events-none" aria-hidden="true">
-          <VendorIcon vendor={cliVendor} size={15} />
-        </span>
-      ) : (
-        <Terminal size={15} strokeWidth={1.5} />
-      )}
+      <span className="ui-tree-collapsed-icon pointer-events-none" aria-hidden="true">
+        <NodeAppearanceIcon
+          mark={appearance.emoji}
+          iconKey={appearance.iconKey}
+          cliTool={p.cli_tool}
+          fallback="terminal"
+          size={15}
+        />
+      </span>
       {terminalCount > 0 && <span className="ui-tree-collapsed-badge">{terminalCount > 99 ? "99+" : terminalCount}</span>}
     </button>
   );
@@ -872,7 +847,7 @@ function CollapsedGroupButton({
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
-  const count = useMemo(() => countProjects(node), [node]);
+  const count = useMemo(() => countProjectsInNode(node), [node]);
 
   const cancelClose = useCallback(() => {
     if (closeTimer.current !== null) {
@@ -896,6 +871,7 @@ function CollapsedGroupButton({
 
   if (node.type !== "group") return null;
   const g = node.group;
+  const groupAppearance = resolveNodeAppearance({ icon: g.icon, color: g.color });
 
   const handleClick = () => {
     cancelClose();
@@ -908,7 +884,8 @@ function CollapsedGroupButton({
     <Popover open={open} onOpenChange={(next) => { if (!next) setOpen(false); }}>
       <PopoverAnchor asChild>
         <button
-          className={`ui-flat-action ui-tree-collapsed-item relative my-0.5 px-0 text-primary ${sizeClass}`}
+          className={`ui-flat-action ui-tree-collapsed-item relative my-0.5 px-0 ${sizeClass}`}
+          style={(groupAppearance.hasColor ? { "--node-accent": groupAppearance.colorVar } : {}) as CSSProperties}
           title={g.name}
           aria-label={t("sidebar.tree.directoryProjectCount", { name: g.name, count })}
           onMouseEnter={openNow}
@@ -917,7 +894,14 @@ function CollapsedGroupButton({
           onClick={handleClick}
           onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
         >
-          <Folder size={16} strokeWidth={1.5} />
+          <span className="ui-tree-collapsed-icon" aria-hidden="true">
+            <NodeAppearanceIcon
+              mark={groupAppearance.emoji}
+              iconKey={groupAppearance.iconKey}
+              fallback="folder"
+              size={16}
+            />
+          </span>
           {count > 0 && <span className="ui-tree-collapsed-badge">{count > 99 ? "99+" : count}</span>}
         </button>
       </PopoverAnchor>
@@ -991,9 +975,8 @@ function renderFlyoutNodes(nodes: TNode[], depth: number, actions: TreeActions, 
     }
 
     const p = child.project;
-    const status = actions.getProjectStatus(p.id);
     const terminalCount = actions.getProjectTerminalCount(p.id);
-    const cliVendor = p.cli_tool ? inferVendor(p.cli_tool) : null;
+    const cliIcon = resolveCliToolIconKey(p.cli_tool);
     return (
       <button
         key={`p:${p.id}`}
@@ -1001,17 +984,16 @@ function renderFlyoutNodes(nodes: TNode[], depth: number, actions: TreeActions, 
         style={{ paddingLeft: padLeft }}
         title={p.name}
         onPointerDownCapture={preventSecondaryPointerFocus}
-        onClick={() => {
+        onClick={(event) => actions.onSelectProject(event, p)}
+        onDoubleClick={() => {
           actions.onOpenProject(p);
           onPick();
         }}
         onContextMenu={(e) => actions.onContextMenuProject(e, p)}
       >
         <span className="ui-tree-leading-icon flex shrink-0 items-center">
-          {status ? (
-            <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: STATUS_COLORS[status] }} />
-          ) : cliVendor ? (
-            <VendorIcon vendor={cliVendor} size={13} />
+          {cliIcon ? (
+            <CliToolIcon icon={cliIcon} size={13} />
           ) : (
             <Terminal size={13} strokeWidth={1.5} />
           )}

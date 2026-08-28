@@ -19,6 +19,7 @@ const SHORTCUT_LABELS: Record<ShortcutAction, TranslationKey> = {
   commandPalette: "settings.shortcuts.action.commandPalette",
   sessionHistory: "settings.shortcuts.action.sessionHistory",
   copyAi: "settings.shortcuts.action.copyAi",
+  copyTerminalSelection: "settings.shortcuts.action.copyTerminalSelection",
   toggleSidebar: "settings.shortcuts.action.toggleSidebar",
   toggleTerminalFullscreen: "settings.shortcuts.action.toggleTerminalFullscreen",
 };
@@ -43,6 +44,8 @@ export function ShortcutSettingsPage({ searchValue }: ShortcutSettingsPageProps)
   const { t } = useI18n();
   const shortcuts = useSettingsStore((s) => s.keyboardShortcuts);
   const terminalNewlineShortcut = useSettingsStore((s) => s.terminalNewlineShortcut);
+  const osc52ClipboardEnabled = useSettingsStore((s) => s.osc52ClipboardEnabled);
+  const osc52ClipboardQueryEnabled = useSettingsStore((s) => s.osc52ClipboardQueryEnabled);
   const update = useSettingsStore((s) => s.update);
   const [recording, setRecording] = useState<ShortcutAction | null>(null);
 
@@ -158,6 +161,84 @@ export function ShortcutSettingsPage({ searchValue }: ShortcutSettingsPageProps)
                 </Button>
               );
             })}
+          </Group>
+        </Stack>
+      </section>
+
+      <section className="ui-surface-card rounded-2xl border border-border p-4">
+        <Stack gap="sm">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              {t("settings.shortcuts.osc52ClipboardQuery")}
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              {t("settings.shortcuts.osc52ClipboardQueryDescription")}
+            </Text>
+          </Box>
+          <Group gap="xs" aria-label={t("settings.shortcuts.osc52ClipboardQueryAria")}>
+            <Button
+              type="button"
+              size="xs"
+              variant={osc52ClipboardQueryEnabled ? "light" : "default"}
+              color={osc52ClipboardQueryEnabled ? "cliPrimary" : "gray"}
+              onClick={() => {
+                if (!osc52ClipboardQueryEnabled) void update("osc52ClipboardQueryEnabled", true);
+              }}
+              aria-pressed={osc52ClipboardQueryEnabled}
+            >
+              {t("settings.shortcuts.osc52ClipboardOn")}
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={!osc52ClipboardQueryEnabled ? "light" : "default"}
+              color={!osc52ClipboardQueryEnabled ? "cliPrimary" : "gray"}
+              onClick={() => {
+                if (osc52ClipboardQueryEnabled) void update("osc52ClipboardQueryEnabled", false);
+              }}
+              aria-pressed={!osc52ClipboardQueryEnabled}
+            >
+              {t("settings.shortcuts.osc52ClipboardOff")}
+            </Button>
+          </Group>
+        </Stack>
+      </section>
+
+      <section className="ui-surface-card rounded-2xl border border-border p-4">
+        <Stack gap="sm">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              {t("settings.shortcuts.osc52Clipboard")}
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              {t("settings.shortcuts.osc52ClipboardDescription")}
+            </Text>
+          </Box>
+          <Group gap="xs" aria-label={t("settings.shortcuts.osc52ClipboardAria")}>
+            <Button
+              type="button"
+              size="xs"
+              variant={osc52ClipboardEnabled ? "light" : "default"}
+              color={osc52ClipboardEnabled ? "cliPrimary" : "gray"}
+              onClick={() => {
+                if (!osc52ClipboardEnabled) void update("osc52ClipboardEnabled", true);
+              }}
+              aria-pressed={osc52ClipboardEnabled}
+            >
+              {t("settings.shortcuts.osc52ClipboardOn")}
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={!osc52ClipboardEnabled ? "light" : "default"}
+              color={!osc52ClipboardEnabled ? "cliPrimary" : "gray"}
+              onClick={() => {
+                if (osc52ClipboardEnabled) void update("osc52ClipboardEnabled", false);
+              }}
+              aria-pressed={!osc52ClipboardEnabled}
+            >
+              {t("settings.shortcuts.osc52ClipboardOff")}
+            </Button>
           </Group>
         </Stack>
       </section>

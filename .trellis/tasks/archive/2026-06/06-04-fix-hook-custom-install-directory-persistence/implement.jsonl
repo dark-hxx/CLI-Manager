@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-04-fix-hook-custom-install-directory-persistence/prd.md","reason":"Confirmed requirements and acceptance criteria for persisting custom Claude/Codex hook config directories."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Use existing Zustand plus tauri-plugin-store settings persistence pattern for user preferences."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Keep new persisted settings strongly typed and nullable only at the setting boundary."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing settings store/update mechanism instead of adding duplicate persistence."}

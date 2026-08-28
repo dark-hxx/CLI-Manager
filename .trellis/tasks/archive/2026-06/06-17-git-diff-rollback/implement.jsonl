@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "回滚是破坏性文件写操作，需遵守路径校验、越界防护、用户文件安全清单"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "gitStore 新增 discardFile/applyReversePatch/discardAll/silent 刷新 action 的规范"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增右键菜单、确认弹窗、hover 回滚按钮组件的组件规范"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "前端 invoke 与 Rust git 命令的跨层数据流与错误传播约定"}

@@ -4,6 +4,17 @@
 @import "./styles/themes.css";
 @import "./styles/base.css";
 @import "./styles/components.css";
+
+/* @xterm/xterm 6.1.0-beta.288 still creates this DOM fallback but omits its hiding rule. */
+.xterm .xterm-char-measure-element {
+  display: inline-block;
+  visibility: hidden;
+  position: absolute;
+  top: 0;
+  left: -9999em;
+  line-height: normal;
+}
+
 /* Design Tokens — Tailwind CSS 4 @theme */
 @theme {
   --color-bg-primary: var(--bg-primary);

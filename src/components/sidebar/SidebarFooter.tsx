@@ -4,13 +4,13 @@ import { toast } from "sonner";
 import { BarChart3, Settings } from "../icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../SettingsModal";
-import { getErrorMessage, getPiHookErrorMessage } from "../../lib/hookErrors";
+import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "../../lib/hookErrors";
 import { useSettingsStore, type SidebarToolbarVisibilitySettings } from "../../stores/settingsStore";
 import { useI18n } from "../../lib/i18n";
 
-type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
+type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
 type HookLightStatus = "missing" | "partial" | "installed";
-type HookTool = "claude" | "codex" | "pi" | "grok";
+type HookTool = "claude" | "codex" | "kimi" | "pi" | "grok";
 
 interface ToolHookSettingsStatus {
   configDir: string | null;
@@ -20,6 +20,7 @@ interface ToolHookSettingsStatus {
 interface HookSettingsStatus {
   claude: ToolHookSettingsStatus;
   codex: ToolHookSettingsStatus;
+  kimi: ToolHookSettingsStatus;
   pi: ToolHookSettingsStatus;
   grok: ToolHookSettingsStatus;
   claudeAutoRepaired?: boolean;
@@ -42,7 +43,7 @@ function getApplicableTools(
   enabledTools: Record<HookTool, boolean>
 ): HookTool[] {
   if (!status) return [];
-  return (["claude", "codex", "pi", "grok"] as const).filter(
+  return (["claude", "codex", "kimi", "pi", "grok"] as const).filter(
     (tool) => enabledTools[tool] && Boolean(status[tool]?.configDir)
   );
 }
@@ -64,11 +65,13 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   const { t } = useI18n();
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
+  const kimiHookConfigDir = useSettingsStore((s) => s.kimiHookConfigDir);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const piHookConfigDir = useSettingsStore((s) => s.piHookConfigDir);
   const grokHookConfigDir = useSettingsStore((s) => s.grokHookConfigDir);
   const claudeHookBridgeEnabled = useSettingsStore((s) => s.claudeHookBridgeEnabled);
   const codexHookBridgeEnabled = useSettingsStore((s) => s.codexHookBridgeEnabled);
+  const kimiHookBridgeEnabled = useSettingsStore((s) => s.kimiHookBridgeEnabled);
   const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
   const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
   const claudeHookAutoRepairKnownInstalled = useSettingsStore((s) => s.claudeHookAutoRepairKnownInstalled);
@@ -80,19 +83,21 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
 
   const selectedDir = useMemo(() => trimDir(claudeHookConfigDir), [claudeHookConfigDir]);
   const codexSelectedDir = useMemo(() => trimDir(codexHookConfigDir), [codexHookConfigDir]);
+  const kimiSelectedDir = useMemo(() => trimDir(kimiHookConfigDir), [kimiHookConfigDir]);
   const piSelectedDir = useMemo(() => trimDir(piHookConfigDir), [piHookConfigDir]);
   const grokSelectedDir = useMemo(() => trimDir(grokHookConfigDir), [grokHookConfigDir]);
   const enabledTools = useMemo<Record<HookTool, boolean>>(
     () => ({
       claude: claudeHookBridgeEnabled,
       codex: codexHookBridgeEnabled,
+      kimi: kimiHookBridgeEnabled,
       pi: piHookBridgeEnabled,
       grok: grokHookBridgeEnabled,
     }),
-    [claudeHookBridgeEnabled, codexHookBridgeEnabled, piHookBridgeEnabled, grokHookBridgeEnabled]
+    [claudeHookBridgeEnabled, codexHookBridgeEnabled, kimiHookBridgeEnabled, piHookBridgeEnabled, grokHookBridgeEnabled]
   );
   const allBridgesDisabled =
-    !claudeHookBridgeEnabled && !codexHookBridgeEnabled && !piHookBridgeEnabled && !grokHookBridgeEnabled;
+    !claudeHookBridgeEnabled && !codexHookBridgeEnabled && !kimiHookBridgeEnabled && !piHookBridgeEnabled && !grokHookBridgeEnabled;
   const lightStatus = getHookLightStatus(status, enabledTools);
 
   const refreshStatus = useCallback(async () => {
@@ -101,6 +106,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_get_status", {
         selectedDir,
         codexSelectedDir,
+        kimiSelectedDir,
         piSelectedDir,
         grokSelectedDir,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -124,6 +130,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
     claudeHookAutoRepairNoticeShown,
     ccSwitchDbPath,
     codexSelectedDir,
+    kimiSelectedDir,
     grokSelectedDir,
     piSelectedDir,
     selectedDir,
@@ -136,7 +143,9 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   }, [refreshStatus]);
 
   const reinstallHooks = async () => {
-    const tools = getApplicableTools(status, enabledTools);
+    const tools = getApplicableTools(status, enabledTools).filter(
+      (tool) => status?.[tool].status !== "unsupported"
+    );
     if (tools.length === 0) {
       toast.info(t("sidebar.hook.chooseConfigDir"));
       onOpenSettings("hooks");
@@ -148,6 +157,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       const dirs = {
         selectedDir,
         codexSelectedDir,
+        kimiSelectedDir,
         piSelectedDir,
         grokSelectedDir,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -162,6 +172,10 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
         await invoke<HookSettingsStatus>("hook_settings_uninstall_codex", dirs);
         await invoke<HookSettingsStatus>("hook_settings_install_codex", dirs);
       }
+      if (tools.includes("kimi")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_kimi", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_kimi", dirs);
+      }
       if (tools.includes("pi")) {
         await invoke<HookSettingsStatus>("hook_settings_uninstall_pi", dirs);
         await invoke<HookSettingsStatus>("hook_settings_install_pi", dirs);
@@ -173,7 +187,9 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       await refreshStatus();
       toast.success(t("sidebar.hook.reinstalled"));
     } catch (error) {
-      toast.error(t("sidebar.hook.reinstallFailed"), { description: getPiHookErrorMessage(error, t) });
+      toast.error(t("sidebar.hook.reinstallFailed"), {
+        description: tools.includes("kimi") ? getKimiHookErrorMessage(error, t) : getPiHookErrorMessage(error, t),
+      });
       await refreshStatus();
     } finally {
       setWorking(false);

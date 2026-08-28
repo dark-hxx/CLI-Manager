@@ -95,6 +95,7 @@ function inferHistorySource(haystack: string): HistorySource | null {
   if (/\bclaude\b/.test(lower)) return "claude";
   if (/\bopencode\b/.test(lower)) return "opencode";
   if (/\bgrok\b/.test(lower)) return "grok";
+  if (/\bkimi\b/.test(lower)) return "kimi";
   if (/(?:^|\s)pi(?:\s|$)/.test(lower) || /\bpi[-_ ]?agent\b/.test(lower)) return "pi";
   return null;
 }

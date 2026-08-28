@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/05-29-optimize-history-sessions-with-memory-index/prd.md","reason":"Check implementation against accepted requirements and out-of-scope boundaries."}
-{"file":".trellis/spec/backend/index.md","reason":"Verify backend command signatures remain stable and cargo check is run."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify backend/frontend payload contract and sorting/filtering semantics are unchanged."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify helper logic reuses existing parser/scanner functions without unnecessary duplication."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify no frontend hot-path regressions if frontend is touched."}

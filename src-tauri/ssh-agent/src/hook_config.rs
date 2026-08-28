@@ -1,16 +1,18 @@
 use crate::installer::{read_installation_record, InstallationRecord};
 use crate::layout::{resolve_layout, AgentLayout};
 use cli_manager_hook_schema::{
+    kimi::{self, KimiPlanAction, ALL_MODULES as ALL_KIMI_HOOK_MODULES},
     HookConfigChange, HookConfigFile, HookConfigReport, HookConfigRequest,
     HookHistorySourceCandidate, HookInstallationFile, HookInstallationRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use toml_edit::{value, DocumentMut, Item};
@@ -51,10 +53,30 @@ const CODEX_HOOKS: &[(&str, &str, &str)] = &[
     ("SubagentStop", "SubagentStop", ""),
 ];
 
+const GROK_HOOKS: &[(&str, &str, &str)] = &[
+    ("SessionStart", "SessionStart", ""),
+    ("UserPromptSubmit", "UserPromptSubmit", ""),
+    (
+        "PreToolUse",
+        "PermissionRequest",
+        "Bash|Edit|Write|MultiEdit",
+    ),
+    ("Stop", "Stop", ""),
+    ("StopFailure", "StopFailure", ""),
+    ("SubagentStart", "SubagentStart", ""),
+    ("SubagentStop", "SubagentStop", ""),
+    ("PreToolUse", "AgentToolStart", "Agent|Task"),
+    ("PostToolUse", "AgentToolStop", "Agent|Task"),
+    ("PreToolUse", "ToolStart", ""),
+    ("PostToolUse", "ToolStop", ""),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Source {
     Claude,
     Codex,
+    Kimi,
+    Grok,
 }
 
 impl Source {
@@ -62,6 +84,8 @@ impl Source {
         match value {
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
+            "kimi" => Ok(Self::Kimi),
+            "grok" => Ok(Self::Grok),
             _ => Err("hook_source_invalid".to_string()),
         }
     }
@@ -70,6 +94,8 @@ impl Source {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Kimi => "kimi",
+            Self::Grok => "grok",
         }
     }
 
@@ -77,6 +103,8 @@ impl Source {
         match self {
             Self::Claude => ".claude",
             Self::Codex => ".codex",
+            Self::Kimi => ".kimi-code",
+            Self::Grok => ".grok",
         }
     }
 
@@ -84,6 +112,15 @@ impl Source {
         match self {
             Self::Claude => CLAUDE_HOOKS,
             Self::Codex => CODEX_HOOKS,
+            Self::Kimi => &[],
+            Self::Grok => GROK_HOOKS,
+        }
+    }
+
+    fn required_entries(self) -> u32 {
+        match self {
+            Self::Kimi => kimi::DEFINITIONS.len() as u32,
+            _ => self.hooks().len() as u32,
         }
     }
 }
@@ -375,12 +412,17 @@ fn resolve_recorded_uninstall_root(
         }
         let canonical = PathBuf::from(&record.canonical_config_root);
         validate_canonical_path(&canonical)?;
-        if record.history_source_candidate.source != source.as_str()
-            || record.history_source_candidate.canonical_config_root != record.canonical_config_root
-            || record.history_source_candidate.config_root_hash != config_root_hash(&canonical)
-        {
-            return Err("hook_config_record_invalid".to_string());
-        }
+        let record_hash = match (source, record.history_source_candidate.as_ref()) {
+            (Source::Kimi | Source::Grok, None) => config_root_hash(&canonical),
+            (Source::Claude | Source::Codex, Some(candidate))
+                if candidate.source == source.as_str()
+                    && candidate.canonical_config_root == record.canonical_config_root
+                    && candidate.config_root_hash == config_root_hash(&canonical) =>
+            {
+                candidate.config_root_hash.clone()
+            }
+            _ => return Err("hook_config_record_invalid".to_string()),
+        };
         let existed = canonical.exists();
         if existed {
             if !canonical.is_dir() {
@@ -397,7 +439,7 @@ fn resolve_recorded_uninstall_root(
         matches.push(ResolvedRoot {
             configured: configured.to_string(),
             requested: canonical.clone(),
-            hash: record.history_source_candidate.config_root_hash,
+            hash: record_hash,
             canonical,
             existed,
         });
@@ -523,18 +565,121 @@ fn installation(layout: &AgentLayout) -> Result<InstallationRecord, String> {
     Ok(record)
 }
 
+fn run_kimi_command(executable: &Path, args: &[&str]) -> Result<bool, String> {
+    let mut child = Command::new(executable)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "hook_config_doctor_failed".to_string())?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status.success()),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("hook_config_doctor_failed".to_string());
+            }
+            Err(_) => return Err("hook_config_doctor_failed".to_string()),
+        }
+    }
+}
+
+fn discover_kimi_executable(layout: &AgentLayout) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|path| path.join("kimi")));
+    }
+    candidates.push(layout.home.join(".kimi-code/bin/kimi"));
+    for candidate in candidates {
+        if supports_current_kimi(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err("kimi_code_unsupported".to_string())
+}
+
+fn supports_current_kimi(executable: &Path) -> bool {
+    executable.is_file() && run_kimi_command(executable, &["doctor", "--help"]).unwrap_or(false)
+}
+
+fn ensure_kimi_capability(source: Source, layout: &AgentLayout) -> Result<Option<PathBuf>, String> {
+    if source == Source::Kimi {
+        discover_kimi_executable(layout).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn validate_kimi_candidate(
+    executable: &Path,
+    config_path: &Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| "hook_config_path_invalid".to_string())?;
+    let candidate = parent.join(format!(
+        ".config.toml.cli-manager-{}.tmp",
+        Uuid::new_v4().simple()
+    ));
+    let result = (|| {
+        let mut file =
+            File::create(&candidate).map_err(|_| "kimi_candidate_write_failed".to_string())?;
+        file.write_all(bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| "kimi_candidate_write_failed".to_string())?;
+        set_mode(&candidate, Some(0o600))?;
+        let candidate_text = candidate
+            .to_str()
+            .ok_or_else(|| "kimi_candidate_path_invalid".to_string())?;
+        if run_kimi_command(executable, &["doctor", "config", candidate_text])? {
+            Ok(())
+        } else {
+            Err("hook_config_doctor_failed".to_string())
+        }
+    })();
+    let _ = fs::remove_file(candidate);
+    result
+}
+
 fn posix_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn hook_command(installation: &InstallationRecord, source: Source, event: &str) -> String {
+    let owner = (source == Source::Kimi).then(|| {
+        format!(
+            " --owner {}{}",
+            kimi::SSH_OWNER_PREFIX,
+            installation.installation_id
+        )
+    });
     format!(
-        "{} hook --source {} --event {} --managed-by cli-manager-ssh-agent --installation-id {}",
+        "{} hook --source {} --event {}{} --managed-by cli-manager-ssh-agent --installation-id {}",
         posix_quote(&path_text(&installation.install_path)),
         source.as_str(),
         event,
+        owner.as_deref().unwrap_or_default(),
         installation.installation_id
     )
+}
+
+fn kimi_commands(installation: &InstallationRecord) -> BTreeMap<String, String> {
+    kimi::DEFINITIONS
+        .iter()
+        .map(|definition| {
+            (
+                definition.bridge_event.to_string(),
+                hook_command(installation, Source::Kimi, definition.bridge_event),
+            )
+        })
+        .collect()
 }
 
 fn read_json(state: &FileState) -> Result<Value, String> {
@@ -919,12 +1064,299 @@ fn uninstall_codex_feature(
     Ok(())
 }
 
+fn grok_compat_marker(
+    installation_id: &str,
+    previous: &str,
+    compat_created: bool,
+    vendor_created: bool,
+) -> String {
+    format!(
+        " # cli-manager-ssh-agent installation={installation_id} previous={previous} compatCreated={compat_created} vendorCreated={vendor_created}"
+    )
+}
+
+fn parse_grok_compat_marker(
+    suffix: &str,
+    installation_id: &str,
+) -> Option<(String, bool, bool, String)> {
+    let marker = "# cli-manager-ssh-agent ";
+    let (original_suffix, fields) = suffix.rsplit_once(marker)?;
+    let mut installation = None;
+    let mut previous = None;
+    let mut compat_created = None;
+    let mut vendor_created = None;
+    for field in fields.split_whitespace() {
+        let (key, value) = field.split_once('=')?;
+        match key {
+            "installation" => installation = Some(value),
+            "previous" => previous = Some(value),
+            "compatCreated" => {
+                compat_created = match value {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => return None,
+                }
+            }
+            "vendorCreated" => {
+                vendor_created = match value {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => return None,
+                }
+            }
+            _ => {}
+        }
+    }
+    if installation != Some(installation_id) {
+        return None;
+    }
+    Some((
+        previous?.to_string(),
+        compat_created?,
+        vendor_created?,
+        original_suffix.to_string(),
+    ))
+}
+
+fn install_grok_compat_hooks(
+    document: &mut DocumentMut,
+    installation_id: &str,
+    vendor: &str,
+) -> Result<(), String> {
+    let compat_created = !document.contains_key("compat");
+    if compat_created {
+        document["compat"] = Item::Table(toml_edit::Table::new());
+    }
+    let compat = document["compat"]
+        .as_table_like_mut()
+        .ok_or_else(|| "hook_config_toml_compat_invalid".to_string())?;
+    let vendor_created = !compat.contains_key(vendor);
+    if vendor_created {
+        compat.insert(vendor, Item::Table(toml_edit::Table::new()));
+    }
+    let vendor_config = compat
+        .get_mut(vendor)
+        .and_then(Item::as_table_like_mut)
+        .ok_or_else(|| "hook_config_toml_compat_vendor_invalid".to_string())?;
+    let (previous, prefix, suffix) = match vendor_config.get("hooks") {
+        None => ("missing", String::new(), String::new()),
+        Some(item) if item.as_bool() == Some(true) => {
+            let (prefix, suffix) = item_decor(item);
+            ("true", prefix, suffix)
+        }
+        Some(item) if item.as_bool() == Some(false) => return Ok(()),
+        Some(_) => return Err("hook_config_toml_compat_hooks_invalid".to_string()),
+    };
+    let mut owned = value(false);
+    let decor = owned.as_value_mut().expect("toml bool value").decor_mut();
+    decor.set_prefix(prefix);
+    decor.set_suffix(format!(
+        "{suffix}{}",
+        grok_compat_marker(installation_id, previous, compat_created, vendor_created)
+    ));
+    vendor_config.insert("hooks", owned);
+    Ok(())
+}
+
+fn install_grok_compat_isolation(
+    document: &mut DocumentMut,
+    installation_id: &str,
+) -> Result<(), String> {
+    for vendor in ["claude", "cursor"] {
+        install_grok_compat_hooks(document, installation_id, vendor)?;
+    }
+    Ok(())
+}
+
+fn uninstall_grok_compat_hooks(
+    document: &mut DocumentMut,
+    installation_id: &str,
+    vendor: &str,
+) -> Result<bool, String> {
+    let Some(compat) = document.get_mut("compat").and_then(Item::as_table_like_mut) else {
+        return Ok(false);
+    };
+    let Some(vendor_config) = compat.get_mut(vendor).and_then(Item::as_table_like_mut) else {
+        return Ok(false);
+    };
+    let Some(item) = vendor_config.get("hooks") else {
+        return Ok(false);
+    };
+    if item.as_bool() != Some(false) {
+        return Ok(false);
+    }
+    let prefix = item_decor(item).0;
+    let Some((previous, compat_created, vendor_created, original_suffix)) =
+        parse_grok_compat_marker(&marker_suffix(item), installation_id)
+    else {
+        return Ok(false);
+    };
+    match previous.as_str() {
+        "true" => {
+            let mut restored = value(true);
+            let decor = restored
+                .as_value_mut()
+                .expect("toml bool value")
+                .decor_mut();
+            decor.set_prefix(prefix);
+            decor.set_suffix(original_suffix);
+            vendor_config.insert("hooks", restored);
+        }
+        "missing" => {
+            vendor_config.remove("hooks");
+        }
+        _ => return Err("hook_config_toml_marker_invalid".to_string()),
+    }
+    let remove_vendor = vendor_created && vendor_config.is_empty();
+    if remove_vendor {
+        compat.remove(vendor);
+    }
+    Ok(compat_created)
+}
+
+fn uninstall_grok_compat_isolation(
+    document: &mut DocumentMut,
+    installation_id: &str,
+) -> Result<(), String> {
+    let mut compat_created = false;
+    for vendor in ["claude", "cursor"] {
+        compat_created |= uninstall_grok_compat_hooks(document, installation_id, vendor)?;
+    }
+    if compat_created
+        && document
+            .get("compat")
+            .and_then(Item::as_table_like)
+            .is_some_and(|compat| compat.is_empty())
+    {
+        document.remove("compat");
+    }
+    Ok(())
+}
+
+fn grok_compat_hooks_disabled(document: &DocumentMut, vendor: &str) -> bool {
+    let nested = document
+        .get("compat")
+        .and_then(Item::as_table_like)
+        .and_then(|compat| compat.get(vendor))
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get("hooks"))
+        .and_then(Item::as_bool);
+    let dotted_table = document
+        .get(&format!("compat.{vendor}"))
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get("hooks"))
+        .and_then(Item::as_bool);
+    let dotted_key = document
+        .get("compat")
+        .and_then(Item::as_table_like)
+        .and_then(|compat| compat.get(&format!("{vendor}.hooks")))
+        .and_then(Item::as_bool);
+    nested.or(dotted_table).or(dotted_key) == Some(false)
+}
+
+fn grok_compat_isolated(document: &DocumentMut) -> bool {
+    ["claude", "cursor"]
+        .iter()
+        .all(|vendor| grok_compat_hooks_disabled(document, vendor))
+}
+
 fn plan_files(
     root: &ResolvedRoot,
     source: Source,
     installation: &InstallationRecord,
     operation: Option<bool>,
 ) -> Result<(Vec<PlannedFile>, u32, bool), String> {
+    if source == Source::Kimi {
+        let state = resolve_config_file(root, "kimiConfig", "config.toml")?;
+        let original = std::str::from_utf8(&state.bytes)
+            .map_err(|_| "hook_config_toml_utf8_invalid".to_string())?;
+        let action = match operation {
+            Some(true) => KimiPlanAction::Install,
+            Some(false) => KimiPlanAction::Uninstall,
+            None => KimiPlanAction::Inspect,
+        };
+        let plan = kimi::plan(
+            original,
+            &kimi_commands(installation),
+            &ALL_KIMI_HOOK_MODULES,
+            action,
+        )?;
+        let after_exists = state.exists || operation == Some(true);
+        return Ok((
+            vec![PlannedFile {
+                before: state,
+                after: if after_exists {
+                    plan.content.into_bytes()
+                } else {
+                    Vec::new()
+                },
+                after_exists,
+            }],
+            plan.managed_entries,
+            plan.conflict || plan.outdated,
+        ));
+    }
+    if source == Source::Grok {
+        let json_state = resolve_config_file(root, "grokHooks", "hooks/cli-manager.json")?;
+        let mut json_value = read_json(&json_state)?;
+        let original_json = json_value.clone();
+        let expected = exact_commands(installation, source);
+        let (managed_entries, conflict, outdated) = inspect_json(&json_value, source, &expected)?;
+        match operation {
+            Some(true) => {
+                if conflict {
+                    return Err("hook_config_owner_conflict".to_string());
+                }
+                add_exact_hooks(&mut json_value, source, &expected)?;
+            }
+            Some(false) => {
+                if conflict {
+                    return Err("hook_config_owner_conflict".to_string());
+                }
+                remove_exact_hooks(&mut json_value, source, &expected)?;
+            }
+            None => {}
+        }
+        let json_after_exists = json_state.exists || operation == Some(true);
+        let json_after = if !json_after_exists {
+            Vec::new()
+        } else if json_state.exists && json_value == original_json {
+            json_state.bytes.clone()
+        } else {
+            serialize_json(&json_value)?
+        };
+        let toml_state = resolve_config_file(root, "grokCompat", "config.toml")?;
+        let mut document = parse_toml(&toml_state)?;
+        let toml_after = match operation {
+            Some(true) => {
+                install_grok_compat_isolation(&mut document, &installation.installation_id)?;
+                document.to_string().into_bytes()
+            }
+            Some(false) => {
+                uninstall_grok_compat_isolation(&mut document, &installation.installation_id)?;
+                document.to_string().into_bytes()
+            }
+            _ if toml_state.exists => toml_state.bytes.clone(),
+            _ => Vec::new(),
+        };
+        let toml_after_exists = toml_state.exists || operation == Some(true);
+        return Ok((
+            vec![
+                PlannedFile {
+                    before: json_state,
+                    after: json_after,
+                    after_exists: json_after_exists,
+                },
+                PlannedFile {
+                    before: toml_state,
+                    after: toml_after,
+                    after_exists: toml_after_exists,
+                },
+            ],
+            managed_entries,
+            conflict || outdated,
+        ));
+    }
     let json_state = resolve_config_file(
         root,
         if source == Source::Claude {
@@ -997,17 +1429,49 @@ fn current_status(
     source: Source,
     installation: &InstallationRecord,
 ) -> Result<(String, u32), String> {
+    if source == Source::Kimi {
+        let original = std::str::from_utf8(&plans[0].before.bytes)
+            .map_err(|_| "hook_config_toml_utf8_invalid".to_string())?;
+        let plan = kimi::plan(
+            original,
+            &kimi_commands(installation),
+            &ALL_KIMI_HOOK_MODULES,
+            KimiPlanAction::Inspect,
+        )?;
+        let status = if plan.conflict {
+            "conflict"
+        } else if plan.outdated {
+            "outdated"
+        } else if plan.managed_entries == 0 {
+            "notInstalled"
+        } else if plan.managed_entries == source.required_entries() {
+            "installed"
+        } else {
+            "partialInstalled"
+        };
+        return Ok((status.to_string(), plan.managed_entries));
+    }
     let json = read_json(&plans[0].before)?;
     let expected = exact_commands(installation, source);
     let (managed, conflict, outdated) = inspect_json(&json, source, &expected)?;
     if conflict {
         return Ok(("conflict".to_string(), managed));
     }
-    let feature_ready = source != Source::Codex || {
-        let document = parse_toml(&plans[1].before)?;
-        codex_feature_enabled(&document)
+    let feature_ready = match source {
+        Source::Codex => {
+            let document = parse_toml(&plans[1].before)?;
+            codex_feature_enabled(&document)
+        }
+        Source::Grok => {
+            if plans.len() < 2 {
+                false
+            } else {
+                grok_compat_isolated(&parse_toml(&plans[1].before)?)
+            }
+        }
+        _ => true,
     };
-    let required = source.hooks().len() as u32;
+    let required = source.required_entries();
     let status = if managed == 0 {
         "notInstalled"
     } else if outdated {
@@ -1391,7 +1855,7 @@ fn report(
             })
             .collect(),
         managed_entries,
-        required_entries: source.hooks().len() as u32,
+        required_entries: source.required_entries(),
         changes: plans.iter().map(PlannedFile::change).collect(),
         installation: record,
     }
@@ -1418,14 +1882,16 @@ fn installation_record(
                 after_fingerprint: plan.after_fingerprint(),
             })
             .collect(),
-        managed_entries: source.hooks().len() as u32,
+        managed_entries: source.required_entries(),
         adapter_version: ADAPTER_VERSION,
         installed_at: now_ms(),
-        history_source_candidate: HookHistorySourceCandidate {
-            source: source.as_str().to_string(),
-            canonical_config_root: path_text(&root.canonical),
-            config_root_hash: root.hash.clone(),
-        },
+        history_source_candidate: matches!(source, Source::Claude | Source::Codex).then(|| {
+            HookHistorySourceCandidate {
+                source: source.as_str().to_string(),
+                canonical_config_root: path_text(&root.canonical),
+                config_root_hash: root.hash.clone(),
+            }
+        }),
     }
 }
 
@@ -1438,6 +1904,7 @@ fn record_path(layout: &AgentLayout, source: Source, root_hash: &str) -> PathBuf
 pub fn inspect(request: HookConfigRequest) -> Result<HookConfigReport, String> {
     let source = Source::parse(&request.source)?;
     let layout = resolve_layout().map_err(str::to_string)?;
+    ensure_kimi_capability(source, &layout)?;
     let installation = installation(&layout)?;
     let root = resolve_root(&request.configured_config_root, source, &layout, false)?;
     let (plans, _, _) = plan_files(&root, source, &installation, None)?;
@@ -1459,6 +1926,9 @@ pub fn preview(request: HookConfigRequest, install: bool) -> Result<HookConfigRe
     }
     let source = Source::parse(&request.source)?;
     let layout = resolve_layout().map_err(str::to_string)?;
+    if install {
+        ensure_kimi_capability(source, &layout)?;
+    }
     let installation = installation(&layout)?;
     let root = if install {
         resolve_root(&request.configured_config_root, source, &layout, false)?
@@ -1496,6 +1966,11 @@ pub fn apply(request: HookConfigRequest, install: bool) -> Result<HookConfigRepo
     }
     let source = Source::parse(&request.source)?;
     let layout = resolve_layout().map_err(str::to_string)?;
+    let kimi_executable = if install {
+        ensure_kimi_capability(source, &layout)?
+    } else {
+        None
+    };
     let installation = installation(&layout)?;
     let root = if install {
         resolve_root(&request.configured_config_root, source, &layout, true)?
@@ -1511,6 +1986,11 @@ pub fn apply(request: HookConfigRequest, install: bool) -> Result<HookConfigRepo
     recover_transaction(&layout, &root.hash)?;
     let (plans, _, _) = plan_files(&root, source, &installation, Some(install))?;
     expected_files_match(&plans, &request)?;
+    if install {
+        if let Some(executable) = kimi_executable.as_deref() {
+            validate_kimi_candidate(executable, &plans[0].before.canonical_path, &plans[0].after)?;
+        }
+    }
     let record = install.then(|| installation_record(source, &root, &installation, &plans));
     let hook_record_path = record_path(&layout, source, &root.hash);
     let previous_record = fs::read(&hook_record_path).ok();
@@ -1541,7 +2021,7 @@ pub fn apply(request: HookConfigRequest, install: bool) -> Result<HookConfigRepo
         &installation,
         &plans,
         if install {
-            source.hooks().len() as u32
+            source.required_entries()
         } else {
             0
         },
@@ -1551,18 +2031,349 @@ pub fn apply(request: HookConfigRequest, install: bool) -> Result<HookConfigRepo
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::config_target_unchanged;
     use super::{
-        add_exact_hooks, apply_transaction, feature_marker, fingerprint, inspect_json,
-        install_codex_feature, parse_owned_marker, recover_transaction, remove_exact_hooks,
-        transaction_dir, uninstall_codex_feature, FileState, PlannedFile, Source, TransactionFile,
-        TransactionJournal,
+        add_exact_hooks, apply_transaction, feature_marker, fingerprint, grok_compat_isolated,
+        hook_command, inspect_json, install_codex_feature, install_grok_compat_isolation,
+        parse_owned_marker, parse_toml, recover_transaction, remove_exact_hooks, transaction_dir,
+        uninstall_codex_feature, uninstall_grok_compat_isolation, FileState, PlannedFile, Source,
+        TransactionFile, TransactionJournal,
     };
+    #[cfg(unix)]
+    use super::{
+        config_target_unchanged, exact_commands, installation_record, plan_files,
+        supports_current_kimi, validate_kimi_candidate, ResolvedRoot,
+    };
+    use crate::installer::InstallationRecord;
     use crate::layout::AgentLayout;
     use serde_json::json;
     use std::collections::HashMap;
     use std::fs;
+
+    fn installation_record_for_test(path: &std::path::Path) -> InstallationRecord {
+        InstallationRecord {
+            schema_version: 1,
+            installation_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            remote_machine_id: "machine".to_string(),
+            agent_version: "0.1.9".to_string(),
+            protocol_version: "1.11".to_string(),
+            target: "linux-x86_64".to_string(),
+            install_root: path.parent().unwrap().to_path_buf(),
+            install_path: path.to_path_buf(),
+            source: "test".to_string(),
+            manifest_url: String::new(),
+            artifact_sha256: "a".repeat(64),
+            installed_at: 1,
+            previous_version: String::new(),
+        }
+    }
+
+    #[test]
+    fn kimi_source_uses_native_root_and_exact_owner_token() {
+        let installation = installation_record_for_test(std::path::Path::new(
+            "/opt/cli-manager/cli-manager-ssh-agent",
+        ));
+        assert_eq!(Source::Kimi.default_dir(), ".kimi-code");
+        assert_eq!(Source::Kimi.required_entries(), 9);
+        assert_eq!(
+            hook_command(&installation, Source::Kimi, "PermissionResult"),
+            "'/opt/cli-manager/cli-manager-ssh-agent' hook --source kimi --event PermissionResult --owner cli-manager-ssh-agent:00000000-0000-4000-8000-000000000001 --managed-by cli-manager-ssh-agent --installation-id 00000000-0000-4000-8000-000000000001"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kimi_plan_uses_single_config_role_and_omits_history_candidate() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_path = temp.path().join(".kimi-code");
+        fs::create_dir_all(&root_path).unwrap();
+        fs::write(
+            root_path.join("config.toml"),
+            "# keep\nmodel = \"kimi-k2\"\n\n[[hooks]]\nevent = \"Stop\"\ncommand = \"third-party\"\n",
+        )
+        .unwrap();
+        let canonical = fs::canonicalize(&root_path).unwrap();
+        let root = ResolvedRoot {
+            configured: "~/.kimi-code".to_string(),
+            requested: root_path,
+            canonical,
+            hash: "a".repeat(64),
+            existed: true,
+        };
+        let installation = installation_record_for_test(std::path::Path::new(
+            "/opt/cli-manager/cli-manager-ssh-agent",
+        ));
+
+        let (plans, managed, conflict) =
+            plan_files(&root, Source::Kimi, &installation, Some(true)).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].before.role, "kimiConfig");
+        assert_eq!(managed, 9);
+        assert!(!conflict);
+        let content = String::from_utf8(plans[0].after.clone()).unwrap();
+        assert!(content.contains("# keep"));
+        assert!(content.contains("third-party"));
+        assert_eq!(content.matches("--source kimi").count(), 9);
+
+        let record = installation_record(Source::Kimi, &root, &installation, &plans);
+        assert!(record.history_source_candidate.is_none());
+    }
+
+    #[test]
+    fn grok_source_uses_native_root_and_permission_request_command() {
+        let installation = installation_record_for_test(std::path::Path::new(
+            "/opt/cli-manager/cli-manager-ssh-agent",
+        ));
+        assert_eq!(Source::Grok.default_dir(), ".grok");
+        assert_eq!(Source::Grok.required_entries(), 11);
+        assert_eq!(
+            hook_command(&installation, Source::Grok, "PermissionRequest"),
+            "'/opt/cli-manager/cli-manager-ssh-agent' hook --source grok --event PermissionRequest --managed-by cli-manager-ssh-agent --installation-id 00000000-0000-4000-8000-000000000001"
+        );
+    }
+
+    fn grok_compat_doc(text: &str) -> toml_edit::DocumentMut {
+        parse_toml(&FileState {
+            role: "grokCompat",
+            logical_path: "config.toml".into(),
+            canonical_path: "config.toml".into(),
+            bytes: text.as_bytes().to_vec(),
+            exists: true,
+            mode: None,
+        })
+        .expect("grok compat toml")
+    }
+
+    #[test]
+    fn grok_compat_isolated_reads_nested_and_dotted_tables() {
+        assert!(!grok_compat_isolated(&grok_compat_doc(
+            "[compat.claude]\nskills = true\n"
+        )));
+        assert!(grok_compat_isolated(&grok_compat_doc(
+            "[compat.claude]\nhooks = false\n[compat.cursor]\nhooks = false\n"
+        )));
+        assert!(grok_compat_isolated(&grok_compat_doc(
+            "compat.claude.hooks = false\ncompat.cursor.hooks = false\n"
+        )));
+        assert!(grok_compat_isolated(&grok_compat_doc(
+            "[compat]\nclaude.hooks = false\ncursor.hooks = false\n"
+        )));
+        assert!(!grok_compat_isolated(&grok_compat_doc(
+            "[compat.claude]\nhooks = false\n[compat.cursor]\nhooks = true\n"
+        )));
+    }
+
+    #[test]
+    fn grok_compat_uninstall_restores_owned_values_and_preserves_user_values() {
+        let mut document = grok_compat_doc(
+            "# keep\n[compat.claude]\nhooks = true # claude user comment\nskills = true\n[compat.cursor]\nhooks = false # cursor user choice\n",
+        );
+
+        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
+        let installed = document.to_string();
+        assert!(grok_compat_isolated(&document));
+        assert!(installed.contains("hooks = false # claude user comment # cli-manager-ssh-agent"));
+        assert!(installed.contains("hooks = false # cursor user choice"));
+        assert_eq!(installed.matches("cli-manager-ssh-agent").count(), 1);
+
+        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
+        let restored = document.to_string();
+        assert!(restored.contains("hooks = true # claude user comment"));
+        assert!(restored.contains("hooks = false # cursor user choice"));
+        assert!(!restored.contains("cli-manager-ssh-agent"));
+        assert!(restored.contains("skills = true"));
+    }
+
+    #[test]
+    fn grok_compat_uninstall_removes_only_agent_created_tables() {
+        let mut document = grok_compat_doc("# keep\n[other]\nvalue = true\n");
+
+        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
+        assert!(grok_compat_isolated(&document));
+        assert!(document.contains_key("compat"));
+
+        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
+        assert!(!document.contains_key("compat"));
+        let restored = document.to_string();
+        assert!(restored.contains("# keep"));
+        assert!(restored.contains("[other]"));
+        assert!(restored.contains("value = true"));
+    }
+
+    #[test]
+    fn grok_compat_uninstall_respects_other_installations_and_user_changes() {
+        let mut document =
+            grok_compat_doc("[compat.claude]\nhooks = true\n[compat.cursor]\nhooks = true\n");
+        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
+
+        uninstall_grok_compat_isolation(&mut document, "installation-2").unwrap();
+        assert!(grok_compat_isolated(&document));
+        assert!(document.to_string().contains("installation=installation-1"));
+
+        document["compat"]["claude"]["hooks"] = toml_edit::value(true);
+        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
+        assert_eq!(document["compat"]["claude"]["hooks"].as_bool(), Some(true));
+        assert_eq!(document["compat"]["cursor"]["hooks"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn grok_compat_already_isolated_without_marker_remains_unchanged() {
+        let original =
+            "[compat.claude]\nhooks = false # user\n[compat.cursor]\nhooks = false # user\n";
+        let mut document = grok_compat_doc(original);
+
+        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
+        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
+
+        assert_eq!(document.to_string(), original);
+    }
+
+    #[test]
+    fn grok_compat_uninstall_ignores_incomplete_markers() {
+        let original =
+            "[compat.claude]\nhooks = false # cli-manager-ssh-agent installation=installation-1\n";
+        let mut document = grok_compat_doc(original);
+
+        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
+
+        assert_eq!(document.to_string(), original);
+    }
+
+    #[test]
+    fn grok_compat_install_and_uninstall_preserve_supported_dotted_forms() {
+        for original in [
+            "compat.claude.hooks = true\ncompat.cursor.hooks = true\n",
+            "[compat]\nclaude.hooks = true\ncursor.hooks = true\n",
+        ] {
+            let mut document = grok_compat_doc(original);
+            install_grok_compat_isolation(&mut document, "installation-1").unwrap();
+            assert!(grok_compat_isolated(&document));
+
+            uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
+            assert!(!grok_compat_isolated(&document));
+            assert_eq!(document["compat"]["claude"]["hooks"].as_bool(), Some(true));
+            assert_eq!(document["compat"]["cursor"]["hooks"].as_bool(), Some(true));
+            assert!(!document.to_string().contains("cli-manager-ssh-agent"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn grok_plan_writes_hooks_json_and_compat_and_omits_history_candidate() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_path = temp.path().join(".grok");
+        fs::create_dir_all(root_path.join("hooks")).unwrap();
+        fs::write(
+            root_path.join("hooks").join("cli-manager.json"),
+            "{\n  \"keep\": true\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            root_path.join("config.toml"),
+            "# keep\n[compat.claude]\nhooks = true\nskills = true\n",
+        )
+        .unwrap();
+        let canonical = fs::canonicalize(&root_path).unwrap();
+        let root = ResolvedRoot {
+            configured: "~/.grok".to_string(),
+            requested: root_path.clone(),
+            canonical,
+            hash: "a".repeat(64),
+            existed: true,
+        };
+        let installation = installation_record_for_test(std::path::Path::new(
+            "/opt/cli-manager/cli-manager-ssh-agent",
+        ));
+
+        let (plans, _, conflict) =
+            plan_files(&root, Source::Grok, &installation, Some(true)).unwrap();
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].before.role, "grokHooks");
+        assert_eq!(plans[1].before.role, "grokCompat");
+        assert!(!conflict);
+        let hooks = String::from_utf8(plans[0].after.clone()).unwrap();
+        assert!(hooks.contains("\"keep\": true"));
+        assert_eq!(hooks.matches("--source grok").count(), 11);
+        assert!(hooks.contains("PermissionRequest"));
+        let after_json = serde_json::from_slice(&plans[0].after).unwrap();
+        let expected = exact_commands(&installation, Source::Grok);
+        let (managed, after_conflict, _) =
+            inspect_json(&after_json, Source::Grok, &expected).unwrap();
+        assert_eq!(managed, 11);
+        assert!(!after_conflict);
+        let config = String::from_utf8(plans[1].after.clone()).unwrap();
+        assert!(config.contains("# keep"));
+        assert!(config.contains("skills = true"));
+        assert!(config.contains("hooks = false"));
+
+        let record = installation_record(Source::Grok, &root, &installation, &plans);
+        assert!(record.history_source_candidate.is_none());
+
+        let inspect_plans = plan_files(&root, Source::Grok, &installation, None)
+            .unwrap()
+            .0;
+        assert!(!grok_compat_isolated(
+            &parse_toml(&inspect_plans[1].before).unwrap()
+        ));
+        let after_toml = parse_toml(&FileState {
+            role: "grokCompat",
+            logical_path: inspect_plans[1].before.logical_path.clone(),
+            canonical_path: inspect_plans[1].before.canonical_path.clone(),
+            bytes: plans[1].after.clone(),
+            exists: true,
+            mode: None,
+        })
+        .unwrap();
+        assert!(grok_compat_isolated(&after_toml));
+
+        fs::write(root_path.join("config.toml"), &plans[1].after).unwrap();
+        let uninstall_plans = plan_files(&root, Source::Grok, &installation, Some(false))
+            .unwrap()
+            .0;
+        let restored = String::from_utf8(uninstall_plans[1].after.clone()).unwrap();
+        assert!(restored.contains("hooks = true"));
+        assert!(restored.contains("skills = true"));
+        assert!(!restored.contains("cli-manager-ssh-agent"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kimi_candidate_failure_leaves_live_config_untouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config.toml");
+        fs::write(&config, "model = \"kimi-k2\"\n").unwrap();
+        let doctor = temp.path().join("kimi");
+        fs::write(&doctor, "#!/bin/sh\nexit 2\n").unwrap();
+        fs::set_permissions(&doctor, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(
+            validate_kimi_candidate(&doctor, &config, b"model = \"other\"\n").unwrap_err(),
+            "hook_config_doctor_failed"
+        );
+        assert_eq!(
+            fs::read_to_string(&config).unwrap(),
+            "model = \"kimi-k2\"\n"
+        );
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kimi_capability_rejects_legacy_cli_and_accepts_current_cli() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let current = temp.path().join("current-kimi");
+        fs::write(&current, "#!/bin/sh\n[ \"$1\" = doctor ]\n").unwrap();
+        fs::set_permissions(&current, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(supports_current_kimi(&current));
+
+        let legacy = temp.path().join("legacy-kimi");
+        fs::write(&legacy, "#!/bin/sh\nexit 2\n").unwrap();
+        fs::set_permissions(&legacy, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(!supports_current_kimi(&legacy));
+    }
 
     #[test]
     fn exact_owner_merge_preserves_third_party_entries() {
@@ -1683,14 +2494,14 @@ mod tests {
                 "configuredConfigRoot": configured.to_string_lossy(),
                 "canonicalConfigRoot": canonical.to_string_lossy(),
                 "configFiles": [],
-                "managedEntries": source.hooks().len(),
+                "managedEntries": source.required_entries(),
                 "adapterVersion": 1,
                 "installedAt": 1,
-                "historySourceCandidate": {
+                "historySourceCandidate": matches!(source, Source::Claude | Source::Codex).then(|| json!({
                     "source": source.as_str(),
                     "canonicalConfigRoot": canonical.to_string_lossy(),
                     "configRootHash": hash,
-                }
+                }))
             }))
             .unwrap(),
         )

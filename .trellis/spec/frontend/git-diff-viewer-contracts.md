@@ -60,6 +60,7 @@ type GitDiffViewMode = "split" | "unified";
 ### 3. Contracts
 
 - The review dialog owns the filtered target list and active target identity; the controller owns the active Hunk within one target.
+- The review dialog must derive its initial active target synchronously from `initialFilePath` during render and repeat that binding before paint when the dialog opens or the target tree changes; an empty active ID must never reconcile to the first file before this binding.
 - Target identity is repository context plus repository-relative file path. Status and line counts must not participate in identity, so refresh can retain the same target.
 - Target order is the rendered tracked tree followed by the rendered untracked tree. `M` and `D` filters exclude the untracked tree, matching `GitChangesPanel`.
 - `F7` and `Shift+F7` are handled by the focusable review viewer only. They must not install a global listener or affect terminals and other windows.
@@ -85,6 +86,7 @@ type GitDiffViewMode = "split" | "unified";
 ### 6. Tests Required
 
 - Unit-test tracked/untracked order, `M`/`D` filtering, repository identity, refresh reconciliation, Hunk/file transitions, boundaries, and zero-Hunk fallback.
+- Unit-test opening a non-first changed file on the first render and reopening a mounted dialog with a different initial file.
 - Assert settings default, persisted-value validation, and preference-sync classification.
 - Run the shared Viewer architecture test and the SSH Git regression test.
 
@@ -270,12 +272,31 @@ findAdjacentGitDiffChange(order, currentKey, side, direction): GitDiffSelectable
 | Unified Shift target changes side | Clear the previous range and select the target only |
 | Non-UTF-8, non-exact, untracked, or backend-disabled payload | No interactive gutter; partial mutation remains guarded |
 | Escape while IME is composing | Keep the Dialog open |
-| Nested confirmation Dialog is open | Only Radix's top dismissable layer handles Escape |
+| Nested confirmation Dialog is open | Only Radix's top dismissable layer handles Escape; file and Hunk destructive actions confirm before mutation |
+
+### Common Mistake: Mounting a nested confirmation below the Diff Dialog
+
+**Symptom**: Clicking file-level or Hunk revert from the Git Diff Dialog appears to freeze the UI; the confirmation prompt is hidden and the Diff Dialog cannot be interacted with.
+
+**Cause**: `GitDiffDialogFrame` renders its overlay/content at `z-index` 100/101, while a confirmation dialog mounted by the parent Git panel uses the shared `ConfirmDialog` default of 50. Two Radix modal focus scopes remain active, but the lower confirmation layer cannot receive visible interaction.
+
+**Fix**: Set the higher layer only at each Git Diff confirmation call site. The shared `ConfirmDialog` accepts `zIndex` and applies it to both overlay and content; use a value above the Diff Dialog layer (currently 220). Do not change the shared default because unrelated consumers would inherit the behavior change. The Hunk button must open this confirmation first and invoke `controller.revertHunk` only after confirmation.
+
+```tsx
+<ConfirmDialog
+  open={discardTarget !== null}
+  zIndex={220}
+  onConfirm={confirmDiscard}
+  onClose={closeConfirm}
+/>
+```
 
 ### 5. Tests Required
 
 - Unit-test toggle, split anchors, unified cross-side reset, same-side range filtering, and keyboard adjacency.
 - Assert the Dialog has Radix autofocus/restore hooks and no `window` key listener.
+- Assert file-level revert confirmation is above `GitDiffDialogFrame` and that confirm/cancel/Escape returns interaction to the underlying Diff Dialog.
+- Assert Hunk revert opens a second confirmation, does not mutate before confirmation, and uses the same top-layer behavior.
 - Assert focusable gutters expose marker, check, and pressed semantics; selection count uses `aria-live`.
 - Run shared Viewer architecture, navigation, generation-option, settings, and pinned-editor regressions.
 
@@ -383,6 +404,7 @@ useGitDiffOpenWorkflow(options): {
 
 - `settingsStore.gitDiffOpenMode` defaults to `dialog`; `gitDiffWrapLines` defaults to `true`. Both validate persisted input and belong to the `preferences` sync domain.
 - Application Diff tokens are scoped to `data-git-diff-theme="application"`. Terminal roots provide complete surface, text, semantic, interaction, selection, and syntax tokens; global application light selectors must not override them.
+- Refractor token class names are runtime syntax metadata, not Tailwind utility intent. Inside `.diff-code`, token spans must retain inline source-fragment layout even when a language grammar emits a class such as `table` that collides with a global utility.
 - Wrapped mode uses fixed-layout tables and `pre-wrap`. Unwrapped Split mode uses fixed gutter tracks plus equal `minmax(0, 1fr)` code tracks, while code cells use `white-space: pre` and one `GitDiffContent` horizontal scrollbar writes the same `scrollLeft` to both sides.
 - The Split center remains fixed during horizontal scrolling. Newly virtualized Hunk cells receive the current offset, and container or line-width changes recalculate the shared scroll range.
 - Hunk containers have no decorative border, radius, shadow, or overflow clipping. Changing wrap or view mode remeasures virtual Hunk heights.
@@ -416,6 +438,7 @@ useGitDiffOpenWorkflow(options): {
 
 - Assert settings defaults, validation, and sync classification.
 - Assert terminal/application selector isolation, toolbar interaction states, fixed nowrap Split tracks, synchronized virtual-cell offsets, Hunk remeasurement, and absence of the old framed container classes.
+- Assert Markdown table header, separator, and body token spans remain inline in wrapped and unwrapped Diff code cells; do not replace the source-code Diff with rendered Markdown HTML.
 - Assert pin/open routing and success-gated dialog close behavior.
 - Run the architecture limit test and assert each Diff responsibility module remains at most 300 lines with no environment-specific branching in the shared viewer.
 

@@ -23,6 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ERROR_DIAGNOSTIC_BODY_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const KEY_COOLDOWN_DEFAULT: Duration = Duration::from_secs(30);
 const KEY_COOLDOWN_MAX: Duration = Duration::from_secs(60);
@@ -60,6 +61,7 @@ struct ProviderSnapshot {
     app_type: &'static str,
     provider_id: String,
     provider_name: String,
+    is_current: bool,
     base_url: String,
     claude_api_key_field: Option<String>,
     claude_api_format: Option<String>,
@@ -84,8 +86,15 @@ enum UpstreamSendFailure {
     Request,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum KeySelection {
+    Ready(KeyCandidate),
+    CoolingDown,
+    Unavailable,
+}
+
 enum ProviderAttemptOutcome {
-    Response(reqwest::Response),
+    Response(reqwest::Response, usize),
     Failure(StatusCode, &'static str),
     KeyExhausted,
 }
@@ -209,6 +218,7 @@ struct HotSwitchCommit {
 struct UsageCommit {
     context: RouteUsageContext,
     status_code: Option<u16>,
+    initial_error_code: Option<&'static str>,
 }
 
 struct TimedBodyState<S> {
@@ -258,11 +268,11 @@ pub(crate) struct RouteState {
 }
 
 impl RouteState {
-    fn select_key(
+    fn select_key_status(
         &self,
         pool_id: &str,
         candidates: Vec<KeyCandidate>,
-    ) -> Result<KeyCandidate, String> {
+    ) -> Result<KeySelection, String> {
         let mut pools = self
             .pools
             .lock()
@@ -279,8 +289,20 @@ impl RouteState {
             pool.cursor = 0;
             pool.cooldowns.clear();
         }
-        pool.next_key(&HashSet::new())
-            .ok_or_else(|| "routing_provider_keys_cooling_down".to_string())
+        Ok(pool.next_key_status(&HashSet::new()))
+    }
+
+    #[cfg(test)]
+    fn select_key(
+        &self,
+        pool_id: &str,
+        candidates: Vec<KeyCandidate>,
+    ) -> Result<KeyCandidate, String> {
+        match self.select_key_status(pool_id, candidates)? {
+            KeySelection::Ready(key) => Ok(key),
+            KeySelection::CoolingDown => Err("routing_provider_keys_cooling_down".to_string()),
+            KeySelection::Unavailable => Err("routing_provider_keys_unavailable".to_string()),
+        }
     }
 
     fn next_key(&self, pool_id: &str, used: &HashSet<String>) -> Option<KeyCandidate> {
@@ -309,20 +331,36 @@ impl RouteState {
 
 impl KeyPool {
     fn next_key(&mut self, used: &HashSet<String>) -> Option<KeyCandidate> {
+        match self.next_key_status(used) {
+            KeySelection::Ready(candidate) => Some(candidate),
+            KeySelection::CoolingDown | KeySelection::Unavailable => None,
+        }
+    }
+
+    fn next_key_status(&mut self, used: &HashSet<String>) -> KeySelection {
         let now = Instant::now();
         self.cooldowns.retain(|_, deadline| *deadline > now);
         if self.candidates.is_empty() {
-            return None;
+            return KeySelection::Unavailable;
         }
+        let mut has_unused = false;
         for _ in 0..self.candidates.len() {
             let index = self.cursor % self.candidates.len();
             self.cursor = (self.cursor + 1) % self.candidates.len();
             let candidate = &self.candidates[index];
-            if !used.contains(&candidate.id) && !self.cooldowns.contains_key(&candidate.id) {
-                return Some(candidate.clone());
+            if used.contains(&candidate.id) {
+                continue;
+            }
+            has_unused = true;
+            if !self.cooldowns.contains_key(&candidate.id) {
+                return KeySelection::Ready(candidate.clone());
             }
         }
-        None
+        if has_unused {
+            KeySelection::CoolingDown
+        } else {
+            KeySelection::Unavailable
+        }
     }
 }
 
@@ -534,6 +572,11 @@ async fn forward_request(
         .get("stream")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    let error_capture_timeout = Duration::from_secs(if streaming {
+        failover_config.streaming_idle_timeout
+    } else {
+        failover_config.non_streaming_timeout
+    });
     let circuit_policy = CircuitPolicy {
         failure_threshold: failover_config.circuit_failure_threshold,
         success_threshold: failover_config.circuit_success_threshold,
@@ -588,11 +631,13 @@ async fn forward_request(
         1
     };
     let mut provider_index = 0usize;
+    let mut actual_provider_attempts = 0usize;
     let mut terminal_failure = None;
     let record_failed_attempt = |snapshot: &ProviderSnapshot,
                                  attempt_index: usize,
                                  status_code: Option<StatusCode>,
-                                 error_code: &'static str| {
+                                 error_code: &'static str,
+                                 capture: usage::UsageCapture| {
         if !usage_logging_enabled {
             return;
         }
@@ -614,7 +659,7 @@ async fn forward_request(
         tokio::task::spawn_local(async move {
             usage::record_route_usage_best_effort(
                 context,
-                usage::UsageCapture::default(),
+                capture,
                 status_code.map(|status| status.as_u16()),
                 "error",
                 Some(error_code),
@@ -623,13 +668,48 @@ async fn forward_request(
             .await;
         });
     };
+    let record_skipped_attempt = |snapshot: &ProviderSnapshot,
+                                  candidate_index: usize,
+                                  actual_attempts: usize,
+                                  status_code: Option<StatusCode>,
+                                  error_code: &'static str| {
+        if !usage_logging_enabled {
+            return;
+        }
+        let context = RouteUsageContext {
+            request_id: format!("{}:skip:{}", request_id, candidate_index + 1),
+            logical_request_id: request_id.clone(),
+            app_type: app_type.to_string(),
+            session_id: session_id.clone(),
+            requested_model: requested_model.clone(),
+            outbound_model: effective_model_for_request(&request_json, &snapshot.model_mappings),
+            provider_id: snapshot.provider_id.clone(),
+            provider_name: snapshot.provider_name.clone(),
+            started_at_ms: request_started_at,
+            is_streaming: streaming,
+            attempt_index: actual_attempts as u32,
+            attempt_count: actual_attempts as u32,
+            degraded: actual_attempts > 0,
+        };
+        tokio::task::spawn_local(async move {
+            usage::record_route_usage_best_effort(
+                context,
+                usage::UsageCapture::default(),
+                status_code.map(|status| status.as_u16()),
+                "skipped",
+                Some(error_code),
+                crate::provider::routing::now_millis().saturating_sub(request_started_at),
+            )
+            .await;
+        });
+    };
     let selected = loop {
-        if provider_index >= snapshots.len() || provider_index >= max_provider_attempts {
+        if provider_index >= snapshots.len() || actual_provider_attempts >= max_provider_attempts {
             break None;
         }
         let snapshot = snapshots[provider_index].clone();
         log::info!(
-            "routing provider attempt: app_type={} index={} provider={} provider_id={}",
+            "routing provider candidate: app_type={} index={} provider={} provider_id={}",
             snapshot.app_type,
             provider_index + 1,
             snapshot.provider_name,
@@ -649,6 +729,13 @@ async fn forward_request(
                         snapshot.provider_name,
                         snapshot.provider_id,
                     );
+                    record_skipped_attempt(
+                        &snapshot,
+                        provider_index,
+                        actual_provider_attempts,
+                        Some(StatusCode::SERVICE_UNAVAILABLE),
+                        "routing_provider_circuit_open",
+                    );
                     provider_index = provider_index.saturating_add(1);
                     continue;
                 }
@@ -662,6 +749,13 @@ async fn forward_request(
                 if let Some(permit) = circuit_permit.take() {
                     state.circuits.release(permit);
                 }
+                record_skipped_attempt(
+                    &snapshot,
+                    provider_index,
+                    actual_provider_attempts,
+                    Some(StatusCode::BAD_GATEWAY),
+                    "routing_provider_endpoint_invalid",
+                );
                 terminal_failure =
                     Some((StatusCode::BAD_GATEWAY, "routing_provider_endpoint_invalid"));
                 provider_index = provider_index.saturating_add(1);
@@ -669,9 +763,34 @@ async fn forward_request(
             }
         };
         let mut selected_key =
-            match state.select_key(&snapshot.pool_id, snapshot.key_candidates.clone()) {
-                Ok(key) => key,
-                Err(_) => {
+            match state.select_key_status(&snapshot.pool_id, snapshot.key_candidates.clone()) {
+                Ok(KeySelection::Ready(key)) => key,
+                Ok(KeySelection::CoolingDown) => {
+                    if !failover_config.auto_failover_enabled {
+                        return Err((
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "routing_provider_unavailable",
+                        ));
+                    }
+                    if let Some(permit) = circuit_permit.take() {
+                        state.circuits.release(permit);
+                    }
+                    log::warn!(
+                        "routing provider skipped: app_type={} provider_id={} reason=key_cooldown",
+                        snapshot.app_type,
+                        snapshot.provider_id
+                    );
+                    record_skipped_attempt(
+                        &snapshot,
+                        provider_index,
+                        actual_provider_attempts,
+                        None,
+                        "routing_provider_keys_cooling_down",
+                    );
+                    provider_index = provider_index.saturating_add(1);
+                    continue;
+                }
+                Ok(KeySelection::Unavailable) | Err(_) => {
                     if !failover_config.auto_failover_enabled {
                         return Err((
                             StatusCode::SERVICE_UNAVAILABLE,
@@ -683,9 +802,16 @@ async fn forward_request(
                         snapshot.app_type,
                         snapshot.provider_id
                     );
-                    record_circuit_failure(&state, &mut circuit_permit, circuit_policy);
-                    terminal_failure =
-                        Some((StatusCode::BAD_GATEWAY, "routing_provider_key_exhausted"));
+                    if let Some(permit) = circuit_permit.take() {
+                        state.circuits.release(permit);
+                    }
+                    record_skipped_attempt(
+                        &snapshot,
+                        provider_index,
+                        actual_provider_attempts,
+                        None,
+                        "routing_provider_keys_unavailable",
+                    );
                     provider_index = provider_index.saturating_add(1);
                     continue;
                 }
@@ -714,6 +840,13 @@ async fn forward_request(
             add_bedrock_beta_header(&mut attempt_headers);
         }
         let outcome = loop {
+            let attempt_body = apply_model_mapping(&provider_request, &snapshot.model_mappings)
+                .map_err(|_| (StatusCode::BAD_REQUEST, "routing_model_mapping_invalid"))?;
+            let Some(actual_attempt_index) =
+                reserve_provider_attempt(&mut actual_provider_attempts, max_provider_attempts)
+            else {
+                break ProviderAttemptOutcome::KeyExhausted;
+            };
             let mut upstream = client.post(&url);
             for (name, value) in &attempt_headers {
                 upstream = upstream.header(name, value);
@@ -726,8 +859,6 @@ async fn forward_request(
                     format!("Bearer {}", selected_key.api_key),
                 );
             }
-            let attempt_body = apply_model_mapping(&provider_request, &snapshot.model_mappings)
-                .map_err(|_| (StatusCode::BAD_REQUEST, "routing_model_mapping_invalid"))?;
             let send_result = if streaming {
                 match tokio::time::timeout(
                     Duration::from_secs(failover_config.streaming_first_byte_timeout),
@@ -770,6 +901,13 @@ async fn forward_request(
                         snapshot.provider_name,
                         snapshot.provider_id,
                     );
+                    record_failed_attempt(
+                        &snapshot,
+                        actual_attempt_index,
+                        Some(StatusCode::GATEWAY_TIMEOUT),
+                        "routing_upstream_timeout",
+                        usage::UsageCapture::default(),
+                    );
                     break ProviderAttemptOutcome::Failure(
                         StatusCode::GATEWAY_TIMEOUT,
                         "routing_upstream_timeout",
@@ -781,6 +919,13 @@ async fn forward_request(
                         snapshot.app_type,
                         snapshot.provider_name,
                         snapshot.provider_id,
+                    );
+                    record_failed_attempt(
+                        &snapshot,
+                        actual_attempt_index,
+                        Some(StatusCode::BAD_GATEWAY),
+                        "routing_upstream_request_failed",
+                        usage::UsageCapture::default(),
                     );
                     break ProviderAttemptOutcome::Failure(
                         StatusCode::BAD_GATEWAY,
@@ -820,16 +965,45 @@ async fn forward_request(
                 && (!is_anthropic_provider || response.status() != StatusCode::BAD_REQUEST)
                 && can_media;
             if should_read_anthropic_client_error || should_read_media_error {
-                let error_body = response
-                    .bytes()
-                    .await
-                    .map_err(|_| (StatusCode::BAD_GATEWAY, "routing_upstream_body_failed"))?;
+                let response_status = response.status();
+                let error_body = match response.bytes().await {
+                    Ok(body) => body,
+                    Err(_) => {
+                        record_failed_attempt(
+                            &snapshot,
+                            actual_attempt_index,
+                            Some(StatusCode::BAD_GATEWAY),
+                            "routing_upstream_body_failed",
+                            usage::UsageCapture::default(),
+                        );
+                        break ProviderAttemptOutcome::Failure(
+                            StatusCode::BAD_GATEWAY,
+                            "routing_upstream_body_failed",
+                        );
+                    }
+                };
+                let error_capture = usage_logging_enabled
+                    .then(|| capture_upstream_error_body(&error_body))
+                    .unwrap_or_default();
                 if should_read_anthropic_client_error {
                     if can_signature && is_thinking_signature_error(&error_body) {
                         remove_invalid_thinking_blocks(&mut provider_request);
                         retry_context.mark_used(
                             crate::provider::routing::RoutingRectifierRule::ThinkingSignature,
                         );
+                        record_failed_attempt(
+                            &snapshot,
+                            actual_attempt_index,
+                            Some(response_status),
+                            "routing_upstream_rectifier_retry",
+                            error_capture.clone(),
+                        );
+                        if actual_provider_attempts >= max_provider_attempts {
+                            break ProviderAttemptOutcome::Failure(
+                                StatusCode::BAD_GATEWAY,
+                                "routing_upstream_provider_failed",
+                            );
+                        }
                         continue;
                     }
                     if can_budget
@@ -839,6 +1013,19 @@ async fn forward_request(
                         retry_context.mark_used(
                             crate::provider::routing::RoutingRectifierRule::ThinkingBudget,
                         );
+                        record_failed_attempt(
+                            &snapshot,
+                            actual_attempt_index,
+                            Some(response_status),
+                            "routing_upstream_rectifier_retry",
+                            error_capture.clone(),
+                        );
+                        if actual_provider_attempts >= max_provider_attempts {
+                            break ProviderAttemptOutcome::Failure(
+                                StatusCode::BAD_GATEWAY,
+                                "routing_upstream_provider_failed",
+                            );
+                        }
                         continue;
                     }
                 }
@@ -848,63 +1035,147 @@ async fn forward_request(
                 {
                     retry_context
                         .mark_used(crate::provider::routing::RoutingRectifierRule::MediaFallback);
+                    record_failed_attempt(
+                        &snapshot,
+                        actual_attempt_index,
+                        Some(response_status),
+                        "routing_upstream_rectifier_retry",
+                        error_capture.clone(),
+                    );
+                    if actual_provider_attempts >= max_provider_attempts {
+                        break ProviderAttemptOutcome::Failure(
+                            StatusCode::BAD_GATEWAY,
+                            "routing_upstream_provider_failed",
+                        );
+                    }
                     continue;
                 }
                 if failover_config.auto_failover_enabled {
+                    record_failed_attempt(
+                        &snapshot,
+                        actual_attempt_index,
+                        Some(response_status),
+                        "routing_upstream_provider_failed",
+                        error_capture,
+                    );
                     break ProviderAttemptOutcome::Failure(
                         StatusCode::BAD_GATEWAY,
                         "routing_upstream_provider_failed",
                     );
                 }
+                record_failed_attempt(
+                    &snapshot,
+                    actual_attempt_index,
+                    Some(response_status),
+                    "routing_upstream_client_error",
+                    error_capture,
+                );
                 return Err((StatusCode::BAD_REQUEST, "routing_upstream_client_error"));
             }
             if classify_upstream_status(response.status()) == UpstreamErrorClass::Provider {
+                let status = response.status();
+                let capture = if usage_logging_enabled {
+                    capture_upstream_error_response(response, error_capture_timeout).await
+                } else {
+                    usage::UsageCapture::default()
+                };
+                record_failed_attempt(
+                    &snapshot,
+                    actual_attempt_index,
+                    Some(status),
+                    "routing_upstream_provider_failed",
+                    capture,
+                );
                 break ProviderAttemptOutcome::Failure(
                     StatusCode::BAD_GATEWAY,
                     "routing_upstream_provider_failed",
                 );
             }
             if !is_key_retryable(response.status()) {
-                break ProviderAttemptOutcome::Response(response);
+                break ProviderAttemptOutcome::Response(response, actual_attempt_index);
             }
+            let response_status = response.status();
             state.mark_cooldown(
                 &snapshot.pool_id,
                 &selected_key.id,
-                response.status().as_u16(),
+                response_status.as_u16(),
                 response.headers(),
             );
             let Some(next_key) = state.next_key(&snapshot.pool_id, &used_keys) else {
                 break if failover_config.auto_failover_enabled {
+                    let capture = if usage_logging_enabled {
+                        capture_upstream_error_response(response, error_capture_timeout).await
+                    } else {
+                        usage::UsageCapture::default()
+                    };
+                    record_failed_attempt(
+                        &snapshot,
+                        actual_attempt_index,
+                        Some(response_status),
+                        "routing_provider_key_exhausted",
+                        capture,
+                    );
                     ProviderAttemptOutcome::KeyExhausted
                 } else {
-                    ProviderAttemptOutcome::Response(response)
+                    ProviderAttemptOutcome::Response(response, actual_attempt_index)
                 };
             };
+            if actual_provider_attempts >= max_provider_attempts {
+                break if failover_config.auto_failover_enabled {
+                    let capture = if usage_logging_enabled {
+                        capture_upstream_error_response(response, error_capture_timeout).await
+                    } else {
+                        usage::UsageCapture::default()
+                    };
+                    record_failed_attempt(
+                        &snapshot,
+                        actual_attempt_index,
+                        Some(response_status),
+                        "routing_provider_key_exhausted",
+                        capture,
+                    );
+                    ProviderAttemptOutcome::KeyExhausted
+                } else {
+                    ProviderAttemptOutcome::Response(response, actual_attempt_index)
+                };
+            }
+            let capture = if usage_logging_enabled {
+                capture_upstream_error_response(response, error_capture_timeout).await
+            } else {
+                usage::UsageCapture::default()
+            };
+            record_failed_attempt(
+                &snapshot,
+                actual_attempt_index,
+                Some(response_status),
+                "routing_upstream_key_retry",
+                capture,
+            );
             used_keys.insert(next_key.id.clone());
             selected_key = next_key;
         };
         match outcome {
-            ProviderAttemptOutcome::Response(response) => {
+            ProviderAttemptOutcome::Response(response, actual_attempt_index) => {
                 log::info!(
                     "routing provider selected: app_type={} provider={} provider_id={} index={}",
                     snapshot.app_type,
                     snapshot.provider_name,
                     snapshot.provider_id,
-                    provider_index + 1,
+                    actual_attempt_index + 1,
                 );
                 let outbound_model =
                     effective_model_for_request(&request_json, &snapshot.model_mappings);
                 break Some((
                     response,
                     circuit_permit,
-                    provider_index,
+                    actual_attempt_index,
                     snapshot.provider_id,
                     snapshot.provider_name,
+                    snapshot.is_current,
                     outbound_model,
                 ));
             }
             ProviderAttemptOutcome::Failure(status, message) => {
-                record_failed_attempt(&snapshot, provider_index, Some(status), message);
                 log::warn!(
                     "routing provider circuit failure: app_type={} provider={} provider_id={} status={} reason={}",
                     snapshot.app_type,
@@ -917,12 +1188,6 @@ async fn forward_request(
                 terminal_failure = Some((status, message));
             }
             ProviderAttemptOutcome::KeyExhausted => {
-                record_failed_attempt(
-                    &snapshot,
-                    provider_index,
-                    None,
-                    "routing_provider_key_exhausted",
-                );
                 log::warn!(
                     "routing provider key pool exhausted: app_type={} provider_id={}",
                     snapshot.app_type,
@@ -947,13 +1212,14 @@ async fn forward_request(
         selected_provider_index,
         selected_provider_id,
         selected_provider_name,
+        selected_provider_is_current,
         selected_outbound_model,
     )) = selected
     else {
         log::warn!(
             "routing failover exhausted: app_type={} attempted={} loaded={} max_attempts={}",
             route_app_type(route),
-            provider_index,
+            actual_provider_attempts,
             snapshots.len(),
             max_provider_attempts,
         );
@@ -963,6 +1229,11 @@ async fn forward_request(
         )));
     };
     let status = response.status();
+    let should_hot_switch = should_hot_switch_provider(
+        failover_config.auto_failover_enabled,
+        selected_provider_is_current,
+        status,
+    );
     log::info!(
         "routing provider final response: app_type={} provider={} provider_id={} status={} index={}",
         route_app_type(route),
@@ -1004,9 +1275,7 @@ async fn forward_request(
                 return Err((StatusCode::GATEWAY_TIMEOUT, "routing_upstream_timeout"));
             }
         };
-        if selected_provider_index > 0
-            && classify_upstream_status(status) == UpstreamErrorClass::Success
-        {
+        if should_hot_switch {
             if let Err(error) = crate::provider::routing::apply_hot_switch_for_active_homes(
                 route_app_type(route),
                 &selected_provider_id,
@@ -1016,7 +1285,8 @@ async fn forward_request(
                 log::warn!("routing hot switch failed: {error}");
             }
         }
-        if classify_upstream_status(status) == UpstreamErrorClass::Success {
+        let upstream_success = classify_upstream_status(status) == UpstreamErrorClass::Success;
+        if upstream_success {
             record_circuit_success(&state, &mut circuit_permit, circuit_policy);
         } else if let Some(permit) = circuit_permit.take() {
             state.circuits.release(permit);
@@ -1034,12 +1304,12 @@ async fn forward_request(
                     context,
                     capture,
                     Some(status.as_u16()),
-                    if classify_upstream_status(status) == UpstreamErrorClass::Success {
-                        "success"
+                    if upstream_success { "success" } else { "error" },
+                    if upstream_success {
+                        None
                     } else {
-                        "error"
+                        Some("routing_upstream_http_error")
                     },
-                    None,
                     duration_ms,
                 )
                 .await;
@@ -1085,12 +1355,10 @@ async fn forward_request(
             app_type: route_app_type(route),
             provider_id: selected_provider_id.clone(),
             provider_name: selected_provider_name.clone(),
-            hot_switch: (selected_provider_index > 0
-                && classify_upstream_status(status) == UpstreamErrorClass::Success)
-                .then(|| HotSwitchCommit {
-                    app_type: route_app_type(route),
-                    provider_id: selected_provider_id.clone(),
-                }),
+            hot_switch: should_hot_switch.then(|| HotSwitchCommit {
+                app_type: route_app_type(route),
+                provider_id: selected_provider_id.clone(),
+            }),
         }),
         usage_logging_enabled.then(|| SseUsageCollector::default()),
         usage_logging_enabled.then(|| UsageCommit {
@@ -1099,6 +1367,11 @@ async fn forward_request(
                 selected_provider_name.clone(),
             ),
             status_code: Some(status.as_u16()),
+            initial_error_code: if classify_upstream_status(status) == UpstreamErrorClass::Success {
+                None
+            } else {
+                Some("routing_upstream_http_error")
+            },
         }),
     );
     let body = BodyExt::boxed(StreamBody::new(stream));
@@ -1259,6 +1532,7 @@ async fn load_provider_snapshot_for_provider(
         app_type,
         provider_id: detail.card.id,
         provider_name: detail.card.name,
+        is_current: detail.card.is_current,
         base_url,
         claude_api_key_field: detail
             .claude_config
@@ -1272,6 +1546,16 @@ async fn load_provider_snapshot_for_provider(
         bedrock_enabled: app_type == "claude"
             && effective_bedrock_enabled(&detail.effective_settings_config),
     })
+}
+
+fn should_hot_switch_provider(
+    auto_failover_enabled: bool,
+    selected_provider_is_current: bool,
+    status: StatusCode,
+) -> bool {
+    auto_failover_enabled
+        && !selected_provider_is_current
+        && classify_upstream_status(status) == UpstreamErrorClass::Success
 }
 
 async fn load_provider_snapshots(
@@ -1924,6 +2208,40 @@ fn classify_upstream_status(status: StatusCode) -> UpstreamErrorClass {
     }
 }
 
+fn capture_upstream_error_body(body: &[u8]) -> usage::UsageCapture {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .map(|value| usage::parse_response_json(&value))
+        .unwrap_or_default()
+}
+
+async fn capture_upstream_error_response(
+    response: reqwest::Response,
+    timeout: Duration,
+) -> usage::UsageCapture {
+    let read = async move {
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let Ok(chunk) = chunk else {
+                break;
+            };
+            let remaining = MAX_ERROR_DIAGNOSTIC_BODY_BYTES.saturating_sub(body.len());
+            if remaining == 0 {
+                break;
+            }
+            let take = chunk.len().min(remaining);
+            body.extend_from_slice(&chunk[..take]);
+            if take < chunk.len() {
+                break;
+            }
+        }
+        capture_upstream_error_body(&body)
+    };
+    tokio::time::timeout(timeout, read)
+        .await
+        .unwrap_or_default()
+}
+
 fn record_circuit_success(
     state: &RouteState,
     permit: &mut Option<CircuitPermit>,
@@ -1946,6 +2264,15 @@ fn record_circuit_failure(
 
 fn max_attempts(max_retries: u32) -> u32 {
     max_retries.saturating_add(1)
+}
+
+fn reserve_provider_attempt(actual_attempts: &mut usize, max_attempts: usize) -> Option<usize> {
+    if *actual_attempts >= max_attempts {
+        return None;
+    }
+    let attempt_index = *actual_attempts;
+    *actual_attempts = actual_attempts.saturating_add(1);
+    Some(attempt_index)
 }
 
 fn stream_failure_policy(policy: CircuitPolicy) -> CircuitPolicy {
@@ -2123,6 +2450,13 @@ fn finish_usage_commit<S>(state: &mut TimedBodyState<S>, error_code: Option<&'st
         .take()
         .map(SseUsageCollector::finish)
         .unwrap_or_default();
+    let error_code = error_code
+        .or(commit.initial_error_code)
+        .or(if capture.failed {
+            Some("routing_upstream_stream_error")
+        } else {
+            None
+        });
     let outcome = if error_code.is_some() {
         "error"
     } else {
@@ -2304,6 +2638,60 @@ mod tests {
     }
 
     #[test]
+    fn automatic_failover_hot_switch_uses_provider_identity_not_candidate_index() {
+        let cases = [
+            (
+                "non-current first candidate",
+                0usize,
+                true,
+                false,
+                StatusCode::OK,
+                true,
+            ),
+            (
+                "current first candidate",
+                0usize,
+                true,
+                true,
+                StatusCode::OK,
+                false,
+            ),
+            (
+                "non-current later candidate",
+                1usize,
+                true,
+                false,
+                StatusCode::OK,
+                true,
+            ),
+            (
+                "automatic failover disabled",
+                0usize,
+                false,
+                false,
+                StatusCode::OK,
+                false,
+            ),
+            (
+                "non-current provider returned failure",
+                0usize,
+                true,
+                false,
+                StatusCode::BAD_GATEWAY,
+                false,
+            ),
+        ];
+
+        for (case, candidate_index, auto_failover_enabled, is_current, status, expected) in cases {
+            assert_eq!(
+                should_hot_switch_provider(auto_failover_enabled, is_current, status),
+                expected,
+                "{case} at candidate index {candidate_index}"
+            );
+        }
+    }
+
+    #[test]
     fn upstream_error_classifier_separates_key_and_provider_failures() {
         assert_eq!(
             classify_upstream_status(StatusCode::UNAUTHORIZED),
@@ -2336,10 +2724,33 @@ mod tests {
     }
 
     #[test]
+    fn provider_error_body_capture_uses_sanitized_error_details() {
+        let capture = capture_upstream_error_body(
+            br#"{"type":"error","error":{"message":"provider rejected token=private-token"},"request":"must not persist"}"#,
+        );
+
+        assert!(capture.failed);
+        assert_eq!(
+            capture.error_detail.as_deref(),
+            Some("provider rejected token=<redacted>")
+        );
+    }
+
+    #[test]
     fn max_attempts_is_initial_attempt_plus_retry_budget() {
         assert_eq!(max_attempts(0), 1);
         assert_eq!(max_attempts(3), 4);
         assert_eq!(max_attempts(u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn outbound_attempt_reservation_counts_each_send_and_stops_at_budget() {
+        let mut actual_attempts = 0usize;
+
+        assert_eq!(reserve_provider_attempt(&mut actual_attempts, 2), Some(0));
+        assert_eq!(reserve_provider_attempt(&mut actual_attempts, 2), Some(1));
+        assert_eq!(reserve_provider_attempt(&mut actual_attempts, 2), None);
+        assert_eq!(actual_attempts, 2);
     }
 
     #[test]
@@ -2800,6 +3211,28 @@ mod tests {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("retry-after", HeaderValue::from_static("999"));
         assert_eq!(retry_cooldown(429, &headers), KEY_COOLDOWN_MAX);
+    }
+
+    #[test]
+    fn key_selection_distinguishes_cooldown_from_missing_keys() {
+        let state = RouteState::default();
+        let candidates = vec![candidate("one"), candidate("two")];
+        state
+            .select_key_status("codex:provider", candidates.clone())
+            .unwrap();
+        let headers = reqwest::header::HeaderMap::new();
+        state.mark_cooldown("codex:provider", "one", 401, &headers);
+        state.mark_cooldown("codex:provider", "two", 401, &headers);
+        assert_eq!(
+            state
+                .select_key_status("codex:provider", candidates)
+                .unwrap(),
+            KeySelection::CoolingDown
+        );
+        assert_eq!(
+            state.select_key_status("codex:empty", Vec::new()).unwrap(),
+            KeySelection::Unavailable
+        );
     }
 
     #[test]

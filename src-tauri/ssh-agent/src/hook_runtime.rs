@@ -39,6 +39,31 @@ const CODEX_EVENTS: &[&str] = &[
     "SubagentStart",
     "SubagentStop",
 ];
+const KIMI_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PermissionResult",
+    "Stop",
+    "Interrupt",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+];
+const GROK_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "Notification",
+    "PermissionRequest",
+    "Stop",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "AgentToolStart",
+    "AgentToolStop",
+    "ToolStart",
+    "ToolStop",
+];
 
 #[derive(Debug, Clone)]
 pub struct HookCommandOptions {
@@ -138,6 +163,8 @@ fn validate_options(options: &HookCommandOptions) -> Result<(), String> {
     let events = match options.source.as_str() {
         "claude" => CLAUDE_EVENTS,
         "codex" => CODEX_EVENTS,
+        "kimi" => KIMI_EVENTS,
+        "grok" => GROK_EVENTS,
         _ => return Err("hook_source_invalid".to_string()),
     };
     if !events.contains(&options.event.as_str()) {
@@ -726,7 +753,7 @@ mod tests {
     use super::{
         ack_spool, append_spool_with_limits, bridge_pid_file_name, bridge_socket_file_name,
         build_event, read_spool_batch, spool_namespace, validate_options, write_json_atomic,
-        HookBinding, HookCommandOptions, HookRunResult, SpoolMeta,
+        HookBinding, HookCommandOptions, HookRunResult, SpoolMeta, GROK_EVENTS, KIMI_EVENTS,
     };
     use cli_manager_hook_schema::normalize_hook_input;
     use serde_json::json;
@@ -758,6 +785,32 @@ mod tests {
         codex_notification.source = "codex".into();
         codex_notification.event = "Notification".into();
         validate_options(&codex_notification).unwrap();
+        for event in KIMI_EVENTS {
+            let mut kimi = options();
+            kimi.source = "kimi".into();
+            kimi.event = (*event).into();
+            validate_options(&kimi).unwrap();
+        }
+        for event in GROK_EVENTS {
+            let mut grok = options();
+            grok.source = "grok".into();
+            grok.event = (*event).into();
+            validate_options(&grok).unwrap();
+        }
+        let mut unknown_kimi = options();
+        unknown_kimi.source = "kimi".into();
+        unknown_kimi.event = "SessionEnd".into();
+        assert_eq!(
+            validate_options(&unknown_kimi).unwrap_err(),
+            "hook_event_invalid"
+        );
+        let mut unknown_grok = options();
+        unknown_grok.source = "grok".into();
+        unknown_grok.event = "Interrupt".into();
+        assert_eq!(
+            validate_options(&unknown_grok).unwrap_err(),
+            "hook_event_invalid"
+        );
         let mut invalid = options();
         invalid.managed_by = "other".into();
         assert_eq!(

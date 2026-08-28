@@ -125,7 +125,9 @@ Only the exact value `1` enables control-terminal input. One-shot probes, direct
 - If the saved-password broker is consumed, expired, or unreachable, an interactive `credential_ref` launch falls back to the same control terminal so the user can correct the password. The helper writes the prompt to the control terminal and writes only the response bytes to helper stdout.
 - Control-terminal fallback is allowed only when `CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK=1` is explicitly present. Background one-shot launches set it to `0` and must fail quickly without opening `/dev/tty` or `CONIN$`, even if they inherit a control terminal or a parent process exported the value `1`.
 - AskPass broker token input is bounded before comparison. An oversized or mismatched token receives no password response and must not consume the broker; only the first matching token consumes the saved password, or the broker expires after its bounded lifetime.
-- Server-controlled AskPass prompts must normalize CR/LF, remove terminal control characters, and cap terminal output before writing to `/dev/tty` or `CONOUT$`; ANSI/OSC/CSI content must not execute in the local terminal.
+- Server-controlled AskPass prompts must normalize CR/LF, remove terminal control characters, and cap terminal output before writing to the owning terminal output; ANSI/OSC/CSI content must not execute in the local terminal.
+- On Windows ConPTY, AskPass manual input/output must reuse the helper's inherited standard input/error handles, because reopening `CONIN$`/`CONOUT$` can bind to a different console queue and disconnect the active SSH authentication session. Helper stdout remains reserved for the response returned to OpenSSH.
+- AskPass helper diagnostics are written to `<logs_dir>/ssh-askpass.log` before Tauri initialization. They may contain only timestamp, process id, prompt category (`password`/`mfa`/`interactive`), route/result, platform, error kind, and byte counts; they must never contain prompt text, password, MFA code, broker token, broker address, or response content. The log is rolling and can be collected together with the normal CLI-Manager log after reproducing an authentication failure.
 - Manual AskPass input disables terminal echo before displaying the prompt, accepts at most 16 KiB, strips trailing CR/LF, and restores the original terminal mode on success, EOF, or error.
 - SSH launch-generated local environment values are protected. Project/session/user environment values, including differently cased Windows keys, must not override `SSH_ASKPASS`, broker address/token, helper dispatch, `DISPLAY`, `SSH_ASKPASS_REQUIRE`, or the TTY fallback policy.
 - Passwords, private-key contents/passphrases, and proxy credentials must not enter SQLite, Tauri store, session snapshots, logs, WebDAV, or local exports.
@@ -215,7 +217,7 @@ Only the exact value `1` enables control-terminal input. One-shot probes, direct
 - The serialized launch environment may contain only the credential reference. Password values remain in the local credential store and are delivered through the one-shot AskPass broker.
 - During SSH handoff, the proxy rewrites only matching `thread/resume` requests to the registered remote directory and rejects fresh-thread or session-drift requests.
 - Remote app-server turn, approval, completion, and non-retrying error events are converted locally into the existing handoff Hook events. Telegram, Feishu, Weixin, and WeCom therefore share the same progress, permission, completion, and failure notification path without a remote Hook installation.
-- Persist handoff transport, SSH host ID, and remote path with the existing schema-version-1 record using defaulted fields for backward compatibility.
+- Persist handoff transport, SSH host ID, remote path, and `agent=codex` in the schema-version-2 record. Schema v1 records migrate in memory with Codex as the default; unknown versions fail closed. Adding local Claude/Pi/OpenCode handoff must not widen this SSH Codex-only boundary.
 - On cancellation, re-resolve a structured SSH PTY launch and run `codex resume --no-alt-screen <cliSessionId>` on the same registered host and path. If the project host/path changed, fail closed and keep the recovery lock visible.
 
 ### Sync
@@ -283,6 +285,7 @@ Only the exact value `1` enables control-terminal input. One-shot probes, direct
 - Good: application restart attaches a daemon-owned SSH PTY without repeating initialization commands.
 - Good: Username / Password host can test connection and browse/check a remote path through AskPass without exposing the password.
 - Good: an interactive Username / Password terminal consumes the saved password once, then reads `Please Enter MFA Code.` from the same PTY without exposing or reusing the password.
+- Good: on Windows ConPTY, the MFA prompt is written through AskPass inherited stderr and the code is read through inherited stdin; after authentication the same SSH PTY remains open for the remote shell.
 - Base: an incorrect/consumed saved password falls back to hidden manual password input in the owning interactive PTY.
 - Base: a background one-shot receives an MFA prompt, carries `CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK=0`, and fails quickly even if a control terminal or parent value `1` was inherited.
 - Good: project `~/state/claude` overrides the Host Claude root and launches with `CLAUDE_CONFIG_DIR="${HOME}"/'state/claude'`.

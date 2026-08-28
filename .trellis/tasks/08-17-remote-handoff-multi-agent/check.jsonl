@@ -1,0 +1,8 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"Check Agent, environment, Hook, window, Worktree and failure scenario coverage."}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Check branch state, TEMP changelog, feature inventory and package report."}
+{"file":".trellis/spec/backend/ccswitch-integration-contracts.md","reason":"Check cc-connect remains unmodified and Provider/config secrets stay inside managed launch boundaries."}
+{"file":".trellis/spec/backend/ssh-remote-terminal-contracts.md","reason":"Check SSH Codex handoff does not regress and new Agents remain explicitly local-only."}
+{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Check Hook events match the persisted Agent plus tab/session identity without cross-session broadcasts."}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Check Claude/Codex project Provider selection and snapshot lifecycle; Pi/OpenCode must not enter this domain."}
+{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Check only authoritative stopped sessions are handed off."}
+{"file":".trellis/tasks/08-17-remote-handoff-multi-agent/research/current-code-touchpoints.md","reason":"Recheck every identified hard-coded Codex touchpoint and reusable implementation."}

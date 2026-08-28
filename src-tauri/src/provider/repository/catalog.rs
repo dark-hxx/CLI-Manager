@@ -9,9 +9,12 @@ use super::support::{
     normalize_app_type, normalize_settings_config, optional_text, optional_text_value, parse_meta,
     provider_from_row, serialize_meta, unix_timestamp_millis,
 };
+use crate::app_paths;
 use crate::provider::database;
 use serde_json::{Map, Value};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use sqlx::Connection;
+use std::time::Duration;
 use uuid::Uuid;
 
 pub(crate) async fn list_providers(app_type: Option<String>) -> Result<Vec<ProviderCard>, String> {
@@ -314,20 +317,51 @@ pub(crate) async fn duplicate_provider(
     get_provider(app_type, new_id).await
 }
 
-async fn provider_reference_count(
-    connection: &mut sqlx::SqliteConnection,
+async fn provider_reference_count(app_type: &str, provider_id: &str) -> Result<i64, String> {
+    let path =
+        app_paths::db_path().map_err(|_| error("provider_reference_check_failed", "database"))?;
+    if !path.is_file() {
+        return Ok(0);
+    }
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .busy_timeout(Duration::from_secs(5));
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|err| map_database_error("provider_reference_check_failed", err))?;
+    provider_reference_count_in_app_database(&mut connection, app_type, provider_id).await
+}
+
+pub(super) async fn provider_reference_count_in_app_database(
+    connection: &mut SqliteConnection,
     app_type: &str,
     provider_id: &str,
 ) -> Result<i64, String> {
-    sqlx::query_scalar(
-        "SELECT COUNT(*) FROM provider_import_refs
-         WHERE provider_id = ?1 AND app_type = ?2",
+    let project_overrides =
+        sqlx::query_scalar::<_, String>("SELECT provider_overrides FROM projects")
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(|err| map_database_error("provider_reference_check_failed", err))?;
+    let worktree_overrides = sqlx::query_scalar::<_, String>(
+        "SELECT provider_overrides FROM worktrees WHERE status = 'active'",
     )
-    .bind(provider_id)
-    .bind(app_type)
-    .fetch_one(&mut *connection)
+    .fetch_all(&mut *connection)
     .await
-    .map_err(|err| map_database_error("provider_reference_check_failed", err))
+    .map_err(|err| map_database_error("provider_reference_check_failed", err))?;
+
+    let mut count = 0;
+    for overrides in project_overrides.into_iter().chain(worktree_overrides) {
+        // 只有当前原生目录可解析的 schema-v2 引用才会指向 providers.db。
+        // 旧 CCS 引用已不能解析为原生供应商，不能阻塞其启停或删除。
+        if matches!(
+            crate::provider::scope::parse_provider_reference(Some(&overrides), app_type),
+            Ok(Some(reference)) if reference == provider_id
+        ) {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 pub(crate) async fn delete_provider(app_type: String, provider_id: String) -> Result<(), String> {
@@ -337,7 +371,7 @@ pub(crate) async fn delete_provider(app_type: String, provider_id: String) -> Re
     if provider.is_current {
         return Err(error("provider_current_cannot_delete", "providerId"));
     }
-    if provider_reference_count(&mut connection, &app_type, &provider.id).await? > 0 {
+    if provider_reference_count(&app_type, &provider.id).await? > 0 {
         return Err(error("provider_referenced_cannot_delete", "providerId"));
     }
     sqlx::query("DELETE FROM providers WHERE id = ?1 AND app_type = ?2")
@@ -360,7 +394,7 @@ pub(crate) async fn set_provider_enabled(
     if !enabled && provider.is_current {
         return Err(error("provider_current_cannot_disable", "providerId"));
     }
-    if !enabled && provider_reference_count(&mut connection, &app_type, &provider.id).await? > 0 {
+    if !enabled && provider_reference_count(&app_type, &provider.id).await? > 0 {
         return Err(error("provider_referenced_cannot_disable", "providerId"));
     }
     let mut meta = parse_meta(&provider.meta);

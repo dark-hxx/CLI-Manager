@@ -16,7 +16,6 @@ import {
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorktreeStore } from "../stores/worktreeStore";
-import { useAppConfirm } from "./ui/useAppConfirm";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { AlertTriangle, Boxes, Check, ChevronRight, Database, Globe, RefreshCw } from "./icons";
 import { ProviderBadge, type ProviderBadgeTone } from "./provider/ProviderRow";
@@ -24,12 +23,9 @@ import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import {
   providerErrorCode,
   type NativeProviderCard,
-  type NativeProviderGlobalApplyResult,
   type NativeProviderGlobalCurrent,
-  type NativeProviderGlobalPreview,
   type NativeProviderHomeState,
 } from "./settings/providers/nativeProviderTypes";
-import { providerGlobalTargetRoot } from "./settings/providers/nativeProviderGlobalView";
 
 interface ProviderScopeResponse {
   appType: string;
@@ -232,7 +228,6 @@ interface Props {
 
 export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
   const { t } = useI18n();
-  const { confirm, confirmDialog } = useAppConfirm();
   const appType = getProviderSwitchAppType(project);
   const targetProviderOverrides = worktree?.provider_overrides ?? project.provider_overrides;
   const targetProject = useMemo<Project>(
@@ -270,6 +265,12 @@ export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
     if (!appType) {
       setProviders([]);
       setError(t("providerSwitch.unsupported"));
+      setLoading(false);
+      return;
+    }
+    if (appType === "grokbuild") {
+      setProviders([]);
+      setError(t("providerSwitch.grokUnsupported"));
       setLoading(false);
       return;
     }
@@ -320,42 +321,19 @@ export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
   }, [load]);
 
   const applyProvider = async (provider: NativeProviderCard) => {
-    if (applyingId || !appType) return;
+    if (applyingId || !appType || appType === "grokbuild") return;
     setApplyingId(provider.id);
     try {
-      if (!home) throw new Error("provider_home_active_unavailable");
-      const preview = await invoke<NativeProviderGlobalPreview>("provider_global_preview", {
-        input: {
-          appType,
-          providerId: provider.id,
-          homeIdentity: home.identity,
-        },
+      const nextProviderOverrides = withOverride(targetProviderOverrides, appType, provider);
+      await updateTargetProviderOverrides(nextProviderOverrides);
+      setProbe({
+        appType,
+        providerId: provider.id,
+        providerName: provider.name,
+        source: worktree ? "worktree" : "project",
       });
-      const confirmed = await confirm({
-        title: t("providerCatalog.global.confirmTitle"),
-        message: t("providerCatalog.global.confirmMessage", {
-          provider: preview.providerName,
-          home: providerGlobalTargetRoot(preview),
-        }),
-        confirmText: t("providerCatalog.global.apply"),
-        danger: true,
-      });
-      if (!confirmed) return;
-
-      const result = await invoke<NativeProviderGlobalApplyResult>("provider_global_apply", {
-        input: {
-          appType,
-          providerId: provider.id,
-          homeIdentity: home.identity,
-          previewFingerprint: preview.fingerprint,
-        },
-      });
-      setProbe({ appType, providerId: result.providerId, providerName: provider.name, source: "global" });
-      setGlobalCurrent((current) => current
-        ? { ...current, providerId: result.providerId, providerName: provider.name, state: "applied" }
-        : current);
       toast.success(t("providerSwitch.applySuccess"), {
-        description: t("providerSwitch.globalApplyDescription", { name: provider.name }),
+        description: t("providerSwitch.applyDescription", { name: provider.name }),
       });
       await useProjectStore.getState().refreshProviderBadges();
     } catch (applyError) {
@@ -413,16 +391,18 @@ export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
             <span className="text-xs text-text-muted">{providerTypeLabel(appType, t)}</span>
           )}
         </div>
-        <div
-          className="mb-2 flex items-center gap-1.5 text-[11px] text-text-muted"
-          aria-label={t("providerSwitch.homeModeAria", { mode: homeModeLabel(home, t) })}
-        >
-          {home?.identity.environmentKind === "wsl" ? <Globe size={14} /> : <Monitor size={14} />}
-          <span>{homeModeLabel(home, t)}</span>
-          {home?.identity.environmentKind === "wsl" && home.identity.environmentId && (
-            <span className="truncate" title={home.identity.environmentId}>· {home.identity.environmentId}</span>
-          )}
-        </div>
+        {appType !== "grokbuild" && (
+          <div
+            className="mb-2 flex items-center gap-1.5 text-[11px] text-text-muted"
+            aria-label={t("providerSwitch.homeModeAria", { mode: homeModeLabel(home, t) })}
+          >
+            {home?.identity.environmentKind === "wsl" ? <Globe size={14} /> : <Monitor size={14} />}
+            <span>{homeModeLabel(home, t)}</span>
+            {home?.identity.environmentKind === "wsl" && home.identity.environmentId && (
+              <span className="truncate" title={home.identity.environmentId}>· {home.identity.environmentId}</span>
+            )}
+          </div>
+        )}
         <p className="mb-3 break-all text-xs text-text-muted" title={targetProject.path}>
           {targetProject.name} · {targetProject.path}
         </p>
@@ -431,7 +411,7 @@ export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
           <div className="mb-3 rounded bg-danger/15 px-2 py-1.5 text-xs text-danger">{error}</div>
         )}
 
-        {!loading && hasCustomProviderStartup && hasOverride && (
+        {!loading && appType !== "grokbuild" && hasCustomProviderStartup && hasOverride && (
           <div className="mb-3 flex items-start gap-1.5 rounded border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-text-secondary">
             <AlertTriangle size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-warning" />
             <span className="min-w-0 break-all">{t("providerSwitch.customStartup")}</span>
@@ -471,7 +451,7 @@ export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
           </div>
         )}
 
-        {!loading && providers.length === 0 && (
+        {!loading && !error && providers.length === 0 && (
           <div className="py-6 text-center text-sm text-text-muted">
             {t("providerSwitch.empty", { appType: providerTypeLabel(appType, t) })}
           </div>
@@ -522,11 +502,10 @@ export function ProviderSwitchModal({ project, worktree, onClose }: Props) {
           </div>
         )}
 
-        {!loading && override && hasCustomProviderStartup && (
+        {!loading && appType !== "grokbuild" && override && hasCustomProviderStartup && (
           <p className="mt-3 text-xs text-text-muted">{t("providerSwitch.customStartupHint")}</p>
         )}
       </DialogContent>
-      {confirmDialog}
     </Dialog>
   );
 }

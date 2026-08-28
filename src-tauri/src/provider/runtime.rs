@@ -2,9 +2,34 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
-use super::{open_connection, repository};
+use super::{global, open_connection, repository};
+use std::fs;
+use std::path::Path;
+use toml_edit::DocumentMut;
+
+pub(crate) struct CodexProviderProfile {
+    pub(crate) profile_name: String,
+    pub(crate) model_provider: String,
+    pub(crate) profile_text: String,
+}
+
+impl CodexProviderProfile {
+    pub(crate) fn with_env_key(&self, env_key: &str) -> Result<Self, String> {
+        let mut document = self
+            .profile_text
+            .parse::<DocumentMut>()
+            .map_err(|_| "provider_config_invalid".to_string())?;
+        set_profile_env_key(&mut document, &self.model_provider, env_key)?;
+        Ok(Self {
+            profile_name: self.profile_name.clone(),
+            model_provider: self.model_provider.clone(),
+            profile_text: document.to_string(),
+        })
+    }
+}
 
 pub(crate) struct CodexProviderRuntimeConfig {
+    pub(crate) profile: CodexProviderProfile,
     pub(crate) env_key: String,
     pub(crate) secret_value: String,
     pub(crate) base_url: String,
@@ -148,13 +173,116 @@ pub(crate) fn parse_runtime_config(
         .and_then(|config| find_selected_provider_env_key(config, &secret_value))
         .unwrap_or(generated_env_key);
 
+    let profile = materialize_codex_profile(
+        provider_id,
+        &parsed,
+        &env_key,
+        &base_url,
+        model.as_deref(),
+        wire_api.as_deref(),
+    )?;
+
     Ok(CodexProviderRuntimeConfig {
+        profile,
         env_key,
         secret_value,
         base_url,
         model,
         wire_api,
     })
+}
+
+fn materialize_codex_profile(
+    provider_id: &str,
+    effective: &Value,
+    env_key: &str,
+    base_url: &str,
+    model: Option<&str>,
+    wire_api: Option<&str>,
+) -> Result<CodexProviderProfile, String> {
+    let mut normalized = effective.clone();
+    let root = normalized
+        .as_object_mut()
+        .ok_or_else(|| "provider_config_invalid".to_string())?;
+    root.insert("base_url".to_string(), Value::String(base_url.to_string()));
+    if let Some(model) = model {
+        root.insert("model".to_string(), Value::String(model.to_string()));
+    }
+    let (bytes, _) = global::materialize_codex_config(None, &normalized)?;
+    let mut document = String::from_utf8(bytes)
+        .map_err(|_| "provider_config_invalid".to_string())?
+        .parse::<DocumentMut>()
+        .map_err(|_| "provider_config_invalid".to_string())?;
+    let model_provider = document
+        .get("model_provider")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "provider_config_invalid: missing_codex_model_provider".to_string())?
+        .to_string();
+    set_profile_env_key(&mut document, &model_provider, env_key)?;
+    if let Some(wire_api) = wire_api.map(str::trim).filter(|value| !value.is_empty()) {
+        let provider = document
+            .get_mut("model_providers")
+            .and_then(|value| value.as_table_mut())
+            .and_then(|providers| providers.get_mut(&model_provider))
+            .and_then(|value| value.as_table_mut())
+            .ok_or_else(|| "provider_config_invalid: missing_codex_model_provider".to_string())?;
+        provider.insert("wire_api", toml_edit::value(wire_api));
+    }
+
+    Ok(CodexProviderProfile {
+        profile_name: codex_profile_name(provider_id),
+        model_provider,
+        profile_text: document.to_string(),
+    })
+}
+
+fn set_profile_env_key(
+    document: &mut DocumentMut,
+    model_provider: &str,
+    env_key: &str,
+) -> Result<(), String> {
+    let provider = document
+        .get_mut("model_providers")
+        .and_then(|value| value.as_table_mut())
+        .and_then(|providers| providers.get_mut(model_provider))
+        .and_then(|value| value.as_table_mut())
+        .ok_or_else(|| "provider_config_invalid: missing_codex_model_provider".to_string())?;
+    provider.insert("env_key", toml_edit::value(env_key));
+    Ok(())
+}
+
+pub(crate) fn write_codex_profile_to_dir(
+    codex_dir: &Path,
+    profile: &CodexProviderProfile,
+) -> Result<(), String> {
+    fs::create_dir_all(codex_dir).map_err(|err| format!("profile_write_failed: {err}"))?;
+    fs::write(
+        codex_dir.join(format!("{}.config.toml", profile.profile_name)),
+        &profile.profile_text,
+    )
+    .map_err(|err| format!("profile_write_failed: {err}"))
+}
+
+pub(crate) fn codex_profile_name(provider_id: &str) -> String {
+    let mut slug = provider_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    slug = slug.trim_matches('-').chars().take(40).collect();
+    if slug.is_empty() {
+        slug = "provider".to_string();
+    }
+    let digest = Sha256::digest(provider_id.as_bytes());
+    let hash = format!("{digest:x}");
+    format!("cli-manager-{}-{}", slug, &hash[..10])
 }
 
 fn env_value_text(value: &Value) -> String {
@@ -426,6 +554,16 @@ mod tests {
         assert_eq!(runtime.wire_api.as_deref(), Some("responses"));
         assert_eq!(runtime.env_key, "OPENAI_API_KEY");
         assert_eq!(runtime.secret_value, "sk-secret");
+        assert_eq!(runtime.profile.model_provider, "cloud");
+        assert!(runtime
+            .profile
+            .profile_text
+            .contains("base_url = \"https://api.example.com/v1\""));
+        assert!(runtime
+            .profile
+            .profile_text
+            .contains("env_key = \"OPENAI_API_KEY\""));
+        assert!(!runtime.profile.profile_text.contains("sk-secret"));
     }
 
     #[test]
@@ -439,5 +577,11 @@ mod tests {
         assert_eq!(runtime.base_url, "https://config.example.com");
         assert_eq!(runtime.model.as_deref(), Some("gpt-config"));
         assert!(runtime.env_key.starts_with("CLI_MANAGER_CODEX_PROVIDER_"));
+        assert_eq!(runtime.profile.model_provider, "cloud");
+        assert!(runtime
+            .profile
+            .profile_text
+            .contains(&format!("env_key = \"{}\"", runtime.env_key)));
+        assert!(!runtime.profile.profile_text.contains("sk-secret"));
     }
 }

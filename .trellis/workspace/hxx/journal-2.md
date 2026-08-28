@@ -699,7 +699,106 @@ OpenCode/Pi/Amp/Aider/Crush/Cline/Goose 等无厂商归属的 CLI 工具在 Tab 
 ### Next Steps
 
 - None - task complete
-## Session 80: 修复 Codex 供应商启动覆盖真实 Home
+## Session 80: 同步 master 并发布版本 1.3.5
+
+**Date**: 2026-08-10
+**Task**: 同步 master 并发布版本 1.3.5
+**Branch**: `master`
+
+### Summary
+
+拉取 origin/master，将 package.json、package-lock.json、src-tauri/Cargo.toml、Cargo.lock 和 tauri.conf.json 的应用版本统一更新为 1.3.5；cargo check 通过，版本一致性校验通过，未推送远端。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eabf83fc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 81: 优化历史会话索引数据库体积
+
+**Date**: 2026-08-12
+**Task**: 优化历史会话索引数据库体积
+**Branch**: `master`
+
+### Summary
+
+新建并完成 Trellis 任务：将历史 catalog FTS 升级为 detail=none，使用三元组候选加正文连续匹配，兼容 v5→v6 迁移并回收碎片；156 个 history 测试、cargo check 和 fmt 检查通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d6e10b19` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 82: 修复历史索引压缩迁移检测
+
+**Date**: 2026-08-12
+**Task**: 修复历史索引压缩迁移检测
+**Branch**: `master`
+
+### Summary
+
+确认发布后打开历史 catalog 会自动检查 user_version 与真实 FTS schema；修复版本号已为 6 但 FTS 仍为旧 detail 模式时跳过迁移的问题。新增真实 schema 检测和回归测试，更新历史索引契约与 TEMP changelog；cargo fmt、cargo check、cargo test history 157/157 通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ad1e2a26` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 83: 修复 Codex 供应商启动覆盖真实 Home
 
 **Date**: 2026-08-06
 **Task**: 修复 Codex 供应商启动覆盖真实 Home
@@ -732,7 +831,7 @@ OpenCode/Pi/Amp/Aider/Crush/Cline/Goose 等无厂商归属的 CLI 工具在 Tab 
 - None - task complete
 
 
-## Session 81: 修复 Grok 供应商真实 Home 启动
+## Session 84: 修复 Grok 供应商真实 Home 启动
 
 **Date**: 2026-08-06
 **Task**: 修复 Grok 供应商真实 Home 启动
@@ -765,7 +864,7 @@ OpenCode/Pi/Amp/Aider/Crush/Cline/Goose 等无厂商归属的 CLI 工具在 Tab 
 - None - task complete
 
 
-## Session 82: 修复 Grok Home 隔离并恢复旧会话
+## Session 85: 修复 Grok Home 隔离并恢复旧会话
 
 **Date**: 2026-08-06
 **Task**: 修复 Grok Home 隔离并恢复旧会话
@@ -799,7 +898,7 @@ OpenCode/Pi/Amp/Aider/Crush/Cline/Goose 等无厂商归属的 CLI 工具在 Tab 
 - None - task complete
 
 
-## Session 83: 修复 Grok 会话历史路径并提交任务
+## Session 86: 修复 Grok 会话历史路径并提交任务
 
 **Date**: 2026-08-07
 **Task**: 修复 Grok 会话历史路径并提交任务
@@ -830,3 +929,307 @@ OpenCode/Pi/Amp/Aider/Crush/Cline/Goose 等无厂商归属的 CLI 工具在 Tab 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 87: 修复 Diff 回退确认与折叠项目交互
+
+**Date**: 2026-08-13
+**Task**: 修复 Diff 回退确认与折叠项目交互
+**Branch**: `master`
+
+### Summary
+
+修复 Diff 文件级与代码块级回滚确认层级导致的卡死/不可见问题；统一折叠侧边栏项目的 CLI 图标、单击跳转、双击启动行为并提高浮层不透明度；同步中英文文案、规格、功能清单与 V1.3.6 变更记录。通过 npx tsc --noEmit 与 git diff --check。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `47661dcc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 88: 修复供应商作用域与 Pi 终端诊断
+
+**Date**: 2026-08-17
+**Task**: 修复供应商作用域与 Pi 终端诊断
+**Branch**: `master`
+
+### Summary
+
+修复供应商生命周期引用扫描、项目作用域切换、Grok 项目级提示、Tab 中键关闭、Pi 预览、Pi Hook 非阻塞上报与 MCP Adapter 能力发现。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3207bc68` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 89: 修复 SSH Grok 会话历史打开提示
+
+**Date**: 2026-08-18
+**Task**: 修复 SSH Grok 会话历史打开提示
+**Branch**: `master`
+
+### Summary
+
+SSH Grok 在历史入口改为显示明确的暂不支持提示，避免暴露底层 history_remote_source_required 错误。
+
+### Main Changes
+
+- 将 SSH 会话历史能力限制为远程桥接已支持的 Claude Code 与 Codex CLI。
+- 在侧边栏和终端工具栏统一显示 Grok 暂不支持查看会话历史的中英文提示。
+- 补充能力矩阵测试、V1.3.7 交付记录和历史契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `60372d68` | (see git log) |
+
+### Testing
+
+- [OK] node --test scripts/projectCapabilities.test.mjs scripts/sshRemoteFileContext.test.mjs（5/5 通过）
+- [OK] npx tsc --noEmit（通过）
+- [OK] npm run build（通过）
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 90: 历史会话对话消息操作栏
+
+**Date**: 2026-08-18
+**Task**: 历史会话对话消息操作栏
+**Branch**: `master`
+
+### Summary
+
+对话页复用原文消息操作栏；编辑和插入通过既有闸门后切换原文表单，SSH/快照保持只读，并补齐 V1.3.7 记录与历史会话契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f8602bb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 91: Fix PR #219 Kimi cross-platform tests
+
+**Date**: 2026-08-19
+**Task**: Fix PR #219 Kimi cross-platform tests
+**Branch**: `agent/kimi-code-cli-hooks`
+
+### Summary
+
+Fixed CRLF-safe Kimi frontend test extraction and Unix-only SSH Agent planner coverage; validated and pushed the PR branch for review.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a9781941` | (see git log) |
+| `2152a22d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 92: 修复 Kimi Hook 本地检测延迟
+
+**Date**: 2026-08-19
+**Task**: 修复 Kimi Hook 本地检测延迟
+**Branch**: `master`
+
+### Summary
+
+移除本地 Kimi Hook 状态与安装中的 CLI/doctor 子进程检测，修正空配置状态，保留 TOML 原子写入保护，并将 TEMP 发布记录整理到 V1.3.7。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `890f59d4` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 93: Review and harden PR 220 Kimi history
+
+**Date**: 2026-08-20
+**Task**: Review and harden PR 220 Kimi history
+**Branch**: `pr220`
+
+### Summary
+
+Reviewed PR #220 against current Kimi Code, fixed wire usage parsing, append-only index and tombstone behavior, session-id command validation, added regression coverage, ran full checks, and updated V1.3.7 documentation.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c52a9b7f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 94: Fix provider dialog layering and terminal file navigation
+
+**Date**: 2026-08-21
+**Task**: Fix provider dialog layering and terminal file navigation
+**Branch**: `master`
+
+### Summary
+
+Raised the provider delete confirmation above its parent modal and normalized slash-form Windows file paths at the Explorer boundary, with regression coverage and V1.3.8 release records.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `575f903e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 95: 修复 PR #224 Grok Hook 配置恢复
+
+**Date**: 2026-08-21
+**Task**: 修复 PR #224 Grok Hook 配置恢复
+**Branch**: `agent/grok-ssh-hooks-history`
+
+### Summary
+
+修复 Grok 兼容 Hook 卸载覆盖用户配置的问题，补齐 Linux 测试编译与 Windows 测试告警清理，并已推送至 PR #224。
+
+### Main Changes
+
+- Grok compat 配置以 installation id marker 记录原始状态，只恢复本实例持有的 true/缺失值。
+- 补充注释、既有 false、外部实例、用户改写、缺失表和 dotted TOML 的回归测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dde0f550` | (see git log) |
+| `84326c38` | (see git log) |
+| `e4c62bc2` | (see git log) |
+
+### Testing
+
+- [OK] npx tsc --noEmit；cargo check/test；SSH Agent 90 项主机测试；Linux x86_64/aarch64 测试编译；34 项前端脚本测试通过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- PR #224 仍与 master 冲突；解决冲突并合并后，从上游 master 创建 ssh-agent-v0.1.10 标签。
+
+
+## Session 96: Fix file preview refresh and file tab menu
+
+**Date**: 2026-08-24
+**Task**: Fix file preview refresh and file tab menu
+**Branch**: `master`
+
+### Summary
+
+Fixed Markdown preview zoom, persistent local/WSL/SSH file refresh, Markdown table Diff token layout, and terminal-themed file tab close actions.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c6aa22d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 97: History smart-title prompt and responsiveness
+
+**Date**: 2026-08-26
+**Task**: History smart-title prompt and responsiveness
+**Branch**: `master`
+
+### Summary
+
+Added a global local smart-title prompt, persisted save feedback, non-blocking Provider execution, shared SQLite contention handling, and immediate generation loading feedback.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `65a6b5cf` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 98: 修复 macOS Fcitx5 终端中文重复输入
+
+**Date**: 2026-08-26
+**Task**: 修复 macOS Fcitx5 终端中文重复输入
+**Branch**: `master`
+
+### Summary
+
+在共享终端输入边界修复 macOS Fcitx5 的同源 CJK 重发，并补齐回归测试与规范。
+
+### Main Changes
+
+- 新增 Process-key 检查点的同源 CJK 去重，覆盖普通 Shell、Codex 与其他内置 CLI。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b669c1db` | (see git log) |
+
+### Testing
+
+- [OK] node --test scripts/terminalImeInputDedup.test.mjs scripts/terminalImeComposition.test.mjs；npx tsc --noEmit；npm run build。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 待 macOS + Fcitx5 真机补测中文候选、标点、ASCII、分屏与切换标签场景。

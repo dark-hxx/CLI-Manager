@@ -1141,7 +1141,6 @@ fn is_video_path(path: &Path) -> bool {
                 | "mpg"
                 | "mts"
                 | "ogv"
-                | "ts"
                 | "webm"
                 | "wmv"
         )
@@ -1390,6 +1389,8 @@ mod tests {
             read_text_file_bytes(&root.to_string_lossy(), "clip.mp4").unwrap_err(),
             "video_preview_unsupported"
         );
+        fs::write(root.join("main.ts"), b"export const preview = true;\n").unwrap();
+        assert!(read_text_file_bytes(&root.to_string_lossy(), "main.ts").is_ok());
     }
 
     #[test]

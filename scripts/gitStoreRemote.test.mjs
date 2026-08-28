@@ -34,7 +34,7 @@ test("SSH visible-file refresh never falls back to local file commands", () => {
 
   const refresh = fileStoreSource.slice(refreshStart, refreshEnd);
   assert.match(refresh, /project\.environment_type === "ssh" && !remoteFileContext/);
-  assert.match(refresh, /loadProjectFile\(project, latestEntry, remoteFileContext\)/);
+  assert.match(refresh, /loadProjectFile\(project, latestEntry, remoteFileContext, options\)/);
 });
 
 test("remote project panels show loading during initial context fetch", () => {

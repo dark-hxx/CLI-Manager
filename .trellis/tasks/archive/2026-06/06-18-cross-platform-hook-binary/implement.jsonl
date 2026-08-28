@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "安装/卸载会写用户 ~/.claude、~/.codex 下的 settings.json/hooks.json/config.toml，须遵守用户文件读写与路径安全约束"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动横跨 Rust 入口(main.rs)、lib.rs 模块暴露、命令层与前端状态字段，需保证跨层契约一致"}

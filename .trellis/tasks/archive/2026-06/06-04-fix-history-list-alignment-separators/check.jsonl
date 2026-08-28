@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Checklist context for verifying frontend changes."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Quality checks relevant to history list rendering."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Component conventions to preserve during review."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared validation and pre-modification guidance."}

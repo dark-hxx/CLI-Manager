@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-09-auto-update-optimization/research/tauri-updater.md","reason":"Official Tauri 2 updater setup, signing, manifest, capability, process restart, and repo mapping."}
-{"file":".trellis/tasks/06-09-auto-update-optimization/research/auto-update-ux.md","reason":"MVP UX decision: auto-check, user-triggered download/install, strong warning for active terminals."}
-{"file":".trellis/spec/guides/version-update-checklist.md","reason":"Version metadata must stay aligned when updater/release behavior depends on Tauri app version."}
-{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"Capability and permission changes must preserve Tauri's minimum-permission security posture."}

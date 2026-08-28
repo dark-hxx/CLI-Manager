@@ -69,6 +69,30 @@ def is_safe_task_path(task_path: str, repo_root: Path | None = None) -> bool:
     return True
 
 
+def is_within_tasks_dir(task_dir_abs: Path, repo_root: Path | None = None) -> bool:
+    """Check that a resolved task directory really is a task under the tasks dir.
+
+    A real task lives directly at ``.trellis/tasks/<name>``. This returns True
+    only when ``task_dir_abs`` is an immediate child of the tasks directory.
+
+    Guards archive: ``resolve_task_dir`` falls back to ``repo_root/<name>`` for
+    an unknown name, so a mistyped ``task.py archive src`` resolves to the real
+    ``src/`` source directory. Without this check archive would ``shutil.move``
+    it out of the repo. Also rejects the tasks dir itself and anything nested
+    under ``archive/`` (already-archived tasks).
+    """
+    if repo_root is None:
+        repo_root = get_repo_root()
+    try:
+        resolved = task_dir_abs.resolve()
+        tasks_resolved = get_tasks_dir(repo_root).resolve()
+    except (OSError, RuntimeError):
+        return False
+    if resolved.parent != tasks_resolved:
+        return False
+    return resolved.name != "archive"
+
+
 # =============================================================================
 # Task Lookup
 # =============================================================================
@@ -171,7 +195,7 @@ def archive_task_complete(
 # Task Directory Resolution
 # =============================================================================
 
-def resolve_task_dir(target_dir: str, repo_root: Path) -> Path:
+def resolve_task_dir(target_dir: str, repo_root: Path) -> Path | None:
     """Resolve task directory to absolute path.
 
     Supports:
@@ -184,7 +208,9 @@ def resolve_task_dir(target_dir: str, repo_root: Path) -> Path:
         repo_root: Repository root path.
 
     Returns:
-        Resolved absolute path.
+        Resolved absolute path, or None when it resolves outside
+        `repo_root`. Both sides are resolved before comparing, since
+        `repo_root` may itself sit behind a symlink (/tmp does on macOS).
     """
     if not target_dir:
         return Path()
@@ -195,20 +221,29 @@ def resolve_task_dir(target_dir: str, repo_root: Path) -> Path:
 
     # Absolute path
     if Path(target_dir).is_absolute():
-        return Path(target_dir)
-
+        candidate = Path(target_dir)
     # Relative path (contains path separator or starts with .trellis)
-    if "/" in normalized or normalized.startswith(".trellis"):
-        return repo_root / Path(normalized)
+    elif "/" in normalized or normalized.startswith(".trellis"):
+        candidate = repo_root / Path(normalized)
+    else:
+        # Task name - try to find in tasks directory; fall back to treating
+        # it as a relative path when not found.
+        tasks_dir = get_tasks_dir(repo_root)
+        found = find_task_by_name(target_dir, tasks_dir)
+        candidate = found if found else repo_root / Path(normalized)
 
-    # Task name - try to find in tasks directory
-    tasks_dir = get_tasks_dir(repo_root)
-    found = find_task_by_name(target_dir, tasks_dir)
-    if found:
-        return found
+    try:
+        resolved = candidate.resolve()
+        root = repo_root.resolve()
+    except OSError:
+        return None
 
-    # Fallback to treating as relative path
-    return repo_root / Path(normalized)
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+
+    return resolved
 
 
 # =============================================================================

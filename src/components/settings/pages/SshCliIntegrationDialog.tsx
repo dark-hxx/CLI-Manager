@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowUp, ChevronRight, Copy, Download, FolderOpen, RefreshCw, RotateCcw, Save, Trash2, Undo2 } from "lucide-react";
@@ -10,6 +10,7 @@ import {
   validateSshToolConfigRoot,
 } from "../../../lib/sshToolIntegration";
 import type {
+  SshAgentAvailableRelease,
   SshAgentInstallPreview,
   SshAgentOperationResult,
   SshAgentProbeResult,
@@ -17,6 +18,12 @@ import type {
   SshRemoteHookConfigReport,
   SshToolSource,
 } from "../../../lib/types";
+import {
+  isSshAgentUpgradeAvailable,
+  resolveCurrentSshAgentVersion,
+  shouldApplySshAgentReleaseResult,
+  sshAgentUpgradeNotice,
+} from "../../../lib/sshAgentRelease";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
 import { useSshDirectoryBrowser } from "../../../hooks/useSshDirectoryBrowser";
 import { useBackgroundOperationStore } from "../../../stores/backgroundOperationStore";
@@ -35,7 +42,13 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const SOURCES: SshToolSource[] = ["claude", "codex"];
+const SOURCES: SshToolSource[] = ["claude", "codex", "kimi", "grok"];
+const SOURCE_METADATA = {
+  claude: { label: "Claude", icon: "claude-code" },
+  codex: { label: "Codex", icon: "codex" },
+  kimi: { label: "Kimi Code", icon: "kimi" },
+  grok: { label: "Grok Build", icon: "grok" },
+} as const;
 const OFFICIAL_AGENT_MANIFEST_PATH = /^\/dark-hxx\/CLI-Manager\/releases\/(?:latest\/download|download\/[^/]+)\/ssh-agent-release-manifest\.json$/;
 const R2_AGENT_MANIFEST_PATH = "/CLI-Manager/releases/ssh-agent/latest/ssh-agent-release-manifest.json";
 const DEFAULT_R2_PUBLIC_BASE_URL = "https://github.bwm.de5.net";
@@ -118,6 +131,8 @@ const AGENT_CODE_KEYS: Record<string, TranslationKey> = {
   hook_config_toml_features_invalid: "settings.sshHosts.cliIntegration.hook.code.tomlInvalid",
   hook_config_toml_hooks_invalid: "settings.sshHosts.cliIntegration.hook.code.tomlInvalid",
   hook_config_owner_conflict: "settings.sshHosts.cliIntegration.hook.code.ownerConflict",
+  kimi_code_unsupported: "settings.sshHosts.cliIntegration.hook.code.kimiUnsupported",
+  hook_config_doctor_failed: "settings.sshHosts.cliIntegration.hook.code.doctorFailed",
   hook_config_changed: "settings.sshHosts.cliIntegration.hook.code.changed",
   hook_config_locked: "settings.sshHosts.cliIntegration.hook.code.locked",
   hook_config_recovery_conflict: "settings.sshHosts.cliIntegration.hook.code.recoveryConflict",
@@ -142,6 +157,9 @@ const HOOK_FILE_ROLE_KEYS: Record<string, TranslationKey> = {
   claudeSettings: "settings.sshHosts.cliIntegration.hook.file.claudeSettings",
   codexHooks: "settings.sshHosts.cliIntegration.hook.file.codexHooks",
   codexFeature: "settings.sshHosts.cliIntegration.hook.file.codexFeature",
+  kimiConfig: "settings.sshHosts.cliIntegration.hook.file.kimiConfig",
+  grokHooks: "settings.sshHosts.cliIntegration.hook.file.grokHooks",
+  grokCompat: "settings.sshHosts.cliIntegration.hook.file.grokCompat",
   unknown: "settings.sshHosts.cliIntegration.hook.file.unknown",
 };
 
@@ -162,7 +180,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   const recordHookReport = useSshAgentIntegrationStore((state) => state.recordHookReport);
   const projects = useProjectStore((state) => state.projects);
   const fetchProjects = useProjectStore((state) => state.fetchProjects);
-  const [roots, setRoots] = useState<Record<SshToolSource, string>>({ claude: "", codex: "" });
+  const [roots, setRoots] = useState<Record<SshToolSource, string>>({ claude: "", codex: "", kimi: "", grok: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pickerSource, setPickerSource] = useState<SshToolSource | null>(null);
@@ -183,6 +201,9 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   const [allowHttp, setAllowHttp] = useState(false);
   const [agentOperation, setAgentOperation] = useState<"preview" | "install" | "rollback" | "uninstall" | null>(null);
   const [installPreview, setInstallPreview] = useState<SshAgentInstallPreview | null>(null);
+  const [availableRelease, setAvailableRelease] = useState<SshAgentAvailableRelease | null>(null);
+  const [releaseCheckError, setReleaseCheckError] = useState("");
+  const [checkingRelease, setCheckingRelease] = useState(false);
   const [installError, setInstallError] = useState("");
   const [allowDowngrade, setAllowDowngrade] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"rollback" | "uninstall" | null>(null);
@@ -229,6 +250,9 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
     ready: (probeResult?.status ?? installation?.status) === "installed",
   }), [installation, probeResult]);
   const activeInstallJob = host ? agentInstallJobs[host.id] ?? null : null;
+  const currentAgentVersion = resolveCurrentSshAgentVersion(probeResult, installation?.agent_version);
+  const upgradeNotice = sshAgentUpgradeNotice(availableRelease, currentAgentVersion);
+  const releaseRequestIdRef = useRef(0);
 
   useEffect(() => {
     if (!open || !host) return;
@@ -241,6 +265,8 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
     setRoots({
       claude: hostPreferences.get("claude") ?? "",
       codex: hostPreferences.get("codex") ?? "",
+      kimi: hostPreferences.get("kimi") ?? "",
+      grok: hostPreferences.get("grok") ?? "",
     });
     setError("");
   }, [host, hostPreferences, open]);
@@ -250,6 +276,9 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
     setProbeResult(null);
     setProbeError("");
     setInstallPreview(null);
+    setAvailableRelease(null);
+    setReleaseCheckError("");
+    setCheckingRelease(false);
     setInstallError("");
     setAllowDowngrade(false);
     setConfirmAction(null);
@@ -276,6 +305,48 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       ? t(AGENT_CODE_KEYS[code])
       : t("settings.sshHosts.cliIntegration.agent.operationFailed", { code: raw });
   };
+
+  useEffect(() => {
+    if (!open || !host) {
+      setAvailableRelease(null);
+      setReleaseCheckError("");
+      setCheckingRelease(false);
+      return;
+    }
+    setAvailableRelease(null);
+    setReleaseCheckError("");
+    setCheckingRelease(true);
+    const requestId = ++releaseRequestIdRef.current;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setCheckingRelease(true);
+        try {
+          const result = await invoke<SshAgentAvailableRelease>("ssh_agent_available_release", {
+            manifestUrl: agentManifestUrl.trim() || null,
+            currentVersion: currentAgentVersion || null,
+            allowHttp,
+          });
+          if (!shouldApplySshAgentReleaseResult(requestId, releaseRequestIdRef.current)) return;
+          setAvailableRelease(result);
+          setReleaseCheckError("");
+        } catch (nextError) {
+          if (!shouldApplySshAgentReleaseResult(requestId, releaseRequestIdRef.current)) return;
+          setAvailableRelease(null);
+          setReleaseCheckError(agentErrorText(nextError));
+        } finally {
+          if (shouldApplySshAgentReleaseResult(requestId, releaseRequestIdRef.current)) {
+            setCheckingRelease(false);
+          }
+        }
+      })();
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      if (releaseRequestIdRef.current === requestId) {
+        releaseRequestIdRef.current += 1;
+      }
+    };
+  }, [agentManifestUrl, allowHttp, currentAgentVersion, host?.id, open, t]);
 
   const probeAgent = async () => {
     if (!host) return;
@@ -306,7 +377,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
         spec: buildSshConnectionSpec(host, hosts),
         manifestUrl: agentManifestUrl.trim() || null,
         installDir: agentInstallDir.trim() || null,
-        currentVersion: installation?.agent_version || null,
+        currentVersion: currentAgentVersion || null,
         allowHttp,
       });
       setInstallPreview(preview);
@@ -632,14 +703,49 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
                   {probing ? t("settings.sshHosts.cliIntegration.agent.probing") : t("settings.sshHosts.cliIntegration.agent.probe")}
                 </Button>
               </div>
-              {(probeResult?.agentVersion || installation?.agent_version) && (
+              {(probeResult?.agentVersion || installation?.agent_version || availableRelease?.version) && (
                 <div className="grid gap-2 text-xs text-text-muted sm:grid-cols-2">
-                  <div>{t("settings.sshHosts.cliIntegration.agent.version", { value: probeResult?.agentVersion || installation?.agent_version || "-" })}</div>
-                  <div>{t("settings.sshHosts.cliIntegration.agent.protocol", { value: probeResult?.protocolVersion || installation?.protocol_version || "-" })}</div>
-                  <div>{t("settings.sshHosts.cliIntegration.agent.target", { value: probeResult?.target || installation?.target || "-" })}</div>
-                  <div className="truncate font-mono" title={probeResult?.installPath || installation?.install_path || ""}>
-                    {t("settings.sshHosts.cliIntegration.agent.path", { value: probeResult?.installPath || installation?.install_path || "-" })}
-                  </div>
+                  {(probeResult?.agentVersion || installation?.agent_version) && (
+                    <div>{t("settings.sshHosts.cliIntegration.agent.version", { value: probeResult?.agentVersion || installation?.agent_version || "-" })}</div>
+                  )}
+                  {availableRelease?.version && (
+                    <div>{t("settings.sshHosts.cliIntegration.agent.availableVersion", { value: availableRelease.version })}</div>
+                  )}
+                  {(probeResult?.protocolVersion || installation?.protocol_version) && (
+                    <div>{t("settings.sshHosts.cliIntegration.agent.protocol", { value: probeResult?.protocolVersion || installation?.protocol_version || "-" })}</div>
+                  )}
+                  {(probeResult?.target || installation?.target) && (
+                    <div>{t("settings.sshHosts.cliIntegration.agent.target", { value: probeResult?.target || installation?.target || "-" })}</div>
+                  )}
+                  {(probeResult?.installPath || installation?.install_path) && (
+                    <div className="truncate font-mono" title={probeResult?.installPath || installation?.install_path || ""}>
+                      {t("settings.sshHosts.cliIntegration.agent.path", { value: probeResult?.installPath || installation?.install_path || "-" })}
+                    </div>
+                  )}
+                </div>
+              )}
+              {checkingRelease && (
+                <p className="text-xs text-text-muted">{t("settings.sshHosts.cliIntegration.agent.checkingRelease")}</p>
+              )}
+              {isSshAgentUpgradeAvailable(availableRelease) && upgradeNotice && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-primary/40 bg-primary/10 px-3 py-2">
+                  <p className="text-xs text-text-primary">
+                    {t("settings.sshHosts.cliIntegration.agent.updateAvailable", {
+                      version: upgradeNotice.version,
+                      current: upgradeNotice.current,
+                    })}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void previewAgentInstall()}
+                    disabled={agentOperation !== null || activeInstallJob?.status === "running"}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                    {agentOperation === "preview"
+                      ? t("settings.sshHosts.cliIntegration.agent.preparing")
+                      : t("settings.sshHosts.cliIntegration.agent.update")}
+                  </Button>
                 </div>
               )}
               <div className="grid gap-3 sm:grid-cols-2">
@@ -716,8 +822,12 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
               {(probeError || probeResult?.detail) && (
                 <p className="break-words text-xs text-danger">{probeError || probeResult?.detail}</p>
               )}
+              {releaseCheckError && (
+                <p className="break-words text-xs text-danger">{releaseCheckError}</p>
+              )}
             </section>
             {SOURCES.map((source) => {
+              const metadata = SOURCE_METADATA[source];
               const report = currentHookReport(source);
               const hookStatus = report?.status ?? "notChecked";
               const hookBusy = hookOperation?.source === source;
@@ -741,8 +851,8 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
               return (
               <section key={source} className="space-y-3 border-b border-border pb-5 last:border-b-0 last:pb-0">
                 <div className="flex items-center gap-2">
-                  <CliToolIcon icon={source === "claude" ? "claude-code" : "codex"} size={18} />
-                  <h3 className="text-sm font-semibold text-text-primary">{source === "claude" ? "Claude" : "Codex"}</h3>
+                  <CliToolIcon icon={metadata.icon} size={18} />
+                  <h3 className="text-sm font-semibold text-text-primary">{metadata.label}</h3>
                 </div>
                 <label className="ui-config-form-label" htmlFor={`ssh-${source}-config-root`}>
                   {t("settings.sshHosts.cliIntegration.configRoot")}

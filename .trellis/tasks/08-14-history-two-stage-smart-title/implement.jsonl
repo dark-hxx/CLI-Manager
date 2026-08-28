@@ -1,0 +1,17 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"Mandatory new-feature scenario enumeration and discovery gate."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature spans source parsing, identity, SQLite, Rust IPC/provider requests, Zustand and UI."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires reusing Conversation classification and existing provider/network protocol helpers."}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Issue-linked user-visible feature requires remote-state checks, V1.3.6 changelog and feature inventory updates."}
+{"file":".trellis/spec/frontend/history-session-contracts.md","reason":"Defines structured parts, injected-content filtering, snapshots, list interaction and local/SSH history behavior."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides persisted settings, history state and application-lifetime queue ownership."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides toolbar switch, settings controls, shared action model and accessible UI composition."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality and i18n-safe implementation constraints."}
+{"file":".trellis/spec/backend/history-index-contracts.md","reason":"Keeps generated titles out of rebuildable catalog and constrains index-trigger integration."}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Provider composite identity, backend-only secrets, providers.db and effective runtime boundaries."}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"Provider selection/readiness UI must preserve redaction and existing Native Provider navigation contracts."}
+{"file":".trellis/spec/backend/app-data-persistence-contracts.md","reason":"Additive cli-manager.db migration and stable user metadata persistence boundary."}
+{"file":".trellis/spec/backend/command-suggestion-contracts.md","reason":"Existing auxiliary OpenAI request code is a reuse candidate whose public behavior must stay compatible."}
+{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"WSL history candidate discovery must not regress into unsafe/native UNC traversal."}
+{"file":".trellis/spec/backend/ssh-agent-contracts.md","reason":"SSH remains version-compatible/read-only and only online detail may qualify without protocol upgrade."}
+{"file":".trellis/tasks/08-14-history-two-stage-smart-title/research/reference-title-implementations.md","reason":"Public evidence and adopted patterns from DSH, Cherry Studio and Codex."}
+{"file":".trellis/tasks/08-14-history-two-stage-smart-title/research/current-code-touchpoints.md","reason":"Current title, metadata, provider, settings and identity touchpoints for implementation navigation."}

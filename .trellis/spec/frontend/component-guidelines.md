@@ -262,6 +262,34 @@ const handleOpenProjectFiles = async (project: Project) => {
 
 **Tests**: Run `npx tsc --noEmit`; manually verify opening the right Files panel leaves the left project tree visible, while the left context-menu Browse Files action still opens a file tree with a working return button.
 
+### Convention: Internal terminal file drops preserve the source file panel context
+
+**What**: A file dragged from the file panel into any terminal uses a one-shot suppression marker while the target terminal receives focus. `TerminalTabs` must consume that marker before synchronizing the shared file explorer project, so the source project's selected directory remains visible after a cross-project drop.
+
+**Why**: Focusing a split terminal normally changes the active session and would otherwise replace the shared file panel project before the user can continue selecting files from the source directory.
+
+**Contracts**:
+
+- The suppression marker is set only after an internal file drag has resolved a terminal drop zone.
+- It is consumed once by `syncFilePanelProject`; ordinary terminal activation and explicit Files-panel navigation continue to synchronize normally.
+- Internal file-drag text appends one trailing space unless it already ends in whitespace; ordinary paste and system file drops keep their existing text behavior.
+
+**Tests**: Run `node --test scripts/fileExplorerPathActions.test.mjs` and `npx tsc --noEmit`; manually verify a file panel drag to another split project's terminal keeps the source project and directory, then verify the next explicit Files-panel switch still follows the selected terminal.
+
+### Convention: Terminal Tab CLI icons inherit Tab foreground color
+
+**What**: CLI-specific icons rendered inside terminal Tabs must receive `className="text-current"` so monochrome icons such as OpenCode and Pi follow the Tab's theme-aware foreground color.
+
+**Why**: The shared `CliToolIcon` default is suitable for normal application surfaces but can become low-contrast inside terminal chrome, whose foreground color is scoped by the active terminal theme.
+
+**Correct**:
+
+```tsx
+<CliToolIcon icon={cliToolIcon} size={14} className="text-current" />
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually verify OpenCode and Pi Tabs in dark, light, and split-pane terminal themes.
+
 ### Convention: Optional-container Radix dialogs pick positioning by portal target
 
 **What**: A Radix `Dialog.Portal` that accepts an optional `container` must use container-relative `absolute inset-0` positioning only when a container is supplied. When the portal falls back to `document.body`, the overlay and content must use viewport-relative `fixed inset-0`.
@@ -781,6 +809,63 @@ const badge = await invoke("ccswitch_probe_projects", { projectPaths: [project.p
 
 **Tests**: Run `npx tsc --noEmit`; manually switch a Claude provider and a Codex provider and verify the project tree chip appears/clears immediately and after a fresh `fetchAll()`.
 
+### Convention: Collapsed project tree preserves expanded project semantics
+
+**What**: The collapsed project strip and group flyout must use the same CLI identity and interaction contract as the expanded project tree. Resolve the project CLI with `resolveCliToolIconKey` and render it with `CliToolIcon`; a single click selects the project and activates an existing terminal Tab, while a double click calls `onOpenProject` to start a new terminal. The running-session count remains a badge and must not replace the CLI icon with a status dot.
+
+**Why**: The collapsed tree is a presentation variant of the same project navigator, not a separate launch surface. Divergent click handlers caused a single click to start terminals, and status-first rendering hid the configured CLI tool identity.
+
+**Correct**:
+
+```tsx
+const cliIcon = resolveCliToolIconKey(project.cli_tool);
+
+<button
+  onClick={(event) => actions.onSelectProject(event, project)}
+  onDoubleClick={() => actions.onOpenProject(project)}
+>
+  {cliIcon ? <CliToolIcon icon={cliIcon} size={15} /> : <Terminal size={15} />}
+</button>
+```
+
+**Wrong**:
+
+```tsx
+// Collapsed-only behavior: single click starts a new terminal and status hides the CLI icon.
+<button onClick={() => actions.onOpenProject(project)}>
+  {status ? <StatusDot /> : <VendorIcon vendor={vendor} />}
+</button>
+```
+
+**Contracts**:
+
+- Expanded and collapsed project rows use the same `onSelectProject`/`onOpenProject` semantic boundary.
+- Group flyout project rows also reserve single click for selection and only close the flyout after the double-click launch path.
+- CLI icon lookup is shared with `TreeNodeItem`, project creation, history, and terminal Tab rendering; do not introduce a second vendor-to-icon map.
+- The collapsed flyout background is opaque enough to keep project names and icons legible over the terminal content.
+
+### Common Mistake: Passing `undefined` when a project menu needs a plain Shell
+
+**Symptom**: Project or Worktree context-menu “New Terminal” unexpectedly starts the configured CLI or custom startup command.
+
+**Cause**: `terminalStore.createSession(projectId, cwd, title, startupCmd, ...)` treats `startupCmd: undefined` as “resolve the project startup configuration”. That is different from an explicit empty string, which means the new session has no startup command.
+
+**Correct**:
+
+```tsx
+await createSession(project.id, project.path, project.name, "", undefined, project.shell || undefined);
+```
+
+**Contracts**:
+
+- Project and Worktree context-menu new-terminal handlers must pass `""` for `startupCmd` when they need a plain Shell in the target directory.
+- Preserve `projectId`, `cwd`, `shell`, and `worktreeId`; only startup-command inheritance is disabled.
+- Do not change the `undefined` semantics in the shared store: other entry points use it to inherit project configuration or resume commands.
+
+**Tests**: Inspect both local project and Worktree handlers and manually verify a project with `cli_tool`, `cli_args`, and `startup_cmd` opens at its project directory with only the Shell prompt; verify shortcut/command-palette new terminals and session restore retain their existing behavior.
+
+**Tests**: Run `npx tsc --noEmit`; manually verify a running Claude/Codex project and a stopped project in collapsed and expanded modes: single click switches to an existing Tab, double click starts a new Tab, the CLI icon stays visible, the terminal-count badge remains, and the group flyout does not show terminal content through its background.
+
 ### Convention: Terminal tab drag uses overlay plus explicit pane drop zones
 
 **What**: Terminal tab drag interactions use dnd-kit `DragOverlay` for the cursor-following tab, while pane movement/splitting is driven by explicit drop ids:
@@ -797,6 +882,10 @@ type PaneDropTarget =
 **Intent boundary**:
 
 - A Workspan dragged inside the top tab bar remains a sortable tab operation.
+- Middle-clicking either a session Tab or a Workspan Tab calls the existing
+  close path after preventing the browser's auxiliary-click default. Ignore it
+  while the Tab is being renamed or dragged; do not introduce a second close
+  or confirmation path.
 - Once the pointer enters a pane content rectangle, its outer directional regions become split targets. Resolve left/right/top/bottom from the pointer position relative to the pane center, while keeping a neutral center region so entering a pane does not immediately force a split.
 - Session tabs inside a multi-view pane keep the existing center-move and explicit edge-split behavior.
 - Collision detection identifies the pane only. Resolve the Workspan split direction in `onDragOver` and `onDragEnd` from `activatorEvent + delta` and `over.rect`; do not synthesize a pane-edge collision inside the collision detector.
@@ -1055,6 +1144,36 @@ const { suffixParts, leaf: displayNode } = collectCompactDirectoryChain(node);
 
 ## Styling Patterns
 
+### Convention: Project-tree hover actions preserve row geometry
+
+**What**: A project row in `TreeNodeItem` that uses `.ui-tree-item-actions` must keep its action container in the flex layout at all times. Let the existing `.ui-tree-item-actions` opacity, visibility, pointer-events, and transform rules control the hover transition; do not swap the container between Tailwind `hidden` and `group-hover:flex`.
+
+**Why**: Toggling `display` inserts the 22px start-action button only after the pointer enters the row. In a narrow sidebar this reflows the project title and badges, which appears as hover jitter and can make the pointer target feel unstable.
+
+**Correct**:
+
+```tsx
+<span className="ui-tree-item-actions flex shrink-0 items-center gap-0.5">
+  <button className="icon-btn">…</button>
+</span>
+```
+
+**Wrong**:
+
+```tsx
+<span className="ui-tree-item-actions hidden shrink-0 group-hover/item:flex">
+  <button className="icon-btn">…</button>
+</span>
+```
+
+**Contracts**:
+
+- The project title and metadata keep a stable available width before, during, and after hover.
+- The hidden action remains non-interactive until the existing hover/focus CSS exposes it.
+- Do not change project selection, drag activation, double-click launch, or the folder/worktree action contracts as part of this visual fix.
+
+**Tests**: Run `npx tsc --noEmit` and `npm run build`. Manually hover a project with a long name and terminal/provider badges in compact and comfortable sidebar density, then verify the title, badges, row position, hover action, click, double-click, and drag behavior stay stable in one light and one dark theme.
+
 ### Convention: Terminal auxiliary panels share one themed header
 
 **What**: Realtime stats, Git changes, project files in `mode="panel"`, replay, system resources, and the provider quick-switch panel must render their top title through `TerminalPanelHeader`. The shared header uses `TERM_PANEL.bg` as its fallback and mirrors the terminal pane Tab bar gradient in both light and dark terminal themes.
@@ -1224,6 +1343,37 @@ const marker = resolveTerminalPaneMarker({ hookStatus: tabStatuses[activeId]?.ho
 Selected variants may keep overriding `border-color`, but the base rule must own width and style.
 
 **Prevention**: When a Mantine-backed settings card appears borderless, inspect the computed `border-width` and `border-style` before changing colors.
+
+### Gotcha: Keep the xterm 6.1 Beta DOM character-measure fallback hidden
+
+**Symptom**: A terminal opened in an older WebView shows 32 uppercase `W` characters above the canvas.
+
+**Cause**: `@xterm/xterm` `6.1.0-beta.288` falls back from `OffscreenCanvas` font metrics to a DOM span when the WebView does not expose `fontBoundingBoxAscent` and `fontBoundingBoxDescent`. The fallback span contains `"W".repeat(32)`, but that beta package removed the `.xterm-char-measure-element` hiding rule from its bundled CSS.
+
+**Contract**: While this xterm version remains pinned, `src/App.css` must keep a scoped `.xterm .xterm-char-measure-element` rule with `visibility: hidden`, absolute positioning, and offscreen placement. Keep `display: inline-block`; `display: none` would make `offsetWidth` and `offsetHeight` zero and break cell measurement.
+
+**Wrong**:
+
+```css
+.xterm .xterm-char-measure-element {
+  display: none;
+}
+```
+
+**Correct**:
+
+```css
+.xterm .xterm-char-measure-element {
+  display: inline-block;
+  visibility: hidden;
+  position: absolute;
+  top: 0;
+  left: -9999em;
+  line-height: normal;
+}
+```
+
+**Tests**: Statically assert that the complete rule remains in `src/App.css`; manually verify an older macOS WebView shows no measurement text and that terminal columns, IME placement, file-link hover icons, and normal glyph alignment remain correct.
 
 ### Gotcha: xterm.js `allowTransparency` is a construction-time option
 
@@ -1397,6 +1547,21 @@ textarea.style.display = "none";
 - [ ] Chinese/IME composition still positions the candidate window correctly.
 - [ ] `node --test scripts/terminalImeAnchor.test.mjs scripts/terminalImeComposition.test.mjs` confirms real-cursor priority, prompt fallback, Process-key synchronous re-pinning, resize invalidation, composition cleanup ordering, and cancellation for a new composition/disposal.
 
+### Convention: Deduplicate macOS IME input at the shared forwarding boundary
+
+**What**: Keep terminal-input de-duplication in the one shared PTY forwarding path. Preserve the existing 80 ms exact cross-source rule for xterm onData versus native-text recovery. For macOS only, allow the IME controller to arm a short Process-key checkpoint from a helper-textarea keydown(229); while that checkpoint is live, reject only an exact non-ASCII onData re-emission.
+
+**Why**: WebKit IMEs can deliver input before keydown(229). xterm may emit that CJK payload directly and then emit it again from its deferred helper-textarea diff fallback. Both producer paths then look like onData, so a source-only rule cannot see the duplicate. PTY-side filtering is too late because it loses the browser event boundary and can erase intentional repeated input.
+
+**Contracts**:
+
+- The forwarding controller owns the last accepted payload and Process-key checkpoint; individual CLI views, PTY code, and output transforms must not implement competing text filters.
+- The IME DOM controller notifies the forwarding controller only after verifying that the Process key came from xterm's helper textarea. A new composition start clears the checkpoint.
+- Same-source matching is macOS-only, non-ASCII-only, exact-payload-only, and expires within the existing 400 ms Process-key recovery horizon. It must not become a general recent-input history filter.
+- A new composition must allow an intentional second commit of the same Chinese text. Windows, Linux, normal ASCII input, Enter, Backspace, paste, and the native recovery path retain their existing behavior.
+
+**Tests**: Run node --test scripts/terminalImeInputDedup.test.mjs scripts/terminalImeComposition.test.mjs and npx tsc --noEmit. Cover cross-source de-duplication, input-before-229 same-source re-emission, accumulated deferred payloads, composition reset, expiration, and disabled-platform behavior.
+
 ### Common Mistake: Estimating xterm IME cell size from container bounds
 
 **Symptom**: IME candidate popup or composition caret drifts on secondary monitors, mixed-DPI displays, or after display-scale changes even though the terminal prompt row detection is correct.
@@ -1481,6 +1646,31 @@ If a CLI draws large opaque panels or status rows over a terminal background ima
 
 Do not keep WebGL enabled while a terminal background image is active. The default renderer is the safer path for transparent backgrounds and xterm buffer-attr corrections; WebGL can preserve or redraw opaque TUI cells in ways that make Codex/Ratatui panels appear as black blocks.
 
+On a light terminal theme, a CLI that renders with its own dark theme paints message blocks that outlive every prompt-row heuristic: the submitted prompt scrolls up out of the composer area, and the Claude light-theme pass only covers patch rows plus the app-owned slash-menu highlight. Erase those blocks by resolved cell color instead of by row shape:
+
+- Gate the pass on theme brightness plus session identity (a Claude or Pi context), and accept a latched AI TUI signature as the plain-shell fallback for a CLI started by hand. Never require the latch: the welcome banner that sets it scrolls away while the black block keeps coming back.
+- Resolve what xterm will actually paint before judging a cell: RGB attrs directly, palette attrs through the active theme's ANSI entries with the xterm 256 cube and gray ramp as fallback, and never default-background cells — the terminal theme owns those, no CLI does.
+- Clear only near-neutral dark backgrounds (relative luminance <= 0.28 and chroma <= 96) so colored badges, diff markers, and light selection highlights survive the pass.
+- Require several dark cells on the row (>= 4). A one- or two-cell dark background is a TUI block cursor, not a painted block.
+- Do not clear the foreground here. Light themes run with `minimumContrastRatio: 6`, so xterm re-derives a readable foreground once the dark background is gone; clearing it would also discard configured TUI user/assistant colors.
+
+### Convention: Terminal-side preview panels share one theme resolver
+
+**What**: The Markdown preview, subagent transcript, session replay, and the in-terminal Git diff viewer resolve their colors through `useTerminalPreviewTheme()` (backed by `src/lib/terminalPreviewTheme.ts`). Panels must not call `getTerminalTheme()` / `isLightTerminalTheme()` themselves, and must not read `terminalThemeName` + the two palettes to re-derive brightness.
+
+**Why**: These panels follow the terminal theme by default but can be pinned to an independent preset (`terminalPreviewThemeName`, `follow-terminal` when unset). Every panel that judges brightness on its own drifts out of the family the first time that setting is used — and one of them silently kept following the *app* theme for code blocks before this was centralized.
+
+**Contracts**:
+
+- `resolveTerminalPreviewTheme()` owns the follow-vs-independent decision, brightness, and the panel CSS variable scope. Anything that is not a known preset id — a stale value from settings sync, a renamed preset — resolves to "follow the terminal", never to a broken panel.
+- A panel re-themes its subtree by putting `panelStyle` on its own root, not by writing global `--term-panel-*`. `App.tsx` keeps owning the global variables for terminal-side chrome (stats, providers, resources, tab bar); those must not move with the preview theme.
+- `TERM.*` from `termStatsUi` are `var(--term-panel-*)` references, so the local scope is enough — do not resolve colors in JS and inline them.
+- The terminal's custom text-color override applies only while following the terminal; an independently chosen preset keeps its own foreground.
+- Code-block brightness comes from the resolver's `tone`. When a caller needs the terminal code theme without terminal link behavior, pass `linkBehavior="preview"` explicitly — `MarkdownContent` derives it from `variant` otherwise.
+- The settings library grid is one component (`TerminalThemePresetGrid`); tone filtering, search, and the terminal library's auto/system special case stay in the host section.
+
+**Tests**: `node --test scripts/terminalPreviewTheme.test.mjs scripts/gitDiffThemeWorkflow.test.mjs` plus `npx tsc --noEmit`; manually verify follow mode against a light and a dark terminal theme, then an independent preset of the opposite brightness across all four panels.
+
 ### Convention: Click-based terminal cursor relocation is unsupported
 
 **What**: Clicking terminal content does not reposition the PTY line-editor cursor. The application must not register a click handler that emits cursor-movement sequences.
@@ -1564,6 +1754,79 @@ invoke("pty_write", { sessionId, data });
 - [ ] Claude Code multi-line paste preserves line order and is not submitted line-by-line.
 - [ ] CMD still accepts normal paste and Enter behavior.
 - [ ] Browser text/image paste, app-internal file drag, and system file drop all focus the intended visible terminal only once.
+
+### Scenario: File path actions and cross-project terminal drag
+
+#### 1. Scope / Trigger
+
+- Trigger: the file explorer or Git Changes tree sends a project file or directory to an in-app terminal through drag-and-drop.
+- Boundary: source rows use `useTerminalFilePointerDrag`; `terminalFileDrag` owns the in-memory/DataTransfer contract; `useTerminalInput` resolves the payload for the target terminal session.
+
+#### 2. Signatures
+
+- `formatRelativeProjectFilePath(relativePath, kind)` returns the normalized project-relative path.
+- `formatAbsoluteProjectFilePath(project, relativePath, kind)` joins the local project root or SSH `remote_path` with the relative path.
+- `TerminalFileDragProject` is the minimum project root accepted by `createTerminalFileDragPayload(project, relativePath, kind)`; it includes the project identity, local/remote roots, environment, SSH host, and CLI tool.
+- `TerminalFileDragPayload` contains `text`, `absolutePath`, and `source` (`id`, `path`, `remote_path`, `environment_type`, `ssh_host_id`).
+- `TERMINAL_FILE_DRAG_MIME` carries the serialized payload across the browser drag boundary.
+- A registered terminal drop zone accepts `paste(payload)`, not a pre-resolved string.
+- `useTerminalFilePointerDrag({ project, onDropOutsideTerminal? })` returns pointer handlers and the portal preview. Sources supply `{ path, kind }`.
+
+#### 3. Contracts
+
+- The file explorer and Git Changes tree may provide files and directories. Git rows must use `gitTreeProject`, whose root is the active Git repository rather than an enclosing project/worktree root.
+- File Explorer and Git Changes tree must share `useTerminalFilePointerDrag`; producers must not duplicate pointer threshold, preview, drop-zone, or click-suppression state.
+- The hook begins a drag only after `POINTER_DRAG_START_PX`, builds `TerminalFileDragPayload`, updates the registered terminal drop-zone point, and commits through `commitTerminalFileDragDrop()`.
+- File/directory-row action buttons (stage, discard, delete) are not drag handles. A completed pointer drag suppresses the source row's subsequent click once.
+- The source keeps the existing CLI-specific relative drag text for same-location drops.
+- The target compares the source location with its current project/worktree location using `isSameProjectFileLocation`.
+- Same project location uses `payload.text`; a different project, worktree, SSH host, or SSH remote root uses `payload.absolutePath`.
+- Local/WSL absolute paths use `project.path`; SSH absolute paths use `project.remote_path`.
+- The custom MIME payload is supplementary to `TERMINAL_FILE_PATH_MIME` and `text/plain`; older text-only drags remain accepted.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| No source project, non-primary pointer, or modifier-held pointer | Do not begin a terminal-file drag |
+| Pointer movement below `POINTER_DRAG_START_PX` | Preserve the normal source-row click |
+| Pointer starts on a Git row action button | Preserve the action and do not begin a drag |
+| Drop over a registered terminal | Commit the payload, paste once, focus that terminal, and suppress file-panel project sync once |
+| Drop outside a terminal | Run the source's optional outside-drop behavior, then clear the in-memory drag |
+| Same local/WSL root | Paste the relative drag text |
+| Different local/WSL root or worktree | Paste the source absolute path |
+| Same SSH host and remote root | Paste the relative drag text |
+| Different SSH host or remote root | Paste the source remote absolute path |
+| Malformed custom payload | Ignore its metadata and fall back to legacy text data |
+| Empty source root | Keep the normalized relative path as the absolute-path fallback |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: a modified or untracked Git file or directory from repository B is dropped into project A in a split pane and the terminal receives B's absolute path.
+- Base: a file or directory from the current project's file panel or Git Changes tree is dropped into another pane for the same project and keeps the existing relative CLI format, with a trailing slash for directories.
+- Bad: giving Git Changes its own pointer-drag implementation; source panels drift in threshold, preview, or terminal drop behavior.
+- Bad: resolving the path when the drag starts and storing only one string; the target pane cannot detect that the source and target roots differ.
+- Bad: comparing only project IDs; two worktrees or two SSH roots can have different filesystem locations while sharing a project identity.
+
+#### 6. Tests Required
+
+- Static regression test asserts all file explorer context-menu variants expose both copy actions.
+- Static regression test asserts file explorer and Git Changes both route through `useTerminalFilePointerDrag`, with Git rows excluding action buttons and suppressing a post-drag click.
+- Static regression test asserts the shared drag payload includes source context, absolute fallback data, and the custom MIME field.
+- Static regression test asserts terminal drop resolution uses project/worktree location comparison and absolute fallback.
+- `npx tsc --noEmit` must cover the payload, drop-zone callback, and i18n keys.
+- Manually verify file-explorer file/directory and Git file/directory drags (including modified and untracked trees) for same-project pane, cross-project pane, cross-worktree pane, local/WSL, SSH same-root, SSH different-root, and both `zh-CN`/`en-US` UI languages.
+
+#### 7. Wrong vs Correct
+
+```tsx
+// Wrong: Git Changes owns a second drag lifecycle and can drift from the file explorer.
+onPointerMove={() => beginTerminalFileDrag(payload)};
+
+// Correct: every source shares the payload, threshold, preview, and terminal commit contract.
+const drag = useTerminalFilePointerDrag({ project: gitTreeProject });
+onPointerDown={(event) => drag.handlePointerDown(event, { path: node.path, kind: "file" })};
+```
 
 ### Convention: Terminal input selection state stays in the Input controller
 
@@ -1777,6 +2040,8 @@ if (!isEdit && !isClone && trimmedCliArgs) {
 
 **Why**: `XTermTerminal` receives a real `.xterm-slider` from xterm.js, while a transcript's `overflow-y-auto` scrollbar is generated internally by WebView2/Chromium. Browser `::-webkit-scrollbar` hover behavior is platform-dependent and can change layout width, causing reflow and Pane jitter.
 
+For a third-party picker rendered in an open Shadow DOM, hide the browser-native scrollbar inside the shadow root, but render the absolutely positioned track/thumb in the stable React-owned host container (not inside the third-party root or its ShadowRoot). Position it from the real scroll container's bounding rect. Wheel/trackpad scrolling must remain owned by the scroll container; the overlay is only a visual indicator and drag target. If the picker is mounted imperatively, parent-provided callbacks must be read through refs so routine parent rerenders (for example popover/menu positioning) do not recreate the picker and reset category navigation or scroll position.
+
 **Correct**:
 
 ```tsx
@@ -1805,7 +2070,14 @@ if (!isEdit && !isClone && trimmedCliArgs) {
 
 **What**: The terminal Markdown preview uses the existing Radix Select primitive for historical answer selection. Its portal content must receive the terminal theme variables explicitly, and its viewport must use `ui-thin-scroll` with `--ui-scrollbar-thumb` / `--ui-scrollbar-track` from the terminal theme. Do not use a native `<select>` when the popup scrollbar or surface needs terminal styling.
 
-The preview can open when the session is a supported Claude/Codex session with a bound `cliSessionId`; a current-turn Hook status is not a prerequisite because restored sessions may have no new Hook event. `Ctrl`/`Cmd` plus wheel changes the preview Markdown scale only within the preview content, clamped to `0.8`–`1.6`; an unmodified wheel must keep normal scrolling.
+Every configured Agent CLI terminal keeps the right-top preview control visible.
+It can open when its `cliTool` or project tool resolves to a registered
+`HistorySource` and the session has a bound `cliSessionId`; this includes Pi's
+native `pi` history source. A missing source or session ID disables the control
+instead of hiding it. A current-turn Hook status is not a prerequisite because
+restored sessions may have no new Hook event. `Ctrl`/`Cmd` plus wheel changes
+the preview Markdown scale only within the preview content, clamped to
+`0.8`–`1.6`; an unmodified wheel must keep normal scrolling.
 
 KaTeX's package stylesheet owns the `.katex` base font size. Shared Markdown CSS may set its color, but must not force `.katex` to `font-size: 1em`, which makes terminal formulas smaller and visually soft. Preview zoom should scale the Markdown container instead of using transforms that introduce raster blur.
 
@@ -1827,7 +2099,7 @@ KaTeX's package stylesheet owns the `.katex` base font size. Shared Markdown CSS
 <style>.ui-markdown .katex { font-size: 1em; }</style>
 ```
 
-**Tests**: Run `node --test scripts/terminalMarkdownPreview.test.mjs scripts/markdownRendering.test.mjs` and `npx tsc --noEmit`; manually verify long answer lists, keyboard selection, restored sessions without a new conversation, normal scrolling, `Ctrl`/`Cmd` wheel zoom limits, light/dark terminal themes, background images, and clear KaTeX formulas.
+**Tests**: Run `node --test scripts/terminalMarkdownPreview.test.mjs scripts/markdownRendering.test.mjs` and `npx tsc --noEmit`; manually verify long answer lists, keyboard selection, Pi and restored sessions without a new conversation, a configured CLI without a bound session ID, normal scrolling, `Ctrl`/`Cmd` wheel zoom limits, light/dark terminal themes, background images, and clear KaTeX formulas.
 
 ### Convention: Settings pages fill the available content width and wrap controls
 

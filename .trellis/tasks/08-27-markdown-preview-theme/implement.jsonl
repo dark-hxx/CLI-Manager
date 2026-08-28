@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "终端右侧面板/主题相关既有约定与踩坑记录，含 xterm 主题明暗与面板 CSS 变量作用域"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 spec 索引，确认是否还有设置持久化/同步相关契约需要遵守"}
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "新需求必须先按 §5 场景维度清单枚举场景"}

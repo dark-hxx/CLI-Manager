@@ -7,6 +7,7 @@ export type HistorySourceId =
   | "copilot"
   | "antigravity"
   | "grok"
+  | "kimi"
   | "pi"
   | "opencode"
   | "kiro"
@@ -239,13 +240,34 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
       ...jsonReaderCapabilities,
       usage: "supported",
       resume: "supported",
+      delete: "supported",
       realtimeStats: "supported",
     },
     parserPlan: {
       stage: "native",
       batch: "batch-3",
       writer: "planned",
-      note: "Read-only parser for ~/.grok/sessions/*/*/updates.jsonl with summary.json metadata; resume via grok --resume / --continue; realtime stats via hook session bind.",
+      note: "Read-only parser for ~/.grok/sessions/*/*/updates.jsonl with summary.json metadata; resume via grok --resume / --continue; delete removes the session directory; realtime stats via hook session bind.",
+    },
+  },
+  {
+    id: "kimi",
+    labelKey: "historySources.source.kimi",
+    defaultLabel: "Kimi Code",
+    aliases: ["kimi-code"],
+    locations: [configRootSlot],
+    capabilities: {
+      ...jsonReaderCapabilities,
+      usage: "supported",
+      resume: "supported",
+      delete: "supported",
+      realtimeStats: "supported",
+    },
+    parserPlan: {
+      stage: "native",
+      batch: "batch-3",
+      writer: "planned",
+      note: "Read-only parser for ~/.kimi-code/sessions/*/agents/main/wire.jsonl plus state.json; resume via kimi --session / --continue; realtime stats via hook session bind. Legacy ~/.kimi is ignored.",
     },
   },
   {

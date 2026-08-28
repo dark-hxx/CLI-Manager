@@ -822,7 +822,6 @@ fn is_video(path: &Path) -> bool {
                 | "mpg"
                 | "mts"
                 | "ogv"
-                | "ts"
                 | "webm"
                 | "wmv"
         )
@@ -1054,6 +1053,18 @@ mod tests {
             .unwrap_err(),
             "video_preview_unsupported"
         );
+        fs::write(
+            root.path().join("main.ts"),
+            b"export const preview = true;\n",
+        )
+        .unwrap();
+        let result = read(FileReadRequest {
+            root_path: root.path().display().to_string(),
+            relative_path: "main.ts".into(),
+        })
+        .unwrap();
+        assert_eq!(result.kind, "text");
+        assert_eq!(result.content, "export const preview = true;\n");
     }
 
     #[test]

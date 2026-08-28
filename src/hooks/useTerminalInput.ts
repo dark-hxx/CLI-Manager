@@ -22,10 +22,16 @@ import {
   hasDataTransferType,
 } from "../lib/terminalClipboardImage";
 import {
+  appendTerminalFileDragSeparator,
   endTerminalFileDrag,
   getTerminalFileDropZoneIdAtPoint,
+  getTerminalFileDragPayload,
   getTerminalFileDragText,
+  parseTerminalFileDragPayload,
+  markTerminalFileDragPanelSyncSuppression,
   registerTerminalDropZone,
+  TERMINAL_FILE_DRAG_MIME,
+  type TerminalFileDragPayload,
   updateTerminalFileDragPointFromEvent,
 } from "../lib/terminalFileDrag";
 import {
@@ -47,6 +53,10 @@ import {
   type TerminalImeAnchorResolver,
   type TerminalImeTextareaAnchorResolver,
 } from "../lib/terminalIme";
+import {
+  createTerminalImeInputDeduper,
+  type TerminalInputSource,
+} from "../lib/terminalImeInputDedup";
 import {
   clampTextCursorIndex,
   getTextCursorLength,
@@ -70,11 +80,11 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
+import { findProjectByPath, isSameProjectFileLocation, projectWithWorktreePath } from "../lib/terminalProject";
 
 const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
 const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
 const SUGGESTION_AI_DEBOUNCE_MS = 400;
-const IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS = 80;
 
 const remoteAttachmentErrorDescription = (error: unknown) => {
   const code = String(error);
@@ -140,8 +150,6 @@ interface TerminalInputSelectionOptions {
   reportPtyWriteError: (stage: string, err: unknown) => void;
 }
 
-export type TerminalInputSource = "onData" | "nativeTextInput";
-
 interface TerminalInputForwardingOptions {
   selection: TerminalInputSelectionController;
   osPlatformRef: RefObject<OsPlatform>;
@@ -154,6 +162,8 @@ interface TerminalInputForwardingOptions {
 export interface TerminalInputForwardingController {
   dispose: () => void;
   forwardTerminalInput: (data: string, source: TerminalInputSource) => void;
+  noteImeProcessKey: (at: number) => void;
+  resetImeInputDedup: () => void;
 }
 
 interface TerminalInputImeOptions {
@@ -752,33 +762,15 @@ export function useTerminalInput({
       onInputForwarded,
     }: TerminalInputForwardingOptions,
   ): TerminalInputForwardingController => {
-    let lastForwardedTerminalInput: { data: string; source: TerminalInputSource; at: number } | null = null;
-    const isImeDuplicateCandidate = (data: string, source: TerminalInputSource) => {
-      if (!data || data === "\r" || data === "\x7f" || data === "\b" || data.startsWith("\x1b")) return false;
-      const normalized = data.replace(/\r\n?/g, "\n");
-      if (!Boolean(normalized.trim())) return false;
-      // 跨源去重的目标：同一字符既被 IME 恢复（nativeTextInput）转发，又被 xterm 的
-      // onData 转发，导致双份。非 ASCII（中文/标点）一直是候选；ASCII 符号
-      // （如 Shift+1 的 ! 或 Shift+' 的 "）在 macOS 上也会走 IME 恢复路径，
-      // 因此来自 nativeTextInput 的单个可打印 ASCII 字符同样纳入候选。
-      if (/[^\x00-\x7f]/.test(normalized)) return true;
-      return source === "nativeTextInput"
-        && Array.from(normalized).length === 1
-        && normalized.charCodeAt(0) >= 32;
-    };
-    const shouldDropCrossSourceImeDuplicate = (data: string, source: TerminalInputSource, now: number) => {
-      if (!isImeDuplicateCandidate(data, source) || !lastForwardedTerminalInput) return false;
-      const deltaMs = now - lastForwardedTerminalInput.at;
-      return (
-        lastForwardedTerminalInput.source !== source
-        && lastForwardedTerminalInput.data === data
-        && deltaMs >= 0
-        && deltaMs <= IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS
-      );
-    };
+    const inputDeduper = createTerminalImeInputDeduper({
+      shouldEnableSameSourceProcessKeyDedup: () => (
+        osPlatformRef.current === "macos"
+        || (osPlatformRef.current === "unknown" && navigator.platform.toLowerCase().includes("mac"))
+      ),
+    });
     const forwardTerminalInput = (data: string, source: TerminalInputSource) => {
       const now = performance.now();
-      if (shouldDropCrossSourceImeDuplicate(data, source, now)) return;
+      if (!inputDeduper.shouldForward(data, source, now)) return;
 
       markAttentionInputHandled();
       const replacingSelectedInput = selection.consumeSelectedInputForReplacement(data);
@@ -793,7 +785,6 @@ export function useTerminalInput({
         os: osPlatformRef.current,
       });
       const ptyData = manualDirectCodexOverride ?? data;
-      lastForwardedTerminalInput = { data, source, at: now };
       terminalProcessManager.write(
         sessionId,
         replacingSelectedInput ? replacingSelectedInput + ptyData : ptyData,
@@ -821,6 +812,8 @@ export function useTerminalInput({
         onBinaryDisposable.dispose();
       },
       forwardTerminalInput,
+      noteImeProcessKey: inputDeduper.noteImeProcessKey,
+      resetImeInputDedup: inputDeduper.resetForComposition,
     };
   };
 
@@ -847,6 +840,8 @@ export function useTerminalInput({
       fontSize,
       getTerminalRenderedCellSize,
       forwardNativeInput: (data) => forwarding.forwardTerminalInput(data, "nativeTextInput"),
+      onImeProcessKey: forwarding.noteImeProcessKey,
+      onCompositionStarted: forwarding.resetImeInputDedup,
       clearSuggestion: () => clearSuggestionRef.current(),
       updateSuggestionPosition: () => updateSuggestionGhostPositionRef.current(),
       scheduleFit,
@@ -1155,6 +1150,28 @@ export function useTerminalInput({
     return { session, project };
   };
 
+  const getCurrentTerminalProject = () => {
+    const terminalState = useTerminalStore.getState();
+    const session = terminalState.sessions.find((item) => item.id === sessionId) ?? null;
+    const projectState = useProjectStore.getState();
+    const project = session?.projectId
+      ? projectState.projects.find((item) => item.id === session.projectId) ?? null
+      : findProjectByPath(projectState.projects, session?.cwd);
+    if (!project) return null;
+
+    const worktree = session?.worktreeId
+      ? projectState.worktrees.find((item) => item.id === session.worktreeId && item.project_id === project.id)
+      : null;
+    return worktree ? projectWithWorktreePath(project, worktree) : project;
+  };
+
+  const resolveTerminalFileDragText = (payload: TerminalFileDragPayload) => {
+    const targetProject = getCurrentTerminalProject();
+    return targetProject && isSameProjectFileLocation(payload.source, targetProject)
+      ? payload.text
+      : payload.absolutePath || payload.text;
+  };
+
   const isSshPasteContext = (context: ReturnType<typeof getCurrentPasteContext>) => (
     context.session?.environmentType === "ssh" || context.project?.environment_type === "ssh"
   );
@@ -1225,12 +1242,17 @@ export function useTerminalInput({
       return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     };
     const hasTerminalFileDragData = (dataTransfer: DataTransfer | null) => (
-      Boolean(getTerminalFileDragText()) || hasDataTransferType(dataTransfer, TERMINAL_FILE_PATH_MIME)
+      Boolean(getTerminalFileDragPayload())
+      || hasDataTransferType(dataTransfer, TERMINAL_FILE_DRAG_MIME)
+      || hasDataTransferType(dataTransfer, TERMINAL_FILE_PATH_MIME)
     );
     const unregisterTerminalDropZone = registerTerminalDropZone({
       id: sessionId,
       getRect: () => (isVisibleRef.current ? pasteTarget.getBoundingClientRect() : null),
-      paste: pasteIntoTerminal,
+      paste: (payload) => {
+        markTerminalFileDragPanelSyncSuppression();
+        pasteIntoTerminal(appendTerminalFileDragSeparator(resolveTerminalFileDragText(payload)));
+      },
       focus: () => terminal.focus(),
     });
     const onPaste = (event: ClipboardEvent) => {
@@ -1296,14 +1318,18 @@ export function useTerminalInput({
     };
     const onDrop = (event: DragEvent) => {
       if (!isPointInsidePasteTarget(event.clientX, event.clientY) || !hasTerminalFileDragData(event.dataTransfer)) return;
-      const text = getTerminalFileDragText()
-        || event.dataTransfer?.getData(TERMINAL_FILE_PATH_MIME)
-        || event.dataTransfer?.getData("text/plain")
-        || "";
+      const payload = getTerminalFileDragPayload()
+        || parseTerminalFileDragPayload(event.dataTransfer?.getData(TERMINAL_FILE_DRAG_MIME));
+      const text = payload
+        ? resolveTerminalFileDragText(payload)
+        : event.dataTransfer?.getData(TERMINAL_FILE_PATH_MIME)
+          || event.dataTransfer?.getData("text/plain")
+          || "";
       event.preventDefault();
       event.stopPropagation();
       if (!text) return;
-      pasteIntoTerminal(text);
+      if (payload) markTerminalFileDragPanelSyncSuppression();
+      pasteIntoTerminal(payload ? appendTerminalFileDragSeparator(text) : text);
       endTerminalFileDrag();
       terminal.focus();
     };

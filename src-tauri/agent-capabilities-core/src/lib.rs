@@ -381,7 +381,44 @@ pub fn discovery_layout(
                 "json",
             );
         }
-        AgentKind::Pi => {}
+        AgentKind::Pi => {
+            push_config(
+                &mut layout,
+                home.join(".config").join("mcp").join("mcp.json"),
+                home,
+                cwd,
+                "user",
+                "native",
+                "json",
+            );
+            push_config(
+                &mut layout,
+                home.join(".agents").join("mcp.json"),
+                home,
+                cwd,
+                "user",
+                "native",
+                "json",
+            );
+            push_config(
+                &mut layout,
+                home.join(".agents").join("mcp").join("mcp.json"),
+                home,
+                cwd,
+                "user",
+                "native",
+                "json",
+            );
+            push_config(
+                &mut layout,
+                agent_root.join("mcp.json"),
+                home,
+                cwd,
+                "user",
+                "native",
+                "json",
+            );
+        }
     }
 
     let user_roots: Vec<(PathBuf, &str)> = match agent {
@@ -475,7 +512,26 @@ pub fn discovery_layout(
                     "json",
                 );
             }
-            AgentKind::Pi => {}
+            AgentKind::Pi => {
+                push_config(
+                    &mut layout,
+                    ancestor.join(".mcp.json"),
+                    home,
+                    cwd,
+                    "project",
+                    "native",
+                    "json",
+                );
+                push_config(
+                    &mut layout,
+                    ancestor.join(".pi").join("mcp.json"),
+                    home,
+                    cwd,
+                    "project",
+                    "native",
+                    "json",
+                );
+            }
         }
         let project_roots: Vec<(PathBuf, &str)> = match agent {
             AgentKind::Claude => vec![
@@ -724,10 +780,17 @@ fn collect_json_mcp(
     };
     if let Some(servers) = root.get(key).and_then(JsonValue::as_object) {
         for (name, value) in servers {
-            let enabled = value
-                .get("enabled")
-                .and_then(JsonValue::as_bool)
-                .unwrap_or(true);
+            let enabled = if agent == AgentKind::Pi {
+                !value
+                    .get("disabled")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false)
+            } else {
+                value
+                    .get("enabled")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(true)
+            };
             target.insert(
                 name.to_lowercase(),
                 McpItem {
@@ -1104,7 +1167,7 @@ pub fn apply_probe_output(
         return;
     }
     let mut observed = HashMap::<String, McpHealth>::new();
-    if let Ok(json) = serde_json::from_str::<JsonValue>(output) {
+    let parsed_json = if let Ok(json) = serde_json::from_str::<JsonValue>(output) {
         for record in probe_records(&json) {
             let name = record
                 .get("name")
@@ -1122,17 +1185,24 @@ pub fn apply_probe_output(
                 .get("status")
                 .or_else(|| record.get("state"))
                 .or_else(|| record.get("authStatus"))
+                // Codex CLI emits this field as snake_case in `mcp list --json`.
+                .or_else(|| record.get("auth_status"))
                 .and_then(JsonValue::as_str)
                 .and_then(probe_status_from_text)
                 .unwrap_or(McpHealth::Unknown);
             observed.insert(name.to_lowercase(), status);
         }
-    }
-    for line in output.lines() {
-        if let Some(status) = probe_status_from_text(line) {
-            for item in &snapshot.mcp {
-                if line.to_lowercase().contains(&item.name.to_lowercase()) {
-                    observed.insert(item.name.to_lowercase(), status.clone());
+        true
+    } else {
+        false
+    };
+    if !parsed_json {
+        for line in output.lines() {
+            if let Some(status) = probe_status_from_text(line) {
+                for item in &snapshot.mcp {
+                    if line.to_lowercase().contains(&item.name.to_lowercase()) {
+                        observed.insert(item.name.to_lowercase(), status.clone());
+                    }
                 }
             }
         }
@@ -1186,6 +1256,66 @@ mod tests {
         assert!(!serde_json::to_string(&snapshot)
             .unwrap()
             .contains("secret.example"));
+    }
+
+    #[test]
+    fn pi_adapter_configs_follow_their_documented_precedence() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let cwd = temp.path().join("project");
+        fs::create_dir_all(cwd.join(".git")).unwrap();
+
+        let layout = discovery_layout(AgentKind::Pi, &home, &cwd, None);
+        let paths = layout
+            .configs
+            .iter()
+            .map(|config| config.path.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            paths,
+            vec![
+                home.join(".config").join("mcp").join("mcp.json"),
+                home.join(".agents").join("mcp.json"),
+                home.join(".agents").join("mcp").join("mcp.json"),
+                home.join(".pi").join("agent").join("mcp.json"),
+                cwd.join(".mcp.json"),
+                cwd.join(".pi").join("mcp.json"),
+            ]
+        );
+    }
+
+    #[test]
+    fn pi_adapter_config_reports_active_and_disabled_mcp_without_unknown_diagnostic() {
+        let bundle = DiscoveryBundle {
+            configs: vec![ConfigDocument {
+                path_label: "home/.pi/agent/mcp.json".into(),
+                scope: "user".into(),
+                source_kind: "native".into(),
+                format: "json".into(),
+                content: r#"{
+                  "mcpServers": {
+                    "enabled-server": { "type": "stdio", "command": "secret-command" },
+                    "disabled-server": { "disabled": true, "command": "another-secret" }
+                  }
+                }"#
+                .into(),
+            }],
+            ..DiscoveryBundle::default()
+        };
+
+        let snapshot = assemble_snapshot(request(AgentKind::Pi), bundle);
+
+        assert_eq!(snapshot.mcp_summary.active, 1);
+        assert_eq!(snapshot.mcp_summary.disabled, 1);
+        assert_eq!(snapshot.mcp_summary.unknown, 1);
+        assert!(!snapshot
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "pi_mcp_extension_observability_unknown"));
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        assert!(!serialized.contains("secret-command"));
+        assert!(!serialized.contains("another-secret"));
     }
 
     #[test]
@@ -1247,6 +1377,53 @@ command = "git"
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "config_parse_error"));
+    }
+
+    #[test]
+    fn codex_probe_reads_snake_case_auth_status() {
+        let bundle = DiscoveryBundle {
+            configs: vec![ConfigDocument {
+                path_label: "home/.codex/config.toml".into(),
+                scope: "user".into(),
+                source_kind: "native".into(),
+                format: "toml".into(),
+                content: r#"
+[mcp_servers.authenticated]
+command = "auth"
+
+[mcp_servers.unauthenticated]
+command = "login"
+
+[mcp_servers.stdio]
+command = "local"
+"#
+                .into(),
+            }],
+            ..DiscoveryBundle::default()
+        };
+        let mut snapshot = assemble_snapshot(request(AgentKind::Codex), bundle);
+
+        apply_probe_output(
+            &mut snapshot,
+            r#"[
+              {"name":"authenticated","enabled":true,"auth_status":"authenticated"},
+              {"name":"unauthenticated","enabled":true,"auth_status":"unauthenticated"},
+              {"name":"stdio","enabled":true,"auth_status":"unsupported"}
+            ]"#,
+            true,
+        );
+
+        assert_eq!(snapshot.mcp_summary.healthy, 1);
+        assert_eq!(snapshot.mcp_summary.error, 1);
+        assert_eq!(snapshot.mcp_summary.unknown, 1);
+        assert_eq!(
+            snapshot
+                .mcp
+                .iter()
+                .find(|item| item.name == "unauthenticated")
+                .and_then(|item| item.error_code.as_deref()),
+            Some("agent_reported_mcp_error")
+        );
     }
 
     #[test]

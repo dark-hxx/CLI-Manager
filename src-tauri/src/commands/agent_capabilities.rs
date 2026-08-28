@@ -445,7 +445,44 @@ fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnap
                 "json",
             );
         }
-        AgentKind::Pi => {}
+        AgentKind::Pi => {
+            push_wsl_config(
+                &mut bundle,
+                distro,
+                posix_join(&home, ".config/mcp/mcp.json"),
+                "home/.config/mcp/mcp.json".into(),
+                "user",
+                "native",
+                "json",
+            );
+            push_wsl_config(
+                &mut bundle,
+                distro,
+                posix_join(&home, ".agents/mcp.json"),
+                "home/.agents/mcp.json".into(),
+                "user",
+                "native",
+                "json",
+            );
+            push_wsl_config(
+                &mut bundle,
+                distro,
+                posix_join(&home, ".agents/mcp/mcp.json"),
+                "home/.agents/mcp/mcp.json".into(),
+                "user",
+                "native",
+                "json",
+            );
+            push_wsl_config(
+                &mut bundle,
+                distro,
+                posix_join(&agent_root, "mcp.json"),
+                "home/.pi/agent/mcp.json".into(),
+                "user",
+                "native",
+                "json",
+            );
+        }
     }
     let mut user_skill_roots: Vec<(String, &str)> = match core.agent {
         AgentKind::Claude | AgentKind::Codex => vec![
@@ -534,7 +571,26 @@ fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnap
                     "json",
                 );
             }
-            AgentKind::Pi => {}
+            AgentKind::Pi => {
+                push_wsl_config(
+                    &mut bundle,
+                    distro,
+                    posix_join(&project_root, ".mcp.json"),
+                    "project/.mcp.json".into(),
+                    "project",
+                    "native",
+                    "json",
+                );
+                push_wsl_config(
+                    &mut bundle,
+                    distro,
+                    posix_join(&project_root, ".pi/mcp.json"),
+                    "project/.pi/mcp.json".into(),
+                    "project",
+                    "native",
+                    "json",
+                );
+            }
         }
         let roots: Vec<(&str, &str)> = match core.agent {
             AgentKind::Claude => vec![

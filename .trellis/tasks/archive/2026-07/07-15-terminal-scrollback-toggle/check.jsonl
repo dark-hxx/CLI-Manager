@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"检查持久化字段默认值和非法类型回退"}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查终端创建与热更新使用一致的有效回滚行数"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查隐藏输出缓冲仍为有界实现"}
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"检查类型验证、Changelog 和功能清单交付项"}

@@ -7,6 +7,7 @@ import {
   getRemoteHandoffEligibility,
   getRemoteHandoffWorkDir,
   preflightRemoteHandoff,
+  resolveRemoteHandoffAgent,
   REMOTE_HANDOFF_CANCEL_REQUEST_EVENT,
   REMOTE_HANDOFF_START_REQUEST_EVENT,
   type CcConnectHandoffInfo,
@@ -30,7 +31,10 @@ const HANDOFF_STATUS_POLL_MS = 2000;
 
 const ERROR_TRANSLATIONS: Array<[string, TranslationKey]> = [
   ["cc_connect_not_running", "remoteHandoff.error.ccConnectNotRunning"],
-  ["handoff_codex_only", "remoteHandoff.error.codexOnly"],
+  ["handoff_agent_mismatch", "remoteHandoff.error.agentMismatch"],
+  ["handoff_agent_unsupported", "remoteHandoff.error.agentUnsupported"],
+  ["handoff_ssh_agent_unsupported", "remoteHandoff.error.sshAgentUnsupported"],
+  ["handoff_agent_unavailable", "remoteHandoff.error.agentUnavailable"],
   ["handoff_project_not_registered", "remoteHandoff.error.projectMissing"],
   ["handoff_worktree_not_registered", "remoteHandoff.error.worktreeMissing"],
   ["handoff_worktree_missing", "remoteHandoff.error.worktreeMissing"],
@@ -56,6 +60,8 @@ const ERROR_TRANSLATIONS: Array<[string, TranslationKey]> = [
   ["remote_handoff_project_missing", "remoteHandoff.error.projectMissing"],
   ["remote_handoff_worktree_missing", "remoteHandoff.error.worktreeMissing"],
   ["remote_handoff_provider_mismatch", "remoteHandoff.error.providerMismatch"],
+  ["provider_not_found", "remoteHandoff.error.providerMismatch"],
+  ["provider_snapshot_", "remoteHandoff.error.providerMismatch"],
   ["remote_handoff_ssh_project_mismatch", "remoteHandoff.error.sshConfigurationChanged"],
   ["remote_handoff_ssh_host_mismatch", "remoteHandoff.error.sshConfigurationChanged"],
   ["remote_handoff_ssh_path_mismatch", "remoteHandoff.error.sshConfigurationChanged"],
@@ -135,6 +141,7 @@ function handoffErrorMessage(
 function activeMetadata(info: CcConnectHandoffInfo): RemoteHandoffSessionState {
   return {
     phase: "active",
+    agent: info.agent,
     cliSessionId: info.cliSessionId,
     projectName: info.projectName,
     workDir: info.workDir,
@@ -153,6 +160,7 @@ function metadataMatches(
   next: RemoteHandoffSessionState
 ): boolean {
   return current?.phase === next.phase
+    && current.agent === next.agent
     && current.cliSessionId === next.cliSessionId
     && current.projectName === next.projectName
     && current.workDir === next.workDir
@@ -174,6 +182,9 @@ function eligibilityTranslation(reason: ReturnType<typeof getRemoteHandoffEligib
     case "ssh_worktree_unsupported": return "remoteHandoff.error.sshWorktreeUnsupported";
     case "ssh_host_missing": return "remoteHandoff.error.sshHostMissing";
     case "ssh_interactive_auth_unsupported": return "remoteHandoff.error.sshInteractiveAuthUnsupported";
+    case "unsupported_agent": return "remoteHandoff.error.agentUnsupported";
+    case "agent_mismatch": return "remoteHandoff.error.agentMismatch";
+    case "ssh_agent_unsupported": return "remoteHandoff.error.sshAgentUnsupported";
     case "path_unsupported": return "remoteHandoff.error.pathUnsupported";
     default: return "remoteHandoff.error.unavailable";
   }
@@ -273,7 +284,8 @@ export function useRemoteHandoffCoordinator(appReady: boolean) {
         }
       }
       const workDir = getRemoteHandoffWorkDir(session, project);
-      if (!eligibility.eligible || !project || !session.cliSessionId || !workDir) {
+      const agent = resolveRemoteHandoffAgent(session, project).agent;
+      if (!eligibility.eligible || !project || !session.cliSessionId || !workDir || !agent) {
         toast.warning(t("remoteHandoff.toast.unavailable"), {
           description: t(eligibilityTranslation(eligibility.reason)),
         });
@@ -281,6 +293,7 @@ export function useRemoteHandoffCoordinator(appReady: boolean) {
       }
 
       const request = {
+        agent,
         localSessionId: session.id,
         cliSessionId: session.cliSessionId,
         platform,
@@ -291,6 +304,7 @@ export function useRemoteHandoffCoordinator(appReady: boolean) {
       };
       const pending: RemoteHandoffSessionState = {
         phase: "pending",
+        agent,
         cliSessionId: session.cliSessionId,
         projectName: project.name,
         workDir,

@@ -1,0 +1,32 @@
+{
+  "id": "sidebar-node-appearance",
+  "name": "sidebar-node-appearance",
+  "title": "项目栏节点外观标记与布局优化 (issue #213)",
+  "description": "issue #213：左侧项目栏节点缺少视觉区分。为分组/项目增加 icon+color 外观标记（含名称 hash 自动配色兜底），覆盖侧边栏 / History / Stats 三处项目树，并进 WebDAV 同步。父任务持有需求集与跨子验收。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-08-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-24-sidebar-visibility-p0",
+    "08-24-appearance-data-layer",
+    "08-24-sidebar-appearance-ui",
+    "08-24-history-stats-appearance",
+    "08-24-webdav-appearance-sync"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

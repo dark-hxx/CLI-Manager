@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GitFileDiffPayload } from "../../../lib/gitTransport";
 import type { GitDiffOptions } from "../../../lib/gitDiffOptions";
 import { useI18n } from "../../../lib/i18n";
@@ -8,6 +8,7 @@ import { GitDiffViewer } from "./GitDiffViewer";
 import { GitDiffDialogFrame } from "./GitDiffDialogFrame";
 import {
   buildGitDiffReviewTargets,
+  findInitialReviewTargetIndex,
   reconcileReviewTargetIndex,
   type GitDiffHunkPlacement,
   type GitDiffReviewStatusFilter,
@@ -69,18 +70,20 @@ export function GitDiffReviewDialog({
     repositoryPath,
     repositoryRelativePath,
   }), [repositoryPath, repositoryRelativePath, statusFilter, tree, untrackedTree]);
-  const [activeTargetId, setActiveTargetId] = useState<string | null>(null);
+  const initialTargetIndex = findInitialReviewTargetIndex(targets, initialFilePath);
+  const [activeTargetId, setActiveTargetId] = useState<string | null>(
+    targets[initialTargetIndex]?.id ?? null,
+  );
   const [initialHunkPlacement, setInitialHunkPlacement] = useState<GitDiffHunkPlacement>("first");
   const previousIndexRef = useRef(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
-    const initialIndex = targets.findIndex((target) => target.filePath === initialFilePath);
-    const nextIndex = initialIndex >= 0 ? initialIndex : 0;
+    const nextIndex = findInitialReviewTargetIndex(targets, initialFilePath);
     previousIndexRef.current = nextIndex;
     setInitialHunkPlacement("first");
     setActiveTargetId(targets[nextIndex]?.id ?? null);
-  }, [initialFilePath, open, repositoryPath]);
+  }, [initialFilePath, open, repositoryPath, targets]);
 
   const activeIndex = reconcileReviewTargetIndex(
     targets,
@@ -90,7 +93,7 @@ export function GitDiffReviewDialog({
   const activeTarget = activeIndex >= 0 ? targets[activeIndex] : null;
 
   useEffect(() => {
-    if (!activeTarget) return;
+    if (!activeTarget || activeTargetId === null) return;
     previousIndexRef.current = activeIndex;
     if (activeTarget.id !== activeTargetId) setActiveTargetId(activeTarget.id);
   }, [activeIndex, activeTarget, activeTargetId]);

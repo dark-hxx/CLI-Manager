@@ -93,6 +93,15 @@ export function reconcileReviewTargetIndex(
   return Math.min(Math.max(previousIndex, 0), targets.length - 1);
 }
 
+export function findInitialReviewTargetIndex(
+  targets: GitDiffReviewTarget[],
+  initialFilePath: string,
+): number {
+  if (targets.length === 0) return -1;
+  const initialIndex = targets.findIndex((target) => target.filePath === initialFilePath);
+  return initialIndex >= 0 ? initialIndex : 0;
+}
+
 export function stepReviewNavigation(
   direction: GitDiffNavigationDirection,
   position: ReviewNavigationPosition,

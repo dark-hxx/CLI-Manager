@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "新命令接收用户提供的 db 路径，需按清单做边界校验与只读约束"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "settingsStore 新增持久化字段 ccSwitchDbPath，需遵循 migrate/默认值模式"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "SettingsModal 新增 Tab 的 id 稳定性与 searchPlaceholder 约定"}
-{"file": ".trellis/spec/backend/index.md", "reason": "后端命令边界校验与 cargo check 要求"}
-{"file": ".trellis/tasks/06-11-cc-switch-provider-integration/research/cc-switch-db-schema.md", "reason": "cc-switch.db 真实表结构与 settings_config 字段含义"}

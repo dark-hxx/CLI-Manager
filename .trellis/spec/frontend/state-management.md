@@ -533,6 +533,57 @@ if (!isSameProjectFileContext(current, project)) await openProject(project);
 - Complete a file open or save after switching projects and verify the result stays in the originating workspace.
 - Keep both the Files side panel and a file-editor Tab mounted, switch terminal Tabs, and verify project synchronization does not repeatedly call `openProject`.
 
+### Pattern: File-tab batch close keeps ordering in the view and draft safety in the pane
+
+**Problem**: A file-tab context menu needs the current visual order for “close others/left/right”, but `fileExplorerStore.closeFile` owns active-file fallback. Closing a clean prefix before discovering a dirty file silently changes the workspace before the user can cancel.
+
+**Solution**: `FileEditorTabs` derives ordered target paths from its rendered `files` array and passes them to `FileEditorPane`. The Pane filters the current visible workspace, snapshots target and dirty paths, and only invokes `closeFile` after no draft is involved or after the user chooses Save/Discard.
+
+```tsx
+const leftPaths = files.slice(0, index).map((file) => file.path);
+const dirtyPaths = targetFiles
+  .filter((file) => file.content !== file.savedContent)
+  .map((file) => file.path);
+
+if (dirtyPaths.length > 0) {
+  setPendingAction({ closePane: false, paths: targetPaths, dirtyPaths });
+  return;
+}
+targetPaths.forEach(closeFile);
+```
+
+**Contracts**:
+
+- File-tab menus operate only on ordinary `ActiveProjectFile` tabs in the active file location. They never include pinned Git Diff tabs, terminal sessions, Workspans, or another cached editor workspace.
+- “Others” excludes the clicked path; “left” and “right” follow the rendered file-tab order. Actions with an empty target are disabled.
+- A target set with one or more dirty files opens one confirmation before any target is closed. Save writes only the selected dirty paths; Discard closes only selected paths; Cancel leaves every selected path unchanged.
+- Keep `fileExplorerStore.closeFile` as the only close mutation so its existing active-file fallback and workspace behavior remain authoritative. Do not add a parallel bulk-close store implementation.
+- SSH remains read-only: the menu itself does not invoke remote mutation, and any existing save failure continues to leave the confirmation state intact.
+
+**Tests Required**:
+
+- Static regression coverage asserts all four file-specific i18n actions, target ordering, empty-target disabling, batch dirty handoff, and absence of terminal menu keys.
+- Manually verify clean and dirty batches in local/WSL/SSH/Worktree locations, a split file-editor Pane, and alongside pinned Git Diff tabs in `zh-CN`, `zh-TW`, and `en-US`.
+
+### Pattern: File refresh ownership follows the editor workspace lifecycle
+
+**Problem**: A file editor can remain mounted after its Files side panel or embedded file panel is hidden. Owning watcher setup, fallback polling, or focus refresh in the conditional panel silently stops clean-file refresh while the editor is still visible.
+
+**Solution**: Mount one nonvisual project-file refresh controller with `App`. It owns local watcher start/stop, WSL watcher-failure polling, changed-path debounce, and focus/visibility refresh. `fileExplorerStore.refreshVisibleState` remains the only single-flight queue and the authority for preserving dirty drafts.
+
+**Contracts**:
+
+- Local and WSL projects prefer `project-files-changed`; watcher failure falls back to the existing low-frequency interval. The controller passes changed paths through instead of forcing a full tree reload.
+- SSH has no watcher. Poll only when its validated remote file context exists and the active workspace has opened files; automatic list/read calls are silent, while explicit user list/open/search calls retain background-operation feedback.
+- SSH refresh must continue to fail closed when the remote context is absent. It never calls local `file_*` commands for an SSH project.
+- A dirty file (`content !== savedContent`) remains a local draft after every automatic trigger. A clean file reloads only when its `modifiedMs` or `sizeBytes` changed.
+- Sidebar-local state such as the `.gitignore` matcher may retain its own lightweight event listener, but must not own watcher or refresh lifecycle.
+
+**Tests Required**:
+
+- Hide the Files panel with an editor still open, then verify local/WSL clean-file refresh, dirty-draft preservation, and watcher cleanup on project change.
+- Verify SSH context gating, 15-second quiet polling, focus refresh, and no local-path fallback.
+
 ### Common Mistake: Reloading the file tree when only project metadata changes
 
 **Symptom**: Switching terminal tabs that point to the same directory resets the right-side file tree, including its expanded rows and scroll position.

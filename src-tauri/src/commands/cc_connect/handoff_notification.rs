@@ -64,6 +64,7 @@ impl Default for NotificationSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HandoffIdentity {
+    agent: CcConnectAgent,
     local_session_id: String,
     cli_session_id: String,
     platform: CcConnectPlatform,
@@ -74,6 +75,7 @@ struct HandoffIdentity {
 impl HandoffIdentity {
     fn from_record(record: &PersistedHandoffRecord) -> Self {
         Self {
+            agent: record.agent,
             local_session_id: record.local_session_id.clone(),
             cli_session_id: record.cli_session_id.clone(),
             platform: record.platform,
@@ -118,7 +120,7 @@ impl RemoteHookEvent {
     }
 
     fn belongs_to(&self, record: &PersistedHandoffRecord) -> bool {
-        self.source == "codex"
+        self.source == record.agent.hook_source()
             && self.tab_id == record.local_session_id
             && self
                 .cli_session_id
@@ -951,13 +953,15 @@ pub fn cc_connect_handoff_notification_status() -> Result<CcConnectHandoffNotifi
 
 #[cfg(test)]
 mod tests {
+    use super::super::handoff_session::HANDOFF_SCHEMA_VERSION;
     use super::*;
     use serde_json::json;
     use std::cell::Cell;
 
     fn record() -> PersistedHandoffRecord {
         PersistedHandoffRecord {
-            schema_version: 1,
+            schema_version: HANDOFF_SCHEMA_VERSION,
+            agent: CcConnectAgent::Codex,
             local_session_id: "local-session".to_string(),
             cli_session_id: "cli-session".to_string(),
             project_id: "project-1".to_string(),
@@ -968,6 +972,7 @@ mod tests {
             provider_id: Some("provider-1".to_string()),
             provider_name: "Provider One".to_string(),
             provider_is_global: false,
+            provider_snapshot_id: None,
             platform: CcConnectPlatform::Telegram,
             platform_session_key: "telegram:1:1".to_string(),
             cc_session_id: "cc-session".to_string(),
@@ -1004,16 +1009,25 @@ mod tests {
 
     #[test]
     fn hook_event_must_match_the_handoff_owner() {
-        let record = record();
-        let event = RemoteHookEvent::from_payload(&json!({
-            "tabId": "local-session",
-            "source": "codex",
-            "event": "Stop",
-            "sessionId": "cli-session"
-        }))
-        .unwrap();
-        assert!(event.belongs_to(&record));
+        for (agent, source) in [
+            (CcConnectAgent::Claude, "claude"),
+            (CcConnectAgent::Codex, "codex"),
+            (CcConnectAgent::Pi, "pi"),
+            (CcConnectAgent::Opencode, "opencode"),
+        ] {
+            let mut record = record();
+            record.agent = agent;
+            let event = RemoteHookEvent::from_payload(&json!({
+                "tabId": "local-session",
+                "source": source,
+                "event": "Stop",
+                "sessionId": "cli-session"
+            }))
+            .unwrap();
+            assert!(event.belongs_to(&record));
+        }
 
+        let record = record();
         for payload in [
             json!({ "tabId": "other", "source": "codex", "event": "Stop", "sessionId": "cli-session" }),
             json!({ "tabId": "local-session", "source": "claude", "event": "Stop", "sessionId": "cli-session" }),
@@ -1093,6 +1107,9 @@ mod tests {
         let identity = HandoffIdentity::from_record(&original);
         let mut replacements = Vec::new();
 
+        let mut changed = original.clone();
+        changed.agent = CcConnectAgent::Claude;
+        replacements.push(changed);
         let mut changed = original.clone();
         changed.local_session_id = "other-local".to_string();
         replacements.push(changed);

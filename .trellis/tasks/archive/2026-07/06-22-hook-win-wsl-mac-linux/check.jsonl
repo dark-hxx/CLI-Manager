@@ -1,6 +1,0 @@
-{"file": ".trellis/tasks/06-22-hook-win-wsl-mac-linux/prd.md", "reason": "验证实现是否符合 PRD 的 Acceptance Criteria 和 Definition of Done"}
-{"file": ".trellis/tasks/06-22-hook-win-wsl-mac-linux/research/tauri-notification-plugin.md", "reason": "验证权限配置、前端 API 用法是否与调研结论一致"}
-{"file": ".trellis/spec/backend/cli-hook-contracts.md", "reason": "验证 hook payload 使用是否符合后端契约"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验证 TypeScript 类型定义完整性"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证代码质量：错误处理、异步边界、用户提示"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "验证 capability 权限配置安全性"}

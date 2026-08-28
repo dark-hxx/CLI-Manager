@@ -1,10 +1,12 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowRightLeft, Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, MessageSquare, RefreshCw, Search, Star, Terminal, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { ArrowRightLeft, Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, LoaderCircle, MessageSquare, RefreshCw, Search, Sparkles, Star, Terminal, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistoryIndexStatus, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
-import { resolveCliToolIconKey, resolveHistorySourceIconKey } from "../../lib/cliTools";
+import { resolveHistorySourceIconKey } from "../../lib/cliTools";
+import { resolveNodeAppearance } from "../../lib/nodeAppearance";
+import { NodeAppearanceIcon } from "../NodeAppearanceIcon";
 import { findWorktreeByPath } from "../../lib/terminalProject";
 import { useWorktreeStore } from "../../stores/worktreeStore";
 import { CliToolIcon } from "../CliToolIcon";
@@ -76,8 +78,13 @@ interface HistoryListPaneProps {
   selectedCount: number;
   allVisibleSelected: boolean;
   selectedSessionKeys: Set<string>;
+  smartTitleInFlightSessionKeys: ReadonlySet<string>;
   onRefresh: () => void;
   onClose: () => void;
+  smartTitleEnabled: boolean;
+  smartTitleAvailable: boolean;
+  onToggleSmartTitle: () => void;
+  onOpenSmartTitleSettings: () => void;
   onSourceFilterChange: (value: HistorySourceFilter) => void;
   onProjectPathFilterChange: (value: string | null, projectId?: string | null) => void;
   onGlobalQueryChange: (value: string) => void;
@@ -90,6 +97,8 @@ interface HistoryListPaneProps {
   onResumeSession: (session: HistorySessionView) => void;
   canConvertSession: (session: HistorySessionView) => boolean;
   onConvertSession: (session: HistorySessionView) => void;
+  onGenerateSmartTitle: (session: HistorySessionView) => void;
+  onClearSmartTitle: (session: HistorySessionView) => void;
   onDeleteSession: (session: HistorySessionView) => void;
   onDeleteSelected: () => void;
   onOpenHit: (hit: HistorySearchHit) => void;
@@ -128,7 +137,8 @@ function SelectionCheckbox({
         e.stopPropagation();
         onToggle();
       }}
-      className="ui-focus-ring mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors"
+      onKeyDown={(e) => e.stopPropagation()}
+      className="ui-focus-ring relative z-10 mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors"
       style={{
         borderColor: checked ? "var(--primary)" : "color-mix(in srgb, var(--border) 82%, transparent)",
         backgroundColor: checked ? "color-mix(in srgb, var(--primary) 16%, transparent)" : "transparent",
@@ -220,8 +230,16 @@ function countProjects(node: HistoryProjectTreeNode): number {
 }
 
 function ProjectFilterIcon({ project, size = 13 }: { project: Project; size?: number }) {
-  const icon = resolveCliToolIconKey(project.cli_tool);
-  return icon ? <CliToolIcon icon={icon} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+  const appearance = resolveNodeAppearance({ icon: project.icon, color: project.color });
+  return (
+    <NodeAppearanceIcon
+      mark={appearance.emoji}
+      iconKey={appearance.iconKey}
+      cliTool={project.cli_tool}
+      fallback="terminal"
+      size={size}
+    />
+  );
 }
 
 function SessionSourceIcon({ source, size = 14 }: { source: string; size?: number }) {
@@ -339,8 +357,13 @@ export function HistoryListPane({
   selectedCount,
   allVisibleSelected,
   selectedSessionKeys,
+  smartTitleInFlightSessionKeys,
   onRefresh,
   onClose,
+  smartTitleEnabled,
+  smartTitleAvailable,
+  onToggleSmartTitle,
+  onOpenSmartTitleSettings,
   onSourceFilterChange,
   onProjectPathFilterChange,
   onGlobalQueryChange,
@@ -353,6 +376,8 @@ export function HistoryListPane({
   onResumeSession,
   canConvertSession,
   onConvertSession,
+  onGenerateSmartTitle,
+  onClearSmartTitle,
   onDeleteSession,
   onDeleteSelected,
   onOpenHit,
@@ -503,6 +528,20 @@ export function HistoryListPane({
     onConvertSession(session);
   }, [contextMenu, onConvertSession]);
 
+  const handleContextMenuGenerateSmartTitle = useCallback(() => {
+    if (!contextMenu) return;
+    const session = contextMenu.session;
+    setContextMenu(null);
+    onGenerateSmartTitle(session);
+  }, [contextMenu, onGenerateSmartTitle]);
+
+  const handleContextMenuClearSmartTitle = useCallback(() => {
+    if (!contextMenu) return;
+    const session = contextMenu.session;
+    setContextMenu(null);
+    onClearSmartTitle(session);
+  }, [contextMenu, onClearSmartTitle]);
+
   useEffect(() => {
     if (!contextMenu) return;
     const handler = (e: Event) => {
@@ -634,23 +673,37 @@ export function HistoryListPane({
   });
 
   const menuX = contextMenu ? Math.max(8, Math.min(contextMenu.x, window.innerWidth - 200)) : 0;
-  const menuY = contextMenu ? Math.max(8, Math.min(contextMenu.y, window.innerHeight - 80)) : 0;
+  const menuY = contextMenu ? Math.max(8, Math.min(contextMenu.y, window.innerHeight - 150)) : 0;
 
   const renderProjectNode = (node: HistoryProjectTreeNode, depth = 0): ReactNode => {
     const paddingLeft = 8 + depth * 14;
     if (node.type === "group") {
       const isOpen = Boolean(normalizedProjectSearch) || !collapsedFilterGroups.has(node.group.id);
+      const groupAppearance = resolveNodeAppearance({
+        icon: node.group.icon,
+        color: node.group.color,
+      });
       return (
         <div key={`group:${node.group.id}`}>
           <button
             type="button"
             onClick={() => toggleFilterGroup(node.group.id)}
             className="ui-tree-node ui-tree-group ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[11px] font-semibold"
-            style={{ paddingLeft }}
+            style={{
+              paddingLeft,
+              ...(groupAppearance.hasColor ? { "--node-accent": groupAppearance.colorVar } : {}),
+            } as CSSProperties}
             aria-expanded={isOpen}
           >
             <ChevronRight size={12} className="shrink-0" style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 150ms" }} />
-            <Folder size={13} className="shrink-0" />
+            <span className="ui-tree-leading-icon shrink-0">
+              <NodeAppearanceIcon
+                mark={groupAppearance.emoji}
+                iconKey={groupAppearance.iconKey}
+                fallback="folder"
+                size={13}
+              />
+            </span>
             <span className="min-w-0 flex-1 truncate">{node.group.name}</span>
             <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{countProjects(node)}</span>
           </button>
@@ -665,6 +718,10 @@ export function HistoryListPane({
 
     const projectPath = historyProjectPath(node.project);
     const selected = selectedProjectMatch(node.project);
+    const projectAppearance = resolveNodeAppearance({
+      icon: node.project.icon,
+      color: node.project.color,
+    });
     return (
       <button
         key={`project:${node.project.id}`}
@@ -676,7 +733,11 @@ export function HistoryListPane({
         )}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
-        style={{ paddingLeft }}
+        data-accent={projectAppearance.hasColor ? "true" : undefined}
+        style={{
+          paddingLeft,
+          ...(projectAppearance.hasColor ? { "--node-accent": projectAppearance.colorVar } : {}),
+        } as CSSProperties}
         title={projectPath}
       >
         <span className="ui-tree-leading-icon">
@@ -774,6 +835,17 @@ export function HistoryListPane({
             title={t("history.refreshList")}
           >
             <RefreshCw size={12} className={indexBusy ? "animate-spin" : undefined} />
+          </button>
+          <button
+            type="button"
+            onClick={smartTitleAvailable ? onToggleSmartTitle : onOpenSmartTitleSettings}
+            aria-label={t(smartTitleAvailable ? "historySources.smartTitle.enabled" : "history.smartTitle.configure")}
+            aria-pressed={smartTitleEnabled}
+            className="ui-flat-action ui-toolbar-button-compact ui-history-list-action h-8 w-8 shrink-0 px-0"
+            title={t(smartTitleAvailable ? "historySources.smartTitle.enabled" : "history.smartTitle.configure")}
+            style={{ color: smartTitleEnabled ? "var(--accent)" : undefined }}
+          >
+            <Sparkles size={12} fill={smartTitleEnabled ? "currentColor" : "none"} />
           </button>
           <button
             type="button"
@@ -960,6 +1032,10 @@ export function HistoryListPane({
                 ? formatSessionListTitle(row.item.displayTitle, t("history.imagePlaceholder"))
                 : "";
             const sessionWorktree = row.type === "session" ? getSessionWorktree(row.item) : null;
+            const smartTitlePending = row.type === "session" && (
+              row.item.generatedTitle?.state === "pending"
+              || smartTitleInFlightSessionKeys.has(row.item.sessionKey)
+            );
             return (
               <div
                 key={virtualRow.key}
@@ -1019,16 +1095,28 @@ export function HistoryListPane({
                     )}
                     <div
                       onContextMenu={(e) => handleSessionContextMenu(e, row.item)}
-                      onClick={selectionMode ? () => onToggleSessionSelection(row.item.sessionKey) : undefined}
                       className={[
-                        "ui-list-row group/session-row flex w-full items-center gap-2 border text-left",
+                        "ui-list-row group/session-row relative flex w-full items-center gap-2 border text-left",
                         row.depth > 0
                           ? "min-h-[58px] rounded-lg border-border/45 bg-surface-container-low px-2 py-1.5"
                           : "min-h-[68px] rounded-xl border-border/70 bg-surface-container-lowest px-2.5 py-2",
-                        selectionMode ? "cursor-pointer" : "",
+                        "cursor-pointer",
                       ].join(" ")}
                       style={{ backgroundColor: row.item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : undefined }}
                     >
+                      <button
+                        type="button"
+                        role={selectionMode ? "checkbox" : undefined}
+                        aria-checked={selectionMode ? selectedSessionKeys.has(row.item.sessionKey) : undefined}
+                        aria-label={t(
+                          selectionMode ? "history.bulk.selectSessionNamed" : "history.openSessionNamed",
+                          { title: sessionDisplayTitle }
+                        )}
+                        onClick={() => selectionMode
+                          ? onToggleSessionSelection(row.item.sessionKey)
+                          : onOpenSession(row.item.sessionKey)}
+                        className="ui-focus-ring absolute inset-0 rounded-[inherit] border-0 bg-transparent"
+                      />
                       {row.childCount > 0 && (
                         <button
                           type="button"
@@ -1036,7 +1124,7 @@ export function HistoryListPane({
                             e.stopPropagation();
                             toggleSessionParent(row.item.sessionKey);
                           }}
-                          className="ui-history-tree-toggle mt-0.5"
+                          className="ui-history-tree-toggle relative z-10 mt-0.5"
                           aria-expanded={!collapsedSessionParents.has(row.item.sessionKey)}
                           aria-label={t(
                             collapsedSessionParents.has(row.item.sessionKey)
@@ -1067,7 +1155,7 @@ export function HistoryListPane({
                         />
                       )}
                       {selectionMode ? (
-                        <div className="min-w-0 flex-1 overflow-hidden text-left">
+                        <div className="pointer-events-none relative z-[1] min-w-0 flex-1 overflow-hidden text-left">
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-primary">
                               <SessionSourceIcon source={row.item.source} size={14} />
@@ -1092,6 +1180,15 @@ export function HistoryListPane({
                               </span>
                             )}
                             <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
+                            {smartTitlePending && (
+                              <span title={t("history.smartTitle.pending")}>
+                                <LoaderCircle
+                                  size={12}
+                                  className="shrink-0 animate-spin text-primary"
+                                  aria-label={t("history.smartTitle.pending")}
+                                />
+                              </span>
+                            )}
                             {row.childCount > 0 && (
                               <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[10px] font-medium text-text-muted">
                                 {t("history.tree.childCount", { count: row.childCount })}
@@ -1110,11 +1207,7 @@ export function HistoryListPane({
                           </div>
                         </div>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => onOpenSession(row.item.sessionKey)}
-                          className="min-w-0 flex-1 overflow-hidden text-left"
-                        >
+                        <div className="pointer-events-none relative z-[1] min-w-0 flex-1 overflow-hidden text-left">
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-primary">
                               <SessionSourceIcon source={row.item.source} size={14} />
@@ -1139,6 +1232,15 @@ export function HistoryListPane({
                               </span>
                             )}
                             <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
+                            {smartTitlePending && (
+                              <span title={t("history.smartTitle.pending")}>
+                                <LoaderCircle
+                                  size={12}
+                                  className="shrink-0 animate-spin text-primary"
+                                  aria-label={t("history.smartTitle.pending")}
+                                />
+                              </span>
+                            )}
                             {row.childCount > 0 && (
                               <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[10px] font-medium text-text-muted">
                                 {t("history.tree.childCount", { count: row.childCount })}
@@ -1155,13 +1257,17 @@ export function HistoryListPane({
                               {t("history.messageCount", { count: row.item.message_count })}
                             </span>
                           </div>
-                        </button>
+                        </div>
                       )}
                       {!selectionMode && (
                         <button
                           type="button"
-                          onClick={() => onDeleteSession(row.item)}
-                          className="ui-history-row-delete"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDeleteSession(row.item);
+                          }}
+                          onKeyDown={(event) => event.stopPropagation()}
+                          className="ui-history-row-delete relative z-10"
                           aria-label={t("history.deleteSessionNamed", { title: sessionDisplayTitle })}
                           title={t("history.deleteSession")}
                         >
@@ -1208,6 +1314,33 @@ export function HistoryListPane({
               <RefreshCw size={13} aria-hidden="true" />
               <span>{t("history.menu.resumeInTerminal")}</span>
             </button>
+            <>
+              <button
+                className="context-menu-item"
+                role="menuitem"
+                onClick={handleContextMenuGenerateSmartTitle}
+                disabled={
+                  contextMenu.session.generatedTitle?.state === "pending"
+                  || smartTitleInFlightSessionKeys.has(contextMenu.session.sessionKey)
+                }
+              >
+                <Sparkles size={13} aria-hidden="true" />
+                <span>
+                  {contextMenu.session.generatedTitle?.state === "pending"
+                    || smartTitleInFlightSessionKeys.has(contextMenu.session.sessionKey)
+                    ? t("history.smartTitle.pending")
+                    : contextMenu.session.generatedTitle
+                      ? t("history.smartTitle.regenerate")
+                      : t("history.smartTitle.generate")}
+                </span>
+              </button>
+              {contextMenu.session.generatedTitle?.title ? (
+                <button className="context-menu-item" role="menuitem" onClick={handleContextMenuClearSmartTitle}>
+                  <X size={13} aria-hidden="true" />
+                  <span>{t("history.smartTitle.clear")}</span>
+                </button>
+              ) : null}
+            </>
             {canConvertSession(contextMenu.session) ? (
               <button className="context-menu-item" role="menuitem" onClick={handleContextMenuConvert}>
                 <ArrowRightLeft size={13} aria-hidden="true" />

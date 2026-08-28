@@ -4,7 +4,11 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex Hook configuration, the one-shot Hook runtime, remote history/resume RPCs, and daemon-owned protocol `1.11` bridges per active SSH Host. Protocol 1.5 introduced read-only file RPCs; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, protocol 1.8 adds negotiated Diff generation options, protocol 1.9 adds bounded terminal image attachments outside project roots, protocol 1.10 generalizes attachment upload to arbitrary regular files, and protocol 1.11 adds session-bound Agent MCP/Skill diagnostics through `agentCapabilitiesV1`. Realtime/historical stats remain separate stages.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex/Kimi/Grok Hook configuration, the one-shot Hook runtime, Claude/Codex-only remote history/resume RPCs, and daemon-owned protocol `1.11` bridges per active SSH Host. Protocol 1.5 introduced read-only file RPCs; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, protocol 1.8 adds negotiated Diff generation options, protocol 1.9 adds bounded terminal image attachments outside project roots, protocol 1.10 generalizes attachment upload to arbitrary regular files, and protocol 1.11 adds session-bound Agent MCP/Skill diagnostics through `agentCapabilitiesV1`. Realtime/historical stats remain separate stages.
+
+Grok compatibility isolation is a stateful `config.toml` mutation: installing and uninstalling must
+distinguish Agent-owned `compat.<vendor>.hooks` values from values already chosen or subsequently
+edited by the user.
 
 ### Agent Release Identity
 
@@ -24,6 +28,8 @@ The delivered scope includes explicit one-shot probe/install lifecycle, remote C
   protocol `1.10` and adds `fileAttachAny` for arbitrary regular files up to 20 MiB while
   preserving the original safe basename. Agent `0.1.8` reports protocol `1.11` and
   advertises `agentCapabilitiesV1` for fixed-command, redacted MCP/Skill inspection and probes.
+  Agent `0.1.9` keeps protocol `1.11` and adds the current Kimi Code TOML Hook adapter/runtime without adding Kimi history support.
+  Agent `0.1.10` keeps protocol `1.11` and adds the Grok Build JSON Hook adapter (`hooks/cli-manager.json` plus `config.toml` cross-tool isolation) without adding Grok remote history support.
 - The independent Agent release tag is exactly `ssh-agent-v<agent-version>`. Its signed manifest
   must carry that Agent version and point only to assets on that same tag.
 - Independent Agent releases are GitHub prereleases with `make_latest: false`. The desktop
@@ -85,6 +91,11 @@ pub async fn ssh_agent_probe(
     agent_path: Option<String>,
 ) -> Result<SshAgentProbeResult, String>;
 
+pub async fn ssh_agent_available_release(
+    manifest_url: Option<String>,
+    current_version: Option<String>,
+    allow_http: bool,
+) -> Result<SshAgentAvailableRelease, String>;
 pub async fn ssh_agent_install_preview(...) -> Result<SshAgentInstallPreview, String>;
 pub async fn ssh_agent_install(...) -> Result<SshAgentOperationResult, String>;
 pub async fn ssh_agent_rollback(...) -> Result<SshAgentOperationResult, String>;
@@ -112,6 +123,8 @@ pub async fn ssh_db_record_history_source(input: SshHistorySourceInput) -> Resul
 
 `SshAgentProbeResult` contains `status`, stable `code`, sanitized executable/version/protocol/target metadata, `supported`, and an ephemeral diagnostic `detail`. Only metadata fields enter `ssh_agent_installations`; `detail` is never persisted.
 
+`ssh_agent_available_release` resolves the same bundled-first signed Agent manifest as install preview. It must not accept an SSH spec and must not open an SSH connection. The CLI Integration UI may show an Update action only when `action == "upgrade"`; pressing Update still runs `ssh_agent_install_preview` then `ssh_agent_install`. Check failures are shown as real errors and must not be reported as up to date.
+
 ### Agent CLI and bridge
 
 ```text
@@ -125,6 +138,19 @@ cli-manager-ssh-agent hook --source claude|codex --event EVENT \
   --managed-by cli-manager-ssh-agent --installation-id UUID
 cli-manager-ssh-agent hook-config inspect|preview-install|preview-uninstall|install|uninstall
 cli-manager-ssh-agent bridge --stdio --protocol 1
+```
+
+### Grok compatibility config plan (internal)
+
+```rust
+fn install_grok_compat_isolation(
+    document: &mut DocumentMut,
+    installation_id: &str,
+) -> Result<(), String>;
+fn uninstall_grok_compat_isolation(
+    document: &mut DocumentMut,
+    installation_id: &str,
+) -> Result<(), String>;
 ```
 
 Bridge output begins with:
@@ -192,16 +218,26 @@ GitFileDiffPayload {
 - The Agent owns installation transactions: an exclusive lock, `versions/<version>`, atomic `current`/`previous` symlinks, a CLI-Manager-owned `$HOME/.local/bin` launcher, and an atomic XDG state `installation.json` discovery record.
 - Existing custom install roots are reused from the discovery record when no new root is supplied. A corrupt record is archived and repaired by an explicit install. A valid current binary remains the downgrade authority even if the record is missing.
 - Downgrades are rejected unless explicitly allowed. A failed promote restores `current`, `previous`, and the launcher. Rollback swaps only distinct valid versions and restores links if self-check or record persistence fails.
-- Uninstall quarantines managed versions before removing links and the discovery record; a failure restores all original links and versions. Normal uninstall keeps one bounded record, while `--purge` removes Agent state. No Agent lifecycle command modifies Claude/Codex Hook configuration.
+- Uninstall quarantines managed versions before removing links and the discovery record; a failure restores all original links and versions. Normal uninstall keeps one bounded record, while `--purge` removes Agent state. No Agent lifecycle command modifies Claude/Codex/Kimi Hook configuration.
 - Operation JSON is accepted only after strict marker, action, UUID, version, protocol, target, path, source, manifest URL, and SHA-256 validation. Arbitrary remote output is never persisted.
-- Hook config requests use the Host/tool `configuredConfigRoot`; empty means `$HOME/.claude` or `$HOME/.codex`. Inspect and preview never create directories. Confirmed install may create only a missing native default root; a missing custom root is rejected.
+- Hook config requests use the Host/tool `configuredConfigRoot`; empty means the source-native default (`$HOME/.claude`, `$HOME/.codex`, or `$HOME/.kimi-code`). Inspect and preview never create directories. Confirmed install may create only a missing native default root; a missing custom root is rejected.
 - Hook reports return the configured and canonical roots, `configRootHash`, actual canonical config files, fingerprints, change actions, Agent installation/machine identity, and an installation record. The desktop validates every field before persisting `hook_record_json`.
+- Kimi Hook operations use source `kimi`, default root `$HOME/.kimi-code`, and the single `kimiConfig` role at `<root>/config.toml`. SSH launch injects `KIMI_CODE_HOME` only when a non-empty Host/project effective root is configured; an empty root preserves the remote login environment and Kimi's native default. Local terminal launch does not inherit this SSH behavior.
+- Kimi runtime admits exactly `SessionStart`, `UserPromptSubmit` (from native `TurnStarted`), `PermissionRequest`, `PermissionResult`, `Stop`, `Interrupt`, `StopFailure`, `SubagentStart`, and `SubagentStop`. Other Kimi events fail source/event admission.
 - Hook report `requiredEntries` is Agent-owned capability data, not a Desktop per-source constant. The Desktop accepts `1..=64`, requires `managedEntries <= requiredEntries`, and for an installed record requires its `managedEntries == requiredEntries`; this keeps old and new Agent Hook sets compatible without trusting unbounded remote counts.
 - A later inspect refresh preserves the last validated `HookInstallationRecord` for the same canonical root until explicit uninstall. Host-primary and project-override rows that resolve to the same Host/source/canonical root mirror the same Hook report so one physical installation cannot appear installed in one scope and absent in another.
 - Local Hook report persistence uses one backend-owned SQLite connection and one bounded transaction. Frontend SQL pool calls must not split `BEGIN`, mutations, and `COMMIT` across separate invocations. A failed root rotation or mirror update rolls back every affected integration row.
-- Claude JSON and Codex JSON/TOML are parsed structurally. Install normalizes only exact Agent-owned duplicates in place; uninstall removes only the exact path/source/event/owner/installation command. Unknown events and third-party fields, array order, matchers, symlinks, TOML comments, and user-owned `features.hooks = true` remain intact.
+- Claude JSON, Codex JSON/TOML, and Kimi `config.toml [[hooks]]` are parsed structurally. Install normalizes only exact Agent-owned duplicates in place; uninstall removes only the exact parsed path/source/event/owner/installation command. Unknown events and third-party fields, array order, matchers, symlinks, TOML comments, similar commands, and user-owned `features.hooks = true` remain intact. Substring ownership is forbidden.
+- Grok install changes only a missing or `true` `compat.claude.hooks` / `compat.cursor.hooks` value
+  to `false`. Each actual change carries the complete suffix marker
+  `# cli-manager-ssh-agent installation=<id> previous=<true|missing> compatCreated=<bool> vendorCreated=<bool>`;
+  an already-`false` value is user-owned and receives no marker. Uninstall restores only a still-
+  `false` value with the current installation's complete marker, preserving its original comments;
+  it removes a vendor or `compat` table only when the marker proves the Agent created it.
+- Kimi config planning requires current Kimi Code doctor capability and validates the staged candidate with `kimi doctor config <candidate>` before commit. Legacy `kimi-cli`, missing capability, or candidate rejection is an explicit error and leaves live bytes untouched; `~/.kimi` is never inspected or migrated.
+- Hook installation records carry an optional `historySourceCandidate`: Claude/Codex require a matching candidate; Kimi requires it to be absent. Persisting a Kimi Hook report must leave `history_source_instance_id` empty and must never enqueue history work.
 - Config writes hold a per-root lock, verify preview fingerprints and current symlink targets, journal original bytes/mode, atomically replace files, reread, and roll back safely. A stale or externally edited target returns a conflict instead of overwriting it.
-- Hook execution requires all reserved Host/client/project/Tab/bridge-epoch variables. Missing or invalid binding is a successful no-op. Runtime errors are swallowed by the `hook` CLI so Claude/Codex is never blocked.
+- Hook execution requires all reserved Host/client/project/Tab/bridge-epoch variables. Missing or invalid binding is a successful no-op. Runtime errors are swallowed by the `hook` CLI so Claude/Codex/Kimi is never blocked.
 - The full 64-character Hook spool namespace remains the durable isolation key. Unix bridge socket and PID filenames use the same deterministic 96-bit shortened digest so bind and notify agree while the default fallback runtime path stays below the Linux `AF_UNIX` path limit.
 - Hook stdin is limited to 1 MiB and normalized through `hook-schema`. Prompt/message text is removed before spooling. Remote transcript paths remain opaque references and never become desktop-local paths.
 - Spool/socket namespace is `SHA-256(hostId, clientInstanceId, installationId)`. It is bounded by 24 hours, 10000 records, and 32 MiB; overflow emits a sequenced `gap`. A stale PID lock is recoverable, JSONL/meta divergence rebuilds monotonic sequence state, ACK removes only confirmed records, and reconnect dedup covers the full bounded spool.
@@ -223,7 +259,7 @@ GitFileDiffPayload {
 - Frontend single-flight keys include every result-affecting scope, cursor, limit, and refresh field but exclude the UI `consumerId`. The shared RPC uses its own ephemeral bridge consumer and releases it after settlement so one window's close cannot stop another window's request.
 - Desktop remote-history consumers validate installation/machine/user/source/config-root/source-instance identity on initial and continuation pages. Detail chunks additionally validate request identity, sequence, total, aggregate size, and one request deadline.
 - `sourceInstanceId` remains stable across Agent reinstall/upgrade because its identity is machine/user/source/config-root. The current RPC must still match the launch plan's `installationId`, but catalog apply treats `installationId` and Host binding as rotatable metadata and atomically replaces them after the stable source identity matches.
-- Resume preflight reopens the indexed artifact, validates the stable source identity, verifies the original JSONL is still readable, canonicalizes an enterable absolute POSIX cwd, checks the standard Claude/Codex executable, and returns structured resume args plus the canonical config-root environment override.
+- Resume preflight remains Claude/Codex-only: it reopens the indexed artifact, validates the stable source identity, verifies the original JSONL is still readable, canonicalizes an enterable absolute POSIX cwd, checks the standard executable, and returns structured resume args plus the canonical config-root environment override. Kimi is rejected before history metadata or Agent history work is created.
 - Agent uninstall returns `agent_managed_hooks_present` while any Agent Hook installation record remains. Hook uninstall does not delete the configured root, future history source identity, or unrelated Agent state.
 - If a custom config root was deleted externally, install/inspect still report it missing, but preview-uninstall/uninstall may recover exactly one matching canonical identity from the bounded Agent-owned record set and remove that stale record without recreating the directory. Retained-root cleanup also sends the previously validated `expectedCanonicalRoot`; if the configured path is a symlink that now resolves elsewhere, only an exact unique Agent record may route cleanup back to the old canonical root. Ambiguous, missing, invalid, or retargeted canonical records fail closed.
 - Remote Hook third-party notification jobs omit remote cwd, transcript refs, Host/project/session/Tab identifiers, and prompt text. Their optional display project is the daemon-validated sidebar project name captured at launch, never a remote cwd basename or remote event field.
@@ -297,6 +333,8 @@ GitFileDiffPayload {
 | Deleted custom root has multiple or invalid matching records | `hook_config_record_conflict` / `hook_config_record_invalid` |
 | Configured-root symlink now points from canonical root A to B | uninstall based on a stored Hook report carries `expectedCanonicalRoot=A` and uses one exact Agent record; a direct request without an expected identity follows the current B root |
 | Hook JSON/TOML is malformed or a managed event has an invalid shape | stable `hook_config_*_invalid` error; no write |
+| Grok `compat`, a vendor entry, or its `hooks` item has an incompatible TOML type | `hook_config_toml_compat_invalid`, `hook_config_toml_compat_vendor_invalid`, or `hook_config_toml_compat_hooks_invalid`; no write |
+| Grok value is already `false`, its marker is incomplete/mismatched, or the value changed after install | treat it as unowned and leave it unchanged during uninstall |
 | Preview fingerprint or symlink/root target changed | `hook_config_changed` / `hook_config_root_changed` |
 | Another live Hook config transaction owns the root lock | `hook_config_locked` |
 | SSH multi-row write cannot obtain/commit its SQLite transaction | stable `ssh_database_begin_failed` / `ssh_database_commit_failed`; no partial mutation |
@@ -329,6 +367,9 @@ GitFileDiffPayload {
 - Good: Claude and Codex Hooks use different roots; preview shows actual files, confirmation preserves third-party entries, and both tools can be removed independently.
 - Good: an Agent release adds a Hook template and increases `requiredEntries`; the Desktop accepts the bounded self-consistent report without a matching hardcoded count update.
 - Bad: hardcode Claude/Codex Hook counts in the Desktop validator; Agent template additions then make inspect, preview, and apply fail together.
+- Good: Grok disables an existing `compat.claude.hooks = true # user note`, then uninstall restores `true # user note`; a pre-existing `compat.cursor.hooks = false` stays false throughout.
+- Base: a missing Grok `compat` hierarchy is created for install and removed again on uninstall, while unrelated TOML tables remain intact.
+- Bad: an uninstall sees an incomplete or another installation's Grok marker and re-enables the value; the value is not Agent-owned and must remain unchanged.
 - Good: the desktop disconnects, events spool under the bound Host/client namespace, and reconnect replays each event at most once before ACK deletion.
 - Good: four Host bridges are connected, a fifth waits without starting SSH, and closing one Host releases a permit for the waiting Host.
 - Good: an SSH project file panel reuses its Host bridge, lists only canonical-root descendants, skips symlinks, and reads bounded UTF-8 text or supported image data URLs.
@@ -363,7 +404,7 @@ GitFileDiffPayload {
 - Bad: validate an allowed-empty `repoPath` with the same non-empty path-segment check as file paths; the root repository then fails every Git read with `remote_git_path_invalid`.
 - Good: a replaced bridge briefly receives `bridge_already_active`, backs off, then takes ownership after the old Agent process removes its socket.
 - Base: a missing or malformed discovery record is reconstructed only after an explicit install; no page-open or probe action changes remote files.
-- Base: Claude/Codex launched from an ordinary SSH shell has no binding variables; the installed Hook exits successfully without writing spool data.
+- Base: Claude/Codex/Kimi launched from an ordinary SSH shell has no binding variables; the installed Hook exits successfully without writing spool data.
 - Bad: trust an artifact hash from the WebView, skip manifest re-verification after preview, overwrite a non-owned launcher, or run `curl | sh` without review.
 - Bad: identify ownership by substring alone, rewrite unknown Hook events, trust only the WebView fingerprint, reuse a stale spool meta sequence, or send remote cwd to third-party notifications.
 - Bad: reuse the `-tt` terminal launch to run doctor, causing PTY/profile output to contaminate protocol stdout.
@@ -398,9 +439,11 @@ GitFileDiffPayload {
 - Assert ordinary untracked directories expand to concrete files and nested repositories are excluded from the parent repository's change list.
 - Assert manifest tampering, duplicate/unknown targets, HTTP opt-in, query/fragment rejection, target selection, size/SHA-256 mismatch, and bounded downloads.
 - Assert install path quoting, strict operation markers/metadata, semantic version actions, lock conflicts, default/custom roots, corrupt/missing discovery recovery, promote rollback, distinct previous versions, and transactional uninstall.
-- Assert Claude/Codex exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, user-owned Codex feature/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.
+- Assert Claude/Codex/Kimi exact-owner merge, duplicate normalization, unknown-event preservation, invalid JSON/TOML refusal, Kimi similar-command isolation/current-product doctor/candidate validation, user-owned TOML/comment preservation, symlink target change refusal, fingerprint conflict, journal rollback, and Agent uninstall blocking.
+- Assert Grok install/uninstall restores only same-installation marker-backed `true`/missing compat values, preserves pre-existing `false`, comments and unrelated fields, removes only Agent-created tables, ignores incomplete/foreign markers and user edits, and accepts dotted TOML forms.
+- Assert Kimi reports only `kimiConfig`, admits exactly its nine bridge events, omits `historySourceCandidate`, never writes history metadata, and remains rejected by history sync/detail/resume commands while Claude/Codex records still require matching history candidates.
 - Assert Desktop Hook report validation accepts current and legacy positive entry counts, rejects zero and counts above 64, rejects `managedEntries > requiredEntries`, and requires installed-record counts to match the report.
-- Assert missing binding no-op, event allowlists, 1 MiB stdin bound, message redaction, Host/client/installation namespace isolation, stale lock recovery, monotonic meta rebuild, TTL/count/byte gap, streaming read/ACK, malformed-record preservation, monotonic batch/ACK validation, full-window event/gap dedup, and Claude/Codex remote notification cwd redaction plus trusted project-name propagation.
+- Assert missing binding no-op, event allowlists, 1 MiB stdin bound, message redaction, Host/client/installation namespace isolation, stale lock recovery, monotonic meta rebuild, TTL/count/byte gap, streaming read/ACK, malformed-record preservation, monotonic batch/ACK validation, full-window event/gap dedup, and Claude/Codex/Kimi remote notification cwd redaction plus trusted project-name propagation.
 - Run the POSIX installer smoke test for HTTPS dry-run, default HTTP rejection, explicit HTTP, custom install root, downgrade forwarding, and temporary-directory cleanup.
 - Compile the Agent for Linux `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` in addition to host tests.
 - Manually verify the CLI Integration page opens without SSH traffic and only Probe Agent starts a one-shot connection.
@@ -494,6 +537,25 @@ if required == 0 || required > MAX_AGENT_HOOK_ENTRIES || report.managed_entries 
 ```
 
 The Agent owns the Hook template list. The Desktop owns boundary validation and must not duplicate the list length.
+
+### Wrong: blindly reset Grok cross-tool compatibility on uninstall
+
+```rust
+document["compat"][vendor]["hooks"] = value(true);
+```
+
+### Correct: restore only a current-installation-owned marker-backed value
+
+```rust
+let Some((previous, compat_created, vendor_created, original_suffix)) =
+    parse_grok_compat_marker(&marker_suffix(item), installation_id)
+else {
+    return Ok(false); // user-owned, foreign, incomplete, or subsequently changed
+};
+```
+
+The marker records the original `true`/missing state and table ownership. This prevents uninstall
+from enabling a user-disabled integration or deleting user-owned configuration.
 
 ### Wrong: add fields to the published legacy Git Diff payload
 

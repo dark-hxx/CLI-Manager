@@ -4,7 +4,6 @@ import {
   Accordion,
   Alert,
   Badge,
-  Button,
   Group,
   PasswordInput,
   Stack,
@@ -14,6 +13,7 @@ import {
 import { Check, Globe2, Radar, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { providerErrorCode } from "./nativeProviderTypes";
 
 interface GlobalProxyState {

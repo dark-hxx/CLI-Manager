@@ -334,7 +334,7 @@ await getCurrentWindow().destroy();
 
 - `getDb()` must call `db_repair_known_migration_drift` before the first `Database.load(...)`.
 - The repair command must only use `app_paths::db_path()`; do not accept an arbitrary frontend path.
-- Repair is limited to known migration drift versions `13..=15`.
+- Checksum-drift row rewriting is limited to the explicitly recognized feature lineages (`13..=15` plus the existing SSH 20/21 compatibility). A separately documented large-data deferral may only insert the exact released migration row after verifying its prerequisite schema; it must not rewrite an applied checksum.
 - Repair rewrites only `_sqlx_migrations` rows for known complete schema states; it must not delete user data tables or rerun unsafe `ALTER TABLE` statements.
 - Current migration SQL strings shared with repair code must live in one source of truth, not duplicated with separate literals.
 
@@ -389,3 +389,23 @@ Migration {
     kind: MigrationKind::Up,
 }
 ```
+
+## Scenario: Large historical-data backfills during upgrade
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing a migration that updates existing `usage_records`, `request_logs`, history catalog rows, or other unbounded user-history tables.
+
+### 2. Contracts
+
+- Schema changes required for safe reads may run in SQLx startup migrations; an unbounded historical-data rewrite must not keep the main window inside a single startup transaction.
+- A released migration version, description, SQL and checksum remain immutable. Compatibility code that defers its data rewrite must register the exact original checksum and preserve equivalent eventual data semantics.
+- Deferred work starts only after `Database.load(...)` and connection pragmas complete, runs single-flight, commits bounded batches, skips already-complete rows, and is safe to interrupt and retry on the next launch.
+- Reads must retain a bounded compatibility path while deferred rows remain; background failure is logged but must not convert a successfully loaded schema into startup failure.
+- Empty databases and databases that already applied the migration keep the standard migration/no-op path.
+
+### 3. Tests Required
+
+- Verify exact migration checksum registration and idempotent no-op states.
+- Cover more than one batch, interruption-safe predicates, ambiguous mappings, existing-value protection and dependent-row propagation.
+- Run the focused Rust migration tests, `cargo check`, frontend type-check and an installed upgrade smoke test with a large copied database when available.

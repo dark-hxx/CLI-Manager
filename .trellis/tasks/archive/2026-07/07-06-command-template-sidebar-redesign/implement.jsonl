@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index for this UI task."}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "i18n and component conventions for user-facing UI."}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Local UI state and Zustand subscription conventions."}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality and verification requirements."}
-{"file": ".trellis/spec/guides/task-delivery-checklist.md", "reason": "Repo delivery rules for changelog and dirty-file handling."}

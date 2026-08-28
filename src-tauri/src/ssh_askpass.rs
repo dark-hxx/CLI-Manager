@@ -16,12 +16,50 @@ const BROKER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const MAX_BROKER_TOKEN_BYTES: usize = 128;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_TERMINAL_PROMPT_CHARS: usize = 1024;
+#[cfg(not(test))]
+const ASKPASS_DIAGNOSTIC_LOG_FILE: &str = "ssh-askpass.log";
+
+#[cfg(not(test))]
+fn write_diagnostic_event(event: &str, details: &str) {
+    let Ok(log_dir) = crate::app_paths::logs_dir() else {
+        return;
+    };
+    let Ok(mut writer) =
+        crate::log_rotation::create_log_writer(log_dir, ASKPASS_DIAGNOSTIC_LOG_FILE)
+    else {
+        return;
+    };
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or_default();
+    let _ = writeln!(
+        writer,
+        "timestamp_ms={} pid={} event={} {}",
+        timestamp_ms,
+        std::process::id(),
+        event,
+        details
+    );
+}
+
+#[cfg(test)]
+fn write_diagnostic_event(_event: &str, _details: &str) {}
 
 /// Invoked by the main executable when OpenSSH launches it as SSH_ASKPASS.
 pub fn run_helper_and_exit() -> ! {
     let prompt = std::env::args().nth(1).unwrap_or_default();
     let fallback_value = std::env::var(ASKPASS_TTY_FALLBACK_ENV).ok();
     let allow_terminal_fallback = terminal_fallback_enabled(fallback_value.as_deref());
+    write_diagnostic_event(
+        "helper_started",
+        &format!(
+            "prompt_kind={} prompt_bytes={} tty_fallback={}",
+            prompt_kind(&prompt),
+            prompt.len(),
+            allow_terminal_fallback
+        ),
+    );
     let result = answer_prompt_with(
         &prompt,
         allow_terminal_fallback,
@@ -29,6 +67,13 @@ pub fn run_helper_and_exit() -> ! {
         request_broker_password,
         read_control_terminal,
     );
+    match &result {
+        Ok(()) => write_diagnostic_event("helper_finished", "status=ok"),
+        Err(error) => write_diagnostic_event(
+            "helper_finished",
+            &format!("status=error error_kind={:?}", error.kind()),
+        ),
+    }
     std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
@@ -49,13 +94,45 @@ where
     T: FnMut(&str) -> io::Result<Vec<u8>>,
 {
     let prompt = sanitize_terminal_prompt(prompt);
-    let broker_response = is_password_prompt(&prompt)
-        .then(|| request_broker())
-        .flatten();
-    let response = match (broker_response, allow_terminal_fallback) {
-        (Some(response), _) => response,
-        (None, true) => read_terminal(&prompt)?,
+    let password_prompt = is_password_prompt(&prompt);
+    write_diagnostic_event(
+        "prompt_route",
+        &format!(
+            "prompt_kind={} prompt_bytes={} broker_allowed={} tty_fallback={}",
+            prompt_kind(&prompt),
+            prompt.len(),
+            password_prompt,
+            allow_terminal_fallback
+        ),
+    );
+    let broker_response = password_prompt.then(|| request_broker()).flatten();
+    if password_prompt {
+        write_diagnostic_event(
+            "broker_result",
+            &format!(
+                "status={}",
+                if broker_response.is_some() {
+                    "ok"
+                } else {
+                    "unavailable"
+                }
+            ),
+        );
+    }
+    let (response, source) = match (broker_response, allow_terminal_fallback) {
+        (Some(response), _) => (response, "broker"),
+        (None, true) => match read_terminal(&prompt) {
+            Ok(response) => (response, "terminal"),
+            Err(error) => {
+                write_diagnostic_event(
+                    "terminal_read",
+                    &format!("status=error error_kind={:?}", error.kind()),
+                );
+                return Err(error);
+            }
+        },
         _ => {
+            write_diagnostic_event("response_unavailable", "error_kind=NotConnected");
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "SSH input unavailable",
@@ -63,8 +140,54 @@ where
         }
     };
 
-    output.write_all(&response)?;
-    output.flush()
+    if let Err(error) = output.write_all(&response) {
+        write_diagnostic_event(
+            "response_write",
+            &format!("status=error error_kind={:?}", error.kind()),
+        );
+        return Err(error);
+    }
+    if let Err(error) = output.flush() {
+        write_diagnostic_event(
+            "response_write",
+            &format!("status=error error_kind={:?}", error.kind()),
+        );
+        return Err(error);
+    }
+    write_diagnostic_event(
+        "response_write",
+        &format!(
+            "status=ok source={} response_bytes={}",
+            source,
+            response.len()
+        ),
+    );
+    Ok(())
+}
+
+fn prompt_kind(prompt: &str) -> &'static str {
+    if is_password_prompt(prompt) {
+        return "password";
+    }
+    let prompt = prompt.to_ascii_lowercase();
+    if [
+        "one-time",
+        "one time",
+        "otp",
+        "mfa",
+        "verification",
+        "authenticator",
+        "security code",
+        "passcode",
+        "pin",
+    ]
+    .iter()
+    .any(|marker| prompt.contains(marker))
+    {
+        "mfa"
+    } else {
+        "interactive"
+    }
 }
 
 fn is_password_prompt(prompt: &str) -> bool {
@@ -191,17 +314,42 @@ fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
     use std::fs::OpenOptions;
     use std::os::fd::AsRawFd;
 
-    let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+    let tty = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|error| {
+            write_diagnostic_event(
+                "terminal_open",
+                &format!("platform=unix status=error error_kind={:?}", error.kind()),
+            );
+            error
+        })?;
     let fd = tty.as_raw_fd();
     let mut original = unsafe { std::mem::zeroed::<libc::termios>() };
     if unsafe { libc::tcgetattr(fd, &mut original) } != 0 {
+        write_diagnostic_event(
+            "terminal_mode",
+            &format!(
+                "platform=unix operation=get error_os={}",
+                io::Error::last_os_error()
+            ),
+        );
         return Err(io::Error::last_os_error());
     }
     let mut hidden = original;
     hidden.c_lflag &= !(libc::ECHO | libc::ECHONL);
     if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &hidden) } != 0 {
+        write_diagnostic_event(
+            "terminal_mode",
+            &format!(
+                "platform=unix operation=disable_echo error_os={}",
+                io::Error::last_os_error()
+            ),
+        );
         return Err(io::Error::last_os_error());
     }
+    write_diagnostic_event("terminal_open", "platform=unix status=ok source=dev_tty");
 
     let result = with_restore(
         move || unsafe {
@@ -217,25 +365,56 @@ fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
     let mut output = &tty;
     let _ = output.write_all(b"\r\n");
     let _ = output.flush();
+    match &result {
+        Ok(response) => write_diagnostic_event(
+            "terminal_read",
+            &format!("platform=unix status=ok response_bytes={}", response.len()),
+        ),
+        Err(error) => write_diagnostic_event(
+            "terminal_read",
+            &format!("platform=unix status=error error_kind={:?}", error.kind()),
+        ),
+    }
     result
 }
 
 #[cfg(windows)]
 fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
-    use std::fs::OpenOptions;
+    use std::io::BufReader;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::Console::{GetConsoleMode, SetConsoleMode, ENABLE_ECHO_INPUT};
 
-    let input = OpenOptions::new().read(true).open("CONIN$")?;
-    let mut output = OpenOptions::new().write(true).open("CONOUT$")?;
+    // OpenSSH keeps the SSH process' stdin/stderr attached to the owning
+    // ConPTY when it launches SSH_ASKPASS. Reopening CONIN$/CONOUT$ can bind
+    // the helper to a different console input queue instead of this session.
+    let input = std::io::stdin();
+    let mut output = std::io::stderr();
     let handle = input.as_raw_handle();
     let mut original = 0;
     if unsafe { GetConsoleMode(handle, &mut original) } == 0 {
+        write_diagnostic_event(
+            "terminal_mode",
+            &format!(
+                "platform=windows operation=get error_os={}",
+                io::Error::last_os_error()
+            ),
+        );
         return Err(io::Error::last_os_error());
     }
     if unsafe { SetConsoleMode(handle, original & !ENABLE_ECHO_INPUT) } == 0 {
+        write_diagnostic_event(
+            "terminal_mode",
+            &format!(
+                "platform=windows operation=disable_echo error_os={}",
+                io::Error::last_os_error()
+            ),
+        );
         return Err(io::Error::last_os_error());
     }
+    write_diagnostic_event(
+        "terminal_open",
+        "platform=windows status=ok source=stdin_stderr",
+    );
 
     let result = with_restore(
         move || unsafe {
@@ -244,11 +423,27 @@ fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
         || {
             output.write_all(prompt.as_bytes())?;
             output.flush()?;
-            read_bounded_line(&mut BufReader::new(&input), MAX_RESPONSE_BYTES)
+            read_bounded_line(&mut BufReader::new(input.lock()), MAX_RESPONSE_BYTES)
         },
     );
     let _ = output.write_all(b"\r\n");
     let _ = output.flush();
+    match &result {
+        Ok(response) => write_diagnostic_event(
+            "terminal_read",
+            &format!(
+                "platform=windows status=ok response_bytes={}",
+                response.len()
+            ),
+        ),
+        Err(error) => write_diagnostic_event(
+            "terminal_read",
+            &format!(
+                "platform=windows status=error error_kind={:?}",
+                error.kind()
+            ),
+        ),
+    }
     result
 }
 
@@ -266,7 +461,9 @@ pub fn prepare(account: &str) -> Result<HashMap<String, String>, String> {
     let password = crate::credential_store::get(account)?
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "ssh_credential_missing".to_string())?;
-    prepare_with_password(password)
+    let env = prepare_with_password(password)?;
+    write_diagnostic_event("broker_prepared", "status=ok");
+    Ok(env)
 }
 
 fn prepare_with_password(password: String) -> Result<HashMap<String, String>, String> {

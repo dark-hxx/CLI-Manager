@@ -4,12 +4,12 @@ import { toast } from "sonner";
 import { ActionIcon, Badge, Box, Button, Card, Divider, Group, NumberInput, SegmentedControl, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X, Activity, Bell, ShieldAlert, ToggleRight, AlertTriangle, BellOff, XCircle, Layers } from "lucide-react";
 import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "@/stores/settingsStore";
-import { getErrorMessage, getPiHookErrorMessage } from "@/lib/hookErrors";
+import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "@/lib/hookErrors";
 import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
 import { ThirdPartyNotificationSection } from "../ThirdPartyNotificationSection";
 
-type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
-type HookTool = "claude" | "codex" | "pi" | "grok";
+type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
+type HookTool = "claude" | "codex" | "kimi" | "pi" | "grok";
 type HookModule = "sessionStart" | "running" | "attention" | "stop" | "failure" | "subagent" | "hooksFeature";
 
 interface ToolHookSettingsStatus {
@@ -32,6 +32,7 @@ interface ToolHookSettingsStatus {
 interface HookSettingsStatus {
   claude: ToolHookSettingsStatus;
   codex: ToolHookSettingsStatus;
+  kimi: ToolHookSettingsStatus;
   pi: ToolHookSettingsStatus;
   grok: ToolHookSettingsStatus;
   claudeAutoRepaired: boolean;
@@ -42,6 +43,7 @@ const STATUS_LABELS: Record<HookInstallStatus, { zh: string; en: string }> = {
   notInstalled: { zh: "未安装", en: "Not Installed" },
   partialInstalled: { zh: "部分安装", en: "Partially Installed" },
   installed: { zh: "已安装", en: "Installed" },
+  unsupported: { zh: "版本不支持", en: "Unsupported Version" },
 };
 
 const STATUS_COLORS: Record<HookInstallStatus, string> = {
@@ -49,6 +51,7 @@ const STATUS_COLORS: Record<HookInstallStatus, string> = {
   notInstalled: "gray",
   partialInstalled: "yellow",
   installed: "green",
+  unsupported: "red",
 };
 
 function pickText(language: AppLanguage, zh: string, en: string) {
@@ -371,17 +374,20 @@ export function HookSettingsPage() {
   const text = (zh: string, en: string) => pickText(language, zh, en);
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
+  const kimiHookConfigDir = useSettingsStore((s) => s.kimiHookConfigDir);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const piHookConfigDir = useSettingsStore((s) => s.piHookConfigDir);
   const grokHookConfigDir = useSettingsStore((s) => s.grokHookConfigDir);
   const [status, setStatus] = useState<HookSettingsStatus | null>(null);
   const [selectedDir, setSelectedDir] = useState<string | null>(claudeHookConfigDir);
   const [codexSelectedDir, setCodexSelectedDir] = useState<string | null>(codexHookConfigDir);
+  const [kimiSelectedDir, setKimiSelectedDir] = useState<string | null>(kimiHookConfigDir);
   const [piSelectedDir, setPiSelectedDir] = useState<string | null>(piHookConfigDir);
   const [grokSelectedDir, setGrokSelectedDir] = useState<string | null>(grokHookConfigDir);
   const [loading, setLoading] = useState(false);
   const [claudeWorking, setClaudeWorking] = useState(false);
   const [codexWorking, setCodexWorking] = useState(false);
+  const [kimiWorking, setKimiWorking] = useState(false);
   const [piWorking, setPiWorking] = useState(false);
   const [grokWorking, setGrokWorking] = useState(false);
   const hookPopupNotificationsEnabled = useSettingsStore((s) => s.hookPopupNotificationsEnabled);
@@ -390,6 +396,7 @@ export function HookSettingsPage() {
   const hookSubagentSplitViewEnabled = useSettingsStore((s) => s.hookSubagentSplitViewEnabled);
   const claudeHookBridgeEnabled = useSettingsStore((s) => s.claudeHookBridgeEnabled);
   const codexHookBridgeEnabled = useSettingsStore((s) => s.codexHookBridgeEnabled);
+  const kimiHookBridgeEnabled = useSettingsStore((s) => s.kimiHookBridgeEnabled);
   const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
   const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
   const systemNotificationsEnabled = useSettingsStore((s) => s.systemNotificationsEnabled);
@@ -407,6 +414,8 @@ export function HookSettingsPage() {
   const [claudeInfoOpen, setClaudeInfoOpen] = useState(false);
   const [codexPathsOpen, setCodexPathsOpen] = useState(false);
   const [codexInfoOpen, setCodexInfoOpen] = useState(false);
+  const [kimiPathsOpen, setKimiPathsOpen] = useState(false);
+  const [kimiInfoOpen, setKimiInfoOpen] = useState(false);
   const [piPathsOpen, setPiPathsOpen] = useState(false);
   const [piInfoOpen, setPiInfoOpen] = useState(false);
   const [grokPathsOpen, setGrokPathsOpen] = useState(false);
@@ -433,6 +442,10 @@ export function HookSettingsPage() {
   }, [codexHookConfigDir]);
 
   useEffect(() => {
+    setKimiSelectedDir(kimiHookConfigDir);
+  }, [kimiHookConfigDir]);
+
+  useEffect(() => {
     setPiSelectedDir(piHookConfigDir);
   }, [piHookConfigDir]);
 
@@ -442,6 +455,7 @@ export function HookSettingsPage() {
 
   const selectedDirArg = useMemo(() => selectedDir ?? undefined, [selectedDir]);
   const codexSelectedDirArg = useMemo(() => codexSelectedDir ?? undefined, [codexSelectedDir]);
+  const kimiSelectedDirArg = useMemo(() => kimiSelectedDir ?? undefined, [kimiSelectedDir]);
   const piSelectedDirArg = useMemo(() => piSelectedDir ?? undefined, [piSelectedDir]);
   const grokSelectedDirArg = useMemo(() => grokSelectedDir ?? undefined, [grokSelectedDir]);
 
@@ -450,12 +464,14 @@ export function HookSettingsPage() {
     codexDir = codexSelectedDirArg,
     piDir = piSelectedDirArg,
     grokDir = grokSelectedDirArg,
+    kimiDir = kimiSelectedDirArg,
   ) => {
     setLoading(true);
     try {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_get_status", {
         selectedDir: dir,
         codexSelectedDir: codexDir,
+        kimiSelectedDir: kimiDir,
         piSelectedDir: piDir,
         grokSelectedDir: grokDir,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -515,6 +531,20 @@ export function HookSettingsPage() {
     }
   };
 
+  const handleSelectKimiDir = async () => {
+    try {
+      const dir = await invoke<string | null>("hook_settings_select_dir", {
+        title: text("选择 Kimi Code 配置目录", "Choose Kimi Code config directory"),
+      });
+      if (!dir) return;
+      setKimiSelectedDir(dir);
+      await updateSetting("kimiHookConfigDir", dir);
+      await refreshStatus(selectedDirArg, codexSelectedDirArg, piSelectedDirArg, grokSelectedDirArg, dir);
+    } catch (error) {
+      toast.error(text("选择 Kimi Code 目录失败", "Failed to choose Kimi Code directory"), { description: getErrorMessage(error) });
+    }
+  };
+
   // 手动粘贴配置目录（支持 WSL UNC，如 \\wsl.localhost\Ubuntu-22.04\home\<用户名>\.claude）。
   // 原生选目录弹窗进 WSL 路径体验差，故提供文本输入兜底。
   const handleManualClaudeDirCommit = async (raw: string) => {
@@ -531,6 +561,13 @@ export function HookSettingsPage() {
     await refreshStatus(selectedDirArg, dir ?? undefined, piSelectedDirArg);
   };
 
+  const handleManualKimiDirCommit = async (raw: string) => {
+    const dir = raw.trim() || null;
+    setKimiSelectedDir(dir);
+    await updateSetting("kimiHookConfigDir", dir);
+    await refreshStatus(selectedDirArg, codexSelectedDirArg, piSelectedDirArg, grokSelectedDirArg, dir ?? undefined);
+  };
+
   const handleManualPiDirCommit = async (raw: string) => {
     const dir = raw.trim() || null;
     setPiSelectedDir(dir);
@@ -544,6 +581,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -565,6 +603,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -586,6 +625,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install_codex", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -605,6 +645,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall_codex", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -615,6 +656,48 @@ export function HookSettingsPage() {
       toast.error(text("删除 Codex Hook 失败", "Failed to remove Codex Hook"), { description: getErrorMessage(error) });
     } finally {
       setCodexWorking(false);
+    }
+  };
+
+  const handleKimiInstall = async () => {
+    setKimiWorking(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install_kimi", {
+        selectedDir: selectedDirArg,
+        codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      setStatus(nextStatus);
+      toast.success(text("Kimi Code Hook 已安装", "Kimi Code Hook installed"), {
+        description: text("新会话会自动生效；活动中的 Kimi TUI 请执行 /reload。", "New sessions pick it up automatically; run /reload in active Kimi TUI sessions."),
+      });
+    } catch (error) {
+      toast.error(text("安装 Kimi Code Hook 失败", "Failed to install Kimi Code Hook"), { description: getKimiHookErrorMessage(error, t) });
+    } finally {
+      setKimiWorking(false);
+    }
+  };
+
+  const handleKimiUninstall = async () => {
+    setKimiWorking(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall_kimi", {
+        selectedDir: selectedDirArg,
+        codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
+        piSelectedDir: piSelectedDirArg,
+        grokSelectedDir: grokSelectedDirArg,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      setStatus(nextStatus);
+      toast.success(text("Kimi Code Hook 已删除", "Kimi Code Hook removed"));
+    } catch (error) {
+      toast.error(text("删除 Kimi Code Hook 失败", "Failed to remove Kimi Code Hook"), { description: getKimiHookErrorMessage(error, t) });
+    } finally {
+      setKimiWorking(false);
     }
   };
 
@@ -638,6 +721,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install_pi", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
       });
@@ -659,6 +743,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall_pi", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
       });
@@ -699,6 +784,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_install_grok", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
       });
@@ -731,6 +817,7 @@ export function HookSettingsPage() {
       const nextStatus = await invoke<HookSettingsStatus>("hook_settings_uninstall_grok", {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
       });
@@ -759,7 +846,9 @@ export function HookSettingsPage() {
         ? (installed ? "hook_settings_uninstall" : "hook_settings_install")
         : tool === "codex"
           ? (installed ? "hook_settings_uninstall_codex" : "hook_settings_install_codex")
-          : tool === "pi"
+          : tool === "kimi"
+            ? (installed ? "hook_settings_uninstall_kimi" : "hook_settings_install_kimi")
+            : tool === "pi"
             ? (installed ? "hook_settings_uninstall_pi" : "hook_settings_install_pi")
             : (installed ? "hook_settings_uninstall_grok" : "hook_settings_install_grok");
     const setWorking =
@@ -767,17 +856,20 @@ export function HookSettingsPage() {
         ? setClaudeWorking
         : tool === "codex"
           ? setCodexWorking
-          : tool === "pi"
+          : tool === "kimi"
+            ? setKimiWorking
+            : tool === "pi"
             ? setPiWorking
             : setGrokWorking;
     const toolLabel =
-      tool === "claude" ? "Claude" : tool === "codex" ? "Codex" : tool === "pi" ? "Pi" : "Grok";
+      tool === "claude" ? "Claude" : tool === "codex" ? "Codex" : tool === "kimi" ? "Kimi Code" : tool === "pi" ? "Pi" : "Grok";
 
     setWorking(true);
     try {
       const nextStatus = await invoke<HookSettingsStatus>(command, {
         selectedDir: selectedDirArg,
         codexSelectedDir: codexSelectedDirArg,
+        kimiSelectedDir: kimiSelectedDirArg,
         piSelectedDir: piSelectedDirArg,
         grokSelectedDir: grokSelectedDirArg,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
@@ -800,7 +892,7 @@ export function HookSettingsPage() {
           tool: toolLabel,
           module: moduleLabel,
         }),
-        { description: tool === "pi" ? getPiHookErrorMessage(error, t) : getErrorMessage(error) }
+        { description: tool === "pi" ? getPiHookErrorMessage(error, t) : tool === "kimi" ? getKimiHookErrorMessage(error, t) : getErrorMessage(error) }
       );
     } finally {
       setWorking(false);
@@ -819,13 +911,15 @@ export function HookSettingsPage() {
 
   const claude = status?.claude;
   const codex = status?.codex;
+  const kimi = status?.kimi;
   const pi = status?.pi;
   const grok = status?.grok;
   const claudeStatus = claude?.status ?? "directoryMissing";
   const codexStatus = codex?.status ?? "directoryMissing";
+  const kimiStatus = kimi?.status ?? "directoryMissing";
   const piStatus = pi?.status ?? "directoryMissing";
   const grokStatus = grok?.status ?? "directoryMissing";
-  const anyWorking = loading || claudeWorking || codexWorking || piWorking || grokWorking;
+  const anyWorking = loading || claudeWorking || codexWorking || kimiWorking || piWorking || grokWorking;
   const claudeSessionStartInstalled = Boolean(claude?.attentionScriptInstalled && claude.sessionStartHookInstalled);
   const claudeRunningInstalled = Boolean(claude?.attentionScriptInstalled && claude.runningHookInstalled);
   const claudeAttentionInstalled = Boolean(claude?.attentionScriptInstalled && claude.attentionHookInstalled);
@@ -839,6 +933,12 @@ export function HookSettingsPage() {
   // Codex — 拆分为独立事件
   const codexStopInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
   const codexSubagentInstalled = Boolean(codex?.subagentStartHookInstalled);
+  const kimiSessionStartInstalled = Boolean(kimi?.sessionStartHookInstalled);
+  const kimiRunningInstalled = Boolean(kimi?.runningHookInstalled);
+  const kimiAttentionInstalled = Boolean(kimi?.attentionHookInstalled);
+  const kimiStopInstalled = Boolean(kimi?.stopHookInstalled);
+  const kimiFailureInstalled = Boolean(kimi?.failureHookInstalled);
+  const kimiSubagentInstalled = Boolean(kimi?.subagentStartHookInstalled);
   const piSessionStartInstalled = Boolean(pi?.attentionScriptInstalled && pi.sessionStartHookInstalled);
   const piRunningInstalled = Boolean(pi?.attentionScriptInstalled && pi.runningHookInstalled);
   const piStopInstalled = Boolean(pi?.finishedScriptInstalled && pi.stopHookInstalled);
@@ -851,6 +951,7 @@ export function HookSettingsPage() {
   const grokIsolationInstalled = Boolean(grok?.hooksFeatureInstalled);
   const claudeToolLabel = "Claude";
   const codexToolLabel = "Codex";
+  const kimiToolLabel = "Kimi Code";
   const piToolLabel = "Pi";
   const grokToolLabel = "Grok";
   const claudeSessionStartLabel = text("会话启动", "Session Start");
@@ -865,6 +966,12 @@ export function HookSettingsPage() {
   const codexStopLabel = text("完成", "Completed");
   const codexSubagentLabel = text("子 Agent", "Subagent");
   const codexHooksFeatureLabel = text("Hooks 功能", "Hooks Feature");
+  const kimiSessionStartLabel = text("会话启动", "Session Start");
+  const kimiRunningLabel = text("运行中", "Running");
+  const kimiAttentionLabel = text("审批生命周期", "Approval Lifecycle");
+  const kimiStopLabel = text("完成 / 中断", "Completed / Interrupted");
+  const kimiFailureLabel = text("执行失败", "Failed");
+  const kimiSubagentLabel = text("子 Agent", "Subagent");
   const piSessionStartLabel = text("会话启动", "Session Start");
   const piRunningLabel = text("运行中", "Running");
   const piStopLabel = text("任务完成", "Task Completed");
@@ -900,7 +1007,7 @@ export function HookSettingsPage() {
       </Group>
       <CollapsibleHookSection
         title={text("Hook 通知弹框", "Hook Toast Notifications")}
-        description={text("控制 Claude Code、Codex CLI 和 Pi Agent Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。", "Controls top-right toast cards for Claude Code, Codex CLI, and Pi Agent Hook events. Terminal tab dots are not affected.")}
+        description={text("控制 Claude Code、Codex CLI、Kimi Code、Pi Agent 和 Grok Build Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。", "Controls top-right toast cards for Claude Code, Codex CLI, Kimi Code, Pi Agent, and Grok Build Hook events. Terminal tab dots are not affected.")}
         open={hookSettingsSectionsExpanded.toast}
         onToggle={() => toggleHookSection("toast")}
       >
@@ -1477,6 +1584,170 @@ export function HookSettingsPage() {
             <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking || piWorking}>
               {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
             </Button>
+              </Group>
+            </>
+          )}
+        </Stack>
+      </CollapsibleHookSection>
+
+
+      <CollapsibleHookSection
+        title={text("Kimi Code Hook 桥接", "Kimi Code Hook Bridge")}
+        description={text("通过当前 Kimi Code 的 TOML Hook 上报运行、审批、完成、中断、失败和子 Agent 状态。", "Reports running, approval, completion, interruption, failure, and sub-agent states through current Kimi Code TOML hooks.")}
+        open={hookSettingsSectionsExpanded.kimi}
+        onToggle={() => toggleHookSection("kimi")}
+        collapsible={kimiHookBridgeEnabled}
+        action={(
+          <Switch
+            color="cliPrimary"
+            checked={kimiHookBridgeEnabled}
+            onChange={(event) => void updateSetting("kimiHookBridgeEnabled", event.currentTarget.checked)}
+            aria-label={t("settings.hooks.bridge.enabled")}
+          />
+        )}
+        right={<StatusPill status={kimiStatus} />}
+      >
+        <Stack gap="lg">
+          {kimiHookBridgeEnabled && (
+            <>
+              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
+                <HookCard
+                  icon={<Play />}
+                  label={kimiSessionStartLabel}
+                  checked={kimiSessionStartInstalled}
+                  notifyEnabled={notifyState(["SessionStart"])}
+                  onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
+                  notifyDisabled={!hookEventNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("kimi", "sessionStart", kimiSessionStartInstalled, kimiSessionStartLabel)}
+                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
+                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiSessionStartLabel, kimiSessionStartInstalled)}
+                />
+                <HookCard
+                  icon={<Activity />}
+                  label={kimiRunningLabel}
+                  checked={kimiRunningInstalled}
+                  notifyEnabled={notifyState(["UserPromptSubmit"])}
+                  onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
+                  notifyDisabled={!hookEventNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("kimi", "running", kimiRunningInstalled, kimiRunningLabel)}
+                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
+                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiRunningLabel, kimiRunningInstalled)}
+                />
+                <HookCard
+                  icon={<ShieldAlert />}
+                  label={kimiAttentionLabel}
+                  checked={kimiAttentionInstalled}
+                  notifyEnabled={notifyState(["PermissionRequest"])}
+                  onToggleNotify={() => toggleNotifyEvents(["PermissionRequest"], !notifyState(["PermissionRequest"]))}
+                  notifyDisabled={!hookEventNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("kimi", "attention", kimiAttentionInstalled, kimiAttentionLabel)}
+                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
+                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiAttentionLabel, kimiAttentionInstalled)}
+                />
+                <HookCard
+                  icon={<CheckCircle />}
+                  label={kimiStopLabel}
+                  checked={kimiStopInstalled}
+                  notifyEnabled={notifyState(["Stop"])}
+                  onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
+                  notifyDisabled={!hookEventNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("kimi", "stop", kimiStopInstalled, kimiStopLabel)}
+                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
+                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiStopLabel, kimiStopInstalled)}
+                />
+                <HookCard
+                  icon={<XCircle size={26} />}
+                  label={kimiFailureLabel}
+                  checked={kimiFailureInstalled}
+                  notifyEnabled={notifyState(["StopFailure"])}
+                  onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
+                  notifyDisabled={!hookEventNotificationsEnabled}
+                  onClick={() => void handleModuleToggle("kimi", "failure", kimiFailureInstalled, kimiFailureLabel)}
+                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
+                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiFailureLabel, kimiFailureInstalled)}
+                />
+                <HookCard
+                  icon={<Layers size={26} />}
+                  label={kimiSubagentLabel}
+                  checked={kimiSubagentInstalled}
+                  onClick={() => void handleModuleToggle("kimi", "subagent", kimiSubagentInstalled, kimiSubagentLabel)}
+                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
+                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiSubagentLabel, kimiSubagentInstalled)}
+                />
+              </SimpleGrid>
+
+              <Group gap="xs">
+                <Button
+                  variant="subtle"
+                  color="gray"
+                  size="xs"
+                  onClick={() => setKimiPathsOpen(!kimiPathsOpen)}
+                  leftSection={kimiPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                >
+                  {text("查看配置路径", "View Config Paths")}
+                </Button>
+                <Button
+                  variant="subtle"
+                  color="gray"
+                  size="xs"
+                  onClick={() => setKimiInfoOpen(!kimiInfoOpen)}
+                  leftSection={<HelpCircle size={14} />}
+                >
+                  {text("安装说明", "Install Notes")}
+                </Button>
+              </Group>
+
+              {kimiPathsOpen && (
+                <Card className="bg-surface-container-low/50" p="sm" radius="lg">
+                  <Stack gap="xs">
+                    <PathRow label={text("Kimi Code 配置目录", "Kimi Code Config Directory")} value={kimi?.configDir ?? kimiSelectedDir} />
+                    <PathRow label="config.toml" value={kimi?.configPath ?? null} />
+                  </Stack>
+                </Card>
+              )}
+
+              {kimiInfoOpen && (
+                <Card className="bg-surface-container-low/50" p="md" radius="lg">
+                  <Stack gap="sm">
+                    <Text size="xs" c="var(--on-surface-variant)">
+                      {text("仅支持当前 Kimi Code；安装前会通过 kimi doctor 校验临时配置，旧 kimi-cli 不受支持且不会迁移 ~/.kimi。", "Only current Kimi Code is supported. A temporary config is validated with kimi doctor before installation; legacy kimi-cli is unsupported and ~/.kimi is never migrated.")}
+                    </Text>
+                    <Text size="xs" c="var(--on-surface-variant)">
+                      {text("自定义目录只决定 Hook 配置写入位置，不会自动切换本地 Kimi 的 KIMI_CODE_HOME、凭据或会话。", "The custom directory only selects where Hook config is managed; it does not change local KIMI_CODE_HOME, credentials, or sessions.")}
+                    </Text>
+                    <Text size="xs" c="var(--on-surface-variant)">
+                      {text("CLI-Manager 只删除带精确 owner 标记的条目，并保留用户与第三方 Hook。安装后新会话自动生效；活动 TUI 请执行 /reload。", "CLI-Manager removes only entries with its exact owner marker and preserves user and third-party hooks. New sessions pick up changes automatically; run /reload in active TUI sessions.")}
+                    </Text>
+                  </Stack>
+                </Card>
+              )}
+
+              <TextInput
+                size="xs"
+                label={text("Kimi Code 配置目录（仅管理 Hook，可手动粘贴 WSL UNC）", "Kimi Code config directory (Hook management only; WSL UNC paste supported)")}
+                placeholder={text("\\wsl.localhost\\Ubuntu-22.04\\home\\用户名\\.kimi-code", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\.kimi-code")}
+                value={kimiSelectedDir ?? ""}
+                onChange={(event) => setKimiSelectedDir(event.currentTarget.value || null)}
+                onBlur={(event) => void handleManualKimiDirCommit(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void handleManualKimiDirCommit(event.currentTarget.value);
+                }}
+                disabled={anyWorking}
+              />
+
+              <Group gap="xs">
+                <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectKimiDir} disabled={anyWorking}>
+                  {text("选择 Kimi Code 目录", "Choose Kimi Code Directory")}
+                </Button>
+                <Button color="cliPrimary" size="xs" onClick={handleKimiInstall} disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}>
+                  {kimiWorking ? text("处理中...", "Processing...") : text("安装 Kimi Code Hook", "Install Kimi Code Hook")}
+                </Button>
+                <Button variant="light" color="red" size="xs" onClick={handleKimiUninstall} disabled={anyWorking || kimiStatus === "directoryMissing"}>
+                  {text("删除 Kimi Code Hook", "Remove Kimi Code Hook")}
+                </Button>
+                <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={anyWorking}>
+                  {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
+                </Button>
               </Group>
             </>
           )}

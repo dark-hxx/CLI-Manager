@@ -140,6 +140,9 @@ async fn ensure_schema(conn: &mut SqliteConnection) -> Result<(), String> {
         .await
         .map_err(|err| err.to_string())?;
     if current_version >= HISTORY_INDEX_SCHEMA_VERSION {
+        if !compact_fts_schema_ready(conn).await? {
+            rebuild_compact_fts(conn).await?;
+        }
         return Ok(());
     }
     let statements = [
@@ -186,6 +189,7 @@ async fn ensure_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             content,
             content='history_catalog_messages',
             content_rowid='id',
+            detail='none',
             tokenize='trigram case_sensitive 0'
         )",
         "CREATE TRIGGER IF NOT EXISTS history_catalog_messages_ai AFTER INSERT ON history_catalog_messages BEGIN
@@ -217,11 +221,29 @@ async fn ensure_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             .await
             .map_err(|err| err.to_string())?;
     }
-    ensure_v2_schema(conn).await?;
+    ensure_v2_schema(conn, current_version).await?;
     Ok(())
 }
 
-async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
+async fn compact_fts_schema_ready(conn: &mut SqliteConnection) -> Result<bool, String> {
+    for table in ["history_catalog_messages_fts", "history_messages_fts"] {
+        let sql: Option<String> =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1")
+                .bind(table)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(|err| err.to_string())?;
+        if !sql
+            .map(|value| value.to_ascii_lowercase().contains("detail='none'"))
+            .unwrap_or(false)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+async fn ensure_v2_schema(conn: &mut SqliteConnection, current_version: i64) -> Result<(), String> {
     let statements = [
         "CREATE TABLE IF NOT EXISTS history_meta (
             key TEXT PRIMARY KEY,
@@ -381,6 +403,7 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
             display_content,
             content='history_messages',
             content_rowid='id',
+            detail='none',
             tokenize='trigram case_sensitive 0'
         )",
         "CREATE TRIGGER IF NOT EXISTS history_messages_ai AFTER INSERT ON history_messages BEGIN
@@ -574,6 +597,9 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
     ] {
         ensure_column(conn, table, column, definition).await?;
     }
+    if current_version > 0 && current_version < HISTORY_INDEX_SCHEMA_VERSION {
+        rebuild_compact_fts(conn).await?;
+    }
     sqlx::query("DROP INDEX IF EXISTS idx_history_source_instances_one_active")
         .execute(&mut *conn)
         .await
@@ -611,6 +637,92 @@ async fn ensure_v2_schema(conn: &mut SqliteConnection) -> Result<(), String> {
     .execute(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+async fn rebuild_compact_fts(conn: &mut SqliteConnection) -> Result<(), String> {
+    let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
+    for (fts_table, source_table, source_column) in [
+        (
+            "history_catalog_messages_fts",
+            "history_catalog_messages",
+            "content",
+        ),
+        (
+            "history_messages_fts",
+            "history_messages",
+            "display_content",
+        ),
+    ] {
+        for trigger in [
+            format!("{source_table}_ai"),
+            format!("{source_table}_ad"),
+            format!("{source_table}_au"),
+        ] {
+            sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        sqlx::query(&format!("DROP TABLE IF EXISTS {fts_table}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        sqlx::query(&format!(
+            "CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                {source_column},
+                content='{source_table}',
+                content_rowid='id',
+                detail='none',
+                tokenize='trigram case_sensitive 0'
+            )"
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(&format!(
+            "INSERT INTO {fts_table}({fts_table}) VALUES ('rebuild')"
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(&format!(
+            "CREATE TRIGGER {source_table}_ai AFTER INSERT ON {source_table} BEGIN
+                INSERT INTO {fts_table}(rowid, {source_column}) VALUES (new.id, new.{source_column});
+            END"
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(&format!(
+            "CREATE TRIGGER {source_table}_ad AFTER DELETE ON {source_table} BEGIN
+                INSERT INTO {fts_table}({fts_table}, rowid, {source_column})
+                VALUES ('delete', old.id, old.{source_column});
+            END"
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(&format!(
+            "CREATE TRIGGER {source_table}_au AFTER UPDATE ON {source_table} BEGIN
+                INSERT INTO {fts_table}({fts_table}, rowid, {source_column})
+                VALUES ('delete', old.id, old.{source_column});
+                INSERT INTO {fts_table}(rowid, {source_column}) VALUES (new.id, new.{source_column});
+            END"
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+    }
+    tx.commit().await.map_err(|err| err.to_string())?;
+    sqlx::query("PRAGMA optimize")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    sqlx::query("VACUUM")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -1376,6 +1488,15 @@ fn fts_literal(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
 }
 
+fn fts_trigram_query(query: &str) -> String {
+    let chars: Vec<char> = query.chars().collect();
+    chars
+        .windows(3)
+        .map(|trigram| fts_literal(&trigram.iter().collect::<String>()))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
 fn merge_search_results(
     primary: Vec<HistorySearchResult>,
     fallback: Vec<HistorySearchResult>,
@@ -1474,15 +1595,19 @@ async fn search_sessions_from_legacy_catalog(
 
     let mut builder = QueryBuilder::<Sqlite>::new(
         "SELECT s.session_id, s.source, s.project_key, s.title, s.file_path,
-                m.role, snippet(history_catalog_messages_fts, 0, '', '', '…', 24) AS snippet,
+                m.role, substr(m.content, 1, 240) AS snippet,
                 m.timestamp
          FROM history_catalog_messages_fts
          JOIN history_catalog_messages m ON m.id = history_catalog_messages_fts.rowid
          JOIN history_catalog_sessions s
            ON s.roots_key = m.roots_key AND s.file_path = m.file_path
-         WHERE history_catalog_messages_fts MATCH ",
+         WHERE history_catalog_messages_fts MATCH (",
     );
-    builder.push_bind(fts_literal(normalized));
+    builder.push_bind(fts_trigram_query(normalized));
+    builder.push(")");
+    builder.push(" AND instr(lower(m.content), lower(");
+    builder.push_bind(normalized);
+    builder.push(")) > 0");
     builder.push(" AND s.roots_key = ");
     builder.push_bind(&roots_key);
     if let Some(source) = source_filter {
@@ -1560,7 +1685,7 @@ async fn search_sessions_from_v2(
 
     let mut builder = QueryBuilder::<Sqlite>::new(
         "SELECT s.session_id, s.source, s.project_key, s.title, s.file_path,
-                m.role, snippet(history_messages_fts, 0, '', '', '…', 24) AS snippet,
+                m.role, substr(m.display_content, 1, 240) AS snippet,
                 m.timestamp_ms
          FROM history_messages_fts
          JOIN history_messages m ON m.id = history_messages_fts.rowid
@@ -1573,9 +1698,13 @@ async fn search_sessions_from_v2(
             JOIN history_source_instances i ON i.id = hs.source_instance_id
             WHERE i.activation_state = 'active' AND hs.parse_status = 'ok'
          ) s ON s.id = m.session_id
-         WHERE history_messages_fts MATCH ",
+         WHERE history_messages_fts MATCH (",
     );
-    builder.push_bind(fts_literal(normalized));
+    builder.push_bind(fts_trigram_query(normalized));
+    builder.push(")");
+    builder.push(" AND instr(lower(m.display_content), lower(");
+    builder.push_bind(normalized);
+    builder.push(")) > 0");
     if let Some(source) = source_filter {
         builder.push(" AND s.source = ");
         builder.push_bind(source);
@@ -1990,7 +2119,7 @@ async fn get_session_detail_from_v2_with_conn(
     }
 
     let message_rows = sqlx::query(
-        "SELECT message_index, role, display_content, timestamp_ms, model,
+        "SELECT id, message_index, role, display_content, timestamp_ms, model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 editable, raw_pointers_json
          FROM history_messages
@@ -2001,50 +2130,95 @@ async fn get_session_detail_from_v2_with_conn(
     .fetch_all(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
-    let messages = message_rows
-        .into_iter()
-        .map(|message_row| {
-            let timestamp_ms = message_row
-                .try_get::<Option<i64>, _>("timestamp_ms")
-                .map_err(|err| err.to_string())?;
-            Ok(HistoryMessage {
-                role: message_row.try_get("role").map_err(|err| err.to_string())?,
-                content: message_row
-                    .try_get("display_content")
+    let part_rows = sqlx::query(
+        "SELECT p.message_id, p.kind, p.text_content, p.tool_name, p.tool_call_id
+         FROM history_message_parts p
+         INNER JOIN history_messages m ON m.id = p.message_id
+         WHERE m.session_id = ?1
+         ORDER BY m.message_index ASC, p.part_index ASC",
+    )
+    .bind(session_row_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| err.to_string())?;
+    let mut parts_by_message_id: HashMap<i64, Vec<HistoryMessagePart>> = HashMap::new();
+    for part_row in part_rows {
+        let Some(content) = part_row
+            .try_get::<Option<String>, _>("text_content")
+            .map_err(|err| err.to_string())?
+            .filter(|content| !content.trim().is_empty())
+        else {
+            continue;
+        };
+        let message_id: i64 = part_row
+            .try_get("message_id")
+            .map_err(|err| err.to_string())?;
+        parts_by_message_id
+            .entry(message_id)
+            .or_default()
+            .push(HistoryMessagePart {
+                kind: part_row.try_get("kind").map_err(|err| err.to_string())?,
+                content,
+                tool_name: part_row
+                    .try_get("tool_name")
                     .map_err(|err| err.to_string())?,
-                timestamp: timestamp_ms.and_then(timestamp_millis_to_rfc3339),
-                model: message_row
-                    .try_get("model")
+                call_id: part_row
+                    .try_get("tool_call_id")
                     .map_err(|err| err.to_string())?,
-                input_tokens: message_row
-                    .try_get::<Option<i64>, _>("input_tokens")
-                    .map_err(|err| err.to_string())?
-                    .map(|value| value.max(0) as u64),
-                output_tokens: message_row
-                    .try_get::<Option<i64>, _>("output_tokens")
-                    .map_err(|err| err.to_string())?
-                    .map(|value| value.max(0) as u64),
-                cache_read_tokens: message_row
-                    .try_get::<Option<i64>, _>("cache_read_tokens")
-                    .map_err(|err| err.to_string())?
-                    .map(|value| value.max(0) as u64),
-                cache_creation_tokens: message_row
-                    .try_get::<Option<i64>, _>("cache_creation_tokens")
-                    .map_err(|err| err.to_string())?
-                    .map(|value| value.max(0) as u64),
-                line_index: v2_raw_pointer_line_index(
-                    message_row
-                        .try_get("raw_pointers_json")
-                        .map_err(|err| err.to_string())?,
-                ),
-                editable: message_row
-                    .try_get::<i64, _>("editable")
-                    .map_err(|err| err.to_string())?
-                    != 0,
-                editable_text: None,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+            });
+    }
+    let mut messages = Vec::with_capacity(message_rows.len());
+    for message_row in message_rows {
+        let timestamp_ms = message_row
+            .try_get::<Option<i64>, _>("timestamp_ms")
+            .map_err(|err| err.to_string())?;
+        let message_row_id: i64 = message_row.try_get("id").map_err(|err| err.to_string())?;
+        let role: String = message_row.try_get("role").map_err(|err| err.to_string())?;
+        let content: String = message_row
+            .try_get("display_content")
+            .map_err(|err| err.to_string())?;
+        let mut parts = parts_by_message_id
+            .remove(&message_row_id)
+            .unwrap_or_default();
+        if parts.is_empty() {
+            parts.push(fallback_history_message_part(&role, &content));
+        }
+        messages.push(HistoryMessage {
+            parts,
+            role,
+            content,
+            timestamp: timestamp_ms.and_then(timestamp_millis_to_rfc3339),
+            model: message_row
+                .try_get("model")
+                .map_err(|err| err.to_string())?,
+            input_tokens: message_row
+                .try_get::<Option<i64>, _>("input_tokens")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as u64),
+            output_tokens: message_row
+                .try_get::<Option<i64>, _>("output_tokens")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as u64),
+            cache_read_tokens: message_row
+                .try_get::<Option<i64>, _>("cache_read_tokens")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as u64),
+            cache_creation_tokens: message_row
+                .try_get::<Option<i64>, _>("cache_creation_tokens")
+                .map_err(|err| err.to_string())?
+                .map(|value| value.max(0) as u64),
+            line_index: v2_raw_pointer_line_index(
+                message_row
+                    .try_get("raw_pointers_json")
+                    .map_err(|err| err.to_string())?,
+            ),
+            editable: message_row
+                .try_get::<i64, _>("editable")
+                .map_err(|err| err.to_string())?
+                != 0,
+            editable_text: None,
+        });
+    }
 
     let tool_rows = sqlx::query(
         "SELECT te.call_id, te.name, te.category, hm.message_index, te.timestamp_ms,
@@ -2240,6 +2414,9 @@ fn collect_catalog_files(roots: &HistoryRoots) -> Vec<CatalogFile> {
     files.extend(collect_grok_session_files(&resolve_grok_history_root(
         roots,
     )));
+    files.extend(super::kimi::collect_kimi_session_files(
+        &super::kimi::resolve_kimi_history_root(roots),
+    ));
     files.extend(collect_pi_session_files(&resolve_pi_history_root()));
     files.extend(collect_kiro_session_files(&resolve_kiro_history_root()));
     for root in resolve_cline_history_roots() {
@@ -3216,7 +3393,7 @@ async fn replace_v2_session(
     .map_err(|err| err.to_string())?;
     let session_row_id = result.last_insert_rowid();
     for message in adapted.messages {
-        sqlx::query(
+        let result = sqlx::query(
             "INSERT INTO history_messages(
                 session_id, message_index, role, display_content, timestamp_ms,
                 model, input_tokens, output_tokens, cache_read_tokens,
@@ -3238,6 +3415,23 @@ async fn replace_v2_session(
         .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
+        let message_row_id = result.last_insert_rowid();
+        for (part_index, part) in message.parts.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO history_message_parts(
+                    message_id, part_index, kind, text_content, tool_call_id, tool_name
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )
+            .bind(message_row_id)
+            .bind(part_index as i64)
+            .bind(&part.kind)
+            .bind(&part.content)
+            .bind(&part.call_id)
+            .bind(&part.tool_name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        }
     }
     for event in &stats.usage_events {
         sqlx::query(
@@ -4014,6 +4208,15 @@ mod tests {
     }
 
     #[test]
+    fn fts_trigram_query_preserves_overlapping_literal_terms() {
+        assert_eq!(
+            fts_trigram_query("history"),
+            "\"his\" AND \"ist\" AND \"sto\" AND \"tor\" AND \"ory\""
+        );
+        assert_eq!(fts_trigram_query("数据库"), "\"数据库\"");
+    }
+
+    #[test]
     fn project_candidates_include_claude_key_and_basename() {
         let (_cwd, keys, basename) = project_candidates(r"D:\work\pythonProject\CLI-Manager");
         assert!(keys.iter().any(|key| key.contains("cli-manager")));
@@ -4028,12 +4231,60 @@ mod tests {
                 r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex",
             )),
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let wsl_file = r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\sessions\2026\07\14\rollout.jsonl";
         let native_file = r"\\?\C:\Users\Administrator\.codex\sessions\2026\07\02\rollout.jsonl";
 
         assert!(catalog_path_within_roots("codex", wsl_file, &roots));
         assert!(!catalog_path_within_roots("codex", native_file, &roots));
+    }
+
+    #[test]
+    fn collect_catalog_files_includes_kimi_main_wire_and_skips_subagents() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let home = temp_dir.path().join(".kimi-code");
+        let session_id = "01KIMICATALOGFILE000000001";
+        let session_dir = home.join("sessions").join("wd__fixture").join(session_id);
+        let wire = session_dir.join("agents").join("main").join("wire.jsonl");
+        std::fs::create_dir_all(wire.parent().unwrap()).unwrap();
+        std::fs::write(
+            &wire,
+            "{\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"hello\"}]}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            session_dir.join("state.json"),
+            r#"{"id":"01KIMICATALOGFILE000000001","title":"Kimi summary","cwd":"/tmp/cli-manager"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(session_dir.join("agents").join("agent-0")).unwrap();
+        std::fs::write(
+            session_dir
+                .join("agents")
+                .join("agent-0")
+                .join("wire.jsonl"),
+            "{\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"subagent\"}]}\n",
+        )
+        .unwrap();
+
+        let roots = HistoryRoots {
+            claude_config_dir: Some(temp_dir.path().join("missing-claude")),
+            codex_config_dir: Some(temp_dir.path().join("missing-codex")),
+            grok_session_root: Some(temp_dir.path().join("missing-grok")),
+            kimi_config_dir: Some(home),
+        };
+        let kimi_files: Vec<_> = collect_catalog_files(&roots)
+            .into_iter()
+            .filter(|file| file.file_ref.source == "kimi")
+            .collect();
+        assert_eq!(kimi_files.len(), 1);
+        assert_eq!(kimi_files[0].file_ref.path, wire);
+        assert!(catalog_path_within_roots(
+            "kimi",
+            &wire.to_string_lossy(),
+            &roots,
+        ));
     }
 
     #[test]
@@ -4047,6 +4298,7 @@ mod tests {
             claude_config_dir: None,
             codex_config_dir: Some(codex_dir),
             grok_session_root: None,
+            kimi_config_dir: None,
         };
 
         assert!(catalog_path_within_roots(
@@ -4071,21 +4323,175 @@ mod tests {
 
         let chinese: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM history_catalog_messages_fts
-             WHERE history_catalog_messages_fts MATCH '\"历史会话\"'",
+             WHERE history_catalog_messages_fts MATCH ?1",
         )
+        .bind(fts_trigram_query("历史会话"))
         .fetch_one(&mut conn)
         .await
         .unwrap();
         let code: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM history_catalog_messages_fts
-             WHERE history_catalog_messages_fts MATCH '\"Catalog\"'",
+             WHERE history_catalog_messages_fts MATCH ?1",
         )
+        .bind(fts_trigram_query("Catalog"))
         .fetch_one(&mut conn)
         .await
         .unwrap();
 
         assert_eq!(chinese, 1);
         assert_eq!(code, 1);
+    }
+
+    #[tokio::test]
+    async fn schema_v5_upgrade_rebuilds_compact_fts_without_losing_messages() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        sqlx::query(
+            "INSERT INTO history_catalog_messages(
+                roots_key, file_path, message_index, role, timestamp, content
+             ) VALUES ('roots', 'session.jsonl', 0, 'user', NULL,
+                       'history-catalog 数据库压缩测试')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query("DROP TRIGGER history_catalog_messages_ai")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("DROP TRIGGER history_catalog_messages_ad")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("DROP TRIGGER history_catalog_messages_au")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE history_catalog_messages_fts")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE VIRTUAL TABLE history_catalog_messages_fts USING fts5(
+                content,
+                content='history_catalog_messages',
+                content_rowid='id',
+                tokenize='trigram case_sensitive 0'
+            )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO history_catalog_messages_fts(history_catalog_messages_fts) VALUES ('rebuild')")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA user_version = 5")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        ensure_schema(&mut conn).await.unwrap();
+
+        let detail: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master
+             WHERE name = 'history_catalog_messages_fts'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert!(detail.contains("detail='none'"));
+        let content: String =
+            sqlx::query_scalar("SELECT content FROM history_catalog_messages WHERE id = 1")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(content, "history-catalog 数据库压缩测试");
+        let english: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM history_catalog_messages_fts
+             WHERE history_catalog_messages_fts MATCH ?1",
+        )
+        .bind(fts_trigram_query("history"))
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        let chinese: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM history_catalog_messages_fts
+             WHERE history_catalog_messages_fts MATCH ?1",
+        )
+        .bind(fts_trigram_query("数据库"))
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(english, 1);
+        assert_eq!(chinese, 1);
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(version, HISTORY_INDEX_SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
+    async fn current_version_rebuilds_legacy_fts_schema() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        ensure_schema(&mut conn).await.unwrap();
+        for trigger in [
+            "history_catalog_messages_ai",
+            "history_catalog_messages_ad",
+            "history_catalog_messages_au",
+            "history_messages_ai",
+            "history_messages_ad",
+            "history_messages_au",
+        ] {
+            sqlx::query(&format!("DROP TRIGGER {trigger}"))
+                .execute(&mut conn)
+                .await
+                .unwrap();
+        }
+        for (table, column, source_table) in [
+            (
+                "history_catalog_messages_fts",
+                "content",
+                "history_catalog_messages",
+            ),
+            (
+                "history_messages_fts",
+                "display_content",
+                "history_messages",
+            ),
+        ] {
+            sqlx::query(&format!("DROP TABLE {table}"))
+                .execute(&mut conn)
+                .await
+                .unwrap();
+            sqlx::query(&format!(
+                "CREATE VIRTUAL TABLE {table} USING fts5(
+                    {column}, content='{source_table}', content_rowid='id',
+                    tokenize='trigram case_sensitive 0'
+                )"
+            ))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        }
+        sqlx::query("PRAGMA user_version = 6")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        ensure_schema(&mut conn).await.unwrap();
+
+        for table in ["history_catalog_messages_fts", "history_messages_fts"] {
+            let sql: String = sqlx::query_scalar(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            )
+            .bind(table)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+            assert!(sql.contains("detail='none'"));
+        }
     }
 
     #[tokio::test]
@@ -4276,8 +4682,9 @@ mod tests {
 
         let fts_hits: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM history_messages_fts
-             WHERE history_messages_fts MATCH '\"历史索引\"'",
+             WHERE history_messages_fts MATCH ?1",
         )
+        .bind(fts_trigram_query("历史索引"))
         .fetch_one(&mut conn)
         .await
         .unwrap();
@@ -4592,6 +4999,7 @@ mod tests {
             claude_config_dir: Some(claude_root.clone()),
             codex_config_dir: None,
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let roots_key = roots.cache_key();
         let v2_file = claude_root
@@ -4685,6 +5093,7 @@ mod tests {
             claude_config_dir: Some(claude_root.clone()),
             codex_config_dir: None,
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let roots_key = roots.cache_key();
         let v2_file = claude_root
@@ -4783,6 +5192,7 @@ mod tests {
             claude_config_dir: Some(claude_root.clone()),
             codex_config_dir: None,
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let file = claude_root
             .join("projects")
@@ -4962,6 +5372,7 @@ mod tests {
             claude_config_dir: Some(claude_root.clone()),
             codex_config_dir: None,
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let file = claude_root
             .join("projects")
@@ -5027,6 +5438,16 @@ mod tests {
         .await
         .unwrap();
         sqlx::query(
+            "INSERT INTO history_message_parts(
+                message_id, part_index, kind, text_content, tool_call_id, tool_name
+             ) VALUES (?1, 0, 'reasoning', 'inspect detail', NULL, NULL),
+                      (?1, 1, 'text', 'hello detail', NULL, NULL)",
+        )
+        .bind(message_result.last_insert_rowid())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
             "INSERT INTO history_tool_events(
                 session_id, message_id, event_index, call_id, name, category, status,
                 timestamp_ms, duration_ms, input_summary, output_summary
@@ -5059,6 +5480,9 @@ mod tests {
         assert_eq!(detail.session_id, "detail-v2");
         assert_eq!(detail.messages.len(), 1);
         assert_eq!(detail.messages[0].line_index, Some(7));
+        assert_eq!(detail.messages[0].parts.len(), 2);
+        assert_eq!(detail.messages[0].parts[0].kind, "reasoning");
+        assert_eq!(detail.messages[0].parts[1].kind, "text");
         assert_eq!(detail.usage.token_trend.len(), 1);
         assert_eq!(detail.tool_events[0].message_index, Some(0));
         assert_eq!(detail.usage.builtin_calls[0].name, "Edit");
@@ -5075,6 +5499,7 @@ mod tests {
             claude_config_dir: Some(temp_dir.path().join(".claude")),
             codex_config_dir: Some(temp_dir.path().join(".codex")),
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let roots_key = roots.cache_key();
         let file = resolve_claude_history_root(&roots)
@@ -5246,6 +5671,7 @@ mod tests {
             claude_config_dir: Some(temp_dir.path().join(".claude")),
             codex_config_dir: Some(temp_dir.path().join(".codex")),
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let roots_key = roots.cache_key();
         let file = resolve_codex_history_root(&roots)
@@ -5348,6 +5774,7 @@ mod tests {
             claude_config_dir: Some(temp_dir.path().join(".claude")),
             codex_config_dir: Some(temp_dir.path().join(".codex")),
             grok_session_root: None,
+            kimi_config_dir: None,
         };
         let roots_key = roots.cache_key();
         let file = temp_dir.path().join("gemini-session.json");

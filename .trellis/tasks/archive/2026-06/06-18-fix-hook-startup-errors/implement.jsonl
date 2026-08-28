@@ -1,2 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Rust/Tauri backend command changes must follow backend checklist and run cargo check/tests."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Hook installation spans app settings, CLI runtime, and external Claude/Codex configs; verify cross-layer impact."}

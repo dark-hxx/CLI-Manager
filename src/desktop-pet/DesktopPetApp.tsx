@@ -115,6 +115,19 @@ function buildDesktopPetLabels(language: DesktopPetConfigPayload["language"]): D
     handoffTaskRunning: translate(language, "desktopPet.actions.handoffTaskRunning"),
     handoffStateUnknown: translate(language, "desktopPet.actions.handoffStateUnknown"),
     handoffUnavailable: translate(language, "desktopPet.actions.handoffUnavailable"),
+    handoffRegisteredProvider: translate(
+      language,
+      "desktopPet.actions.handoffRegisteredProvider"
+    ),
+    handoffPiConfiguration: translate(language, "desktopPet.actions.handoffPiConfiguration"),
+    handoffOpenCodeConfiguration: translate(
+      language,
+      "desktopPet.actions.handoffOpenCodeConfiguration"
+    ),
+    handoffOpenCodeCapabilityLimited: translate(
+      language,
+      "desktopPet.actions.handoffOpenCodeCapabilityLimited"
+    ),
   };
 }
 
@@ -207,6 +220,28 @@ function handoffTargetStatusLabel(
   if (target.handoffReason === "task_running") return labels.handoffTaskRunning;
   if (target.handoffReason === "task_state_unknown") return labels.handoffStateUnknown;
   return labels.handoffUnavailable;
+}
+
+function handoffAgentLabel(target: DesktopPetTarget): string | null {
+  if (!target.handoffAgent) return null;
+  return {
+    claude: "Claude Code",
+    codex: "Codex",
+    pi: "Pi",
+    opencode: "OpenCode",
+  }[target.handoffAgent];
+}
+
+function handoffProviderLabel(
+  labels: DesktopPetConfigPayload["labels"],
+  target: DesktopPetTarget,
+): string | null {
+  if (target.handoffAgent === "pi") return labels.handoffPiConfiguration;
+  if (target.handoffAgent === "opencode") return labels.handoffOpenCodeConfiguration;
+  if (target.handoffAgent === "claude" || target.handoffAgent === "codex") {
+    return target.handoffProviderName || labels.handoffRegisteredProvider;
+  }
+  return null;
 }
 
 function platformLabel(
@@ -1082,6 +1117,18 @@ export default function DesktopPetApp() {
               const handoffDisabled = targetMode === "handoff"
                 && !target.handoffEligible
                 && !target.handoffRecoverable;
+              const handoffDetails = targetMode === "handoff"
+                ? [
+                    handoffAgentLabel(target),
+                    handoffProviderLabel(labels, target),
+                    target.handoffAgent === "opencode"
+                      ? labels.handoffOpenCodeCapabilityLimited
+                      : null,
+                    status,
+                  ].filter((value): value is string => Boolean(value))
+                : [status];
+              const detailLabels = [secondary, ...handoffDetails]
+                .filter((value): value is string => Boolean(value));
               return (
                 <button
                   key={target.sessionId}
@@ -1105,7 +1152,7 @@ export default function DesktopPetApp() {
                   onClick={() => (
                     targetMode === "handoff" ? requestHandoff(target) : openTarget(target)
                   )}
-                  title={[...identityLabels, status].join(" · ")}
+                  title={[...identityLabels, ...handoffDetails].join(" · ")}
                 >
                   {target.handoffPhase ? (
                     <LockKeyhole className="desktop-pet-target-lock" size={14} aria-hidden="true" />
@@ -1114,10 +1161,7 @@ export default function DesktopPetApp() {
                   )}
                   <span className="desktop-pet-target-copy">
                     <strong>{primary}</strong>
-                    <small>
-                      {secondary ? `${secondary} · ` : ""}
-                      {status}
-                    </small>
+                    <small>{detailLabels.join(" · ")}</small>
                   </span>
                   {target.active ? (
                     <span className="desktop-pet-target-current">{labels.currentTask}</span>

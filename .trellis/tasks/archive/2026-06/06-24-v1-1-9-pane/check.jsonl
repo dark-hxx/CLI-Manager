@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量标准 - tsc --noEmit 和人工验证清单"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件规范 - Settings UI 一致性检查"}
-{"file": "CLAUDE.md", "reason": "项目架构约定 - 改动影响范围验证"}

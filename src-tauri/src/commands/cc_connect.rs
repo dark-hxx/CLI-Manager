@@ -1,10 +1,11 @@
 #[cfg(not(target_os = "windows"))]
 use crate::codex_app_server_proxy::HELPER_SUBCOMMAND as CODEX_PROXY_SUBCOMMAND;
 use crate::codex_app_server_proxy::{
-    SshCodexLaunch, CODEX_BASE_URL_OVERRIDE_ENV, CODEX_ENV_KEY_OVERRIDE_ENV, CODEX_LAUNCHER_ENV,
-    CODEX_MODEL_CATALOG_OVERRIDE_ENV, CODEX_MODEL_OVERRIDE_ENV, CODEX_REMOTE_PROVIDER_NAME,
-    CODEX_SSH_LAUNCH_ENV, CODEX_WIRE_API_OVERRIDE_ENV, EXPECTED_SESSION_ID_ENV,
-    PROXY_EXECUTABLE_ENV,
+    SshCodexLaunch, CODEX_BASE_URL_OVERRIDE_ENV, CODEX_ENV_KEY_OVERRIDE_ENV,
+    CODEX_LAUNCHER_ARGS_ENV, CODEX_LAUNCHER_ENV, CODEX_MODEL_CATALOG_OVERRIDE_ENV,
+    CODEX_MODEL_OVERRIDE_ENV, CODEX_MODEL_PROVIDER_ENV, CODEX_PROFILE_NAME_ENV,
+    CODEX_PROVIDER_NAME_OVERRIDE_ENV, CODEX_SSH_LAUNCH_ENV, CODEX_WIRE_API_OVERRIDE_ENV,
+    EXPECTED_SESSION_ID_ENV, PROXY_EXECUTABLE_ENV,
 };
 #[cfg(target_os = "windows")]
 use crate::process_job::ChildJob;
@@ -101,6 +102,8 @@ const VERIFIED_V1_4_1_BINARY_SHA256: &[&str] = &[
 pub enum CcConnectAgent {
     Claude,
     Codex,
+    Pi,
+    Opencode,
 }
 
 impl CcConnectAgent {
@@ -108,12 +111,15 @@ impl CcConnectAgent {
         match self {
             Self::Claude => "claudecode",
             Self::Codex => "codex",
+            Self::Pi => "pi",
+            Self::Opencode => "opencode",
         }
     }
     fn safe_mode(self) -> &'static str {
         match self {
             Self::Claude => "default",
             Self::Codex => "suggest",
+            Self::Pi | Self::Opencode => "default",
         }
     }
 
@@ -124,6 +130,7 @@ impl CcConnectAgent {
         match self {
             Self::Claude => "bypassPermissions",
             Self::Codex => "yolo",
+            Self::Pi | Self::Opencode => "yolo",
         }
     }
 
@@ -134,6 +141,110 @@ impl CcConnectAgent {
     fn app_server_url(self) -> Option<&'static str> {
         matches!(self, Self::Codex).then_some("stdio://")
     }
+
+    fn rpc(self) -> Option<bool> {
+        matches!(self, Self::Pi).then_some(true)
+    }
+
+    fn session_type(self) -> &'static str {
+        self.config_type()
+    }
+
+    fn hook_source(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Pi => "pi",
+            Self::Opencode => "opencode",
+        }
+    }
+}
+
+const MAX_REGISTERED_LAUNCHER_ARGS: usize = 64;
+const MAX_REGISTERED_LAUNCHER_ARG_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedAgentLauncher {
+    executable: PathBuf,
+    args: Vec<String>,
+}
+
+fn parse_registered_command(value: &str) -> Result<Vec<String>, String> {
+    if value.len() > MAX_REGISTERED_LAUNCHER_ARG_BYTES
+        || value.contains(['\0', '\r', '\n', '&', ';', '|', '<', '>', '(', ')'])
+    {
+        return Err("handoff_agent_launcher_invalid".to_string());
+    }
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut chars = value.trim().chars().peekable();
+    while let Some(character) = chars.next() {
+        if let Some(expected_quote) = quote {
+            if character == expected_quote {
+                quote = None;
+            } else if character == '\\'
+                && chars
+                    .peek()
+                    .is_some_and(|next| *next == expected_quote || *next == '\\')
+            {
+                current.push(chars.next().expect("peeked launcher escape"));
+            } else {
+                current.push(character);
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => quote = Some(character),
+            character if character.is_whitespace() => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(character),
+        }
+    }
+    if quote.is_some() || !current.is_empty() && current.len() > MAX_REGISTERED_LAUNCHER_ARG_BYTES {
+        return Err("handoff_agent_launcher_invalid".to_string());
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    if words.is_empty()
+        || words.len() > MAX_REGISTERED_LAUNCHER_ARGS
+        || words
+            .iter()
+            .any(|word| word.is_empty() || word.len() > MAX_REGISTERED_LAUNCHER_ARG_BYTES)
+    {
+        return Err("handoff_agent_launcher_invalid".to_string());
+    }
+    Ok(words)
+}
+
+fn agent_from_launcher_program(program: &str) -> Option<CcConnectAgent> {
+    let name = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .to_ascii_lowercase();
+    let command = [".exe", ".cmd", ".bat", ".com", ".ps1"]
+        .into_iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .unwrap_or(&name);
+    match command {
+        "claude" => Some(CcConnectAgent::Claude),
+        "codex" => Some(CcConnectAgent::Codex),
+        "pi" => Some(CcConnectAgent::Pi),
+        "opencode" => Some(CcConnectAgent::Opencode),
+        _ => None,
+    }
+}
+
+fn cc_connect_agent_from_cli_tool(value: &str) -> Option<CcConnectAgent> {
+    parse_registered_command(value)
+        .ok()
+        .and_then(|words| words.into_iter().next())
+        .and_then(|program| agent_from_launcher_program(&program))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -879,8 +990,15 @@ fn trusted_binary_version(sha256: &str) -> Option<String> {
 }
 
 fn output_text(stdout: &[u8], stderr: &[u8]) -> String {
-    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    let decode = |bytes: &[u8]| {
+        crate::text_encoding::decode_text(bytes)
+            .map(|decoded| decoded.content)
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
+            .trim()
+            .to_string()
+    };
+    let stdout = decode(stdout);
+    let stderr = decode(stderr);
     if stdout.is_empty() {
         stderr
     } else {
@@ -1003,6 +1121,8 @@ struct ManagedAgentOptions {
     work_dir: String,
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    cmd: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     app_server_url: Option<String>,
@@ -1010,6 +1130,8 @@ struct ManagedAgentOptions {
     model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     codex_home: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rpc: Option<bool>,
     env: BTreeMap<String, String>,
 }
 #[derive(Serialize)]
@@ -1047,6 +1169,8 @@ struct RegisteredProject {
     name: String,
     path: String,
     agent: CcConnectAgent,
+    cli_tool: String,
+    cli_args: String,
     group_path: Vec<RegisteredGroupSegment>,
     provider_id: Option<String>,
     codex_provider_id: Option<String>,
@@ -1079,6 +1203,8 @@ struct RegisteredProjectRow {
     name: String,
     path: String,
     agent: CcConnectAgent,
+    cli_tool: String,
+    cli_args: String,
     group_id: Option<String>,
     sort_order: i64,
     provider_overrides: String,
@@ -1221,6 +1347,26 @@ fn build_managed_config_with_codex(
     project_switch_script_path: &Path,
     codex_launch: Option<&RemoteCodexLaunch>,
 ) -> Result<ManagedConfig, String> {
+    build_managed_config_with_agent_launch(
+        profile,
+        project_list_path,
+        project_switch_script_path,
+        codex_launch,
+        None,
+        None,
+        &BTreeMap::new(),
+    )
+}
+
+fn build_managed_config_with_agent_launch(
+    profile: &CcConnectProfile,
+    project_list_path: &Path,
+    project_switch_script_path: &Path,
+    codex_launch: Option<&RemoteCodexLaunch>,
+    agent_launcher: Option<&ResolvedAgentLauncher>,
+    claude_settings_path: Option<&Path>,
+    additional_agent_environment: &BTreeMap<String, String>,
+) -> Result<ManagedConfig, String> {
     let configured_platforms = enabled_platforms(profile);
     if configured_platforms.is_empty() {
         return Err("at least one messaging platform must be enabled".to_string());
@@ -1251,6 +1397,38 @@ fn build_managed_config_with_codex(
                 .and_then(|provider| provider.model.clone())
         })
         .flatten();
+    let mut agent_environment = [
+        (TELEGRAM_TOKEN_ENV.to_string(), String::new()),
+        (FEISHU_APP_ID_ENV.to_string(), String::new()),
+        (FEISHU_APP_SECRET_ENV.to_string(), String::new()),
+        (WEIXIN_TOKEN_ENV.to_string(), String::new()),
+        (WECOM_BOT_ID_ENV.to_string(), String::new()),
+        (WECOM_BOT_SECRET_ENV.to_string(), String::new()),
+    ]
+    .into_iter()
+    .collect::<BTreeMap<_, _>>();
+    if let Some(provider) = codex_launch.and_then(|launch| launch.provider.as_ref()) {
+        // cc-connect builds the Codex child environment from this map. Keep the
+        // credential in the managed process environment and reference it here,
+        // so the generated config never persists the secret itself.
+        agent_environment.insert(
+            provider.env_key.clone(),
+            format!("${{{}}}", provider.env_key),
+        );
+    }
+    agent_environment.extend(additional_agent_environment.clone());
+    let managed_command = agent_launcher.map(managed_agent_command);
+    let agent_command = match profile.agent {
+        CcConnectAgent::Claude => {
+            let mut command = managed_command.unwrap_or_else(|| vec!["claude".to_string()]);
+            if let Some(settings_path) = claude_settings_path {
+                command.extend(["--settings".to_string(), config_path_value(settings_path)]);
+            }
+            (agent_launcher.is_some() || claude_settings_path.is_some()).then_some(command)
+        }
+        CcConnectAgent::Pi | CcConnectAgent::Opencode => managed_command,
+        CcConnectAgent::Codex => None,
+    };
     Ok(ManagedConfig {
         data_dir: config_path_value(&data_dir()?),
         language: match profile.language {
@@ -1322,23 +1500,13 @@ fn build_managed_config_with_codex(
                         .agent
                         .configured_mode(profile.yolo_enabled)
                         .to_string(),
+                    cmd: agent_command,
                     backend: profile.agent.backend().map(str::to_string),
                     app_server_url: profile.agent.app_server_url().map(str::to_string),
                     model: active_model,
                     codex_home,
-                    // cc-connect resolves platform placeholders in its own process,
-                    // then MergeEnv lets these empty values override inheritance into
-                    // Claude/Codex child processes.
-                    env: [
-                        (TELEGRAM_TOKEN_ENV.to_string(), String::new()),
-                        (FEISHU_APP_ID_ENV.to_string(), String::new()),
-                        (FEISHU_APP_SECRET_ENV.to_string(), String::new()),
-                        (WEIXIN_TOKEN_ENV.to_string(), String::new()),
-                        (WECOM_BOT_ID_ENV.to_string(), String::new()),
-                        (WECOM_BOT_SECRET_ENV.to_string(), String::new()),
-                    ]
-                    .into_iter()
-                    .collect(),
+                    rpc: profile.agent.rpc(),
+                    env: agent_environment,
                 },
             },
             platforms,
@@ -1756,10 +1924,27 @@ fn agent_display_name(agent: CcConnectAgent) -> &'static str {
     match agent {
         CcConnectAgent::Claude => "Claude Code",
         CcConnectAgent::Codex => "Codex",
+        CcConnectAgent::Pi => "Pi",
+        CcConnectAgent::Opencode => "OpenCode",
     }
 }
 
 fn provider_display_value(language: CcConnectLanguage, project: &RegisteredProject) -> String {
+    if matches!(project.agent, CcConnectAgent::Pi | CcConnectAgent::Opencode) {
+        return match (language, project.agent) {
+            (CcConnectLanguage::Zh, CcConnectAgent::Pi) => "Provider：跟随 Pi 配置".to_string(),
+            (CcConnectLanguage::En, CcConnectAgent::Pi) => {
+                "Provider: follow Pi configuration".to_string()
+            }
+            (CcConnectLanguage::Zh, CcConnectAgent::Opencode) => {
+                "Provider：跟随 OpenCode 配置".to_string()
+            }
+            (CcConnectLanguage::En, CcConnectAgent::Opencode) => {
+                "Provider: follow OpenCode configuration".to_string()
+            }
+            _ => unreachable!(),
+        };
+    }
     let provider_name = project.provider_name.as_deref().map(single_line);
     match (language, project.provider_is_global, provider_name) {
         (CcConnectLanguage::Zh, true, Some(name)) => format!("Provider：{name}（全局）"),
@@ -1957,6 +2142,16 @@ fn write_managed_config_with_codex(
     profile: &CcConnectProfile,
     codex_launch: Option<&RemoteCodexLaunch>,
 ) -> Result<PathBuf, String> {
+    write_managed_config_with_agent_launch(profile, codex_launch, None, None, &BTreeMap::new())
+}
+
+fn write_managed_config_with_agent_launch(
+    profile: &CcConnectProfile,
+    codex_launch: Option<&RemoteCodexLaunch>,
+    agent_launcher: Option<&ResolvedAgentLauncher>,
+    claude_settings_path: Option<&Path>,
+    additional_agent_environment: &BTreeMap<String, String>,
+) -> Result<PathBuf, String> {
     let dir = remote_manager_dir()?;
     fs::create_dir_all(&dir).map_err(|err| format!("create remote manager dir failed: {err}"))?;
     fs::create_dir_all(data_dir()?)
@@ -1967,11 +2162,14 @@ fn write_managed_config_with_codex(
     let registered_projects = load_registered_projects(Some(profile))?;
     let cli_manager_executable = std::env::current_exe()
         .map_err(|err| format!("resolve CLI-Manager executable failed: {err}"))?;
-    let payload = toml::to_string_pretty(&build_managed_config_with_codex(
+    let payload = toml::to_string_pretty(&build_managed_config_with_agent_launch(
         profile,
         &list_path,
         &switch_script_path,
         codex_launch,
+        agent_launcher,
+        claude_settings_path,
+        additional_agent_environment,
     )?)
     .map_err(|err| format!("serialize cc-connect config failed: {err}"))?;
     let list_payload = render_project_list(profile, &registered_projects);
@@ -2217,6 +2415,34 @@ fn set_platform_allow_from(
     }
 }
 
+fn prepare_weixin_authorization_platforms(
+    profile: &mut CcConnectProfile,
+) -> Result<String, String> {
+    if profile.platform != CcConnectPlatform::Weixin {
+        return Err("select the Weixin platform before authorization".to_string());
+    }
+    hydrate_profile_platforms(profile);
+
+    let existing_allow_from = platform_profile(profile, CcConnectPlatform::Weixin)
+        .map(|item| item.allow_from)
+        .and_then(|value| normalize_allow_from(CcConnectPlatform::Weixin, &value).ok())
+        .unwrap_or_default();
+
+    for item in &mut profile.platforms {
+        if item.platform == CcConnectPlatform::Weixin {
+            item.enabled = true;
+            item.allow_from = "authorization-pending@im.wechat".to_string();
+        } else if item.enabled && normalize_allow_from(item.platform, &item.allow_from).is_err() {
+            // An unfinished draft for another platform cannot participate in a
+            // runnable profile. Preserve its values, but keep Weixin setup
+            // isolated instead of rejecting the QR authorization.
+            item.enabled = false;
+        }
+    }
+    profile.allow_from = "authorization-pending@im.wechat".to_string();
+    Ok(existing_allow_from)
+}
+
 fn normalize_profile(
     manager: &CcConnectManager,
     mut profile: CcConnectProfile,
@@ -2363,8 +2589,273 @@ fn user_home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+fn default_agent_command(agent: CcConnectAgent) -> &'static str {
+    match agent {
+        CcConnectAgent::Claude => "claude",
+        CcConnectAgent::Codex => "codex",
+        CcConnectAgent::Pi => "pi",
+        CcConnectAgent::Opencode => "opencode",
+    }
+}
+
+fn directory_matches(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn resolve_program_from_path(
+    program: &str,
+    path_value: &std::ffi::OsStr,
+    skip_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
+    for directory in env::split_paths(path_value) {
+        if skip_dir.is_some_and(|wrapper| directory_matches(&directory, wrapper)) {
+            continue;
+        }
+        #[cfg(target_os = "windows")]
+        let candidates = if Path::new(program).extension().is_some() {
+            vec![program.to_string()]
+        } else {
+            vec![
+                format!("{program}.exe"),
+                format!("{program}.cmd"),
+                format!("{program}.bat"),
+                format!("{program}.com"),
+                format!("{program}.ps1"),
+            ]
+        };
+        #[cfg(not(target_os = "windows"))]
+        let candidates = vec![program.to_string()];
+        for candidate in candidates {
+            let candidate = directory.join(candidate);
+            #[cfg(not(target_os = "windows"))]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let Ok(metadata) = candidate.metadata() else {
+                    continue;
+                };
+                if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+            #[cfg(target_os = "windows")]
+            if !candidate.is_file() {
+                continue;
+            }
+            if let Ok(canonical) = candidate.canonicalize() {
+                return Ok(canonical);
+            }
+        }
+    }
+    Err("handoff_agent_unavailable".to_string())
+}
+
+#[cfg(all(test, unix))]
+fn resolve_codex_launcher_from_path(
+    wrapper_dir: &Path,
+    path_value: impl AsRef<std::ffi::OsStr>,
+) -> Result<PathBuf, String> {
+    resolve_program_from_path("codex", path_value.as_ref(), Some(wrapper_dir))
+}
+
+fn resolve_local_agent_program(program: &str, work_dir: &Path) -> Result<PathBuf, String> {
+    let configured = Path::new(program);
+    if configured.is_absolute() || program.contains(['/', '\\']) {
+        let candidate = if configured.is_absolute() {
+            configured.to_path_buf()
+        } else {
+            work_dir.join(configured)
+        };
+        let candidate = candidate
+            .canonicalize()
+            .map_err(|_| "handoff_agent_unavailable".to_string())?;
+        return candidate
+            .is_file()
+            .then_some(candidate)
+            .ok_or_else(|| "handoff_agent_unavailable".to_string());
+    }
+
+    let path_value = env::var_os("PATH").ok_or_else(|| "handoff_agent_unavailable".to_string())?;
+    let skip_wrapper = (program == "codex" || program.eq_ignore_ascii_case("codex.exe"))
+        .then(|| remote_manager_dir().ok().map(|dir| dir.join("bin")))
+        .flatten();
+    resolve_program_from_path(program, &path_value, skip_wrapper.as_deref())
+}
+
+fn has_handoff_session_argument(agent: CcConnectAgent, argument: &str) -> bool {
+    let option = argument
+        .split_once('=')
+        .map(|(name, _)| name)
+        .unwrap_or(argument)
+        .to_ascii_lowercase();
+    let common = matches!(
+        option.as_str(),
+        "--resume" | "--continue" | "--last" | "--session" | "--session-id" | "--fork" | "-r"
+    );
+    common
+        || matches!(agent, CcConnectAgent::Codex) && option == "resume"
+        || matches!(agent, CcConnectAgent::Claude) && option == "-c"
+}
+
+fn validate_registered_launcher_arguments(
+    agent: CcConnectAgent,
+    args: &[String],
+) -> Result<(), String> {
+    if args
+        .iter()
+        .any(|argument| has_handoff_session_argument(agent, argument))
+    {
+        return Err("handoff_agent_launcher_session_arg".to_string());
+    }
+    let has_provider_override = args.iter().any(|argument| {
+        let option = argument
+            .split_once('=')
+            .map(|(name, _)| name)
+            .unwrap_or(argument)
+            .to_ascii_lowercase();
+        matches!(
+            (agent, option.as_str()),
+            (CcConnectAgent::Claude, "--settings") | (CcConnectAgent::Codex, "--profile" | "-p")
+        )
+    });
+    if has_provider_override {
+        return Err("handoff_agent_launcher_provider_arg".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_windows_script_launcher(executable: &Path, args: &[String]) -> Result<(), String> {
+    let is_script = executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd")
+                || extension.eq_ignore_ascii_case("bat")
+                || extension.eq_ignore_ascii_case("ps1")
+        });
+    let executable = executable.to_string_lossy();
+    if is_script
+        && std::iter::once(executable.as_ref())
+            .chain(args.iter().map(String::as_str))
+            .any(|value| value.contains(['&', '|', '<', '>', '^', '%', '!']))
+    {
+        return Err("handoff_agent_launcher_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_local_agent_available(
+    project: &RegisteredProject,
+) -> Result<ResolvedAgentLauncher, String> {
+    let mut command = if project.cli_tool.trim().is_empty() {
+        vec![default_agent_command(project.agent).to_string()]
+    } else {
+        parse_registered_command(&project.cli_tool)?
+    };
+    let program = command.remove(0);
+    if agent_from_launcher_program(&program) != Some(project.agent) {
+        return Err("handoff_agent_launcher_invalid".to_string());
+    }
+    if !project.cli_args.trim().is_empty() {
+        command.extend(parse_registered_command(&project.cli_args)?);
+    }
+    if command.len() > MAX_REGISTERED_LAUNCHER_ARGS {
+        return Err("handoff_agent_launcher_invalid".to_string());
+    }
+    validate_registered_launcher_arguments(project.agent, &command)?;
+    let executable = resolve_local_agent_program(&program, Path::new(&project.path))?;
+    #[cfg(target_os = "windows")]
+    validate_windows_script_launcher(&executable, &command)?;
+    Ok(ResolvedAgentLauncher {
+        executable,
+        args: command,
+    })
+}
+
+fn managed_agent_command(launcher: &ResolvedAgentLauncher) -> Vec<String> {
+    let executable = config_path_value(&launcher.executable);
+    #[cfg(target_os = "windows")]
+    if launcher
+        .executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ps1"))
+    {
+        let mut command = vec![
+            "powershell.exe".to_string(),
+            "-NoProfile".to_string(),
+            "-File".to_string(),
+            executable,
+        ];
+        command.extend(launcher.args.clone());
+        return command;
+    }
+    let mut command = vec![executable];
+    command.extend(launcher.args.clone());
+    command
+}
+
+fn managed_project_environment(
+    project: &RegisteredProject,
+) -> (BTreeMap<String, String>, Vec<(String, String)>) {
+    if !matches!(project.agent, CcConnectAgent::Pi | CcConnectAgent::Opencode) {
+        return (BTreeMap::new(), Vec::new());
+    }
+    let Ok(serde_json::Value::Object(values)) = serde_json::from_str(&project.env_vars) else {
+        return (BTreeMap::new(), Vec::new());
+    };
+    let reserved = [
+        TELEGRAM_TOKEN_ENV,
+        FEISHU_APP_ID_ENV,
+        FEISHU_APP_SECRET_ENV,
+        WEIXIN_TOKEN_ENV,
+        WECOM_BOT_ID_ENV,
+        WECOM_BOT_SECRET_ENV,
+    ];
+    let mut config = BTreeMap::new();
+    let mut process = Vec::new();
+    for (key, value) in values.into_iter().take(128) {
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        let valid_key = key.len() <= 128
+            && key
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            && key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        let upper = key.to_ascii_uppercase();
+        if !valid_key
+            || value.len() > 32 * 1024
+            || value.contains('\0')
+            || upper.starts_with("CLI_MANAGER_")
+            || upper.starts_with("CC_CONNECT_")
+            || reserved.contains(&upper.as_str())
+            || PROXY_ENV_KEYS
+                .iter()
+                .any(|reserved_key| reserved_key.eq_ignore_ascii_case(&key))
+        {
+            continue;
+        }
+        config.insert(key.clone(), format!("${{{key}}}"));
+        process.push((key, value.to_string()));
+    }
+    (config, process)
+}
+
 struct RemoteCodexProviderLaunch {
     name: String,
+    profile_name: String,
+    model_provider: String,
+    provider_name_override: String,
     model: Option<String>,
     models: Vec<String>,
     base_url_override: String,
@@ -2378,6 +2869,7 @@ struct RemoteCodexProviderLaunch {
 struct RemoteCodexLaunch {
     wrapper_dir: PathBuf,
     launcher: Option<PathBuf>,
+    launcher_args: Vec<String>,
     proxy_executable: PathBuf,
     expected_session_id: Option<String>,
     codex_home: Option<PathBuf>,
@@ -2397,63 +2889,10 @@ fn codex_config_dir(profile: &CcConnectProfile) -> Result<PathBuf, String> {
         .ok_or_else(|| "home_dir_unavailable".to_string())
 }
 
-#[cfg(target_os = "windows")]
-fn resolve_codex_launcher(wrapper_dir: &Path) -> Result<PathBuf, String> {
-    let path_value = env::var_os("PATH").ok_or_else(|| "codex PATH is unavailable".to_string())?;
-    for directory in env::split_paths(&path_value) {
-        if directory == wrapper_dir {
-            continue;
-        }
-        for file_name in ["codex.exe", "codex.cmd", "codex.bat", "codex.com"] {
-            let candidate = directory.join(file_name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-    }
-    Err("Codex launcher was not found in PATH".to_string())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn resolve_codex_launcher(wrapper_dir: &Path) -> Result<PathBuf, String> {
-    let path_value = env::var_os("PATH").ok_or_else(|| "codex PATH is unavailable".to_string())?;
-    resolve_codex_launcher_from_path(wrapper_dir, &path_value)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn resolve_codex_launcher_from_path(
-    wrapper_dir: &Path,
-    path_value: &std::ffi::OsStr,
-) -> Result<PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let wrapper = wrapper_dir.join("codex");
-    let canonical_wrapper = wrapper.canonicalize().ok();
-    for directory in env::split_paths(path_value) {
-        let candidate = directory.join("codex");
-        let Ok(metadata) = candidate.metadata() else {
-            continue;
-        };
-        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
-            continue;
-        }
-        let canonical_candidate = candidate.canonicalize().unwrap_or(candidate);
-        if canonical_candidate == wrapper
-            || canonical_wrapper
-                .as_ref()
-                .is_some_and(|managed| managed == &canonical_candidate)
-        {
-            continue;
-        }
-        return Ok(canonical_candidate);
-    }
-    Err("Codex launcher was not found in PATH".to_string())
-}
-
 #[cfg(not(target_os = "windows"))]
 fn codex_profile_wrapper_payload() -> String {
     format!(
-        "#!/bin/sh\nif [ -n \"${{{CODEX_SSH_LAUNCH_ENV}:-}}\" ]; then\n  exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} \"$@\"\nfi\nif [ \"${{1:-}}\" = \"app-server\" ]; then\n  exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} \"$@\"\nfi\nif [ -z \"${{{CODEX_BASE_URL_OVERRIDE_ENV}:-}}\" ]; then\n  exec \"${CODEX_LAUNCHER_ENV}\" \"$@\"\nfi\nif [ -n \"${{{CODEX_MODEL_OVERRIDE_ENV}:-}}\" ]; then\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_CATALOG_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_OVERRIDE_ENV}\" \"$@\"\nelse\n  exec \"${CODEX_LAUNCHER_ENV}\" -c \"model_provider={CODEX_REMOTE_PROVIDER_NAME}\" -c \"model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_CATALOG_OVERRIDE_ENV}\" \"$@\"\nfi\n"
+        "#!/bin/sh\nif [ -n \"${{{CODEX_SSH_LAUNCH_ENV}:-}}\" ]; then\n  exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} \"$@\"\nfi\nif [ \"${{1:-}}\" = \"app-server\" ]; then\n  exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} \"$@\"\nfi\nif [ -n \"${{{CODEX_LAUNCHER_ARGS_ENV}:-}}\" ] && [ \"${CODEX_LAUNCHER_ARGS_ENV}\" != \"[]\" ]; then\n  exec \"${PROXY_EXECUTABLE_ENV}\" {CODEX_PROXY_SUBCOMMAND} \"$@\"\nfi\nif [ -z \"${{{CODEX_BASE_URL_OVERRIDE_ENV}:-}}\" ]; then\n  exec \"${CODEX_LAUNCHER_ENV}\" \"$@\"\nfi\nif [ -n \"${{{CODEX_MODEL_OVERRIDE_ENV}:-}}\" ]; then\n  exec \"${CODEX_LAUNCHER_ENV}\" --profile \"${CODEX_PROFILE_NAME_ENV}\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_CATALOG_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_OVERRIDE_ENV}\" \"$@\"\nelse\n  exec \"${CODEX_LAUNCHER_ENV}\" --profile \"${CODEX_PROFILE_NAME_ENV}\" -c \"${CODEX_BASE_URL_OVERRIDE_ENV}\" -c \"${CODEX_ENV_KEY_OVERRIDE_ENV}\" -c \"${CODEX_WIRE_API_OVERRIDE_ENV}\" -c \"${CODEX_MODEL_CATALOG_OVERRIDE_ENV}\" \"$@\"\nfi\n"
     )
 }
 
@@ -2473,7 +2912,24 @@ fn codex_wrapper_override(key: &str, value: &str) -> Result<String, String> {
     Ok(format!("{key}={value}"))
 }
 
-fn codex_base_url_override(value: &str) -> Result<String, String> {
+fn codex_provider_override_key(model_provider: &str, field: &str) -> Result<String, String> {
+    let model_provider = model_provider.trim();
+    if model_provider.is_empty() || model_provider.chars().any(char::is_control) {
+        return Err("Codex model Provider ID is invalid".to_string());
+    }
+    let segment = if model_provider
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+    {
+        model_provider.to_string()
+    } else {
+        serde_json::to_string(model_provider)
+            .map_err(|err| format!("encode Codex model Provider ID failed: {err}"))?
+    };
+    Ok(format!("model_providers.{segment}.{field}"))
+}
+
+fn codex_base_url_override(model_provider: &str, value: &str) -> Result<String, String> {
     let value = value.trim();
     let url =
         reqwest::Url::parse(value).map_err(|_| "Codex Provider base URL is invalid".to_string())?;
@@ -2481,12 +2937,12 @@ fn codex_base_url_override(value: &str) -> Result<String, String> {
         return Err("Codex Provider base URL must use HTTP or HTTPS".to_string());
     }
     codex_wrapper_override(
-        &format!("model_providers.{CODEX_REMOTE_PROVIDER_NAME}.base_url"),
+        &codex_provider_override_key(model_provider, "base_url")?,
         value,
     )
 }
 
-fn codex_env_key_override(value: &str) -> Result<String, String> {
+fn codex_env_key_override(model_provider: &str, value: &str) -> Result<String, String> {
     let value = value.trim();
     let mut chars = value.chars();
     if !chars
@@ -2497,18 +2953,18 @@ fn codex_env_key_override(value: &str) -> Result<String, String> {
         return Err("Codex Provider environment key is invalid".to_string());
     }
     codex_wrapper_override(
-        &format!("model_providers.{CODEX_REMOTE_PROVIDER_NAME}.env_key"),
+        &codex_provider_override_key(model_provider, "env_key")?,
         value,
     )
 }
 
-fn codex_wire_api_override(value: Option<&str>) -> Result<String, String> {
+fn codex_wire_api_override(model_provider: &str, value: Option<&str>) -> Result<String, String> {
     let value = value
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("responses");
     codex_wrapper_override(
-        &format!("model_providers.{CODEX_REMOTE_PROVIDER_NAME}.wire_api"),
+        &codex_provider_override_key(model_provider, "wire_api")?,
         value,
     )
 }
@@ -2873,12 +3329,17 @@ fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
 fn prepare_remote_codex_launch(
     profile: &CcConnectProfile,
     project: &RegisteredProject,
+    local_launcher: Option<&ResolvedAgentLauncher>,
 ) -> Result<Option<RemoteCodexLaunch>, String> {
     if profile.agent != CcConnectAgent::Codex {
         return Ok(None);
     }
     let ssh_launch = (project.environment_type == "ssh")
         .then(|| load_ssh_codex_launch(project))
+        .transpose()?;
+    let codex_home = ssh_launch
+        .is_none()
+        .then(|| codex_config_dir(profile))
         .transpose()?;
     let provider = match (ssh_launch.is_none(), project.codex_provider_id.as_deref()) {
         (true, Some(provider_id)) => {
@@ -2888,6 +3349,12 @@ fn prepare_remote_codex_launch(
                 .map_err(|err| format!("create provider query runtime failed: {err}"))?;
             let runtime = query_runtime.block_on(
                 crate::provider::runtime::load_codex_runtime_config(provider_id),
+            )?;
+            crate::provider::runtime::write_codex_profile_to_dir(
+                codex_home.as_deref().ok_or_else(|| {
+                    "Codex home is unavailable for the registered Provider".to_string()
+                })?,
+                &runtime.profile,
             )?;
             let proxy = resolve_proxy_url_if_enabled(
                 profile.proxy_enabled,
@@ -2908,6 +3375,8 @@ fn prepare_remote_codex_launch(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
+            let profile_name = runtime.profile.profile_name.clone();
+            let model_provider = runtime.profile.model_provider.clone();
             Some(RemoteCodexProviderLaunch {
                 name: project
                     .provider_name
@@ -2915,26 +3384,27 @@ fn prepare_remote_codex_launch(
                     .map(single_line)
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| provider_id.to_string()),
+                profile_name,
+                model_provider: model_provider.clone(),
+                provider_name_override: codex_wrapper_override(
+                    &codex_provider_override_key(&model_provider, "name")?,
+                    "CLI-Manager remote",
+                )?,
                 models: normalize_managed_codex_models(model.as_deref(), discovered_models),
                 model: model.clone(),
-                base_url_override: codex_base_url_override(&runtime.base_url)?,
-                env_key_override: codex_env_key_override(&runtime.env_key)?,
+                base_url_override: codex_base_url_override(&model_provider, &runtime.base_url)?,
+                env_key_override: codex_env_key_override(&model_provider, &runtime.env_key)?,
                 model_override: codex_model_override(model.as_deref())?,
-                wire_api_override: codex_wire_api_override(runtime.wire_api.as_deref())?,
+                wire_api_override: codex_wire_api_override(
+                    &model_provider,
+                    runtime.wire_api.as_deref(),
+                )?,
                 env_key: runtime.env_key,
                 secret: runtime.secret_value,
             })
         }
         _ => None,
     };
-    #[cfg(not(target_os = "windows"))]
-    if provider.is_none() && ssh_launch.is_none() {
-        return Ok(None);
-    }
-    let codex_home = ssh_launch
-        .is_none()
-        .then(|| codex_config_dir(profile))
-        .transpose()?;
     let discovery_codex_home = match provider.as_ref() {
         Some(provider) => {
             let path = remote_manager_dir()?.join("codex-model-discovery");
@@ -2948,10 +3418,12 @@ fn prepare_remote_codex_launch(
         .parent()
         .ok_or_else(|| "Codex wrapper directory is missing".to_string())?
         .to_path_buf();
-    let launcher = ssh_launch
-        .is_none()
-        .then(|| resolve_codex_launcher(&wrapper_dir))
-        .transpose()?;
+    let (launcher, launcher_args) = if ssh_launch.is_some() {
+        (None, Vec::new())
+    } else {
+        let launcher = local_launcher.ok_or_else(|| "handoff_agent_unavailable".to_string())?;
+        (Some(launcher.executable.clone()), launcher.args.clone())
+    };
     let proxy_executable = env::current_exe()
         .map_err(|err| format!("resolve Codex app-server proxy failed: {err}"))?;
     let expected_session_id =
@@ -2959,6 +3431,7 @@ fn prepare_remote_codex_launch(
     Ok(Some(RemoteCodexLaunch {
         wrapper_dir,
         launcher,
+        launcher_args,
         proxy_executable,
         expected_session_id,
         codex_home,
@@ -2984,9 +3457,19 @@ fn apply_remote_codex_launch_environment(
     match launch.launcher.as_ref() {
         Some(launcher) => {
             command.env(CODEX_LAUNCHER_ENV, launcher);
+            if launch.launcher_args.is_empty() {
+                command.env_remove(CODEX_LAUNCHER_ARGS_ENV);
+            } else {
+                command.env(
+                    CODEX_LAUNCHER_ARGS_ENV,
+                    serde_json::to_string(&launch.launcher_args)
+                        .map_err(|err| format!("encode Codex launcher arguments failed: {err}"))?,
+                );
+            }
         }
         None => {
             command.env_remove(CODEX_LAUNCHER_ENV);
+            command.env_remove(CODEX_LAUNCHER_ARGS_ENV);
         }
     }
     // The generated catalog directory is not a Codex home: redirecting CODEX_HOME
@@ -3023,6 +3506,12 @@ fn apply_remote_codex_launch_environment(
                 .ok_or_else(|| "Codex model discovery directory is missing".to_string())
                 .and_then(codex_model_catalog_override)?;
             command
+                .env(CODEX_PROFILE_NAME_ENV, &provider.profile_name)
+                .env(CODEX_MODEL_PROVIDER_ENV, &provider.model_provider)
+                .env(
+                    CODEX_PROVIDER_NAME_OVERRIDE_ENV,
+                    &provider.provider_name_override,
+                )
                 .env(CODEX_BASE_URL_OVERRIDE_ENV, &provider.base_url_override)
                 .env(CODEX_ENV_KEY_OVERRIDE_ENV, &provider.env_key_override)
                 .env(CODEX_MODEL_CATALOG_OVERRIDE_ENV, model_catalog_override)
@@ -3038,6 +3527,9 @@ fn apply_remote_codex_launch_environment(
         }
         None => {
             command
+                .env_remove(CODEX_PROFILE_NAME_ENV)
+                .env_remove(CODEX_MODEL_PROVIDER_ENV)
+                .env_remove(CODEX_PROVIDER_NAME_OVERRIDE_ENV)
                 .env_remove(CODEX_BASE_URL_OVERRIDE_ENV)
                 .env_remove(CODEX_ENV_KEY_OVERRIDE_ENV)
                 .env_remove(CODEX_MODEL_CATALOG_OVERRIDE_ENV)
@@ -3164,6 +3656,7 @@ fn project_provider(
     let app_type = match agent {
         CcConnectAgent::Claude => "claude",
         CcConnectAgent::Codex => "codex",
+        CcConnectAgent::Pi | CcConnectAgent::Opencode => return (None, None, true),
     };
     let project_override = serde_json::from_str::<serde_json::Value>(provider_overrides)
         .ok()
@@ -3249,6 +3742,8 @@ fn registered_project_from_row(
         name: row.name.clone(),
         path: row.path.clone(),
         agent: row.agent,
+        cli_tool: row.cli_tool.clone(),
+        cli_args: row.cli_args.clone(),
         group_path: group_path.to_vec(),
         provider_id,
         codex_provider_id,
@@ -3457,7 +3952,7 @@ fn load_registered_projects(
             .await
             .map_err(|err| format!("query CLI-Manager groups failed: {err}"))?;
         let project_rows = sqlx::query(
-            "SELECT p.id, p.name, p.path, p.cli_tool, p.group_id, p.sort_order, \
+            "SELECT p.id, p.name, p.path, p.cli_tool, p.cli_args, p.group_id, p.sort_order, \
                     p.provider_overrides, p.environment_type, p.ssh_host_id, p.remote_path, \
                     p.cli_config_root, p.env_vars, \
                     COALESCE(( \
@@ -3497,7 +3992,10 @@ fn load_registered_projects(
                 let cli_tool: String = row
                     .try_get("cli_tool")
                     .map_err(|err| format!("read project CLI tool failed: {err}"))?;
-                Ok(RegisteredProjectRow {
+                let Some(agent) = cc_connect_agent_from_cli_tool(&cli_tool) else {
+                    return Ok(None);
+                };
+                Ok(Some(RegisteredProjectRow {
                     id: row
                         .try_get("id")
                         .map_err(|err| format!("read project ID failed: {err}"))?,
@@ -3507,11 +4005,11 @@ fn load_registered_projects(
                     path: row
                         .try_get("path")
                         .map_err(|err| format!("read project path failed: {err}"))?,
-                    agent: if cli_tool.to_ascii_lowercase().contains("codex") {
-                        CcConnectAgent::Codex
-                    } else {
-                        CcConnectAgent::Claude
-                    },
+                    agent,
+                    cli_tool,
+                    cli_args: row
+                        .try_get("cli_args")
+                        .map_err(|err| format!("read project CLI arguments failed: {err}"))?,
                     group_id: row
                         .try_get("group_id")
                         .map_err(|err| format!("read project group failed: {err}"))?,
@@ -3539,9 +4037,12 @@ fn load_registered_projects(
                     env_vars: row
                         .try_get("env_vars")
                         .map_err(|err| format!("read project environment failed: {err}"))?,
-                })
+                }))
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, String>>()?
+            .into_iter()
+            .flatten()
+            .collect();
         let provider_catalog = load_provider_catalog().await;
         Ok(order_registered_projects(
             groups,
@@ -4318,34 +4819,7 @@ impl CcConnectManager {
         }
 
         let mut profile = request.profile;
-        if profile.platform != CcConnectPlatform::Weixin {
-            return Err("select the Weixin platform before authorization".to_string());
-        }
-        hydrate_profile_platforms(&mut profile);
-        let existing_allow_from = platform_profile(&profile, CcConnectPlatform::Weixin)
-            .map(|item| item.allow_from)
-            .unwrap_or_default();
-        let existing_allow_from = if existing_allow_from.trim().is_empty() {
-            String::new()
-        } else {
-            normalize_allow_from(CcConnectPlatform::Weixin, &existing_allow_from)?
-        };
-        if let Some(item) = profile
-            .platforms
-            .iter_mut()
-            .find(|item| item.platform == CcConnectPlatform::Weixin)
-        {
-            item.enabled = true;
-        }
-        set_platform_allow_from(
-            &mut profile,
-            CcConnectPlatform::Weixin,
-            if existing_allow_from.is_empty() {
-                "authorization-pending@im.wechat".to_string()
-            } else {
-                existing_allow_from.clone()
-            },
-        );
+        let existing_allow_from = prepare_weixin_authorization_platforms(&mut profile)?;
         let mut profile = normalize_profile(self, profile)?;
         set_platform_allow_from(&mut profile, CcConnectPlatform::Weixin, existing_allow_from);
 
@@ -4952,11 +5426,18 @@ impl CcConnectManager {
                 format!("Codex interactive approval backend is unavailable: {err}")
             })?;
         }
-        let codex_launch = prepare_remote_codex_launch(&profile, &project)?;
+        let local_agent_launcher = (project.environment_type != "ssh")
+            .then(|| ensure_local_agent_available(&project))
+            .transpose()?;
+        let codex_launch =
+            prepare_remote_codex_launch(&profile, &project, local_agent_launcher.as_ref())?;
         if let Some(launch) = codex_launch.as_ref() {
             probe_remote_codex_app_server(launch)
                 .map_err(|err| format!("Codex remote app-server backend is unavailable: {err}"))?;
         }
+        let claude_settings_path = handoff::active_claude_settings_path()?;
+        let (project_agent_environment, project_process_environment) =
+            managed_project_environment(&project);
         let binary = self.detect(profile.executable_path.as_deref(), true)?;
         if !binary.compatible {
             return Err(format!(
@@ -4964,7 +5445,13 @@ impl CcConnectManager {
                 binary.version.as_deref().unwrap_or("binary")
             ));
         }
-        let config_path = write_managed_config_with_codex(&profile, codex_launch.as_ref())?;
+        let config_path = write_managed_config_with_agent_launch(
+            &profile,
+            codex_launch.as_ref(),
+            local_agent_launcher.as_ref(),
+            claude_settings_path.as_deref(),
+            &project_agent_environment,
+        )?;
         format_and_check_config_syntax(&binary.path, &config_path)?;
         let (mut environment, mut secrets) = credential_environment_for_profile(&profile)?;
         if let Some(provider) = codex_launch
@@ -4973,6 +5460,16 @@ impl CcConnectManager {
         {
             environment.push((provider.env_key.clone(), provider.secret.clone()));
             secrets.push(provider.secret.clone());
+        }
+        for (key, value) in project_process_environment {
+            if ["TOKEN", "KEY", "SECRET", "PASSWORD"]
+                .iter()
+                .any(|marker| key.to_ascii_uppercase().contains(marker))
+                && !value.is_empty()
+            {
+                secrets.push(value.clone());
+            }
+            environment.push((key, value));
         }
         let proxy = resolve_proxy_url_if_enabled(
             profile.proxy_enabled,
@@ -5608,6 +6105,8 @@ mod tests {
             name: name.to_string(),
             path: path_string(project_path),
             agent: CcConnectAgent::Claude,
+            cli_tool: "claude".to_string(),
+            cli_args: String::new(),
             group_path: Vec::new(),
             provider_id: None,
             codex_provider_id: None,
@@ -5733,6 +6232,8 @@ mod tests {
             name: name.to_string(),
             path: path_string(project_path),
             agent,
+            cli_tool: default_agent_command(agent).to_string(),
+            cli_args: String::new(),
             group_id: group_id.map(str::to_string),
             sort_order,
             provider_overrides: provider_overrides.to_string(),
@@ -5849,6 +6350,14 @@ mod tests {
             "zhangsan,lisi"
         );
         assert!(normalize_allow_from(CcConnectPlatform::Wecom, "*").is_err());
+    }
+
+    #[test]
+    fn process_output_decodes_utf8_and_gbk_diagnostics() {
+        assert_eq!(output_text(b"ready", b"ignored"), "ready");
+        let (encoded, _, had_errors) = encoding_rs::GBK.encode("系统找不到指定的路径。\r\n");
+        assert!(!had_errors);
+        assert_eq!(output_text(&[], &encoded), "系统找不到指定的路径。");
     }
 
     #[test]
@@ -6043,6 +6552,7 @@ mod tests {
             .iter()
             .any(|code| code == "proxy_invalid"));
     }
+    #[cfg(windows)]
     #[test]
     fn git_safe_directory_is_scoped_to_the_registered_project() {
         let environment =
@@ -6231,6 +6741,100 @@ mod tests {
     }
 
     #[test]
+    fn weixin_authorization_ignores_incomplete_unrelated_platform_drafts() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.allow_from = "legacy-invalid-id".to_string();
+        profile.platforms = vec![
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Telegram,
+                enabled: true,
+                allow_from: String::new(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Feishu,
+                enabled: true,
+                allow_from: "ou_owner".to_string(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Weixin,
+                enabled: true,
+                allow_from: "legacy-invalid-id".to_string(),
+            },
+        ];
+
+        let existing = prepare_weixin_authorization_platforms(&mut profile).unwrap();
+
+        assert!(existing.is_empty());
+        let telegram = platform_profile(&profile, CcConnectPlatform::Telegram).unwrap();
+        assert!(!telegram.enabled);
+        assert!(telegram.allow_from.is_empty());
+        let feishu = platform_profile(&profile, CcConnectPlatform::Feishu).unwrap();
+        assert!(feishu.enabled);
+        assert_eq!(feishu.allow_from, "ou_owner");
+        let weixin = platform_profile(&profile, CcConnectPlatform::Weixin).unwrap();
+        assert!(weixin.enabled);
+        assert_eq!(weixin.allow_from, "authorization-pending@im.wechat");
+        assert_eq!(profile.allow_from, "authorization-pending@im.wechat");
+    }
+
+    #[test]
+    fn weixin_authorization_preserves_valid_existing_allowlist() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.platforms = vec![
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Telegram,
+                enabled: true,
+                allow_from: "123456789".to_string(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Weixin,
+                enabled: true,
+                allow_from: "owner@im.wechat".to_string(),
+            },
+        ];
+
+        let existing = prepare_weixin_authorization_platforms(&mut profile).unwrap();
+
+        assert_eq!(existing, "owner@im.wechat");
+        assert!(
+            platform_profile(&profile, CcConnectPlatform::Telegram)
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[test]
+    fn regular_profile_validation_still_rejects_incomplete_enabled_platforms() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.platform = CcConnectPlatform::Weixin;
+        profile.allow_from = "owner@im.wechat".to_string();
+        profile.platforms = vec![
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Telegram,
+                enabled: true,
+                allow_from: String::new(),
+            },
+            CcConnectPlatformProfile {
+                platform: CcConnectPlatform::Weixin,
+                enabled: true,
+                allow_from: "owner@im.wechat".to_string(),
+            },
+        ];
+
+        let error = normalize_profile(&CcConnectManager::new(), profile).unwrap_err();
+
+        assert_eq!(
+            error,
+            "allow_from must contain at least one explicit user ID"
+        );
+    }
+
+    #[test]
     fn managed_config_keeps_multiple_enabled_platforms_online() {
         let project = tempfile::tempdir().unwrap();
         let mut profile = sample_profile(project.path());
@@ -6381,22 +6985,27 @@ allow_from = ""
     fn sample_remote_codex_launch(provider: bool) -> RemoteCodexLaunch {
         let provider = provider.then(|| RemoteCodexProviderLaunch {
             name: "Project Provider".to_string(),
+            profile_name: "cli-manager-project-provider-123".to_string(),
+            model_provider: "custom".to_string(),
+            provider_name_override: "model_providers.custom.name=CLI-Manager remote".to_string(),
             model: Some("gpt-5.4".to_string()),
             models: vec!["gpt-5.4".to_string(), "gpt-5.3-codex".to_string()],
-            base_url_override:
-                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
-                    .to_string(),
-            env_key_override:
-                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
-                    .to_string(),
+            base_url_override: "model_providers.custom.base_url=https://provider.example.com/v1"
+                .to_string(),
+            env_key_override: "model_providers.custom.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
+                .to_string(),
             model_override: Some("model=gpt-5.4".to_string()),
-            wire_api_override: "model_providers.cli_manager_remote.wire_api=responses".to_string(),
+            wire_api_override: "model_providers.custom.wire_api=responses".to_string(),
             env_key: "CLI_MANAGER_CODEX_PROVIDER_API_KEY".to_string(),
             secret: "sk-provider-secret".to_string(),
         });
         RemoteCodexLaunch {
             wrapper_dir: PathBuf::from(r"C:\Users\test\.cli-manager\remote-manager\bin"),
             launcher: Some(PathBuf::from(r"D:\npm\codex.cmd")),
+            launcher_args: vec![
+                "--config".to_string(),
+                "model_reasoning_effort=high".to_string(),
+            ],
             proxy_executable: PathBuf::from(r"C:\Program Files\CLI-Manager\cli-manager.exe"),
             expected_session_id: Some("thread-original".to_string()),
             codex_home: Some(PathBuf::from(r"C:\Users\test\.codex")),
@@ -6409,7 +7018,7 @@ allow_from = ""
     }
 
     #[test]
-    fn managed_codex_config_keeps_provider_runtime_out_of_cc_connect_config() {
+    fn managed_codex_config_forwards_provider_key_without_persisting_secret() {
         let project = tempfile::tempdir().unwrap();
         let mut profile = sample_profile(project.path());
         profile.agent = CcConnectAgent::Codex;
@@ -6436,10 +7045,13 @@ allow_from = ""
             .unwrap()
             .contains_key("provider"));
         assert!(!agent.as_table().unwrap().contains_key("providers"));
+        assert_eq!(
+            agent["options"]["env"]["CLI_MANAGER_CODEX_PROVIDER_API_KEY"].as_str(),
+            Some("${CLI_MANAGER_CODEX_PROVIDER_API_KEY}")
+        );
         for secret in [
             "sk-provider-secret",
             "https://provider.example.com/v1",
-            "CLI_MANAGER_CODEX_PROVIDER_API_KEY",
             "Project Provider",
         ] {
             assert!(!raw.contains(secret));
@@ -6546,6 +7158,7 @@ allow_from = ""
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn codex_launch_environment_forces_provider_without_embedding_secrets() {
         let mut command = Command::new("cc-connect");
@@ -6563,8 +7176,21 @@ allow_from = ""
         assert_eq!(
             environment.get(CODEX_BASE_URL_OVERRIDE_ENV),
             Some(&Some(
-                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
-                    .to_string()
+                "model_providers.custom.base_url=https://provider.example.com/v1".to_string()
+            ))
+        );
+        assert_eq!(
+            environment.get(CODEX_PROFILE_NAME_ENV),
+            Some(&Some("cli-manager-project-provider-123".to_string()))
+        );
+        assert_eq!(
+            environment.get(CODEX_MODEL_PROVIDER_ENV),
+            Some(&Some("custom".to_string()))
+        );
+        assert_eq!(
+            environment.get(CODEX_PROVIDER_NAME_OVERRIDE_ENV),
+            Some(&Some(
+                "model_providers.custom.name=CLI-Manager remote".to_string()
             ))
         );
         assert_eq!(
@@ -6590,12 +7216,17 @@ allow_from = ""
             environment.get(EXPECTED_SESSION_ID_ENV),
             Some(&Some("thread-original".to_string()))
         );
+        assert_eq!(
+            environment.get(CODEX_LAUNCHER_ARGS_ENV),
+            Some(&Some(serde_json::to_string(&launch.launcher_args).unwrap()))
+        );
         assert!(!environment
             .values()
             .flatten()
             .any(|value| value == "sk-provider-secret"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn codex_launch_environment_clears_provider_overrides_when_unregistered() {
         let mut command = Command::new("cc-connect");
@@ -6611,6 +7242,9 @@ allow_from = ""
             })
             .collect::<BTreeMap<_, _>>();
         for key in [
+            CODEX_PROFILE_NAME_ENV,
+            CODEX_MODEL_PROVIDER_ENV,
+            CODEX_PROVIDER_NAME_OVERRIDE_ENV,
             CODEX_BASE_URL_OVERRIDE_ENV,
             CODEX_ENV_KEY_OVERRIDE_ENV,
             CODEX_MODEL_CATALOG_OVERRIDE_ENV,
@@ -6623,6 +7257,25 @@ allow_from = ""
             environment.get(CODEX_LAUNCHER_ENV),
             Some(&Some(r"D:\npm\codex.cmd".to_string()))
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn codex_launch_environment_omits_empty_registered_launcher_args() {
+        let mut command = Command::new("cc-connect");
+        let mut launch = sample_remote_codex_launch(false);
+        launch.launcher_args.clear();
+        apply_remote_codex_launch_environment(&mut command, &launch).unwrap();
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(environment.get(CODEX_LAUNCHER_ARGS_ENV), Some(&None));
     }
 
     #[cfg(target_os = "windows")]
@@ -6643,16 +7296,19 @@ allow_from = ""
     #[test]
     fn codex_app_server_overrides_reject_command_injection_characters() {
         assert_eq!(
-            codex_base_url_override("https://provider.example.com/v1").unwrap(),
-            "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
+            codex_base_url_override("custom", "https://provider.example.com/v1").unwrap(),
+            "model_providers.custom.base_url=https://provider.example.com/v1"
         );
-        assert!(codex_base_url_override("https://provider.example.com/v1?x=1&whoami").is_err());
-        assert!(codex_base_url_override("file:///tmp/provider").is_err());
-        assert!(codex_env_key_override("OPENAI_API_KEY").is_ok());
-        assert!(codex_env_key_override("OPENAI_API_KEY & whoami").is_err());
+        assert!(
+            codex_base_url_override("custom", "https://provider.example.com/v1?x=1&whoami")
+                .is_err()
+        );
+        assert!(codex_base_url_override("custom", "file:///tmp/provider").is_err());
+        assert!(codex_env_key_override("custom", "OPENAI_API_KEY").is_ok());
+        assert!(codex_env_key_override("custom", "OPENAI_API_KEY & whoami").is_err());
         assert_eq!(
-            codex_wire_api_override(None).unwrap(),
-            "model_providers.cli_manager_remote.wire_api=responses"
+            codex_wire_api_override("custom", None).unwrap(),
+            "model_providers.custom.wire_api=responses"
         );
         assert_eq!(codex_model_override(None).unwrap(), None);
         assert!(codex_model_override(Some("gpt-5.4\" & whoami")).is_err());
@@ -6721,6 +7377,245 @@ allow_from = ""
         assert_eq!(claude_options["mode"].as_str(), Some("bypassPermissions"));
         assert!(!claude_options.contains_key("backend"));
         assert!(!claude_options.contains_key("app_server_url"));
+    }
+
+    #[test]
+    fn managed_agent_config_maps_all_supported_handoff_agents() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        for (agent, kind, safe_mode, rpc) in [
+            (CcConnectAgent::Claude, "claudecode", "default", None),
+            (CcConnectAgent::Codex, "codex", "suggest", None),
+            (CcConnectAgent::Pi, "pi", "default", Some(true)),
+            (CcConnectAgent::Opencode, "opencode", "default", None),
+        ] {
+            profile.agent = agent;
+            let raw = toml::to_string(
+                &build_managed_config(
+                    &profile,
+                    Path::new(r"C:\Users\test\cli-manager-projects.txt"),
+                    Path::new(r"C:\Users\test\cli-manager-switch.ps1"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let config = toml::from_str::<toml::Value>(&raw).unwrap();
+            let managed_agent = &config["projects"][0]["agent"];
+            assert_eq!(managed_agent["type"].as_str(), Some(kind));
+            assert_eq!(managed_agent["options"]["mode"].as_str(), Some(safe_mode));
+            assert_eq!(
+                managed_agent["options"]
+                    .as_table()
+                    .unwrap()
+                    .get("rpc")
+                    .and_then(toml::Value::as_bool),
+                rpc
+            );
+        }
+    }
+
+    #[test]
+    fn registered_cli_tool_parser_accepts_supported_launchers_and_rejects_other_agents() {
+        for (value, expected) in [
+            ("claude", Some(CcConnectAgent::Claude)),
+            (
+                r#""D:\npm\codex.cmd" --profile managed"#,
+                Some(CcConnectAgent::Codex),
+            ),
+            (r#"C:\tools\pi.bat --model test"#, Some(CcConnectAgent::Pi)),
+            ("opencode.exe --continue", Some(CcConnectAgent::Opencode)),
+            ("grok", None),
+            ("npm run dev", None),
+        ] {
+            assert_eq!(cc_connect_agent_from_cli_tool(value), expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn registered_launcher_parser_preserves_argv_and_rejects_shell_fragments() {
+        assert_eq!(
+            parse_registered_command(r#""D:\Tools\claude.cmd" --model "test model""#).unwrap(),
+            vec![
+                r#"D:\Tools\claude.cmd"#.to_string(),
+                "--model".to_string(),
+                "test model".to_string()
+            ]
+        );
+        assert!(parse_registered_command("codex && whoami").is_err());
+        assert_eq!(
+            validate_registered_launcher_arguments(
+                CcConnectAgent::Codex,
+                &["resume".to_string(), "other-session".to_string()]
+            ),
+            Err("handoff_agent_launcher_session_arg".to_string())
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn unix_codex_wrapper_routes_registered_launcher_args_through_proxy() {
+        let payload = codex_profile_wrapper_payload();
+        assert!(payload.contains(&format!("${{{CODEX_LAUNCHER_ARGS_ENV}:-}}")));
+        assert_eq!(payload.matches(CODEX_PROXY_SUBCOMMAND).count(), 3);
+    }
+
+    #[test]
+    fn managed_config_reuses_registered_launcher_for_non_codex_agents() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        let launcher = ResolvedAgentLauncher {
+            executable: PathBuf::from(r"C:\Tools\claude.cmd"),
+            args: vec!["--verbose".to_string()],
+        };
+        let settings_path = Path::new(r"C:\Users\test\.cli-manager\providers\settings.json");
+
+        profile.agent = CcConnectAgent::Claude;
+        let config = build_managed_config_with_agent_launch(
+            &profile,
+            Path::new(r"C:\Users\test\cli-manager-projects.txt"),
+            Path::new(r"C:\Users\test\cli-manager-switch.ps1"),
+            None,
+            Some(&launcher),
+            Some(settings_path),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let raw = toml::to_string_pretty(&config).unwrap();
+        let config = toml::from_str::<toml::Value>(&raw).unwrap();
+        assert_eq!(
+            config["projects"][0]["agent"]["options"]["cmd"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "C:/Tools/claude.cmd",
+                "--verbose",
+                "--settings",
+                "C:/Users/test/.cli-manager/providers/settings.json"
+            ]
+        );
+
+        for agent in [CcConnectAgent::Pi, CcConnectAgent::Opencode] {
+            profile.agent = agent;
+            let config = build_managed_config_with_agent_launch(
+                &profile,
+                Path::new(r"C:\Users\test\cli-manager-projects.txt"),
+                Path::new(r"C:\Users\test\cli-manager-switch.ps1"),
+                None,
+                Some(&launcher),
+                None,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+            let raw = toml::to_string_pretty(&config).unwrap();
+            let config = toml::from_str::<toml::Value>(&raw).unwrap();
+            assert_eq!(
+                config["projects"][0]["agent"]["options"]["cmd"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .collect::<Vec<_>>(),
+                vec!["C:/Tools/claude.cmd", "--verbose"]
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn powershell_launcher_uses_a_structured_host_command() {
+        let command = managed_agent_command(&ResolvedAgentLauncher {
+            executable: PathBuf::from(r"C:\Tools\pi.ps1"),
+            args: vec!["--model".to_string(), "test".to_string()],
+        });
+        assert_eq!(
+            command,
+            vec![
+                "powershell.exe",
+                "-NoProfile",
+                "-File",
+                "C:/Tools/pi.ps1",
+                "--model",
+                "test"
+            ]
+        );
+    }
+
+    #[test]
+    fn managed_claude_snapshot_uses_structured_cmd_without_persisting_project_secrets() {
+        let project = tempfile::tempdir().unwrap();
+        let mut profile = sample_profile(project.path());
+        profile.agent = CcConnectAgent::Claude;
+        let settings_path = Path::new(r"C:\Users\test\.cli-manager\providers\settings.json");
+        let mut environment = BTreeMap::new();
+        environment.insert(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            "${ANTHROPIC_AUTH_TOKEN}".to_string(),
+        );
+        let raw = toml::to_string_pretty(
+            &build_managed_config_with_agent_launch(
+                &profile,
+                Path::new(r"C:\Users\test\cli-manager-projects.txt"),
+                Path::new(r"C:\Users\test\cli-manager-switch.ps1"),
+                None,
+                None,
+                Some(settings_path),
+                &environment,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let config = toml::from_str::<toml::Value>(&raw).unwrap();
+        assert_eq!(
+            config["projects"][0]["agent"]["options"]["cmd"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "claude",
+                "--settings",
+                "C:/Users/test/.cli-manager/providers/settings.json"
+            ]
+        );
+        assert_eq!(
+            config["projects"][0]["agent"]["options"]["env"]["ANTHROPIC_AUTH_TOKEN"].as_str(),
+            Some("${ANTHROPIC_AUTH_TOKEN}")
+        );
+        assert!(!raw.contains("sk-secret"));
+    }
+
+    #[test]
+    fn pi_and_opencode_project_environment_uses_process_placeholders() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let mut project = sample_registered_project("pi-project", "Pi", project_dir.path());
+        project.agent = CcConnectAgent::Pi;
+        project.env_vars = serde_json::json!({
+            "PI_API_KEY": "sk-secret",
+            "CLI_MANAGER_TAB_ID": "must-not-override",
+            "HTTP_PROXY": "http://unmanaged-proxy"
+        })
+        .to_string();
+        let (config, process) = managed_project_environment(&project);
+        assert_eq!(
+            config.get("PI_API_KEY").map(String::as_str),
+            Some("${PI_API_KEY}")
+        );
+        assert_eq!(
+            process,
+            vec![("PI_API_KEY".to_string(), "sk-secret".to_string())]
+        );
+        assert!(!config.contains_key("CLI_MANAGER_TAB_ID"));
+        assert!(!config.contains_key("HTTP_PROXY"));
+
+        project.agent = CcConnectAgent::Claude;
+        assert_eq!(
+            managed_project_environment(&project),
+            (BTreeMap::new(), Vec::new())
+        );
     }
     #[test]
     fn project_list_and_switch_tokens_are_stable_and_safe() {
@@ -7043,7 +7938,37 @@ allow_from = ""
         .unwrap();
         fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
         format_and_check_config_syntax(Path::new(&binary), &config_path).unwrap();
+        let formatted = fs::read_to_string(&config_path).unwrap();
+        assert!(formatted.contains("${CLI_MANAGER_CODEX_PROVIDER_API_KEY}"));
+        assert!(!formatted.contains("sk-provider-secret"));
+
+        for agent in [
+            CcConnectAgent::Claude,
+            CcConnectAgent::Pi,
+            CcConnectAgent::Opencode,
+        ] {
+            profile.agent = agent;
+            let settings_path = project.path().join("claude-settings.json");
+            let environment = BTreeMap::from([(
+                "AGENT_TEST_TOKEN".to_string(),
+                "${AGENT_TEST_TOKEN}".to_string(),
+            )]);
+            let config = build_managed_config_with_agent_launch(
+                &profile,
+                Path::new(r"C:\Users\test\cli-manager-projects.txt"),
+                Path::new(r"C:\Users\test\cli-manager-switch.ps1"),
+                None,
+                None,
+                (agent == CcConnectAgent::Claude).then_some(settings_path.as_path()),
+                &environment,
+            )
+            .unwrap();
+            fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+            format_and_check_config_syntax(Path::new(&binary), &config_path).unwrap();
+        }
+
         profile.platforms.clear();
+        profile.agent = CcConnectAgent::Codex;
         profile.platform = CcConnectPlatform::Weixin;
         profile.allow_from = "authorization-pending@im.wechat".to_string();
         fs::write(

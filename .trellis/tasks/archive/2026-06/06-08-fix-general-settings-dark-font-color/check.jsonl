@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Static checks plus manual UI verification items are required for visual changes."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Settings UI changes should preserve existing navigation/contracts."}

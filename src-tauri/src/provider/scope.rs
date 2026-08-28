@@ -1,19 +1,17 @@
 use super::grok;
 use crate::{
     app_paths,
-    provider::{global, home, repository},
+    provider::{home, repository},
     wsl,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use sqlx::{Connection, Row};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use toml_edit::DocumentMut;
 use uuid::Uuid;
 
 const GENERATED_ROOT: &str = "generated";
@@ -250,7 +248,10 @@ async fn read_scope_override(
         .map_err(|_| "provider_scope_database_error".to_string())
 }
 
-fn parse_provider_reference(raw: Option<&str>, app_type: &str) -> Result<Option<String>, String> {
+pub(crate) fn parse_provider_reference(
+    raw: Option<&str>,
+    app_type: &str,
+) -> Result<Option<String>, String> {
     let Some(raw) = raw.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
@@ -642,57 +643,22 @@ fn codex_config_overrides(provider_id: &str, effective: &Value) -> Result<Vec<St
     Ok(overrides)
 }
 
-fn codex_profile_name(provider_id: &str) -> String {
-    let mut slug = provider_id
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    slug = slug.trim_matches('-').chars().take(40).collect();
-    if slug.is_empty() {
-        slug = "provider".to_string();
-    }
-    let digest = Sha256::digest(provider_id.as_bytes());
-    let hash = format!("{digest:x}");
-    format!("cli-manager-{}-{}", slug, &hash[..10])
-}
-
 fn write_codex_profile(provider_id: &str, effective: &Value) -> Result<String, String> {
     let config_dir = home::default_config_root("codex")
         .ok_or_else(|| "provider_snapshot_write_failed".to_string())?;
-    let (bytes, _) = global::materialize_codex_config(None, effective)?;
-    let mut document = String::from_utf8(bytes)
-        .map_err(|_| "provider_snapshot_write_failed".to_string())?
-        .parse::<DocumentMut>()
+    let settings = serde_json::to_string(effective)
         .map_err(|_| "provider_snapshot_write_failed".to_string())?;
-    let provider_name = document
-        .get("model_provider")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("cli_manager")
-        .to_string();
-    let providers = document
-        .get_mut("model_providers")
-        .and_then(|value| value.as_table_mut())
-        .ok_or_else(|| "provider_snapshot_write_failed".to_string())?;
-    let provider = providers
-        .entry(&provider_name)
-        .or_insert(toml_edit::table())
-        .as_table_mut()
-        .ok_or_else(|| "provider_snapshot_write_failed".to_string())?;
-    provider.insert("env_key", toml_edit::value(CODEX_PROVIDER_ENV_KEY));
-    let bytes = document.to_string();
-    let profile_name = codex_profile_name(provider_id);
+    let runtime = crate::provider::runtime::parse_runtime_config(provider_id, &settings)
+        .map_err(|_| "provider_snapshot_write_failed".to_string())?;
+    let profile = runtime
+        .profile
+        .with_env_key(CODEX_PROVIDER_ENV_KEY)
+        .map_err(|_| "provider_snapshot_write_failed".to_string())?;
     write_snapshot_file(
-        &config_dir.join(format!("{}.config.toml", profile_name)),
-        bytes.as_bytes(),
+        &config_dir.join(format!("{}.config.toml", profile.profile_name)),
+        profile.profile_text.as_bytes(),
     )?;
-    Ok(profile_name)
+    Ok(profile.profile_name)
 }
 
 fn write_snapshot_bundle(
@@ -849,6 +815,24 @@ pub(crate) async fn release_snapshot(snapshot_id: String) -> Result<(), String> 
         fs::remove_dir_all(root).map_err(|_| "provider_snapshot_release_failed".to_string())?;
     }
     Ok(())
+}
+
+pub(crate) fn resolve_claude_settings_path(
+    snapshot_id: &str,
+    provider_id: &str,
+) -> Result<PathBuf, String> {
+    let (root, manifest) = read_manifest("claude", snapshot_id)?;
+    if manifest.app_type != "claude"
+        || manifest.provider_id != provider_id.trim()
+        || manifest.snapshot_id != snapshot_id
+    {
+        return Err("provider_snapshot_mismatch".to_string());
+    }
+    let path = root.join("claude").join("settings.json");
+    if !path.is_file() {
+        return Err("provider_snapshot_missing".to_string());
+    }
+    Ok(path)
 }
 
 pub(crate) async fn garbage_collect_snapshots(
@@ -1113,8 +1097,11 @@ mod tests {
 
     #[test]
     fn codex_profile_name_is_stable_and_safe() {
-        let first = codex_profile_name("Provider/One");
-        assert_eq!(first, codex_profile_name("Provider/One"));
+        let first = crate::provider::runtime::codex_profile_name("Provider/One");
+        assert_eq!(
+            first,
+            crate::provider::runtime::codex_profile_name("Provider/One")
+        );
         assert!(first.starts_with("cli-manager-provider-one-"));
         assert!(first
             .chars()

@@ -16,6 +16,7 @@ mod file_watcher;
 mod git_watcher;
 pub mod hook_client;
 mod linux_graphics;
+mod live_server;
 mod log_rotation;
 mod process_job;
 pub(crate) mod provider;
@@ -33,6 +34,7 @@ mod sync;
 mod text_encoding;
 mod third_party_notification;
 pub mod usage;
+pub(crate) mod usage_schema;
 mod webdav;
 mod wsl;
 
@@ -425,8 +427,8 @@ const MIGRATION_EXTEND_SSH_AGENT_INSTALLATIONS_SQL: &str = "
                 ALTER TABLE ssh_agent_installations ADD COLUMN previous_version TEXT NOT NULL DEFAULT '';
               ";
 
-const MIGRATION_CREATE_USAGE_RECORDS_VERSION: i64 = 27;
-const MIGRATION_CREATE_USAGE_RECORDS_SQL: &str = "
+pub(crate) const MIGRATION_CREATE_USAGE_RECORDS_VERSION: i64 = 27;
+pub(crate) const MIGRATION_CREATE_USAGE_RECORDS_SQL: &str = "
                 CREATE TABLE IF NOT EXISTS usage_records (
                     record_id              TEXT PRIMARY KEY,
                     logical_request_id     TEXT NOT NULL,
@@ -541,7 +543,7 @@ const MIGRATION_CREATE_USAGE_RECORDS_SQL: &str = "
                 );
               ";
 const MIGRATION_RECREATE_UNIFIED_USAGE_RECORDS_VERSION: i64 = 28;
-const MIGRATION_RECREATE_UNIFIED_USAGE_RECORDS_SQL: &str = "
+pub(crate) const MIGRATION_RECREATE_UNIFIED_USAGE_RECORDS_SQL: &str = "
                 DROP VIEW IF EXISTS unified_usage_records;
                 CREATE VIEW unified_usage_records AS
                 SELECT
@@ -591,7 +593,222 @@ const MIGRATION_RECREATE_UNIFIED_USAGE_RECORDS_SQL: &str = "
                    );
               ";
 const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_VERSION: i64 = 29;
-const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL: &str = "
+const MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION: i64 = 30;
+const MIGRATION_CREATE_HISTORY_GENERATED_TITLES_DESCRIPTION: &str =
+    "create_history_generated_titles_table";
+const MIGRATION_CREATE_HISTORY_GENERATED_TITLES_SQL: &str = "
+                CREATE TABLE IF NOT EXISTS history_generated_titles (
+                    session_key             TEXT PRIMARY KEY,
+                    source_id               TEXT NOT NULL,
+                    source_instance_id      TEXT NOT NULL DEFAULT '',
+                    source_session_id       TEXT NOT NULL,
+                    transport_kind          TEXT NOT NULL DEFAULT 'local',
+                    generated_title         TEXT,
+                    generation_state        TEXT NOT NULL DEFAULT 'idle'
+                                            CHECK (generation_state IN ('idle','pending','succeeded','failed')),
+                    generation_revision     INTEGER NOT NULL DEFAULT 0,
+                    trigger_kind            TEXT
+                                            CHECK (trigger_kind IS NULL OR trigger_kind IN ('automatic','manual')),
+                    source_message_identity TEXT,
+                    source_content_sha256   TEXT,
+                    provider_app_type       TEXT,
+                    provider_id             TEXT,
+                    model_id                TEXT,
+                    failure_code            TEXT,
+                    auto_suppressed         INTEGER NOT NULL DEFAULT 0 CHECK (auto_suppressed IN (0,1)),
+                    suppressed_fingerprint  TEXT,
+                    requested_at            INTEGER,
+                    completed_at            INTEGER,
+                    updated_at              INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_history_generated_titles_source_identity
+                    ON history_generated_titles(source_id, source_instance_id, source_session_id);
+                CREATE INDEX IF NOT EXISTS idx_history_generated_titles_state
+                    ON history_generated_titles(generation_state, updated_at DESC);
+            ";
+pub(crate) const MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION: i64 = 31;
+pub(crate) const MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_SQL: &str = "
+                CREATE INDEX IF NOT EXISTS idx_usage_records_project_path
+                    ON usage_records(project_path, started_at_ms DESC);
+                DROP VIEW IF EXISTS unified_usage_records;
+                CREATE VIEW unified_usage_records AS
+                SELECT
+                    u.record_id AS request_id,
+                    u.source,
+                    COALESCE(u.project_key, '') AS project_key,
+                    COALESCE(u.project_path, '') AS project_path,
+                    COALESCE(u.session_id, '') AS session_id,
+                    COALESCE(u.file_path, '') AS file_path,
+                    u.event_index,
+                    u.started_at_ms AS timestamp_ms,
+                    COALESCE(u.outbound_model, u.response_model, u.requested_model, u.pricing_model) AS model,
+                    u.input_tokens,
+                    u.output_tokens,
+                    u.cache_read_tokens,
+                    u.cache_creation_tokens,
+                    u.data_source,
+                    u.provider_id,
+                    u.provider_name,
+                    u.requested_model,
+                    u.outbound_model,
+                    u.response_model,
+                    u.usage_status,
+                    u.status_code,
+                    u.outcome,
+                    u.duration_ms,
+                    u.attempt_count,
+                    u.degraded
+                FROM usage_records u
+                WHERE u.data_source = 'route'
+                   OR NOT EXISTS (
+                        SELECT 1
+                        FROM usage_records r
+                        WHERE r.data_source = 'route'
+                          AND r.usage_status IN ('complete', 'partial')
+                          AND NULLIF(TRIM(r.session_id), '') IS NOT NULL
+                          AND r.source = u.source
+                          AND r.session_id = u.session_id
+                          AND COALESCE(r.completed_at_ms, r.started_at_ms)
+                              BETWEEN u.started_at_ms - 120000 AND u.started_at_ms + 120000
+                          AND LOWER(COALESCE(r.outbound_model, r.response_model, r.requested_model, ''))
+                              = LOWER(COALESCE(u.response_model, u.pricing_model, ''))
+                          AND r.output_tokens = u.output_tokens
+                          AND (
+                              r.input_tokens = u.input_tokens
+                              OR r.input_tokens = u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens
+                              OR u.input_tokens = r.input_tokens + r.cache_read_tokens + r.cache_creation_tokens
+                          )
+                   );
+              ";
+pub(crate) const MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION: i64 = 32;
+pub(crate) const MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL: &str = r#"
+                UPDATE usage_records
+                   SET project_path = LOWER(RTRIM(REPLACE(TRIM(project_key), '\', '/'), '/'))
+                 WHERE NULLIF(TRIM(project_path), '') IS NULL
+                   AND NULLIF(TRIM(project_key), '') IS NOT NULL
+                   AND (
+                        SUBSTR(REPLACE(TRIM(project_key), '\', '/'), 1, 1) = '/'
+                        OR SUBSTR(REPLACE(TRIM(project_key), '\', '/'), 2, 2) = ':/'
+                   );
+                WITH normalized_projects AS (
+                    SELECT
+                        LOWER(TRIM(name)) AS project_name,
+                        LOWER(RTRIM(REPLACE(TRIM(path), '\', '/'), '/')) AS project_path
+                    FROM projects
+                    WHERE COALESCE(environment_type, 'local') <> 'ssh'
+                      AND NULLIF(TRIM(path), '') IS NOT NULL
+                ),
+                resolved_paths AS (
+                    SELECT target.record_id, MIN(project.project_path) AS project_path
+                    FROM usage_records AS target
+                    JOIN normalized_projects AS project
+                      ON project.project_name = LOWER(TRIM(target.project_key))
+                      OR project.project_path = LOWER(RTRIM(REPLACE(TRIM(target.project_key), '\', '/'), '/'))
+                      OR project.project_path LIKE '%/' || LOWER(TRIM(target.project_key))
+                    WHERE NULLIF(TRIM(target.project_path), '') IS NULL
+                      AND NULLIF(TRIM(target.project_key), '') IS NOT NULL
+                    GROUP BY target.record_id
+                    HAVING COUNT(DISTINCT project.project_path) = 1
+                )
+                UPDATE usage_records
+                   SET project_path = (
+                        SELECT resolved.project_path
+                        FROM resolved_paths AS resolved
+                        WHERE resolved.record_id = usage_records.record_id
+                   )
+                 WHERE record_id IN (SELECT record_id FROM resolved_paths);
+                UPDATE usage_records AS target
+                   SET project_path = (
+                        SELECT session.project_path
+                          FROM usage_records AS session
+                         WHERE session.data_source = 'session_log'
+                           AND session.source = target.source
+                           AND session.session_id = target.session_id
+                           AND NULLIF(TRIM(session.project_path), '') IS NOT NULL
+                         ORDER BY session.updated_at_ms DESC
+                         LIMIT 1
+                   )
+                 WHERE target.data_source = 'route'
+                   AND NULLIF(TRIM(target.project_path), '') IS NULL
+                   AND NULLIF(TRIM(target.session_id), '') IS NOT NULL
+                   AND EXISTS (
+                        SELECT 1
+                          FROM usage_records AS session
+                         WHERE session.data_source = 'session_log'
+                           AND session.source = target.source
+                           AND session.session_id = target.session_id
+                           AND NULLIF(TRIM(session.project_path), '') IS NOT NULL
+                   );
+              "#;
+pub(crate) const MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION: i64 = 33;
+pub(crate) const MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION: &str =
+    "add_route_usage_error_diagnostics";
+
+macro_rules! recreate_unified_usage_records_with_error_detail_sql {
+    () => {
+        r#"
+                DROP VIEW IF EXISTS unified_usage_records;
+                CREATE VIEW unified_usage_records AS
+                SELECT
+                    u.record_id AS request_id,
+                    u.source,
+                    COALESCE(u.project_key, '') AS project_key,
+                    COALESCE(u.project_path, '') AS project_path,
+                    COALESCE(u.session_id, '') AS session_id,
+                    COALESCE(u.file_path, '') AS file_path,
+                    u.event_index,
+                    u.started_at_ms AS timestamp_ms,
+                    COALESCE(u.outbound_model, u.response_model, u.requested_model, u.pricing_model) AS model,
+                    u.input_tokens,
+                    u.output_tokens,
+                    u.cache_read_tokens,
+                    u.cache_creation_tokens,
+                    u.data_source,
+                    u.provider_id,
+                    u.provider_name,
+                    u.requested_model,
+                    u.outbound_model,
+                    u.response_model,
+                    u.usage_status,
+                    u.status_code,
+                    u.outcome,
+                    u.error_code,
+                    u.error_detail,
+                    u.duration_ms,
+                    u.attempt_count,
+                    u.degraded
+                FROM usage_records u
+                WHERE u.data_source = 'route'
+                   OR NOT EXISTS (
+                        SELECT 1
+                        FROM usage_records r
+                        WHERE r.data_source = 'route'
+                          AND r.usage_status IN ('complete', 'partial')
+                          AND NULLIF(TRIM(r.session_id), '') IS NOT NULL
+                          AND r.source = u.source
+                          AND r.session_id = u.session_id
+                          AND COALESCE(r.completed_at_ms, r.started_at_ms)
+                              BETWEEN u.started_at_ms - 120000 AND u.started_at_ms + 120000
+                          AND LOWER(COALESCE(r.outbound_model, r.response_model, r.requested_model, ''))
+                              = LOWER(COALESCE(u.response_model, u.pricing_model, ''))
+                          AND r.output_tokens = u.output_tokens
+                          AND (
+                              r.input_tokens = u.input_tokens
+                              OR r.input_tokens = u.input_tokens + u.cache_read_tokens + u.cache_creation_tokens
+                              OR u.input_tokens = r.input_tokens + r.cache_read_tokens + r.cache_creation_tokens
+                          )
+                   );
+              "#
+    };
+}
+
+pub(crate) const MIGRATION_RECREATE_UNIFIED_USAGE_RECORDS_WITH_ERROR_DETAIL_SQL: &str =
+    recreate_unified_usage_records_with_error_detail_sql!();
+pub(crate) const MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL: &str = concat!(
+    "ALTER TABLE usage_records ADD COLUMN error_detail TEXT;",
+    recreate_unified_usage_records_with_error_detail_sql!()
+);
+pub(crate) const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL: &str = "
                 CREATE INDEX IF NOT EXISTS idx_usage_records_route_dedup
                 ON usage_records(
                     source,
@@ -649,6 +866,23 @@ const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL: &str = "
                           )
                    );
               ";
+/// 分组与项目的外观标记（issue #213）。空串表示"自动"：颜色按名称 hash 落到调色板，图标按节点类型回退。
+/// `icon` 存单个 emoji 字符或内置图标 key，`color` 只存调色板 token（不存任意 hex，保证主题适配）。
+const MIGRATION_ADD_NODE_APPEARANCE_VERSION: i64 = 34;
+const MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION: &str =
+    "add_node_appearance_to_groups_and_projects";
+const MIGRATION_ADD_NODE_APPEARANCE_SQL: &str = "
+                ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+                ALTER TABLE groups ADD COLUMN color TEXT NOT NULL DEFAULT '';
+                ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+                ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '';
+              ";
+/// 供 `commands::db_repair` 做"缺列自愈"用：外观列缺失时补列并按同一 checksum 登记 migration 34，
+/// 避免 sqlx 随后重放 `ADD COLUMN` 撞 `duplicate column name`。
+pub(crate) const NODE_APPEARANCE_MIGRATION_VERSION: i64 = MIGRATION_ADD_NODE_APPEARANCE_VERSION;
+pub(crate) const NODE_APPEARANCE_MIGRATION_DESCRIPTION: &str =
+    MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION;
+pub(crate) const NODE_APPEARANCE_MIGRATION_SQL: &str = MIGRATION_ADD_NODE_APPEARANCE_SQL;
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -929,6 +1163,36 @@ fn migrations() -> Vec<Migration> {
             sql: MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
+            description: MIGRATION_CREATE_HISTORY_GENERATED_TITLES_DESCRIPTION,
+            sql: MIGRATION_CREATE_HISTORY_GENERATED_TITLES_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
+            description: "materialize_request_log_project_path",
+            sql: MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
+            description: "backfill_request_log_project_path",
+            sql: MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+            description: MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION,
+            sql: MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_ADD_NODE_APPEARANCE_VERSION,
+            description: MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION,
+            sql: MIGRATION_ADD_NODE_APPEARANCE_SQL,
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -1127,6 +1391,14 @@ pub fn run() {
                                     "pty daemon connected: 127.0.0.1:{}",
                                     client.info().port
                                 );
+                                if let Err(error) =
+                                    commands::routing::reconcile_persisted_service(client.clone())
+                                {
+                                    log::warn!(
+                                        "persisted local routing recovery skipped: {}",
+                                        error.code
+                                    );
+                                }
                                 handle.state::<daemon::client::DaemonBridge>().set(client);
                             }
                             Err(err) => log::warn!(
@@ -1211,6 +1483,7 @@ pub fn run() {
         .manage(daemon::client::DaemonBridge::new())
         .manage(file_watcher::FileWatcherBridge::new())
         .manage(git_watcher::GitWatcherBridge::new())
+        .manage(live_server::LiveServerManager::new())
         .manage(commands::subagent_transcript::SubagentTranscriptBridge::new())
         .manage(commands::cc_connect::CcConnectManager::new())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -1274,6 +1547,7 @@ pub fn run() {
             commands::ssh::ssh_resolve_user,
             commands::ssh::ssh_test_connection,
             commands::ssh::ssh_agent_probe,
+            commands::ssh::ssh_agent_available_release,
             commands::ssh::ssh_agent_install_preview,
             commands::ssh::ssh_agent_install,
             commands::ssh::ssh_agent_rollback,
@@ -1300,6 +1574,9 @@ pub fn run() {
             commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::logging::resource_diagnostics_write,
+            commands::live_server::live_server_start,
+            commands::live_server::live_server_status,
+            commands::live_server::live_server_stop,
             commands::fs::clipboard_read_file_paths,
             commands::fs::check_paths_exist,
             commands::fs::file_get_path_kind,
@@ -1364,6 +1641,10 @@ pub fn run() {
             commands::history::history_list_prompts,
             commands::history::history_list_stats_projects,
             commands::history::history_get_stats,
+            commands::history_title::history_title_list_providers,
+            commands::history_title::history_title_generate,
+            commands::history_title::history_title_clear,
+            commands::history_title::history_title_cancel,
             commands::history::request_logs::history_sync_request_logs,
             commands::history::request_logs::history_list_request_logs,
             commands::history::request_logs::history_get_request_log_stats,
@@ -1401,6 +1682,7 @@ pub fn run() {
             app_open_devtools,
             app_paths::app_get_data_paths,
             commands::db_repair::db_repair_known_migration_drift,
+            commands::db_repair::db_backfill_request_log_project_paths,
             commands::fonts::list_system_fonts,
             commands::background::save_background_image,
             commands::background::cleanup_unused_backgrounds,
@@ -1410,6 +1692,8 @@ pub fn run() {
             commands::hook_settings::hook_settings_uninstall,
             commands::hook_settings::hook_settings_install_codex,
             commands::hook_settings::hook_settings_uninstall_codex,
+            commands::hook_settings::hook_settings_install_kimi,
+            commands::hook_settings::hook_settings_uninstall_kimi,
             commands::hook_settings::hook_settings_install_pi,
             commands::hook_settings::hook_settings_uninstall_pi,
             commands::hook_settings::hook_settings_install_grok,
@@ -1562,6 +1846,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = &event {
+                app.state::<live_server::LiveServerManager>().shutdown();
                 app.state::<commands::cc_connect::CcConnectManager>()
                     .shutdown();
                 crash_reporter::mark_graceful_exit();
@@ -1820,6 +2105,12 @@ mod provider_migration_tests {
     use crate::provider::{
         MIGRATION_CREATE_NATIVE_PROVIDERS_VERSION, MIGRATION_LEGACY_PROVIDERS_VERSION,
     };
+    use crate::{
+        MIGRATION_ADD_NODE_APPEARANCE_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+        MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
+        MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
+        MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
+    };
 
     #[test]
     fn registry_keeps_legacy_v25_before_native_v26() {
@@ -1835,5 +2126,219 @@ mod provider_migration_tests {
         assert_eq!(legacy.description, "create_providers_and_keys_tables");
         assert_eq!(native.description, "create_native_provider_management");
         assert!(legacy.version < native.version);
+    }
+
+    #[test]
+    fn history_generated_titles_and_request_project_path_migrations_are_additive() {
+        let registry = migrations();
+        let title_migrations: Vec<_> = registry
+            .iter()
+            .filter(|migration| {
+                migration.version == MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION
+            })
+            .collect();
+        assert_eq!(title_migrations.len(), 1);
+        let title_migration = title_migrations[0];
+        assert_eq!(title_migration.version, 30);
+        assert!(title_migration
+            .sql
+            .contains("CREATE TABLE IF NOT EXISTS history_generated_titles"));
+        assert!(title_migration
+            .sql
+            .contains("idx_history_generated_titles_state"));
+        let project_path_migration = registry
+            .iter()
+            .find(|migration| {
+                migration.version == MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION
+            })
+            .expect("request project path migration must be registered");
+        assert_eq!(project_path_migration.version, 31);
+        assert!(project_path_migration
+            .sql
+            .contains("COALESCE(u.project_path, '') AS project_path"));
+        assert!(project_path_migration
+            .sql
+            .contains("idx_usage_records_project_path"));
+        let project_path_backfill = registry
+            .iter()
+            .find(|migration| {
+                migration.version == MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION
+            })
+            .expect("request project path backfill must be registered");
+        assert_eq!(project_path_backfill.version, 32);
+        assert!(project_path_backfill
+            .sql
+            .contains("UPDATE usage_records AS target"));
+        assert!(project_path_backfill
+            .sql
+            .contains("SELECT session.project_path"));
+        let error_detail_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+            .expect("route usage error detail migration must be registered");
+        assert_eq!(error_detail_migration.version, 33);
+        assert!(error_detail_migration
+            .sql
+            .contains("ALTER TABLE usage_records ADD COLUMN error_detail TEXT"));
+        assert!(error_detail_migration.sql.contains("u.error_code"));
+        assert!(error_detail_migration.sql.contains("u.error_detail"));
+        let node_appearance_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_NODE_APPEARANCE_VERSION)
+            .expect("node appearance migration must be registered");
+        assert_eq!(node_appearance_migration.version, 34);
+        assert!(node_appearance_migration
+            .sql
+            .contains("ALTER TABLE groups ADD COLUMN icon TEXT"));
+        assert!(node_appearance_migration
+            .sql
+            .contains("ALTER TABLE projects ADD COLUMN color TEXT"));
+        assert!(title_migration.version < project_path_migration.version);
+        assert!(project_path_migration.version < project_path_backfill.version);
+        assert!(project_path_backfill.version < error_detail_migration.version);
+        assert!(error_detail_migration.version < node_appearance_migration.version);
+        assert!(registry
+            .iter()
+            .all(|migration| migration.version <= node_appearance_migration.version));
+        assert!(registry.iter().any(|migration| migration.version == 29
+            && migration.description == "optimize_unified_usage_record_queries"));
+    }
+}
+
+#[cfg(test)]
+mod request_log_project_path_migration_tests {
+    use super::{
+        MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL, MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+        MIGRATION_CREATE_REQUEST_LOGS_SQL, MIGRATION_CREATE_USAGE_RECORDS_SQL,
+        MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_SQL,
+    };
+    use sqlx::{Connection, Row, SqliteConnection};
+
+    #[tokio::test]
+    async fn materialized_project_path_migration_backfills_legacy_rows_idempotently() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                environment_type TEXT NOT NULL DEFAULT 'local'
+             )",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO projects(id, name, path, environment_type) VALUES
+                ('project-a', 'Configured Project', 'D:\\Work\\Project-A', 'local'),
+                ('duplicate-a', 'Duplicate A', 'D:\\Work\\One\\Duplicate', 'local'),
+                ('duplicate-b', 'Duplicate B', 'E:\\Work\\Two\\Duplicate', 'wsl'),
+                ('remote', 'Project-A', '', 'ssh')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_REQUEST_LOGS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_USAGE_RECORDS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO usage_records(
+                record_id, logical_request_id, data_source, source, session_id,
+                project_key, project_path, started_at_ms, created_at_ms, updated_at_ms
+             ) VALUES
+                ('absolute', 'absolute', 'session_log', 'grok', 'session-absolute',
+                 '/mnt/d/Work/App/', NULL, 1, 1, 1),
+                ('configured', 'configured', 'session_log', 'codex', 'session-configured',
+                 'Project-A', NULL, 2, 2, 2),
+                ('ambiguous', 'ambiguous', 'session_log', 'codex', 'session-ambiguous',
+                 'Duplicate', NULL, 3, 3, 3),
+                ('existing', 'existing', 'session_log', 'opencode', 'session-existing',
+                 'Existing', 'keep/me', 4, 4, 4),
+                ('route', 'route', 'route', 'codex', 'session-configured',
+                 'Project-A', NULL, 5, 5, 5)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        for statement in MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_SQL.split(';') {
+            let statement = statement.trim();
+            if !statement.is_empty() {
+                sqlx::query(statement).execute(&mut conn).await.unwrap();
+            }
+        }
+        for _ in 0..2 {
+            for statement in MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL.split(';') {
+                let statement = statement.trim();
+                if !statement.is_empty() {
+                    sqlx::query(statement).execute(&mut conn).await.unwrap();
+                }
+            }
+        }
+
+        let rows = sqlx::query("SELECT record_id, project_path FROM usage_records")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+        let project_path = |record_id: &str| {
+            rows.iter()
+                .find(|row| row.get::<String, _>("record_id") == record_id)
+                .and_then(|row| row.get::<Option<String>, _>("project_path"))
+        };
+        assert_eq!(project_path("absolute").as_deref(), Some("/mnt/d/work/app"));
+        assert_eq!(
+            project_path("configured").as_deref(),
+            Some("d:/work/project-a")
+        );
+        assert_eq!(project_path("route").as_deref(), Some("d:/work/project-a"));
+        assert_eq!(project_path("ambiguous"), None);
+        assert_eq!(project_path("existing").as_deref(), Some("keep/me"));
+    }
+
+    #[tokio::test]
+    async fn route_usage_error_detail_migration_preserves_legacy_rows_and_rebuilds_view() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_REQUEST_LOGS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_USAGE_RECORDS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO usage_records(
+                record_id, logical_request_id, data_source, source, error_code,
+                started_at_ms, created_at_ms, updated_at_ms
+             ) VALUES ('route-error', 'route-error', 'route', 'codex',
+                       'routing_upstream_timeout', 1, 1, 1)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        sqlx::raw_sql(MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        let row = sqlx::query(
+            "SELECT error_code, error_detail
+             FROM unified_usage_records
+             WHERE request_id = 'route-error'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            row.get::<Option<String>, _>("error_code").as_deref(),
+            Some("routing_upstream_timeout")
+        );
+        assert_eq!(row.get::<Option<String>, _>("error_detail"), None);
     }
 }

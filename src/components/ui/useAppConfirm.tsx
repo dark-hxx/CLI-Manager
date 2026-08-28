@@ -10,7 +10,11 @@ interface AppConfirmOptions {
   danger?: boolean;
 }
 
-export function useAppConfirm() {
+interface UseAppConfirmOptions {
+  zIndex?: number;
+}
+
+export function useAppConfirm({ zIndex }: UseAppConfirmOptions = {}) {
   const { t } = useI18n();
   const [request, setRequest] = useState<AppConfirmOptions | null>(null);
   const resolverRef = useRef<((confirmed: boolean) => void) | null>(null);
@@ -41,6 +45,7 @@ export function useAppConfirm() {
       confirmText={request?.confirmText ?? t("common.confirm")}
       cancelText={request?.cancelText ?? t("common.cancel")}
       danger={request?.danger}
+      zIndex={zIndex}
       onConfirm={() => close(true)}
       onClose={() => close(false)}
     />

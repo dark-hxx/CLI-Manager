@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify settings UI changes preserve settings tab contracts and stay within frontend component patterns"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify static checks and manual UI verification expectations for desktop visuals"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Keep the UI tweak local and avoid unnecessary abstraction"}

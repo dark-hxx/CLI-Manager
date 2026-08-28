@@ -1,5 +1,0 @@
-{"file": ".trellis/tasks/07-05-feat-git-sub-repo-monitor/prd.md", "reason": "任务需求：git_list_repositories 命令、watcher 过滤、前端仓库切换，含 WSL 补充项与验收标准"}
-{"file": ".trellis/spec/backend/git-status-contracts.md", "reason": "Git 状态收集三条链路合约与嵌套仓库过滤陷阱（任务 A 教训，必读）"}
-{"file": ".trellis/spec/backend/index.md", "reason": "后端开发前置清单"}
-{"file": ".trellis/spec/backend/wsl-path-contracts.md", "reason": "WSL UNC 路径限制与转换工具，WSL 链路过滤需要"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引"}

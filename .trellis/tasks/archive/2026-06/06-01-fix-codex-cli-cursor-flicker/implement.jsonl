@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"xterm component rules, including cursorBlink hot-update and construction-time option guidance"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"frontend quality constraints for terminal buffering/performance-sensitive UI"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"pre-modification search/reuse checklist for small targeted changes"}

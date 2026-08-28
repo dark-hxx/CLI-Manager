@@ -43,7 +43,7 @@ cd src-tauri && cargo test <test_name>   # 运行单个 Rust 测试
 - 前端在 `App.tsx` 监听该事件：`SessionStart`/`UserPromptSubmit` 仅用于绑定 sessionId 不弹 toast，其余事件弹通知。实时统计（CcusageStatsPanel）依赖 hook 上报的 sessionId，未安装 hook 时会引导去设置。
 
 ### 数据层
-- SQLite 通过 `tauri-plugin-sql`，**migrations 定义在 `lib.rs` 的 `migrations()`，当前到 v13**。新增表/列必须追加新的 `Migration`（只增不改，向后兼容），不要修改历史 migration。
+- SQLite 通过 `tauri-plugin-sql`，**migrations 定义在 `lib.rs` 的 `migrations()`，当前到 v33**。新增表/列必须追加新的 `Migration`（只增不改，向后兼容），不要修改历史 migration。`commands/db_repair.rs` 的漂移修复只覆盖 v13–v15 与两个 SSH 主机 migration（`KNOWN_DRIFT_START_VERSION` / `KNOWN_DRIFT_END_VERSION`），新增版本落在该窗口外时无需同步登记。
 - 前端用 `Database.load("sqlite:cli-manager.db")` 直接读写 SQLite（见 `src/lib/`）。表：`projects`、`groups`、`command_templates`、`command_history`、`session_meta`、`sync_meta`、`ccusage_cache`、`model_prices`。
 - 用户偏好（设置/主题/快捷键/同步配置等）走 `tauri-plugin-store`，由 `stores/settingsStore.ts` 管理，与 SQLite 分离。
 
@@ -73,24 +73,25 @@ cd src-tauri && cargo test <test_name>   # 运行单个 Rust 测试
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **CLI-Manager** (25532 symbols, 51499 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **CLI-Manager** (23354 symbols, 70814 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "master"})`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER edit a function, class, or method without first running `impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit changes without running `detect_changes()` to check affected scope.
 
 ## Resources
 

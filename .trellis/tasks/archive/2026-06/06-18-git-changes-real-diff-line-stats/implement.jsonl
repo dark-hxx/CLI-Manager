@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "P1 跨 Rust(git.rs)→invoke→gitStore→GitTreeNode 数据流一致性，added/deleted 字段需端到端对齐"}
-{"file": ".trellis/spec/backend/index.md", "reason": "后端命令层约定与 git.rs 所在 commands 模块规范"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "git diff/统计涉及读取工作区文件，遵循前端不可信 + 路径校验边界"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "gitStore (Zustand) 与 GitChangesPanel summary 聚合改动遵循状态管理约定"}

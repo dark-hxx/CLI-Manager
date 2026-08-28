@@ -49,6 +49,7 @@ mod tests {
     fn version_report_uses_the_stable_agent_identity() {
         let report = version_report();
         assert_eq!(report.agent_name, "cli-manager-ssh-agent");
+        assert_eq!(report.agent_version, "0.1.10");
         assert_eq!(report.protocol_major, 1);
         assert_eq!(report.protocol_minor, 11);
     }

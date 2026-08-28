@@ -53,3 +53,12 @@ export function CliToolIcon({
   const Icon = CLI_TOOL_ICONS[icon];
   return <Icon size={size} className={className} />;
 }
+
+/**
+ * 判定字符串是否为内置 CLI 工具图标 key。
+ * 直接查 `CLI_TOOL_ICONS`（类型为 `Record<CliToolIconKey, ...>`，编译期保证覆盖完整），
+ * 避免另维护一份 key 清单导致漂移。
+ */
+export function isCliToolIconKey(value: string): value is CliToolIconKey {
+  return Object.prototype.hasOwnProperty.call(CLI_TOOL_ICONS, value);
+}

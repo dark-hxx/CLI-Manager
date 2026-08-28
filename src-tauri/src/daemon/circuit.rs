@@ -256,8 +256,12 @@ mod tests {
             let permit = registry.acquire("grokbuild", provider, policy).unwrap();
             registry.record_failure(permit, policy);
         }
+        for _ in 0..2 {
+            let permit = registry.acquire("codex", "other-app", policy).unwrap();
+            registry.record_failure(permit, policy);
+        }
         registry.reset("grokbuild", "a");
-        assert_eq!(registry.snapshots().len(), 2);
+        assert_eq!(registry.snapshots().len(), 3);
         assert_eq!(
             registry
                 .snapshots()
@@ -271,7 +275,17 @@ mod tests {
         assert!(registry
             .snapshots()
             .into_iter()
+            .filter(|snapshot| snapshot.app_type == "grokbuild")
             .all(|snapshot| snapshot.status == "closed"));
+        assert_eq!(
+            registry
+                .snapshots()
+                .into_iter()
+                .find(|snapshot| snapshot.app_type == "codex")
+                .unwrap()
+                .status,
+            "open"
+        );
     }
 
     #[test]

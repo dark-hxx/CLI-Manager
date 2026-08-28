@@ -6,7 +6,7 @@ import {
   isExactCodexProject,
   isNativeProviderReference,
 } from "./providerSwitching";
-import { replaceGrokModelArg, stripResumeCliArgs } from "./resumeCliArgs";
+import { replaceGrokModelArg, stripKimiResumeCliArgs, stripResumeCliArgs } from "./resumeCliArgs";
 import { normalizeShellKey } from "./shell";
 
 const CODEX_PROFILE_ARG = "--profile";
@@ -166,7 +166,7 @@ export function resolveProjectStartupCommand(
 // startup_cmd 是自由文本（可能含一次性 prompt），无法安全拆参，保持不继承。
 export function appendResumeCliArgs(
   baseCommand: string,
-  source: "claude" | "codex" | "grok",
+  source: "claude" | "codex" | "grok" | "kimi",
   project: Pick<Project, "cli_tool" | "cli_args" | "startup_cmd" | "provider_overrides" | "shell"> | null | undefined,
   options: { includeProviderOverrides?: boolean } = {},
 ): string {
@@ -176,10 +176,14 @@ export function appendResumeCliArgs(
       ? isExactCodexProject(project)
       : source === "claude"
         ? getProviderSwitchAppType(project) === "claude"
-        : project.cli_tool.trim().toLowerCase().includes("grok");
+        : source === "kimi"
+          ? project.cli_tool.trim().toLowerCase().includes("kimi")
+          : project.cli_tool.trim().toLowerCase().includes("grok");
   if (!matchesSource) return baseCommand;
 
-  const cliArgs = stripResumeCliArgs(project.cli_args);
+  const cliArgs = source === "kimi"
+    ? stripKimiResumeCliArgs(project.cli_args)
+    : stripResumeCliArgs(project.cli_args);
   return appendProviderOverrideArgs(
     cliArgs ? `${baseCommand} ${cliArgs}` : baseCommand,
     project,

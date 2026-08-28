@@ -305,7 +305,9 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "cc-connect") return <CcConnectSettingsPage />;
     if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} onTerminalOpened={onClose} />;
     if (activeTab === "sync") return <SyncSettingsPage />;
-    if (activeTab === "history-sources") return <HistorySourceSettingsPage />;
+    if (activeTab === "history-sources") {
+      return <HistorySourceSettingsPage onOpenNativeProviderSettings={() => handleTabChange("native-providers")} />;
+    }
     if (activeTab === "hooks") return <HookSettingsPage />;
     if (activeTab === "statusline") return <StatuslineSettingsPage searchValue={searchValue} />;
     if (activeTab === "command-suggestions") return <CommandSuggestionSettingsPage />;

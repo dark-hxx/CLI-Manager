@@ -69,8 +69,11 @@ form must not hide URL, key or model in a generic configuration textarea.
   untouched because this pre-release product does not require migration or
   cleanup of those records. The quick-switch header shows a localized local/WSL
   icon and, for WSL, the selected distribution.
-- The project/Worktree selector lists native providers and visibly resolves
-  Worktree > project > global. Reset means follow the next lower scope.
+- The project/Worktree selector lists eligible Claude/Codex native providers
+  and visibly resolves Worktree > project > global. Reset means follow the
+  next lower scope. Grok Build is a direct localized unsupported state: do not
+  load a catalog, write an override, or call global preview/apply; historical
+  Grok overrides remain backend-compatible but are not editable from this UI.
 - Home selection offers auto, choose folder, paste absolute path and reset.
   The chooser remains enabled for local and WSL environments in both modes,
   and uses the current Home as its initial directory. A successful selection
@@ -266,12 +269,30 @@ form must not hide URL, key or model in a generic configuration textarea.
 - Provider-card enable switches control whether the provider may participate
   in global/project/Worktree resolution. Current or referenced providers may
   not be disabled, and their stable backend errors require localized feedback.
+  Both `provider_referenced_cannot_disable` and
+  `provider_referenced_cannot_delete` must render the actionable project/
+  Worktree-reference message rather than a generic operation failure.
+  Provider reordering also maps stale-list and database errors to actionable
+  refresh feedback instead of the generic operation failure.
 
 ## Provider routing page memory and active-channel contract (2026-08-09)
 
 - Reopening the provider settings page restores the last app type, surface
   (catalog/Home/routing), detail tab, selected provider, and outer page scroll
   position from the in-memory page cache.
+- `selectedProviderId` remains the detail/cache identity, not a permanent list
+  selection. The catalog may render its selected card style and `aria-current`
+  only while that provider's detail dialog is open; closing the dialog must
+  remove the visual state without clearing the cached selection.
+- Detail-modal focus return is separate from catalog selection. The detail
+  `Modal` must use `returnFocus={false}` and, after its exit transition, return
+  focus only for an accepted user/detail close to the connected checked radio
+  in the existing surface navigation. Gate that callback with a close ref and
+  clear the gate for app-type/surface transitions so an unmount cannot steal a
+  newer focus target. Do not add a focused `tabIndex={-1}` page wrapper, hide
+  `.ui-focus-ring`, or change `selectedProviderId` to suppress the returned-row
+  ring; the nested provider form retains normal focus return to the still-open
+  detail modal.
 - Failover queue rows render `isCurrent` as an explicit localized “In use”
   badge with the primary color, so the channel currently selected by routing is
   distinguishable from merely queued or ready providers.
@@ -386,6 +407,12 @@ form must not hide URL, key or model in a generic configuration textarea.
   first, ordered by `sortIndex`, followed by non-queued providers ordered by
   `sortIndex`. Manual mode renders the ungrouped catalog order. This grouping is
   display-only and must not become a second persisted failover-order array.
+- The quick panel is a vertical sortable surface. `SortableProviderRow` must
+  apply the dnd-kit transform with `x: 0` while preserving `y`, scale, and the
+  shared sortable transition. Pointer drift must not expand the panel's
+  vertical scroll container into a horizontal scrolling range. Do not treat
+  `overflow-x: hidden` as the primary fix because that leaves the card moving
+  off-axis and only masks the resulting scrollbar.
 - The Settings Catalog surface is also a failover consumer while automatic
   failover is enabled. It polls `routing_get_failover_queue`, renders queued
   providers first with `#N`, and exposes queue toggle plus priority up/down
@@ -432,6 +459,9 @@ setSnapshot((current) => ({
 
 - Side panel automatic mode has no up/down buttons, while drag/keyboard
   ordering remains available.
+- Pointer dragging a quick-panel provider sideways keeps the card on the
+  vertical axis and does not create a bottom scrollbar; vertical auto-scroll
+  and keyboard ordering remain available in merged and independent panels.
 - A queue/order mutation made in either side panel or Settings is visible in
   the other consumer after the next snapshot publication or poll.
 - Toggling automatic failover off and on preserves an existing queue and its

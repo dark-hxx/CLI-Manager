@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Authoritative provider catalog, scope resolution, Claude/Codex launch materialization, Home and compatibility contracts."}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"Provider settings and project/Worktree switching UI contract."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend error handling, i18n and quality requirements."}
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"Root-cause lane, discovery-list and scenario-matrix requirements for this behavioral cross-database regression."}
+{"file":".trellis/tasks/08-17-fix-provider-lifecycle-project-scope/research/root-cause-and-touchpoints.md","reason":"Confirmed root causes, GitNexus blast radius, source anchors and scenario matrix."}

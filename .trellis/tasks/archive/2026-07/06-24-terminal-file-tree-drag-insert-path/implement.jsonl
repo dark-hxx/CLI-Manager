@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component conventions for terminal/file-tree drag UI changes."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Use local/transient state only unless global state is necessary."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Required frontend verification and terminal UI manual-check expectations."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing drag/path formatter helpers instead of duplicating path logic."}

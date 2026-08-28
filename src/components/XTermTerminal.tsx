@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type WheelEvent as ReactWheelEvent } from "react";
 import {
   Terminal,
   type IBufferLine,
@@ -47,7 +47,10 @@ import { useTerminalOsc } from "../hooks/useTerminalOsc";
 import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
 import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
 import { getTerminalCellWidth } from "../lib/terminalCellWidth";
-import { copyTextToClipboard } from "../lib/systemClipboard";
+import { resolveClaudeImeCompositionAnchor } from "../lib/terminalImeAnchor";
+import { copyTextToClipboard, readTextFromClipboard } from "../lib/systemClipboard";
+import { formatOsc52Reply } from "../lib/terminalOscParse";
+import { eventToCombo } from "../hooks/useKeyboardShortcuts";
 import { hasCodexTuiViewport } from "../lib/terminalTuiDisplay";
 import { createTerminalTuiColorSyncController } from "../lib/terminalTuiColorSync";
 import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
@@ -63,6 +66,7 @@ import {
 } from "../lib/linuxGraphics";
 import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../lib/shell";
 import { Portal } from "./ui/Portal";
+import { FontSizeControl, useFontSizeControlVisibility } from "./ui/FontSizeControl";
 import { useProjectStore } from "../stores/projectStore";
 import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
 import {
@@ -75,9 +79,12 @@ import {
 } from "./terminal/TerminalMarkdownPreview";
 import {
   createTerminalCliContext,
+  isClaudeTerminalContext,
   isCodexTerminalContext,
+  isOpenCodeTerminalContext,
 } from "../terminal/browser/TerminalCliContext";
 import { createTerminalMouseInteractionOptions } from "../terminal/browser/TerminalMouseInteraction";
+import { attachOpenCodeTuiClipboard } from "../terminal/browser/OpenCodeTuiClipboard";
 import {
   createPiTerminalCompatibility,
   type PiTerminalCompatibility,
@@ -86,6 +93,9 @@ import { shouldReflowTerminalCursorLine } from "../terminal/browser/TerminalRefl
 import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 import type { TerminalProcessTraits } from "../terminal/transport/PtyHostSocket";
 import {
+  TERMINAL_FONT_SIZE_DEFAULT,
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
   TERMINAL_SCROLLBACK_ROWS_DEFAULT,
   useSettingsStore,
   type LightThemePalette,
@@ -97,6 +107,8 @@ const IMAGE_ADDON_PIXEL_LIMIT = 4 * 1024 * 1024;
 const IMAGE_ADDON_SEQUENCE_LIMIT = 8 * 1024 * 1024;
 const IMAGE_ADDON_STORAGE_LIMIT_MB = 32;
 const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
+// ponytail: fixed ceiling bounds untrusted OSC 52 bursts; add per-session rate limiting only if legitimate bursts need it.
+const OSC52_MAX_PENDING_CLIPBOARD_ACTIONS = 32;
 const CODEX_OUTPUT_SIGNATURE_PATTERN = /(?:openai\s+codex|\/model\s+to\s+change)/i;
 const ANSI_CSI_SEQUENCE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 let terminalImageAddonFallbackLogged = false;
@@ -424,12 +436,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const visibilityRestoreFallbackRafRef = useRef<number | null>(null);
   const codexCursorShowTimerRef = useRef<number | null>(null);
   const codexSessionDetectedRef = useRef(false);
+  const osc52ClipboardChainRef = useRef(Promise.resolve());
+  const osc52ClipboardPendingRef = useRef(0);
   const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
   const displayTransformOutputRef = useRef<(text: string) => string>((text) => text);
   const displayAfterWriteRef = useRef<((terminal: Terminal) => void) | null>(null);
   const piTerminalCompatibilityRef = useRef<PiTerminalCompatibility | null>(null);
   const terminalScrollbackCustomEnabled = useSettingsStore((s) => s.terminalScrollbackCustomEnabled);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
+  const updateSettings = useSettingsStore((s) => s.update);
   const effectiveTerminalScrollbackRows = terminalScrollbackCustomEnabled
     ? terminalScrollbackRows
     : TERMINAL_SCROLLBACK_ROWS_DEFAULT;
@@ -469,12 +484,18 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       : null
   ));
   const markdownPreviewSupported = isTerminalMarkdownPreviewSupported(terminalSession, terminalProject);
+  const markdownPreviewButtonVisible = Boolean(
+    terminalSession?.isAgentSession
+    || terminalSession?.cliTool?.trim()
+    || terminalProject?.cli_tool?.trim(),
+  );
   const markdownPreviewCanOpen = markdownPreviewSupported
     && Boolean(terminalSession?.cliSessionId?.trim());
 
   const [assetUrl, setAssetUrl] = useState<string | null>(null);
   const [visibilityRestorePending, setVisibilityRestorePending] = useState(false);
   const [suggestionGhost, setSuggestionGhost] = useState<TerminalSuggestionGhostState | null>(null);
+  const { fontSizeControlVisible, showFontSizeControl } = useFontSizeControlVisibility();
   const [linuxGraphicsConstrained, setLinuxGraphicsConstrained] = useState(false);
   const [linuxGraphicsDisableWebgl, setLinuxGraphicsDisableWebgl] = useState(false);
   const [markdownPreviewOpen, setMarkdownPreviewOpen] = useState(false);
@@ -748,12 +769,47 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     logError("PTY write failed in XTermTerminal", { sessionId, stage, err });
   };
 
+  const queueOsc52ClipboardAction = (
+    action: () => Promise<void> | void,
+    onError?: (err: unknown) => void,
+  ) => {
+    if (osc52ClipboardPendingRef.current >= OSC52_MAX_PENDING_CLIPBOARD_ACTIONS) return;
+    osc52ClipboardPendingRef.current += 1;
+    osc52ClipboardChainRef.current = osc52ClipboardChainRef.current
+      .catch(() => undefined)
+      .then(action)
+      .catch((err) => onError?.(err))
+      .finally(() => {
+        osc52ClipboardPendingRef.current -= 1;
+      });
+  };
+
   const {
     normalizeTerminalOutput,
     updateSessionCwdIfChanged,
   } = useTerminalOsc({
     sessionId,
     osPlatformRef,
+    onOsc52Write: (text) => {
+      if (!useSettingsStore.getState().osc52ClipboardEnabled) return;
+      queueOsc52ClipboardAction(() => {
+        if (!useSettingsStore.getState().osc52ClipboardEnabled) return;
+        return copyTextToClipboard(text);
+      });
+    },
+    onOsc52Query: (selection) => {
+      if (!useSettingsStore.getState().osc52ClipboardQueryEnabled) return;
+      queueOsc52ClipboardAction(async () => {
+        if (!useSettingsStore.getState().osc52ClipboardQueryEnabled) return;
+        const text = await readTextFromClipboard();
+        if (!useSettingsStore.getState().osc52ClipboardQueryEnabled) return;
+        const reply = formatOsc52Reply(text, selection || "c");
+        if (reply === null) return;
+        await terminalProcessManager.write(sessionId, reply);
+      }, (err) => {
+        logError("Failed to answer OSC 52 clipboard query", { sessionId, err });
+      });
+    },
   });
   displayNormalizeOutputRef.current = normalizeTerminalOutput;
 
@@ -1420,6 +1476,28 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       reportPtyWriteError,
     });
     inputDisposables.push({ dispose: inputSelection.dispose });
+    if (contextMenuTarget && isOpenCodeTerminalContext(getSessionToolContext())) {
+      inputDisposables.push({
+        dispose: attachOpenCodeTuiClipboard({
+          container: contextMenuTarget,
+          terminal,
+          isActive: () => isActiveRef.current,
+          isVisible: () => isVisibleRef.current,
+          hasInputFocus: () => contextMenuTarget.contains(document.activeElement),
+          isMac: () => (
+            osPlatformRef.current === "macos"
+            || (osPlatformRef.current === "unknown" && navigator.platform.toLowerCase().includes("mac"))
+          ),
+          readClipboardText: readClipboardPasteText,
+          pasteText: (text) => pasteText(terminal, text),
+          wrapMultilinePaste: wrapTerminalPasteTextForCtrlShiftV,
+          copyText: copyTextToClipboard,
+          clearInputSelection: inputSelection.clearInputSelectionState,
+          focusTerminal: () => focusTerminalWithCodexCursorPolicy(terminal),
+          logError,
+        }),
+      });
+    }
     const onContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1548,6 +1626,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       ) {
         if (acceptSuggestion()) {
           e.preventDefault();
+          return false;
+        }
+      }
+      if (e.type === "keydown") {
+        const copyShortcut = useSettingsStore.getState().keyboardShortcuts.copyTerminalSelection;
+        if (copyShortcut && eventToCombo(e) === copyShortcut) {
+          e.preventDefault();
+          if (terminal.hasSelection()) {
+            void copySelection();
+          }
           return false;
         }
       }
@@ -1711,7 +1799,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       forwarding: inputForwarding,
       osPlatformRef,
       scheduleFit,
-      resolveCompositionAnchor: piTerminalCompatibilityRef.current?.resolveImeCompositionAnchor,
+      resolveCompositionAnchor: (runtimeTerminal, anchor) => {
+        const piAnchor = piTerminalCompatibilityRef.current?.resolveImeCompositionAnchor(runtimeTerminal, anchor) ?? anchor;
+        return isClaudeTerminalContext(getSessionToolContext())
+          ? resolveClaudeImeCompositionAnchor(runtimeTerminal, piAnchor)
+          : piAnchor;
+      },
       resolveTextareaAnchor: piTerminalCompatibilityRef.current?.resolveImeTextareaAnchor,
       shouldRefreshCompositionAnchor: piTerminalCompatibilityRef.current?.shouldRefreshImeCompositionAnchor,
       onCompositionCommitted: (textareaValue) => {
@@ -1784,7 +1877,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     : "12px";
   const searchRightOffset = markdownPreviewOpen
     ? `calc(${markdownPreviewPanelPercent}% + 56px)`
-    : markdownPreviewSupported
+    : markdownPreviewButtonVisible
       ? "56px"
       : "12px";
 
@@ -1808,6 +1901,16 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     backgroundColor: hexToRgba(searchForeground, 0.08, "rgba(255, 255, 255, 0.08)"),
     borderColor: hexToRgba(searchForeground, 0.16, "rgba(255, 255, 255, 0.16)"),
     color: searchForeground,
+  };
+  const terminalFontSizeControlStyle: CSSProperties = {
+    backgroundColor: hexToRgba(searchBackground, showBackgroundImage ? 0.78 : 0.92, "rgba(0, 0, 0, 0.86)"),
+    borderColor: hexToRgba(searchForeground, 0.24, "rgba(255, 255, 255, 0.22)"),
+    boxShadow: `0 12px 30px ${hexToRgba(searchBackground, 0.55, "rgba(0, 0, 0, 0.45)")}`,
+    color: searchForeground,
+    fontFamily: effectiveFontFamily,
+  };
+  const handleTerminalFontSizeWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (event.ctrlKey && event.deltaY !== 0) showFontSizeControl();
   };
 
   const handleMenuCopy = () => {
@@ -1898,7 +2001,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       data-bg-fit={showBackgroundImage ? background.fit : undefined}
       data-bg-position={showBackgroundImage ? background.position : undefined}
     >
-      {markdownPreviewSupported && (
+      {markdownPreviewButtonVisible && (
         <button
           type="button"
           onClick={() => {
@@ -2003,8 +2106,24 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         <div
           className="absolute inset-y-0 left-0 min-w-0 overflow-hidden"
           style={{ width: markdownPreviewOpen ? `${100 - markdownPreviewPanelPercent}%` : "100%" }}
+          onWheelCapture={handleTerminalFontSizeWheel}
         >
           <div ref={containerRef} className="relative h-full w-full overflow-hidden pl-2" style={terminalContainerStyle} />
+          {fontSizeControlVisible && (
+            <FontSizeControl
+              fontSize={fontSize}
+              defaultFontSize={TERMINAL_FONT_SIZE_DEFAULT}
+              min={TERMINAL_FONT_SIZE_MIN}
+              max={TERMINAL_FONT_SIZE_MAX}
+              onChange={(next) => {
+                showFontSizeControl();
+                void updateSettings("fontSize", next);
+              }}
+              className="absolute bottom-3 right-3 z-20"
+              style={terminalFontSizeControlStyle}
+              variant="terminal"
+            />
+          )}
         </div>
         {markdownPreviewOpen && (
           <div
@@ -2024,7 +2143,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
             sessionId={sessionId}
             open={markdownPreviewOpen}
             onClose={() => setMarkdownPreviewOpen(false)}
-            terminalTheme={terminalTheme}
           />
         </div>
       </div>

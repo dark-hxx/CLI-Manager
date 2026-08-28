@@ -1,14 +1,21 @@
 use bytes::Bytes;
+use regex::{Captures, Regex};
 use serde_json::Value;
-use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{Connection, Row, SqliteConnection};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+#[cfg(test)]
+use sqlx::Connection;
+use sqlx::{Row, SqliteConnection};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
 use uuid::Uuid;
 
 const MAX_SSE_BUFFER_BYTES: usize = 1024 * 1024;
+const MAX_ERROR_DETAIL_CHARS: usize = 1_024;
 static ROUTE_USAGE_GENERATION: AtomicU64 = AtomicU64::new(0);
-
+static SENSITIVE_ASSIGNMENT_RE: OnceLock<Regex> = OnceLock::new();
+static BEARER_TOKEN_RE: OnceLock<Regex> = OnceLock::new();
+static SECRET_VALUE_RE: OnceLock<Regex> = OnceLock::new();
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UsageTokens {
     pub input_tokens: u64,
@@ -37,6 +44,7 @@ impl UsageTokens {
 pub struct UsageCapture {
     pub usage: UsageTokens,
     pub response_model: Option<String>,
+    pub error_detail: Option<String>,
     pub completed: bool,
     pub failed: bool,
 }
@@ -77,6 +85,7 @@ pub enum UsageStatus {
     Partial,
     Missing,
     Invalid,
+    NotApplicable,
 }
 
 impl UsageStatus {
@@ -86,6 +95,7 @@ impl UsageStatus {
             Self::Partial => "partial",
             Self::Missing => "missing",
             Self::Invalid => "invalid",
+            Self::NotApplicable => "not_applicable",
         }
     }
 }
@@ -150,6 +160,7 @@ pub fn session_id_from_headers_and_body(
 
 pub fn parse_response_json(value: &Value) -> UsageCapture {
     let mut capture = UsageCapture::default();
+    capture.error_detail = extract_error_detail(value);
     scan_json(value, &mut capture);
     capture
 }
@@ -194,6 +205,87 @@ fn scan_json(value: &Value, capture: &mut UsageCapture) {
             scan_json(child, capture);
         }
     }
+}
+
+fn extract_error_detail(value: &Value) -> Option<String> {
+    let error = value.get("error");
+    let candidate = [
+        error.and_then(Value::as_str),
+        error
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str),
+        error
+            .and_then(|error| error.get("detail"))
+            .and_then(Value::as_str),
+        error
+            .and_then(|error| error.get("error_description"))
+            .and_then(Value::as_str),
+        error
+            .and_then(|error| error.get("reason"))
+            .and_then(Value::as_str),
+        value.get("message").and_then(Value::as_str),
+        value.get("detail").and_then(Value::as_str),
+        value.get("error_description").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|candidate| !candidate.is_empty());
+    candidate.and_then(sanitize_error_detail)
+}
+
+fn sensitive_assignment_re() -> &'static Regex {
+    SENSITIVE_ASSIGNMENT_RE.get_or_init(|| {
+        Regex::new(
+            r#"(?i)((?:api[_ -]?key|access[_ -]?token|auth(?:orization)?|bearer|token|secret|password|passwd|client[_ -]?secret)\s*[:=]\s*)(?:Bearer\s+)?(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)"#,
+        )
+        .expect("valid usage error detail sensitive assignment regex")
+    })
+}
+
+fn bearer_token_re() -> &'static Regex {
+    BEARER_TOKEN_RE.get_or_init(|| {
+        Regex::new(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+            .expect("valid usage error detail bearer regex")
+    })
+}
+
+fn secret_value_re() -> &'static Regex {
+    SECRET_VALUE_RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{8,}|sk_[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b",
+        )
+        .expect("valid usage error detail secret regex")
+    })
+}
+
+fn sanitize_error_detail(raw: &str) -> Option<String> {
+    let normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let assigned = sensitive_assignment_re()
+        .replace_all(&normalized, |captures: &Captures<'_>| {
+            format!(
+                "{}<redacted>",
+                captures.get(1).map_or("", |capture| capture.as_str())
+            )
+        })
+        .into_owned();
+    let bearer = bearer_token_re().replace_all(&assigned, "<redacted>");
+    let redacted = secret_value_re()
+        .replace_all(&bearer, "<redacted>")
+        .into_owned();
+    let mut chars = redacted.chars();
+    let limited = chars
+        .by_ref()
+        .take(MAX_ERROR_DETAIL_CHARS)
+        .collect::<String>();
+    Some(if chars.next().is_some() {
+        format!("{limited}…")
+    } else {
+        limited
+    })
 }
 
 fn parse_usage(value: &Value) -> UsageTokens {
@@ -277,18 +369,26 @@ impl SseUsageCollector {
                 data.push_str(value.trim_start());
             }
         }
-        if data.is_empty() {
+        let payload = if data.is_empty() {
+            event.trim()
+        } else {
+            data.as_str()
+        };
+        if payload.is_empty() {
             return;
         }
-        if data == "[DONE]" {
+        if payload == "[DONE]" {
             self.capture.completed = true;
             return;
         }
-        if let Ok(value) = serde_json::from_str::<Value>(&data) {
+        if let Ok(value) = serde_json::from_str::<Value>(payload) {
             let next = parse_response_json(&value);
             self.capture.usage.max_assign(next.usage);
             if next.response_model.is_some() {
                 self.capture.response_model = next.response_model;
+            }
+            if next.error_detail.is_some() {
+                self.capture.error_detail = next.error_detail;
             }
             self.capture.completed |= next.completed;
             self.capture.failed |= next.failed;
@@ -322,25 +422,13 @@ pub async fn record_route_usage(
     error_code: Option<&str>,
     duration_ms: i64,
 ) -> Result<(), String> {
-    let usage_status = if capture.usage.total() > 0 {
-        if capture.completed || !context.is_streaming {
-            UsageStatus::Complete
-        } else {
-            UsageStatus::Partial
-        }
-    } else if capture.failed {
-        UsageStatus::Invalid
+    let usage_status = usage_status_for(&capture, context.is_streaming, outcome, error_code);
+    let error_detail = if capture.failed || outcome != "success" || error_code.is_some() {
+        capture.error_detail.as_deref()
     } else {
-        UsageStatus::Missing
+        None
     };
-    let path = crate::app_paths::db_path()?;
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(false)
-        .busy_timeout(Duration::from_secs(15));
-    let mut connection = SqliteConnection::connect_with(&options)
-        .await
-        .map_err(|err| format!("usage_db_open_failed: {err}"))?;
+    let mut connection = crate::usage_schema::open_usage_database().await?;
     let now_ms = crate::provider::routing::now_millis();
     let source = if context.app_type == "grokbuild" {
         "grok"
@@ -353,12 +441,12 @@ pub async fn record_route_usage(
             session_id, attribution_status, provider_id, provider_name,
             requested_model, outbound_model, response_model, pricing_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            usage_status, status_code, outcome, error_code, is_streaming,
+            usage_status, status_code, outcome, error_code, error_detail, is_streaming,
             started_at_ms, completed_at_ms, duration_ms, attempt_index, attempt_count,
             degraded, created_at_ms, updated_at_ms
          ) VALUES (?1, ?2, 'route', ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9, ?10,
                    COALESCE(?10, ?9, ?8), ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                   ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?26)
+                   ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?27)
          ON CONFLICT(record_id) DO UPDATE SET
             response_model = excluded.response_model,
             pricing_model = excluded.pricing_model,
@@ -370,6 +458,7 @@ pub async fn record_route_usage(
             status_code = excluded.status_code,
             outcome = excluded.outcome,
             error_code = excluded.error_code,
+            error_detail = excluded.error_detail,
             completed_at_ms = excluded.completed_at_ms,
             duration_ms = excluded.duration_ms,
             updated_at_ms = excluded.updated_at_ms",
@@ -392,6 +481,7 @@ pub async fn record_route_usage(
     .bind(status_code.map(i64::from))
     .bind(outcome)
     .bind(error_code)
+    .bind(error_detail)
     .bind(if context.is_streaming { 1_i64 } else { 0_i64 })
     .bind(context.started_at_ms)
     .bind(now_ms)
@@ -404,7 +494,40 @@ pub async fn record_route_usage(
     .await
     .map_err(|err| format!("usage_record_insert_failed: {err}"))?;
     ROUTE_USAGE_GENERATION.fetch_add(1, Ordering::AcqRel);
+    if let Some(session_id) = context
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
+    {
+        reconcile_route_attribution_for_session_with_connection(
+            &mut connection,
+            source,
+            session_id,
+            now_ms,
+        )
+        .await?;
+    }
     Ok(())
+}
+
+fn usage_status_for(
+    capture: &UsageCapture,
+    is_streaming: bool,
+    outcome: &str,
+    error_code: Option<&str>,
+) -> UsageStatus {
+    if capture.usage.total() > 0 {
+        if capture.completed || !is_streaming {
+            UsageStatus::Complete
+        } else {
+            UsageStatus::Partial
+        }
+    } else if capture.failed || outcome != "success" || error_code.is_some() {
+        UsageStatus::NotApplicable
+    } else {
+        UsageStatus::Missing
+    }
 }
 
 pub async fn record_route_usage_best_effort(
@@ -436,14 +559,7 @@ pub async fn load_route_usage_records(
     start_at: i64,
     end_at: i64,
 ) -> Result<Vec<RouteUsageRecord>, String> {
-    let path = crate::app_paths::db_path()?;
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(false)
-        .busy_timeout(Duration::from_secs(15));
-    let mut connection = SqliteConnection::connect_with(&options)
-        .await
-        .map_err(|err| format!("usage_db_open_failed: {err}"))?;
+    let mut connection = crate::usage_schema::open_usage_database().await?;
     let rows = sqlx::query(
         "SELECT source, session_id, project_key, file_path, started_at_ms, completed_at_ms,
                 COALESCE(outbound_model, response_model, requested_model) AS model,
@@ -498,14 +614,7 @@ pub async fn load_route_usage_records(
 }
 
 pub async fn reconcile_route_attribution() -> Result<u64, String> {
-    let path = crate::app_paths::db_path()?;
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(false)
-        .busy_timeout(Duration::from_secs(15));
-    let mut connection = SqliteConnection::connect_with(&options)
-        .await
-        .map_err(|err| format!("usage_db_open_failed: {err}"))?;
+    let mut connection = crate::usage_schema::open_usage_database().await?;
     reconcile_route_attribution_with_connection(
         &mut connection,
         crate::provider::routing::now_millis(),
@@ -531,12 +640,22 @@ async fn reconcile_route_attribution_with_connection(
                  ORDER BY rl.updated_at_ms DESC
                  LIMIT 1
              ),
+             project_path = (
+                 SELECT session.project_path FROM usage_records session
+                 WHERE session.data_source = 'session_log'
+                   AND session.source = target.source
+                   AND session.session_id = target.session_id
+                   AND NULLIF(trim(session.project_path), '') IS NOT NULL
+                 ORDER BY session.updated_at_ms DESC
+                 LIMIT 1
+             ),
              attribution_status = 'resolved',
              updated_at_ms = ?1
          WHERE target.data_source = 'route'
            AND (
                 target.attribution_status <> 'resolved'
                 OR target.project_key IS NULL
+                OR NULLIF(trim(target.project_path), '') IS NULL
                 OR NULLIF(trim(target.file_path), '') IS NULL
            )
            AND target.session_id IS NOT NULL
@@ -569,6 +688,53 @@ async fn reconcile_route_attribution_with_connection(
     Ok(resolved
         .rows_affected()
         .saturating_add(unattributed.rows_affected()))
+}
+
+pub(crate) async fn reconcile_route_attribution_for_session_with_connection(
+    connection: &mut SqliteConnection,
+    source: &str,
+    session_id: &str,
+    updated_at_ms: i64,
+) -> Result<u64, String> {
+    let result = sqlx::query(
+        "UPDATE usage_records AS target
+         SET project_key = (
+                 SELECT rl.project_key FROM request_logs rl
+                 WHERE rl.source = ?1 AND rl.session_id = ?2
+                 ORDER BY rl.updated_at_ms DESC
+                 LIMIT 1
+             ),
+             file_path = (
+                 SELECT rl.file_path FROM request_logs rl
+                 WHERE rl.source = ?1 AND rl.session_id = ?2
+                 ORDER BY rl.updated_at_ms DESC
+                 LIMIT 1
+             ),
+             project_path = (
+                 SELECT session.project_path FROM usage_records session
+                 WHERE session.data_source = 'session_log'
+                   AND session.source = ?1
+                   AND session.session_id = ?2
+                   AND NULLIF(trim(session.project_path), '') IS NOT NULL
+                 ORDER BY session.updated_at_ms DESC
+                 LIMIT 1
+             ),
+             attribution_status = CASE WHEN EXISTS (
+                 SELECT 1 FROM request_logs rl
+                 WHERE rl.source = ?1 AND rl.session_id = ?2
+             ) THEN 'resolved' ELSE 'unattributed' END,
+             updated_at_ms = ?3
+         WHERE target.data_source = 'route'
+           AND target.source = ?1
+           AND target.session_id = ?2",
+    )
+    .bind(source)
+    .bind(session_id)
+    .bind(updated_at_ms)
+    .execute(&mut *connection)
+    .await
+    .map_err(|err| format!("usage_attribution_update_failed: {err}"))?;
+    Ok(result.rows_affected())
 }
 
 #[cfg(test)]
@@ -614,13 +780,95 @@ mod tests {
         assert!(capture.completed);
     }
 
+    #[test]
+    fn error_detail_uses_allowed_fields_and_redacts_sensitive_values() {
+        let capture = parse_response_json(&serde_json::json!({
+            "type": "error",
+            "error": {
+                "message": "upstream rejected Authorization: Bearer sk-secret-value and api_key=private-key"
+            },
+            "request_body": "this field must never be persisted"
+        }));
+        let detail = capture
+            .error_detail
+            .expect("structured error message is captured");
+
+        assert!(capture.failed);
+        assert!(detail.contains("upstream rejected"));
+        assert!(detail.contains("<redacted>"));
+        assert!(!detail.contains("sk-secret-value"));
+        assert!(!detail.contains("private-key"));
+        assert!(!detail.contains("this field must never be persisted"));
+    }
+
+    #[test]
+    fn error_detail_is_length_limited() {
+        let long_detail = "x".repeat(MAX_ERROR_DETAIL_CHARS + 32);
+        let capture = parse_response_json(&serde_json::json!({
+            "error": { "detail": long_detail }
+        }));
+        let detail = capture.error_detail.expect("error detail is captured");
+
+        assert_eq!(detail.chars().count(), MAX_ERROR_DETAIL_CHARS + 1);
+        assert!(detail.ends_with('…'));
+    }
+
+    #[test]
+    fn sse_collector_captures_terminal_raw_json_error_detail() {
+        let mut collector = SseUsageCollector::default();
+        collector.observe(&Bytes::from_static(
+            b"{\"type\":\"error\",\"error\":{\"message\":\"stream failed: token=private-token\"}}",
+        ));
+        let capture = collector.finish();
+
+        assert!(capture.failed);
+        assert_eq!(
+            capture.error_detail.as_deref(),
+            Some("stream failed: token=<redacted>")
+        );
+    }
+
+    #[test]
+    fn failed_empty_capture_is_not_applicable_but_successful_empty_capture_is_missing() {
+        let capture = UsageCapture::default();
+        assert_eq!(
+            usage_status_for(&capture, false, "error", Some("routing_upstream_timeout")),
+            UsageStatus::NotApplicable
+        );
+        assert_eq!(
+            usage_status_for(
+                &capture,
+                false,
+                "skipped",
+                Some("routing_provider_circuit_open")
+            ),
+            UsageStatus::NotApplicable
+        );
+        assert_eq!(
+            usage_status_for(&capture, false, "success", None),
+            UsageStatus::Missing
+        );
+    }
+
+    #[test]
+    fn semantic_error_payload_without_tokens_is_not_applicable() {
+        let capture = UsageCapture {
+            failed: true,
+            ..UsageCapture::default()
+        };
+        assert_eq!(
+            usage_status_for(&capture, false, "success", None),
+            UsageStatus::NotApplicable
+        );
+    }
+
     #[tokio::test]
     async fn route_attribution_resolves_project_and_session_file() {
         let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE usage_records(
                 record_id TEXT PRIMARY KEY, data_source TEXT NOT NULL, source TEXT NOT NULL,
-                session_id TEXT, project_key TEXT, file_path TEXT,
+                session_id TEXT, project_key TEXT, project_path TEXT, file_path TEXT,
                 attribution_status TEXT NOT NULL, updated_at_ms INTEGER NOT NULL
              )",
         )
@@ -638,8 +886,8 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO usage_records VALUES
-                ('route:matched', 'route', 'codex', 'session-a', NULL, NULL, 'pending', 1),
-                ('route:missing', 'route', 'codex', 'session-missing', NULL, NULL, 'pending', 1)",
+                ('route:matched', 'route', 'codex', 'session-a', NULL, NULL, NULL, 'pending', 1),
+                ('route:missing', 'route', 'codex', 'session-missing', NULL, NULL, NULL, 'pending', 1)",
         )
         .execute(&mut connection)
         .await
@@ -683,5 +931,67 @@ mod tests {
             "resolved"
         );
         assert_eq!(missing, "unattributed");
+    }
+
+    #[tokio::test]
+    async fn targeted_route_attribution_copies_materialized_project_path() {
+        let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE usage_records(
+                record_id TEXT PRIMARY KEY, data_source TEXT NOT NULL, source TEXT NOT NULL,
+                session_id TEXT, project_key TEXT, project_path TEXT, file_path TEXT,
+                attribution_status TEXT NOT NULL, updated_at_ms INTEGER NOT NULL
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE request_logs(
+                request_id TEXT PRIMARY KEY, source TEXT NOT NULL, session_id TEXT NOT NULL,
+                project_key TEXT NOT NULL, file_path TEXT NOT NULL, updated_at_ms INTEGER NOT NULL
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO usage_records VALUES
+                ('route:a', 'route', 'codex', 'session-a', NULL, NULL, NULL, 'pending', 1),
+                ('session:a', 'session_log', 'codex', 'session-a', 'project-a',
+                 'd:/work/project-a', 'session-a.jsonl', 'resolved', 10)",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO request_logs VALUES
+                ('local:a', 'codex', 'session-a', 'project-a', 'session-a.jsonl', 10)",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+        let changed = reconcile_route_attribution_for_session_with_connection(
+            &mut connection,
+            "codex",
+            "session-a",
+            20,
+        )
+        .await
+        .unwrap();
+        let row = sqlx::query(
+            "SELECT project_key, project_path, file_path, attribution_status
+             FROM usage_records WHERE record_id = 'route:a'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+
+        assert_eq!(changed, 1);
+        assert_eq!(row.get::<String, _>("project_key"), "project-a");
+        assert_eq!(row.get::<String, _>("project_path"), "d:/work/project-a");
+        assert_eq!(row.get::<String, _>("file_path"), "session-a.jsonl");
+        assert_eq!(row.get::<String, _>("attribution_status"), "resolved");
     }
 }

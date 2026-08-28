@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-09-auto-update-optimization/research/tauri-updater.md","reason":"Verify implementation matches official updater signing, endpoints, permissions, and release artifact requirements."}
-{"file":".trellis/tasks/06-09-auto-update-optimization/research/auto-update-ux.md","reason":"Verify UI behavior does not silently interrupt active terminal work and handles failure states."}
-{"file":".trellis/spec/guides/version-update-checklist.md","reason":"Check release/version metadata remains consistent after dependency and Tauri config changes."}
-{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"Check capability changes remain minimal and no broad filesystem or process permissions are introduced."}

@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端静态校验与运行态 UI 人工验收要求"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"校验伪会话不破坏 sessions/pane 不变量与持久化跳过"}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"校验 kind 判别联合穷尽处理，无 any/非空断言糊过"}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"校验未破坏既有 hook 事件/notify 鉴权契约"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"校验 Rust↔bridge↔前端字段与事件一致"}

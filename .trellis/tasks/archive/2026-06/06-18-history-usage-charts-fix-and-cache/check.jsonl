@@ -1,6 +1,0 @@
-{"type":"spec","path":".trellis/tasks/06-18-history-usage-charts-fix-and-cache/prd.md","reason":"验收基线：6 项需求 + Acceptance Criteria + Out of Scope（不得改统计口径）"}
-{"type":"spec","path":".trellis/spec/backend/history-stats-contracts.md","reason":"图5 落盘后须仍满足：fingerprint 复用不重扫、缓存失效一起清、payload 字段不破坏"}
-{"type":"spec","path":".trellis/spec/frontend/quality-guidelines.md","reason":"前端质量基线：组件/状态/可访问性，检查图表改动是否达标"}
-{"type":"spec","path":".trellis/spec/frontend/component-guidelines.md","reason":"图表组件改动是否符合结构/样式约定"}
-{"type":"spec","path":".trellis/spec/frontend/type-safety.md","reason":"颜色解析/类型新增需满足 strict、无滥用 any/as"}
-{"type":"spec","path":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"图5 跨 Rust→TS→UI：落盘缓存与前端加载链路一致性核查"}

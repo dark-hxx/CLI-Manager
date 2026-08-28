@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"前端组件局部样式修改需遵循现有组件模式"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查是否引入前端禁用模式或不必要复杂度"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"本次应复用现有 token 和局部样式，不提前抽象"}

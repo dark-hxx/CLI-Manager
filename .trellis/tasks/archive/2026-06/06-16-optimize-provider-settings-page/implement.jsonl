@@ -1,4 +1,0 @@
-{"type":"spec","path":".trellis/tasks/06-16-optimize-provider-settings-page/prd.md","why":"需求文档，明确 P0 三项优化目标与验收标准"}
-{"type":"source","path":"src/components/settings/pages/ProviderSettingsPage.tsx","why":"待优化主体组件，当前实现供应商列表/详情展示"}
-{"type":"source","path":"src/components/ProviderSwitchModal.tsx","why":"参考复制按钮实现模式（如有），确认现有复制交互规范"}
-{"type":"source","path":"src/components/icons.ts","why":"确认可用图标（Copy / AlertTriangle / ExternalLink 等）"}

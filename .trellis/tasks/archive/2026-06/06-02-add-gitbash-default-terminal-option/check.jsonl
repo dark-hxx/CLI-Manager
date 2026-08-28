@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify the UI option change stays minimal and consistent with frontend quality rules."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify gitbash is included in all relevant shell key typing and normalization paths."}
-{"file":".trellis/spec/backend/index.md","reason":"Verify Rust/Tauri backend changes keep stable command contracts and compile."}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Verify Git Bash support does not accidentally enable or regress PowerShell runtime monitoring."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify front-to-back shell key behavior is consistent across create, settings, PTY, and external terminal paths."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify the change reuses existing shell option and normalization patterns instead of adding parallel logic."}

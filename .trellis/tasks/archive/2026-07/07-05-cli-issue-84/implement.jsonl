@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/backend/ccswitch-integration-contracts.md", "reason": "cli_args 必须与项目级供应商切换（--profile/--settings 自动追加）兼容，用户明确要求"}
-{"file": ".trellis/spec/backend/webdav-sync-contracts.md", "reason": "projects 表新增 cli_args 字段需要纳入 WebDAV 同步字段清单"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "projectStore 增加字段的写法需符合现有 store 约定"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "ConfigModal 新增输入框需符合组件规范"}

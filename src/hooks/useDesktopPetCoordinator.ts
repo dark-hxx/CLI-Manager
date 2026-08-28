@@ -194,6 +194,10 @@ export function useDesktopPetCoordinator({
       handoffTaskRunning: t("desktopPet.actions.handoffTaskRunning"),
       handoffStateUnknown: t("desktopPet.actions.handoffStateUnknown"),
       handoffUnavailable: t("desktopPet.actions.handoffUnavailable"),
+      handoffRegisteredProvider: t("desktopPet.actions.handoffRegisteredProvider"),
+      handoffPiConfiguration: t("desktopPet.actions.handoffPiConfiguration"),
+      handoffOpenCodeConfiguration: t("desktopPet.actions.handoffOpenCodeConfiguration"),
+      handoffOpenCodeCapabilityLimited: t("desktopPet.actions.handoffOpenCodeCapabilityLimited"),
     },
   }), [desktopPet, language, petWindowVisible, t]);
 

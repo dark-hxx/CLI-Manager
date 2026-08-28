@@ -31,7 +31,7 @@ const anchorPath = transpile(
   "terminalImeAnchor.mjs",
   { "./terminalTui": "./terminalTui.mjs" },
 );
-const { resolveTerminalImeCompositionAnchor } = await import(pathToFileURL(anchorPath).href);
+const { resolveClaudeImeCompositionAnchor, resolveTerminalImeCompositionAnchor } = await import(pathToFileURL(anchorPath).href);
 
 function terminalWithLines(lines, cursor, inverseCells = []) {
   const cols = Math.max(1, ...lines.map((line) => line.length), ...inverseCells.map(({ x }) => x + 1));
@@ -73,6 +73,28 @@ test("real cursor inside the composer wins over unrelated inverse cells", () => 
   );
 
   assert.deepEqual(resolveTerminalImeCompositionAnchor(terminal), { x: 2, y: 1 });
+});
+
+test("Claude IME follows its isolated software cursor after deleting text", () => {
+  const terminal = terminalWithLines(
+    ["output", "> 水电          ", "──────────────", "status"],
+    { x: 13, y: 1 },
+    [{ x: 5, y: 1 }],
+  );
+
+  const fallback = resolveTerminalImeCompositionAnchor(terminal);
+  assert.deepEqual(fallback, { x: 13, y: 1 });
+  assert.deepEqual(resolveClaudeImeCompositionAnchor(terminal, fallback), { x: 5, y: 1 });
+});
+
+test("Claude IME ignores inverse spans that are not a software cursor", () => {
+  const terminal = terminalWithLines(
+    ["output", "> hello", "menu", "────────", "status"],
+    { x: 7, y: 1 },
+    [{ x: 1, y: 2 }, { x: 2, y: 2 }],
+  );
+
+  assert.deepEqual(resolveClaudeImeCompositionAnchor(terminal, { x: 7, y: 1 }), { x: 7, y: 1 });
 });
 
 test("prompt fallback remains available when a TUI redraw moves the cursor outside", () => {

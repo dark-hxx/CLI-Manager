@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality constraints for terminal performance and bounded buffers."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Confirm no unnecessary shared abstraction or duplicated logic is introduced."}

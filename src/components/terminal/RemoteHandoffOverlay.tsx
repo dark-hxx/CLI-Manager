@@ -29,6 +29,14 @@ export function RemoteHandoffOverlay({ session }: RemoteHandoffOverlayProps) {
   const description = recoveryFailed
     ? t("remoteHandoff.overlay.recoveryDescription")
     : t("remoteHandoff.overlay.description");
+  const agentName = handoff.agent
+    ? ({
+        claude: "Claude Code",
+        codex: "Codex",
+        pi: "Pi",
+        opencode: "OpenCode",
+      } as const)[handoff.agent]
+    : "Codex";
 
   return (
     <section
@@ -66,6 +74,12 @@ export function RemoteHandoffOverlay({ session }: RemoteHandoffOverlayProps) {
         </p>
 
         <dl className="mb-6 grid w-full grid-cols-[112px_minmax(0,1fr)] gap-x-4 gap-y-2 text-left text-xs">
+          <dt style={{ color: "var(--terminal-theme-muted, #9ca0a6)" }}>
+            {t("remoteHandoff.overlay.agent")}
+          </dt>
+          <dd className="m-0 truncate" title={agentName}>
+            {agentName}
+          </dd>
           <dt style={{ color: "var(--terminal-theme-muted, #9ca0a6)" }}>
             {t("remoteHandoff.overlay.sessionId")}
           </dt>

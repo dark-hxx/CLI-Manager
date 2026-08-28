@@ -1,8 +1,0 @@
-{"file":".trellis/tasks/05-22-performance-optimization/prd.md","reason":"Acceptance criteria, verification scope, and behavior invariants to check"}
-{"file":".trellis/workflow.md","reason":"Trellis finish/check workflow and quality gates"}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality expectations for changed UI/state/terminal code"}
-{"file":".trellis/spec/backend/webdav-sync-contracts.md","reason":"WebDAV sync payload contract, response size boundary, and serialization rules"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer data-flow and boundary checks for Rust/Tauri sync changes"}
-{"file":"CLAUDE.md","reason":"Required validation commands and GitNexus detect_changes before commit"}
-{"file":"package.json","reason":"Frontend scripts available for typecheck/build validation"}
-{"file":"src-tauri/Cargo.toml","reason":"Rust crate configuration for cargo check/test validation"}

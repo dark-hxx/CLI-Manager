@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check terminal split UI follows existing component patterns"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Check pane/session state contracts are preserved"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check required typecheck and manual UI verification notes"}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Ensure hook/runtime env/session contracts are not broken"}
-{"file":".trellis/tasks/06-19-cross-platform-sub-agent-split-pane-support/prd.md","reason":"Acceptance criteria for cross-platform sub-agent split pane support"}

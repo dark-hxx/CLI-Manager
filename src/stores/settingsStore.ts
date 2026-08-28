@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
-import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
+import { isKnownTerminalThemePreset, resolveAutoTerminalThemeId } from "../lib/terminalThemes";
+import { FOLLOW_TERMINAL_PREVIEW_THEME } from "../lib/terminalPreviewTheme";
 import { backgroundImageExists } from "../lib/assetUrl";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey } from "../lib/shell";
 import { getCliManagerDataPaths } from "../lib/appPaths";
@@ -39,6 +40,13 @@ import {
   sanitizeTerminalPaneMarkerSettings,
   type TerminalPaneMarkerSettings,
 } from "../lib/terminalPaneMarker";
+import type { HistorySmartTitleSettings } from "../lib/types";
+
+export const HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES = 4096;
+
+export function getHistorySmartTitleCustomPromptByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
 
 export {
   DESKTOP_PET_SIZE_DEFAULT_PERCENT,
@@ -119,9 +127,9 @@ export type SystemResourceCardKey =
   | "processes";
 export type TerminalPanelWidthKey = "merged" | "stats" | "git" | "replay" | "files" | "systemResources" | "providers";
 export type TerminalPanelWidthSettings = Record<TerminalPanelWidthKey, number>;
-export type TerminalSettingsSectionKey = "behavior" | "paneMarker" | "shells" | "themes" | "background";
+export type TerminalSettingsSectionKey = "behavior" | "paneMarker" | "shells" | "themes" | "previewTheme" | "background";
 export type TerminalSettingsSectionsExpanded = Record<TerminalSettingsSectionKey, boolean>;
-export type HookSettingsSectionKey = "toast" | "notifications" | "claude" | "codex" | "pi" | "grok";
+export type HookSettingsSectionKey = "toast" | "notifications" | "claude" | "codex" | "kimi" | "pi" | "grok";
 export type HookSettingsSectionsExpanded = Record<HookSettingsSectionKey, boolean>;
 export const UI_FONT_SIZE_MIN = 11;
 export const UI_FONT_SIZE_MAX = 18;
@@ -147,6 +155,7 @@ export const TERMINAL_SETTINGS_SECTION_KEYS: readonly TerminalSettingsSectionKey
   "paneMarker",
   "shells",
   "themes",
+  "previewTheme",
   "background",
 ];
 export const TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT: TerminalSettingsSectionsExpanded = {
@@ -154,6 +163,7 @@ export const TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT: TerminalSettingsSectio
   paneMarker: false,
   shells: false,
   themes: false,
+  previewTheme: false,
   background: false,
 };
 export const HOOK_SETTINGS_SECTION_KEYS: readonly HookSettingsSectionKey[] = [
@@ -161,6 +171,7 @@ export const HOOK_SETTINGS_SECTION_KEYS: readonly HookSettingsSectionKey[] = [
   "notifications",
   "claude",
   "codex",
+  "kimi",
   "pi",
   "grok",
 ];
@@ -169,6 +180,7 @@ export const HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT: HookSettingsSectionsExpand
   notifications: false,
   claude: false,
   codex: false,
+  kimi: false,
   pi: false,
   grok: false,
 };
@@ -180,6 +192,7 @@ export type ShortcutAction =
   | "commandPalette"
   | "sessionHistory"
   | "copyAi"
+  | "copyTerminalSelection"
   | "toggleSidebar"
   | "toggleTerminalFullscreen";
 export type TabSwitchShortcutModifier = "Alt" | "Ctrl" | "Shift";
@@ -235,6 +248,7 @@ const SHORTCUT_ACTIONS: readonly ShortcutAction[] = [
   "commandPalette",
   "sessionHistory",
   "copyAi",
+  "copyTerminalSelection",
   "toggleSidebar",
   "toggleTerminalFullscreen",
 ];
@@ -292,6 +306,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   commandPalette: "Ctrl+P",
   sessionHistory: "Ctrl+K",
   copyAi: "Alt+P",
+  copyTerminalSelection: "Ctrl+Shift+C",
   toggleSidebar: "Ctrl+B",
   toggleTerminalFullscreen: "F11",
 };
@@ -358,11 +373,14 @@ export interface Settings {
   defaultShell: string;
   sidebarWidth: number;
   historySidebarWidth: number;
+  historySmartTitle: HistorySmartTitleSettings;
   collapsedGroupIds: string[];
   useExternalTerminal: boolean;
   debugMode: boolean;
   terminalThemeMode: TerminalThemeMode;
   terminalThemeName: string;
+  /** 终端右侧预览面板主题：`follow-terminal` 跟随终端，其余为终端主题库预设 id。 */
+  terminalPreviewThemeName: string;
   sidebarDensity: SidebarDensity;
   sidebarProjectFilterVisible: boolean;
   viewMode: ViewMode;
@@ -372,6 +390,8 @@ export interface Settings {
   backgroundIncludeFinishedTasks: boolean;
   keyboardShortcuts: KeyboardShortcutMap;
   terminalNewlineShortcut: TerminalNewlineShortcut;
+  osc52ClipboardEnabled: boolean;
+  osc52ClipboardQueryEnabled: boolean;
   unsplitBehavior: UnsplitBehavior;
   terminalToolbarVisibility: TerminalToolbarVisibilitySettings;
   sidebarToolbarVisibility: SidebarToolbarVisibilitySettings;
@@ -422,6 +442,7 @@ export interface Settings {
   hookSubagentSplitViewEnabled: boolean;
   claudeHookBridgeEnabled: boolean;
   codexHookBridgeEnabled: boolean;
+  kimiHookBridgeEnabled: boolean;
   piHookBridgeEnabled: boolean;
   grokHookBridgeEnabled: boolean;
   systemNotificationsEnabled: boolean;
@@ -443,6 +464,7 @@ export interface Settings {
   claudeHookAutoRepairKnownInstalled: boolean;
   claudeHookAutoRepairNoticeShown: boolean;
   codexHookConfigDir: string | null;
+  kimiHookConfigDir: string | null;
   piHookConfigDir: string | null;
   grokHookConfigDir: string | null;
   /** cc-switch 数据库路径；null 表示使用默认路径 ~/.cc-switch/cc-switch.db */
@@ -507,11 +529,20 @@ const DEFAULTS: Settings = {
   defaultShell: "powershell.exe",
   sidebarWidth: 248,
   historySidebarWidth: 276,
+  historySmartTitle: {
+    enabled: false,
+    providerAppType: null,
+    providerId: null,
+    modelId: null,
+    enabledAt: null,
+    customPrompt: "",
+  },
   collapsedGroupIds: [],
   useExternalTerminal: false,
   debugMode: false,
   terminalThemeMode: "independent",
   terminalThemeName: "forestNightDark",
+  terminalPreviewThemeName: FOLLOW_TERMINAL_PREVIEW_THEME,
   sidebarDensity: "comfortable",
   sidebarProjectFilterVisible: false,
   viewMode: "standard",
@@ -520,6 +551,8 @@ const DEFAULTS: Settings = {
   backgroundIncludeFinishedTasks: false,
   keyboardShortcuts: DEFAULT_KEYBOARD_SHORTCUTS,
   terminalNewlineShortcut: "Shift+Enter",
+  osc52ClipboardEnabled: true,
+  osc52ClipboardQueryEnabled: false,
   unsplitBehavior: "merge",
   terminalToolbarVisibility: {
     templates: true,
@@ -607,6 +640,7 @@ const DEFAULTS: Settings = {
   hookSubagentSplitViewEnabled: true,
   claudeHookBridgeEnabled: true,
   codexHookBridgeEnabled: true,
+  kimiHookBridgeEnabled: true,
   piHookBridgeEnabled: true,
   grokHookBridgeEnabled: true,
   systemNotificationsEnabled: true,
@@ -634,6 +668,7 @@ const DEFAULTS: Settings = {
   claudeHookAutoRepairKnownInstalled: false,
   claudeHookAutoRepairNoticeShown: false,
   codexHookConfigDir: null,
+  kimiHookConfigDir: null,
   piHookConfigDir: null,
   grokHookConfigDir: null,
   ccSwitchDbPath: null,
@@ -767,6 +802,51 @@ function migrateLastSettingsTab(value: unknown): LastSettingsTab {
   return typeof value === "string" && LAST_SETTINGS_TABS.includes(value as LastSettingsTab)
     ? (value as LastSettingsTab)
     : DEFAULTS.lastSettingsTab;
+}
+
+function migrateHistorySmartTitleCustomPrompt(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const prompt = value.trim();
+  if (
+    !prompt
+    || prompt.includes("\0")
+    || getHistorySmartTitleCustomPromptByteLength(prompt) > HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES
+  ) {
+    return "";
+  }
+  return prompt;
+}
+
+export function migrateHistorySmartTitleSettings(value: unknown): HistorySmartTitleSettings {
+  const defaults = DEFAULTS.historySmartTitle;
+  if (typeof value !== "object" || value === null) {
+    return { ...defaults };
+  }
+  const raw = value as Record<string, unknown>;
+  const providerAppType = raw.providerAppType === "claude"
+    || raw.providerAppType === "codex"
+    || raw.providerAppType === "grokbuild"
+    ? raw.providerAppType
+    : null;
+  const providerId = typeof raw.providerId === "string" && raw.providerId.trim()
+    ? raw.providerId.trim()
+    : null;
+  const modelId = typeof raw.modelId === "string" && raw.modelId.trim()
+    ? raw.modelId.trim()
+    : null;
+  const enabledAt = typeof raw.enabledAt === "number"
+    && Number.isFinite(raw.enabledAt)
+    && raw.enabledAt > 0
+    ? Math.floor(raw.enabledAt)
+    : null;
+  return {
+    enabled: raw.enabled === true,
+    providerAppType,
+    providerId,
+    modelId,
+    enabledAt,
+    customPrompt: migrateHistorySmartTitleCustomPrompt(raw.customPrompt),
+  };
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -1226,6 +1306,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.terminalThemeName = terminalThemeName;
     entries.terminalThemeMode = terminalThemeMode;
 
+    const storedTerminalPreviewThemeName = entries.terminalPreviewThemeName;
+    const terminalPreviewThemeName =
+      typeof storedTerminalPreviewThemeName === "string"
+      && (storedTerminalPreviewThemeName === FOLLOW_TERMINAL_PREVIEW_THEME
+        || isKnownTerminalThemePreset(storedTerminalPreviewThemeName))
+        ? storedTerminalPreviewThemeName
+        : DEFAULTS.terminalPreviewThemeName;
+    entries.terminalPreviewThemeName = terminalPreviewThemeName;
+    if (
+      storedTerminalPreviewThemeName !== undefined
+      && storedTerminalPreviewThemeName !== terminalPreviewThemeName
+    ) {
+      persistSetting("terminalPreviewThemeName", terminalPreviewThemeName);
+    }
+
     if (
       entries.uiTextColor !== undefined &&
       (typeof entries.uiTextColor !== "string" ||
@@ -1274,6 +1369,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         : DEFAULTS.uiFontFamily;
     entries.sidebarWidth = clampNumber(entries.sidebarWidth, 64, 500, DEFAULTS.sidebarWidth);
     entries.historySidebarWidth = clampNumber(entries.historySidebarWidth, 180, 520, DEFAULTS.historySidebarWidth);
+    entries.historySmartTitle = migrateHistorySmartTitleSettings(entries.historySmartTitle);
     entries.uiFontSize = clampNumber(
       entries.uiFontSize,
       UI_FONT_SIZE_MIN,
@@ -1480,6 +1576,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.codexHookBridgeEnabled === "boolean"
         ? entries.codexHookBridgeEnabled
         : DEFAULTS.codexHookBridgeEnabled;
+    entries.kimiHookBridgeEnabled =
+      typeof entries.kimiHookBridgeEnabled === "boolean"
+        ? entries.kimiHookBridgeEnabled
+        : DEFAULTS.kimiHookBridgeEnabled;
     entries.piHookBridgeEnabled =
       typeof entries.piHookBridgeEnabled === "boolean"
         ? entries.piHookBridgeEnabled
@@ -1546,6 +1646,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.codexHookConfigDir === "string" && entries.codexHookConfigDir.trim()
         ? entries.codexHookConfigDir
         : null;
+    entries.kimiHookConfigDir =
+      typeof entries.kimiHookConfigDir === "string" && entries.kimiHookConfigDir.trim()
+        ? entries.kimiHookConfigDir
+        : null;
     entries.piHookConfigDir =
       typeof entries.piHookConfigDir === "string" && entries.piHookConfigDir.trim()
         ? entries.piHookConfigDir
@@ -1609,6 +1713,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       entries.terminalNewlineShortcut === "Alt+Enter"
         ? entries.terminalNewlineShortcut
         : DEFAULTS.terminalNewlineShortcut;
+    entries.osc52ClipboardEnabled =
+      typeof entries.osc52ClipboardEnabled === "boolean"
+        ? entries.osc52ClipboardEnabled
+        : DEFAULTS.osc52ClipboardEnabled;
+    entries.osc52ClipboardQueryEnabled =
+      typeof entries.osc52ClipboardQueryEnabled === "boolean"
+        ? entries.osc52ClipboardQueryEnabled
+        : DEFAULTS.osc52ClipboardQueryEnabled;
     entries.projectScopedTerminalViewEnabled =
       typeof entries.projectScopedTerminalViewEnabled === "boolean"
         ? entries.projectScopedTerminalViewEnabled

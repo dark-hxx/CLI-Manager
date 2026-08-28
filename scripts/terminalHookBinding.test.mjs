@@ -42,6 +42,27 @@ test("OpenCode 启动命令映射到独立 Hook 来源", () => {
   assert.equal(inferHookBindingSource("OpenCode.exe"), "opencode");
 });
 
+test("Kimi Code 裸命令与 Windows shim 映射到独立 Hook 来源", () => {
+  assert.equal(inferHookBindingSource("kimi --continue"), "kimi");
+  assert.equal(inferHookBindingSource('"C:\\Program Files\\Kimi\\kimi.cmd" --model moonshot'), "kimi");
+  assert.equal(inferHookBindingSource("kimi.ps1"), "kimi");
+});
+
+test("同路径多个 Kimi 会话保持歧义拒绝", () => {
+  const result = resolveCliHookTarget({
+    rawTabId: "external:kimi:session",
+    primaryTabId: "external:kimi:session",
+    source: "kimi",
+    cwd: "D:/work/project",
+    receivedAt: 10_000,
+    candidates: [
+      candidate("kimi-a", { source: "kimi" }),
+      candidate("kimi-b", { source: "kimi" }),
+    ],
+  });
+  assert.deepEqual(result, { tabId: null, reason: "ambiguous" });
+});
+
 test("外部 Hook 仅有一个路径候选时自动恢复", () => {
   const result = resolveCliHookTarget({
     rawTabId: "external:grok:session",

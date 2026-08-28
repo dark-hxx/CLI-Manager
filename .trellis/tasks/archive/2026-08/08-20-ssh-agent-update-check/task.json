@@ -1,0 +1,28 @@
+{
+  "id": "ssh-agent-update-check",
+  "name": "ssh-agent-update-check",
+  "title": "SSH Agent 新版本自动检测",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "ssh-agent",
+  "package": null,
+  "priority": "P2",
+  "creator": "grok",
+  "assignee": "grok",
+  "createdAt": "2026-08-20",
+  "completedAt": "2026-08-20",
+  "branch": "agent/ssh-agent-update-check",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "pr_url": "https://github.com/dark-hxx/CLI-Manager/pull/223"
+  }
+}

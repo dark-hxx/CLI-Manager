@@ -1,7 +1,0 @@
-{"file":".trellis/tasks/06-26-codex-project-provider-switching/research/codex-config-provider-switching.md","reason":"Verify implementation obeys Codex profile/project-config constraints and secret handling."}
-{"file":".trellis/spec/backend/ccswitch-integration-contracts.md","reason":"Check behavior preserves existing Claude cc-switch switching and extends it safely for Codex."}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Check generated Codex profiles and launch changes do not break Codex hook behavior."}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Check PTY env injection remains compatible with terminal runtime monitoring and hook env injection."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Check state changes are persisted and refreshed according to store conventions."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check modal/sidebar UI follows component conventions and filters providers by adapter."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check TypeScript changes avoid loose types and unsafe assertions."}

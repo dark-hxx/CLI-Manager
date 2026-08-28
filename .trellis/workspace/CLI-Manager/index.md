@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 49
-- **Last Active**: 2026-08-13
+- **Total Sessions**: 52
+- **Last Active**: 2026-08-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1652 | Active |
+| `journal-1.md` | ~1715 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 52 | 2026-08-24 | 修复供应商目录残留选中态 | `320d4d6f` | `master` |
+| 51 | 2026-08-17 | 修复应用重启后本地路由未恢复 | `a3958343` | `master` |
+| 50 | 2026-08-17 | 修复自动故障转移当前供应商高亮 | `d9d04050` | `master` |
 | 49 | 2026-08-13 | 修复路由请求日志重复与布局 | `16b3e051` | `feat/native-provider-management` |
 | 48 | 2026-08-13 | 修复供应商故障转移排序持久化 | `d4df1777` | `feat/native-provider-management` |
 | 47 | 2026-08-12 | 修复路径复制菜单交互与图标 | `72538d0d` | `feat/native-provider-management` |

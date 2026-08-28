@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"verify xterm cursorBlink change follows existing terminal component guidance"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"verify no performance or buffering regression in terminal UI"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"verify change remains minimal and does not duplicate behavior"}

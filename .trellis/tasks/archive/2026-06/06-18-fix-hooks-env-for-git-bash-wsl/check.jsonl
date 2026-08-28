@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Verify hook env and runtime monitoring contracts remain separate and compatible."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check relevant static verification and manual runtime verification expectations."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check cross-layer data flow and boundary assumptions for the hook callback env."}

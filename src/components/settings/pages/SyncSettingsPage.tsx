@@ -134,6 +134,9 @@ export function SyncSettingsPage() {
             onChange={() => setSelectedDomains((current) => current.includes(domain) ? current.filter((item) => item !== domain) : [...current, domain])} />
         ))}
       </Group>
+      {selectedDomains.includes("workspace") && (
+        <Text size="xs" c="var(--on-surface-variant)">{t("settings.sync.backup.appearanceOverwriteNote")}</Text>
+      )}
     </Stack>
   );
   const previewSummary = (preview: BackupSnapshotV3) => t("settings.sync.backup.previewSummary", {

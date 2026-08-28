@@ -3082,6 +3082,7 @@ wire_api = "responses"
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn stage_path_stays_beside_local_and_wsl_targets() {
         let local =

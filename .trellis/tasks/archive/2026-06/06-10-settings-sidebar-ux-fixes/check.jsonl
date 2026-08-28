@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify the changes do not break settings contracts or component patterns"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify typecheck passes and manual verification notes are reported"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "Verify the new opener permission stays minimal and scoped to user-maintained paths"}

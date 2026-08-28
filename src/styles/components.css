@@ -1099,6 +1099,7 @@
 }
 
 .ui-tree-node {
+  position: relative;
   color: var(--text-secondary);
   transition:
     background-color var(--animate-duration-fast),
@@ -1107,6 +1108,34 @@
     border-color var(--animate-duration-fast),
     transform var(--animate-duration-fast),
     opacity var(--animate-duration-fast);
+}
+
+/* 节点外观色标（issue #213）。项目行的 CLI 品牌图标自带品牌色、吃不到 --node-accent，
+   所以颜色标记统一由左侧色条承担；图标着色只对单色图标生效（分组文件夹、终端回退图标）。
+   刻意不铺整行背景：data-status 已经用背景表达运行态。 */
+.ui-tree-node[data-accent="true"]::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background-color: var(--node-accent, var(--accent));
+  opacity: 0.5;
+  transition:
+    opacity var(--animate-duration-fast),
+    height var(--animate-duration-fast);
+}
+
+.ui-tree-node[data-accent="true"]:hover::before {
+  opacity: 0.8;
+}
+
+.ui-tree-node[data-accent="true"][data-selected="true"]::before {
+  height: 18px;
+  opacity: 1;
 }
 
 .ui-tree-node[data-selected="true"] {
@@ -1432,6 +1461,7 @@
 }
 
 .ui-tree-group {
+  position: relative;
   letter-spacing: 0.03em;
   border: 1px solid transparent;
 }
@@ -1487,7 +1517,20 @@
   flex-shrink: 0;
   border-radius: 999px;
   background-color: color-mix(in srgb, var(--surface-container-highest) 82%, transparent);
-  color: var(--accent);
+  color: var(--node-accent, var(--accent));
+}
+
+/* 单字符标记（emoji / CJK 单字）替代图标渲染：自带颜色，不吃 --node-accent。 */
+.ui-tree-icon-mark {
+  display: inline-block;
+  line-height: 1;
+  text-align: center;
+  font-size: 14px;
+}
+
+.ui-node-brand-icon {
+  object-fit: contain;
+  border-radius: 4px;
 }
 
 [data-theme="dark"] .ui-tree-leading-icon {
@@ -1546,7 +1589,10 @@
   opacity: 0.82;
 }
 
-.ui-tree-meta-chip[data-cli-tool="claude"] {
+/* data-cli-tool 取 resolveCliToolIconKey 归一化后的图标 key（cli_tool 本身是自由文本命令，不能直接匹配）。
+   同时保留短别名选择器，便于其他调用方传入工具 id。 */
+.ui-tree-meta-chip[data-cli-tool="claude"],
+.ui-tree-meta-chip[data-cli-tool="claude-code"] {
   --cli-chip-color: #f97316;
 }
 
@@ -1554,8 +1600,275 @@
   --cli-chip-color: #22c55e;
 }
 
-.ui-tree-meta-chip[data-cli-tool="gemini"] {
+.ui-tree-meta-chip[data-cli-tool="gemini"],
+.ui-tree-meta-chip[data-cli-tool="gemini-cli"] {
   --cli-chip-color: #8b5cf6;
+}
+
+/* 分组行的项目数徽章：与项目行"终端数"徽章共用外框，但去掉工具色圆点，避免两种计数被看成同一含义 */
+.ui-tree-meta-chip.ui-tree-count-chip::before {
+  display: none;
+}
+
+/* 折叠侧边栏窄条：图标跟随节点外观色（单色图标生效；CLI 品牌图标与 emoji 自带颜色） */
+.ui-tree-collapsed-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--node-accent, var(--primary));
+}
+
+/* 外观编辑面板（issue #213）：右键菜单内联展开与新建分组行 Popover 共用 */
+.ui-appearance-trigger {
+  cursor: pointer;
+  border: 1px dashed color-mix(in srgb, var(--border) 52%, transparent);
+  transition:
+    border-color var(--animate-duration-fast),
+    background-color var(--animate-duration-fast);
+}
+
+.ui-appearance-trigger:hover {
+  border-color: color-mix(in srgb, var(--primary) 62%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.ui-appearance-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.ui-appearance-picker-popover {
+  z-index: 70;
+  width: 390px;
+  max-width: calc(100vw - 16px);
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  background-color: var(--surface-container-lowest);
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--on-surface) 24%, transparent);
+}
+
+.ui-appearance-picker {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: min(520px, calc(100vh - 24px));
+  max-height: calc(100vh - 24px);
+  min-height: 0;
+}
+
+.ui-appearance-picker-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ui-appearance-picker-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ui-appearance-picker-tab {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.ui-appearance-picker-tab:hover,
+.ui-appearance-picker-tab[aria-selected="true"] {
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.ui-appearance-picker-tab[aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+
+.ui-appearance-picker-search-wrap {
+  flex: none;
+  padding: 8px 12px 4px;
+}
+
+.ui-appearance-picker-search {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 56%, transparent);
+  border-radius: 8px;
+  background-color: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 13px;
+  outline: none;
+}
+
+.ui-appearance-picker-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 8px 10px 12px;
+}
+
+.ui-appearance-picker-title {
+  flex: none;
+  margin: 0 0 6px;
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ui-appearance-picker-scroll {
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--on-surface) 42%, transparent) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.ui-appearance-picker-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.ui-appearance-picker-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ui-appearance-picker-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--on-surface) 42%, transparent);
+}
+
+.ui-appearance-picker-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--on-surface) 58%, transparent);
+}
+
+.ui-appearance-picker-grid,
+.ui-appearance-picker-brand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
+  gap: 4px;
+  padding: 2px 2px 8px 0;
+}
+
+.ui-appearance-emoji-button,
+.ui-appearance-picker-brand-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ui-appearance-emoji-button {
+  font-size: 21px;
+  line-height: 1;
+}
+
+.ui-appearance-picker-brand-button img {
+  width: 21px;
+  height: 21px;
+}
+
+.ui-appearance-emoji-button:hover,
+.ui-appearance-emoji-button:focus-visible,
+.ui-appearance-picker-brand-button:hover,
+.ui-appearance-picker-brand-button:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+  outline: none;
+}
+
+.ui-appearance-picker-empty {
+  margin: 12px 0;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  text-align: center;
+}
+
+.ui-appearance-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, 18px);
+  gap: 5px;
+}
+
+.ui-appearance-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 46%, transparent);
+  cursor: pointer;
+  transition:
+    transform var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast);
+}
+
+/* 「默认颜色」= 不写 color 列，节点跟随统一的系统色；用虚线边框与显式配色区分 */
+.ui-appearance-default {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--on-surface) 46%, transparent);
+}
+
+.ui-appearance-swatch:hover {
+  transform: scale(1.12);
+}
+
+.ui-appearance-swatch[data-selected="true"] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 62%, transparent);
+}
+
+.ui-appearance-mark-input {
+  width: 36px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
+  background-color: var(--surface-container-lowest);
+  color: var(--on-surface);
+  text-align: center;
+  font-size: 12px;
+  outline: none;
+}
+
+.ui-appearance-mark-input[data-brand="true"] {
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px 18px;
+  color: transparent;
+  caret-color: transparent;
+}
+
+.ui-appearance-mark-input[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--danger) 62%, transparent);
+}
+
+.ui-appearance-hint {
+  margin: 0;
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 /* 项目级供应商覆盖徽标（cc-switch）— 独立样式，不复用 cli_tool chip 配色 */
@@ -1673,6 +1986,14 @@
 .ui-collapsed-flyout-item {
   cursor: pointer;
   transition: background-color var(--animate-duration-fast);
+}
+
+.ui-collapsed-flyout {
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 94%, var(--surface) 6%);
+  border-color: color-mix(in srgb, var(--border) 34%, transparent);
+  box-shadow:
+    0 16px 36px color-mix(in srgb, var(--on-surface) 24%, transparent),
+    0 2px 8px color-mix(in srgb, var(--on-surface) 10%, transparent);
 }
 
 .ui-collapsed-flyout-item:hover {
@@ -1890,6 +2211,10 @@
   position: fixed;
   z-index: 60;
   min-width: 148px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border-radius: 10px;
   background-color: color-mix(in srgb, var(--surface) 96%, var(--on-surface) 4%);
@@ -2041,6 +2366,15 @@
 
 .context-menu.terminal-skin [role="separator"] {
   background-color: color-mix(in srgb, var(--menu-fg) 18%, transparent);
+}
+
+/* File-tab menus render in a body portal, so bind the shared terminal skin to
+   the root theme variables instead of inheriting a file-editor ancestor. */
+.context-menu.terminal-skin.ui-file-editor-tab-menu {
+  --menu-fg: var(--terminal-theme-foreground, #d8dee9);
+  --menu-bg: var(--terminal-theme-background, #0c0e10);
+  --menu-border: color-mix(in srgb, var(--terminal-theme-foreground, #d8dee9) 18%, transparent);
+  --menu-hover: color-mix(in srgb, var(--terminal-theme-foreground, #d8dee9) 12%, transparent);
 }
 
 .ui-split-project-picker {
@@ -2324,6 +2658,102 @@
 .ui-btn-destructive:hover {
   filter: brightness(1.04);
   color: #fff;
+}
+
+/* Provider Settings keeps Mantine's control behavior but uses the shared app button language. */
+.native-provider-control {
+  border: 0 !important;
+  border-radius: 10px !important;
+  font-weight: 400 !important;
+  box-shadow: none;
+  transition:
+    background-color var(--animate-duration-fast),
+    color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    opacity var(--animate-duration-fast) !important;
+}
+
+.native-provider-control:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--interactive-focus-ring) !important;
+}
+
+.native-provider-control--primary {
+  background: linear-gradient(135deg, var(--primary-gradient-start), var(--primary-gradient-end)) !important;
+  color: #fff !important;
+}
+
+.native-provider-control--primary:hover:not([data-disabled]):not(:disabled) {
+  filter: brightness(1.04);
+  color: #fff !important;
+}
+
+.native-provider-control--secondary {
+  background: var(--surface-container-high) !important;
+  color: var(--on-surface-variant) !important;
+}
+
+.native-provider-control--secondary:hover:not([data-disabled]):not(:disabled),
+.native-provider-control--ghost:hover:not([data-disabled]):not(:disabled),
+.native-provider-control--outline:hover:not([data-disabled]):not(:disabled) {
+  background: var(--interactive-hover-bg) !important;
+  color: var(--text-primary) !important;
+}
+
+.native-provider-control--soft-primary {
+  background: color-mix(in srgb, var(--primary) 13%, var(--surface-container-high) 87%) !important;
+  color: var(--primary) !important;
+}
+
+.native-provider-control--soft-primary:hover:not([data-disabled]):not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 20%, var(--surface-container-high) 80%) !important;
+}
+
+.native-provider-control--ghost {
+  background: transparent !important;
+  color: var(--on-surface-variant) !important;
+}
+
+.native-provider-control--outline {
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent) !important;
+  background: transparent !important;
+  color: var(--on-surface-variant) !important;
+}
+
+.native-provider-control--danger {
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+
+.native-provider-control--danger:hover:not([data-disabled]):not(:disabled),
+.native-provider-control--success:hover:not([data-disabled]):not(:disabled) {
+  filter: brightness(1.04);
+  color: #fff !important;
+}
+
+.native-provider-control--soft-danger {
+  background: color-mix(in srgb, var(--danger) 13%, var(--surface-container-high) 87%) !important;
+  color: var(--danger) !important;
+}
+
+.native-provider-control--ghost-danger {
+  background: transparent !important;
+  color: var(--danger) !important;
+}
+
+.native-provider-control--success {
+  background: var(--success) !important;
+  color: #fff !important;
+}
+
+.native-provider-control--soft-success {
+  background: color-mix(in srgb, var(--success) 13%, var(--surface-container-high) 87%) !important;
+  color: var(--success) !important;
+}
+
+.native-provider-control--ghost-success {
+  background: transparent !important;
+  color: var(--success) !important;
 }
 
 .ui-segmented {
@@ -3628,7 +4058,7 @@
 }
 
 .terminal-markdown-preview .subagent-transcript-markdown.ui-markdown-terminal {
-  font-size: calc(0.75rem * var(--markdown-preview-font-scale, 1));
+  font-size: var(--markdown-preview-font-size, var(--font-size-ui));
 }
 
 /* Let the terminal's single background-image layer show through the split
@@ -5726,6 +6156,10 @@
   background-color: color-mix(in srgb, var(--surface-container-low) 54%, var(--surface) 46%);
 }
 
+.ui-history-conversation-message .ui-history-message-stack {
+  gap: 0.45rem;
+}
+
 .ui-history-message-card {
   display: flex;
   align-items: flex-start;
@@ -7692,6 +8126,18 @@
   box-shadow: inset 2px 0 0 var(--term-panel-cyan, #5AC8E0);
 }
 
+/* Issue #227：忽略项不再抽离到「已折叠文件」分组，改为原位显示 + 整行淡化
+   （JetBrains 风：文件名、图标、Git 状态徽标一起变淡）。
+   hover / 选中时提亮，否则透明度会吃掉选中反馈。 */
+.ui-file-tree-row[data-ignored="true"] {
+  opacity: 0.45;
+}
+
+.ui-file-tree-row[data-ignored="true"]:hover,
+.ui-file-tree-row[data-ignored="true"][data-selected="true"] {
+  opacity: 0.75;
+}
+
 .ui-file-drag-preview {
   position: fixed;
   top: 0;
@@ -7838,6 +8284,7 @@
 }
 
 .ui-file-editor-markdown-preview .ui-markdown-terminal {
+  font-size: var(--markdown-preview-font-size, var(--font-size-ui));
   --md-text: var(--terminal-theme-foreground, #f8fafc);
   --md-muted: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 78%, var(--terminal-theme-muted, #64748b) 22%);
   --md-subtle: var(--file-editor-muted);

@@ -60,6 +60,7 @@ export const CLI_TOOL_DESCRIPTORS: readonly CliToolDescriptor[] = [
     label: "Kimi",
     icon: "kimi",
     vendor: "kimi",
+    historySourceId: "kimi",
   },
   {
     id: "grok",
@@ -147,6 +148,7 @@ const HISTORY_SOURCE_ICON_KEYS: Partial<Record<HistorySourceId, CliToolIconKey>>
   copilot: "copilot",
   antigravity: "antigravity",
   grok: "grok",
+  kimi: "kimi",
   pi: "pi",
   opencode: "opencode",
   kiro: "kiro",
@@ -188,6 +190,7 @@ export function resolveCliToolIconKey(cliTool: string | null | undefined): CliTo
     (normalized.includes("kiro") ? "kiro" : null) ??
     (normalized.includes("antigravity") ? "antigravity" : null) ??
     (normalized.includes("grok") ? "grok" : null) ??
+    (normalized.includes("kimi") ? "kimi" : null) ??
     (normalized.includes("qwen") ? "qwen" : null)
   );
 }
@@ -204,5 +207,6 @@ export function resolveCliToolHistorySourceId(cliTool: string | null | undefined
   if (normalized.includes("claude")) return "claude";
   if (normalized.includes("codex")) return "codex";
   if (normalized.includes("grok")) return "grok";
+  if (normalized.includes("kimi")) return "kimi";
   return null;
 }

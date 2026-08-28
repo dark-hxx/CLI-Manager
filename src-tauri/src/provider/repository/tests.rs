@@ -9,7 +9,7 @@ use super::support::{
 use crate::provider::database;
 use serde_json::Map;
 use serde_json::Value;
-use sqlx::Connection;
+use sqlx::{Connection, SqliteConnection};
 use tempfile::tempdir;
 
 #[test]
@@ -164,6 +164,61 @@ fn config_summary_reads_nested_toml_document_fields() {
     );
     assert_eq!(summary.0.as_deref(), Some("https://api.example.test"));
     assert_eq!(summary.1.as_deref(), Some("gpt-test"));
+}
+
+#[tokio::test]
+async fn lifecycle_reference_count_uses_project_and_active_worktree_overrides() {
+    let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    sqlx::query("CREATE TABLE projects (provider_overrides TEXT NOT NULL)")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE worktrees (provider_overrides TEXT NOT NULL, status TEXT NOT NULL)")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+    let claude_reference = r#"{"claude":{"schemaVersion":2,"source":"cli-manager","appType":"claude","providerId":"provider-a"}}"#;
+    let codex_reference = r#"{"codex":{"schemaVersion":2,"source":"cli-manager","appType":"codex","providerId":"provider-a"}}"#;
+    let legacy_claude_reference =
+        r#"{"claude":{"providerId":"ccs-provider-a","settingsPath":"old"}}"#;
+    let malformed_claude_reference = "not-json";
+    sqlx::query("INSERT INTO projects (provider_overrides) VALUES (?1), (?2), (?3), (?4)")
+        .bind(claude_reference)
+        .bind(codex_reference)
+        .bind(legacy_claude_reference)
+        .bind(malformed_claude_reference)
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO worktrees (provider_overrides, status) VALUES (?1, 'active'), (?1, 'missing')",
+    )
+    .bind(claude_reference)
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        super::catalog::provider_reference_count_in_app_database(
+            &mut connection,
+            "claude",
+            "provider-a",
+        )
+        .await
+        .unwrap(),
+        2,
+    );
+    assert_eq!(
+        super::catalog::provider_reference_count_in_app_database(
+            &mut connection,
+            "claude",
+            "provider-b",
+        )
+        .await
+        .unwrap(),
+        0,
+    );
 }
 
 #[tokio::test]

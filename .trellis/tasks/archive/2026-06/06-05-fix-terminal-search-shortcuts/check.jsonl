@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Validate terminal search shortcut fix against frontend quality expectations."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Ensure no unnecessary abstraction or broad shortcut rewrite was introduced."}

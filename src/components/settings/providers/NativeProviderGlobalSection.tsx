@@ -1,6 +1,5 @@
 import {
   Badge,
-  Button,
   Card,
   Group,
   Stack,
@@ -9,6 +8,7 @@ import {
 import { Check, Eye } from "lucide-react";
 import { useAppConfirm } from "@/components/ui/useAppConfirm";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type { UseNativeProviderHomeResult } from "./useNativeProviderHome";
 import type { NativeProviderGlobalCurrent } from "./nativeProviderTypes";
 import { providerGlobalTargetRoot } from "./nativeProviderGlobalView";
@@ -30,7 +30,7 @@ export function NativeProviderGlobalSection({
   onGlobalApplied,
 }: NativeProviderGlobalSectionProps) {
   const { t } = useI18n();
-  const { confirm, confirmDialog } = useAppConfirm();
+  const { confirm, confirmDialog } = useAppConfirm({ zIndex: 220 });
   const busy = Boolean(state.action) || state.loading;
   const homeDraftDirty = state.homeDraftDirty;
 

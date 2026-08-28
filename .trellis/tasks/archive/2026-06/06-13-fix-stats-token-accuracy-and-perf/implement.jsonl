@@ -1,3 +1,0 @@
-{"file": ".trellis/tasks/06-13-fix-stats-token-accuracy-and-perf/prd.md", "reason": "本任务需求与已验证问题清单"}
-{"file": ".trellis/tasks/06-13-fix-stats-token-accuracy-and-perf/research/check_dup.py", "reason": "Claude 重复 usage 验证脚本与基准数据（去重前后 token 对比）"}
-{"file": ".trellis/spec/backend/history-stats-contracts.md", "reason": "历史统计既有契约，改动需保持响应结构兼容"}

@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec entry point for this UI styling change."}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Existing component and styling conventions for frontend UI changes."}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verification expectations for frontend visual changes."}

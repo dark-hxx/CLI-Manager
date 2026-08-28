@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type {
   AgentCapabilitySnapshot,
   AgentRuntimeKind,
+  McpActivation,
   McpCapabilityItem,
   McpHealth,
   SkillCapabilityItem,
@@ -44,6 +45,11 @@ const MCP_LABEL_KEYS: Record<McpHealth, TranslationKey> = {
   error: "termStats.agentCapabilities.health.error",
   checking: "termStats.agentCapabilities.health.checking",
   unknown: "termStats.agentCapabilities.health.unknown",
+};
+
+const MCP_ACTIVATION_LABEL_KEYS: Record<McpActivation, TranslationKey> = {
+  active: "termStats.agentCapabilities.activation.active",
+  disabled: "termStats.agentCapabilities.activation.disabled",
 };
 
 const SKILL_LABEL_KEYS: Record<SkillState, TranslationKey> = {
@@ -109,9 +115,16 @@ function McpRow({ item }: { item: McpCapabilityItem }) {
           <Text size="sm" fw={600} truncate>{item.name}</Text>
           <Text size="xs" c="dimmed" truncate title={meta}>{meta}</Text>
         </div>
-        <Badge className="shrink-0" color={disabled ? "gray" : item.health === "error" ? "red" : item.health === "healthy" ? "green" : "gray"} variant="light">
-          {disabled ? t("termStats.agentCapabilities.activation.disabled") : t(MCP_LABEL_KEYS[item.health])}
-        </Badge>
+        <Group gap={4} wrap="nowrap" className="shrink-0">
+          <Badge color={disabled ? "gray" : "cyan"} variant="light">
+            {t(MCP_ACTIVATION_LABEL_KEYS[item.activation])}
+          </Badge>
+          {!disabled && (
+            <Badge color={item.health === "error" ? "red" : item.health === "healthy" ? "green" : "gray"} variant="light">
+              {t(MCP_LABEL_KEYS[item.health])}
+            </Badge>
+          )}
+        </Group>
       </Group>
       {item.lastEvidence && (
         <Text size="xs" c="dimmed" mt={6}>

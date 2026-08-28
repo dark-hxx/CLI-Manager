@@ -1,21 +1,25 @@
 use crate::app_paths;
 use crate::{
     MIGRATION_ADD_CLI_ARGS_DESCRIPTION, MIGRATION_ADD_CLI_ARGS_SQL, MIGRATION_ADD_CLI_ARGS_VERSION,
-    MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION, MIGRATION_ADD_WORKTREE_ISOLATION_SQL,
-    MIGRATION_ADD_WORKTREE_ISOLATION_VERSION,
+    MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION, MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL,
+    MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION, MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION,
+    MIGRATION_ADD_WORKTREE_ISOLATION_SQL, MIGRATION_ADD_WORKTREE_ISOLATION_VERSION,
+    MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+    MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_SQL,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION, MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
     MIGRATION_CREATE_SSH_HOSTS_SQL, MIGRATION_CREATE_SSH_HOSTS_VERSION,
     MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
-    MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
+    MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION, NODE_APPEARANCE_MIGRATION_DESCRIPTION,
+    NODE_APPEARANCE_MIGRATION_SQL, NODE_APPEARANCE_MIGRATION_VERSION,
 };
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{Connection, Row, SqliteConnection};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -32,6 +36,11 @@ const LEGACY_MODEL_PRICES_MIGRATION_MARKER_FILE: &str = "legacy-model-prices-mig
 const DB_FILE_NAME: &str = "cli-manager.db";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const USER_DATA_TABLES: [&str; 3] = ["projects", "groups", "command_templates"];
+const REQUEST_LOG_PROJECT_PATH_BACKFILL_DESCRIPTION: &str = "backfill_request_log_project_path";
+const REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE: i64 = 2_000;
+const REQUEST_LOG_PROJECT_PATH_BACKFILL_YIELD_MS: u64 = 10;
+static REQUEST_LOG_PROJECT_PATH_BACKFILL_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
 
 const FAVORITE_SNAPSHOT_COLUMNS: [&str; 11] = [
     "session_key",
@@ -127,6 +136,13 @@ pub struct DbMigrationRepairResult {
     status: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbProjectPathBackfillResult {
+    updated_rows: u64,
+    mapped_project_keys: usize,
+}
+
 #[tauri::command]
 pub async fn db_repair_known_migration_drift(
     app: AppHandle,
@@ -159,6 +175,22 @@ pub async fn db_repair_known_migration_drift(
 
     let mut conn = open_cli_manager_db(&db_path).await?;
     let mut result = repair_known_migration_drift(&mut conn).await?;
+    if reconcile_legacy_node_appearance_v33_migration(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(
+            &result.status,
+            "reconciled_legacy_node_appearance_v33_migration",
+        );
+    }
+    if ensure_node_appearance_columns(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_node_appearance_columns");
+    }
+    if defer_request_log_project_path_backfill(&mut conn).await? {
+        result.repaired = true;
+        result.status =
+            append_repair_status(&result.status, "deferred_request_log_project_path_backfill");
+    }
     conn.close()
         .await
         .map_err(|err| format!("db_close_failed: {err}"))?;
@@ -214,6 +246,489 @@ pub async fn db_repair_known_migration_drift(
         }
     }
     Ok(result)
+}
+
+fn append_repair_status(current: &str, next: &str) -> String {
+    if current == "already_consistent" {
+        next.to_string()
+    } else {
+        format!("{current};{next}")
+    }
+}
+
+/// 将本地旧版外观迁移 v33 迁移为远端的用量诊断 v33。
+///
+/// 两条分支曾独立占用 v33。仅把外观迁移改为 v34 会让已登记旧外观 v33 的数据库在 SQLx
+/// 校验 checksum 时启动失败。确认登记项确实是旧外观 SQL 后，先运行用量 schema bootstrap，
+/// 再把 v33 的登记项切换为用量诊断 SQL；随后由 v34 外观列修复登记当前外观迁移。
+async fn reconcile_legacy_node_appearance_v33_migration(
+    conn: &mut SqliteConnection,
+) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? {
+        return Ok(false);
+    }
+
+    let legacy_marker = sqlx::query(
+        "SELECT description, checksum
+         FROM _sqlx_migrations
+         WHERE version = ?1 AND success = 1
+         LIMIT 1",
+    )
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|err| format!("legacy_node_appearance_v33_query_failed: {err}"))?;
+    let Some(legacy_marker) = legacy_marker else {
+        return Ok(false);
+    };
+    let description: String = legacy_marker
+        .try_get("description")
+        .map_err(|err| format!("legacy_node_appearance_v33_description_failed: {err}"))?;
+    let checksum: Vec<u8> = legacy_marker
+        .try_get("checksum")
+        .map_err(|err| format!("legacy_node_appearance_v33_checksum_failed: {err}"))?;
+    if description != NODE_APPEARANCE_MIGRATION_DESCRIPTION
+        || checksum != migration_checksum(NODE_APPEARANCE_MIGRATION_SQL)
+    {
+        return Ok(false);
+    }
+
+    crate::usage_schema::ensure_usage_schema(conn)
+        .await
+        .map_err(|err| format!("legacy_node_appearance_v33_usage_schema_failed: {err}"))?;
+    sqlx::query(
+        "UPDATE _sqlx_migrations
+         SET description = ?1, checksum = ?2
+         WHERE version = ?3 AND success = 1",
+    )
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION)
+    .bind(migration_checksum(MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL))
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| format!("legacy_node_appearance_v33_update_failed: {err}"))?;
+    Ok(true)
+}
+
+/// 外观列缺失自愈（issue #213）。
+///
+/// migration 34 只做四条 `ADD COLUMN`。如果历史库出现"版本已登记但列不存在"或"列存在但版本未登记"
+/// 的漂移，前者会让外观读写一直报 `no such column: color`，后者会让 sqlx 重放 ALTER 撞
+/// `duplicate column name`。这里在每次打开数据库前主动把两种漂移都补齐：
+/// 缺列就补列，版本未登记时按同一 checksum 登记，让 sqlx 跳过重放。
+async fn ensure_node_appearance_columns(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
+        || !table_exists(conn, "groups").await?
+        || !table_exists(conn, "projects").await?
+    {
+        return Ok(false);
+    }
+
+    let group_columns = table_columns(conn, "groups").await?;
+    let project_columns = table_columns(conn, "projects").await?;
+    let mut missing: Vec<&str> = Vec::new();
+    if !group_columns.contains("icon") {
+        missing.push("ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    }
+    if !group_columns.contains("color") {
+        missing.push("ALTER TABLE groups ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+    }
+    if !project_columns.contains("icon") {
+        missing.push("ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    }
+    if !project_columns.contains("color") {
+        missing.push("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+    }
+
+    let already_registered: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("node_appearance_migration_query_failed: {err}"))?;
+
+    // 列齐全且版本已登记：正常状态，什么都不做。
+    if missing.is_empty() && already_registered != 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("node_appearance_repair_begin_failed: {err}"))?;
+    let result = async {
+        for statement in &missing {
+            sqlx::query(statement)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("node_appearance_repair_alter_failed: {err}"))?;
+        }
+        if already_registered == 0 {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+            .bind(NODE_APPEARANCE_MIGRATION_DESCRIPTION)
+            .bind(migration_checksum(NODE_APPEARANCE_MIGRATION_SQL))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("node_appearance_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("node_appearance_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
+async fn defer_request_log_project_path_backfill(
+    conn: &mut SqliteConnection,
+) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
+        || !table_exists(conn, "usage_records").await?
+        || !table_columns(conn, "usage_records")
+            .await?
+            .contains("project_path")
+    {
+        return Ok(false);
+    }
+
+    let already_applied: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_migration_query_failed: {err}"))?;
+    if already_applied != 0 {
+        return Ok(false);
+    }
+
+    let has_legacy_rows: i64 =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM usage_records LIMIT 1)")
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|err| format!("request_log_backfill_legacy_query_failed: {err}"))?;
+    if has_legacy_rows == 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_defer_begin_failed: {err}"))?;
+    let result = sqlx::query(
+        "INSERT INTO _sqlx_migrations
+             (version, description, installed_on, success, checksum, execution_time)
+         VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+    )
+    .bind(MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION)
+    .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_DESCRIPTION)
+    .bind(migration_checksum(
+        MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+    ))
+    .execute(&mut *conn)
+    .await;
+
+    match result {
+        Ok(_) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("request_log_backfill_defer_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(format!("request_log_backfill_defer_insert_failed: {err}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn db_backfill_request_log_project_paths() -> Result<DbProjectPathBackfillResult, String>
+{
+    let _guard = REQUEST_LOG_PROJECT_PATH_BACKFILL_LOCK.lock().await;
+    let db_path = app_paths::db_path()?;
+    if !db_path.is_file() {
+        return Ok(DbProjectPathBackfillResult {
+            updated_rows: 0,
+            mapped_project_keys: 0,
+        });
+    }
+
+    let mut conn = open_cli_manager_db(&db_path).await?;
+    let result = backfill_request_log_project_paths(&mut conn).await;
+    conn.close()
+        .await
+        .map_err(|err| format!("db_close_failed: {err}"))?;
+    result
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackfillProject {
+    name: String,
+    path: String,
+}
+
+fn normalize_backfill_path(value: &str) -> String {
+    value
+        .trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
+fn is_absolute_backfill_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    value.starts_with('/') || (bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/')
+}
+
+fn resolve_backfill_project_path(key: &str, projects: &[BackfillProject]) -> Option<String> {
+    let normalized_key = normalize_backfill_path(key);
+    if normalized_key.is_empty() {
+        return None;
+    }
+    if is_absolute_backfill_path(&normalized_key) {
+        return Some(normalized_key);
+    }
+
+    let project_name = key.trim().to_lowercase();
+    let suffix = format!("/{normalized_key}");
+    let candidates = projects
+        .iter()
+        .filter(|project| {
+            project.name == project_name
+                || project.path == normalized_key
+                || project.path.ends_with(&suffix)
+        })
+        .map(|project| project.path.clone())
+        .collect::<BTreeSet<_>>();
+    (candidates.len() == 1).then(|| candidates.into_iter().next().unwrap())
+}
+
+async fn backfill_request_log_project_paths(
+    conn: &mut SqliteConnection,
+) -> Result<DbProjectPathBackfillResult, String> {
+    if !table_exists(conn, "usage_records").await?
+        || !table_exists(conn, "projects").await?
+        || !table_columns(conn, "usage_records")
+            .await?
+            .contains("project_path")
+    {
+        return Ok(DbProjectPathBackfillResult {
+            updated_rows: 0,
+            mapped_project_keys: 0,
+        });
+    }
+
+    let project_rows = sqlx::query(
+        "SELECT name, path
+         FROM projects
+         WHERE COALESCE(environment_type, 'local') <> 'ssh'
+           AND NULLIF(TRIM(path), '') IS NOT NULL",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_projects_failed: {err}"))?;
+    let projects = project_rows
+        .into_iter()
+        .filter_map(|row| {
+            let name = row.try_get::<String, _>("name").ok()?.trim().to_lowercase();
+            let path = normalize_backfill_path(&row.try_get::<String, _>("path").ok()?);
+            (!path.is_empty()).then_some(BackfillProject { name, path })
+        })
+        .collect::<Vec<_>>();
+
+    let key_rows = sqlx::query(
+        "SELECT DISTINCT project_key
+         FROM usage_records
+         WHERE NULLIF(TRIM(project_path), '') IS NULL
+           AND NULLIF(TRIM(project_key), '') IS NOT NULL",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_keys_failed: {err}"))?;
+
+    let mappings = key_rows
+        .into_iter()
+        .filter_map(|row| row.try_get::<String, _>("project_key").ok())
+        .filter_map(|key| resolve_backfill_project_path(&key, &projects).map(|path| (key, path)))
+        .collect::<Vec<_>>();
+
+    sqlx::query(
+        "CREATE TEMP TABLE IF NOT EXISTS request_log_project_path_backfill_queue (
+             record_rowid INTEGER PRIMARY KEY,
+             project_path TEXT NOT NULL
+         ) WITHOUT ROWID",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_queue_create_failed: {err}"))?;
+    sqlx::query("DELETE FROM request_log_project_path_backfill_queue")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_queue_reset_failed: {err}"))?;
+    for (project_key, project_path) in &mappings {
+        sqlx::query(
+            "INSERT OR IGNORE INTO request_log_project_path_backfill_queue
+                 (record_rowid, project_path)
+             SELECT rowid, ?1
+             FROM usage_records
+             WHERE project_key = ?2
+               AND NULLIF(TRIM(project_path), '') IS NULL",
+        )
+        .bind(project_path)
+        .bind(project_key)
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_queue_fill_failed: {err}"))?;
+    }
+
+    let mut updated_rows = 0_u64;
+    loop {
+        let rowids = sqlx::query_scalar::<_, i64>(
+            "SELECT record_rowid
+             FROM request_log_project_path_backfill_queue
+             ORDER BY record_rowid
+             LIMIT ?1",
+        )
+        .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_batch_query_failed: {err}"))?;
+        let Some(last_rowid) = rowids.last().copied() else {
+            break;
+        };
+        let affected = sqlx::query(
+            "UPDATE usage_records AS target
+             SET project_path = (
+                 SELECT queued.project_path
+                 FROM request_log_project_path_backfill_queue AS queued
+                 WHERE queued.record_rowid = target.rowid
+             )
+             WHERE target.rowid IN (
+                 SELECT record_rowid
+                 FROM request_log_project_path_backfill_queue
+                 ORDER BY record_rowid
+                 LIMIT ?1
+             )
+               AND NULLIF(TRIM(target.project_path), '') IS NULL",
+        )
+        .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE)
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_batch_update_failed: {err}"))?
+        .rows_affected();
+        updated_rows += affected;
+        sqlx::query("DELETE FROM request_log_project_path_backfill_queue WHERE record_rowid <= ?1")
+            .bind(last_rowid)
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("request_log_backfill_queue_advance_failed: {err}"))?;
+        tokio::time::sleep(Duration::from_millis(
+            REQUEST_LOG_PROJECT_PATH_BACKFILL_YIELD_MS,
+        ))
+        .await;
+    }
+    sqlx::query("DROP TABLE request_log_project_path_backfill_queue")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_queue_drop_failed: {err}"))?;
+
+    updated_rows += backfill_route_project_paths(conn).await?;
+    log::info!(
+        "Request-log project-path background backfill completed: updated_rows={updated_rows}, mapped_project_keys={}",
+        mappings.len()
+    );
+    Ok(DbProjectPathBackfillResult {
+        updated_rows,
+        mapped_project_keys: mappings.len(),
+    })
+}
+
+async fn backfill_route_project_paths(conn: &mut SqliteConnection) -> Result<u64, String> {
+    let mut after_rowid = 0_i64;
+    let mut updated_rows = 0_u64;
+    loop {
+        let rowids = sqlx::query_scalar::<_, i64>(
+            "SELECT rowid
+             FROM usage_records
+             WHERE rowid > ?1
+               AND data_source = 'route'
+               AND NULLIF(TRIM(project_path), '') IS NULL
+               AND NULLIF(TRIM(session_id), '') IS NOT NULL
+             ORDER BY rowid
+             LIMIT ?2",
+        )
+        .bind(after_rowid)
+        .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_route_backfill_query_failed: {err}"))?;
+        let Some(last_rowid) = rowids.last().copied() else {
+            break;
+        };
+        let first_rowid = rowids[0];
+        let affected = sqlx::query(
+            "UPDATE usage_records AS target
+             SET project_path = (
+                 SELECT session.project_path
+                 FROM usage_records AS session
+                 WHERE session.data_source = 'session_log'
+                   AND session.source = target.source
+                   AND session.session_id = target.session_id
+                   AND NULLIF(TRIM(session.project_path), '') IS NOT NULL
+                 ORDER BY session.updated_at_ms DESC
+                 LIMIT 1
+             )
+             WHERE target.rowid BETWEEN ?1 AND ?2
+               AND target.data_source = 'route'
+               AND NULLIF(TRIM(target.project_path), '') IS NULL
+               AND EXISTS (
+                   SELECT 1
+                   FROM usage_records AS session
+                   WHERE session.data_source = 'session_log'
+                     AND session.source = target.source
+                     AND session.session_id = target.session_id
+                     AND NULLIF(TRIM(session.project_path), '') IS NOT NULL
+               )",
+        )
+        .bind(first_rowid)
+        .bind(last_rowid)
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_route_backfill_update_failed: {err}"))?
+        .rows_affected();
+        updated_rows += affected;
+        after_rowid = last_rowid;
+        tokio::time::sleep(Duration::from_millis(
+            REQUEST_LOG_PROJECT_PATH_BACKFILL_YIELD_MS,
+        ))
+        .await;
+    }
+    Ok(updated_rows)
 }
 
 async fn open_cli_manager_db(path: &Path) -> Result<SqliteConnection, String> {
@@ -948,11 +1463,13 @@ async fn table_columns(
     }
 
     let query = match table {
+        "groups" => "PRAGMA table_info(groups)",
         "projects" => "PRAGMA table_info(projects)",
         "session_favorite_snapshots" => "PRAGMA table_info(session_favorite_snapshots)",
         "worktrees" => "PRAGMA table_info(worktrees)",
         "ssh_hosts" => "PRAGMA table_info(ssh_hosts)",
         "ssh_host_groups" => "PRAGMA table_info(ssh_host_groups)",
+        "usage_records" => "PRAGMA table_info(usage_records)",
         _ => return Err("migration_repair_unsupported_table".to_string()),
     };
     let rows = sqlx::query(query)
@@ -1422,6 +1939,229 @@ mod tests {
         assert_eq!(count, 0);
     }
 
+    #[tokio::test]
+    async fn defers_large_project_path_migration_with_original_checksum() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_project_path_backfill_schema(&mut conn).await;
+        insert_usage_row(
+            &mut conn,
+            "legacy-1",
+            "session_log",
+            "codex",
+            Some("session-1"),
+            Some("demo"),
+            None,
+            1,
+        )
+        .await;
+
+        assert!(defer_request_log_project_path_backfill(&mut conn)
+            .await
+            .unwrap());
+        assert!(!defer_request_log_project_path_backfill(&mut conn)
+            .await
+            .unwrap());
+
+        let row =
+            sqlx::query("SELECT description, checksum FROM _sqlx_migrations WHERE version = ?1")
+                .bind(MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(
+            row.try_get::<String, _>("description").unwrap(),
+            REQUEST_LOG_PROJECT_PATH_BACKFILL_DESCRIPTION
+        );
+        assert_eq!(
+            row.try_get::<Vec<u8>, _>("checksum").unwrap(),
+            migration_checksum(MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL)
+        );
+        let project_path: Option<String> =
+            sqlx::query_scalar("SELECT project_path FROM usage_records WHERE record_id='legacy-1'")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(
+            project_path, None,
+            "startup compatibility must not backfill rows"
+        );
+    }
+
+    #[tokio::test]
+    async fn leaves_empty_or_incompatible_databases_to_standard_migrations() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_project_path_backfill_schema(&mut conn).await;
+        assert!(!defer_request_log_project_path_backfill(&mut conn)
+            .await
+            .unwrap());
+
+        let mut missing_schema = SqliteConnection::connect(":memory:").await.unwrap();
+        create_migration_table(&mut missing_schema).await;
+        assert!(
+            !defer_request_log_project_path_backfill(&mut missing_schema)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn resolves_only_unambiguous_local_project_paths() {
+        let projects = vec![
+            BackfillProject {
+                name: "demo".to_string(),
+                path: "d:/work/demo".to_string(),
+            },
+            BackfillProject {
+                name: "duplicate".to_string(),
+                path: "d:/one/duplicate".to_string(),
+            },
+            BackfillProject {
+                name: "duplicate".to_string(),
+                path: "d:/two/duplicate".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            resolve_backfill_project_path("demo", &projects).as_deref(),
+            Some("d:/work/demo")
+        );
+        assert_eq!(resolve_backfill_project_path("duplicate", &projects), None);
+        assert_eq!(
+            resolve_backfill_project_path(r"C:\Work\Repo\", &projects).as_deref(),
+            Some("c:/work/repo")
+        );
+    }
+
+    #[tokio::test]
+    async fn backfills_large_legacy_sets_in_batches_and_inherits_route_paths() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        create_project_path_backfill_schema(&mut conn).await;
+        sqlx::query(
+            "INSERT INTO projects (id, name, path, environment_type) VALUES
+             ('demo', 'demo', 'D:\\work\\demo', 'local'),
+             ('dup-1', 'duplicate', 'D:\\one\\duplicate', 'local'),
+             ('dup-2', 'duplicate', 'D:\\two\\duplicate', 'local'),
+             ('remote', 'remote-only', '', 'ssh')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "WITH RECURSIVE seq(value) AS (
+                 SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < 50005
+             )
+             INSERT INTO usage_records (
+                 record_id, data_source, source, session_id, project_key,
+                 project_path, updated_at_ms, started_at_ms
+             )
+             SELECT 'demo-' || value, 'session_log', 'codex',
+                    CASE WHEN value = 1 THEN 'shared-session' ELSE 'session-' || value END,
+                    'demo', NULL, value, value
+             FROM seq",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        insert_usage_row(
+            &mut conn,
+            "absolute",
+            "session_log",
+            "codex",
+            Some("absolute-session"),
+            Some(r"C:\Work\Repo"),
+            None,
+            5_000,
+        )
+        .await;
+        insert_usage_row(
+            &mut conn,
+            "ambiguous",
+            "session_log",
+            "codex",
+            Some("ambiguous-session"),
+            Some("duplicate"),
+            None,
+            5_001,
+        )
+        .await;
+        insert_usage_row(
+            &mut conn,
+            "route",
+            "route",
+            "codex",
+            Some("shared-session"),
+            None,
+            None,
+            5_002,
+        )
+        .await;
+        insert_usage_row(
+            &mut conn,
+            "preexisting",
+            "session_log",
+            "codex",
+            Some("preexisting-session"),
+            Some("demo"),
+            Some("keep/me"),
+            5_003,
+        )
+        .await;
+
+        let result = backfill_request_log_project_paths(&mut conn).await.unwrap();
+        assert_eq!(result.mapped_project_keys, 2);
+        assert_eq!(result.updated_rows, 50_007);
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT project_path FROM usage_records WHERE record_id='demo-50005'",
+            )
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+            "d:/work/demo"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT project_path FROM usage_records WHERE record_id='absolute'",
+            )
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+            "c:/work/repo"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT project_path FROM usage_records WHERE record_id='route'",
+            )
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+            "d:/work/demo"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT project_path FROM usage_records WHERE record_id='ambiguous'",
+            )
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT project_path FROM usage_records WHERE record_id='preexisting'",
+            )
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+            "keep/me"
+        );
+
+        let rerun = backfill_request_log_project_paths(&mut conn).await.unwrap();
+        assert_eq!(rerun.updated_rows, 0);
+    }
+
     async fn create_migration_table(conn: &mut SqliteConnection) {
         conn.execute(
             "CREATE TABLE _sqlx_migrations (
@@ -1433,6 +2173,238 @@ mod tests {
                 execution_time BIGINT NOT NULL
             )",
         )
+        .await
+        .unwrap();
+    }
+
+    async fn create_appearance_drift_schema(conn: &mut SqliteConnection, with_columns: bool) {
+        let group_extra = if with_columns {
+            ", icon TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT ''"
+        } else {
+            ""
+        };
+        conn.execute(
+            format!("CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL{group_extra})")
+                .as_str(),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            format!("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL{group_extra})")
+                .as_str(),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn register_appearance_migration(conn: &mut SqliteConnection) {
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+                 (version, description, installed_on, success, checksum, execution_time)
+             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+        )
+        .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+        .bind(NODE_APPEARANCE_MIGRATION_DESCRIPTION)
+        .bind(migration_checksum(NODE_APPEARANCE_MIGRATION_SQL))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    async fn register_legacy_node_appearance_v33_migration(conn: &mut SqliteConnection) {
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+                 (version, description, installed_on, success, checksum, execution_time)
+             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+        )
+        .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+        .bind(NODE_APPEARANCE_MIGRATION_DESCRIPTION)
+        .bind(migration_checksum(NODE_APPEARANCE_MIGRATION_SQL))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
+
+    async fn appearance_columns(conn: &mut SqliteConnection) -> (HashSet<String>, HashSet<String>) {
+        (
+            table_columns(conn, "groups").await.unwrap(),
+            table_columns(conn, "projects").await.unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn appearance_repair_adds_columns_when_migration_registered_but_columns_missing() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, false).await;
+        register_appearance_migration(&mut conn).await;
+
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+        let (groups, projects) = appearance_columns(&mut conn).await;
+        assert!(groups.contains("icon") && groups.contains("color"));
+        assert!(projects.contains("icon") && projects.contains("color"));
+
+        // 幂等：第二次不再改动。
+        assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn appearance_repair_registers_migration_when_columns_exist_but_version_missing() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, true).await;
+
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+        let registered: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?1 AND success = 1)",
+        )
+        .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(registered, 1);
+        assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn appearance_repair_applies_missing_columns_before_sqlx() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, false).await;
+
+        // 列缺失且版本未登记 —— 先在数据库打开前补齐，避免首次外观写入撞缺列。
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+        let (groups, projects) = appearance_columns(&mut conn).await;
+        assert!(groups.contains("icon") && groups.contains("color"));
+        assert!(projects.contains("icon") && projects.contains("color"));
+        let registered: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?1 AND success = 1)",
+        )
+        .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(registered, 1);
+        assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn legacy_node_appearance_v33_migration_is_reconciled_before_sqlx_runs() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_appearance_drift_schema(&mut conn, true).await;
+        register_legacy_node_appearance_v33_migration(&mut conn).await;
+
+        assert!(reconcile_legacy_node_appearance_v33_migration(&mut conn)
+            .await
+            .unwrap());
+        assert!(ensure_node_appearance_columns(&mut conn).await.unwrap());
+
+        let usage_marker =
+            sqlx::query("SELECT description, checksum FROM _sqlx_migrations WHERE version = ?1")
+                .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(
+            usage_marker.try_get::<String, _>("description").unwrap(),
+            MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION
+        );
+        assert_eq!(
+            usage_marker.try_get::<Vec<u8>, _>("checksum").unwrap(),
+            migration_checksum(MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL)
+        );
+
+        let appearance_marker =
+            sqlx::query("SELECT description, checksum FROM _sqlx_migrations WHERE version = ?1")
+                .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(
+            appearance_marker
+                .try_get::<String, _>("description")
+                .unwrap(),
+            NODE_APPEARANCE_MIGRATION_DESCRIPTION
+        );
+        assert_eq!(
+            appearance_marker.try_get::<Vec<u8>, _>("checksum").unwrap(),
+            migration_checksum(NODE_APPEARANCE_MIGRATION_SQL)
+        );
+
+        let error_detail_columns: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name = 'error_detail'",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(error_detail_columns, 1);
+    }
+
+    async fn create_project_path_backfill_schema(conn: &mut SqliteConnection) {
+        conn.execute(
+            "CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                environment_type TEXT NOT NULL DEFAULT 'local'
+            )",
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE usage_records (
+                record_id TEXT PRIMARY KEY,
+                data_source TEXT NOT NULL,
+                source TEXT NOT NULL,
+                session_id TEXT,
+                project_key TEXT,
+                project_path TEXT,
+                updated_at_ms INTEGER NOT NULL,
+                started_at_ms INTEGER NOT NULL
+            )",
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "CREATE INDEX idx_usage_records_project
+             ON usage_records(project_key, started_at_ms DESC)",
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "CREATE INDEX idx_usage_records_route_dedup
+             ON usage_records(source, data_source, session_id, started_at_ms)",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_usage_row(
+        conn: &mut SqliteConnection,
+        record_id: &str,
+        data_source: &str,
+        source: &str,
+        session_id: Option<&str>,
+        project_key: Option<&str>,
+        project_path: Option<&str>,
+        timestamp: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO usage_records (
+                record_id, data_source, source, session_id, project_key,
+                project_path, updated_at_ms, started_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        )
+        .bind(record_id)
+        .bind(data_source)
+        .bind(source)
+        .bind(session_id)
+        .bind(project_key)
+        .bind(project_path)
+        .bind(timestamp)
+        .execute(&mut *conn)
         .await
         .unwrap();
     }

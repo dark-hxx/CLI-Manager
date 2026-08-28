@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-04-fix-hook-custom-install-directory-persistence/prd.md","reason":"Check implementation against confirmed acceptance criteria."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Verify selected directories are persisted settings rather than ephemeral component state."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check frontend quality constraints and avoid unnecessary UI/store churn."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify frontend saved directories continue to align with backend hook status/install commands."}

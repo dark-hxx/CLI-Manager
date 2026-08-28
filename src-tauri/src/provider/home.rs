@@ -645,6 +645,7 @@ fn active_state() -> Option<ProviderHomeState> {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
     fn derives_cli_targets_from_one_home() {
         let targets = build_targets(r"C:\Users\tester");
@@ -657,6 +658,7 @@ mod tests {
         assert_eq!(targets.grok_history_root, r"C:\Users\tester\.grok\sessions");
     }
 
+    #[cfg(windows)]
     #[test]
     fn derives_cli_targets_from_wsl_unc_home() {
         let targets = build_targets(r"\\wsl.localhost\Ubuntu\home\tester");
@@ -674,6 +676,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn rejects_cli_subdirectories() {
         assert_eq!(

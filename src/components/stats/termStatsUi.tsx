@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { HistorySessionDetail } from "../../lib/types";
 import { calculateCost, inferDominantModel } from "../../lib/modelPricing";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
@@ -739,6 +739,34 @@ export function EmptyHint({ text }: { text: string }) {
       <span className="animate-pulse" style={{ color: TERM_PANEL.fg }}>
         ▊
       </span>
+    </div>
+  );
+}
+
+// 终端侧边面板的友好空态：图标 + 标题 + 可选说明。
+// 用于「预期内的空场景」（如目录不是 Git 仓库），替代把后端原始错误串直接铺在面板里。
+export function PanelEmptyState({
+  icon,
+  title,
+  description,
+}: {
+  icon: ReactNode;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-6 text-center">
+      <span className="opacity-60" style={{ color: TERM_PANEL.dim }}>
+        {icon}
+      </span>
+      <p className="text-[12px] font-medium" style={{ color: TERM_PANEL.fg }}>
+        {title}
+      </p>
+      {description && (
+        <p className="max-w-[230px] text-[11px] leading-relaxed" style={{ color: TERM_PANEL.dim }}>
+          {description}
+        </p>
+      )}
     </div>
   );
 }

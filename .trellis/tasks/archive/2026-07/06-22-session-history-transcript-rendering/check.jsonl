@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-22-session-history-transcript-rendering/prd.md","reason":"Acceptance criteria and definition of done for validation."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check Markdown rendering safety and component convention compliance."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check required frontend static/manual verification guidance."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check TypeScript type-safety compliance."}

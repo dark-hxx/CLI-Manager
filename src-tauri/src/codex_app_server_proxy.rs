@@ -19,21 +19,28 @@ pub const HELPER_SUBCOMMAND: &str = "__codex_app_server_proxy";
 pub(crate) const PROXY_EXECUTABLE_ENV: &str = "CLI_MANAGER_CODEX_APP_SERVER_PROXY";
 pub(crate) const EXPECTED_SESSION_ID_ENV: &str = "CLI_MANAGER_CODEX_EXPECTED_SESSION_ID";
 pub(crate) const CODEX_LAUNCHER_ENV: &str = "CLI_MANAGER_CODEX_LAUNCHER";
+pub(crate) const CODEX_LAUNCHER_ARGS_ENV: &str = "CLI_MANAGER_CODEX_LAUNCHER_ARGS";
 pub(crate) const CODEX_BASE_URL_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_BASE_URL_OVERRIDE";
 pub(crate) const CODEX_ENV_KEY_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_ENV_KEY_OVERRIDE";
 pub(crate) const CODEX_MODEL_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_MODEL_OVERRIDE";
 pub(crate) const CODEX_MODEL_CATALOG_OVERRIDE_ENV: &str =
     "CLI_MANAGER_CODEX_MODEL_CATALOG_OVERRIDE";
 pub(crate) const CODEX_WIRE_API_OVERRIDE_ENV: &str = "CLI_MANAGER_CODEX_WIRE_API_OVERRIDE";
+pub(crate) const CODEX_PROVIDER_NAME_OVERRIDE_ENV: &str =
+    "CLI_MANAGER_CODEX_PROVIDER_NAME_OVERRIDE";
+pub(crate) const CODEX_PROFILE_NAME_ENV: &str = "CLI_MANAGER_CODEX_PROFILE_NAME";
+pub(crate) const CODEX_MODEL_PROVIDER_ENV: &str = "CLI_MANAGER_CODEX_MODEL_PROVIDER";
 pub(crate) const CODEX_SSH_LAUNCH_ENV: &str = "CLI_MANAGER_CODEX_SSH_LAUNCH";
-pub(crate) const CODEX_REMOTE_PROVIDER_NAME: &str = "cli_manager_remote";
 
 // A resumed Codex thread can legitimately exceed cc-connect's 10 MB scanner limit.
 // Keep a finite ceiling so a broken child cannot exhaust the host process indefinitely.
 const MAX_PROTOCOL_LINE_BYTES: usize = 512 * 1024 * 1024;
+const MAX_CODEX_LAUNCHER_ARGS: usize = 64;
+const MAX_CODEX_LAUNCHER_ARG_BYTES: usize = 8 * 1024;
 const STRICT_RESUME_ERROR_CODE: i64 = -32091;
 const SSH_HANDOFF_HOOK_QUEUE_CAPACITY: usize = 32;
 const LOCAL_HANDOFF_DELIVERY_INSTRUCTION: &str = "CLI-Manager remote handoff: deliver output files with `cc-connect send --file <absolute-path>` and output images with `cc-connect send --image <absolute-path>`.";
+const LOCAL_HANDOFF_DELIVERY_CONTEXT_KEY: &str = "cli-manager.remote-handoff.delivery";
 
 #[derive(Debug, Deserialize)]
 struct RpcProbe {
@@ -62,6 +69,8 @@ struct ResumeResult {
     #[serde(default)]
     model: String,
     #[serde(default)]
+    model_provider: String,
+    #[serde(default)]
     reasoning_effort: Option<String>,
     #[serde(default)]
     thread: ResumeThread,
@@ -71,6 +80,8 @@ struct ResumeResult {
 struct ResumeThread {
     #[serde(default)]
     id: String,
+    #[serde(default)]
+    model_provider: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +96,7 @@ struct MinimalRpcError {
 struct PendingResume {
     requested_thread_id: String,
     expected_thread_id: Option<String>,
+    expected_model_provider: Option<String>,
 }
 
 enum ClientLineAction {
@@ -283,13 +295,22 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let mut command = if let Some(ssh_launch) = ssh_launch.as_ref() {
-        command_from_ssh_launch(ssh_launch.build_launch(child_args)?)
+    let (mut command, expected_model_provider) = if let Some(ssh_launch) = ssh_launch.as_ref() {
+        (
+            command_from_ssh_launch(ssh_launch.build_launch(child_args)?),
+            None,
+        )
     } else {
         let launcher = codex_launcher_from_environment()?;
+        let launcher_args = codex_launcher_args_from_environment()?;
         let provider_overrides = CodexProviderOverrides::from_environment()?;
-        let child_args = build_codex_child_args(child_args, &provider_overrides)?;
-        codex_command(&launcher, &child_args)
+        let expected_model_provider = provider_overrides.model_provider.clone();
+        let mut effective_args = launcher_args;
+        effective_args.extend(build_codex_child_args(child_args, &provider_overrides)?);
+        (
+            codex_command(&launcher, &effective_args)?,
+            expected_model_provider,
+        )
     };
     command
         .stdin(Stdio::piped())
@@ -319,6 +340,7 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
         if let Err(err) = forward_parent_input(
             child_stdin,
             expected_thread_id.as_deref(),
+            expected_model_provider.as_deref(),
             remote_work_dir.as_deref(),
             &input_pending,
             &input_output,
@@ -355,9 +377,12 @@ fn run_passthrough(child_args: &[String]) -> Result<i32, String> {
         return Ok(status.code().unwrap_or(1));
     }
     let launcher = codex_launcher_from_environment()?;
-    let child_args =
-        build_codex_child_args(child_args, &CodexProviderOverrides::from_environment()?)?;
-    let status = codex_command(&launcher, &child_args)
+    let mut command_args = codex_launcher_args_from_environment()?;
+    command_args.extend(build_codex_child_args(
+        child_args,
+        &CodexProviderOverrides::from_environment()?,
+    )?);
+    let status = codex_command(&launcher, &command_args)?
         .status()
         .map_err(|err| format!("start real Codex command failed: {err}"))?;
     Ok(status.code().unwrap_or(1))
@@ -401,8 +426,36 @@ fn codex_launcher_from_environment() -> Result<PathBuf, String> {
         .ok_or_else(|| "real Codex launcher is unavailable".to_string())
 }
 
+fn codex_launcher_args_from_environment() -> Result<Vec<String>, String> {
+    let Some(value) = env::var_os(CODEX_LAUNCHER_ARGS_ENV).filter(|value| !value.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| "Codex launcher arguments are not valid Unicode".to_string())?;
+    parse_codex_launcher_args(&value)
+}
+
+fn parse_codex_launcher_args(value: &str) -> Result<Vec<String>, String> {
+    let args = serde_json::from_str::<Vec<String>>(value)
+        .map_err(|_| "Codex launcher arguments are invalid".to_string())?;
+    if args.len() > MAX_CODEX_LAUNCHER_ARGS
+        || args.iter().any(|arg| {
+            arg.is_empty()
+                || arg.len() > MAX_CODEX_LAUNCHER_ARG_BYTES
+                || arg.contains(['\0', '\r', '\n'])
+        })
+    {
+        return Err("Codex launcher arguments are invalid".to_string());
+    }
+    Ok(args)
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct CodexProviderOverrides {
+    profile_name: Option<String>,
+    model_provider: Option<String>,
+    provider_name: Option<String>,
     base_url: Option<String>,
     env_key: Option<String>,
     model: Option<String>,
@@ -413,6 +466,9 @@ struct CodexProviderOverrides {
 impl CodexProviderOverrides {
     fn from_environment() -> Result<Self, String> {
         Ok(Self {
+            profile_name: optional_unicode_env(CODEX_PROFILE_NAME_ENV)?,
+            model_provider: optional_unicode_env(CODEX_MODEL_PROVIDER_ENV)?,
+            provider_name: optional_unicode_env(CODEX_PROVIDER_NAME_OVERRIDE_ENV)?,
             base_url: optional_unicode_env(CODEX_BASE_URL_OVERRIDE_ENV)?,
             env_key: optional_unicode_env(CODEX_ENV_KEY_OVERRIDE_ENV)?,
             model: optional_unicode_env(CODEX_MODEL_OVERRIDE_ENV)?,
@@ -421,8 +477,11 @@ impl CodexProviderOverrides {
         })
     }
 
-    fn command_args(&self) -> Result<Vec<String>, String> {
-        let has_any = self.base_url.is_some()
+    fn command_args(&self, include_profile: bool) -> Result<Vec<String>, String> {
+        let has_any = self.profile_name.is_some()
+            || self.model_provider.is_some()
+            || self.provider_name.is_some()
+            || self.base_url.is_some()
             || self.env_key.is_some()
             || self.model.is_some()
             || self.model_catalog.is_some()
@@ -430,6 +489,14 @@ impl CodexProviderOverrides {
         if !has_any {
             return Ok(Vec::new());
         }
+        let model_provider = self
+            .model_provider
+            .as_ref()
+            .ok_or_else(|| "Codex model Provider ID is missing".to_string())?;
+        let provider_name = self
+            .provider_name
+            .as_ref()
+            .ok_or_else(|| "Codex Provider name override is missing".to_string())?;
         let base_url = self
             .base_url
             .as_ref()
@@ -446,11 +513,23 @@ impl CodexProviderOverrides {
             .model_catalog
             .as_ref()
             .ok_or_else(|| "Codex model catalog override is missing".to_string())?;
-        let mut args = vec![
+        let mut args = Vec::new();
+        if include_profile {
+            let profile_name = self
+                .profile_name
+                .as_ref()
+                .ok_or_else(|| "Codex Provider profile name is missing".to_string())?;
+            args.extend(["--profile".to_string(), profile_name.clone()]);
+        }
+        args.extend([
             "-c".to_string(),
-            format!("model_provider={CODEX_REMOTE_PROVIDER_NAME}"),
+            format!(
+                "model_provider={}",
+                serde_json::to_string(model_provider)
+                    .map_err(|err| format!("encode Codex model Provider ID failed: {err}"))?
+            ),
             "-c".to_string(),
-            format!("model_providers.{CODEX_REMOTE_PROVIDER_NAME}.name=CLI-Manager remote"),
+            provider_name.clone(),
             "-c".to_string(),
             base_url.clone(),
             "-c".to_string(),
@@ -459,7 +538,7 @@ impl CodexProviderOverrides {
             wire_api.clone(),
             "-c".to_string(),
             model_catalog.clone(),
-        ];
+        ]);
         if let Some(model) = self.model.as_ref() {
             args.extend(["-c".to_string(), model.clone()]);
         }
@@ -480,40 +559,85 @@ fn build_codex_child_args(
     child_args: &[String],
     overrides: &CodexProviderOverrides,
 ) -> Result<Vec<String>, String> {
-    let mut args = overrides.command_args()?;
+    // Codex rejects --profile for app-server, while runtime commands still use
+    // the generated profile. The complete -c overrides lock app-server to the
+    // registered Provider without relying on profile support.
+    let mut args = overrides.command_args(!is_app_server_command(child_args))?;
     args.extend_from_slice(child_args);
     Ok(args)
 }
 
 #[cfg(target_os = "windows")]
-fn codex_command(launcher: &Path, args: &[String]) -> Command {
-    let is_script = launcher
+fn windows_shell_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = value.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn contains_unsupported_script_characters(value: &str) -> bool {
+    value.contains(['&', '|', '<', '>', '^', '%', '!', '\r', '\n'])
+}
+
+#[cfg(target_os = "windows")]
+fn codex_command(launcher: &Path, args: &[String]) -> Result<Command, String> {
+    let extension = launcher
         .extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| {
-            value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat")
-        });
-    if is_script {
+        .unwrap_or_default();
+    let is_script = matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "cmd" | "bat" | "ps1"
+    );
+    let shell_launcher = windows_shell_path(launcher);
+    let launcher_value = shell_launcher.to_string_lossy();
+    if is_script
+        && std::iter::once(launcher_value.as_ref())
+            .chain(args.iter().map(String::as_str))
+            .any(contains_unsupported_script_characters)
+    {
+        return Err("Codex launcher contains unsupported script characters".to_string());
+    }
+    if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
         let mut command = silent_command("cmd.exe");
-        command.args(["/d", "/c"]).arg(launcher).args(args);
+        // `call` is the fixed first command after /c, so CMD honors Rust's
+        // quoting for a script path that contains spaces. Passing the script
+        // itself as the first /c token makes CMD strip/split its outer quotes.
         command
+            .args(["/d", "/s", "/c", "call"])
+            .arg(&shell_launcher)
+            .args(args);
+        Ok(command)
+    } else if extension.eq_ignore_ascii_case("ps1") {
+        let mut command = silent_command("powershell.exe");
+        command
+            .args(["-NoProfile", "-File"])
+            .arg(&shell_launcher)
+            .args(args);
+        Ok(command)
     } else {
         let mut command = silent_command(&launcher.to_string_lossy());
         command.args(args);
-        command
+        Ok(command)
     }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn codex_command(launcher: &Path, args: &[String]) -> Command {
+fn codex_command(launcher: &Path, args: &[String]) -> Result<Command, String> {
     let mut command = Command::new(launcher);
     command.args(args);
-    command
+    Ok(command)
 }
 
 fn forward_parent_input(
     mut child_stdin: impl Write,
     expected_thread_id: Option<&str>,
+    expected_model_provider: Option<&str>,
     remote_work_dir: Option<&str>,
     pending: &Arc<Mutex<HashMap<String, PendingResume>>>,
     parent_output: &Arc<Mutex<io::Stdout>>,
@@ -532,6 +656,7 @@ fn forward_parent_input(
             inspect_client_line(
                 &line,
                 expected_thread_id,
+                expected_model_provider,
                 remote_work_dir,
                 &mut pending,
                 &mut delivery_instruction_pending,
@@ -579,6 +704,7 @@ fn forward_child_output(
 fn inspect_client_line(
     line: &[u8],
     expected_thread_id: Option<&str>,
+    expected_model_provider: Option<&str>,
     remote_work_dir: Option<&str>,
     pending: &mut HashMap<String, PendingResume>,
     delivery_instruction_pending: &mut bool,
@@ -595,7 +721,7 @@ fn inspect_client_line(
         && *delivery_instruction_pending
         && expected_thread_id.is_some()
         && remote_work_dir.is_none()
-        && prepend_local_handoff_delivery_instruction(&mut message)
+        && inject_local_handoff_delivery_context(&mut message)
     {
         *delivery_instruction_pending = false;
         return ClientLineAction::Forward(json_line(&message));
@@ -643,7 +769,7 @@ fn inspect_client_line(
         }
     }
     let mut request_changed = false;
-    if remote_work_dir.is_some() {
+    if remote_work_dir.is_some() || expected_model_provider.is_some() {
         let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) else {
             return ClientLineAction::Reject(rpc_error_response(
                 &id,
@@ -657,6 +783,13 @@ fn inspect_client_line(
             );
             request_changed = true;
         }
+        if let Some(model_provider) = expected_model_provider {
+            params.insert(
+                "modelProvider".to_string(),
+                Value::String(model_provider.to_string()),
+            );
+            request_changed = true;
+        }
     }
     if let Some(key) = rpc_id_key(&id) {
         pending.insert(
@@ -664,6 +797,7 @@ fn inspect_client_line(
             PendingResume {
                 requested_thread_id,
                 expected_thread_id: expected_thread_id.map(str::to_string),
+                expected_model_provider: expected_model_provider.map(str::to_string),
             },
         );
     }
@@ -674,25 +808,38 @@ fn inspect_client_line(
     }
 }
 
-fn prepend_local_handoff_delivery_instruction(message: &mut Value) -> bool {
-    let Some(inputs) = message
-        .pointer_mut("/params/input")
-        .and_then(Value::as_array_mut)
-    else {
+fn inject_local_handoff_delivery_context(message: &mut Value) -> bool {
+    let has_text_input = message
+        .pointer("/params/input")
+        .and_then(Value::as_array)
+        .is_some_and(|inputs| {
+            inputs.iter().any(|input| {
+                input.get("type").and_then(Value::as_str) == Some("text")
+                    && input.get("text").is_some_and(Value::is_string)
+            })
+        });
+    if !has_text_input {
+        return false;
+    }
+    let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) else {
         return false;
     };
-    let Some(text) = inputs.iter_mut().find_map(|input| {
-        if input.get("type").and_then(Value::as_str) != Some("text") {
-            return None;
-        }
-        input.get_mut("text").filter(|value| value.is_string())
-    }) else {
+    let additional_context = params
+        .entry("additionalContext".to_string())
+        .or_insert_with(|| Value::Object(Default::default()));
+    if additional_context.is_null() {
+        *additional_context = Value::Object(Default::default());
+    }
+    let Some(additional_context) = additional_context.as_object_mut() else {
         return false;
     };
-    let original = text.as_str().unwrap_or_default();
-    *text = Value::String(format!(
-        "{LOCAL_HANDOFF_DELIVERY_INSTRUCTION}\n\n{original}"
-    ));
+    additional_context.insert(
+        LOCAL_HANDOFF_DELIVERY_CONTEXT_KEY.to_string(),
+        json!({
+            "kind": "application",
+            "value": LOCAL_HANDOFF_DELIVERY_INSTRUCTION,
+        }),
+    );
     true
 }
 
@@ -806,6 +953,32 @@ fn compact_resume_response(payload: &[u8], fallback_id: &Value, resume: &Pending
             "CLI-Manager received an empty Codex thread ID while resuming".to_string(),
         );
     }
+    let resumed_model_provider = [
+        result.model_provider.trim(),
+        result.thread.model_provider.trim(),
+    ]
+    .into_iter()
+    .find(|value| !value.is_empty())
+    .unwrap_or_default()
+    .to_string();
+    if let Some(expected) = resume.expected_model_provider.as_deref() {
+        if resumed_model_provider.is_empty() {
+            return rpc_error_response(
+                response_id,
+                format!(
+                    "CLI-Manager could not verify the Codex Provider after resume: expected {expected}, but Codex returned no Provider ID"
+                ),
+            );
+        }
+        if resumed_model_provider != expected {
+            return rpc_error_response(
+                response_id,
+                format!(
+                    "CLI-Manager blocked a Codex Provider mismatch after resume: expected {expected}, received {resumed_model_provider}"
+                ),
+            );
+        }
+    }
     if let Some(expected) = resume.expected_thread_id.as_deref() {
         if result.thread.id != expected {
             return rpc_error_response(
@@ -824,8 +997,12 @@ fn compact_resume_response(payload: &[u8], fallback_id: &Value, resume: &Pending
         "result": {
             "cwd": result.cwd,
             "model": result.model,
+            "modelProvider": resumed_model_provider.clone(),
             "reasoningEffort": result.reasoning_effort,
-            "thread": { "id": result.thread.id },
+            "thread": {
+                "id": result.thread.id,
+                "modelProvider": resumed_model_provider,
+            },
         }
     }));
     if payload.len() > 10 * 1024 * 1024 {
@@ -961,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_overrides_are_inserted_before_app_server_without_secrets() {
+    fn app_server_provider_overrides_omit_runtime_only_profile() {
         let args = build_codex_child_args(
             &[
                 "app-server".to_string(),
@@ -969,12 +1146,17 @@ mod tests {
                 "stdio://".to_string(),
             ],
             &CodexProviderOverrides {
+                profile_name: Some("cli-manager-project-provider-123".to_string()),
+                model_provider: Some("custom".to_string()),
+                provider_name: Some(
+                    "model_providers.custom.name=CLI-Manager remote".to_string(),
+                ),
                 base_url: Some(
-                    "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1"
+                    "model_providers.custom.base_url=https://provider.example.com/v1"
                         .to_string(),
                 ),
                 env_key: Some(
-                    "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
+                    "model_providers.custom.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
                         .to_string(),
                 ),
                 model: Some("model=gpt-5.4".to_string()),
@@ -982,7 +1164,7 @@ mod tests {
                     r#"model_catalog_json="C:/Users/test/CLI Manager/cli-manager-model-catalog.json""#
                         .to_string(),
                 ),
-                wire_api: Some("model_providers.cli_manager_remote.wire_api=responses".to_string()),
+                wire_api: Some("model_providers.custom.wire_api=responses".to_string()),
             },
         )
         .unwrap();
@@ -991,15 +1173,15 @@ mod tests {
             args,
             vec![
                 "-c",
-                "model_provider=cli_manager_remote",
+                "model_provider=\"custom\"",
                 "-c",
-                "model_providers.cli_manager_remote.name=CLI-Manager remote",
+                "model_providers.custom.name=CLI-Manager remote",
                 "-c",
-                "model_providers.cli_manager_remote.base_url=https://provider.example.com/v1",
+                "model_providers.custom.base_url=https://provider.example.com/v1",
                 "-c",
-                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY",
+                "model_providers.custom.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY",
                 "-c",
-                "model_providers.cli_manager_remote.wire_api=responses",
+                "model_providers.custom.wire_api=responses",
                 "-c",
                 r#"model_catalog_json="C:/Users/test/CLI Manager/cli-manager-model-catalog.json""#,
                 "-c",
@@ -1010,6 +1192,50 @@ mod tests {
             ]
         );
         assert!(!args.iter().any(|arg| arg.contains("sk-provider-secret")));
+    }
+
+    #[test]
+    fn runtime_provider_overrides_keep_the_generated_profile() {
+        let args = build_codex_child_args(
+            &["resume".to_string(), "thread-original".to_string()],
+            &CodexProviderOverrides {
+                profile_name: Some("cli-manager-project-provider-123".to_string()),
+                model_provider: Some("custom".to_string()),
+                provider_name: Some(
+                    "model_providers.custom.name=CLI-Manager remote".to_string(),
+                ),
+                base_url: Some(
+                    "model_providers.custom.base_url=https://provider.example.com/v1"
+                        .to_string(),
+                ),
+                env_key: Some(
+                    "model_providers.custom.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
+                        .to_string(),
+                ),
+                model: Some("model=gpt-5.4".to_string()),
+                model_catalog: Some(
+                    r#"model_catalog_json="C:/Users/test/CLI Manager/cli-manager-model-catalog.json""#
+                        .to_string(),
+                ),
+                wire_api: Some("model_providers.custom.wire_api=responses".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            args.get(0..2),
+            Some(
+                [
+                    "--profile".to_string(),
+                    "cli-manager-project-provider-123".to_string(),
+                ]
+                .as_slice()
+            )
+        );
+        assert_eq!(
+            args.get(args.len().saturating_sub(2)..),
+            Some(["resume".to_string(), "thread-original".to_string()].as_slice())
+        );
     }
 
     #[test]
@@ -1026,6 +1252,16 @@ mod tests {
     }
 
     #[test]
+    fn registered_codex_launcher_args_are_decoded_as_structured_argv() {
+        assert_eq!(
+            parse_codex_launcher_args(r#"["-c","model_reasoning_effort=high"]"#).unwrap(),
+            vec!["-c", "model_reasoning_effort=high"]
+        );
+        assert!(parse_codex_launcher_args(r#"{"command":"codex"}"#).is_err());
+        assert!(parse_codex_launcher_args(r#"["line\nbreak"]"#).is_err());
+    }
+
+    #[test]
     fn only_the_first_argument_selects_app_server_proxying() {
         assert!(is_app_server_command(&["app-server".to_string()]));
         assert!(!is_app_server_command(&[
@@ -1035,15 +1271,44 @@ mod tests {
         assert!(!is_app_server_command(&[]));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_launch_paths_drop_verbatim_prefixes() {
+        assert_eq!(
+            windows_shell_path(Path::new(r"\\?\D:\Code Space\codex.cmd")),
+            PathBuf::from(r"D:\Code Space\codex.cmd")
+        );
+        assert_eq!(
+            windows_shell_path(Path::new(r"\\?\UNC\server\share\codex.cmd")),
+            PathBuf::from(r"\\server\share\codex.cmd")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_launch_rejects_command_boundary_characters() {
+        for unsafe_value in [
+            r"D:\codex&more.cmd",
+            "D:\\codex\rbreak.cmd",
+            "model=gpt\nwhoami",
+        ] {
+            assert!(contains_unsupported_script_characters(unsafe_value));
+        }
+        assert!(!contains_unsupported_script_characters(
+            r"D:\Code Space\中文\codex.cmd"
+        ));
+    }
+
     #[test]
     fn partial_provider_overrides_are_rejected() {
         let error = CodexProviderOverrides {
-            base_url: Some(
-                "model_providers.cli_manager_remote.base_url=https://example.com".into(),
-            ),
+            profile_name: Some("cli-manager-project-provider-123".into()),
+            model_provider: Some("custom".into()),
+            provider_name: Some("model_providers.custom.name=CLI-Manager remote".into()),
+            base_url: Some("model_providers.custom.base_url=https://example.com".into()),
             ..CodexProviderOverrides::default()
         }
-        .command_args()
+        .command_args(false)
         .unwrap_err();
         assert!(error.contains("environment key"));
     }
@@ -1051,17 +1316,17 @@ mod tests {
     #[test]
     fn provider_overrides_require_the_managed_model_catalog() {
         let error = CodexProviderOverrides {
-            base_url: Some(
-                "model_providers.cli_manager_remote.base_url=https://example.com".into(),
-            ),
+            profile_name: Some("cli-manager-project-provider-123".into()),
+            model_provider: Some("custom".into()),
+            provider_name: Some("model_providers.custom.name=CLI-Manager remote".into()),
+            base_url: Some("model_providers.custom.base_url=https://example.com".into()),
             env_key: Some(
-                "model_providers.cli_manager_remote.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY"
-                    .into(),
+                "model_providers.custom.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY".into(),
             ),
-            wire_api: Some("model_providers.cli_manager_remote.wire_api=responses".into()),
+            wire_api: Some("model_providers.custom.wire_api=responses".into()),
             ..CodexProviderOverrides::default()
         }
-        .command_args()
+        .command_args(false)
         .unwrap_err();
         assert!(error.contains("model catalog"));
     }
@@ -1075,9 +1340,11 @@ mod tests {
             "result": {
                 "cwd": "F:\\repo",
                 "model": "gpt-5.4",
+                "modelProvider": "custom",
                 "reasoningEffort": "high",
                 "thread": {
                     "id": "thread-original",
+                    "modelProvider": "custom",
                     "turns": [{"items": [{"type": "message", "text": huge_history}]}]
                 }
             }
@@ -1088,6 +1355,7 @@ mod tests {
             PendingResume {
                 requested_thread_id: "thread-original".to_string(),
                 expected_thread_id: Some("thread-original".to_string()),
+                expected_model_provider: Some("custom".to_string()),
             },
         )]);
 
@@ -1097,8 +1365,73 @@ mod tests {
         assert_eq!(value["result"]["thread"]["id"], "thread-original");
         assert_eq!(value["result"]["cwd"], r"F:\repo");
         assert_eq!(value["result"]["model"], "gpt-5.4");
+        assert_eq!(value["result"]["modelProvider"], "custom");
         assert_eq!(value["result"]["reasoningEffort"], "high");
         assert!(value["result"]["thread"].get("turns").is_none());
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn resume_response_rejects_a_provider_mismatch_before_the_first_turn() {
+        let source = json_line(&json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "result": {
+                "cwd": "F:\\repo",
+                "model": "gpt-5.4",
+                "modelProvider": "custom",
+                "thread": {
+                    "id": "thread-original",
+                    "modelProvider": "custom",
+                }
+            }
+        }));
+        let mut pending = HashMap::from([(
+            "15".to_string(),
+            PendingResume {
+                requested_thread_id: "thread-original".to_string(),
+                expected_thread_id: Some("thread-original".to_string()),
+                expected_model_provider: Some("cli_manager".to_string()),
+            },
+        )]);
+
+        let response = transform_server_line(&source, &mut pending).unwrap();
+        let response: Value = serde_json::from_slice(trim_line_ending(&response)).unwrap();
+        assert!(response.get("result").is_none());
+        assert!(response["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Provider mismatch")));
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn resume_response_uses_the_effective_provider_over_stale_thread_metadata() {
+        let source = json_line(&json!({
+            "jsonrpc": "2.0",
+            "id": 16,
+            "result": {
+                "cwd": "F:\\repo",
+                "model": "gpt-5.4",
+                "modelProvider": "cli_manager",
+                "thread": {
+                    "id": "thread-original",
+                    "modelProvider": "custom",
+                }
+            }
+        }));
+        let mut pending = HashMap::from([(
+            "16".to_string(),
+            PendingResume {
+                requested_thread_id: "thread-original".to_string(),
+                expected_thread_id: Some("thread-original".to_string()),
+                expected_model_provider: Some("cli_manager".to_string()),
+            },
+        )]);
+
+        let response = transform_server_line(&source, &mut pending).unwrap();
+        let response: Value = serde_json::from_slice(trim_line_ending(&response)).unwrap();
+        assert_eq!(response["result"]["modelProvider"], "cli_manager");
+        assert_eq!(response["result"]["thread"]["modelProvider"], "cli_manager");
         assert!(pending.is_empty());
     }
 
@@ -1111,6 +1444,7 @@ mod tests {
         let ClientLineAction::Reject(response) = inspect_client_line(
             drifted,
             Some("thread-original"),
+            None,
             None,
             &mut pending,
             &mut delivery_instruction_pending,
@@ -1132,6 +1466,7 @@ mod tests {
                 fresh,
                 Some("thread-original"),
                 None,
+                None,
                 &mut pending,
                 &mut delivery_instruction_pending,
             ),
@@ -1150,6 +1485,7 @@ mod tests {
                 request,
                 Some("thread-original"),
                 None,
+                None,
                 &mut pending,
                 &mut delivery_instruction_pending,
             ),
@@ -1164,7 +1500,7 @@ mod tests {
     }
 
     #[test]
-    fn local_handoff_resume_does_not_inject_synthetic_provider() {
+    fn local_handoff_resume_injects_registered_provider() {
         let mut pending = HashMap::new();
         let mut delivery_instruction_pending = false;
         let request = br#"{"jsonrpc":"2.0","id":14,"method":"thread/resume","params":{"threadId":"thread-original"}}
@@ -1172,6 +1508,7 @@ mod tests {
         let ClientLineAction::Forward(forwarded) = inspect_client_line(
             request,
             Some("thread-original"),
+            Some("custom"),
             None,
             &mut pending,
             &mut delivery_instruction_pending,
@@ -1179,7 +1516,7 @@ mod tests {
             panic!("managed local resume must be forwarded");
         };
         let forwarded: Value = serde_json::from_slice(trim_line_ending(&forwarded)).unwrap();
-        assert!(forwarded["params"].get("modelProvider").is_none());
+        assert_eq!(forwarded["params"]["modelProvider"], "custom");
         assert_eq!(forwarded["params"]["threadId"], "thread-original");
         assert!(pending.contains_key("14"));
     }
@@ -1193,6 +1530,7 @@ mod tests {
         let ClientLineAction::Forward(forwarded) = inspect_client_line(
             request,
             Some("thread-original"),
+            None,
             Some("/srv/project"),
             &mut pending,
             &mut delivery_instruction_pending,
@@ -1205,14 +1543,15 @@ mod tests {
     }
 
     #[test]
-    fn local_managed_resume_injects_delivery_instruction_only_once() {
+    fn local_managed_turn_injects_delivery_context_without_changing_user_text() {
         let mut pending = HashMap::new();
         let mut delivery_instruction_pending = true;
-        let first = br#"{"jsonrpc":"2.0","id":9,"method":"turn/start","params":{"threadId":"thread-original","input":[{"type":"localImage","path":"C:\\tmp\\source.png"},{"type":"text","text":"Create the report"}]}}
+        let first = br#"{"jsonrpc":"2.0","id":9,"method":"turn/start","params":{"threadId":"thread-original","input":[{"type":"localImage","path":"C:\\tmp\\source.png"},{"type":"text","text":"Create the report"}],"additionalContext":{"cc-connect":{"kind":"application","value":"existing"}}}}
 "#;
         let ClientLineAction::Forward(first) = inspect_client_line(
             first,
             Some("thread-original"),
+            Some("custom"),
             None,
             &mut pending,
             &mut delivery_instruction_pending,
@@ -1221,9 +1560,18 @@ mod tests {
         };
         let first: Value = serde_json::from_slice(trim_line_ending(&first)).unwrap();
         assert_eq!(first["params"]["input"][0]["path"], r"C:\tmp\source.png");
+        assert_eq!(first["params"]["input"][1]["text"], "Create the report");
         assert_eq!(
-            first["params"]["input"][1]["text"],
-            format!("{LOCAL_HANDOFF_DELIVERY_INSTRUCTION}\n\nCreate the report")
+            first["params"]["additionalContext"][LOCAL_HANDOFF_DELIVERY_CONTEXT_KEY]["kind"],
+            "application"
+        );
+        assert_eq!(
+            first["params"]["additionalContext"][LOCAL_HANDOFF_DELIVERY_CONTEXT_KEY]["value"],
+            LOCAL_HANDOFF_DELIVERY_INSTRUCTION
+        );
+        assert_eq!(
+            first["params"]["additionalContext"]["cc-connect"]["value"],
+            "existing"
         );
         assert!(!delivery_instruction_pending);
 
@@ -1232,6 +1580,7 @@ mod tests {
         let ClientLineAction::Forward(forwarded) = inspect_client_line(
             second,
             Some("thread-original"),
+            Some("custom"),
             None,
             &mut pending,
             &mut delivery_instruction_pending,
@@ -1250,6 +1599,7 @@ mod tests {
         let ClientLineAction::Forward(ssh_forwarded) = inspect_client_line(
             request,
             Some("thread-original"),
+            None,
             Some("/srv/project"),
             &mut pending,
             &mut ssh_instruction_pending,
@@ -1262,6 +1612,7 @@ mod tests {
         let mut unmanaged_instruction_pending = true;
         let ClientLineAction::Forward(unmanaged_forwarded) = inspect_client_line(
             request,
+            None,
             None,
             None,
             &mut pending,
@@ -1282,6 +1633,7 @@ mod tests {
         let ClientLineAction::Forward(forwarded) = inspect_client_line(
             image_only,
             Some("thread-original"),
+            Some("custom"),
             None,
             &mut pending,
             &mut delivery_instruction_pending,
@@ -1296,6 +1648,7 @@ mod tests {
         let ClientLineAction::Forward(forwarded) = inspect_client_line(
             text_turn,
             Some("thread-original"),
+            Some("custom"),
             None,
             &mut pending,
             &mut delivery_instruction_pending,
@@ -1303,9 +1656,10 @@ mod tests {
             panic!("text turn must be forwarded");
         };
         let forwarded: Value = serde_json::from_slice(trim_line_ending(&forwarded)).unwrap();
+        assert_eq!(forwarded["params"]["input"][0]["text"], "Now create it");
         assert_eq!(
-            forwarded["params"]["input"][0]["text"],
-            format!("{LOCAL_HANDOFF_DELIVERY_INSTRUCTION}\n\nNow create it")
+            forwarded["params"]["additionalContext"][LOCAL_HANDOFF_DELIVERY_CONTEXT_KEY]["value"],
+            LOCAL_HANDOFF_DELIVERY_INSTRUCTION
         );
         assert!(!delivery_instruction_pending);
     }

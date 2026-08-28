@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, BarChart3, ChevronDown, ChevronRight, Coins, Database, Folder, Layers, LineChart, RefreshCw, ScrollText, Search, Terminal, X } from "lucide-react";
+import { Activity, BarChart3, ChevronDown, ChevronRight, Coins, Database, Folder, Layers, LineChart, RefreshCw, ScrollText, Search, X } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -37,8 +37,10 @@ import type {
   RequestLogSource,
   RequestLogStatsPayload,
 } from "../../lib/types";
-import { fetchHistoryRequestLogStats, fetchHistoryStatsPayload, fetchRemoteHistoryStatsPayload } from "../../stores/historyStore";
+import { fetchHistoryRequestLogStats, fetchHistoryStatsPayload, fetchRemoteHistoryStatsPayload, syncHistoryRequestLogs } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
+import { resolveNodeAppearance } from "../../lib/nodeAppearance";
+import { NodeAppearanceIcon } from "../NodeAppearanceIcon";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
 import { TimelineHeatmap } from "./TimelineHeatmap";
 import { StatsHourlyActivityChart } from "./StatsHourlyActivityChart";
@@ -58,12 +60,12 @@ import {
   RECHARTS_TOOLTIP_WRAPPER_STYLE,
 } from "./statsPalette";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../lib/i18n";
-import { VendorIcon, inferVendor } from "../VendorIcon";
 import { CliToolIcon } from "../CliToolIcon";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
 import { RequestLogsView } from "./RequestLogsView";
 import { projectSupportsCapability } from "../../lib/projectCapabilities";
 import { resolveHistoryProjectPath } from "../../lib/historyProjectPaths";
+import { logWarn } from "../../lib/logger";
 
 interface StatsPanelProps {
   open: boolean;
@@ -194,8 +196,18 @@ function filterStatsProjectTree(nodes: StatsProjectTreeNode[], query: string): S
 }
 
 function StatsProjectFilterIcon({ project, size = 13 }: { project: Project; size?: number }) {
-  const vendor = project.cli_tool ? inferVendor(project.cli_tool) : null;
-  return vendor ? <VendorIcon vendor={vendor} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+  // 与侧边栏、History 项目树共用同一套图标解析：单字符标记 → 内置 key → CLI 工具图标 → 终端兜底。
+  // 此前这里走 inferVendor + VendorIcon，是三处项目树里唯一的第三种图标口径。
+  const appearance = resolveNodeAppearance({ icon: project.icon, color: project.color });
+  return (
+    <NodeAppearanceIcon
+      mark={appearance.emoji}
+      iconKey={appearance.iconKey}
+      cliTool={project.cli_tool}
+      fallback="terminal"
+      size={size}
+    />
+  );
 }
 
 function formatCount(value: number, language: AppLanguage = "zh-CN"): string {
@@ -1284,17 +1296,31 @@ function StatsProjectFilterDropdown({
     const paddingLeft = 8 + depth * 14;
     if (node.type === "group") {
       const isOpen = Boolean(normalizedQuery) || !collapsedGroups.has(node.group.id);
+      const groupAppearance = resolveNodeAppearance({
+        icon: node.group.icon,
+        color: node.group.color,
+      });
       return (
         <div key={`group:${node.group.id}`}>
           <button
             type="button"
             onClick={() => toggleGroup(node.group.id)}
             className="ui-tree-node ui-tree-group ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[11px] font-semibold"
-            style={{ paddingLeft }}
+            style={{
+              paddingLeft,
+              ...(groupAppearance.hasColor ? { "--node-accent": groupAppearance.colorVar } : {}),
+            } as CSSProperties}
             aria-expanded={isOpen}
           >
             <ChevronRight size={12} className="shrink-0 transition-transform" style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }} />
-            <Folder size={13} className="shrink-0" />
+            <span className="ui-tree-leading-icon shrink-0">
+              <NodeAppearanceIcon
+                mark={groupAppearance.emoji}
+                iconKey={groupAppearance.iconKey}
+                fallback="folder"
+                size={13}
+              />
+            </span>
             <span className="min-w-0 flex-1 truncate">{node.group.name}</span>
             <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{countStatsProjects(node)}</span>
           </button>
@@ -1309,6 +1335,10 @@ function StatsProjectFilterDropdown({
 
     const selected = selectedProjectId === node.project.id;
     const projectPath = resolveHistoryProjectPath(node.project);
+    const projectAppearance = resolveNodeAppearance({
+      icon: node.project.icon,
+      color: node.project.color,
+    });
     return (
       <button
         key={`project:${node.project.id}`}
@@ -1316,7 +1346,11 @@ function StatsProjectFilterDropdown({
         onClick={() => handleSelectProject(node.project.id)}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
-        style={{ paddingLeft }}
+        data-accent={projectAppearance.hasColor ? "true" : undefined}
+        style={{
+          paddingLeft,
+          ...(projectAppearance.hasColor ? { "--node-accent": projectAppearance.colorVar } : {}),
+        } as CSSProperties}
         title={projectPath}
       >
         <span className="ui-tree-leading-icon">
@@ -1418,6 +1452,8 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const [activeTab, setActiveTab] = useState<StatsPanelTab>("overview");
   const [timeWindow, setTimeWindow] = useState<StatsTimeWindowState>(() => getDefaultStatsTimeWindow());
   const [manualRefresh, setManualRefresh] = useState<{ key: string; nonce: number } | null>(null);
+  const [syncingLocalStats, setSyncingLocalStats] = useState(false);
+  const [localStatsSyncError, setLocalStatsSyncError] = useState<string | null>(null);
   const [selectedDayStart, setSelectedDayStart] = useState<number | null>(null);
   const [dayVisibleCount, setDayVisibleCount] = useState(DAY_SESSION_PAGE_SIZE);
   const resolvedTimeWindow = useMemo(() => resolveStatsTimeWindow(timeWindow), [timeWindow]);
@@ -1456,7 +1492,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
         rangeDays: null,
         startAt: dateBounds.startAt,
         endAt: dateBounds.endAt,
-        force: effectiveRefreshNonce > 0,
+        force: selectedProject?.environment_type === "ssh" && effectiveRefreshNonce > 0,
       };
       return selectedProject?.environment_type === "ssh"
         ? fetchRemoteHistoryStatsPayload(selectedProject, options)
@@ -1465,7 +1501,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
     enabled: open && activeTab === "overview" && dateBounds.error === null && dateBounds.startAt !== null && dateBounds.endAt !== null,
   });
   const stats = statsQuery.data ?? null;
-  const loadingStats = statsQuery.isFetching;
+  const loadingStats = statsQuery.isFetching || syncingLocalStats;
   const statsError = statsQuery.error ? String(statsQuery.error) : null;
   const statsUpdatedAt = statsQuery.dataUpdatedAt || null;
   const requestStatsSupported = sourceFilter === "all" || REQUEST_LOG_SOURCE_IDS.has(sourceFilter);
@@ -1485,7 +1521,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
         model: modelFilter || null,
         startAt: dateBounds.startAt,
         endAt: dateBounds.endAt,
-        force: effectiveRefreshNonce > 0,
+        force: false,
       });
     },
     enabled: open
@@ -1587,7 +1623,27 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
   const refreshStats = () => {
     if (dateBounds.error || dateBounds.startAt === null || dateBounds.endAt === null) return;
-    setManualRefresh({ key: statsBaseQueryKey, nonce: Date.now() });
+    setLocalStatsSyncError(null);
+    if (selectedProject?.environment_type === "ssh") {
+      setManualRefresh({ key: statsBaseQueryKey, nonce: Date.now() });
+      return;
+    }
+    if (syncingLocalStats) return;
+    setSyncingLocalStats(true);
+    void (async () => {
+      try {
+        await syncHistoryRequestLogs(true);
+        await Promise.allSettled([
+          statsQuery.refetch(),
+          requestStatsSupported ? requestStatsQuery.refetch() : Promise.resolve(),
+        ]);
+      } catch (error) {
+        logWarn("history.stats.manualSyncFailed", { error: String(error) });
+        setLocalStatsSyncError(String(error));
+      } finally {
+        setSyncingLocalStats(false);
+      }
+    })();
   };
   const controlClass = "h-8 rounded-md border border-border bg-bg-secondary px-2 text-xs text-text-primary";
   const timeInputClass = `${controlClass} min-w-[132px]`;
@@ -1674,12 +1730,17 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                 <StatsDatePicker mode="date" value={resolvedTimeWindow.customEnd} onChange={(value) => setTimeWindow((prev) => ({ ...prev, customEnd: value }))} className={timeInputClass} ariaLabel={t("stats.customEnd")} />
               </>
             )}
-            <Button onClick={refreshStats} disabled={dateBounds.error !== null || waitingForStatsQuery} aria-label={t("common.refresh")} size="sm">
+            <Button onClick={refreshStats} disabled={dateBounds.error !== null || waitingForStatsQuery || syncingLocalStats} aria-label={t("common.refresh")} size="sm">
               <RefreshCw size={12} className={loadingStats ? "animate-spin" : ""} />{t("common.refresh")}
             </Button>
             <div className="ml-auto text-[12px] font-medium text-text-secondary">{t("stats.lastRefresh", { value: waitingForStatsQuery ? "-" : formatDateTime(statsUpdatedAt, language) })}</div>
             <div className="w-full text-[12px] font-medium text-text-secondary">{t("stats.currentRange", { value: dateRangeLabel })}</div>
             {dateBounds.error && <div className="w-full text-[12px] font-medium text-danger">{dateBounds.error}</div>}
+            {localStatsSyncError && (
+              <div className="w-full text-[12px] font-medium text-danger">
+                {t("stats.refreshSyncFailed", { error: localStatsSyncError })}
+              </div>
+            )}
           </div>
         )}
 

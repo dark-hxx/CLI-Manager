@@ -1,5 +1,8 @@
 import { loader } from "@monaco-editor/react";
-import * as monaco from "monaco-editor";
+import { getCurrentLanguage, type AppLanguage } from "./i18n";
+import { monaco, monacoEnglishNlsMessages } from "./monacoEnglishNls";
+import { monacoChineseNlsMessages } from "./monacoChineseNls";
+import { monacoTraditionalChineseNlsMessages } from "./monacoTraditionalChineseNls";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
@@ -8,7 +11,27 @@ import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker"
 
 let configured = false;
 
+interface MonacoNlsGlobal {
+  _VSCODE_NLS_MESSAGES?: string[];
+  _VSCODE_NLS_LANGUAGE?: string;
+}
+
+export function configureMonacoLocale(language: AppLanguage = getCurrentLanguage()) {
+  const nls = globalThis as typeof globalThis & MonacoNlsGlobal;
+  if (language === "en-US") {
+    nls._VSCODE_NLS_MESSAGES = monacoEnglishNlsMessages;
+    nls._VSCODE_NLS_LANGUAGE = "en";
+  } else if (language === "zh-TW") {
+    nls._VSCODE_NLS_MESSAGES = monacoTraditionalChineseNlsMessages;
+    nls._VSCODE_NLS_LANGUAGE = "zh-tw";
+  } else {
+    nls._VSCODE_NLS_MESSAGES = monacoChineseNlsMessages;
+    nls._VSCODE_NLS_LANGUAGE = "zh-cn";
+  }
+}
+
 export function configureMonaco() {
+  configureMonacoLocale();
   if (configured) return;
   configured = true;
 

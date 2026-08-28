@@ -1,3 +1,4 @@
+pub(crate) mod auxiliary_text;
 mod database;
 pub(crate) mod environment;
 pub(crate) mod global;

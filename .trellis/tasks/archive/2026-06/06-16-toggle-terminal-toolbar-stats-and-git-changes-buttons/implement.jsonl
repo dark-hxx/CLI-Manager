@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发规范入口，含 pre-dev checklist 与质量基线"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "改 zustand settingsStore（接口字段/DEFAULTS/migrate）需遵循状态管理规范"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "改 TerminalTabs 与 GeneralSettingsPage 组件（条件渲染/开关列表）需遵循组件规范"}

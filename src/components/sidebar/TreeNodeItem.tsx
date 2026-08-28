@@ -1,16 +1,18 @@
-import { useState, useEffect, useRef, memo, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, useEffect, useRef, memo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { TreeNode as TNode } from "../../lib/types";
-import type { ProviderBadge } from "../../stores/projectStore";
+import { countProjectsInNode, type ProviderBadge } from "../../stores/projectStore";
 import { useTreeActions, worktreeListCollapseId } from "./TreeContext";
-import { Folder, Terminal, Play, ChevronRight, AlertTriangle } from "../icons";
+import { Play, ChevronRight, AlertTriangle } from "../icons";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { WorktreeIcon } from "../WorktreeIcon";
 import { useI18n } from "../../lib/i18n";
 import { DND_SORTABLE_TRANSITION } from "../../lib/dragInteraction";
-import { CliToolIcon } from "../CliToolIcon";
+import { NodeAppearanceIcon } from "../NodeAppearanceIcon";
+import { NewGroupRow } from "./NewGroupRow";
+import { resolveNodeAppearance } from "../../lib/nodeAppearance";
 import { resolveCliToolIconKey } from "../../lib/cliTools";
 
 function preventSecondaryPointerFocus(event: ReactPointerEvent<HTMLElement>) {
@@ -213,6 +215,12 @@ function TreeNodeItemImpl({
     const terminalCount = actions.getProjectTerminalCount(p.id);
     const pathInvalid = actions.isPathInvalid(p.id);
     const cliIcon = resolveCliToolIconKey(p.cli_tool);
+    const appearance = resolveNodeAppearance({ icon: p.icon, color: p.color });
+    const rowStyle = {
+      paddingLeft,
+      paddingRight: compact ? 8 : 10,
+      ...(appearance.hasColor ? { "--node-accent": appearance.colorVar } : {}),
+    } as CSSProperties;
     const projectWorktrees = node.worktrees ?? [];
     const hasWorktrees = projectWorktrees.length > 0;
     const providerBadge = actions.providerBadges[p.id];
@@ -240,14 +248,17 @@ function TreeNodeItemImpl({
             data-selected={isSelected || isMultiSelected ? "true" : "false"}
             data-status={status ?? "idle"}
             data-invalid={pathInvalid ? "true" : "false"}
-            style={{ paddingLeft, paddingRight: compact ? 8 : 10 }}
+            data-accent={appearance.hasColor ? "true" : undefined}
+            style={rowStyle}
           >
             <span className="ui-tree-leading-icon">
-              {cliIcon ? (
-                <CliToolIcon icon={cliIcon} size={14} />
-              ) : (
-                <Terminal size={14} strokeWidth={1.5} />
-              )}
+              <NodeAppearanceIcon
+                mark={appearance.emoji}
+                iconKey={appearance.iconKey}
+                cliTool={p.cli_tool}
+                fallback="terminal"
+                size={14}
+              />
             </span>
             <InlineRename initial={p.name} onConfirm={(name) => actions.onProjectRenameConfirm(p.id, name)} onCancel={actions.onCancelProjectRename} />
           </div>
@@ -284,7 +295,8 @@ function TreeNodeItemImpl({
           data-selected={isSelected || isMultiSelected ? "true" : "false"}
           data-status={status ?? "idle"}
           data-invalid={pathInvalid ? "true" : "false"}
-          style={{ paddingLeft, paddingRight: compact ? 8 : 10 }}
+          data-accent={appearance.hasColor ? "true" : undefined}
+          style={rowStyle}
           onMouseDown={(e) => {
             if (e.button === 2) e.preventDefault();
           }}
@@ -313,11 +325,13 @@ function TreeNodeItemImpl({
             </button>
           )}
           <span className="ui-tree-leading-icon">
-            {cliIcon ? (
-              <CliToolIcon icon={cliIcon} size={14} />
-            ) : (
-              <Terminal size={14} strokeWidth={1.5} />
-            )}
+            <NodeAppearanceIcon
+              mark={appearance.emoji}
+              iconKey={appearance.iconKey}
+              cliTool={p.cli_tool}
+              fallback="terminal"
+              size={14}
+            />
           </span>
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="block truncate font-medium">{p.name}</span>
@@ -334,6 +348,7 @@ function TreeNodeItemImpl({
             {terminalCount > 0 && (
               <span
                 className="ui-tree-meta-chip inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] leading-none"
+                data-cli-tool={cliIcon ?? undefined}
                 title={t("sidebar.tree.terminalCount", { count: terminalCount })}
                 aria-label={t("sidebar.tree.terminalCount", { count: terminalCount })}
               >
@@ -351,7 +366,7 @@ function TreeNodeItemImpl({
             )}
           </span>
           <span
-            className="ui-tree-item-actions hidden shrink-0 items-center gap-0.5 group-hover/item:flex group-focus-within/item:flex"
+            className="ui-tree-item-actions flex shrink-0 items-center gap-0.5"
             onDoubleClick={(e) => e.stopPropagation()}
           >
             <button onClick={(e) => { e.stopPropagation(); actions.onOpenProject(p); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title={t("sidebar.tree.openTerminal")}>
@@ -382,6 +397,15 @@ function TreeNodeItemImpl({
 
   const g = node.group;
   const treeKey = `g:${g.id}`;
+  // 折叠态徽章（ProjectTree 窄条）与这里的展开态计数共用同一口径：含子分组递归、不计 Worktree。
+  const groupProjectCount = countProjectsInNode(node);
+  const groupAppearance = resolveNodeAppearance({ icon: g.icon, color: g.color });
+  const groupRowStyle = {
+    paddingLeft,
+    paddingRight: compact ? 8 : 10,
+    color: "var(--text-secondary)",
+    ...(groupAppearance.hasColor ? { "--node-accent": groupAppearance.colorVar } : {}),
+  } as CSSProperties;
   const isOpen = forceExpanded || !actions.collapsedIds.has(g.id);
   const isSelected =
     actions.projectScopedTerminalViewEnabled &&
@@ -443,7 +467,8 @@ function TreeNodeItemImpl({
           data-selected={isSelected || isMultiSelected ? "true" : "false"}
           data-open={isOpen ? "true" : "false"}
           data-drop-target={isOverInto ? "true" : "false"}
-          style={{ paddingLeft, paddingRight: compact ? 8 : 10, color: "var(--text-secondary)" }}
+          data-accent={groupAppearance.hasColor ? "true" : undefined}
+          style={groupRowStyle}
           onMouseDown={(e) => {
             if (e.button === 2) e.preventDefault();
           }}
@@ -454,21 +479,36 @@ function TreeNodeItemImpl({
           <span className="ui-tree-chevron inline-flex items-center justify-center">
             <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
           </span>
-          <span className="ui-tree-leading-icon"><Folder size={16} strokeWidth={1.5} /></span>
+          <span className="ui-tree-leading-icon">
+            <NodeAppearanceIcon
+              mark={groupAppearance.emoji}
+              iconKey={groupAppearance.iconKey}
+              fallback="folder"
+              size={16}
+            />
+          </span>
           <span className="flex-1 text-left truncate">{g.name}</span>
+          {groupProjectCount > 0 && (
+            <span
+              className="ui-tree-meta-chip ui-tree-count-chip inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] leading-none font-normal"
+              title={t("sidebar.tree.directoryProjectCount", { name: g.name, count: groupProjectCount })}
+              aria-label={t("sidebar.tree.directoryProjectCount", { name: g.name, count: groupProjectCount })}
+            >
+              {groupProjectCount > 99 ? "99+" : groupProjectCount}
+            </span>
+          )}
           <span className="ui-tree-item-actions hidden shrink-0 items-center gap-0.5 group-hover/grp:flex group-focus-within/grp:flex">
             <button onClick={(e) => { e.stopPropagation(); actions.onStartGroup(g.id); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title={t("sidebar.tree.startDirectory")}><Play size={14} strokeWidth={1.5} /></button>
           </span>
         </div>
 
         {actions.newGroupParentId === g.id && (
-          <div
-            className={`flex items-center ${compact ? "gap-1.5 py-1" : "gap-2 py-1.5"}`}
-            style={{ paddingLeft: paddingLeft + indentStep, paddingRight: compact ? 8 : 10 }}
-          >
-            <span className="ui-tree-leading-icon"><Folder size={16} strokeWidth={1.5} /></span>
-            <InlineRename initial="" onConfirm={(name) => actions.onCreateGroup(g.id, name)} onCancel={actions.onCancelNewGroup} />
-          </div>
+          <NewGroupRow
+            compact={compact}
+            paddingLeft={paddingLeft + indentStep}
+            onCreate={(name, appearance) => actions.onCreateGroup(g.id, name, appearance)}
+            onCancel={actions.onCancelNewGroup}
+          />
         )}
 
         {isOpen && node.children.length > 0 && (

@@ -1,7 +1,0 @@
-{"file":".trellis/tasks/06-05-jetbrains/prd.md","reason":"Acceptance criteria and out-of-scope list for verification."}
-{"file":".trellis/tasks/06-05-jetbrains/research/cc-pane.md","reason":"Reference behaviors to compare against while checking pane tree and DnD implementation."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality bar for verification."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Type safety checks for pane tree state and helper functions."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Ensure Zustand updates are immutable and state shape remains minimal."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check frontend/backend PTY session interactions and resize/focus side effects."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify existing tab status visuals and DnD/menu patterns were reused rather than duplicated badly."}

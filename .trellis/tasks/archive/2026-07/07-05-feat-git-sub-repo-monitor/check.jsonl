@@ -1,3 +1,0 @@
-{"file": ".trellis/tasks/07-05-feat-git-sub-repo-monitor/prd.md", "reason": "对照验收标准逐项检查"}
-{"file": ".trellis/spec/backend/git-status-contracts.md", "reason": "检查三条状态链路过滤一致性"}
-{"file": ".trellis/spec/backend/index.md", "reason": "后端合约检查清单"}

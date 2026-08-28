@@ -1,4 +1,19 @@
-import { writeText as writeNativeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
+import {
+  readText as readNativeClipboardText,
+  writeText as writeNativeClipboardText,
+} from "@tauri-apps/plugin-clipboard-manager";
+
+export async function readTextFromClipboard(): Promise<string> {
+  try {
+    return (await readNativeClipboardText()) ?? "";
+  } catch {
+    try {
+      return (await navigator.clipboard.readText()) ?? "";
+    } catch {
+      return "";
+    }
+  }
+}
 
 export async function copyTextToClipboard(text: string) {
   if (!text) return;

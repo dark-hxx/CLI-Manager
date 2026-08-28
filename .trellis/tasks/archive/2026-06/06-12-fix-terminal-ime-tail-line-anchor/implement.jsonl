@@ -1,1 +1,0 @@
-{"file": ".trellis/diagnostics/ime-cursor-position-issue.md", "reason": "前一轮诊断(时序窗口)已合入但未彻底;本轮残余根因=compositionstart 时刻光标可能正处 TUI 重绘中途,被冻结成尾行错误锚点;Claude/Codex 边框输入盒导致输入行启发式失配"}

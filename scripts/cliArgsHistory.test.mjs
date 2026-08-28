@@ -84,6 +84,11 @@ test("includes CLI argument history in preference snapshots", () => {
   assert.deepEqual(pickSyncableSettings({ cliArgsHistory, debugMode: true }), { cliArgsHistory });
 });
 
+test("keeps OSC 52 host clipboard query permission local", () => {
+  assert.equal(SETTING_BACKUP_POLICY.osc52ClipboardQueryEnabled, "excluded");
+  assert.deepEqual(pickSyncableSettings({ osc52ClipboardQueryEnabled: true }), {});
+});
+
 test("records non-clone CLI arguments after either create or edit succeeds", () => {
   const modalSource = readFileSync(new URL("../src/components/ConfigModal.tsx", import.meta.url), "utf8");
   const editBranchStart = modalSource.indexOf("if (isEdit && project) {");

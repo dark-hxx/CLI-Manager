@@ -1,1 +1,0 @@
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "检查对用户配置文件的写入是否安全、可逆、不破坏用户既有非本应用 hook 条目"}

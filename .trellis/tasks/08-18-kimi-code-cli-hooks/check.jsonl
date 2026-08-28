@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/cli-hook-contracts.md", "reason": "验收 source/event admission 和 notification contract"}
+{"file": ".trellis/spec/backend/ssh-agent-contracts.md", "reason": "验收远程配置事务、source 绑定与 Agent 版本"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验收前端质量、静态检查与人工 UI 边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验收 TypeScript source/status/settings 类型覆盖"}
+{"file": ".trellis/tasks/08-18-kimi-code-cli-hooks/research/kimi-code-official-hooks.md", "reason": "核对实现使用当前官方事件和 TOML schema"}
+{"file": ".trellis/tasks/08-18-kimi-code-cli-hooks/research/current-code-touchpoints.md", "reason": "核对所有触点与明确不在范围项"}
