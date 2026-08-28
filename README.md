@@ -1,10 +1,10 @@
 # CLI-Manager
 
-> **Language**: English | [简体中文](README.zh-CN.md)
+> **语言**：简体中文 | [English](README.en-US.md)
 
 <div align="center">
 
-**🚀 Cross-platform AI CLI workspace**
+**🚀 跨平台 AI CLI 增强工作台**
 
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-19-blue?logo=react)](https://react.dev/)
@@ -13,72 +13,101 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/dark-hxx/CLI-Manager)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue)](LICENSE)
 
-A multi-project AI CLI workspace for local terminals, SSH hosts, and mobile-assisted workflows
+覆盖本地终端、SSH 主机与手机协作的多项目 AI CLI 工作台
 
-[Features](#-core-features) • [Comparison](#-product-positioning-and-comparison) • [Preview](#-preview) • [Quick Start](#-quick-start) • [Tech Stack](#-tech-stack) • [Community](#-community)
+[功能特性](#-核心特性) • [竞品对比](#-产品定位与竞品对比) • [界面预览](#-界面预览) • [快速开始](#-快速开始) • [技术栈](#-技术栈) • [交流讨论](#-交流讨论)
 
 </div>
 
 ---
 
-## 💡 Overview
+## ❤️ 赞助商
 
-CLI-Manager is a desktop app focused on **AI CLI workflow enhancement**. It combines local and SSH terminals, multi-project management, deep Claude Code / Codex integration, multi-source history, Git Worktree isolation, and mobile-assisted conversations.
+<p align="center">
+<a href="https://fluxionai.space/register?source=github&campaign=climanager">
+<img src="docs/img/sponsor/fluxion-ai-banner.png" width="100%" alt="Fluxion AI：AI 模型统一接入与管理平台" />
+</a>
+</p>
 
-> **Platform support**: Windows (fully tested) | macOS / Linux (experimental, feedback welcome)
+<table>
+<tr>
+<td width="18%" align="center">
+<a href="https://fluxionai.space/register?source=github&campaign=climanager">
+<img src="docs/img/sponsor/fluxion-ai-logo.jpg" width="96" alt="Fluxion AI 标志" />
+</a>
+</td>
+<td width="82%">
 
-### 🎯 Why CLI-Manager?
+### [Fluxion AI](https://fluxionai.space/register?source=github&campaign=climanager)
 
-When developing across multiple projects, you may run into these problems:
+**一个入口，接入并管理全球主流 AI 模型**
 
-- ❌ You must keep watching the terminal while Claude / Codex runs, and one missed approval request can block the task
-- ❌ You want to review what code changed in a previous session, but Claude history has no Diff view
-- ❌ You do not know how many tokens you used this month or which project costs the most
-- ❌ You switch terminals across many projects and repeatedly type the same commands
-- ❌ You want different Claude backends for different projects (official / proxy / self-hosted), but have to edit environment variables manually
+Fluxion AI 面向个人开发者、技术团队与企业，通过统一 API 接入全球主流 AI 模型，以多线路调度提升可用性，并集中管理模型质量、使用情况与费用。灵活的线路与计费方案带来更具竞争力的调用成本，实时价格与每笔消费公开可查。
 
-**CLI-Manager provides:**
+[访问 Fluxion AI →](https://fluxionai.space/register?source=github&campaign=climanager)
 
-✅ **Real-time hook notifications** - desktop alerts when Claude needs approval, click to jump back<br>
-✅ **Live session statistics** - token usage, cost, and tool calls for each terminal session<br>
-✅ **Historical Diff review** - review code changes across sessions and jump back to the triggering message<br>
-✅ **Usage analytics dashboard** - heatmaps, trends, efficiency scatter charts, and more<br>
-✅ **SSH remote development** - launch and manage remote AI CLI terminals without leaving the workspace<br>
-✅ **cc-connect phone conversations** - continue Claude Code / Codex sessions from Telegram or Feishu<br>
-✅ **Multi-source session history** - parse and search histories from 11 AI CLI / coding-agent sources<br>
-✅ **Mature Worktree isolation** - isolate, commit, merge, and clean up parallel tasks through a guided workflow<br>
-✅ **Durable background tasks** - keep terminal jobs running and attach again after reopening the app<br>
-✅ **Desktop pets** - visualize session status and jump back to active tasks from a floating companion<br>
-✅ **Project-level provider switching** - switch Claude backend per project without editing config manually<br>
-✅ **Flexible split layout** - free terminal splits plus tab dragging across panes<br>
-✅ **Command palette and templates** - launch projects or run common commands quickly with `Ctrl+P`
+</td>
+</tr>
+</table>
+
+## 💡 项目简介
+
+CLI-Manager 是一款专注于 **AI CLI 工作流增强**的桌面应用，将本地与 SSH 终端、多项目管理、Claude Code / Codex 深度集成、多来源历史、Git Worktree 隔离和手机协作连接到同一工作台。
+
+> **平台支持**：Windows（完整测试） | macOS（完整测试） | Linux（实验性支持，欢迎反馈）
+
+### 🎯 为什么选择 CLI-Manager？
+
+在多项目并行开发中，你可能遇到这些痛点：
+
+- ❌ Claude / Codex 跑任务时得盯着终端，错过权限请求就卡住
+- ❌ 想回看某次会话改了什么代码，Claude 历史没有 Diff 视图
+- ❌ 不知道这个月用了多少 Token、哪个项目最费钱
+- ❌ 多个项目频繁切换终端，重复输入相同命令
+- ❌ 想给不同项目用不同的 Claude 后端（官方 / 中转），每次手动改环境变量
+
+**CLI-Manager 提供：**
+
+✅ **实时 Hook 通知** — Claude 需要审批时桌面弹窗提醒，点击直接跳转<br>
+✅ **会话实时统计** — 每个终端显示当前会话 Token 用量、费用、工具调用<br>
+✅ **历史 Diff 回看** — 统一查看所有历史会话的代码变更，支持跳回触发消息<br>
+✅ **用量分析看板** — 多维度统计（热力图、趋势图、效率散点）<br>
+✅ **SSH 远程开发** — 不离开工作区即可启动和管理远端 AI CLI 终端<br>
+✅ **cc-connect 手机对话** — 通过 Telegram 或飞书继续 Claude Code / Codex 会话<br>
+✅ **多来源会话历史** — 统一解析、筛选和搜索 11 类 AI CLI / Coding Agent 历史<br>
+✅ **成熟 Worktree 隔离** — 通过向导完成并行任务隔离、提交、合并与清理<br>
+✅ **持久后台任务** — 终端任务持续运行，重新打开应用后可直接恢复连接<br>
+✅ **桌面宠物** — 用悬浮伙伴展示会话状态，并快速跳回正在执行的任务<br>
+✅ **项目级供应商切换** — 一键切换 Claude 后端（官方 / 中转 / 自建），无需手动改配置<br>
+✅ **灵活分屏布局** — 自由的终端分屏 + Tab 跨 pane 拖拽<br>
+✅ **命令面板 & 模板** — `Ctrl+P` 快速启动项目 / 执行常用命令
 
 ---
 
-## ✨ Core Features
+## ✨ 核心特性
 
-### 🔥 Deep Claude Code / Codex CLI Integration
+### 🔥 Claude Code / Codex CLI 深度集成
 
 <table>
 <tr>
 <td width="50%">
 
-#### 🔔 Real-time Hook Notifications
+#### 🔔 Hook 实时通知
 
-- **Approval reminders** - desktop notification when Claude needs approval, click to jump back
-- **Task status sync** - terminal tabs show running / waiting approval / completed / failed states in real time
-- **OSC 133 shell integration** - standardized command boundary detection
-- **SessionStart binding** - automatically links a terminal with its Claude session ID
+- **权限审批提醒** — Claude 需要审批时桌面弹窗，点击跳转
+- **任务状态同步** — 终端 Tab 实时显示运行中 / 待审批 / 完成 / 失败状态
+- **OSC 133 Shell 集成** — 标准化命令边界检测
+- **SessionStart 会话绑定** — 自动关联终端与 Claude 会话 ID
 
 </td>
 <td width="50%">
 
-#### 📊 Live Session Statistics
+#### 📊 会话实时统计
 
-- **Real-time token monitoring** - input / output / cache token composition for the current session
-- **Cost estimation** - real-time cost estimate for the current session
-- **Tool call details** - see which tools / MCP extensions Claude invoked
-- **Git branch display** - automatically detects the current project's Git branch
+- **Token 用量实时监控** — 当前会话 input / output / cache Token 构成
+- **费用估算** — 实时计算当前会话成本
+- **工具调用明细** — 查看 Claude 调用了哪些工具 / MCP 扩展
+- **Git 分支显示** — 自动识别当前项目 Git 分支
 
 </td>
 </tr>
@@ -87,56 +116,57 @@ When developing across multiple projects, you may run into these problems:
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/img/hook-notification-jump.gif" width="100%" alt="Hook notifications and status sync" />
-<br><sub>Hook notification popup + live tab status sync</sub>
+<img src="docs/img/hook-notification-jump.gif" width="100%" alt="Hook 通知与状态同步" />
+<br><sub>Hook 通知弹窗 + Tab 状态实时同步</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/img/live-session-stats.png" width="100%" alt="Live session statistics panel" />
-<br><sub>Live terminal statistics: tokens / cost / Git branch</sub>
+<img src="docs/img/live-session-stats.png" width="100%" alt="会话实时统计面板" />
+<br><sub>终端实时统计：Token / 费用 / Git 分支</sub>
 </td>
 </tr>
 </table>
 
+
 ---
 
-### 📜 Unified Session History
+### 📜 历史会话统一管理
 
 <table>
 <tr>
 <td width="50%">
 
-#### 🗂️ Session Browsing
+#### 🗂️ 会话浏览
 
-- **Multi-source view** - browse Claude Code, Codex, Gemini, Copilot CLI, Antigravity, Grok Build, Pi, OpenCode, Kiro, Cursor, and Cline history in one place
-- **Smart filters** - group and filter by source / project / time
-- **In-session search** - highlighted search results with jump navigation
-- **Tags and favorites** - mark important sessions for later
+- **多来源统一视图** — 集中查看 Claude Code、Codex、Gemini、Copilot CLI、Antigravity、Grok Build、Pi、OpenCode、Kiro、Cursor 和 Cline 历史
+- **智能筛选** — 按来源 / 项目 / 时间分组
+- **会话内搜索** — 搜索高亮 + 跳转定位
+- **标签 & 收藏** — 为重要会话打标签
 
 </td>
 <td width="50%">
 
-#### 🔍 Diff Review
+#### 🔍 Diff 回看
 
-- **Deep Claude / Codex workflows** - Diff review, message editing, session resume, and cross-format conversion
-- **Code change visualization** - supports Unified Diff and Codex Patch style
-- **Line-level highlighting** - added / removed / hunk header lines use distinct colors
-- **Jump to triggering message** - navigate from a Diff block back to the related conversation
-- **Prompt Library** - extract historical prompts for quick reuse
+- **Claude / Codex 深度能力** — Diff 回看、消息编辑、恢复会话与跨格式互转
+- **代码变更可视化** — Unified Diff / Codex Patch 风格
+- **行级高亮** — 新增 / 删除 / hunk header 分色显示
+- **跳回触发消息** — 从 Diff 块快速定位到对应的对话
+- **Prompt Library** — 提取历史 Prompt 快速复用
 
 </td>
 </tr>
 </table>
 
 <p align="center">
-<img src="docs/img/session-history.png" width="85%" alt="Session history list" />
-<br><sub>Session history list + in-session search and Diff review</sub>
+<img src="docs/img/session-history.png" width="85%" alt="历史会话列表" />
+<br><sub>历史会话列表 + 会话内搜索与 Diff 回看</sub>
 </p>
 
-#### Session Source Capability Matrix
+#### 会话来源能力矩阵
 
-`✅` Full support · `👁️` Read-only support · `—` Not supported · `DB` Database-backed source without a standalone raw session file
+`✅` 完整支持 · `👁️` 只读支持 · `—` 暂不支持 · `DB` 数据库存储来源，没有独立原始会话文件
 
-| Source | Browse | Search | Statistics | Raw source | Diff / changes | Resume | Edit / delete | Convert | Live stats |
+| 来源 | 浏览 | 搜索 | 统计 | 原始数据 | Diff / 变更 | 恢复会话 | 编辑 / 删除 | 会话互转 | 实时统计 |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Claude Code | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Codex CLI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -154,343 +184,339 @@ When developing across multiple projects, you may run into these problems:
 
 ---
 
-### 📈 Multi-dimensional Usage Analytics
+### 📈 多维度用量分析
 
-#### Data Insights
+#### 多维度数据洞察
 
-- **Token composition analysis** - input / output / cache creation / cache read breakdown
-- **Cost estimation** - automatic pricing for Claude, GPT, and o-series models
-- **Project ranking** - click a project name to filter by project
-- **Activity heatmap** - 7 / 30 / 90 day ranges, click a date to inspect sessions from that day
-- **Token trend chart** - session / message / token trends with hover details
-- **Efficiency scatter chart** - project efficiency analysis (token usage vs session count)
-- **24-hour activity distribution** - understand your most active hours
+- **Token 构成分析** — input / output / cache creation / cache read 分项统计
+- **费用估算** — 支持 Claude、GPT、o 系列模型自动定价
+- **项目排行榜** — 点击项目名即可按项目过滤（可交互）
+- **活跃热力图** — 7 / 30 / 90 天范围，点击日期下钻查看当日会话
+- **Token 趋势图** — 会话 / 消息 / Token 趋势，支持 hover 详情
+- **效率散点图** — 项目效率分析（Token 使用 vs 会话数）
+- **24 小时活跃分布** — 了解自己的高效时段
 
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/img/usage-analytics-dashboard.png" width="100%" alt="Usage analytics dashboard" />
-<br><sub>Analytics dashboard: heatmap / token trend / efficiency scatter / project ranking</sub>
+<img src="docs/img/usage-analytics-dashboard.png" width="100%" alt="用量分析看板" />
+<br><sub>多维度统计看板：热力图 / Token 趋势 / 效率散点 / 项目排行</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/img/usage-analytics-details.png" width="100%" alt="Usage analytics details" />
-<br><sub>Token composition pie chart / model share / active hour distribution</sub>
+<img src="docs/img/usage-analytics-details.png" width="100%" alt="多维度统计详情" />
+<br><sub>Token 构成饼图 / 模型占比 / 活跃时段分布</sub>
 </td>
 </tr>
 </table>
 
 ---
 
-### 🔄 cc-switch Provider Integration
+### 🔄 cc-switch 供应商集成
 
-#### Project-level Backend Switching
+#### 项目级后端一键切换
 
-- **Provider management** - read-only parsing of the cc-switch database, grouped by `app_type`
-- **Project-level switching** - right-click project -> switch provider -> automatically writes `.claude/settings.json`
-- **Global default / project override** - choose either global default or project-level override
-- **Provider badges** - projects with overridden providers display dedicated badges in the project tree
+- **供应商管理** — 只读解析 cc-switch 数据库，按 app_type 分类展示
+- **项目级切换** — 右键项目 → 切换供应商 → 自动写入 `.claude/settings.json`
+- **跟随全局 / 项目覆盖** — 灵活选择全局默认或项目级覆盖
+- **供应商徽标** — 项目树为覆盖供应商的项目显示独立徽标
 
-**Use cases:**
-
-- Use the official API for project A
-- Use a proxy backend for project B
-- Use a self-hosted backend for project C
-- Switch with one click instead of editing environment variables manually
+**使用场景：**
+- 官方接口调试项目 A
+- 中转接口开发项目 B
+- 自建后端测试项目 C
+- 无需手动修改环境变量，一键切换
 
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/img/provider-list.png" width="100%" alt="Provider management" />
-<br><sub>Provider list and details</sub>
+<img src="docs/img/provider-list.png" width="100%" alt="供应商管理" />
+<br><sub>供应商列表与详情</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/img/provider-switch.png" width="100%" alt="Project-level provider switching" />
-<br><sub>Project context menu: switch provider with one click</sub>
+<img src="docs/img/provider-switch.png" width="100%" alt="项目级供应商切换" />
+<br><sub>项目右键菜单：一键切换供应商</sub>
 </td>
 </tr>
 </table>
 
 ---
 
-### 🌐 SSH Remote Development
+### 🌐 SSH 远程开发
 
-- **SSH host management** - SSH Config, Agent, private key, password / keyboard-interactive authentication, jump hosts, and ProxyCommand
-- **Proxy and diagnostics** - built-in HTTP CONNECT / SOCKS5 proxy helper, connection tests, host-key confirmation, and detailed diagnostic logs
-- **Remote project workflow** - browse remote directories, configure remote startup commands and environment variables, and launch AI CLI sessions directly in the target path
-- **Workspace integration** - remote terminals support tabs, splits, Workspan, background execution, and daemon-backed recovery
-- **Remote Agent and Hook** - explicitly install or upgrade the signed `cli-manager-ssh-agent`, configure Claude/Codex roots per host or project, preview Hook changes, and install or remove only CLI-Manager-owned entries
-- **Reliable live status** - SSH sessions with a validated installed Hook reuse daemon-owned protocol 1.7 Agent bridges with bounded handshake/response timeouts, heartbeat, reconnect gates, and a streaming Host/client-isolated spool
-- **Remote history** - browse scoped Claude Code and Codex sessions from the existing history workspace, with incremental list/search, on-demand detail and Diff, usage summaries, pagination, and explicit stale/offline cache state
-- **Remote resume** - preflight the original session, Host identity, config root, and cwd through the Agent, then continue it in a new interactive SSH terminal or jump to the existing Tab
-- **Remote files and Git** - browse a confined read-only file tree, search names or text, preview text and images, and use the full Git panel through the SSH Agent without passing remote paths to local filesystem or Git APIs
-- **Credential safety** - passwords use the operating system credential store; sync and export never include passwords, credentials, or private-key paths
+- **SSH 主机管理** — 支持 SSH Config、Agent、私钥、密码 / Keyboard-interactive、跳板机和 ProxyCommand
+- **代理与诊断** — 内置 HTTP CONNECT / SOCKS5 代理助手、连接测试、主机密钥确认和完整诊断日志
+- **远程项目工作流** — 浏览远端目录，配置远端启动命令与环境变量，在目标路径直接启动 AI CLI
+- **工作区集成** — 远程终端支持 Tab、分屏、Workspan、后台执行和 daemon 恢复
+- **远端 Agent 与 Hook** — 显式安装或升级签名的 `cli-manager-ssh-agent`，按主机或项目配置 Claude/Codex 根目录，预览 Hook 变更，并且只安装或移除 CLI-Manager 自有条目
+- **可靠实时状态** — 仅已验证安装 Hook 的 SSH 会话按主机复用一个 protocol 1.1 Agent bridge；握手/响应超时、heartbeat、重连限流和流式主机/客户端隔离 spool 共同控制连接与补发压力
+- **凭据安全** — 密码保存到操作系统凭据管理器；同步与导出不会携带密码、凭据或私钥路径
 
-> Remote Hook status, read-only remote history/resume, file and Git panels, realtime Tab stats, and catalog-backed usage analytics are available for Claude Code and Codex. Remote file/Git writes, local Explorer/Finder actions, Worktree tools, external terminal launch, and remote resource monitoring are not available. SSH projects never scan or switch remote providers.
+> Claude Code 与 Codex 的远端 Hook 状态已经可用。远端历史及分析、文件/Git 面板、Worktree、外部终端和远端资源监控仍未开放；SSH 项目始终不会扫描或切换远端供应商。
 
 <p align="center">
-<img src="docs/img/ssh-settings.png" width="85%" alt="SSH host settings and connection diagnostics" />
-<br><sub>SSH host management, authentication, proxy, and connection diagnostics</sub>
+<img src="docs/img/ssh-settings.png" width="85%" alt="SSH 主机设置与连接诊断" />
+<br><sub>SSH 主机管理、认证、代理与连接诊断</sub>
 </p>
 
 ---
 
-### 📱 Mobile Conversations with cc-connect
+### 📱 cc-connect 手机对话
 
-- **Chat from your phone** - use Telegram or Feishu to start independent Claude Code / Codex conversations on the desktop host
-- **Project-scoped access** - explicitly select the project exposed to remote conversations and restrict access with a fail-closed user-ID allowlist
-- **Managed runtime** - CLI-Manager verifies the supported cc-connect binary checksum, generates an isolated configuration, supervises the process, and can start it with the app
-- **Secure credentials** - bot tokens and app secrets are stored in Windows Credential Manager instead of generated config files
-- **Claude and Codex support** - Claude uses its permission modes; Codex uses the app-server stdio approval channel, with YOLO mode available only through an explicit warning and confirmation
-- **History convergence** - remote conversations create native CLI histories and flow back into CLI-Manager's unified session workspace
+- **手机发起对话** — 通过 Telegram 或飞书，在桌面主机上发起独立的 Claude Code / Codex 会话
+- **项目级授权** — 明确选择允许远程访问的项目，并通过默认拒绝的用户 ID 白名单限制访问者
+- **托管运行** — CLI-Manager 校验受支持 cc-connect 程序的版本与 SHA-256，生成隔离配置、托管进程，并可随应用自动启动
+- **凭据安全** — Bot Token、App ID 和 App Secret 保存到 Windows 凭据管理器，不写入生成的配置文件
+- **Claude 与 Codex 支持** — Claude 使用自身权限模式；Codex 使用 app-server stdio 审批通道，YOLO 模式必须经过明确风险提示和二次确认
+- **历史汇合** — 手机端产生原生 CLI 历史，后续会自动进入 CLI-Manager 的统一会话工作区
 
-> The current cc-connect integration runs on a Windows desktop host and supervises one project plus one messaging platform at a time. Telegram and Feishu are supported.
+> 当前 cc-connect 集成运行在 Windows 桌面主机上，首版每次托管一个项目和一个消息平台，支持 Telegram 与飞书。
 
 <table>
 <tr>
-<td width="50%" align="center"><img src="docs/img/cc-connect-settings.png" width="100%" alt="cc-connect settings" /><br><sub>Project / Agent selection, allowlist, credentials, and process status</sub></td>
-<td width="50%" align="center"><img src="docs/img/cc-connect-mobile.png" width="55%" alt="cc-connect mobile conversation" /><br><sub>Claude Code / Codex conversation from Telegram or Feishu</sub></td>
+<td width="50%" align="center"><img src="docs/img/cc-connect-settings.png" width="100%" alt="cc-connect 设置" /><br><sub>项目 / Agent 选择、白名单、凭据与进程状态</sub></td>
+<td width="50%" align="center"><img src="docs/img/cc-connect-mobile.png" width="55%" alt="cc-connect 手机对话" /><br><sub>通过 Telegram 或飞书与 Claude Code / Codex 对话</sub></td>
 </tr>
 </table>
 
 ---
 
-### 💻 Terminal and Splits
+### 💻 终端与分屏
 
 <table>
 <tr>
 <td width="50%">
 
-#### 🖥️ Built-in Terminal
+#### 🖥️ 内置终端
 
-- **Multiple shell support** - Windows (PowerShell / CMD / Pwsh / WSL / Git Bash), macOS / Linux (Bash / Zsh, etc.)
-- **Tab management** - drag sorting / overflow scrolling / duplicate configuration
-- **Performance optimizations** - high-frequency output batching / WebGL rendering / lower refresh rate for inactive terminals
-- **Chinese IME support** - stable candidate window anchoring and stream redraw resilience
-- **Terminal search** - search terminal output with `Ctrl+F`
-- **Custom background** - image / opacity / blur / dark overlay
+- **多 Shell 支持** — Windows（PowerShell / CMD / Pwsh / WSL / Git Bash）、macOS / Linux（Bash / Zsh 等）
+- **Tab 管理** — 拖拽排序 / 溢出滚动 / 复制配置
+- **性能优化** — 高频输出合并 / WebGL 渲染 / 非激活降频
+- **中文输入法完美支持** — 候选框锚点冻结 / 流式重绘免疫
+- **终端搜索** — `Ctrl+F` 搜索历史输出
+- **自定义背景** — 支持图片 / 透明度 / 高斯模糊 / 暗化覆盖
 
 </td>
 <td width="50%">
 
-#### 📐 Flexible Splits
+#### 📐 灵活分屏
 
-- **Free layout** - Split Right / Split Down / mixed nested splits
-- **Draggable separators** - adjust adjacent pane ratios
-- **Drag tabs across panes** - move tabs to another pane or create a split at the edge
-- **Independent tab bars** - each pane has its own tab bar
+- **自由布局** — Split Right / Split Down / 混合嵌套
+- **拖拽分隔线** — 调整相邻 pane 比例
+- **Tab 跨 pane 拖拽** — Tab 拖到其它 pane 或边缘创建分屏
+- **独立 Tab 栏** — 每个 pane 拥有独立 Tab 栏
 
 </td>
 </tr>
 </table>
 
 <p align="center">
-<img src="docs/img/terminal-splits.png" width="85%" alt="Terminal splits" />
-<br><sub>Flexible split layout + dragging tabs across panes</sub>
+<img src="docs/img/terminal-splits.png" width="85%" alt="终端分屏" />
+<br><sub>灵活分屏布局 + Tab 跨 pane 拖拽</sub>
 </p>
 
-#### Durable Workspaces and Background Tasks
+#### 持久工作区与后台任务
 
-- **Workspan workspaces** - group multiple terminals and nested panes into a persistent top-level workspace
-- **Daemon-backed sessions** - keep CLI tasks running after the main window exits, then attach without restarting the command
-- **Ordered replay and recovery** - restore terminal output, tab metadata, split layout, and live output in order after reconnecting
-- **Background task center** - inspect, restore, discard, or clean up tasks that continue outside the main window
+- **Workspan 工作区** — 将多个终端与嵌套分屏组织成可持久化的顶层工作区
+- **daemon 会话托管** — 主窗口退出后 CLI 任务仍可继续运行，重新打开时直接 attach，不会重复执行启动命令
+- **有序回放与恢复** — 重连后按顺序恢复终端输出、Tab 元数据、分屏布局与实时输出
+- **后台任务中心** — 查看、恢复、丢弃或清理由主窗口外持续运行的任务
 
 ---
 
-### ⚡ Command Reuse and Shortcuts
+### ⚡ 命令复用与快捷操作
 
-#### 🎯 Command Palette
+#### 🎯 命令面板
 
-- **Global `Ctrl+P` palette** - fuzzy search and keyboard navigation
-- **Quick project launch** - start a project terminal directly from the palette
-- **Run command templates** - execute common commands with one click
+- **`Ctrl+P` 全局面板** — 模糊搜索 / 键盘导航
+- **快速启动项目** — 从命令面板直接启动项目终端
+- **执行命令模板** — 一键执行常用命令
 
-#### 📝 Command Templates
+#### 📝 命令模板
 
-- **Three scopes** - global / project / session-level templates
-- **Variable substitution** - `${projectPath}` / `${projectName}`
-- **Command suggestions** - combine templates, existing local history, built-in AI CLI commands, and path completion without automatically executing the candidate
+- **三级作用域** — 全局 / 项目 / 会话级模板
+- **变量替换** — `${projectPath}` / `${projectName}`
+- **命令提示** — 结合模板、已有本地历史、内置 AI CLI 命令和路径补全生成候选，补全后不会自动执行
 
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/img/command-palette.png" width="100%" alt="Command palette" />
-<br><sub>Command palette: fuzzy search + quick launch</sub>
+<img src="docs/img/command-palette.png" width="100%" alt="命令面板" />
+<br><sub>命令面板：模糊搜索 + 快速启动</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/img/command-templates.png" width="100%" alt="Command templates" />
-<br><sub>Command templates: three scopes + variable substitution</sub>
+<img src="docs/img/command-templates.png" width="100%" alt="命令模板" />
+<br><sub>命令模板：三级作用域 + 变量替换</sub>
 </td>
 </tr>
 </table>
 
 ---
 
-### 🗂️ Project Management
+### 🗂️ 项目管理
 
-- **Project groups** - nested groups / drag sorting / collapse and expand
-- **Project config** - dedicated path / shell / startup command / environment variables
-- **Health checks** - automatically detects invalid paths
-- **Context menu** - open directory / switch provider / launch terminal
-- **Git integration** - automatically detects project Git branch
-- **Built-in file and Git tools** - file browsing / editing, Git status and Diff, hunk rollback, and sub-repository visibility
-- **Mature Worktree isolation** - prompt, auto-isolate parallel tasks, or always isolate into dedicated directories and `wt/<task-name>` branches
-- **Finish-task workflow** - review and commit changes, merge into the main workspace, abort safely on conflicts, then clean up the Worktree and branch
-
----
-
-### ☁️ WebDAV Cloud Sync
-
-- **Versioned backups** - immutable snapshots instead of a single overwrite-only backup
-- **Selective restore** - restore individual data domains, create a safety snapshot first, and undo the most recent restore
-- **Multi-device retention** - independent device snapshots with automatic retention of recent versions
-- **Offline retry** - failed uploads stay in an outbox and retry on a later launch
-- **Local import and export** - ZIP backup support with the same restore workflow
+- **项目分组** — 支持多层级分组 / 拖拽排序 / 折叠展开
+- **项目配置** — 独立配置路径 / Shell / 启动命令 / 环境变量
+- **健康检查** — 自动检测失效路径
+- **右键菜单** — 打开所在目录 / 切换供应商 / 启动终端
+- **Git 集成** — 自动识别项目 Git 分支
+- **内置文件与 Git 工具** — 文件浏览 / 编辑、Git 状态与 Diff、Hunk 回滚和子仓库展示
+- **成熟的 Worktree 隔离** — 支持提醒、并行任务自动隔离或始终隔离到独立目录与 `wt/<任务名>` 分支
+- **完成任务闭环** — 审查并提交改动、合并回主工作区，冲突时安全中止，最后清理 Worktree 与分支
 
 ---
 
-### 🎨 Personalization and Themes
+### ☁️ WebDAV 云同步
 
-- **App themes** - multiple built-in themes and customization
-- **Terminal themes** - Tokyo Night / Dracula / Monokai / Nord / Solarized, etc.
-- **Font customization** - UI font / terminal font / size / font color
-- **Shortcut configuration** - all shortcuts are customizable
-- **Compact mode** - compact UI plus external terminal by default
-- **Desktop pets** - floating status companion, task list and session jump-back, size / position / always-on-top controls, `.clipet` packages, and Codex Pets compatibility
+- **版本化备份** — 使用不可变历史快照，不再只覆盖同一份备份
+- **按域恢复** — 可选择恢复不同数据域，恢复前自动创建安全快照，并支持撤回最近一次恢复
+- **多设备保留** — 按设备保存独立快照并自动保留最近版本
+- **离线重试** — 上传失败会进入 outbox，在后续启动时自动重试
+- **本地导入导出** — ZIP 备份复用同一套安全恢复流程
+
+---
+
+### 🎨 个性化与主题
+
+- **应用主题** — 多种内置主题与自定义能力
+- **终端主题** — Tokyo Night / Dracula / Monokai / Nord / Solarized 等
+- **字体自定义** — UI 字体 / 终端字体 / 字号 / 字体颜色
+- **快捷键配置** — 所有快捷键可自定义
+- **精简模式** — 紧凑界面 + 外部终端默认启动
+- **桌面宠物** — 悬浮状态伙伴、任务列表与会话跳转、尺寸 / 位置 / 置顶设置、`.clipet` 宠物包及 Codex Pets 兼容
 
 <p align="center">
-<img src="docs/img/pet-settings.png" width="85%" alt="Desktop pet settings and gallery" />
-<br><sub>Desktop pet, task list, pet gallery, and `.clipet` package management</sub>
+<img src="docs/img/pet-settings.png" width="85%" alt="桌面宠物设置与图鉴" />
+<br><sub>桌面宠物、任务列表、宠物图鉴与 `.clipet` 宠物包管理</sub>
 </p>
 
 ---
 
-## 🧭 Product Positioning and Comparison
+## 🧭 产品定位与竞品对比
 
-CLI-Manager is positioned as a **durable AI CLI workspace**: it connects local and SSH terminals, multi-agent execution, long-term session history, Git Worktree isolation, analytics, provider configuration, background tasks, and phone conversations into one product.
+CLI-Manager 的定位是一个**可长期使用的 AI CLI 工作台**：把本地与 SSH 终端、多 Agent 执行、长期会话历史、Git Worktree 隔离、用量分析、供应商配置、后台任务和手机对话连接成一个完整产品。
 
-The comparison below is based on the public positioning of [Orca](https://github.com/stablyai/orca) and [cmux](https://github.com/manaflow-ai/cmux) as of 2026-07-05. Planned CLI-Manager capabilities are explicitly marked as planned.
+以下对比基于 [Orca](https://github.com/stablyai/orca) 与 [cmux](https://github.com/manaflow-ai/cmux) 在 2026-07-05 的公开项目定位；CLI-Manager 尚未交付的能力会明确标记为“规划中”。
 
-| Area | CLI-Manager | Orca | cmux |
+| 对比点 | CLI-Manager | Orca | cmux |
 |---|---|---|---|
-| Primary focus | Long-running AI CLI workspace across projects, local / SSH terminals, history, analytics, and configuration | Multi-agent orchestration and result comparison in isolated worktrees | Native macOS terminal workspace for agent panes, notifications, and programmable surfaces |
-| Desktop platforms | Windows fully tested; macOS / Linux experimental | macOS / Windows / Linux | macOS |
-| Remote workflows | Built-in SSH projects / terminals plus cc-connect phone conversations through Telegram or Feishu | SSH-oriented worktree workflows and remote orchestration | SSH / tmux through a composable terminal workflow |
-| Session history | 11 parsed sources with unified browse, search, filtering, tags, favorites, and statistics | Usage, account, notification, and AI Diff-oriented features | Session restore, notification panel, and workspace metadata |
-| Deep history operations | Claude / Codex Diff, file changes, message edit / delete, audit rollback, resume, and two-way conversion | Not the primary focus of its public positioning | Not the primary focus of its public positioning |
-| Git Worktree lifecycle | Mature project-level isolation: prompt / automatic strategies, dedicated branches, dependency setup, history, commit, merge, conflict abort, and cleanup | Core parallel-agent orchestration model | External / composable Git workflow rather than a guided task lifecycle |
-| Agent visualization | Automatic sub-agent splits with session association and live status | Parallel agents, isolated attempts, comparison, and merge workflow | Native panes / splits for agents and related tools |
-| Analytics and configuration | Token / cost / model / project analytics, cc-switch provider integration, versioned WebDAV backups | Usage and rate-limit tracking plus account switching | Ghostty configuration, CLI / socket APIs, hooks, and OSC integration |
-| Mobile and web | cc-connect phone conversations available now; dedicated Web and mobile clients are in planning | Includes a mobile companion in its public product positioning | macOS desktop focus |
-| Personalization | App / terminal themes, custom backgrounds, status-line tools, and desktop pets | Product-specific UI and orchestration views | Native terminal theming and Ghostty compatibility |
+| 核心定位 | 跨项目、本地 / SSH 终端、历史、统计和配置的一体化长期 AI CLI 工作台 | 在隔离 Worktree 中进行多 Agent 编排、结果比较与合并 | 面向 Agent pane、通知和可编程界面的原生 macOS 终端工作区 |
+| 桌面平台 | Windows / macOS 完整测试；Linux 实验支持 | macOS / Windows / Linux | macOS |
+| 远程工作流 | 内置 SSH 远程项目 / 终端，并可通过 cc-connect 在 Telegram / 飞书手机端对话 | SSH Worktree 与远程编排工作流 | 通过 SSH / tmux 组合远程终端工作流 |
+| 会话历史 | 解析 11 类来源，统一浏览、搜索、筛选、标签、收藏和统计 | 侧重账号、用量、通知与 AI Diff 等能力 | 会话恢复、通知面板与工作区元数据 |
+| 深度历史操作 | Claude / Codex Diff、文件变更、消息编辑 / 删除、审计撤回、恢复会话和双向互转 | 公开定位中不是核心方向 | 公开定位中不是核心方向 |
+| Git Worktree 生命周期 | 成熟的项目级隔离：提醒 / 自动策略、独立分支、依赖初始化、历史、提交、合并、冲突中止和清理 | 多 Agent 并行编排的核心模型 | 更偏外部组合式 Git 工作流，不提供任务完成向导闭环 |
+| Agent 可视化 | 子 Agent 自动分屏、会话关联与实时状态 | 多 Agent 隔离执行、结果对比与合并 | 原生 pane / split 展示 Agent 与相关工具 |
+| 统计与配置 | Token / 费用 / 模型 / 项目分析、cc-switch 供应商集成、WebDAV 版本化备份 | 用量、rate-limit 跟踪与账号切换 | Ghostty 配置、CLI / socket API、Hook 与 OSC 集成 |
+| 手机与 Web | cc-connect 手机对话已可用；独立 Web 端和 Mobile 端正在规划 | 公开产品定位包含移动端伴侣 | 以 macOS 桌面端为主 |
+| 个性化 | 应用 / 终端主题、自定义背景、状态栏工具和桌面宠物 | 产品自身的编排视图与界面 | 原生终端主题与 Ghostty 配置兼容 |
 
-**How to choose:**
+**选择建议：**
 
-- Choose **CLI-Manager** for a persistent daily workspace around Claude Code, Codex, and other AI CLI histories, especially when you need SSH, Worktree task isolation, deep history operations, analytics, provider management, and phone access.
-- Choose **Orca** when the central workflow is dispatching the same task to multiple isolated agents, comparing their results, and merging the preferred output.
-- Choose **cmux** when the priority is a native high-performance macOS terminal with programmable panes, notifications, and terminal / browser surfaces.
+- 选择 **CLI-Manager**：如果你需要围绕 Claude Code、Codex 和其他 AI CLI 历史构建长期工作台，尤其重视 SSH、Worktree 隔离、深度历史操作、用量分析、供应商管理与手机访问。
+- 选择 **Orca**：如果核心工作流是把同一任务分发给多个隔离 Agent，比较结果并合并最佳产出。
+- 选择 **cmux**：如果优先考虑 macOS 原生高性能终端、可编程 pane、通知以及终端 / 浏览器组合界面。
 
-### 🌍 Multi-surface Roadmap
+### 🌍 多端产品路线
 
-| Surface | Status | Role |
+| 载体 | 状态 | 定位 |
 |---|---|---|
-| Desktop app | ✅ Available | Full terminal, project, history, Git, analytics, SSH, and background-task workspace |
-| Phone conversations | ✅ Available through cc-connect | Talk to Claude Code / Codex from Telegram or Feishu while the desktop host supervises the session |
-| Web client | 🧭 Planning | Browser-based access to CLI-Manager workflows; scope and release schedule are not yet committed |
-| Dedicated mobile client | 🧭 Planning | A first-party mobile companion beyond messaging-platform conversations; scope and release schedule are not yet committed |
+| 桌面应用 | ✅ 已可用 | 完整的终端、项目、历史、Git、统计、SSH 与后台任务工作区 |
+| 手机对话 | ✅ 已通过 cc-connect 可用 | 在 Telegram / 飞书与 Claude Code / Codex 对话，由桌面主机托管会话 |
+| Web 端 | 🧭 规划中 | 通过浏览器访问 CLI-Manager 工作流，具体范围与交付时间尚未承诺 |
+| 独立 Mobile 端 | 🧭 规划中 | 超越消息平台对话的第一方移动伴侣，具体范围与交付时间尚未承诺 |
 
 ---
 
-## 🤖 Agent Parallelism
+## 🤖 Agent 并行能力
 
-CLI-Manager provides two mature parallel-work paths: automatic sub-agent visualization inside the terminal workspace, and project-level Git Worktree isolation for independent tasks.
+CLI-Manager 提供两条成熟的并行工作路径：在终端工作区内自动可视化子 Agent，以及使用项目级 Git Worktree 隔离独立任务。
 
-### 🤖 Automatic Sub-agent Splitting
+### 🤖 子 Agent 自动分屏
 
-- **Smart splits** - automatically creates split terminals when Claude Code dispatches sub-agents
-- **Session association** - each sub-agent gets an independent terminal with live status sync
-- **Layout optimization** - automatically adjusts split layout based on agent count
+- **智能分屏** — Claude Code 派发子 Agent 时自动创建分屏终端
+- **会话关联** — 每个子 Agent 独立终端，状态实时同步
+- **布局优化** — 根据 Agent 数量自动调整分屏布局
 
-### 🌿 Mature Git Worktree Task Isolation
+### 🌿 成熟的 Git Worktree 并行任务隔离
 
-- **Flexible isolation strategies** - keep normal opening as the default, prompt when a parallel CLI task exists, auto-isolate parallel sessions, or always create a Worktree
-- **Dedicated directory and branch** - each task uses an independent Worktree directory and `wt/<task-name>` branch
-- **Integrated project context** - file browsing, Git status, history, live statistics, provider overrides, and terminal focus follow the active Worktree
-- **Dependency setup** - optionally detect missing dependencies and open a dedicated installation terminal
-- **Finish-task wizard** - review and commit changes, merge into the main workspace, abort safely on conflicts, and clean up the Worktree / branch
-- **Safety guards** - block merges into a dirty main workspace, skip no-diff merges, handle stale / damaged Worktrees, and retry cleanup around Windows file locks
+- **灵活隔离策略** — 默认保持普通打开，也可在存在并行 CLI 任务时提醒、自动隔离并行会话或始终创建 Worktree
+- **独立目录与分支** — 每个任务使用独立 Worktree 目录和 `wt/<任务名>` 分支
+- **完整项目上下文** — 文件浏览、Git 状态、会话历史、实时统计、供应商覆盖和终端聚焦都会跟随当前 Worktree
+- **依赖初始化** — 可选检测缺失依赖，并新建专用安装终端
+- **完成任务向导** — 审查并提交改动、合并回主工作区、冲突时安全中止，最后清理 Worktree / 分支
+- **安全保护** — 主工作区脏时阻止合并、无差异时跳过无意义合并，并处理 stale / 损坏 Worktree 与 Windows 文件锁清理重试
 
 ---
 
-## 📸 Preview
+## 📸 界面预览
 
 <p align="center">
-<img src="docs/img/main-workspace.png" width="90%" alt="Main interface" />
-<br><sub>Main interface - terminal workspace</sub>
+<img src="docs/img/main-workspace.png" width="90%" alt="主界面" />
+<br><sub>主界面 — 终端工作区</sub>
 </p>
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ 技术栈
 
-### Frontend
+### 前端
 
-- **Framework**: React 19 + TypeScript 5.8
-- **Build tool**: Vite 7
-- **State management**: Zustand
-- **Styling**: Tailwind CSS 4
-- **Terminal**: xterm.js + FitAddon + WebglAddon
-- **UI components**: Radix UI, Mantine Core
-- **Charts**: ECharts
-- **Drag and drop**: @dnd-kit
-- **Diff rendering**: react-diff-view
+- **框架**：React 19 + TypeScript 5.8
+- **构建工具**：Vite 7
+- **状态管理**：Zustand
+- **样式**：Tailwind CSS 4
+- **终端**：xterm.js + FitAddon + WebglAddon
+- **UI 组件**：Radix UI, Mantine Core
+- **图表**：ECharts
+- **拖拽**：@dnd-kit
+- **Diff 展示**：react-diff-view
 
-### Backend
+### 后端
 
-- **Runtime**: Tauri 2.x
-- **Language**: Rust
-- **Database**: SQLite (tauri-plugin-sql)
-- **Storage**: tauri-plugin-store
-- **PTY**: Rust PTY session management
-- **Cloud sync**: WebDAV adapter layer
+- **运行时**：Tauri 2.x
+- **语言**：Rust
+- **数据库**：SQLite (tauri-plugin-sql)
+- **存储**：tauri-plugin-store
+- **PTY**：Rust PTY 会话管理
+- **云同步**：WebDAV 适配层
 
-### Core Capabilities
+### 核心能力
 
-- Cross-platform desktop app (Windows / macOS / Linux, based on Tauri 2)
-- Multi-shell support (Windows: PowerShell / CMD / Pwsh / WSL / Git Bash; macOS / Linux: Bash / Zsh, etc.)
-- PTY session management and status broadcasting
-- Daemon-backed background tasks, ordered replay, attach, and workspace recovery
-- Claude Code / Codex Hook Bridge (127.0.0.1 loopback + bearer token validation)
-- Automatic sub-agent splitting (cmux-like, creates split terminals when Claude Code dispatches sub-agents)
-- Mature Git Worktree task isolation and commit / merge / cleanup workflow
-- Multi-source history parsing (Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Antigravity, Grok Build, Pi, OpenCode, Kiro, Cursor, and Cline)
-- Deep Claude / Codex history workflows (Diff, edit, resume, conversion, and analytics)
-- SSH remote projects and terminals (OpenSSH launch plans, proxy support, diagnostics, remote directory browsing, and signed Linux Agent lifecycle management)
-- cc-connect mobile conversations (Telegram / Feishu with Claude Code or Codex)
-- Desktop pets (`.clipet` packages and Codex Pets compatibility)
-- Read-only cc-switch provider database parsing
-- WebDAV cloud sync and conflict handling
-- Git integration (branch detection / project path health checks)
+- 跨平台桌面应用（Windows / macOS / Linux，基于 Tauri 2）
+- 多 Shell 支持（Windows：PowerShell / CMD / Pwsh / WSL / Git Bash；macOS / Linux：Bash / Zsh 等）
+- PTY 会话管理与状态广播
+- daemon 后台任务托管、有序回放、attach 与工作区恢复
+- Claude Code / Codex Hook Bridge（127.0.0.1 回环 + bearer token 校验）
+- 子 Agent 自动分屏（类 cmux，Claude Code 派发子 Agent 时自动创建分屏终端）
+- 成熟的 Git Worktree 任务隔离与提交 / 合并 / 清理闭环
+- 多来源历史解析（Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Antigravity、Grok Build、Pi、OpenCode、Kiro、Cursor、Cline）
+- Claude / Codex 深度历史能力（Diff、编辑、恢复、互转与统计）
+- SSH 远程项目与远程终端（OpenSSH Launch Plan、代理、诊断与远程目录浏览）
+- cc-connect 手机对话（通过 Telegram / 飞书连接 Claude Code 或 Codex）
+- 桌面宠物（`.clipet` 宠物包与 Codex Pets 兼容）
+- cc-switch 供应商数据库只读解析
+- WebDAV 云同步与冲突处理
+- Git 集成（分支识别 / 项目路径健康检查）
 
 ---
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
-### Option 1: Download a Release
+### 方式一：下载可执行版本
 
-Go to the [Releases](https://github.com/dark-hxx/CLI-Manager/releases) page and download the latest version.
+前往 [Releases](https://github.com/dark-hxx/CLI-Manager/releases) 页面获取最新版本。
 
-> Windows builds are the primary release artifact at the moment. macOS / Linux users are recommended to build from source.
+> 目前主要提供 Windows 构建产物；macOS / Linux 用户建议从源码构建（见下方）。
 
-### SSH Remote Agent
+### SSH 远端 Agent
 
-For a configured SSH Host, open **Settings -> SSH Hosts -> CLI Integration** to explicitly preview and install, upgrade, roll back, or uninstall `cli-manager-ssh-agent`. The first supported remote targets are Linux x86_64 and aarch64. Opening the page never connects automatically, and Agent lifecycle operations never install or modify Claude/Codex Hooks.
+配置 SSH 主机后，打开 **设置 -> SSH 主机 -> CLI 集成**，可显式预览并安装、升级、回滚或卸载 `cli-manager-ssh-agent`。首期远端目标为 Linux x86_64 与 aarch64。打开页面不会自动连接，Agent 生命周期操作也不会自动安装或修改 Claude/Codex Hook。
 
-After the Agent is installed and detected, use the Claude or Codex card on the same page to inspect the configured root, preview the exact files and fingerprints, and explicitly confirm Hook installation or removal. Each SSH Host and project override keeps its own config-root identity; the default roots are `$HOME/.claude` and `$HOME/.codex`.
+Agent 安装并检测成功后，在同一页面的 Claude 或 Codex 卡片中检查配置根目录、预览实际文件与指纹，再显式确认安装或移除 Hook。每台 SSH 主机和项目覆盖目录分别保存自己的配置根身份；默认目录为 `$HOME/.claude` 与 `$HOME/.codex`。
 
-The reusable bridge requires Agent protocol `1.1` or newer. An older healthy Agent remains available for explicit upgrade, but is shown as incompatible until it provides heartbeat, cancellation, and bounded-backpressure capabilities.
+可复用 bridge 要求 Agent protocol `1.1` 或更高版本。较旧但健康的 Agent 仍可显式升级，但在具备 heartbeat、取消和有界 backpressure 能力前会显示为不兼容。
 
-The same signed release artifacts can be installed from a reviewed POSIX script:
+也可以在远端通过先下载、再审阅的 POSIX 脚本安装同一签名制品：
 
 ```sh
 curl -fL -o install-ssh-agent.sh https://github.com/dark-hxx/CLI-Manager/releases/latest/download/install-ssh-agent.sh
@@ -498,240 +524,255 @@ less install-ssh-agent.sh
 sh install-ssh-agent.sh
 ```
 
-The script requires `curl`, `minisign`, and either `jq` or `python3`. It verifies the signed manifest, target, artifact size, and SHA-256 before execution. Use `--install-dir` for a custom root; HTTP mirrors require the explicit `--allow-http` option and still must pass the built-in public-key verification.
+脚本依赖 `curl`、`minisign`，以及 `jq` 或 `python3` 其中之一；执行前会校验签名 manifest、目标架构、制品大小和 SHA-256。自定义安装根使用 `--install-dir`；普通 HTTP 镜像必须显式传入 `--allow-http`，并且仍需通过内置公钥验签。
 
-### Option 2: Run from Source
+### 方式二：从源码运行
 
-#### Prerequisites
+#### 前置要求
 
 - Node.js >= 20
 - Rust >= 1.70
-- Operating system: Windows 10/11 | macOS | Linux
+- 操作系统：Windows 10/11 | macOS | Linux
 
-#### Install Dependencies
+#### 安装依赖
 
 ```bash
 npm install
 ```
 
-#### Start Development Mode
+#### 开发运行
 
 ```bash
 npm run tauri dev
 ```
 
-#### Build a Release
+#### 构建发行版本
 
 ```bash
 npm run tauri build
 ```
 
-#### Other Useful Commands
+#### 其他常用命令
 
 ```bash
-# TypeScript type check
+# TypeScript 类型检查
 npx tsc --noEmit
 
-# Rust check
+# Rust 检查
 cd src-tauri && cargo check
 
-# Rust tests
+# Rust 测试
 cd src-tauri && cargo test
 ```
 
 ---
 
-## 🎯 Use Cases
+## 🎯 适用场景
 
-- ✅ Developers who use Claude Code / Codex CLI heavily
-- ✅ Users who need real-time token usage and cost monitoring
-- ✅ Users who want to review historical session code changes
-- ✅ Users who need one searchable history workspace across multiple AI CLI tools
-- ✅ Developers who run AI CLI tasks on remote SSH hosts
-- ✅ Developers who want to continue Claude Code / Codex conversations from a phone
-- ✅ Teams running parallel tasks that need mature Git Worktree isolation and merge cleanup
-- ✅ Users who need long-running CLI tasks to survive window or app restarts
-- ✅ Users who want a lightweight visual companion for task and session status
-- ✅ Multi-project development workflows with frequent terminal switching
-- ✅ Users who manage multiple Claude backends with cc-switch
-- ✅ Users who need to sync development configuration across devices
+- ✅ 高频使用 Claude Code / Codex CLI 的开发者
+- ✅ 需要实时监控 Token 用量与费用的用户
+- ✅ 想回看历史会话代码变更的用户
+- ✅ 希望统一搜索多个 AI CLI 工具历史记录的用户
+- ✅ 需要通过 SSH 在远端主机运行 AI CLI 任务的开发者
+- ✅ 希望在手机端继续 Claude Code / Codex 对话的开发者
+- ✅ 并行任务需要成熟 Git Worktree 隔离与合并清理闭环的团队
+- ✅ 希望长时间 CLI 任务在窗口关闭或应用重启后继续运行的用户
+- ✅ 希望用轻量桌宠直观看到任务与会话状态的用户
+- ✅ 多项目并行开发，需要频繁切换终端的场景
+- ✅ 使用 cc-switch 管理多个 Claude 后端的用户
+- ✅ 需要跨设备同步开发配置的用户
 
 ---
 
-## 📋 Feature Quick Reference
+## 📋 功能速查
 
 <details>
-<summary><b>Project Management</b></summary>
+<summary><b>项目管理</b></summary>
 
-- Project groups / search / drag sorting
-- Project configuration (path / shell / startup command / environment variables)
-- Path health checks
-- Automatic Git branch detection
-- Context menu (open directory / switch provider)
-- Built-in file browser / editor and Git Diff tools
-- Git Worktree isolation strategies and finish-task workflow
+- 项目分组 / 搜索 / 拖拽排序
+- 项目配置（路径 / Shell / 启动命令 / 环境变量）
+- 路径健康检查
+- Git 分支自动识别
+- 右键菜单（打开目录 / 切换供应商）
+- 内置文件浏览 / 编辑与 Git Diff 工具
+- Git Worktree 隔离策略与完成任务向导
 
 </details>
 
 <details>
-<summary><b>Terminal Workspace</b></summary>
+<summary><b>终端工作区</b></summary>
 
-- Built-in PTY terminal (xterm.js)
-- Tab management (drag sorting / overflow scrolling / duplicate configuration)
-- Flexible splits (Split Right / Split Down / mixed nested splits)
-- Drag tabs across panes
-- Persistent Workspan workspaces
-- Daemon-backed background tasks and session recovery
-- Terminal search (`Ctrl+F`)
-- Custom background (image / opacity / blur)
-- Chinese IME support
+- 内置 PTY 终端（xterm.js）
+- Tab 管理（拖拽排序 / 溢出滚动 / 复制配置）
+- 灵活分屏（Split Right / Split Down / 混合嵌套）
+- Tab 跨 pane 拖拽
+- 可持久化的 Workspan 工作区
+- daemon 后台任务与会话恢复
+- 终端搜索（`Ctrl+F`）
+- 自定义背景（图片 / 透明度 / 高斯模糊）
+- 中文输入法完美支持
 
 </details>
 
 <details>
-<summary><b>AI CLI Integration and Session History</b></summary>
+<summary><b>AI CLI 集成与会话历史</b></summary>
 
-- Real-time hook notifications (approval / completed / failed)
-- Tab status dots (running / waiting approval / completed / failed)
-- Live session statistics (tokens / cost / tool calls / Git branch)
-- Multi-source history parsing (11 supported sources)
-- Unified filtering / search / tags / favorites
-- Diff review (Unified Diff / Codex Patch)
-- Claude / Codex message editing, resume, and conversion
+- Hook 实时通知（权限审批 / 任务完成 / 失败）
+- Tab 状态点（运行中 / 待审批 / 完成 / 失败）
+- 会话实时统计（Token / 费用 / 工具调用 / Git 分支）
+- 多来源历史解析（支持 11 类来源）
+- 统一筛选 / 搜索 / 标签 / 收藏
+- Diff 回看（Unified Diff / Codex Patch）
+- Claude / Codex 消息编辑、会话恢复与互转
 - Prompt Library
 
 </details>
 
 <details>
-<summary><b>SSH Remote Development</b></summary>
+<summary><b>SSH 远程开发</b></summary>
 
-- SSH host groups and host management
-- SSH Config / Agent / private key / password authentication
-- Jump hosts / ProxyCommand / HTTP CONNECT / SOCKS5
-- Connection diagnostics and host-key confirmation
-- Remote directory browsing and startup commands
-- Remote tabs / splits / Workspan / background recovery
-- Signed `cli-manager-ssh-agent` install / upgrade / rollback / uninstall
-- Per-host and per-project Claude/Codex config roots plus previewed remote Hook lifecycle
-- Bound Hook events, live tab status, offline spool replay, and gap warnings
-
-</details>
-
-<details>
-<summary><b>cc-connect Mobile Conversations</b></summary>
-
-- Telegram / Feishu phone conversations
-- Claude Code / Codex Agent selection
-- Project-scoped access and user-ID allowlist
-- Verified cc-connect binary and managed process lifecycle
-- Windows Credential Manager for platform credentials
-- Native history convergence into CLI-Manager
+- SSH 主机分组与主机管理
+- SSH Config / Agent / 私钥 / 密码认证
+- 跳板机 / ProxyCommand / HTTP CONNECT / SOCKS5
+- 连接诊断与主机密钥确认
+- 远程目录浏览与启动命令
+- 远程 Tab / 分屏 / Workspan / 后台恢复
+- 签名 `cli-manager-ssh-agent` 的安装 / 升级 / 回滚 / 卸载
+- 按主机和项目设置 Claude/Codex 配置根，并预览执行远端 Hook 生命周期
+- 绑定 Hook 事件、Tab 实时状态、断线 spool 补发与 gap 告警
 
 </details>
 
 <details>
-<summary><b>Usage Analytics</b></summary>
+<summary><b>cc-connect 手机对话</b></summary>
 
-- Multi-dimensional analytics dashboard
-- Token composition analysis (input / output / cache)
-- Cost estimation
-- Interactive project ranking
-- Activity heatmap (7 / 30 / 90 days)
-- Token trend chart
-- Efficiency scatter chart
-- 24-hour activity distribution
+- Telegram / 飞书手机对话
+- Claude Code / Codex Agent 选择
+- 项目级授权与用户 ID 白名单
+- cc-connect 程序校验与托管运行
+- Windows 凭据管理器保存平台凭证
+- 原生历史自动汇入 CLI-Manager
 
 </details>
 
 <details>
-<summary><b>cc-switch Integration</b></summary>
+<summary><b>用量分析</b></summary>
 
-- Read-only provider database parsing
-- Grouped by `app_type`
-- Project-level provider switching
-- Automatically writes `.claude/settings.json`
-- Global default / project override
-
-</details>
-
-<details>
-<summary><b>Command Reuse</b></summary>
-
-- Command palette (`Ctrl+P`)
-- Command templates (global / project / session-level)
-- Inline command suggestions (templates / existing local history / AI CLI commands / paths)
-- Variable substitution (`${projectPath}` / `${projectName}`)
+- 多维度统计看板
+- Token 构成分析（input / output / cache）
+- 费用估算
+- 项目排行榜（可交互）
+- 活跃热力图（7 / 30 / 90 天）
+- Token 趋势图
+- 效率散点图
+- 24 小时活跃分布
 
 </details>
 
 <details>
-<summary><b>Cloud Sync</b></summary>
+<summary><b>cc-switch 集成</b></summary>
 
-- Versioned WebDAV snapshots
-- Selective data-domain restore
-- Safety snapshot and one-step undo
-- Per-device retention and offline outbox retry
-- Local import and export (ZIP)
+- 只读解析供应商数据库
+- 按 app_type 分类展示
+- 项目级供应商一键切换
+- 自动写入 `.claude/settings.json`
+- 跟随全局 / 项目覆盖
 
 </details>
 
 <details>
-<summary><b>Personalization</b></summary>
+<summary><b>命令复用</b></summary>
 
-- App themes / terminal themes
-- Font customization (UI / terminal / size / color)
-- Shortcut configuration
-- Compact mode
-- Desktop pets / `.clipet` packages / Codex Pets
-- Custom terminal background
+- 命令面板（`Ctrl+P`）
+- 命令模板（全局 / 项目 / 会话级）
+- 行内命令提示（模板 / 已有本地历史 / AI CLI 命令 / 路径）
+- 变量替换（`${projectPath}` / `${projectName}`）
+
+</details>
+
+<details>
+<summary><b>云同步</b></summary>
+
+- WebDAV 版本化快照
+- 按数据域选择恢复
+- 恢复前安全快照与一步撤回
+- 按设备保留版本与离线 outbox 重试
+- 本地导入导出（ZIP）
+
+</details>
+
+<details>
+<summary><b>个性化</b></summary>
+
+- 应用主题 / 终端主题
+- 字体自定义（UI / 终端 / 字号 / 颜色）
+- 快捷键配置
+- 精简模式
+- 桌面宠物 / `.clipet` 宠物包 / Codex Pets
+- 终端背景自定义
 
 </details>
 
 ---
 
-## 🔑 Default Shortcuts
+## 🔑 默认快捷键
 
-| Shortcut | Action |
+| 快捷键 | 功能 |
 |---|---|
-| `Ctrl+P` | Open command palette |
-| `Ctrl+K` | Open session history |
-| `Ctrl+Shift+T` | New terminal |
-| `Ctrl+W` | Close current terminal |
-| `Alt+ArrowRight` | Next tab |
-| `Alt+ArrowLeft` | Previous tab |
-| `F11` | Terminal fullscreen |
-| `Ctrl+F` | Terminal search / in-session search |
+| `Ctrl+P` | 打开命令面板 |
+| `Ctrl+K` | 打开会话历史 |
+| `Ctrl+Shift+T` | 新建终端 |
+| `Ctrl+W` | 关闭当前终端 |
+| `Alt+ArrowRight` | 下一个 Tab |
+| `Alt+ArrowLeft` | 上一个 Tab |
+| `F11` | 终端全屏 |
+| `Ctrl+F` | 终端搜索 / 会话内搜索 |
 
-> 💡 All shortcuts can be customized in Settings - Shortcuts.
-
----
-
-## 💬 Community
-
-<p align="center">
-  <img src="docs/img/wechat.jpg" width="280" alt="Author's personal WeChat QR code" />
-  <br>
-  <sub>Author's personal WeChat QR code. Please add the note <code>cli-manager</code> when adding the author.</sub>
-</p>
+> 💡 所有快捷键可在「设置 - 快捷键」中自定义
 
 ---
 
-## 🎉 Acknowledgements
+## 💬 交流讨论
 
-This project was promoted in the [LINUX DO](https://linux.do/) community. Thanks to the LINUX DO community for supporting and recognizing open-source projects.
+<div align="center">
+<table>
+<tr>
+<th align="center">作者个人微信</th>
+<th align="center">CLI-Manager 微信群</th>
+</tr>
+<tr>
+<td align="center">
+  <img src="docs/img/wechat.jpg" height="280" alt="作者个人微信二维码" />
+</td>
+<td align="center">
+  <img src="docs/img/wechat-group-qr.png" height="280" alt="CLI-Manager 微信群组二维码" />
+</td>
+</tr>
+<tr>
+<td align="center"><sub>添加好友时请备注 <code>cli-manager</code></sub></td>
+<td align="center"><sub>欢迎加入交流</sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
-## 📄 License
+## 🎉 致谢
 
-CLI-Manager is dual-licensed:
+本项目在 [LINUX DO](https://linux.do/) 社区推广，感谢 LINUX DO 社区对开源项目的支持与认可。
 
-- **Open source**: [AGPL-3.0-or-later](LICENSE). Companies and individuals may use, study, modify, distribute, and provide network access to CLI-Manager under the AGPL terms.
-- **Commercial**: Proprietary integration, closed-source modifications, internal productization where AGPL obligations are not acceptable, commercial redistribution, or hosted/managed offerings under proprietary terms require a separate commercial license. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+---
 
-Copyright (c) 2026 Chenyme. See [NOTICE](NOTICE).
+## 📄 许可证
 
-Ordinary use of the unmodified application does not require a commercial license. Open-source use that complies with AGPL-3.0-or-later does not require a commercial license.
+CLI-Manager 采用双授权模式：
+
+- **开源授权**：[AGPL-3.0-or-later](LICENSE)。公司和个人均可在遵守 AGPL 条款的前提下使用、研究、修改、分发或通过网络提供本项目。
+- **商业授权**：如果需要闭源集成、闭源改造、用于不接受 AGPL 义务的内部产品化平台、商业分发，或以专有条款提供托管/服务化能力，需要单独取得商业授权。详见 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)。
+
+Copyright (c) 2026 Chenyme。详见 [NOTICE](NOTICE)。
+
+正常使用未经修改的官方应用不需要商业授权；遵守 AGPL-3.0-or-later 的开源使用也不需要商业授权。
 
 ---
 
@@ -751,8 +792,8 @@ Ordinary use of the unmodified application does not require a commercial license
 
 <div align="center">
 
-**⭐ If this project helps you, a Star is appreciated.**
+**⭐ 如果这个项目对你有帮助，欢迎 Star 支持！**
 
-[Submit Issue](https://github.com/dark-hxx/CLI-Manager/issues) • [Contribute](https://github.com/dark-hxx/CLI-Manager/pulls) • [View Docs](docs/功能清单.md)
+[提交 Issue](https://github.com/dark-hxx/CLI-Manager/issues) • [贡献代码](https://github.com/dark-hxx/CLI-Manager/pulls) • [查看文档](docs/功能清单.md)
 
 </div>
