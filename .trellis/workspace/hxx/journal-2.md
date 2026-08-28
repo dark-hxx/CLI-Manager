@@ -1179,3 +1179,57 @@ Fixed Markdown preview zoom, persistent local/WSL/SSH file refresh, Markdown tab
 ### Status
 
 [OK] **Completed**
+
+
+## Session 97: History smart-title prompt and responsiveness
+
+**Date**: 2026-08-26
+**Task**: History smart-title prompt and responsiveness
+**Branch**: `master`
+
+### Summary
+
+Added a global local smart-title prompt, persisted save feedback, non-blocking Provider execution, shared SQLite contention handling, and immediate generation loading feedback.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `65a6b5cf` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 98: 修复 macOS Fcitx5 终端中文重复输入
+
+**Date**: 2026-08-26
+**Task**: 修复 macOS Fcitx5 终端中文重复输入
+**Branch**: `master`
+
+### Summary
+
+在共享终端输入边界修复 macOS Fcitx5 的同源 CJK 重发，并补齐回归测试与规范。
+
+### Main Changes
+
+- 新增 Process-key 检查点的同源 CJK 去重，覆盖普通 Shell、Codex 与其他内置 CLI。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b669c1db` | (see git log) |
+
+### Testing
+
+- [OK] node --test scripts/terminalImeInputDedup.test.mjs scripts/terminalImeComposition.test.mjs；npx tsc --noEmit；npm run build。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 待 macOS + Fcitx5 真机补测中文候选、标点、ASCII、分屏与切换标签场景。

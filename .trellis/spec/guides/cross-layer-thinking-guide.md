@@ -79,6 +79,55 @@ contract. Trace it through source parsing, cache/catalog persistence, API
 serialization, frontend normalization, and tree construction. Keep provider
 specific path inference only as an explicit compatibility fallback.
 
+### Mistake 5: Letting a drag source resolve its target terminal path
+
+**Bad**: A file source panel inserts one relative path string itself. A different project, Worktree, SSH host, or remote root terminal then cannot distinguish the source filesystem location.
+
+**Good**: The source creates `TerminalFileDragPayload { text, absolutePath, source }`; the registered terminal drop zone delivers that payload to `useTerminalInput`, which compares source and target locations before choosing relative text or absolute fallback. All source panels share `useTerminalFilePointerDrag`; only the target owns the location decision.
+
+### Mistake 6: Misclassifying local persistence contention as a remote failure
+
+**Bad**: A Tauri command reserves or updates a shared SQLite row with a
+deferred read-then-write transaction. When another supported app process owns
+the writer slot, the command forwards `database is locked` into a generic UI
+fallback that asks the user to check a Provider, model, or network.
+
+**Good**: At the database ownership boundary, choose the transaction mode and
+bounded busy timeout deliberately. A short read-then-write mutation on the
+shared main database acquires `BEGIN IMMEDIATE` before reading, maps SQLite
+busy/locked codes to one stable local-persistence error, and lets the frontend
+render a separate localized retry message. Do not change the supported
+production-plus-development shared-data contract merely to hide contention.
+
+### Mistake 7: Treating a WebView Promise as sufficient async isolation
+
+**Bad**: The frontend calls `invoke(...)` without awaiting it in an event
+handler, but the Rust entrypoint is a synchronous `#[tauri::command] fn` that
+uses `tauri::async_runtime::block_on` for a multi-second HTTP/SQLx operation.
+The renderer-facing Promise does not change the command macro's blocking
+execution context, so the application can still appear frozen.
+
+**Good**: Make the long-running entrypoint a Tauri `async fn`. If an existing
+helper future is non-`Send`, let the async command await a dedicated
+`tauri::async_runtime::spawn_blocking` worker that owns the `block_on`; never
+put that wait back in the synchronous IPC handler. Keep the command name and
+payload stable, retain the existing pending/duplicate guard, and add a
+source-level regression assertion for the execution boundary.
+
+### Mistake 8: Using a terminal IPC response as the loading signal
+
+**Bad**: A store keeps a non-reactive duplicate-request `Map`, while a component
+only displays loading when terminal metadata returned by `await invoke(...)`
+contains `state: "pending"`. A one-shot command that returns only after a slow
+Provider call then gives the user no feedback between click and completion.
+
+**Good**: When an action accepts a request, publish a non-persistent,
+session/resource-keyed in-flight state before any detail load or IPC wait.
+Combine it with persisted pending metadata in every affected view, disable
+duplicate actions, and clear it only if the same request still owns that key.
+Do not invent terminal data or persist the visual state merely to render a
+spinner.
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -95,6 +144,9 @@ After implementation:
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
 - [ ] For parent/child data, verified the relationship survives source file → parser → catalog/cache → API → frontend tree
+- [ ] For a shared SQLite read-then-write path, verified write-lock acquisition, a bounded busy wait, stable busy/error mapping, and a UI message that does not blame an unrelated remote dependency.
+- [ ] For a Tauri command that can await a slow network or database operation, verified both the WebView call and the Rust command execution context are asynchronous; a non-`Send` helper is isolated on a dedicated blocking worker.
+- [ ] For a one-shot long-running IPC request, verified the UI has an observable in-flight state before terminal response metadata is available, and that a superseded request cannot clear a newer action's feedback.
 
 ---
 

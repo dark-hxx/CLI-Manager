@@ -5,6 +5,10 @@ export interface Group {
   name: string;
   parent_id: string | null;
   sort_order: number;
+  /** 外观标记：单个 emoji 字符或内置图标 key；空串表示回退默认文件夹图标。 */
+  icon: string;
+  /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
+  color: string;
   created_at: string;
 }
 
@@ -318,6 +322,10 @@ export interface Project {
   ssh_host_id: string | null;
   remote_path: string;
   cli_config_root: string;
+  /** 外观标记：单个 emoji 字符或内置图标 key；空串表示按节点类型回退默认图标。 */
+  icon: string;
+  /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
+  color: string;
   created_at: string;
   updated_at: string;
 }
@@ -340,6 +348,8 @@ export interface CreateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  icon?: string;
+  color?: string;
 }
 
 export interface UpdateProjectInput {
@@ -361,6 +371,8 @@ export interface UpdateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  icon?: string;
+  color?: string;
 }
 
 export type TerminalScope =
@@ -372,6 +384,8 @@ export type TerminalScope =
 export interface CreateGroupInput {
   name: string;
   parent_id?: string | null;
+  icon?: string;
+  color?: string;
 }
 
 export type TreeNode =
@@ -896,6 +910,7 @@ export interface HistorySmartTitleSettings {
   providerId: string | null;
   modelId: string | null;
   enabledAt: number | null;
+  customPrompt: string;
 }
 
 export interface HistoryTitleProviderOption {

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeftRight, Boxes, CircleAlert, GripVertical, RefreshCw, Settings } from "../icons";
 import { useI18n } from "../../lib/i18n";
-import type { NativeProviderAppType, NativeProviderFailoverProvider, NativeProviderGlobalPreview } from "../settings/providers/nativeProviderTypes";
+import type { NativeProviderAppType, NativeProviderFailoverCircuit, NativeProviderFailoverProvider, NativeProviderGlobalPreview } from "../settings/providers/nativeProviderTypes";
 import { orderFailoverProviders } from "../settings/providers/providerFailoverOrder";
 import { useProviderQuickSwitch } from "./useProviderQuickSwitch";
 import { TerminalPanelHeader } from "./TerminalPanelHeader";
@@ -167,6 +167,8 @@ export function ProviderQuickSwitchPanel({ open, defaultAppType, onOpenSettings 
   const { t } = useI18n();
   const [appType, setAppType] = useState<NativeProviderAppType>(defaultAppType);
   const [pendingSwitch, setPendingSwitch] = useState<PendingProviderSwitch | null>(null);
+  // 纯视图过滤：只控制本面板列表是否展示「不可入队」供应商，默认关闭，不落库也不影响队列成员。
+  const [showNotReady, setShowNotReady] = useState(false);
   useEffect(() => setAppType(defaultAppType), [defaultAppType]);
   useEffect(() => setPendingSwitch(null), [appType, open]);
   const reorderSensors = useSensors(
@@ -224,6 +226,9 @@ export function ProviderQuickSwitchPanel({ open, defaultAppType, onOpenSettings 
         settingsValid: provider.settingsValid,
       }));
   }, [autoFailover, failover, quickSwitch.providers]);
+  // canReorder / queuedIds / queuePosition / 拖拽提交都必须基于全量 rows：
+  // 队列成员和 provider_catalog_reorder 都要求全量 ID 覆盖，用过滤后的列表会把隐藏行踢出队列或触发
+  // provider_reorder_mismatch。展示过滤只作用在 visibleRows 上。
   const canReorder = autoFailover && rows.length > 1 && !quickSwitch.action;
 
   const queuedIds = useMemo(
@@ -231,6 +236,25 @@ export function ProviderQuickSwitchPanel({ open, defaultAppType, onOpenSettings 
     [rows],
   );
   const queuePosition = useMemo(() => new Map(queuedIds.map((id, index) => [id, index])), [queuedIds]);
+
+  // 熔断状态只在自动故障转移开启时有意义；过滤与渲染共用同一份查表，避免两处口径漂移。
+  const circuitOf = useCallback((providerId: string): NativeProviderFailoverCircuit | null => {
+    if (!autoFailover || !failover) return null;
+    return failover.circuits.find((item) => item.providerId === providerId)
+      ?? (failover.circuit.providerId === providerId ? failover.circuit : null);
+  }, [autoFailover, failover]);
+
+  // 「不可入队」= 状态圆点中 !ready 且未熔断的那一档；熔断/半开有各自标签，不归该开关管。
+  // 当前供应商始终保留：面板首要职责是显示正在生效的渠道，把它藏掉会让面板看起来没有当前项。
+  const visibleRows = useMemo(() => {
+    if (showNotReady) return rows;
+    return rows.filter((provider) => {
+      if (provider.ready || provider.id === currentId) return true;
+      const status = circuitOf(provider.id)?.status;
+      return status === "open" || status === "halfOpen";
+    });
+  }, [circuitOf, currentId, rows, showNotReady]);
+  const hiddenCount = rows.length - visibleRows.length;
 
   const selectAppType = (next: NativeProviderAppType) => {
     if (next !== appType) setAppType(next);
@@ -255,9 +279,9 @@ export function ProviderQuickSwitchPanel({ open, defaultAppType, onOpenSettings 
     const nextIndex = event.key === "Home"
       ? 0
       : event.key === "End"
-        ? rows.length - 1
-        : Math.min(rows.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)));
-    rowRefs.current[rows[nextIndex]?.id]?.focus();
+        ? visibleRows.length - 1
+        : Math.min(visibleRows.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)));
+    rowRefs.current[visibleRows[nextIndex]?.id]?.focus();
   };
 
   const handleGlobalSwitch = async (provider: ProviderRow) => {
@@ -409,8 +433,9 @@ export function ProviderQuickSwitchPanel({ open, defaultAppType, onOpenSettings 
         </div>
       </div>
 
-      <div className="ui-thin-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        <div className="mb-3 grid grid-cols-[80px_minmax(0,1fr)] gap-3 rounded-lg border px-3 py-2.5" style={{ borderColor: TERM_PANEL.border, backgroundColor: TERM_PANEL.card }}>
+      {/* 固定区：路由状态卡与列表标题不跟随供应商列表滚动，只有下方列表滚。 */}
+      <div className="shrink-0 px-3 pt-3">
+        <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-3 rounded-lg border px-3 py-2.5" style={{ borderColor: TERM_PANEL.border, backgroundColor: TERM_PANEL.card }}>
           <div className="flex min-w-0 flex-col justify-center">
             <div className="flex min-w-0 items-center gap-1.5">
               <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md" style={{ color: TERM_PANEL.green, backgroundColor: panelColorTint(TERM_PANEL.green, 14) }}><ArrowLeftRight size={12} /></span>
@@ -448,35 +473,47 @@ export function ProviderQuickSwitchPanel({ open, defaultAppType, onOpenSettings 
               busy={quickSwitch.action === "failover-enabled"}
               onToggle={(next) => void handleFailoverToggle(next)}
             />
+            <RoutingToggleRow
+              label={t("providerQuickSwitch.showNotReady")}
+              hint={showNotReady
+                ? t("providerQuickSwitch.showNotReadyOnHint")
+                : t("providerQuickSwitch.showNotReadyOffHint")}
+              checked={showNotReady}
+              disabled={false}
+              busy={false}
+              onToggle={setShowNotReady}
+            />
           </div>
         </div>
 
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-[11px] font-semibold" style={{ color: TERM_PANEL.dim }}>{t("providerQuickSwitch.providerList")}</span>
-          <span className="text-[10px]" style={{ color: TERM_PANEL.dim }}>{rows.length}</span>
-        </div>
+        {errorMessage && <div className="mt-2 flex items-start gap-1.5 rounded-lg border px-2.5 py-2 text-[10px]" style={{ color: TERM_PANEL.red, borderColor: panelColorTint(TERM_PANEL.red, 45), backgroundColor: panelColorTint(TERM_PANEL.red, 10) }}><CircleAlert size={13} className="mt-0.5 shrink-0" />{errorMessage}</div>}
 
-        {quickSwitch.loading && rows.length === 0 && (
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-[11px] font-semibold" style={{ color: TERM_PANEL.dim }}>{t("providerQuickSwitch.providerList")}</span>
+          <span className="text-[10px]" style={{ color: TERM_PANEL.dim }}>{hiddenCount > 0 ? `${visibleRows.length}/${rows.length}` : rows.length}</span>
+        </div>
+      </div>
+
+      <div className="ui-thin-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
+        {quickSwitch.loading && visibleRows.length === 0 && (
           <div className="flex items-center justify-center gap-2 py-8 text-[11px]" style={{ color: TERM_PANEL.dim }}><RefreshCw size={14} className="animate-spin" />{t("providerQuickSwitch.loading")}</div>
         )}
-        {!quickSwitch.loading && rows.length === 0 && (
-          <div className="py-8 text-center text-[11px]" style={{ color: TERM_PANEL.dim }}>{t("providerQuickSwitch.empty")}</div>
+        {!quickSwitch.loading && visibleRows.length === 0 && (
+          <div className="py-8 text-center text-[11px]" style={{ color: TERM_PANEL.dim }}>
+            {hiddenCount > 0 ? t("providerQuickSwitch.allNotReady") : t("providerQuickSwitch.empty")}
+          </div>
         )}
-        {errorMessage && <div className="mb-2 flex items-start gap-1.5 rounded-lg border px-2.5 py-2 text-[10px]" style={{ color: TERM_PANEL.red, borderColor: panelColorTint(TERM_PANEL.red, 45), backgroundColor: panelColorTint(TERM_PANEL.red, 10) }}><CircleAlert size={13} className="mt-0.5 shrink-0" />{errorMessage}</div>}
 
         <DndContext
           sensors={reorderSensors}
           collisionDetection={closestCenter}
           onDragEnd={(event) => void handleReorderDragEnd(event)}
         >
-        <SortableContext items={rows.map((provider) => provider.id)} strategy={verticalListSortingStrategy}>
+        <SortableContext items={visibleRows.map((provider) => provider.id)} strategy={verticalListSortingStrategy}>
         <div className="space-y-2" role="radiogroup" aria-label={t("providerQuickSwitch.providerList")}>
-          {rows.map((provider, index) => {
+          {visibleRows.map((provider, index) => {
             const selected = provider.id === currentId;
-            const circuit = autoFailover
-              ? failover?.circuits.find((item) => item.providerId === provider.id)
-                ?? (failover?.circuit.providerId === provider.id ? failover.circuit : null)
-              : null;
+            const circuit = circuitOf(provider.id);
             const vendor = inferVendor(`${provider.name} ${provider.model ?? ""} ${provider.baseUrl ?? ""}`);
             // 当前供应商由整张卡片的高亮表达；右侧只用状态圆点呈现可用性/熔断状态。
             // 左右标记绝对居中，正文保持单列，避免为两个装饰标记拆成三列布局。

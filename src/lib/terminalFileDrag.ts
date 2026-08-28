@@ -3,6 +3,11 @@ import type { Project, ProjectFileEntry } from "./types";
 
 export const TERMINAL_FILE_DRAG_MIME = "application/x-cli-manager-file-drag";
 
+export type TerminalFileDragProject = Pick<
+  Project,
+  "id" | "name" | "path" | "remote_path" | "environment_type" | "ssh_host_id" | "cli_tool"
+>;
+
 export interface TerminalFileDragPayload {
   text: string;
   absolutePath: string;
@@ -49,7 +54,7 @@ function getDropZoneAtPoint(x: number, y: number): TerminalDropZone | null {
 }
 
 export function createTerminalFileDragPayload(
-  project: Pick<Project, "id" | "name" | "path" | "remote_path" | "environment_type" | "ssh_host_id" | "cli_tool">,
+  project: TerminalFileDragProject,
   relativePath: string,
   kind: ProjectFileEntry["kind"] = "file",
 ): TerminalFileDragPayload {

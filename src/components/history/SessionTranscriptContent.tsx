@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
 import type { ProjectImageFilePayload } from "../../lib/types";
+import type { MarkdownLinkBehavior } from "../ui/MarkdownContent";
 import { HistoryMarkdownContent } from "./HistoryMarkdownContent";
 import {
   isGitStatusLine,
@@ -16,6 +17,11 @@ interface SessionTranscriptContentProps {
   query?: string;
   variant?: "history" | "terminal";
   terminalCodeTheme?: "light" | "dark";
+  /**
+   * Pinned by callers that need the terminal code theme without terminal link behavior:
+   * MarkdownContent derives linkBehavior from variant unless it is given explicitly.
+   */
+  linkBehavior?: MarkdownLinkBehavior;
   markdownClassName?: string;
 }
 
@@ -452,6 +458,7 @@ export function SessionTranscriptContent({
   query = "",
   variant = "history",
   terminalCodeTheme,
+  linkBehavior,
   markdownClassName,
 }: SessionTranscriptContentProps) {
   const sections = useMemo(() => parseTranscriptSections(content), [content]);
@@ -463,6 +470,7 @@ export function SessionTranscriptContent({
         query={query}
         variant={variant}
         terminalCodeTheme={terminalCodeTheme}
+        linkBehavior={linkBehavior}
         className={markdownClassName}
       />
     );
@@ -479,6 +487,7 @@ export function SessionTranscriptContent({
               query={query}
               variant={variant}
               terminalCodeTheme={terminalCodeTheme}
+              linkBehavior={linkBehavior}
               className={markdownClassName}
             />
           );

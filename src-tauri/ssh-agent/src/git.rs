@@ -451,6 +451,12 @@ fn map_git_error(stderr: &[u8], stdout: &[u8]) -> String {
         || lower.contains("no such remote")
     {
         "no_remote"
+    } else if lower.contains("not a git repository")
+        || lower.contains("不是一个 git 仓库")
+        || lower.contains("不是 git 仓库")
+    {
+        // 远端目录本身不是 Git 仓库：与 native/WSL 链路共用稳定错误码，前端渲染友好空态。
+        "not_git_repository"
     } else {
         "git_failed"
     };
@@ -1360,8 +1366,29 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
 mod tests {
     #[cfg(unix)]
     use super::{changes, RepoRequest};
-    use super::{dispatch, is_nested_repo_entry, parse_status, validate_patch, validate_relative};
+    use super::{
+        dispatch, is_nested_repo_entry, map_git_error, parse_status, validate_patch,
+        validate_relative,
+    };
     use serde_json::json;
+    #[test]
+    fn non_git_repository_stderr_maps_to_stable_code() {
+        assert_eq!(
+            map_git_error(
+                b"fatal: not a git repository (or any of the parent directories): .git",
+                b""
+            ),
+            "not_git_repository"
+        );
+        // 远端 URL 不可达仍是 no_remote，不得被非仓库分支抢走。
+        assert_eq!(
+            map_git_error(
+                b"fatal: 'origin' does not appear to be a git repository",
+                b""
+            ),
+            "no_remote"
+        );
+    }
     #[test]
     fn paths_reject_traversal_and_windows_separators() {
         assert!(validate_relative("src/lib.rs", false).is_ok());

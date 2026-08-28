@@ -1,10 +1,12 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowRightLeft, Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, MessageSquare, RefreshCw, Search, Sparkles, Star, Terminal, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { ArrowRightLeft, Bot, Check, ChevronDown, ChevronRight, Clock3, Folder, LoaderCircle, MessageSquare, RefreshCw, Search, Sparkles, Star, Terminal, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistoryIndexStatus, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
-import { resolveCliToolIconKey, resolveHistorySourceIconKey } from "../../lib/cliTools";
+import { resolveHistorySourceIconKey } from "../../lib/cliTools";
+import { resolveNodeAppearance } from "../../lib/nodeAppearance";
+import { NodeAppearanceIcon } from "../NodeAppearanceIcon";
 import { findWorktreeByPath } from "../../lib/terminalProject";
 import { useWorktreeStore } from "../../stores/worktreeStore";
 import { CliToolIcon } from "../CliToolIcon";
@@ -76,6 +78,7 @@ interface HistoryListPaneProps {
   selectedCount: number;
   allVisibleSelected: boolean;
   selectedSessionKeys: Set<string>;
+  smartTitleInFlightSessionKeys: ReadonlySet<string>;
   onRefresh: () => void;
   onClose: () => void;
   smartTitleEnabled: boolean;
@@ -227,8 +230,16 @@ function countProjects(node: HistoryProjectTreeNode): number {
 }
 
 function ProjectFilterIcon({ project, size = 13 }: { project: Project; size?: number }) {
-  const icon = resolveCliToolIconKey(project.cli_tool);
-  return icon ? <CliToolIcon icon={icon} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+  const appearance = resolveNodeAppearance({ icon: project.icon, color: project.color });
+  return (
+    <NodeAppearanceIcon
+      mark={appearance.emoji}
+      iconKey={appearance.iconKey}
+      cliTool={project.cli_tool}
+      fallback="terminal"
+      size={size}
+    />
+  );
 }
 
 function SessionSourceIcon({ source, size = 14 }: { source: string; size?: number }) {
@@ -346,6 +357,7 @@ export function HistoryListPane({
   selectedCount,
   allVisibleSelected,
   selectedSessionKeys,
+  smartTitleInFlightSessionKeys,
   onRefresh,
   onClose,
   smartTitleEnabled,
@@ -667,17 +679,31 @@ export function HistoryListPane({
     const paddingLeft = 8 + depth * 14;
     if (node.type === "group") {
       const isOpen = Boolean(normalizedProjectSearch) || !collapsedFilterGroups.has(node.group.id);
+      const groupAppearance = resolveNodeAppearance({
+        icon: node.group.icon,
+        color: node.group.color,
+      });
       return (
         <div key={`group:${node.group.id}`}>
           <button
             type="button"
             onClick={() => toggleFilterGroup(node.group.id)}
             className="ui-tree-node ui-tree-group ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[11px] font-semibold"
-            style={{ paddingLeft }}
+            style={{
+              paddingLeft,
+              ...(groupAppearance.hasColor ? { "--node-accent": groupAppearance.colorVar } : {}),
+            } as CSSProperties}
             aria-expanded={isOpen}
           >
             <ChevronRight size={12} className="shrink-0" style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 150ms" }} />
-            <Folder size={13} className="shrink-0" />
+            <span className="ui-tree-leading-icon shrink-0">
+              <NodeAppearanceIcon
+                mark={groupAppearance.emoji}
+                iconKey={groupAppearance.iconKey}
+                fallback="folder"
+                size={13}
+              />
+            </span>
             <span className="min-w-0 flex-1 truncate">{node.group.name}</span>
             <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{countProjects(node)}</span>
           </button>
@@ -692,6 +718,10 @@ export function HistoryListPane({
 
     const projectPath = historyProjectPath(node.project);
     const selected = selectedProjectMatch(node.project);
+    const projectAppearance = resolveNodeAppearance({
+      icon: node.project.icon,
+      color: node.project.color,
+    });
     return (
       <button
         key={`project:${node.project.id}`}
@@ -703,7 +733,11 @@ export function HistoryListPane({
         )}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
-        style={{ paddingLeft }}
+        data-accent={projectAppearance.hasColor ? "true" : undefined}
+        style={{
+          paddingLeft,
+          ...(projectAppearance.hasColor ? { "--node-accent": projectAppearance.colorVar } : {}),
+        } as CSSProperties}
         title={projectPath}
       >
         <span className="ui-tree-leading-icon">
@@ -998,6 +1032,10 @@ export function HistoryListPane({
                 ? formatSessionListTitle(row.item.displayTitle, t("history.imagePlaceholder"))
                 : "";
             const sessionWorktree = row.type === "session" ? getSessionWorktree(row.item) : null;
+            const smartTitlePending = row.type === "session" && (
+              row.item.generatedTitle?.state === "pending"
+              || smartTitleInFlightSessionKeys.has(row.item.sessionKey)
+            );
             return (
               <div
                 key={virtualRow.key}
@@ -1142,11 +1180,11 @@ export function HistoryListPane({
                               </span>
                             )}
                             <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
-                            {row.item.generatedTitle?.state === "pending" && (
+                            {smartTitlePending && (
                               <span title={t("history.smartTitle.pending")}>
-                                <Sparkles
+                                <LoaderCircle
                                   size={12}
-                                  className="shrink-0 animate-pulse text-primary"
+                                  className="shrink-0 animate-spin text-primary"
                                   aria-label={t("history.smartTitle.pending")}
                                 />
                               </span>
@@ -1194,11 +1232,11 @@ export function HistoryListPane({
                               </span>
                             )}
                             <span className="truncate text-[13px] font-semibold text-text-primary">{sessionDisplayTitle}</span>
-                            {row.item.generatedTitle?.state === "pending" && (
+                            {smartTitlePending && (
                               <span title={t("history.smartTitle.pending")}>
-                                <Sparkles
+                                <LoaderCircle
                                   size={12}
-                                  className="shrink-0 animate-pulse text-primary"
+                                  className="shrink-0 animate-spin text-primary"
                                   aria-label={t("history.smartTitle.pending")}
                                 />
                               </span>
@@ -1281,11 +1319,15 @@ export function HistoryListPane({
                 className="context-menu-item"
                 role="menuitem"
                 onClick={handleContextMenuGenerateSmartTitle}
-                disabled={contextMenu.session.generatedTitle?.state === "pending"}
+                disabled={
+                  contextMenu.session.generatedTitle?.state === "pending"
+                  || smartTitleInFlightSessionKeys.has(contextMenu.session.sessionKey)
+                }
               >
                 <Sparkles size={13} aria-hidden="true" />
                 <span>
                   {contextMenu.session.generatedTitle?.state === "pending"
+                    || smartTitleInFlightSessionKeys.has(contextMenu.session.sessionKey)
                     ? t("history.smartTitle.pending")
                     : contextMenu.session.generatedTitle
                       ? t("history.smartTitle.regenerate")

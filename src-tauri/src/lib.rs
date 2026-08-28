@@ -16,6 +16,7 @@ mod file_watcher;
 mod git_watcher;
 pub mod hook_client;
 mod linux_graphics;
+mod live_server;
 mod log_rotation;
 mod process_job;
 pub(crate) mod provider;
@@ -865,6 +866,23 @@ pub(crate) const MIGRATION_OPTIMIZE_UNIFIED_USAGE_RECORDS_SQL: &str = "
                           )
                    );
               ";
+/// 分组与项目的外观标记（issue #213）。空串表示"自动"：颜色按名称 hash 落到调色板，图标按节点类型回退。
+/// `icon` 存单个 emoji 字符或内置图标 key，`color` 只存调色板 token（不存任意 hex，保证主题适配）。
+const MIGRATION_ADD_NODE_APPEARANCE_VERSION: i64 = 34;
+const MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION: &str =
+    "add_node_appearance_to_groups_and_projects";
+const MIGRATION_ADD_NODE_APPEARANCE_SQL: &str = "
+                ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+                ALTER TABLE groups ADD COLUMN color TEXT NOT NULL DEFAULT '';
+                ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+                ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '';
+              ";
+/// 供 `commands::db_repair` 做"缺列自愈"用：外观列缺失时补列并按同一 checksum 登记 migration 34，
+/// 避免 sqlx 随后重放 `ADD COLUMN` 撞 `duplicate column name`。
+pub(crate) const NODE_APPEARANCE_MIGRATION_VERSION: i64 = MIGRATION_ADD_NODE_APPEARANCE_VERSION;
+pub(crate) const NODE_APPEARANCE_MIGRATION_DESCRIPTION: &str =
+    MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION;
+pub(crate) const NODE_APPEARANCE_MIGRATION_SQL: &str = MIGRATION_ADD_NODE_APPEARANCE_SQL;
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -1169,6 +1187,12 @@ fn migrations() -> Vec<Migration> {
             sql: MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: MIGRATION_ADD_NODE_APPEARANCE_VERSION,
+            description: MIGRATION_ADD_NODE_APPEARANCE_DESCRIPTION,
+            sql: MIGRATION_ADD_NODE_APPEARANCE_SQL,
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -1459,6 +1483,7 @@ pub fn run() {
         .manage(daemon::client::DaemonBridge::new())
         .manage(file_watcher::FileWatcherBridge::new())
         .manage(git_watcher::GitWatcherBridge::new())
+        .manage(live_server::LiveServerManager::new())
         .manage(commands::subagent_transcript::SubagentTranscriptBridge::new())
         .manage(commands::cc_connect::CcConnectManager::new())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -1549,6 +1574,9 @@ pub fn run() {
             commands::third_party_notification::third_party_notification_test_send,
             commands::logging::set_debug_logging,
             commands::logging::resource_diagnostics_write,
+            commands::live_server::live_server_start,
+            commands::live_server::live_server_status,
+            commands::live_server::live_server_stop,
             commands::fs::clipboard_read_file_paths,
             commands::fs::check_paths_exist,
             commands::fs::file_get_path_kind,
@@ -1818,6 +1846,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = &event {
+                app.state::<live_server::LiveServerManager>().shutdown();
                 app.state::<commands::cc_connect::CcConnectManager>()
                     .shutdown();
                 crash_reporter::mark_graceful_exit();
@@ -2077,7 +2106,7 @@ mod provider_migration_tests {
         MIGRATION_CREATE_NATIVE_PROVIDERS_VERSION, MIGRATION_LEGACY_PROVIDERS_VERSION,
     };
     use crate::{
-        MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+        MIGRATION_ADD_NODE_APPEARANCE_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
         MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
         MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
         MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
@@ -2153,12 +2182,24 @@ mod provider_migration_tests {
             .contains("ALTER TABLE usage_records ADD COLUMN error_detail TEXT"));
         assert!(error_detail_migration.sql.contains("u.error_code"));
         assert!(error_detail_migration.sql.contains("u.error_detail"));
+        let node_appearance_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_NODE_APPEARANCE_VERSION)
+            .expect("node appearance migration must be registered");
+        assert_eq!(node_appearance_migration.version, 34);
+        assert!(node_appearance_migration
+            .sql
+            .contains("ALTER TABLE groups ADD COLUMN icon TEXT"));
+        assert!(node_appearance_migration
+            .sql
+            .contains("ALTER TABLE projects ADD COLUMN color TEXT"));
         assert!(title_migration.version < project_path_migration.version);
         assert!(project_path_migration.version < project_path_backfill.version);
         assert!(project_path_backfill.version < error_detail_migration.version);
+        assert!(error_detail_migration.version < node_appearance_migration.version);
         assert!(registry
             .iter()
-            .all(|migration| migration.version <= error_detail_migration.version));
+            .all(|migration| migration.version <= node_appearance_migration.version));
         assert!(registry.iter().any(|migration| migration.version == 29
             && migration.description == "optimize_unified_usage_record_queries"));
     }

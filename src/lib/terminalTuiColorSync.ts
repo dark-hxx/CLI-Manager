@@ -8,6 +8,7 @@ import {
 import {
   isClaudeTerminalContext,
   isCodexTerminalContext,
+  isPiTerminalContext,
   type TerminalCliContext,
 } from "../terminal/browser/TerminalCliContext";
 
@@ -40,8 +41,10 @@ export function createTerminalTuiColorSyncController(
     // affects rendered cells. Defer that expensive work until the tab is visible.
     if (!options.isVisible) return;
     const context = options.getContext();
+    const isClaudeContext = isClaudeTerminalContext(context);
+    const isPiContext = isPiTerminalContext(context);
     const hasContextualTuiPrompt = (
-      (isCodexTerminalContext(context) || isClaudeTerminalContext(context))
+      (isCodexTerminalContext(context) || isClaudeContext)
       && hasTuiComposerPromptViewport(terminal)
     );
     if (hasKnownAiTuiViewport(terminal) || hasContextualTuiPrompt) tuiSessionDetected = true;
@@ -49,14 +52,22 @@ export function createTerminalTuiColorSyncController(
     const isTuiCodexSession = tuiSessionDetected && (
       hasCodexTuiViewport(terminal) || isCodexTerminalContext(context)
     );
-    const isTuiClaudeSession = tuiSessionDetected && isClaudeTerminalContext(context);
+    const isTuiClaudeSession = tuiSessionDetected && isClaudeContext;
+    // Claude and Pi keep painting dark-theme message blocks on a light terminal even
+    // before any TUI signature is latched, so session identity alone enables this pass.
+    // A latched AI TUI signature covers CLIs started by hand inside a plain shell.
+    const shouldEraseDarkBlocks = options.isLightTheme
+      && (isClaudeContext || isPiContext || tuiSessionDetected);
     normalizeTerminalTuiComposerBackground(terminal, {
-      shouldNormalize: options.isTransparent || ((isTuiCodexSession || isTuiClaudeSession) && options.isLightTheme),
+      shouldNormalize: options.isTransparent
+        || ((isTuiCodexSession || isTuiClaudeSession) && options.isLightTheme)
+        || shouldEraseDarkBlocks,
       isTransparent: options.isTransparent,
       isLightTheme: options.isLightTheme,
       isTuiSession: tuiSessionDetected,
       isCodexSession: isTuiCodexSession,
       isClaudeSession: isTuiClaudeSession,
+      shouldEraseDarkBlocks,
       terminalTextColor: options.terminalTextColor,
       tuiUserColor: options.tuiUserColor,
       tuiAssistantColor: options.tuiAssistantColor,

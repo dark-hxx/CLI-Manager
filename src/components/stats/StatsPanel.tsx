@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, BarChart3, ChevronDown, ChevronRight, Coins, Database, Folder, Layers, LineChart, RefreshCw, ScrollText, Search, Terminal, X } from "lucide-react";
+import { Activity, BarChart3, ChevronDown, ChevronRight, Coins, Database, Folder, Layers, LineChart, RefreshCw, ScrollText, Search, X } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -39,6 +39,8 @@ import type {
 } from "../../lib/types";
 import { fetchHistoryRequestLogStats, fetchHistoryStatsPayload, fetchRemoteHistoryStatsPayload, syncHistoryRequestLogs } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
+import { resolveNodeAppearance } from "../../lib/nodeAppearance";
+import { NodeAppearanceIcon } from "../NodeAppearanceIcon";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
 import { TimelineHeatmap } from "./TimelineHeatmap";
 import { StatsHourlyActivityChart } from "./StatsHourlyActivityChart";
@@ -58,7 +60,6 @@ import {
   RECHARTS_TOOLTIP_WRAPPER_STYLE,
 } from "./statsPalette";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../lib/i18n";
-import { VendorIcon, inferVendor } from "../VendorIcon";
 import { CliToolIcon } from "../CliToolIcon";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
 import { RequestLogsView } from "./RequestLogsView";
@@ -195,8 +196,18 @@ function filterStatsProjectTree(nodes: StatsProjectTreeNode[], query: string): S
 }
 
 function StatsProjectFilterIcon({ project, size = 13 }: { project: Project; size?: number }) {
-  const vendor = project.cli_tool ? inferVendor(project.cli_tool) : null;
-  return vendor ? <VendorIcon vendor={vendor} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+  // 与侧边栏、History 项目树共用同一套图标解析：单字符标记 → 内置 key → CLI 工具图标 → 终端兜底。
+  // 此前这里走 inferVendor + VendorIcon，是三处项目树里唯一的第三种图标口径。
+  const appearance = resolveNodeAppearance({ icon: project.icon, color: project.color });
+  return (
+    <NodeAppearanceIcon
+      mark={appearance.emoji}
+      iconKey={appearance.iconKey}
+      cliTool={project.cli_tool}
+      fallback="terminal"
+      size={size}
+    />
+  );
 }
 
 function formatCount(value: number, language: AppLanguage = "zh-CN"): string {
@@ -1285,17 +1296,31 @@ function StatsProjectFilterDropdown({
     const paddingLeft = 8 + depth * 14;
     if (node.type === "group") {
       const isOpen = Boolean(normalizedQuery) || !collapsedGroups.has(node.group.id);
+      const groupAppearance = resolveNodeAppearance({
+        icon: node.group.icon,
+        color: node.group.color,
+      });
       return (
         <div key={`group:${node.group.id}`}>
           <button
             type="button"
             onClick={() => toggleGroup(node.group.id)}
             className="ui-tree-node ui-tree-group ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[11px] font-semibold"
-            style={{ paddingLeft }}
+            style={{
+              paddingLeft,
+              ...(groupAppearance.hasColor ? { "--node-accent": groupAppearance.colorVar } : {}),
+            } as CSSProperties}
             aria-expanded={isOpen}
           >
             <ChevronRight size={12} className="shrink-0 transition-transform" style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }} />
-            <Folder size={13} className="shrink-0" />
+            <span className="ui-tree-leading-icon shrink-0">
+              <NodeAppearanceIcon
+                mark={groupAppearance.emoji}
+                iconKey={groupAppearance.iconKey}
+                fallback="folder"
+                size={13}
+              />
+            </span>
             <span className="min-w-0 flex-1 truncate">{node.group.name}</span>
             <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{countStatsProjects(node)}</span>
           </button>
@@ -1310,6 +1335,10 @@ function StatsProjectFilterDropdown({
 
     const selected = selectedProjectId === node.project.id;
     const projectPath = resolveHistoryProjectPath(node.project);
+    const projectAppearance = resolveNodeAppearance({
+      icon: node.project.icon,
+      color: node.project.color,
+    });
     return (
       <button
         key={`project:${node.project.id}`}
@@ -1317,7 +1346,11 @@ function StatsProjectFilterDropdown({
         onClick={() => handleSelectProject(node.project.id)}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
-        style={{ paddingLeft }}
+        data-accent={projectAppearance.hasColor ? "true" : undefined}
+        style={{
+          paddingLeft,
+          ...(projectAppearance.hasColor ? { "--node-accent": projectAppearance.colorVar } : {}),
+        } as CSSProperties}
         title={projectPath}
       >
         <span className="ui-tree-leading-icon">

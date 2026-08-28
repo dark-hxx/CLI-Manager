@@ -15,14 +15,13 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { copyAiText } from "../../lib/aiClipboard";
 import { formatAiRootTree, formatAiTree, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
-import { POINTER_DRAG_START_PX } from "../../lib/dragInteraction";
+import { isTerminalFilePointerDragClickHandled, useTerminalFilePointerDrag } from "../../hooks/useTerminalFilePointerDrag";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import {
   beginTerminalFileDrag,
   commitTerminalFileDragDrop,
   createTerminalFileDragPayload,
   endTerminalFileDrag,
-  getTerminalFileDropZoneIdAtPoint,
   TERMINAL_FILE_DRAG_MIME,
   updateTerminalFileDragPointFromEvent,
 } from "../../lib/terminalFileDrag";
@@ -46,11 +45,15 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
-import { Portal } from "../ui/Portal";
 import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Search, Trash2, X } from "../icons";
 import { TERM } from "../stats/termStatsUi";
 import { TerminalPanelHeader } from "../terminal/TerminalPanelHeader";
 import { PathCopyMenu } from "../PathCopyMenu";
+import {
+  LiveServerFileMenuItem,
+  LiveServerRootMenuItem,
+  LiveServerStatusBridge,
+} from "./LiveServerMenuItems";
 
 interface FileExplorerSidebarProps {
   mode?: "sidebar" | "panel";
@@ -84,30 +87,6 @@ interface FileIgnoreState {
   ignoreMatcher: FileExplorerIgnoreMatcher;
   ignorePath: (path: string) => void;
   unignorePath: (path: string) => void;
-}
-
-interface FilePointerDragState {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  entry: ProjectFileEntry;
-  preview: FileDragPreviewSource;
-  dragging: boolean;
-}
-
-interface FileDragPreviewSource {
-  className: string;
-  html: string;
-  offsetX: number;
-  offsetY: number;
-  paddingLeft: string;
-  width: number;
-}
-
-interface FileDragPreviewState {
-  x: number;
-  y: number;
-  source: FileDragPreviewSource;
 }
 
 const GIT_STATUS_LABELS: Record<GitFileChange["status"], TranslationKey> = {
@@ -525,7 +504,7 @@ function FileNode({
             onPointerUp={onFilePointerUp}
             onPointerCancel={onFilePointerCancel}
             onClick={(event) => {
-              if (event.currentTarget.dataset.pointerDragHandled === "true") return;
+              if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
               if (isDir) toggleDirectory();
               else onOpenFile(displayEntry);
             }}
@@ -559,6 +538,7 @@ function FileNode({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem project={project} entry={displayEntry} />
           {!readOnly && isDir && (
             <>
               <ContextMenuItem onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
@@ -756,20 +736,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     [project?.path]
   );
   const [searchControlsVisible, setSearchControlsVisible] = useState(false);
-  const [dragPreview, setDragPreview] = useState<FileDragPreviewState | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const pointerDragRef = useRef<FilePointerDragState | null>(null);
-  const dragPreviewElementRef = useRef<HTMLDivElement | null>(null);
-  const dragPreviewFrameRef = useRef<number | null>(null);
-  const pendingDragPreviewRef = useRef<{ source: FileDragPreviewSource; x: number; y: number } | null>(null);
-
-  useEffect(() => () => {
-    if (dragPreviewFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragPreviewFrameRef.current);
-    }
-    if (pointerDragRef.current?.dragging) endTerminalFileDrag();
-    document.body.style.removeProperty("user-select");
-  }, []);
 
   useEffect(() => {
     setSearchControlsVisible(false);
@@ -1005,43 +972,21 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     return target.dataset.fileDropTargetPath ?? "";
   }, []);
 
-  const markPointerDragHandled = useCallback((element: HTMLElement) => {
-    element.dataset.pointerDragHandled = "true";
-    window.setTimeout(() => {
-      delete element.dataset.pointerDragHandled;
-    }, 0);
-  }, []);
+  const handlePointerDropOutsideTerminal = useCallback((entry: ProjectFileEntry, { x, y }: { x: number; y: number }) => {
+    const targetPath = getPointerDropTargetPath(x, y);
+    if (targetPath !== null) void moveDraggedEntry(entry, targetPath);
+  }, [getPointerDropTargetPath, moveDraggedEntry]);
 
-  const resetPointerDrag = useCallback(() => {
-    pointerDragRef.current = null;
-    pendingDragPreviewRef.current = null;
-    if (dragPreviewFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragPreviewFrameRef.current);
-      dragPreviewFrameRef.current = null;
-    }
-    setDragPreview(null);
-    document.body.style.removeProperty("user-select");
-  }, []);
-
-  const updateDragPreview = useCallback((source: FileDragPreviewSource, x: number, y: number) => {
-    pendingDragPreviewRef.current = { source, x, y };
-    if (dragPreviewFrameRef.current !== null) return;
-
-    dragPreviewFrameRef.current = window.requestAnimationFrame(() => {
-      dragPreviewFrameRef.current = null;
-      const pending = pendingDragPreviewRef.current;
-      const element = dragPreviewElementRef.current;
-      if (!pending || !element) return;
-
-      const { source: pendingSource, x: nextX, y: nextY } = pending;
-      element.style.transform = `translate3d(${nextX - pendingSource.offsetX}px, ${nextY - pendingSource.offsetY}px, 0)`;
-      if (getTerminalFileDropZoneIdAtPoint(nextX, nextY)) {
-        element.dataset.overTerminal = "true";
-      } else {
-        delete element.dataset.overTerminal;
-      }
-    });
-  }, []);
+  const {
+    handlePointerDown: handleFilePointerDown,
+    handlePointerMove: handleFilePointerMove,
+    handlePointerUp: handleFilePointerUp,
+    handlePointerCancel: handleFilePointerCancel,
+    preview: terminalFileDragPreview,
+  } = useTerminalFilePointerDrag<ProjectFileEntry>({
+    project,
+    onDropOutsideTerminal: handlePointerDropOutsideTerminal,
+  });
 
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -1136,86 +1081,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     endTerminalFileDrag();
   }, []);
 
-  const handleFilePointerDown = useCallback((event: ReactPointerEvent<HTMLElement>, entry: ProjectFileEntry) => {
-    if (!project || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.pointerType === "mouse" && event.buttons !== 1) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    pointerDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      entry,
-      preview: {
-        className: event.currentTarget.className,
-        html: event.currentTarget.innerHTML,
-        offsetX: event.clientX - rect.left,
-        offsetY: event.clientY - rect.top,
-        paddingLeft: event.currentTarget.style.paddingLeft,
-        width: rect.width,
-      },
-      dragging: false,
-    };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [project]);
-
-  const handleFilePointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const state = pointerDragRef.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-
-    if (!state.dragging) {
-      const dx = event.clientX - state.startX;
-      const dy = event.clientY - state.startY;
-      if (Math.hypot(dx, dy) < POINTER_DRAG_START_PX) return;
-      state.dragging = true;
-      if (!project) {
-        resetPointerDrag();
-        return;
-      }
-      beginTerminalFileDrag(createTerminalFileDragPayload(project, state.entry.path, state.entry.kind));
-      setDragPreview({
-        x: event.clientX - state.preview.offsetX,
-        y: event.clientY - state.preview.offsetY,
-        source: state.preview,
-      });
-      document.body.style.userSelect = "none";
-    }
-
-    updateTerminalFileDragPointFromEvent(event);
-    updateDragPreview(state.preview, event.clientX, event.clientY);
-    event.preventDefault();
-    event.stopPropagation();
-  }, [project, resetPointerDrag, updateDragPreview]);
-
-  const handleFilePointerUp = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const state = pointerDragRef.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-
-    if (!state.dragging) {
-      resetPointerDrag();
-      return;
-    }
-
-    markPointerDragHandled(event.currentTarget);
-    updateTerminalFileDragPointFromEvent(event);
-    if (!commitTerminalFileDragDrop()) {
-      const targetPath = getPointerDropTargetPath(event.clientX, event.clientY);
-      if (targetPath !== null) void moveDraggedEntry(state.entry, targetPath);
-      endTerminalFileDrag();
-    }
-
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    event.preventDefault();
-    event.stopPropagation();
-    resetPointerDrag();
-  }, [getPointerDropTargetPath, markPointerDragHandled, moveDraggedEntry, resetPointerDrag]);
-
-  const handleFilePointerCancel = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const state = pointerDragRef.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-    endTerminalFileDrag();
-    resetPointerDrag();
-  }, [resetPointerDrag]);
-
   const handleFileDragOver = useCallback((event: ReactDragEvent<HTMLElement>, _targetEntry: ProjectFileEntry) => {
     if (!hasFileExplorerDrag(event.dataTransfer)) return;
     event.preventDefault();
@@ -1305,6 +1170,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem
+            project={project}
+            entry={{ kind: "file", name: match.name, path: match.path }}
+          />
           {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, match.path, t)}>
             <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
           </ContextMenuItem>}
@@ -1358,7 +1227,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             data-file-drop-target-path={getDropTargetPath(entry)}
             draggable={false}
             onClick={(event) => {
-              if (event.currentTarget.dataset.pointerDragHandled === "true") return;
+              if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
               if (entry.kind === "file") requestOpenFile(entry);
             }}
             onContextMenu={(event) => event.stopPropagation()}
@@ -1398,6 +1267,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem project={project} entry={entry} />
         {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, entry.path, t)}>
           <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
         </ContextMenuItem>}
@@ -1584,25 +1454,8 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   return (
     <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
-      {dragPreview && (
-        <Portal>
-          <div
-            ref={dragPreviewElementRef}
-            className="ui-file-drag-preview"
-            style={{
-              width: dragPreview.source.width,
-              transform: `translate3d(${dragPreview.x}px, ${dragPreview.y}px, 0)`,
-            }}
-            aria-hidden="true"
-          >
-            <div
-              className={dragPreview.source.className}
-              style={dragPreview.source.paddingLeft ? { paddingLeft: dragPreview.source.paddingLeft } : undefined}
-              dangerouslySetInnerHTML={{ __html: dragPreview.source.html }}
-            />
-          </div>
-        </Portal>
-      )}
+      {terminalFileDragPreview}
+      <LiveServerStatusBridge project={project} />
       {mode === "panel" ? (
         <>
           <TerminalPanelHeader
@@ -1661,6 +1514,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           <ContextMenuItem onSelect={copyRootAiTree}>
             <Folder size={13} /> {t("files.menu.copyAiTree")}
           </ContextMenuItem>
+          <LiveServerRootMenuItem project={project} />
         </ContextMenuContent>
       </ContextMenu>
 

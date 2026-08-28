@@ -29,6 +29,7 @@ export const SETTING_BACKUP_POLICY = {
   debugMode: "excluded",
   terminalThemeMode: "preferences",
   terminalThemeName: "preferences",
+  terminalPreviewThemeName: "preferences",
   sidebarDensity: "preferences",
   sidebarProjectFilterVisible: "preferences",
   viewMode: "preferences",

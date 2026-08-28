@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type WheelEvent as ReactWheelEvent } from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
-import type { ITheme } from "@xterm/xterm";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n, type AppLanguage } from "../../lib/i18n";
 import { normalizeFontFamilyStack } from "../../lib/systemFonts";
 import type { HistoryMessage, HistorySessionDetail, HistorySource, Project, TerminalSession } from "../../lib/types";
 import { resolveCliToolHistorySourceId } from "../../lib/cliTools";
 import { formatTime } from "../history/historyViewUtils";
-import { isLightTerminalTheme } from "../../lib/terminalThemes";
+import { useTerminalPreviewTheme } from "../../hooks/useTerminalPreviewTheme";
 import { resolveTerminalProjectPath } from "../../lib/terminalOscPath";
 import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../../lib/sshAgentHistory";
 import { useProjectStore } from "../../stores/projectStore";
@@ -35,45 +34,6 @@ function inferSourceFromText(value: string): HistorySource | null {
   if (/\bclaude\b/u.test(normalized)) return "claude";
   if (/\bcodex\b/u.test(normalized)) return "codex";
   return null;
-}
-
-function terminalThemeColor(value: string | undefined, fallback: string): string {
-  return value?.trim() || fallback;
-}
-
-function buildTerminalMarkdownPreviewStyle(theme: ITheme): CSSProperties {
-  const background = terminalThemeColor(theme.background, "#0c0e10");
-  const foreground = terminalThemeColor(theme.foreground, "#f8fafc");
-  const muted = terminalThemeColor(theme.brightBlack ?? theme.white, "#9ca0a6");
-  const accent = terminalThemeColor(theme.cyan ?? theme.blue ?? theme.cursor, foreground);
-  const green = terminalThemeColor(theme.green ?? theme.cyan, accent);
-  const yellow = terminalThemeColor(theme.yellow, accent);
-  const red = terminalThemeColor(theme.red, accent);
-  const magenta = terminalThemeColor(theme.magenta, accent);
-  const blue = terminalThemeColor(theme.blue, accent);
-
-  return {
-    "--terminal-theme-background": background,
-    "--terminal-theme-foreground": foreground,
-    "--terminal-theme-muted": muted,
-    "--terminal-theme-accent": accent,
-    "--terminal-theme-selection": terminalThemeColor(theme.selectionBackground, accent),
-    "--term-panel-bg": background,
-    "--term-panel-fg": foreground,
-    "--term-panel-dim": muted,
-    "--term-panel-green": green,
-    "--term-panel-yellow": yellow,
-    "--term-panel-red": red,
-    "--term-panel-magenta": magenta,
-    "--term-panel-cyan": terminalThemeColor(theme.cyan, accent),
-    "--term-panel-blue": blue,
-    "--term-panel-card": "color-mix(in srgb, var(--term-panel-bg) 91%, var(--term-panel-fg) 9%)",
-    "--term-panel-card-inner": "color-mix(in srgb, var(--term-panel-bg) 87%, var(--term-panel-fg) 13%)",
-    "--term-panel-border": "color-mix(in srgb, var(--term-panel-fg) 14%, transparent)",
-    "--term-panel-track": "color-mix(in srgb, var(--term-panel-bg) 94%, var(--term-panel-fg) 6%)",
-    "--ui-scrollbar-thumb": "color-mix(in srgb, var(--term-panel-fg) 28%, transparent)",
-    "--ui-scrollbar-track": "color-mix(in srgb, var(--term-panel-bg) 94%, var(--term-panel-fg) 6%)",
-  } as CSSProperties;
 }
 
 export function resolveTerminalMarkdownSource(
@@ -213,13 +173,11 @@ interface TerminalMarkdownPreviewProps {
   sessionId: string;
   open: boolean;
   onClose: () => void;
-  terminalTheme: ITheme;
 }
 
-export function TerminalMarkdownPreview({ sessionId, open, onClose, terminalTheme }: TerminalMarkdownPreviewProps) {
+export function TerminalMarkdownPreview({ sessionId, open, onClose }: TerminalMarkdownPreviewProps) {
   const { language, t } = useI18n();
-  const terminalCodeTheme = isLightTerminalTheme(terminalTheme) ? "light" : "dark";
-  const terminalPreviewStyle = useMemo(() => buildTerminalMarkdownPreviewStyle(terminalTheme), [terminalTheme]);
+  const { tone: terminalCodeTheme, panelStyle: terminalPreviewStyle } = useTerminalPreviewTheme();
   const uiFontFamily = useSettingsStore((state) => state.uiFontFamily);
   const uiFontSize = useSettingsStore((state) => state.uiFontSize);
   const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
