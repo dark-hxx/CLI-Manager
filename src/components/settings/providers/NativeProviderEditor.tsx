@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge, Card, Group, Loader, Stack, Switch, Text } from "@mantine/core";
 import { ExternalLink, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type {
@@ -9,6 +11,7 @@ import type {
   NativeProviderGlobalPreview,
 } from "./nativeProviderTypes";
 import { NativeProviderCodeEditor } from "./NativeProviderCodeEditor";
+import { FLUXION_REGISTER_URL } from "@/lib/sponsors";
 import {
   formatJsonDocument,
   nativeProviderConfigFormat,
@@ -149,6 +152,29 @@ export function NativeProviderEditor({
 
   const { card } = detail;
   const isBasicView = view === "basic";
+  const isFluxionProvider = card.id.startsWith("builtin-fluxion-");
+  const category = isFluxionProvider
+    ? t("providerCatalog.fluxion.category")
+    : card.category || t("providerCatalog.uncategorized");
+  const websiteUrl = isFluxionProvider ? FLUXION_REGISTER_URL : card.websiteUrl ?? undefined;
+  const openWebsite = () => {
+    if (!websiteUrl) return;
+    void openUrl(websiteUrl).catch(() => toast.error(t("providerCatalog.websiteOpenFailed")));
+  };
+  const copyFluxionCode = async () => {
+    try {
+      await navigator.clipboard.writeText("CLIMANAGER");
+      toast.success(t("providerCatalog.fluxion.codeCopied"), {
+        description: t("providerCatalog.fluxion.codeOpening"),
+        duration: 3000,
+      });
+      window.setTimeout(() => {
+        void openUrl(FLUXION_REGISTER_URL).catch(() => toast.error(t("providerCatalog.websiteOpenFailed")));
+      }, 3000);
+    } catch {
+      toast.error(t("providerCatalog.fluxion.codeCopyFailed"));
+    }
+  };
 
   return (
       <Card withBorder radius="lg" padding="md" className="min-w-0 overflow-hidden border-border/70 bg-surface-container-low">
@@ -157,9 +183,26 @@ export function NativeProviderEditor({
           <Stack gap={4} miw={0}>
             <Group gap="xs" wrap="wrap">
               <Text fw={700} size="lg" truncate>{card.name}</Text>
+              {isFluxionProvider && (
+                <Badge size="sm" variant="light" color="orange">
+                  {t("providerCatalog.fluxion.sponsorBadge")}
+                </Badge>
+              )}
               {card.isCurrent && <Badge color="cliPrimary">{t("providerCatalog.current")}</Badge>}
             </Group>
-            <Text size="sm" c="dimmed">{card.category || t("providerCatalog.uncategorized")}</Text>
+            <Text size="sm" c="dimmed">{category}</Text>
+            {isFluxionProvider && (
+              <Stack gap={2}>
+                <Text size="xs" c="dimmed" maw={760}>
+                  {t("providerCatalog.fluxion.providerDescription")}
+                </Text>
+                <Text size="xs" c="orange.8" fw={600}>
+                  {t("providerCatalog.fluxion.providerBenefitPrefix")}
+                  <code className="sponsor-card__coupon cursor-pointer" onDoubleClick={() => void copyFluxionCode()} title={t("providerCatalog.fluxion.codeCopyHint")}>CLIMANAGER</code>
+                  {t("providerCatalog.fluxion.providerBenefitSuffix")}
+                </Text>
+              </Stack>
+            )}
           </Stack>
           <Switch
             color="cliPrimary"
@@ -177,15 +220,14 @@ export function NativeProviderEditor({
           <Button size="compact-sm" variant="light" color="red" leftSection={<Trash2 size={14} />} disabled={Boolean(action) || card.isCurrent} onClick={onDelete}>
             {t("common.delete")}
           </Button>
-          {card.websiteUrl && (
+          {websiteUrl && (
             <Button
-              component="a"
-              href={card.websiteUrl}
-              target="_blank"
-              rel="noreferrer"
+              component="button"
+              type="button"
+              onClick={openWebsite}
               size="compact-sm"
-              variant="subtle"
-              color="gray"
+              variant={isFluxionProvider ? "filled" : "subtle"}
+              color={isFluxionProvider ? "indigo" : "gray"}
               leftSection={<ExternalLink size={14} />}
             >
               {t("providerCatalog.website")}

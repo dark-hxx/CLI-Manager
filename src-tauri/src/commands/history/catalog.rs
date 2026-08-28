@@ -62,6 +62,10 @@ pub(super) fn mark_dirty() {
     CATALOG_DIRTY.store(true, Ordering::Release);
 }
 
+pub(super) fn is_dirty() -> bool {
+    CATALOG_DIRTY.load(Ordering::Acquire)
+}
+
 fn catalog_db_path() -> Result<PathBuf, String> {
     let dir = HISTORY_INDEX_CACHE_DIR
         .get()
@@ -2019,7 +2023,7 @@ async fn get_session_detail_from_v2_with_conn(
                 hs.input_tokens, hs.output_tokens, hs.cache_read_tokens,
                 hs.cache_creation_tokens, hs.total_cost_usd, hs.dominant_model,
                 hs.current_model, hs.context_window, hs.last_context_tokens,
-                hs.reasoning_effort, hs.tool_call_count
+                hs.reasoning_effort, hs.tool_call_count, hs.fingerprint_value
          FROM history_sessions hs
          JOIN history_source_instances i ON i.id = hs.source_instance_id
          WHERE i.activation_state = 'active'
@@ -2042,6 +2046,23 @@ async fn get_session_detail_from_v2_with_conn(
     let session_row_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
     let source: String = row.try_get("source").map_err(|err| err.to_string())?;
     let file_path: String = row.try_get("file_path").map_err(|err| err.to_string())?;
+    let source_path = Path::new(&file_path);
+    let current_file_updated_at = source_path
+        .exists()
+        .then(|| session_file_fingerprint(source_path).updated_at);
+    let indexed_fingerprint: Option<String> = row
+        .try_get("fingerprint_value")
+        .map_err(|err| err.to_string())?;
+    if source_path.exists()
+        && indexed_fingerprint.as_deref().map_or(true, |fingerprint| {
+            v2_fingerprint_value(session_file_fingerprint(source_path)) != fingerprint
+        })
+    {
+        // The source file may have been edited outside the catalog writer (or the
+        // catalog may still contain a pre-edit snapshot). Fall back to the live
+        // parser so callers never see stale message content.
+        return Ok(None);
+    }
     let input_tokens = row
         .try_get::<i64, _>("input_tokens")
         .map_err(|err| err.to_string())?
@@ -2331,7 +2352,10 @@ async fn get_session_detail_from_v2_with_conn(
         file_path,
         cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
         created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
-        updated_at: row.try_get("updated_at").map_err(|err| err.to_string())?,
+        updated_at: match current_file_updated_at {
+            Some(value) => value,
+            None => row.try_get("updated_at").map_err(|err| err.to_string())?,
+        },
         message_count: messages.len(),
         branch: row.try_get("branch").map_err(|err| err.to_string())?,
         usage: HistorySessionUsage {

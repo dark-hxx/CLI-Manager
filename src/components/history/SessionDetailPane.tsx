@@ -21,7 +21,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { toast } from "sonner";
 import aiAvatarUrl from "../../assets/history-ai-avatar.svg";
 import userAvatarUrl from "../../assets/history-user-avatar.svg";
@@ -476,6 +476,8 @@ function HistoryMessageCard({
   const messageMeta = formatMessageMeta(message);
   const [open, setOpen] = useState(forceOpen);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const insertTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageEditable = isHistoryMessageEditable(message, canEdit);
   const selectable = selectionMode && messageEditable;
 
@@ -486,6 +488,14 @@ function HistoryMessageCard({
   useEffect(() => {
     if (cardRef.current) measureElement(cardRef.current);
   }, [measureElement, open, isEditing, isInserting]);
+
+  useLayoutEffect(() => {
+    const textarea = isEditing ? editTextareaRef.current : isInserting ? insertTextareaRef.current : null;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+    if (cardRef.current) measureElement(cardRef.current);
+  }, [editDraft, insertDraft, isEditing, isInserting, measureElement]);
 
   const setCardRef = (element: HTMLDivElement | null) => {
     cardRef.current = element;
@@ -582,6 +592,7 @@ function HistoryMessageCard({
           {isEditing ? (
             <div className="ui-history-message-edit">
               <textarea
+                ref={editTextareaRef}
                 autoFocus
                 value={editDraft}
                 onChange={(event) => onEditDraftChange(event.target.value)}
@@ -658,6 +669,7 @@ function HistoryMessageCard({
               </span>
             </div>
             <textarea
+              ref={insertTextareaRef}
               autoFocus
               placeholder={t("history.edit.insertPlaceholder")}
               value={insertDraft}

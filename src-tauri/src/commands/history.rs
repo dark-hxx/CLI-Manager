@@ -1008,6 +1008,11 @@ pub async fn history_list_sessions(
         grok_session_root.clone(),
     )
     .with_kimi_config_dir(kimi_config_dir.clone());
+    if catalog::is_dirty() {
+        // Mutations invalidate the V2 catalog. Complete that refresh before
+        // reading so a successful edit/delete is visible immediately.
+        let _ = catalog::ensure_refresh(app.clone(), roots.clone(), false, true).await;
+    }
     match catalog::list_sessions(
         &roots,
         source.clone(),
@@ -1361,6 +1366,7 @@ async fn history_list_sessions_legacy(
 
 #[tauri::command]
 pub async fn history_get_session(
+    app: tauri::AppHandle,
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
@@ -1382,6 +1388,9 @@ pub async fn history_get_session(
             grok_session_root.clone(),
         )
         .with_kimi_config_dir(kimi_config_dir.clone());
+        if catalog::is_dirty() {
+            let _ = catalog::ensure_refresh(app.clone(), roots.clone(), false, true).await;
+        }
         match catalog::get_session_detail_from_v2(
             &roots,
             &file_path,

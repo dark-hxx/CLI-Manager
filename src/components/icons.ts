@@ -33,6 +33,7 @@ export {
   GitBranch,
   GripVertical,
   Globe,
+  Handshake,
   Hash,
   Image,
   Info,

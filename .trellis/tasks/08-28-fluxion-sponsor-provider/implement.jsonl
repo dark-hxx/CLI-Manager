@@ -1,0 +1,9 @@
+{"file":"src/components/sidebar/SidebarFooter.tsx","reason":"Animated token-station entry point in expanded and collapsed sidebar footer layouts."}
+{"file":"src/components/SettingsModal.tsx","reason":"Register the sponsors settings tab and page."}
+{"file":"src/stores/settingsStore.ts","reason":"Persist and restore the sponsors settings tab."}
+{"file":"src/components/settings/pages/SponsorsSettingsPage.tsx","reason":"Render the localized Fluxion sponsor card and CTA."}
+{"file":"src/components/settings/providers/NativeProviderFormModal.tsx","reason":"Show Fluxion registration CTA in the API key editor."}
+{"file":"src-tauri/src/provider/database.rs","reason":"Seed built-in Fluxion providers idempotently during provider DB initialization."}
+{"file":"src/lib/i18n.ts","reason":"Add zh-CN/en-US strings for sidebar, sponsor page, and provider CTA."}
+{"file":"CHANGELOG.md","reason":"Record the feature under TEMP as required by repository delivery rules."}
+{"file":"docs/功能清单.md","reason":"Document the sponsor entry and built-in provider behavior."}

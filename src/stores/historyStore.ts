@@ -2760,6 +2760,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       return;
     }
     await ensureHistoryIndexListener();
+    const activeSessionKey = get().activeSessionKey;
     const raw = await invoke<unknown>("history_refresh_index", {
       ...(await getHistoryPathArgs()),
       wait: true,
@@ -2770,6 +2771,16 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
     set({ indexStatus: normalizeIndexStatus(raw) });
     await get().loadSessions({ background: true });
+    // Refreshing the index must also replace the currently open detail; otherwise
+    // the editor can keep rendering the pre-delete snapshot until another session
+    // is opened.
+    if (activeSessionKey) {
+      if (get().sessions.some((session) => session.sessionKey === activeSessionKey)) {
+        await get().openSession(activeSessionKey);
+      } else {
+        set({ activeSessionKey: null, activeSession: null });
+      }
+    }
     const query = get().globalQuery;
     if ([...query.trim()].length >= MIN_GLOBAL_SEARCH_CHARS) {
       await get().runGlobalSearch(query);

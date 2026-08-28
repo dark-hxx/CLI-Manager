@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import {
   ActionIcon,
+  Anchor,
   Alert,
   Autocomplete,
   Group,
@@ -16,6 +19,7 @@ import {
 } from "@mantine/core";
 import { AlertTriangle, Check, KeyRound, LoaderCircle } from "lucide-react";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { FLUXION_REGISTER_URL } from "@/lib/sponsors";
 import { useModelPricingStore } from "@/stores/modelPricingStore";
 import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeClaudeConfigSection } from "./NativeClaudeConfigSection";
@@ -377,15 +381,50 @@ export function NativeProviderFormModal({
   };
 
   const selectedKey = providerKeys.find((item) => item.id === selectedKeyId) ?? null;
+  const isFluxionProvider = Boolean(
+    provider && (
+      provider.name.trim().toLowerCase() === "fluxion ai" ||
+      provider.websiteUrl === FLUXION_REGISTER_URL
+    )
+  );
+
+  const openFluxionRegistration = () => {
+    void openUrl(FLUXION_REGISTER_URL).catch(() => {
+      toast.error(t("providerCatalog.fluxion.openFailed"));
+    });
+  };
+
+  const withFluxionKeyDescription = (description: ReactNode): ReactNode => {
+    if (!isFluxionProvider) return description;
+    return (
+      <Stack gap={2}>
+        <Text component="span" size="xs">{description}</Text>
+        <Anchor
+          href={FLUXION_REGISTER_URL}
+          size="xs"
+          fw={600}
+          onClick={(event) => {
+            event.preventDefault();
+            openFluxionRegistration();
+          }}
+        >
+          {t("providerCatalog.fluxion.getApiKey")}
+        </Anchor>
+        <Text component="span" size="xs" c="dimmed">
+          {t("providerCatalog.fluxion.description")}
+        </Text>
+      </Stack>
+    );
+  };
 
   // 密钥字段作为 slot 传进「高级选项」区渲染：两个 appType 分支共用同一份实现，不重复。
   // 输入框占满整行让长密钥完整可见，切换密钥收成 rightSection 里的小图标菜单。
   const keyField = mode === "edit" && providerKeys.length > 0 ? (
     <TextInput
       label={t("providerCatalog.apiKeyLabel")}
-      description={selectedKey
+      description={withFluxionKeyDescription(selectedKey
         ? t("providerCatalog.keyEditingHint", { label: selectedKey.label })
-        : t("providerCatalog.keySelectHint")}
+        : t("providerCatalog.keySelectHint"))}
       placeholder={t("providerCatalog.apiKeyKeepExisting")}
       value={apiKey}
       disabled={loading}
@@ -429,7 +468,7 @@ export function NativeProviderFormModal({
     <PasswordInput
       label={t("providerCatalog.apiKeyLabel")}
       placeholder={t("providerCatalog.apiKeyOptionalPlaceholder")}
-      description={t("providerCatalog.apiKeyFirstKeyDescription")}
+      description={withFluxionKeyDescription(t("providerCatalog.apiKeyFirstKeyDescription"))}
       value={apiKey}
       disabled={loading}
       onChange={(event) => setApiKey(event.currentTarget.value)}

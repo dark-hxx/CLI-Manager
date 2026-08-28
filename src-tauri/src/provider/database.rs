@@ -11,6 +11,10 @@ const PROVIDER_BASE_SCHEMA_VERSION: i64 = 1;
 const PROVIDER_DB_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const PROVIDER_SCHEMA_DESCRIPTION: &str = "create_ccs_provider_domain";
 const PROVIDER_ROUTING_SCHEMA_DESCRIPTION: &str = "add_routing_settings_and_request_logs";
+const FLUXION_REGISTER_URL: &str =
+    "https://fluxionai.space/register?source=github&campaign=climanager";
+const FLUXION_CLAUDE_BASE_URL: &str = "https://www.fluxionai.space";
+const FLUXION_OPENAI_BASE_URL: &str = "https://www.fluxionai.space/v1";
 
 /// The provider domain is intentionally independent from the historical
 /// provider tables in `cli-manager.db`. Keep this schema CCS-shaped for the
@@ -291,7 +295,92 @@ async fn initialize_at(path: PathBuf) -> Result<(), String> {
         ensure_routing_settings(&mut connection).await?;
     }
 
+    ensure_builtin_fluxion_providers(&mut connection).await?;
+
     verify_required_tables(&mut connection).await
+}
+
+/// Add the built-in Fluxion entry for each supported native provider type.
+///
+/// The IDs are stable and the insert is intentionally `OR IGNORE`: users may
+/// rename, reorder, disable, select, or add keys to the provider later, and a
+/// subsequent startup must not overwrite any of those choices.
+async fn ensure_builtin_fluxion_providers(connection: &mut SqliteConnection) -> Result<(), String> {
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|err| format!("provider_db_builtin_seed_begin_failed: {err}"))?;
+    let providers = [
+        (
+            "claude",
+            "builtin-fluxion-claude",
+            serde_json::json!({
+                "env": {"ANTHROPIC_BASE_URL": FLUXION_CLAUDE_BASE_URL},
+                "api_format": "anthropic"
+            })
+            .to_string(),
+        ),
+        (
+            "codex",
+            "builtin-fluxion-codex",
+            serde_json::json!({
+                "base_url": FLUXION_OPENAI_BASE_URL,
+                "config": format!(
+                    r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "{FLUXION_OPENAI_BASE_URL}"
+"#
+                )
+            })
+            .to_string(),
+        ),
+        ("grokbuild", "builtin-fluxion-grokbuild", "{}".to_string()),
+    ];
+
+    for (app_type, id, settings_config) in providers {
+        let sort_index: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MIN(sort_index), 0) - 1 FROM providers WHERE app_type = ?1",
+        )
+        .bind(app_type)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|err| format!("provider_db_builtin_seed_failed: {err}"))?;
+        let meta = serde_json::json!({
+            "enabled": true,
+            "commonConfigEnabled": true,
+            "builtin": "fluxion"
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT OR IGNORE INTO providers
+             (id, app_type, name, settings_config, website_url, category, created_at,
+              sort_index, notes, icon, icon_color, meta, is_current)
+             VALUES (?1, ?2, 'Fluxion AI', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0)",
+        )
+        .bind(id)
+        .bind(app_type)
+        .bind(settings_config)
+        .bind(FLUXION_REGISTER_URL)
+        .bind("AI模型统一接入与管理平台")
+        .bind(unix_timestamp_millis())
+        .bind(sort_index)
+        .bind("")
+        .bind("sparkles")
+        .bind("#6366f1")
+        .bind(meta)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|err| format!("provider_db_builtin_seed_failed: {err}"))?;
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|err| format!("provider_db_builtin_seed_commit_failed: {err}"))
 }
 
 fn connection_options(path: &Path) -> SqliteConnectOptions {
@@ -779,7 +868,111 @@ mod tests {
                 .await
                 .unwrap();
         assert!(service_config.contains("\"preferredPort\":15721"));
+        let builtin_rows = sqlx::query(
+            "SELECT id, app_type, name, website_url, category, sort_index, is_current, meta
+             FROM providers ORDER BY app_type",
+        )
+        .fetch_all(&mut connection)
+        .await
+        .unwrap();
+        assert_eq!(builtin_rows.len(), 3);
+        for (row, expected_type) in builtin_rows.iter().zip(["claude", "codex", "grokbuild"]) {
+            assert_eq!(
+                row.get::<String, _>("id"),
+                format!("builtin-fluxion-{expected_type}")
+            );
+            assert_eq!(row.get::<String, _>("app_type"), expected_type);
+            assert_eq!(row.get::<String, _>("name"), "Fluxion AI");
+            assert_eq!(row.get::<String, _>("website_url"), FLUXION_REGISTER_URL);
+            assert_eq!(row.get::<String, _>("category"), "AI模型统一接入与管理平台");
+            assert_eq!(row.get::<i64, _>("sort_index"), -1);
+            assert_eq!(row.get::<i64, _>("is_current"), 0);
+            let meta: serde_json::Value =
+                serde_json::from_str(&row.get::<String, _>("meta")).unwrap();
+            assert_eq!(
+                meta.get("builtin").and_then(serde_json::Value::as_str),
+                Some("fluxion")
+            );
+        }
+        let key_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM provider_api_keys")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(key_count, 0);
+        let claude_settings: String = sqlx::query_scalar(
+            "SELECT settings_config FROM providers WHERE id = 'builtin-fluxion-claude'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        assert!(claude_settings.contains(FLUXION_CLAUDE_BASE_URL));
+        let codex_settings: serde_json::Value = serde_json::from_str(
+            &sqlx::query_scalar::<_, String>(
+                "SELECT settings_config FROM providers WHERE id = 'builtin-fluxion-codex'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(codex_settings["base_url"], FLUXION_OPENAI_BASE_URL);
+        assert!(codex_settings["config"]
+            .as_str()
+            .unwrap()
+            .contains("wire_api = \"responses\""));
         assert!(!temp.path().join("backups").exists());
+    }
+
+    #[tokio::test]
+    async fn builtin_fluxion_seed_is_idempotent_and_preserves_existing_data() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("providers.db");
+        initialize_at(path.clone()).await.unwrap();
+
+        let mut connection = open_test_connection(&path).await;
+        sqlx::query(
+            "UPDATE providers
+             SET name = 'My Fluxion', sort_index = 27, is_current = 1
+             WHERE id = 'builtin-fluxion-claude' AND app_type = 'claude'",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO provider_api_keys
+             (id, provider_id, app_type, label, api_key, created_at, updated_at)
+             VALUES ('fluxion-test-key', 'builtin-fluxion-claude', 'claude', 'test', 'secret', 1, 1)",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        connection.close().await.unwrap();
+
+        initialize_at(path.clone()).await.unwrap();
+        let mut connection = open_test_connection(&path).await;
+        let row = sqlx::query(
+            "SELECT name, sort_index, is_current FROM providers
+             WHERE id = 'builtin-fluxion-claude' AND app_type = 'claude'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>("name"), "My Fluxion");
+        assert_eq!(row.get::<i64, _>("sort_index"), 27);
+        assert_eq!(row.get::<i64, _>("is_current"), 1);
+        let key_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provider_api_keys
+             WHERE provider_id = 'builtin-fluxion-claude' AND app_type = 'claude'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        assert_eq!(key_count, 1);
+        let provider_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM providers")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(provider_count, 3);
     }
 
     #[tokio::test]
