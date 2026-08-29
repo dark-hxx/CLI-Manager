@@ -2,8 +2,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button, Card, Group, Image, Stack, Text, ThemeIcon } from "@mantine/core";
 import { ExternalLink, Gift, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import fluxionBanner from "../../../../docs/img2/fluxion.png";
-import fluxionLogo from "../../../../docs/img2/fluxion-logo.png";
+import fluxionBanner from "../../../../docs/img/sponsor/fluxion-ai-banner.png";
+import fluxionLogo from "../../../../docs/img/sponsor/fluxion-ai-logo.jpg";
 import { useI18n } from "../../../lib/i18n";
 import { FLUXION_REGISTER_URL } from "../../../lib/sponsors";
 
@@ -19,14 +19,19 @@ export function SponsorsSettingsPage() {
   return (
     <Stack gap="lg" maw={1040} mx="auto" pb="xl">
       <Card withBorder radius="lg" p={0} className="sponsor-card overflow-hidden">
-        <div className="sponsor-card__banner-wrap">
+        <button
+          type="button"
+          onClick={openRegistration}
+          className="ui-focus-ring sponsor-card__banner-wrap"
+          aria-label={t("sponsors.fluxion.bannerLinkTitle")}
+        >
           <Image
             src={fluxionBanner}
             alt={t("sponsors.fluxion.bannerAlt")}
             fit="cover"
             className="sponsor-card__banner"
           />
-        </div>
+        </button>
         <Stack gap="xl" p={{ base: "md", sm: "xl" }}>
           <Group align="center" wrap="nowrap" gap="md">
             <div className="sponsor-card__logo-shell shrink-0">

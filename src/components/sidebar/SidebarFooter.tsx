@@ -221,7 +221,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       type="button"
       onClick={handleClick}
       disabled={loading || working}
-      className="ui-focus-ring ui-icon-action ui-sidebar-action-hook"
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-hook shrink-0"
       data-hook-status={lightStatus}
       title={working ? t("sidebar.hook.working") : title}
       aria-label={title}
@@ -237,7 +237,7 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
   const statsButton = toolbarVisibility.stats ? (
     <button
       onClick={onOpenStats}
-      className="ui-focus-ring ui-icon-action ui-sidebar-action-stats"
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-stats shrink-0"
       title={t("sidebar.stats")}
       aria-label={t("sidebar.openStats")}
     >
@@ -248,7 +248,7 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
   const settingsButton = (
     <button
       onClick={() => onOpenSettings()}
-      className="ui-focus-ring ui-icon-action ui-sidebar-action-settings"
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-settings shrink-0"
       title={t("sidebar.settings")}
       aria-label={t("sidebar.openSettings")}
     >
@@ -260,7 +260,7 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
     <button
       type="button"
       onClick={() => onOpenSettings("sponsors")}
-      className="ui-focus-ring ui-icon-action ui-sidebar-action-token-station"
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-token-station shrink-0"
       title={t("sidebar.tokenStation")}
       aria-label={t("sidebar.openTokenStation")}
     >

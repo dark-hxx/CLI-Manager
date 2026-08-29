@@ -2872,15 +2872,24 @@
 }
 
 .sponsor-card__banner-wrap {
+  display: block;
   width: 100%;
   aspect-ratio: 10 / 3;
   overflow: hidden;
+  padding: 0;
+  border: 0;
   background: linear-gradient(
     110deg,
     color-mix(in srgb, var(--primary) 7%, var(--surface-container-lowest) 93%),
     color-mix(in srgb, var(--primary) 2%, var(--surface-container-lowest) 98%)
   );
   border-bottom: 1px solid color-mix(in srgb, var(--primary) 12%, var(--border) 88%);
+  cursor: pointer;
+  transition: filter var(--animate-duration-fast);
+}
+
+.sponsor-card__banner-wrap:hover {
+  filter: brightness(1.03) saturate(1.02);
 }
 
 .sponsor-card__banner {
@@ -4726,10 +4735,13 @@
 .ui-sidebar-sync-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 28px;
   border-radius: 10px;
-  padding: 0 8px;
+  padding: 0 6px;
+  white-space: nowrap;
   transition:
     background-color var(--animate-duration-fast),
     color var(--animate-duration-fast);
@@ -4738,6 +4750,18 @@
 .ui-sidebar-sync-link:hover {
   background-color: var(--interactive-hover-bg);
   color: var(--on-surface);
+}
+
+/* 侧边栏底部同步状态：图标固定尺寸，文案始终单行，空间不足时省略而不换行。 */
+.ui-sidebar-sync-link > svg {
+  flex: 0 0 auto;
+}
+
+.ui-sidebar-sync-link__label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .ui-sidebar-resize-handle,
