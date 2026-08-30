@@ -415,6 +415,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
     return valid;
   }, []);
 
+  const handleDisabledPathModeClick = useCallback((value: string) => {
+    if (value === "inherit" && !parentBoundPath) {
+      toast.info(t("configModal.pathMode.parentUnavailable"));
+    }
+  }, [parentBoundPath, t]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const requiredFieldsReady = projectType === "ssh"
@@ -642,7 +648,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                     const next = event.target.value as "inherit" | "custom";
                     setPathMode(next);
                     if (next === "inherit" && parentBoundPath) setPath(parentBoundPath);
-                  }} className="w-32 shrink-0 text-sm">
+                  }} onDisabledOptionClick={handleDisabledPathModeClick} className="w-32 shrink-0 text-sm">
                     <option value="inherit" disabled={!parentBoundPath}>{t("configModal.pathMode.inherit")}</option>
                     <option value="custom">{t("configModal.pathMode.custom")}</option>
                   </Select>

@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-30-inherit-parent-hint"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",
