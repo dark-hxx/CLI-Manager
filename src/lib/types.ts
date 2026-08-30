@@ -9,6 +9,8 @@ export interface Group {
   icon: string;
   /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
   color: string;
+  /** 绑定路径：新建子项目/终端时可继承；空串表示未绑定。 */
+  bound_path: string;
   created_at: string;
 }
 
@@ -305,6 +307,8 @@ export interface Project {
   id: string;
   name: string;
   path: string;
+  /** 路径来源：inherit 时按当前分组绑定路径动态解析。 */
+  path_mode: "custom" | "inherit";
   group_name: string;
   group_id: string | null;
   sort_order: number;
@@ -333,6 +337,7 @@ export interface Project {
 export interface CreateProjectInput {
   name: string;
   path: string;
+  path_mode?: "custom" | "inherit";
   group_id?: string | null;
   group_name?: string;
   cli_tool?: string;
@@ -355,6 +360,7 @@ export interface CreateProjectInput {
 export interface UpdateProjectInput {
   name?: string;
   path?: string;
+  path_mode?: "custom" | "inherit";
   group_id?: string | null;
   group_name?: string;
   sort_order?: number;
@@ -386,6 +392,16 @@ export interface CreateGroupInput {
   parent_id?: string | null;
   icon?: string;
   color?: string;
+  bound_path?: string;
+}
+
+export interface UpdateGroupInput {
+  name?: string;
+  parent_id?: string | null;
+  sort_order?: number;
+  icon?: string;
+  color?: string;
+  bound_path?: string;
 }
 
 export type TreeNode =

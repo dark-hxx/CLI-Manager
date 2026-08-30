@@ -15,9 +15,10 @@ import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKe
 import { projectSupportsCapability } from "../lib/projectCapabilities";
 import { normalizeNodeAccentToken, normalizeNodeIcon } from "../lib/nodeAppearance";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
+import { findInheritedDescendants, resolveGroupBoundPath, resolveProjectPath } from "../lib/groupPath";
 import type {
   Project, CreateProjectInput, UpdateProjectInput,
-  Group, CreateGroupInput, TreeNode, WorktreeRecord,
+  Group, CreateGroupInput, UpdateGroupInput, TreeNode, WorktreeRecord,
 } from "../lib/types";
 
 let inflightFetchAll: Promise<void> | null = null;
@@ -52,6 +53,8 @@ interface ProjectStore {
   createGroup: (input: CreateGroupInput) => Promise<Group>;
   /** 只更新分组的外观列（icon / color），未传的字段保持不变。 */
   updateGroupAppearance: (id: string, appearance: { icon?: string; color?: string }) => Promise<void>;
+  updateGroup: (id: string, input: UpdateGroupInput) => Promise<void>;
+  materializeInheritedDescendants: (groupId: string, path: string) => Promise<void>;
   renameGroup: (id: string, name: string) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
   reorderItems: (parentId: string | null, orderedIds: string[]) => Promise<void>;
@@ -322,6 +325,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       id,
       name: input.name,
       path: isSshProject ? "" : input.path,
+      path_mode: isSshProject ? "custom" : input.path_mode ?? "custom",
       group_name: input.group_name ?? "",
       group_id: input.group_id ?? null,
       sort_order: 0,
@@ -345,16 +349,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     };
     await db.execute(
       `INSERT INTO projects (
-         id, name, path, group_name, group_id, sort_order,
+         id, name, path, path_mode, group_name, group_id, sort_order,
          cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides,
          worktree_strategy, worktree_root, worktree_deps_prompt_enabled,
          environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
       [
         project.id,
         project.name,
         project.path,
+        project.path_mode,
         project.group_name,
         project.group_id,
         project.sort_order,
@@ -460,14 +465,47 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       // 外观随建组的同一条 INSERT 落库：避免 "先 INSERT 再 UPDATE" 与 fetchAll 刷新交错造成颜色跳变。
       icon: normalizeNodeIcon(input.icon),
       color: normalizeNodeAccentToken(input.color),
+      bound_path: input.bound_path?.trim() ?? "",
       created_at: ts,
     };
     await db.execute(
-      `INSERT INTO groups (id, name, parent_id, sort_order, icon, color, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [group.id, group.name, group.parent_id, group.sort_order, group.icon, group.color, group.created_at]
+      `INSERT INTO groups (id, name, parent_id, sort_order, icon, color, bound_path, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [group.id, group.name, group.parent_id, group.sort_order, group.icon, group.color, group.bound_path, group.created_at]
     );
     await get().fetchAll();
     return group;
+  },
+
+  updateGroup: async (id, input) => {
+    const db = await getDb();
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [key, value] of Object.entries(input)) {
+      if (value === undefined) continue;
+      fields.push(`${key} = $${idx}`);
+      values.push(key === "bound_path" ? String(value).trim() : value);
+      idx += 1;
+    }
+    if (fields.length === 0) return;
+    values.push(id);
+    await db.execute(`UPDATE groups SET ${fields.join(", ")} WHERE id = $${idx}`, values);
+    await get().fetchAll();
+  },
+
+  materializeInheritedDescendants: async (groupId, path) => {
+    const effectivePath = path.trim();
+    if (!effectivePath) throw new Error("Cannot materialize an empty inherited path");
+    const { groups, projects } = get();
+    const ids = findInheritedDescendants(groupId, groups, projects);
+    const db = await getDb();
+    for (const descendantId of ids.groupIds) {
+      await db.execute("UPDATE groups SET bound_path = $1 WHERE id = $2", [effectivePath, descendantId]);
+    }
+    for (const projectId of ids.projectIds) {
+      await db.execute("UPDATE projects SET path = $1, path_mode = $2, updated_at = $3 WHERE id = $4", [effectivePath, "custom", Date.now().toString(), projectId]);
+    }
+    await get().fetchAll();
   },
 
   updateGroupAppearance: async (id, appearance) => {
@@ -570,9 +608,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const maxOrder = siblings.reduce((m, p) => Math.max(m, p.sort_order ?? 0), -1);
     const nextOrder = maxOrder + 1;
     const ts = Date.now().toString();
+    // 根层没有父级可供继承：继承项目脱出文件夹时固化其当前有效路径。
+    // 移入任意文件夹则保留 path_mode，让它继续动态跟随新父级。
+    const movedProject = project.path_mode === "inherit" && targetGroupId === null
+      ? { ...project, path: resolveProjectPath(project, groups), path_mode: "custom" as const }
+      : project;
     const nextProjects = projects.map((item) =>
       item.id === projectId
-        ? { ...item, group_id: targetGroupId, sort_order: nextOrder, updated_at: ts }
+        ? { ...movedProject, group_id: targetGroupId, sort_order: nextOrder, updated_at: ts }
         : item
     );
 
@@ -583,10 +626,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     try {
       const db = await getDb();
-      await db.execute(
-        "UPDATE projects SET group_id = $1, sort_order = $2, updated_at = $3 WHERE id = $4",
-        [targetGroupId, nextOrder, ts, projectId]
-      );
+      if (movedProject.path_mode === "custom" && project.path_mode === "inherit" && targetGroupId === null) {
+        await db.execute(
+          "UPDATE projects SET group_id = $1, path = $2, path_mode = $3, sort_order = $4, updated_at = $5 WHERE id = $6",
+          [targetGroupId, movedProject.path, movedProject.path_mode, nextOrder, ts, projectId]
+        );
+      } else {
+        await db.execute(
+          "UPDATE projects SET group_id = $1, sort_order = $2, updated_at = $3 WHERE id = $4",
+          [targetGroupId, nextOrder, ts, projectId]
+        );
+      }
       await get().fetchAll();
     } catch (err) {
       set({ projects, tree });
@@ -624,9 +674,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const siblings = groups.filter((g) => g.parent_id === targetParentId && g.id !== groupId);
     const maxOrder = siblings.reduce((m, g) => Math.max(m, g.sort_order ?? 0), -1);
     const nextOrder = maxOrder + 1;
+    // 根层没有父级可供继承：继承分组脱出父级时固化其当前有效路径。
+    // 进入其他文件夹时保留空 bound_path（继承模式），由解析器跟随新父级。
+    const movedGroup = group.bound_path?.trim() || targetParentId !== null
+      ? group
+      : { ...group, bound_path: resolveGroupBoundPath(groups, group.parent_id) };
     const nextGroups = groups.map((item) =>
       item.id === groupId
-        ? { ...item, parent_id: targetParentId, sort_order: nextOrder }
+        ? { ...movedGroup, parent_id: targetParentId, sort_order: nextOrder }
         : item
     );
 
@@ -637,10 +692,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     try {
       const db = await getDb();
-      await db.execute(
-        "UPDATE groups SET parent_id = $1, sort_order = $2 WHERE id = $3",
-        [targetParentId, nextOrder, groupId]
-      );
+      if (movedGroup.bound_path !== group.bound_path) {
+        await db.execute(
+          "UPDATE groups SET parent_id = $1, bound_path = $2, sort_order = $3 WHERE id = $4",
+          [targetParentId, movedGroup.bound_path, nextOrder, groupId]
+        );
+      } else {
+        await db.execute(
+          "UPDATE groups SET parent_id = $1, sort_order = $2 WHERE id = $3",
+          [targetParentId, nextOrder, groupId]
+        );
+      }
       await get().fetchAll();
     } catch (err) {
       set({ groups, tree });

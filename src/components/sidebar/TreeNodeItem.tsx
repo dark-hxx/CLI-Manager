@@ -5,7 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { TreeNode as TNode } from "../../lib/types";
 import { countProjectsInNode, type ProviderBadge } from "../../stores/projectStore";
 import { useTreeActions, worktreeListCollapseId } from "./TreeContext";
-import { Play, ChevronRight, AlertTriangle } from "../icons";
+import { Play, ChevronRight, AlertTriangle, Link2 } from "../icons";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { WorktreeIcon } from "../WorktreeIcon";
 import { useI18n } from "../../lib/i18n";
@@ -226,6 +226,7 @@ function TreeNodeItemImpl({
     const providerBadge = actions.providerBadges[p.id];
     const worktreeCollapseKey = worktreeListCollapseId(p.id);
     const worktreesOpen = forceExpanded || !actions.collapsedIds.has(worktreeCollapseKey);
+    const inheritsParentPath = p.path_mode === "inherit" && parentGroupId !== null;
 
     if (actions.renamingProjectId === p.id) {
       return (
@@ -251,7 +252,12 @@ function TreeNodeItemImpl({
             data-accent={appearance.hasColor ? "true" : undefined}
             style={rowStyle}
           >
-            <span className="ui-tree-leading-icon">
+            <span className={`ui-tree-leading-icon${inheritsParentPath ? " ui-tree-leading-icon-inherited" : ""}`}>
+              {inheritsParentPath && (
+                <span className="ui-tree-inherit-marker" role="img" aria-label={t("sidebar.tree.inheritsParent")} title={t("sidebar.tree.inheritsParent")}>
+                  <Link2 size={11} strokeWidth={2} aria-hidden="true" />
+                </span>
+              )}
               <NodeAppearanceIcon
                 mark={appearance.emoji}
                 iconKey={appearance.iconKey}
@@ -324,7 +330,12 @@ function TreeNodeItemImpl({
               />
             </button>
           )}
-          <span className="ui-tree-leading-icon">
+          <span className={`ui-tree-leading-icon${inheritsParentPath ? " ui-tree-leading-icon-inherited" : ""}`}>
+            {inheritsParentPath && (
+              <span className="ui-tree-inherit-marker" role="img" aria-label={t("sidebar.tree.inheritsParent")} title={t("sidebar.tree.inheritsParent")}>
+                <Link2 size={11} strokeWidth={2} aria-hidden="true" />
+              </span>
+            )}
             <NodeAppearanceIcon
               mark={appearance.emoji}
               iconKey={appearance.iconKey}
@@ -400,6 +411,7 @@ function TreeNodeItemImpl({
   // 折叠态徽章（ProjectTree 窄条）与这里的展开态计数共用同一口径：含子分组递归、不计 Worktree。
   const groupProjectCount = countProjectsInNode(node);
   const groupAppearance = resolveNodeAppearance({ icon: g.icon, color: g.color });
+  const inheritsParentPath = g.parent_id !== null && !g.bound_path.trim();
   const groupRowStyle = {
     paddingLeft,
     paddingRight: compact ? 8 : 10,
@@ -476,6 +488,11 @@ function TreeNodeItemImpl({
           onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
           {...listeners}
         >
+          {inheritsParentPath && (
+            <span className="ui-tree-inherit-marker ui-tree-inherit-marker-group" style={{ left: Math.max(0, paddingLeft - 13) }} role="img" aria-label={t("sidebar.tree.inheritsParent")} title={t("sidebar.tree.inheritsParent")}>
+              <Link2 size={11} strokeWidth={2} aria-hidden="true" />
+            </span>
+          )}
           <span className="ui-tree-chevron inline-flex items-center justify-center">
             <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
           </span>
