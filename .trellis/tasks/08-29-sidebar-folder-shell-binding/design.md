@@ -1,26 +1,41 @@
-# 设计
+# 设计：文件夹路径绑定与继承
 
-## 数据
+## 1. 功能边界
 
-- `groups.bound_path TEXT NOT NULL DEFAULT ''`，新增 SQLite migration 35。
-- `Group`、`CreateGroupInput`、`UpdateGroupInput` 与 projectStore 同步该字段。
-- `projects.path_mode`（`custom` / `inherit`）记录路径来源；继承项目不复制父级变更，启动时实时解析当前分组及祖先绑定链。
-- 绑定路径为空表示未绑定；解析路径时沿 `parent_id` 向上查找最近非空值。
+文件夹绑定路径只影响路径来源为继承的子级项目/文件夹；自定义路径始终保持自身配置。绑定路径是项目启动前使用的工作目录来源，不改变名称、Shell、CLI 配置或终端会话数据。
 
-## UI
+## 2. 数据模型与解析
 
-- 新增 `GroupEditDialog`，复用 ShellSelect/路径输入样式；展示递归项目数量与 Shell 选择。
-- 分组右键菜单增加“修改”，移除原先独立的“本组批量 Shell”入口并并入弹窗。
-- ConfigModal 在本地项目路径字段增加来源下拉。父级绑定存在时默认 `inherit` 且 Input disabled；`custom` 显示可编辑 Input 与图标按钮。
+- `groups.bound_path` 保存文件夹显式绑定路径；空字符串表示跟随祖先绑定或没有可继承路径。
+- `projects.path_mode` 为 `custom` 或 `inherit`。`custom` 使用 `projects.path`，`inherit` 使用所属文件夹及祖先链上最近的非空 `bound_path`。
+- `resolveGroupBoundPath` 和 `resolveProjectPath` 是统一解析入口，启动、外部终端、分屏和命令面板均在使用前解析实际路径。
+- 继承项目不复制父级路径；父级绑定变化后无需逐项编辑即可生效，无可用绑定时回退到项目已保存的 `path`。
 
-## 场景
+## 3. 编辑与校验流程
 
-- 根组/嵌套组/无绑定父链；本地、WSL、SSH；创建项目和编辑项目；侧边栏展开/折叠；已有项目不因绑定改变路径。
-- 继承模式项目在打开、分屏、外部终端和命令面板启动时均实时解析；父级或祖先绑定变更后，已有项目无需编辑即可使用新路径。无可用绑定时回退项目保存的旧路径。
-## Follow-up design: inherited marker and cascade
+`ConfigModal` 根据所选分组提供“继承父级 / 自定义路径”。继承时输入框只读，自定义时恢复输入和目录浏览。保存本地自定义路径调用共享 `pathExists()`，复用终端的 `check_paths_exist` IPC 校验。
 
-Reuse `TreeNodeItem` and render a `Link2` marker inside the existing leading-icon wrapper with absolute positioning, so the flex layout and all following elements retain their current coordinates. Apply the same marker condition to inherited project and group nodes.
+`GroupEditDialog` 同时处理递归子项目 Shell 和文件夹绑定路径。非空自定义绑定先校验；失败阻止保存。选择继承模式时保存空 `bound_path`。
 
-Before clearing a folder binding, resolve and capture the folder's current effective path, then derive dependent descendants from the tree/store path modes rather than rendered DOM. Require confirmation when descendants depend on the binding. On confirmation, persist explicit custom paths for those descendants using the captured effective path, leave unrelated custom paths untouched, and refresh the tree. Empty/unavailable effective paths must continue to use existing validation behavior.
+## 4. 清空绑定的级联固化
 
-The implementation deliberately keeps this flow local to the existing store/dialog boundaries: one shared `pathExists` helper for terminal and folder validation, one descendant traversal, and no new runtime service or visual connector state.
+文件夹原有显式绑定、用户改为自定义但输入为空时：
+
+1. 先捕获该文件夹当前有效路径。
+2. 按分组树查找仍依赖该绑定的后代继承分组和项目；遇到后代显式绑定时停止传播。
+3. 有受影响节点时显示数量和路径确认提示；无受影响节点则直接清空。
+4. 确认后将后代分组写为显式 `bound_path`，后代项目写为 `path=<捕获路径>, path_mode=custom`，再刷新 store/tree。
+5. 取消或保存失败不关闭弹窗，不修改无关自定义节点。
+
+级联仅处理路径来源，不触碰 Shell、排序、外观标记或终端状态；逻辑保持在现有 store/dialog 边界内。
+
+## 5. 视觉标记
+
+`TreeNodeItem` 使用 `Link2` 表示继承关系：项目标记绝对定位在项目外观图标左侧，文件夹标记绝对定位在折叠箭头左侧。标记不占 Flex 空间，名称、徽章、折叠箭头和操作按钮坐标保持不变；aria-label/title 使用中英文 i18n。
+
+## 6. 兼容场景
+
+- 根/嵌套文件夹、折叠/展开、紧凑/舒适密度。
+- 仅继承、继承与自定义混排、后代再次绑定。
+- Local、WSL、SSH 项目；继承和远程路径沿用既有流程。
+- 拖拽移入文件夹保留继承模式；继承节点移到根层时固化为移动前有效路径。

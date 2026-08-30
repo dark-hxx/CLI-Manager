@@ -14,10 +14,11 @@
 - [x] 继承节点后的自定义兄弟项保持纵向连接线连续，嵌套列表连接点按折叠图标位置对齐。
 - [x] 补齐中英文 i18n 文案并通过前端类型检查。
 - [ ] Rust `cargo check`（当前环境未安装 cargo）。
-## Follow-up implementation
+## Final verification
 
-1. Trace group edit save, path-resolution, descendant traversal, and project update persistence.
-2. Add the folder inherited marker with non-flow positioning and localized accessibility text.
-3. Add dependent-descendant detection, effective-path capture, confirmation, and cascade persistence with cancel/error handling.
-4. Update `CHANGELOG.md` and `docs/功能清单.md`, then run TypeScript checks and targeted verification.
-5. Reuse the terminal `check_paths_exist` validation contract for non-empty custom folder bindings.
+- [x] Folder and project inherited markers use absolute positioning and localized accessibility text.
+- [x] Folder binding clear detects dependent descendants, confirms, and materializes the captured effective path.
+- [x] Non-empty custom folder paths reuse the terminal `check_paths_exist` validation.
+- [x] Changelog and feature inventory are consolidated under `TEMP`.
+- [x] `npx tsc --noEmit` and `git diff --check` pass.
+- [ ] Full manual coverage of Local/WSL/SSH and nested drag/drop scenarios remains pending.

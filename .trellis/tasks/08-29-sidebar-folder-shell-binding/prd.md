@@ -18,7 +18,7 @@ TBD.
 - Lightweight tasks can remain PRD-only.
 - For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
 
-## Follow-up requirements: inherited relationship indicator and binding clear cascade
+## Final requirements: inherited indicator, validation, and binding clear cascade
 
 - Show the inherited-path link icon to the left of the existing appearance icon for inherited projects and folders without shifting any existing row content.
 - When editing a folder and changing its binding to an empty custom path, detect descendant groups/projects that inherit from this folder.
@@ -26,6 +26,7 @@ TBD.
 - Preserve unrelated custom paths and support nested, collapsed, mixed, local, WSL, and SSH project trees.
 - Add all warning, accessibility, and status copy in zh-CN and en-US.
 - Validate non-empty custom folder binding paths with the same `check_paths_exist` path existence check used by terminal editing; block save when unavailable.
+- Keep the implementation within the existing store, dialog, and tree boundaries; do not add a separate path service or connector-line layout system.
 
 ### Follow-up acceptance criteria
 
