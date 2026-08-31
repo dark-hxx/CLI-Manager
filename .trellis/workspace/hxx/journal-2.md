@@ -1311,3 +1311,24 @@ Added a global local smart-title prompt, persisted save feedback, non-blocking P
 ### Status
 
 [OK] **Completed**
+
+
+## Session 102: 终端滚动快捷键
+
+**Date**: 2026-08-31
+**Task**: 终端滚动快捷键
+**Branch**: `master`
+
+### Summary
+
+为终端滚动到底部功能增加可配置的 Ctrl+End、PageUp、PageDown 快捷键；普通缓冲区按页滚动，alternate buffer 保留给全屏 TUI；补齐中英文设置文案、测试、V1.3.9 变更记录与前端规范。验证通过 tsc、build 和相关终端测试；完整终端测试仍有既有 terminalCursorMovement 缺失文件失败。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ce0c105` | (see git log) |
+
+### Status
+
+[OK] **Completed**
