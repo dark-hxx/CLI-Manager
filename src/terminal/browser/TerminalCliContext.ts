@@ -2,9 +2,9 @@ import type { Project, TerminalSession } from "../../lib/types";
 
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
-const GROK_COMMAND_PATTERN = /(?:^|\s)grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const GROK_EXECUTABLE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?$/i;
 const GROK_TOOL_VALUE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?(?:\s+build)?$/i;
+const GROK_WSL_COMMAND_PATTERN = /^\s*(?:&\s*)?wsl(?:\.exe)?\s+(?:--\s+)?grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const PI_COMMAND_PATTERN = /^\s*(?:&\s*)?pi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const OPENCODE_TOOL_VALUES = new Set(["opencode", "opencode.cmd", "opencode.exe", "opencode.ps1"]);
 const OPENCODE_COMMAND_PATTERN = /^opencode(?:\.(?:cmd|exe|ps1))?$/i;
@@ -77,7 +77,8 @@ export const isGrokTerminalContext = ({
   isGrokToolValue(sessionTool)
   || isGrokToolValue(projectTool)
   || isGrokToolValue(titleTool)
-  || GROK_COMMAND_PATTERN.test(startupCmd)
+  || isGrokLaunchCommand(startupCmd)
+  || GROK_WSL_COMMAND_PATTERN.test(startupCmd)
 );
 
 export const isGrokRuntimeContext = (
@@ -92,6 +93,10 @@ export const isGrokRuntimeContext = (
 ): boolean => (
   isGrokTerminalContext(context)
   || (manualLaunchDetected && hasVisibleTuiPrompt)
+);
+
+export const usesEscCrComposerNewline = (context: TerminalCliContext): boolean => (
+  isCodexTerminalContext(context) || isGrokTerminalContext(context)
 );
 
 export const isClaudeTerminalContext = ({
