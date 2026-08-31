@@ -1681,6 +1681,26 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           return false;
         }
       }
+      if (e.type === "keydown" && terminal.buffer.active.type === "normal") {
+        const scrollShortcuts = useSettingsStore.getState().keyboardShortcuts;
+        const combo = eventToCombo(e);
+        if (scrollShortcuts.scrollToBottom.trim() && combo === scrollShortcuts.scrollToBottom) {
+          e.preventDefault();
+          terminal.scrollToBottom();
+          setIsScrolledAwayFromBottom(false);
+          return false;
+        }
+        if (scrollShortcuts.pageUp.trim() && combo === scrollShortcuts.pageUp) {
+          e.preventDefault();
+          terminal.scrollPages(-1);
+          return false;
+        }
+        if (scrollShortcuts.pageDown.trim() && combo === scrollShortcuts.pageDown) {
+          e.preventDefault();
+          terminal.scrollPages(1);
+          return false;
+        }
+      }
       if (e.type === "keydown" && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "v") {
         e.preventDefault();
         readClipboardPasteText().then((text) => {

@@ -67,6 +67,7 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 - Clicking the control calls the current terminal's public `scrollToBottom()` API and sends no PTY input.
 - Do not show the control for the alternate buffer or for a normal buffer already at `viewportY === baseY`.
 - If another terminal control occupies the same corner, compose both controls in one positioned vertical group instead of stacking independent absolute elements.
+- The persisted `keyboardShortcuts.scrollToBottom`, `keyboardShortcuts.pageUp`, and `keyboardShortcuts.pageDown` bindings are handled by the xterm custom key handler only while `buffer.active.type === "normal"`; `scrollToBottom()` and `scrollPages(±1)` must not be sent to or replace input for an alternate-screen TUI.
 
 **Correct**:
 

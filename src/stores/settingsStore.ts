@@ -194,6 +194,9 @@ export type ShortcutAction =
   | "sessionHistory"
   | "copyAi"
   | "copyTerminalSelection"
+  | "scrollToBottom"
+  | "pageUp"
+  | "pageDown"
   | "toggleSidebar"
   | "toggleTerminalFullscreen";
 export type TabSwitchShortcutModifier = "Alt" | "Ctrl" | "Shift";
@@ -250,6 +253,9 @@ const SHORTCUT_ACTIONS: readonly ShortcutAction[] = [
   "sessionHistory",
   "copyAi",
   "copyTerminalSelection",
+  "scrollToBottom",
+  "pageUp",
+  "pageDown",
   "toggleSidebar",
   "toggleTerminalFullscreen",
 ];
@@ -308,6 +314,9 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   sessionHistory: "Ctrl+K",
   copyAi: "Alt+P",
   copyTerminalSelection: "Ctrl+Shift+C",
+  scrollToBottom: "Ctrl+End",
+  pageUp: "PageUp",
+  pageDown: "PageDown",
   toggleSidebar: "Ctrl+B",
   toggleTerminalFullscreen: "F11",
 };
