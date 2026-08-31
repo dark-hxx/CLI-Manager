@@ -1268,3 +1268,25 @@ Added a global local smart-title prompt, persisted save feedback, non-blocking P
 ### Next Steps
 
 - 人工在 Grok Build 项目终端中分别验证 Alt+Enter、Shift+Enter、Ctrl+Enter 换行且不提交。
+
+
+## Session 100: 修复 Grok Build Alt+Enter 换行并合并 PR #240
+
+**Date**: 2026-08-31
+**Task**: 修复 Grok Build Alt+Enter 换行并合并 PR #240
+**Branch**: `master`
+
+### Summary
+
+修复 Grok Build 本地、WSL 与 SSH 终端的 Alt+Enter 换行；补充精确命令识别、当前 TUI 提示门控和原生 Alt+Enter 透传，合并远程 PR #240，完成 issue #236 关联。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f6b8ca66` | (see git log) |
+| `66ba0fba` | (see git log) |
+
+### Status
+
+[OK] **Completed**
