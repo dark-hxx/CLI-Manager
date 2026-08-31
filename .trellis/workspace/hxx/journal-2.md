@@ -1290,3 +1290,24 @@ Added a global local smart-title prompt, persisted save feedback, non-blocking P
 ### Status
 
 [OK] **Completed**
+
+
+## Session 101: 终端滚动到底部快捷跳转按钮
+
+**Date**: 2026-08-31
+**Task**: 终端滚动到底部快捷跳转按钮
+**Branch**: `master`
+
+### Summary
+
+实现终端非底部滚动时的底部快捷跳转按钮；复用 xterm Buffer 状态、终端主题和字号控件布局，补齐中英文文案、静态回归测试、V1.3.9 变更记录与前端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `37cc08a3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
