@@ -127,6 +127,31 @@ interface HookMonitoringStatus {
 
 const PLATFORM_KINDS: PlatformKind[] = ["telegram", "feishu", "weixin", "wecom"];
 
+const PLATFORM_LABEL_KEYS: Record<PlatformKind, TranslationKey> = {
+  telegram: "settings.ccConnect.platformTelegram",
+  feishu: "settings.ccConnect.platformFeishu",
+  weixin: "settings.ccConnect.platformWeixin",
+  wecom: "settings.ccConnect.platformWecom",
+};
+
+type PlatformAllowFromErrorKind = "required" | "wildcard" | "invalid";
+
+const PLATFORM_ALLOW_FROM_ERROR_KEYS: Record<PlatformAllowFromErrorKind, TranslationKey> = {
+  required: "settings.ccConnect.allowFromErrorRequired",
+  wildcard: "settings.ccConnect.allowFromErrorWildcard",
+  invalid: "settings.ccConnect.allowFromErrorInvalid",
+};
+
+function parsePlatformAllowFromError(message: string) {
+  const match = /^platform_allow_from_(required|wildcard|invalid):(telegram|feishu|weixin|wecom)$/
+    .exec(message.trim());
+  if (!match) return null;
+  return {
+    kind: match[1] as PlatformAllowFromErrorKind,
+    platform: match[2] as PlatformKind,
+  };
+}
+
 function withPlatformProfiles(profile: CcConnectProfile): CcConnectProfile {
   const rawPlatforms = profile.platforms ?? [];
   const configured = new Map(rawPlatforms.map((item) => [item.platform, item]));
@@ -204,7 +229,7 @@ const EMPTY_PROFILE: CcConnectProfile = {
   allowFrom: "",
   platforms: PLATFORM_KINDS.map((platform) => ({
     platform,
-    enabled: platform === "telegram",
+    enabled: false,
     allowFrom: "",
   })),
   yoloEnabled: false,
@@ -607,7 +632,14 @@ export function CcConnectSettingsPage() {
       setWecomBotSecret("");
       toast.success(t("settings.ccConnect.toast.saveSuccess"));
     } catch (error) {
-      toast.error(t("settings.ccConnect.toast.saveFailed"), { description: errorMessage(error) });
+      const message = errorMessage(error);
+      const platformError = parsePlatformAllowFromError(message);
+      const description = platformError
+        ? t(PLATFORM_ALLOW_FROM_ERROR_KEYS[platformError.kind], {
+            platform: t(PLATFORM_LABEL_KEYS[platformError.platform]),
+          })
+        : message;
+      toast.error(t("settings.ccConnect.toast.saveFailed"), { description });
     } finally {
       setWorkingState(null);
     }
@@ -841,12 +873,11 @@ export function CcConnectSettingsPage() {
     : status?.running
       ? t("settings.ccConnect.running")
       : t("settings.ccConnect.stopped");
-  const platformOptions = [
-    { value: "telegram", label: t("settings.ccConnect.platformTelegram") },
-    { value: "feishu", label: t("settings.ccConnect.platformFeishu") },
-    { value: "weixin", label: t("settings.ccConnect.platformWeixin") },
-    { value: "wecom", label: t("settings.ccConnect.platformWecom") },
-  ];
+  const platformOptions = PLATFORM_KINDS.map((platform) => ({
+    value: platform,
+    label: t(PLATFORM_LABEL_KEYS[platform]),
+  }));
+  const enabledPlatformProfiles = profile.platforms.filter((item) => item.enabled);
   const allowFromHelpKey = ({
     telegram: "settings.ccConnect.allowFromTelegramHelp",
     feishu: "settings.ccConnect.allowFromFeishuHelp",
@@ -1136,6 +1167,32 @@ export function CcConnectSettingsPage() {
           />
           <Select label={t("settings.ccConnect.language")} data={[{ value: "zh", label: t("settings.ccConnect.languageZh") }, { value: "en", label: t("settings.ccConnect.languageEn") }]} value={profile.language} onChange={(value) => value && updateProfile("language", value as ReplyLanguage)} />
         </SimpleGrid>
+        <Stack mt="sm" gap={6}>
+          <Text size="xs" c="var(--text-muted)">
+            {t("settings.ccConnect.enabledPlatforms")}
+          </Text>
+          <Group gap={6}>
+            {enabledPlatformProfiles.length === 0 ? (
+              <Badge color="gray" variant="light" tt="none">
+                {t("settings.ccConnect.enabledPlatformsNone")}
+              </Badge>
+            ) : enabledPlatformProfiles.map((item) => (
+              <Badge
+                key={item.platform}
+                component="button"
+                type="button"
+                color="cliPrimary"
+                variant={item.platform === profile.platform ? "filled" : "light"}
+                tt="none"
+                aria-pressed={item.platform === profile.platform}
+                onClick={() => selectPlatform(item.platform)}
+                style={{ cursor: "pointer" }}
+              >
+                {t(PLATFORM_LABEL_KEYS[item.platform])}
+              </Badge>
+            ))}
+          </Group>
+        </Stack>
         <Switch
           mt="sm"
           checked={selectedPlatformProfile.enabled}

@@ -2478,7 +2478,7 @@ fn normalize_profile(
         item.allow_from = item.allow_from.trim().to_string();
         if item.enabled {
             enabled_count += 1;
-            item.allow_from = normalize_allow_from(item.platform, &item.allow_from)?;
+            item.allow_from = normalize_profile_allow_from(item.platform, &item.allow_from)?;
         }
     }
     if enabled_count == 0 {
@@ -2563,6 +2563,17 @@ fn normalize_allow_from(platform: CcConnectPlatform, raw: &str) -> Result<String
         return Err("allow_from must contain at least one explicit user ID".to_string());
     }
     Ok(values.join(","))
+}
+
+fn normalize_profile_allow_from(platform: CcConnectPlatform, raw: &str) -> Result<String, String> {
+    normalize_allow_from(platform, raw).map_err(|error| {
+        let reason = match error.as_str() {
+            "allow_from must contain at least one explicit user ID" => "required",
+            "allow_from wildcard is forbidden" => "wildcard",
+            _ => "invalid",
+        };
+        format!("platform_allow_from_{reason}:{}", platform_type(platform))
+    })
 }
 
 fn profile_issue_codes(profile: &CcConnectProfile) -> Vec<String> {
@@ -6828,10 +6839,68 @@ mod tests {
 
         let error = normalize_profile(&CcConnectManager::new(), profile).unwrap_err();
 
-        assert_eq!(
-            error,
-            "allow_from must contain at least one explicit user ID"
-        );
+        assert_eq!(error, "platform_allow_from_required:telegram");
+    }
+
+    #[test]
+    fn profile_allowlist_errors_identify_every_platform_and_reason() {
+        let invalid_values = [
+            (CcConnectPlatform::Telegram, "telegram-name"),
+            (CcConnectPlatform::Feishu, "123456789"),
+            (CcConnectPlatform::Weixin, "wechat-owner"),
+            (CcConnectPlatform::Wecom, "user with spaces"),
+        ];
+
+        for platform in CC_CONNECT_PLATFORMS {
+            assert_eq!(
+                normalize_profile_allow_from(platform, "").unwrap_err(),
+                format!("platform_allow_from_required:{}", platform_type(platform))
+            );
+            assert_eq!(
+                normalize_profile_allow_from(platform, "*").unwrap_err(),
+                format!("platform_allow_from_wildcard:{}", platform_type(platform))
+            );
+        }
+
+        for (platform, value) in invalid_values {
+            assert_eq!(
+                normalize_profile_allow_from(platform, value).unwrap_err(),
+                format!("platform_allow_from_invalid:{}", platform_type(platform))
+            );
+        }
+    }
+
+    #[test]
+    fn regular_profile_validation_ignores_disabled_platform_drafts() {
+        let project = tempfile::tempdir().unwrap();
+        let valid_values = [
+            (CcConnectPlatform::Telegram, "123456789"),
+            (CcConnectPlatform::Feishu, "ou_owner"),
+            (CcConnectPlatform::Weixin, "owner@im.wechat"),
+            (CcConnectPlatform::Wecom, "zhangsan"),
+        ];
+
+        for (selected, valid_value) in valid_values {
+            let mut profile = sample_profile(project.path());
+            profile.platform = selected;
+            profile.platforms = CC_CONNECT_PLATFORMS
+                .into_iter()
+                .map(|platform| CcConnectPlatformProfile {
+                    platform,
+                    enabled: platform == selected,
+                    allow_from: if platform == selected {
+                        valid_value.to_string()
+                    } else {
+                        "unfinished draft".to_string()
+                    },
+                })
+                .collect();
+
+            let normalized = normalize_profile(&CcConnectManager::new(), profile).unwrap();
+
+            assert_eq!(enabled_platforms(&normalized).len(), 1);
+            assert_eq!(normalized.allow_from, valid_value);
+        }
     }
 
     #[test]
