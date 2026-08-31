@@ -775,7 +775,7 @@ export function Sidebar({
       const isProject = (id: string) => projects.some((p) => p.id === id);
       const isInheritedNode = (id: string) => {
         const group = groups.find((item) => item.id === id);
-        if (group) return group.parent_id !== null && !group.bound_path.trim();
+        if (group) return group.parent_id !== null && !(group.bound_path ?? "").trim();
         const project = projects.find((item) => item.id === id);
         return project?.path_mode === "inherit" && project.group_id !== null;
       };
