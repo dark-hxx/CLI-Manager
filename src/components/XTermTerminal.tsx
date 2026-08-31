@@ -51,7 +51,7 @@ import { resolveClaudeImeCompositionAnchor } from "../lib/terminalImeAnchor";
 import { copyTextToClipboard, readTextFromClipboard } from "../lib/systemClipboard";
 import { formatOsc52Reply } from "../lib/terminalOscParse";
 import { eventToCombo } from "../hooks/useKeyboardShortcuts";
-import { hasCodexTuiViewport } from "../lib/terminalTuiDisplay";
+import { hasCodexTuiViewport, hasGrokTuiViewport } from "../lib/terminalTuiDisplay";
 import { createTerminalTuiColorSyncController } from "../lib/terminalTuiColorSync";
 import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
 import { wrapTerminalPasteTextForCtrlShiftV } from "../lib/terminalKeyboard";
@@ -81,9 +81,11 @@ import {
   createTerminalCliContext,
   isClaudeTerminalContext,
   isCodexTerminalContext,
+  isGrokTerminalContext,
   isOpenCodeTerminalContext,
 } from "../terminal/browser/TerminalCliContext";
 import { createTerminalMouseInteractionOptions } from "../terminal/browser/TerminalMouseInteraction";
+import { resolveTerminalNewlineKeyEvent } from "../terminal/browser/TerminalNewlineShortcut";
 import { attachOpenCodeTuiClipboard } from "../terminal/browser/OpenCodeTuiClipboard";
 import {
   createPiTerminalCompatibility,
@@ -110,6 +112,7 @@ const VISIBILITY_RESTORE_REVEAL_TIMEOUT_MS = 500;
 // ponytail: fixed ceiling bounds untrusted OSC 52 bursts; add per-session rate limiting only if legitimate bursts need it.
 const OSC52_MAX_PENDING_CLIPBOARD_ACTIONS = 32;
 const CODEX_OUTPUT_SIGNATURE_PATTERN = /(?:openai\s+codex|\/model\s+to\s+change)/i;
+const GROK_OUTPUT_SIGNATURE_PATTERN = /grok\s+build/i;
 const ANSI_CSI_SEQUENCE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 let terminalImageAddonFallbackLogged = false;
 // Minimum time the app must stay in the background before a foreground return
@@ -436,6 +439,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const visibilityRestoreFallbackRafRef = useRef<number | null>(null);
   const codexCursorShowTimerRef = useRef<number | null>(null);
   const codexSessionDetectedRef = useRef(false);
+  const grokSessionDetectedRef = useRef(false);
   const osc52ClipboardChainRef = useRef(Promise.resolve());
   const osc52ClipboardPendingRef = useRef(0);
   const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
@@ -825,6 +829,18 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     if (detected) codexSessionDetectedRef.current = true;
     return detected;
   };
+  const isGrokSession = (
+    context = getSessionToolContext(),
+    runtimeTerminal?: Terminal,
+  ) => {
+    const detected = (
+      isGrokTerminalContext(context)
+      || grokSessionDetectedRef.current
+      || (runtimeTerminal !== undefined && hasGrokTuiViewport(runtimeTerminal))
+    );
+    if (detected) grokSessionDetectedRef.current = true;
+    return detected;
+  };
   const shouldHideCodexCursor = (runtimeTerminal = terminalRef.current) => (
     hideCodexRuntimeCursorRef.current
     && runtimeTerminal !== null
@@ -847,6 +863,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const plainText = text.replace(ANSI_CSI_SEQUENCE_PATTERN, "");
     if (CODEX_OUTPUT_SIGNATURE_PATTERN.test(plainText)) {
       codexSessionDetectedRef.current = true;
+    }
+    if (GROK_OUTPUT_SIGNATURE_PATTERN.test(plainText)) {
+      grokSessionDetectedRef.current = true;
     }
     if (!shouldHideCodexCursor()) return text;
     const cursorPattern = /\x1b\[\?25[hl]/g;
@@ -1099,6 +1118,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   useEffect(() => {
     if (!containerRef.current) return;
     codexSessionDetectedRef.current = false;
+    grokSessionDetectedRef.current = false;
     tuiColorSync.reset();
 
     const baseTheme = withTerminalTextColor(
@@ -1569,24 +1589,23 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         }
       }
       if (e.type === "keydown" && e.key === "Enter") {
-        const shortcut = useSettingsStore.getState().terminalNewlineShortcut;
-        const managedCombo =
-          (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) ||
-          (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) ||
-          (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey);
-        const matched =
-          (shortcut === "Shift+Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) ||
-          (shortcut === "Ctrl+Enter" && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) ||
-          (shortcut === "Alt+Enter" && e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey);
-        if (managedCombo) {
+        const newlineDecision = resolveTerminalNewlineKeyEvent(e, {
+          shortcut: useSettingsStore.getState().terminalNewlineShortcut,
+          usesEscCrComposerNewline:
+            isCodexSession(getSessionToolContext(), terminal)
+            || isGrokSession(getSessionToolContext(), terminal),
+        });
+        if (newlineDecision.action === "write") {
           e.preventDefault();
-          if (matched) {
-            markAttentionInputHandled();
-            const newlineData = isCodexSession(getSessionToolContext(), terminal) ? "\x1b\r" : "\n";
-            terminalProcessManager.write(sessionId, newlineData).catch((err) => reportPtyWriteError("newline", err));
-          }
+          markAttentionInputHandled();
+          terminalProcessManager.write(sessionId, newlineDecision.data).catch((err) => reportPtyWriteError("newline", err));
           return false;
         }
+        if (newlineDecision.action === "swallow") {
+          e.preventDefault();
+          return false;
+        }
+        if (newlineDecision.action === "pass") return true;
       }
       if (
         e.type === "keydown" &&

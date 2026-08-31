@@ -277,6 +277,8 @@ test("shared CLI context includes immutable session metadata for XTermTerminal",
   assert.match(contextSource, /sessionTool:\s*session\?\.cliTool/u);
   assert.match(contextSource, /sessionTool\s*===\s*"codex"/u);
   assert.match(componentSource, /isCodexSession\(getSessionToolContext\(\), terminal\)/u);
+  assert.match(componentSource, /resolveTerminalNewlineKeyEvent/u);
+  assert.match(componentSource, /isGrokSession\(getSessionToolContext\(\), terminal\)/u);
 });
 
 test("light theme erases a dark CLI message block and keeps light highlights", () => {
