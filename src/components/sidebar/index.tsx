@@ -1712,15 +1712,14 @@ export function Sidebar({
 
   const handleCreateGroup = useCallback(
     (parentId: string | null, name: string, appearance?: { icon: string; color: string }) => {
-      void createGroup({
-        name,
-        parent_id: parentId,
-        icon: appearance?.icon,
-        color: appearance?.color,
-      });
+      void createGroup({ name, parent_id: parentId, icon: appearance?.icon, color: appearance?.color })
+        .catch((err) => {
+          logError("Failed to create group", err);
+          toast.error(t("sidebar.toast.groupCreateFailed"), { description: String(err) });
+        });
       setNewGroupParentId(null);
     },
-    [createGroup]
+    [createGroup, t]
   );
 
   const handleUpdateAppearance = useCallback(
