@@ -1162,10 +1162,6 @@
   transform: translateY(-50%);
 }
 
-.ui-tree-inherit-marker-group {
-  pointer-events: none;
-}
-
 .ui-tree-project:hover {
   background-color: color-mix(in srgb, var(--surface-container-high) 62%, transparent);
   border-color: color-mix(in srgb, var(--border) 32%, transparent);

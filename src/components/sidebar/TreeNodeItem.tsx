@@ -411,7 +411,6 @@ function TreeNodeItemImpl({
   // 折叠态徽章（ProjectTree 窄条）与这里的展开态计数共用同一口径：含子分组递归、不计 Worktree。
   const groupProjectCount = countProjectsInNode(node);
   const groupAppearance = resolveNodeAppearance({ icon: g.icon, color: g.color });
-  const inheritsParentPath = g.parent_id !== null && !(g.bound_path ?? "").trim();
   const groupRowStyle = {
     paddingLeft,
     paddingRight: compact ? 8 : 10,
@@ -488,11 +487,6 @@ function TreeNodeItemImpl({
           onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
           {...listeners}
         >
-          {inheritsParentPath && (
-            <span className="ui-tree-inherit-marker ui-tree-inherit-marker-group" style={{ left: Math.max(0, paddingLeft - 13) }} role="img" aria-label={t("sidebar.tree.inheritsParent")} title={t("sidebar.tree.inheritsParent")}>
-              <Link2 size={11} strokeWidth={2} aria-hidden="true" />
-            </span>
-          )}
           <span className="ui-tree-chevron inline-flex items-center justify-center">
             <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
           </span>
