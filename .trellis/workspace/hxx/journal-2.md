@@ -1233,3 +1233,60 @@ Added a global local smart-title prompt, persisted save feedback, non-blocking P
 ### Next Steps
 
 - 待 macOS + Fcitx5 真机补测中文候选、标点、ASCII、分屏与切换标签场景。
+
+
+## Session 99: 修复 Grok Build Alt+Enter 换行
+
+**Date**: 2026-08-31
+**Task**: 修复 Grok Build Alt+Enter 换行
+**Branch**: `master`
+
+### Summary
+
+为 Grok Build 终端补充稳定 CLI 上下文识别，使三种配置的换行组合键在匹配时发送 ESC + CR；普通 Shell、Claude 和 Codex 行为保持不变。
+
+### Main Changes
+
+- 新增 Grok Build 会话上下文分类并接入终端换行字节选择。
+- 补充终端回归测试、前端输入契约及 V1.3.9 交付记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f175f706` | (see git log) |
+
+### Testing
+
+- [OK] node --test scripts/terminalNewlineShortcut.test.mjs；npx tsc --noEmit。
+- [OK] 相关鼠标、OSC 52、OpenCode 终端测试通过；完整脚本测试存在既有无关静态契约失败。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 人工在 Grok Build 项目终端中分别验证 Alt+Enter、Shift+Enter、Ctrl+Enter 换行且不提交。
+
+
+## Session 100: 修复 Grok Build Alt+Enter 换行并合并 PR #240
+
+**Date**: 2026-08-31
+**Task**: 修复 Grok Build Alt+Enter 换行并合并 PR #240
+**Branch**: `master`
+
+### Summary
+
+修复 Grok Build 本地、WSL 与 SSH 终端的 Alt+Enter 换行；补充精确命令识别、当前 TUI 提示门控和原生 Alt+Enter 透传，合并远程 PR #240，完成 issue #236 关联。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f6b8ca66` | (see git log) |
+| `66ba0fba` | (see git log) |
+
+### Status
+
+[OK] **Completed**

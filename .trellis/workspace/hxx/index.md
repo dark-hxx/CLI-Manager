@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 98
-- **Last Active**: 2026-08-26
+- **Total Sessions**: 100
+- **Last Active**: 2026-08-31
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1235 | Active |
+| `journal-2.md` | ~1292 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 100 | 2026-08-31 | 修复 Grok Build Alt+Enter 换行并合并 PR #240 | `f6b8ca66`, `66ba0fba` | `master` |
+| 99 | 2026-08-31 | 修复 Grok Build Alt+Enter 换行 | `f175f706` | `master` |
 | 98 | 2026-08-26 | 修复 macOS Fcitx5 终端中文重复输入 | `b669c1db` | `master` |
 | 97 | 2026-08-26 | History smart-title prompt and responsiveness | `65a6b5cf` | `master` |
 | 96 | 2026-08-24 | Fix file preview refresh and file tab menu | `9c6aa22d` | `master` |

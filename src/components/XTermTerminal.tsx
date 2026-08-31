@@ -51,7 +51,7 @@ import { resolveClaudeImeCompositionAnchor } from "../lib/terminalImeAnchor";
 import { copyTextToClipboard, readTextFromClipboard } from "../lib/systemClipboard";
 import { formatOsc52Reply } from "../lib/terminalOscParse";
 import { eventToCombo } from "../hooks/useKeyboardShortcuts";
-import { hasCodexTuiViewport } from "../lib/terminalTuiDisplay";
+import { hasCodexTuiViewport, hasTuiComposerPromptViewport } from "../lib/terminalTuiDisplay";
 import { createTerminalTuiColorSyncController } from "../lib/terminalTuiColorSync";
 import { hexToRgba, normalizeHexColor } from "../lib/terminalColor";
 import { wrapTerminalPasteTextForCtrlShiftV } from "../lib/terminalKeyboard";
@@ -81,9 +81,13 @@ import {
   createTerminalCliContext,
   isClaudeTerminalContext,
   isCodexTerminalContext,
+  isGrokLaunchCommand,
+  isGrokRuntimeContext,
+  isGrokTerminalContext,
   isOpenCodeTerminalContext,
 } from "../terminal/browser/TerminalCliContext";
 import { createTerminalMouseInteractionOptions } from "../terminal/browser/TerminalMouseInteraction";
+import { resolveTerminalNewlineKeyEvent } from "../terminal/browser/TerminalNewlineShortcut";
 import { attachOpenCodeTuiClipboard } from "../terminal/browser/OpenCodeTuiClipboard";
 import {
   createPiTerminalCompatibility,
@@ -436,6 +440,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const visibilityRestoreFallbackRafRef = useRef<number | null>(null);
   const codexCursorShowTimerRef = useRef<number | null>(null);
   const codexSessionDetectedRef = useRef(false);
+  const grokSessionDetectedRef = useRef(false);
   const osc52ClipboardChainRef = useRef(Promise.resolve());
   const osc52ClipboardPendingRef = useRef(0);
   const displayNormalizeOutputRef = useRef<(text: string) => string>((text) => text);
@@ -478,6 +483,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   );
   const hiddenForThisSession = useTerminalStore((s) => s.hiddenBackgroundSessionIds.has(sessionId));
   const terminalSession = useTerminalStore((state) => state.sessions.find((item) => item.id === sessionId) ?? null);
+  const terminalSessionStatus = useTerminalStore((state) => state.sessionStatuses[sessionId] ?? null);
   const terminalProject = useProjectStore((state) => (
     terminalSession?.projectId
       ? state.projects.find((item) => item.id === terminalSession.projectId) ?? null
@@ -606,6 +612,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     readClipboardPasteText,
     attachSelection,
     attachIme,
+    onCommandSubmitted,
   } = useTerminalInput({
     sessionId,
     wrapperRef,
@@ -823,6 +830,27 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       || (runtimeTerminal !== undefined && hasCodexTuiViewport(runtimeTerminal))
     );
     if (detected) codexSessionDetectedRef.current = true;
+    return detected;
+  };
+  const isGrokSession = (
+    context = getSessionToolContext(),
+    runtimeTerminal?: Terminal,
+  ) => {
+    const stableDetected = isGrokTerminalContext(context);
+    const hasVisibleTuiPrompt = runtimeTerminal !== undefined
+      && hasTuiComposerPromptViewport(runtimeTerminal);
+    const detected = isGrokRuntimeContext(context, {
+      manualLaunchDetected: grokSessionDetectedRef.current,
+      hasVisibleTuiPrompt,
+    });
+    if (
+      !stableDetected
+      && grokSessionDetectedRef.current
+      && runtimeTerminal !== undefined
+      && !hasVisibleTuiPrompt
+    ) {
+      grokSessionDetectedRef.current = false;
+    }
     return detected;
   };
   const shouldHideCodexCursor = (runtimeTerminal = terminalRef.current) => (
@@ -1097,8 +1125,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   }, [isActive, isVisible, visibilityRestorePending]);
 
   useEffect(() => {
+    if (terminalSessionStatus === "exited" || terminalSessionStatus === "error") {
+      grokSessionDetectedRef.current = false;
+    }
+  }, [terminalSessionStatus]);
+
+  useEffect(() => {
     if (!containerRef.current) return;
     codexSessionDetectedRef.current = false;
+    grokSessionDetectedRef.current = false;
     tuiColorSync.reset();
 
     const baseTheme = withTerminalTextColor(
@@ -1569,24 +1604,24 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         }
       }
       if (e.type === "keydown" && e.key === "Enter") {
-        const shortcut = useSettingsStore.getState().terminalNewlineShortcut;
-        const managedCombo =
-          (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) ||
-          (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) ||
-          (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey);
-        const matched =
-          (shortcut === "Shift+Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) ||
-          (shortcut === "Ctrl+Enter" && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) ||
-          (shortcut === "Alt+Enter" && e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey);
-        if (managedCombo) {
+        const sessionContext = getSessionToolContext();
+        const newlineDecision = resolveTerminalNewlineKeyEvent(e, {
+          shortcut: useSettingsStore.getState().terminalNewlineShortcut,
+          usesEscCrComposerNewline:
+            isCodexSession(sessionContext, terminal)
+            || isGrokSession(sessionContext, terminal),
+        });
+        if (newlineDecision.action === "write") {
           e.preventDefault();
-          if (matched) {
-            markAttentionInputHandled();
-            const newlineData = isCodexSession(getSessionToolContext(), terminal) ? "\x1b\r" : "\n";
-            terminalProcessManager.write(sessionId, newlineData).catch((err) => reportPtyWriteError("newline", err));
-          }
+          markAttentionInputHandled();
+          terminalProcessManager.write(sessionId, newlineDecision.data).catch((err) => reportPtyWriteError("newline", err));
           return false;
         }
+        if (newlineDecision.action === "swallow") {
+          e.preventDefault();
+          return false;
+        }
+        if (newlineDecision.action === "pass") return true;
       }
       if (
         e.type === "keydown" &&
@@ -1737,6 +1772,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       reportPtyWriteError,
       updateSessionCwdIfChanged,
       onInputForwarded: maybeLogCodexImeDuplicate,
+      onCommandSubmitted: (command) => {
+        onCommandSubmitted(command);
+        if (isGrokLaunchCommand(command)) {
+          grokSessionDetectedRef.current = true;
+        }
+      },
     });
     inputDisposables.push({ dispose: inputForwarding.dispose });
 
@@ -1837,6 +1878,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       ptyOutput?.dispose();
       tuiColorSync.dispose();
       resetOutputState();
+      grokSessionDetectedRef.current = false;
       clearHiddenWebglDisposeTimer();
       clearVisibilityRestoreRevealSchedule();
       visibilityRestorePendingRef.current = false;
