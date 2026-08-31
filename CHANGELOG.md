@@ -5,7 +5,8 @@
 ### 修复 Grok Build 终端换行快捷键
 
 - 修复 Grok Build 会话按下 `Alt+Enter` 无法换行的问题；在设置中选择 `Shift+Enter`、`Ctrl+Enter` 或 `Alt+Enter` 时，匹配的换行组合键都会发送 Grok Build 所需的 `ESC + CR` 序列。
-- 通过会话、项目、终端标题和启动命令元数据识别 Grok Build，不改变普通 Shell、Claude 或 Codex 的既有输入行为，也不修改 PTY/IPC 契约。
+- 除已有会话、项目、终端标题和启动命令元数据外，补充识别当前终端中用户实际提交的精确 `grok` 启动命令，并仅在当前可见 TUI 输入提示仍存在时启用运行时兜底；避免普通 Shell 或相似命令误触发，不改变 Claude 的既有输入行为，也不修改 PTY/IPC 契约。
+- 当 Grok/Codex 使用非对应的终端换行设置时，原生 `Alt+Enter` 不再被宿主按键处理器吞掉，交由 xterm 发送其 `ESC + CR` 组合；普通 Shell 与其他 CLI 的未匹配组合键行为保持不变。
 
 ## [V1.3.8] - 2026-08-21
 

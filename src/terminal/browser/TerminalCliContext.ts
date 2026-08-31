@@ -3,6 +3,7 @@ import type { Project, TerminalSession } from "../../lib/types";
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const GROK_COMMAND_PATTERN = /(?:^|\s)grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const GROK_EXECUTABLE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?$/i;
 const GROK_TOOL_VALUE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?(?:\s+build)?$/i;
 const PI_COMMAND_PATTERN = /^\s*(?:&\s*)?pi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const OPENCODE_TOOL_VALUES = new Set(["opencode", "opencode.cmd", "opencode.exe", "opencode.ps1"]);
@@ -25,6 +26,10 @@ function commandExecutableToken(command: string): string {
   const match = trimmed.match(/^(?:"([^"]+)"|'([^']+)'|([^\s]+))/);
   return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").replace(/\\/g, "/").split("/").pop() ?? "";
 }
+
+export const isGrokLaunchCommand = (command: string): boolean => (
+  GROK_EXECUTABLE_PATTERN.test(commandExecutableToken(command))
+);
 
 const isOpenCodeToolValue = (value: string): boolean => (
   OPENCODE_TOOL_VALUES.has(value.trim().toLowerCase())
@@ -73,6 +78,20 @@ export const isGrokTerminalContext = ({
   || isGrokToolValue(projectTool)
   || isGrokToolValue(titleTool)
   || GROK_COMMAND_PATTERN.test(startupCmd)
+);
+
+export const isGrokRuntimeContext = (
+  context: TerminalCliContext,
+  {
+    manualLaunchDetected,
+    hasVisibleTuiPrompt,
+  }: {
+    manualLaunchDetected: boolean;
+    hasVisibleTuiPrompt: boolean;
+  },
+): boolean => (
+  isGrokTerminalContext(context)
+  || (manualLaunchDetected && hasVisibleTuiPrompt)
 );
 
 export const isClaudeTerminalContext = ({

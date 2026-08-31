@@ -157,6 +157,7 @@ interface TerminalInputForwardingOptions {
   reportPtyWriteError: (stage: string, err: unknown) => void;
   updateSessionCwdIfChanged: (cwd: string | null) => void;
   onInputForwarded: (data: string) => void;
+  onCommandSubmitted?: (command: string) => void;
 }
 
 export interface TerminalInputForwardingController {
@@ -760,6 +761,7 @@ export function useTerminalInput({
       reportPtyWriteError,
       updateSessionCwdIfChanged,
       onInputForwarded,
+      onCommandSubmitted,
     }: TerminalInputForwardingOptions,
   ): TerminalInputForwardingController => {
     const inputDeduper = createTerminalImeInputDeduper({
@@ -785,6 +787,9 @@ export function useTerminalInput({
         os: osPlatformRef.current,
       });
       const ptyData = manualDirectCodexOverride ?? data;
+      if (data === "\r") {
+        onCommandSubmitted?.(inputBufferBefore);
+      }
       terminalProcessManager.write(
         sessionId,
         replacingSelectedInput ? replacingSelectedInput + ptyData : ptyData,
