@@ -22,6 +22,7 @@ pub mod live_server;
 pub mod logging;
 pub mod model_pricing;
 pub mod opencode_hook;
+pub mod project_groups;
 pub mod provider;
 pub mod routing;
 pub mod shell;

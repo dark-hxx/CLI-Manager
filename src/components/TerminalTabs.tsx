@@ -61,6 +61,7 @@ import { ProviderQuickSwitchPanel } from "./terminal/ProviderQuickSwitchPanel";
 import { WorktreeFinishDialog } from "./worktree/WorktreeFinishDialog";
 import { FileExplorerSidebar } from "./files/FileExplorerSidebar";
 import { openWindowsTerminal } from "../lib/externalTerminal";
+import { resolveProjectPath } from "../lib/groupPath";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import {
   isSshGrokHistoryUnsupported,
@@ -89,7 +90,7 @@ import {
   TERMINAL_TAB_CLOSE_REQUEST_EVENT,
   type TerminalTabCloseRequestDetail,
 } from "../lib/terminalCloseConfirm";
-import type { HistorySourceFilter, Project, TerminalScope, TerminalSession, TreeNode, WorktreeRecord } from "../lib/types";
+import type { Group, HistorySourceFilter, Project, TerminalScope, TerminalSession, TreeNode, WorktreeRecord } from "../lib/types";
 import type { NativeProviderAppType } from "./settings/providers/nativeProviderTypes";
 import {
   ContextMenu,
@@ -463,13 +464,13 @@ function inferSessionCliToolIcon(session: TerminalSession, project?: Project): C
   );
 }
 
-function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
+function buildProjectSplitOptions(project: Project, groups: Group[]): SplitTerminalOptions {
   const cmd = resolveProjectStartupCommand(project);
   const shell = project.shell && project.shell !== "powershell" ? project.shell : undefined;
 
   return {
     projectId: project.id,
-    cwd: project.path,
+    cwd: resolveProjectPath(project, groups),
     title: project.name,
     startupCmd: cmd,
     envVars: parseProjectEnvVars(project),
@@ -3078,7 +3079,7 @@ export function TerminalTabs({
     if (terminalScopeValue.kind === "worktree") {
       if (!scopedWorktree) return;
       if (rejectMissingWorktree(scopedWorktree)) return;
-      const options = buildProjectSplitOptions(projectWithWorktreeProviderOverrides(scopedProject, scopedWorktree));
+      const options = buildProjectSplitOptions(projectWithWorktreeProviderOverrides(scopedProject, scopedWorktree), groups);
       await createSession(
         options.projectId,
         scopedWorktree.path,
@@ -3095,11 +3096,11 @@ export function TerminalTabs({
     }
 
     if (terminalScopeValue.kind !== "project") return;
-    const options = buildProjectSplitOptions(scopedProject);
+    const options = buildProjectSplitOptions(scopedProject, groups);
     await createSession(options.projectId, options.cwd, options.title, options.startupCmd, options.envVars, options.shell);
     closeHistory();
     setActiveWorkspaceTab("terminal");
-  }, [closeHistory, createSession, rejectMissingWorktree, scopedProject, scopedWorktree, terminalScopeValue, useExternalTerminal]);
+  }, [closeHistory, createSession, groups, rejectMissingWorktree, scopedProject, scopedWorktree, terminalScopeValue, useExternalTerminal]);
 
   const handleInstallWorktreeDeps = useCallback((project: Project, worktree: WorktreeRecord) => {
     if (rejectMissingWorktree(worktree)) return;
@@ -3108,7 +3109,7 @@ export function TerminalTabs({
         toast.info(t("worktree.deps.notNeeded"));
         return;
       }
-      const options = buildProjectSplitOptions(project);
+      const options = buildProjectSplitOptions(project, groups);
       void dismissWorktreeDepsPrompt(worktree.id);
       void createSession(
         options.projectId,
@@ -3121,7 +3122,7 @@ export function TerminalTabs({
         worktree.id,
       );
     }).catch((err) => toast.error(t("worktree.deps.checkFailed"), { description: String(err) }));
-  }, [checkWorktreeDeps, createSession, dismissWorktreeDepsPrompt, rejectMissingWorktree, t]);
+  }, [checkWorktreeDeps, createSession, dismissWorktreeDepsPrompt, groups, rejectMissingWorktree, t]);
 
   const handleOpenWorktreeDirectory = useCallback((worktree: WorktreeRecord) => {
     if (rejectMissingWorktree(worktree)) return;
@@ -3157,11 +3158,11 @@ export function TerminalTabs({
     setActiveWorkspaceTab("history");
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project.cli_tool),
-      projectPath: project.path,
+      projectPath: resolveProjectPath(project, groups),
       projectId: project.id,
       scopedProjectPath: worktree.path,
     });
-  }, [openHistory, rejectMissingWorktree, terminalSidePanelSingleOpen]);
+  }, [groups, openHistory, rejectMissingWorktree, terminalSidePanelSingleOpen]);
 
   const handleDuplicateSession = useCallback((session: TerminalSession) => {
     if (rejectMissingSessionWorktree(session)) return;
@@ -3743,11 +3744,11 @@ export function TerminalTabs({
 
   const handleSplitProject = useCallback((project: Project) => {
     if (!splitPicker) return;
-    void splitTerminal(splitPicker.sessionId, splitPicker.direction, buildProjectSplitOptions(project));
+    void splitTerminal(splitPicker.sessionId, splitPicker.direction, buildProjectSplitOptions(project, groups));
     handleCloseSplitPicker();
     closeHistory();
     setActiveWorkspaceTab("terminal");
-  }, [closeHistory, handleCloseSplitPicker, splitPicker, splitTerminal]);
+  }, [closeHistory, groups, handleCloseSplitPicker, splitPicker, splitTerminal]);
 
   const findPaneForSession = useCallback((sessionId: string) => {
     return allPanes.find((pane) => pane.sessionIds.includes(sessionId)) ?? null;

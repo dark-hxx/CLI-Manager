@@ -1148,6 +1148,20 @@
   background-color: color-mix(in srgb, var(--surface-container-lowest) 54%, transparent);
 }
 
+.ui-tree-leading-icon-inherited {
+  position: relative;
+}
+
+.ui-tree-inherit-marker {
+  position: absolute;
+  top: 50%;
+  left: -13px;
+  z-index: 1;
+  color: color-mix(in srgb, var(--primary) 72%, var(--text-muted) 28%);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
 .ui-tree-project:hover {
   background-color: color-mix(in srgb, var(--surface-container-high) 62%, transparent);
   border-color: color-mix(in srgb, var(--border) 32%, transparent);

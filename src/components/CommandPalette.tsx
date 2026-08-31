@@ -14,6 +14,7 @@ import { openWindowsTerminal } from "../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
 import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
+import { resolveProjectPath } from "../lib/groupPath";
 
 export const useCommandPaletteStore = create<{
   isOpen: boolean;
@@ -55,6 +56,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const projects = useProjectStore((s) => s.projects);
+  const groups = useProjectStore((s) => s.groups);
   const getTemplatesForContext = useTemplateStore((s) => s.getForContext);
   const fetchTemplates = useTemplateStore((s) => s.fetchTemplates);
   const sessions = useTerminalStore((s) => s.sessions);
@@ -149,13 +151,13 @@ export function CommandPalette() {
       result.push({
         id: `project:${p.id}`,
         label: p.name,
-        description: p.path,
+        description: resolveProjectPath(p, groups),
         category: "项目",
         action: () => {
           const shell = p.shell && p.shell !== "powershell" ? p.shell : undefined;
           if (viewMode === "compact") {
             void openWindowsTerminal([{
-              cwd: p.path,
+              cwd: resolveProjectPath(p, groups),
               title: p.name,
               startupCmd: resolveProjectStartupCommand(p, { includeCodexProviderProfile: false }),
               shell: p.shell || undefined,
@@ -164,7 +166,7 @@ export function CommandPalette() {
           }
           const envVars = parseProjectEnvVars(p);
           createSession(
-            p.id, p.path,
+            p.id, resolveProjectPath(p, groups),
             p.name,
             resolveProjectStartupCommand(p), envVars, shell,
           );
@@ -197,7 +199,7 @@ export function CommandPalette() {
     }
 
     return result;
-  }, [projects, templates, activeSessionId, newTerminalCwd, newTerminalTitle, resolvedTheme, createSession, splitTerminal, unsplitTerminal, setTheme, viewMode, sessionHistoryShortcut]);
+  }, [projects, groups, templates, activeSessionId, newTerminalCwd, newTerminalTitle, resolvedTheme, createSession, splitTerminal, unsplitTerminal, setTheme, viewMode, sessionHistoryShortcut]);
 
   const queryLower = useMemo(() => query.trim().toLowerCase(), [query]);
 
