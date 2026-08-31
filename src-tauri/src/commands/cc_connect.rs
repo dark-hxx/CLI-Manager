@@ -2711,6 +2711,127 @@ fn has_handoff_session_argument(agent: CcConnectAgent, argument: &str) -> bool {
     common
         || matches!(agent, CcConnectAgent::Codex) && option == "resume"
         || matches!(agent, CcConnectAgent::Claude) && option == "-c"
+        || matches!(agent, CcConnectAgent::Pi) && option == "-c"
+        || matches!(agent, CcConnectAgent::Opencode) && matches!(option.as_str(), "-c" | "-s")
+}
+
+fn codex_resume_option_takes_value(argument: &str) -> bool {
+    if argument.contains('=')
+        || argument
+            .strip_prefix('-')
+            .is_some_and(|value| !value.starts_with('-') && value.len() > 1)
+    {
+        return false;
+    }
+    let option = argument.to_ascii_lowercase();
+    matches!(
+        option.as_str(),
+        "-a" | "--add-dir"
+            | "--ask-for-approval"
+            | "-c"
+            | "--cd"
+            | "--config"
+            | "--disable"
+            | "--enable"
+            | "-i"
+            | "--image"
+            | "--local-provider"
+            | "-m"
+            | "--model"
+            | "-p"
+            | "--profile"
+            | "--remote"
+            | "--remote-auth-token-env"
+            | "-s"
+            | "--sandbox"
+    )
+}
+
+fn handoff_session_argument_takes_value(agent: CcConnectAgent, argument: &str) -> bool {
+    let option = argument
+        .split_once('=')
+        .map(|(name, _)| name)
+        .unwrap_or(argument)
+        .to_ascii_lowercase();
+    match agent {
+        CcConnectAgent::Claude => matches!(
+            option.as_str(),
+            "-c" | "-r" | "--continue" | "--resume" | "--session" | "--session-id" | "--fork"
+        ),
+        CcConnectAgent::Codex => matches!(
+            option.as_str(),
+            "--continue" | "--resume" | "--session" | "--session-id" | "--fork" | "-r"
+        ),
+        CcConnectAgent::Pi => matches!(
+            option.as_str(),
+            "-c" | "-r" | "--continue" | "--resume" | "--session" | "--session-id" | "--fork"
+        ),
+        CcConnectAgent::Opencode => matches!(
+            option.as_str(),
+            "-c" | "-s" | "--continue" | "--session" | "--fork"
+        ),
+    }
+}
+
+fn strip_registered_launcher_session_arguments(
+    agent: CcConnectAgent,
+    args: Vec<String>,
+) -> Vec<String> {
+    let mut kept = Vec::with_capacity(args.len());
+    let mut index = 0;
+    let mut in_codex_resume = false;
+
+    while index < args.len() {
+        let argument = &args[index];
+        let option = argument
+            .split_once('=')
+            .map(|(name, _)| name)
+            .unwrap_or(argument)
+            .to_ascii_lowercase();
+
+        if agent == CcConnectAgent::Codex && !in_codex_resume && option == "resume" {
+            in_codex_resume = true;
+            index += 1;
+            continue;
+        }
+
+        if has_handoff_session_argument(agent, argument) {
+            if !argument.contains('=')
+                && handoff_session_argument_takes_value(agent, argument)
+                && args
+                    .get(index + 1)
+                    .is_some_and(|next| !next.starts_with('-'))
+            {
+                index += 1;
+            }
+            index += 1;
+            continue;
+        }
+
+        if in_codex_resume {
+            if argument == "--"
+                || matches!(
+                    option.as_str(),
+                    "--all" | "--include-non-interactive" | "--no-alt-screen"
+                )
+                || !argument.starts_with('-')
+            {
+                index += 1;
+                continue;
+            }
+        }
+
+        kept.push(argument.clone());
+        if agent == CcConnectAgent::Codex && codex_resume_option_takes_value(argument) {
+            if let Some(value) = args.get(index + 1) {
+                kept.push(value.clone());
+                index += 1;
+            }
+        }
+        index += 1;
+    }
+
+    kept
 }
 
 fn validate_registered_launcher_arguments(
@@ -2779,6 +2900,7 @@ fn ensure_local_agent_available(
     if command.len() > MAX_REGISTERED_LAUNCHER_ARGS {
         return Err("handoff_agent_launcher_invalid".to_string());
     }
+    command = strip_registered_launcher_session_arguments(project.agent, command);
     validate_registered_launcher_arguments(project.agent, &command)?;
     let executable = resolve_local_agent_program(&program, Path::new(&project.path))?;
     #[cfg(target_os = "windows")]
@@ -7511,6 +7633,60 @@ allow_from = ""
             ]
         );
         assert!(parse_registered_command("codex && whoami").is_err());
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Codex,
+                vec!["resume".to_string(), "thread-original".to_string()]
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Codex,
+                vec![
+                    "resume".to_string(),
+                    "--no-alt-screen".to_string(),
+                    "thread-original".to_string(),
+                    "-c".to_string(),
+                    "model_reasoning_effort=high".to_string(),
+                ]
+            ),
+            vec!["-c".to_string(), "model_reasoning_effort=high".to_string()]
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Claude,
+                vec![
+                    "--resume".to_string(),
+                    "session-1".to_string(),
+                    "--verbose".to_string(),
+                ]
+            ),
+            vec!["--verbose".to_string()]
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Pi,
+                vec![
+                    "--session".to_string(),
+                    "session-1".to_string(),
+                    "--verbose".to_string(),
+                ]
+            ),
+            vec!["--verbose".to_string()]
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Opencode,
+                vec![
+                    "-s".to_string(),
+                    "ses_123".to_string(),
+                    "--log-level".to_string(),
+                    "debug".to_string(),
+                ]
+            ),
+            vec!["--log-level".to_string(), "debug".to_string()]
+        );
         assert_eq!(
             validate_registered_launcher_arguments(
                 CcConnectAgent::Codex,
