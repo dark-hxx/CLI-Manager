@@ -130,8 +130,8 @@ interface BackupStore {
 }
 
 const ALL_DOMAINS: BackupDomain[] = ["workspace", "preferences", "model_prices", "notifications", "statusline"];
-const PROJECT_SELECT = "SELECT id, name, path, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at FROM projects ORDER BY sort_order";
-const GROUP_SELECT = "SELECT id, name, parent_id, sort_order, icon, color, created_at FROM groups ORDER BY sort_order";
+const PROJECT_SELECT = "SELECT id, name, path, path_mode, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at FROM projects ORDER BY sort_order";
+const GROUP_SELECT = "SELECT id, name, parent_id, sort_order, icon, color, bound_path, created_at FROM groups ORDER BY sort_order";
 const SSH_HOST_GROUP_SELECT = "SELECT id, name, parent_id, sort_order, created_at FROM ssh_host_groups ORDER BY sort_order";
 const SSH_HOST_SELECT = "SELECT id, name, group_name, group_id, host, port, username, config_alias, auth_mode, jump_mode, jump_host_id, proxy_type, proxy_host, proxy_port, connect_timeout_sec, server_alive_interval_sec, server_alive_count_max, terminal_encoding, startup_script, notes, sort_order, created_at, updated_at FROM ssh_hosts ORDER BY sort_order";
 const LOCAL_SSH_HOST_FIELDS_SELECT = "SELECT id, identity_file, credential_ref, config_file, proxy_command FROM ssh_hosts";
@@ -393,10 +393,11 @@ async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Prom
   statements.push({ sql: "DELETE FROM groups", values: [] });
   // 列清单必须与 src-tauri/src/commands/sync.rs 的 BACKUP_RESTORE_INSERT_COLUMNS 逐字一致，
   // 否则恢复会被 validate_backup_database_statement 整批拒绝并回滚。
-  statements.push(...buildBatchInsertStatements("groups", ["id", "name", "parent_id", "sort_order", "icon", "color", "created_at"], groups, (item) => [
+  statements.push(...buildBatchInsertStatements("groups", ["id", "name", "parent_id", "sort_order", "icon", "color", "bound_path", "created_at"], groups, (item) => [
     item.id, item.name, typeof item.parent_id === "string" && groupIds.has(item.parent_id) ? item.parent_id : null,
     integerOr(item.sort_order, 0),
     normalizeNodeIcon(item.icon), normalizeNodeAccentToken(item.color),
+    typeof item.bound_path === "string" ? item.bound_path : "",
     item.created_at ?? now,
   ]));
   if (hasSshHostData) {
@@ -429,7 +430,7 @@ async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Prom
   }
   statements.push(...buildBatchInsertStatements(
     "projects",
-    ["id", "name", "path", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "cli_config_root", "icon", "color", "created_at", "updated_at"],
+    ["id", "name", "path", "path_mode", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "cli_config_root", "icon", "color", "created_at", "updated_at"],
     projects,
     (item) => {
       const environmentType = item.environment_type === "ssh" ? "ssh" : item.environment_type === "wsl" ? "wsl" : "local";
@@ -445,6 +446,7 @@ async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Prom
       const cliConfigRoot = validateSshToolConfigRoot(rawCliConfigRoot) ? "" : rawCliConfigRoot;
       return [
         item.id, item.name, isSshProject ? "" : item.path,
+        !isSshProject && item.path_mode === "inherit" ? "inherit" : "custom",
         typeof item.group_id === "string" && groupIds.has(item.group_id) ? item.group_id : null,
         integerOr(item.sort_order, 0), item.cli_tool ?? "", item.cli_args ?? "", item.startup_cmd ?? "",
         item.env_vars ?? "{}", shell, isSshProject ? "{}" : item.provider_overrides ?? "{}",

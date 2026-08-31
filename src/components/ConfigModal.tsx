@@ -140,6 +140,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   );
   const [path, setPath] = useState(cloneFrom?.path ?? project?.path ?? "");
   const [pathMode, setPathMode] = useState<"inherit" | "custom">(project?.path_mode ?? (cloneFrom ? "custom" : "inherit"));
+  const pathModeUserSelectedRef = useRef(false);
   const sourceProject = cloneFrom ?? project;
   const [projectType, setProjectType] = useState<"local" | "ssh">(
     sourceProject?.environment_type === "ssh" ? "ssh" : "local"
@@ -193,13 +194,13 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
       setPath(parentBoundPath);
       return;
     }
-    if (project?.path_mode === "inherit") {
+    if (project?.path_mode === "inherit" && !pathModeUserSelectedRef.current) {
       setPath(parentBoundPath);
       setPathMode("inherit");
       return;
     }
     if (isClone) return;
-    if (parentBoundPath && !project) {
+    if (parentBoundPath && !project && !pathModeUserSelectedRef.current) {
       setPath(parentBoundPath);
       setPathMode("inherit");
     } else if (!project) {
@@ -646,6 +647,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                 {groupId && (
                   <Select value={pathMode} onChange={(event) => {
                     const next = event.target.value as "inherit" | "custom";
+                    pathModeUserSelectedRef.current = true;
                     setPathMode(next);
                     if (next === "inherit" && parentBoundPath) setPath(parentBoundPath);
                   }} onDisabledOptionClick={handleDisabledPathModeClick} className="w-32 shrink-0 text-sm">
