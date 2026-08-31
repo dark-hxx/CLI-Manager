@@ -14,6 +14,18 @@ export const TUI_BORDER_PREFIX_PATTERN = /^$/;
 export const TUI_COMPOSER_PROMPT_PATTERN = /^$/;
 `);
 
+const cliContextSource = readFileSync(new URL("../src/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
+const cliContextOutput = ts.transpileModule(cliContextSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: "TerminalCliContext.ts",
+}).outputText;
+const cliContextModulePath = join(tempDir, "TerminalCliContext.mjs");
+writeFileSync(cliContextModulePath, cliContextOutput, "utf8");
+const { isGrokTerminalContext } = await import(pathToFileURL(cliContextModulePath).href);
+
 const colorSource = readFileSync(new URL("../src/lib/terminalColor.ts", import.meta.url), "utf8");
 writeFileSync(join(tempDir, "terminalColor.mjs"), ts.transpileModule(colorSource, {
   compilerOptions: {
@@ -119,6 +131,47 @@ test("does not classify ordinary shells or Claude Code as Codex", () => {
 test("only scans the current viewport", () => {
   const terminal = createTerminal(["OpenAI Codex", "PS F:\\\\github>", "ready"], 1, 2);
   assert.equal(hasCodexTuiViewport(terminal), false);
+});
+
+test("recognizes Grok Build from stable terminal context metadata", () => {
+  const contexts = [
+    { sessionTool: "grok" },
+    { projectTool: "grokbuild" },
+    { titleTool: "Grok Build" },
+    { startupCmd: "wsl.exe grok --continue" },
+  ];
+
+  for (const context of contexts) {
+    assert.equal(
+      isGrokTerminalContext({
+        projectTool: "",
+        sessionTool: "",
+        startupCmd: "",
+        titleTool: "",
+        outputHint: "",
+        ...context,
+      }),
+      true,
+      JSON.stringify(context),
+    );
+  }
+});
+
+test("does not classify an ordinary shell or a similarly named tool as Grok Build", () => {
+  assert.equal(isGrokTerminalContext({
+    projectTool: "",
+    sessionTool: "",
+    startupCmd: "pwsh",
+    titleTool: "",
+    outputHint: "",
+  }), false);
+  assert.equal(isGrokTerminalContext({
+    projectTool: "grok-helper",
+    sessionTool: "",
+    startupCmd: "",
+    titleTool: "",
+    outputHint: "",
+  }), false);
 });
 
 test("transparent Claude normalization preserves an isolated inverse software cursor", () => {
@@ -276,7 +329,10 @@ test("shared CLI context includes immutable session metadata for XTermTerminal",
   assert.match(componentSource, /createTerminalCliContext\(session, project\)/u);
   assert.match(contextSource, /sessionTool:\s*session\?\.cliTool/u);
   assert.match(contextSource, /sessionTool\s*===\s*"codex"/u);
-  assert.match(componentSource, /isCodexSession\(getSessionToolContext\(\), terminal\)/u);
+  assert.match(componentSource, /isCodexSession\(sessionContext, terminal\)/u);
+  assert.match(contextSource, /isGrokTerminalContext/u);
+  assert.match(componentSource, /isCodexSession\(sessionContext, terminal\)\s*\|\|\s*isGrokTerminalContext\(sessionContext\)/u);
+  assert.match(componentSource, /\? "\\x1b\\r" : "\\n"/u);
 });
 
 test("light theme erases a dark CLI message block and keeps light highlights", () => {

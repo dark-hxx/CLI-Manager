@@ -1,5 +1,12 @@
 # Changelog
 
+## [V1.3.9] - 2026-08-31
+
+### 修复 Grok Build 终端换行快捷键
+
+- 修复 Grok Build 会话按下 `Alt+Enter` 无法换行的问题；在设置中选择 `Shift+Enter`、`Ctrl+Enter` 或 `Alt+Enter` 时，匹配的换行组合键都会发送 Grok Build 所需的 `ESC + CR` 序列。
+- 通过会话、项目、终端标题和启动命令元数据识别 Grok Build，不改变普通 Shell、Claude 或 Codex 的既有输入行为，也不修改 PTY/IPC 契约。
+
 ## [V1.3.8] - 2026-08-21
 
 ### 侧边栏底部同步状态单行显示

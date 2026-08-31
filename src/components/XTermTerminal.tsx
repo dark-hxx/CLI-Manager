@@ -81,6 +81,7 @@ import {
   createTerminalCliContext,
   isClaudeTerminalContext,
   isCodexTerminalContext,
+  isGrokTerminalContext,
   isOpenCodeTerminalContext,
 } from "../terminal/browser/TerminalCliContext";
 import { createTerminalMouseInteractionOptions } from "../terminal/browser/TerminalMouseInteraction";
@@ -1582,7 +1583,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           e.preventDefault();
           if (matched) {
             markAttentionInputHandled();
-            const newlineData = isCodexSession(getSessionToolContext(), terminal) ? "\x1b\r" : "\n";
+            const sessionContext = getSessionToolContext();
+            const newlineData = (
+              isCodexSession(sessionContext, terminal)
+              || isGrokTerminalContext(sessionContext)
+            ) ? "\x1b\r" : "\n";
             terminalProcessManager.write(sessionId, newlineData).catch((err) => reportPtyWriteError("newline", err));
           }
           return false;

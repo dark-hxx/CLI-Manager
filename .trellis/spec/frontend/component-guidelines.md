@@ -65,32 +65,33 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 const codex = project.cli_tool === "codex" || CODEX_COMMAND_PATTERN.test(session.startupCmd);
 
 // Correct: stable metadata first; runtime fallback is limited to the current viewport.
-const codex = session.cliTool === "codex"
-  || project.cli_tool === "codex"
-  || matchesCodexStartupMetadata(session)
-  || hasCodexTuiViewport(terminal);
+const multilineInput = isCodexTerminalContext(context)
+  || isGrokTerminalContext(context)
+  || hasCodexTuiViewport(terminal)
+  ? "\x1b\r"
+  : "\n";
 ```
 
 **Contracts**:
 
 - Configured shortcut matching remains authoritative; runtime detection chooses only the PTY byte sequence.
-- Codex multiline input uses `ESC + CR`; ordinary Shell and Claude input keep their existing sequence.
+- Codex and Grok Build multiline input use `ESC + CR`; ordinary Shell and Claude input keep their existing sequence.
 - Runtime detection must inspect only the current viewport; off-viewport scrollback is historical evidence and must never establish current CLI identity.
 - Do not assume Codex uses the alternate buffer. Normal/alternate behavior depends on CLI version, launch arguments, and user configuration.
-- Project-managed Codex sessions should still prefer `TerminalSession.cliTool` or other immutable startup metadata over viewport text.
+- Project-managed Codex and Grok Build sessions should still prefer `TerminalSession.cliTool` or other immutable startup metadata over viewport text.
 - Do not introduce foreground-process IPC solely to infer this input behavior unless local, WSL, and SSH process ownership contracts are designed together.
 
 **Good/Base/Bad Cases**:
 
 - Good: a project Agent terminal remains identifiable after project metadata changes because its session captured `cliTool`.
-- Base: a normal Shell uses normal newline behavior; manually running `codex` in either normal or alternate buffer enables Codex newline encoding without requiring Hook installation.
+- Base: a normal Shell uses normal newline behavior; manually running `codex` in either normal or alternate buffer enables Codex newline encoding without requiring Hook installation, while Grok Build uses the same encoding when stable session metadata identifies it.
 - Good: once Codex TUI signatures leave the current viewport, runtime fallback stops matching.
 - Bad: requiring `buffer.type === "alternate"`; `--no-alt-screen` and user configuration make legitimate Codex sessions stay in the normal buffer.
 - Bad: permanently setting `session.cliTool = "codex"` from viewport text or one Hook event without an authoritative exit transition.
 
 **Tests Required**:
 
-- Assert project-session detection reads `TerminalSession.cliTool`.
+- Assert project-session detection reads `TerminalSession.cliTool` and recognizes Grok Build stable metadata.
 - Assert visible normal- and alternate-buffer `OpenAI Codex` and `/model to change` signatures are recognized.
 - Assert ordinary Shell, Claude, and off-viewport Codex text are rejected.
 - Run `node --test scripts/terminalNewlineShortcut.test.mjs` and `npx tsc --noEmit`.
