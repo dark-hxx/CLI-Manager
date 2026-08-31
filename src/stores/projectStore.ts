@@ -15,7 +15,7 @@ import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKe
 import { projectSupportsCapability } from "../lib/projectCapabilities";
 import { normalizeNodeAccentToken, normalizeNodeIcon } from "../lib/nodeAppearance";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
-import { findInheritedDescendants, resolveGroupBoundPath, resolveProjectPath } from "../lib/groupPath";
+import { resolveGroupBoundPath, resolveProjectPath } from "../lib/groupPath";
 import type {
   Project, CreateProjectInput, UpdateProjectInput,
   Group, CreateGroupInput, UpdateGroupInput, TreeNode, WorktreeRecord,
@@ -54,7 +54,7 @@ interface ProjectStore {
   /** 只更新分组的外观列（icon / color），未传的字段保持不变。 */
   updateGroupAppearance: (id: string, appearance: { icon?: string; color?: string }) => Promise<void>;
   updateGroup: (id: string, input: UpdateGroupInput) => Promise<void>;
-  materializeInheritedDescendants: (groupId: string, path: string) => Promise<void>;
+  saveGroupBinding: (groupId: string, boundPath: string, shellProjectIds?: string[], shell?: string) => Promise<void>;
   renameGroup: (id: string, name: string) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
   reorderItems: (parentId: string | null, orderedIds: string[]) => Promise<void>;
@@ -205,7 +205,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         if (policy.includePathHealth && projects.length > 0) {
           try {
             const localProjects = projects.filter((project) => project.environment_type !== "ssh");
-            const paths = localProjects.map((project) => project.path);
+            const paths = localProjects.map((project) => resolveProjectPath(project, groups));
             const results = await invoke<boolean[]>("check_paths_exist", { paths });
             const health: Record<string, boolean> = {};
             localProjects.forEach((project, index) => { health[project.id] = results[index]; });
@@ -231,7 +231,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (projects.length > 0) {
       try {
         const localProjects = projects.filter((project) => project.environment_type !== "ssh");
-        const paths = localProjects.map((project) => project.path);
+        const paths = localProjects.map((project) => resolveProjectPath(project, get().groups));
         const results = await invoke<boolean[]>("check_paths_exist", { paths });
         const projectHealth: Record<string, boolean> = {};
         localProjects.forEach((project, index) => {
@@ -493,18 +493,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await get().fetchAll();
   },
 
-  materializeInheritedDescendants: async (groupId, path) => {
-    const effectivePath = path.trim();
-    if (!effectivePath) throw new Error("Cannot materialize an empty inherited path");
-    const { groups, projects } = get();
-    const ids = findInheritedDescendants(groupId, groups, projects);
-    const db = await getDb();
-    for (const descendantId of ids.groupIds) {
-      await db.execute("UPDATE groups SET bound_path = $1 WHERE id = $2", [effectivePath, descendantId]);
+  saveGroupBinding: async (groupId, boundPath, shellProjectIds = [], shell) => {
+    const uniqueProjectIds = Array.from(new Set(shellProjectIds.map((id) => id.trim()).filter(Boolean)));
+    let resolvedShell: string | undefined;
+    if (uniqueProjectIds.length > 0 && shell?.trim()) {
+      const os = await getOsPlatform();
+      const trimmedShell = shell.trim();
+      resolvedShell =
+        normalizeShellForOs(trimmedShell, os) ??
+        (!normalizeShellKey(trimmedShell) ? trimmedShell : defaultShellForOs(os));
     }
-    for (const projectId of ids.projectIds) {
-      await db.execute("UPDATE projects SET path = $1, path_mode = $2, updated_at = $3 WHERE id = $4", [effectivePath, "custom", Date.now().toString(), projectId]);
-    }
+    await invoke("project_group_save_binding", {
+      groupId,
+      boundPath,
+      shellProjectIds: uniqueProjectIds,
+      shell: resolvedShell,
+    });
     await get().fetchAll();
   },
 
@@ -537,21 +541,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   deleteGroup: async (id) => {
-    const db = await getDb();
-    // Move child projects to ungrouped, then delete group (CASCADE deletes sub-groups)
-    await db.execute("UPDATE projects SET group_id = NULL WHERE group_id = $1", [id]);
-    // Also ungroup projects in sub-groups before cascade
-    await db.execute(
-      `UPDATE projects SET group_id = NULL WHERE group_id IN (
-        WITH RECURSIVE sg(gid) AS (
-          SELECT id FROM groups WHERE parent_id = $1
-          UNION ALL
-          SELECT g.id FROM groups g JOIN sg ON g.parent_id = sg.gid
-        ) SELECT gid FROM sg
-      )`,
-      [id]
-    );
-    await db.execute("DELETE FROM groups WHERE id = $1", [id]);
+    await invoke("project_group_delete", { groupId: id });
     await get().fetchAll();
   },
 

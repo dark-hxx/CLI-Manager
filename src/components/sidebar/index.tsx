@@ -1268,7 +1268,7 @@ export function Sidebar({
       }
       closeHistory();
     },
-    [closeHistory, compactMode, createSession, onTerminalScopeChange, projectScopedTerminalViewEnabled, rejectUnsupportedCapability, useExternalTerminal]
+    [closeHistory, compactMode, createSession, groups, onTerminalScopeChange, projectScopedTerminalViewEnabled, rejectUnsupportedCapability, useExternalTerminal]
   );
 
   const handleNewWorktreeTerminal = useCallback(

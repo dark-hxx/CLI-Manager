@@ -13,8 +13,7 @@ import { useI18n } from "../../lib/i18n";
 import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../../lib/shell";
 import { getEnabledTerminalShellOptions, resolvePreferredShellOption } from "../../lib/terminalShellProfiles";
 import { getShellOptions, type Group, type Project } from "../../lib/types";
-import { resolveGroupBoundPath } from "../../lib/groupPath";
-import { findInheritedDescendants } from "../../lib/groupPath";
+import { collectGroupSubtreeIds, findInheritedDescendants, resolveGroupBoundPath, resolveProjectPath } from "../../lib/groupPath";
 import { useAppConfirm } from "../ui/useAppConfirm";
 import { pathExists } from "../../lib/pathValidation";
 
@@ -22,16 +21,22 @@ interface Props { group: Group; groups: Group[]; projects: Project[]; onClose: (
 
 export function GroupEditDialog({ group, groups, projects, onClose }: Props) {
   const { t } = useI18n();
-  const updateGroup = useProjectStore((s) => s.updateGroup);
-  const materializeInheritedDescendants = useProjectStore((s) => s.materializeInheritedDescendants);
-  const batchUpdateProjectShell = useProjectStore((s) => s.batchUpdateProjectShell);
+  const saveGroupBinding = useProjectStore((s) => s.saveGroupBinding);
   const defaultShell = useSettingsStore((s) => s.defaultShell);
   const terminalShellProfiles = useSettingsStore((s) => s.terminalShellProfiles);
+  const selectableGroupIds = useMemo(() => collectGroupSubtreeIds(group.id, groups), [group.id, groups]);
+  const selectableProjectIds = useMemo(
+    () => new Set(projects.filter((project) => project.group_id && selectableGroupIds.has(project.group_id)).map((project) => project.id)),
+    [projects, selectableGroupIds]
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
-    const groupIds = new Set([group.id]); let changed = true;
-    while (changed) { changed = false; for (const item of groups) if (item.parent_id && groupIds.has(item.parent_id) && !groupIds.has(item.id)) { groupIds.add(item.id); changed = true; } }
-    return new Set(projects.filter((p) => p.group_id && groupIds.has(p.group_id)).map((p) => p.id));
+    const groupIds = collectGroupSubtreeIds(group.id, groups);
+    return new Set(projects.filter((project) => project.group_id && groupIds.has(project.group_id)).map((project) => project.id));
   });
+  const selectedProjectIds = useMemo(
+    () => Array.from(selectedIds).filter((projectId) => selectableProjectIds.has(projectId)),
+    [selectedIds, selectableProjectIds]
+  );
   const [shell, setShell] = useState("");
   const [boundPath, setBoundPath] = useState(group.bound_path ?? "");
   const parentBoundPath = useMemo(() => resolveGroupBoundPath(groups, group.parent_id), [group.parent_id, groups]);
@@ -48,18 +53,21 @@ export function GroupEditDialog({ group, groups, projects, onClose }: Props) {
   const shellOptions = useMemo(() => getEnabledTerminalShellOptions(osPlatform, terminalShellProfiles), [osPlatform, terminalShellProfiles]);
   const shellLabelFor = useMemo(() => { const options = getShellOptions(osPlatform); return (value: string) => options.find((opt) => opt.value === normalizeShellKey(value))?.label ?? value; }, [osPlatform]);
   const sections = useMemo(() => {
-    const known = new Set(groups.map((g) => g.id)); const byGroup = new Map<string | null, Project[]>();
-    for (const project of projects) { const key = project.group_id && known.has(project.group_id) ? project.group_id : null; byGroup.set(key, [...(byGroup.get(key) ?? []), project]); }
-    const result = groups.flatMap((g) => { const list = byGroup.get(g.id); return list?.length ? [{ key: g.id, name: g.name, projects: list }] : []; });
-    const ungrouped = byGroup.get(null);
-    if (ungrouped?.length) result.push({ key: "__ungrouped__", name: t("batchShell.ungrouped"), projects: ungrouped });
-    return result;
-  }, [groups, projects, t]);
+    const byGroup = new Map<string, Project[]>();
+    for (const project of projects) {
+      if (!project.group_id || !selectableGroupIds.has(project.group_id)) continue;
+      byGroup.set(project.group_id, [...(byGroup.get(project.group_id) ?? []), project]);
+    }
+    return groups.flatMap((groupItem) => {
+      const list = byGroup.get(groupItem.id);
+      return list?.length ? [{ key: groupItem.id, name: groupItem.name, projects: list }] : [];
+    });
+  }, [groups, projects, selectableGroupIds]);
   const toggle = (id: string) => setSelectedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const handleBrowse = async () => { const selected = await open({ directory: true, title: t("groupEdit.chooseBoundPath") }); if (typeof selected === "string") setBoundPath(selected); };
   const effectiveBoundPath = boundPathMode === "inherit" ? parentBoundPath : boundPath;
   const updateBoundPath = { bound_path: boundPathMode === "inherit" ? "" : boundPath.trim() };
-  const savePathWithCascade = async () => {
+  const savePathWithCascade = async (shellProjectIds: string[] = [], shell?: string) => {
     const normalizedPath = boundPath.trim();
     if (boundPathMode === "custom" && normalizedPath) {
       if (!(await pathExists(normalizedPath))) {
@@ -79,15 +87,14 @@ export function GroupEditDialog({ group, groups, projects, onClose }: Props) {
           cancelText: t("common.cancel"),
         });
         if (!accepted) return false;
-        await materializeInheritedDescendants(group.id, resolveGroupBoundPath(groups, group.id));
       }
     }
-    await updateGroup(group.id, updateBoundPath);
+    await saveGroupBinding(group.id, updateBoundPath.bound_path, shellProjectIds, shell);
     return true;
   };
   const handleApply = async () => {
     if (selectedIds.size === 0 || !shell.trim() || applying) return; setApplying(true);
-    try { if (await savePathWithCascade()) { await batchUpdateProjectShell(Array.from(selectedIds), shell); toast.success(t("groupEdit.saved")); onClose(); } else setApplying(false); }
+    try { if (await savePathWithCascade(selectedProjectIds, shell)) { toast.success(t("groupEdit.saved")); onClose(); } else setApplying(false); }
     catch (err) { toast.error(t("groupEdit.saveFailed"), { description: String(err) }); setApplying(false); }
   };
   const handleSavePath = async () => {
@@ -100,10 +107,10 @@ export function GroupEditDialog({ group, groups, projects, onClose }: Props) {
   <Dialog open onOpenChange={(next) => { if (!next && !applying) onClose(); }}>
     <DialogContent className="max-w-[560px] p-0" showCloseButton={!applying}>
       <div className="border-b border-border/70 px-5 py-4"><DialogTitle>{t("groupEdit.title", { name: group.name })}</DialogTitle><DialogDescription className="mt-1">{t("groupEdit.description")}</DialogDescription></div>
-      <div className="flex items-center justify-between gap-3 border-b border-border/60 px-5 py-3"><div className="text-sm text-on-surface-variant">{t("batchShell.selectedSummary", { count: selectedIds.size })}</div><div className="flex items-center gap-2"><Button variant="ghost" size="sm" disabled={applying || projects.length === 0} onClick={() => setSelectedIds(new Set(projects.map((p) => p.id)))}>{t("batchShell.selectAll")}</Button><Button variant="ghost" size="sm" disabled={applying || projects.length === 0} onClick={() => setSelectedIds(new Set())}>{t("batchShell.clearAll")}</Button></div></div>
-      <div className="max-h-[340px] overflow-y-auto px-3 py-3"><div className="space-y-4">{sections.map((section) => <section key={section.key} className="space-y-1"><div className="px-3 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">{section.name}</div><div className="space-y-1">{section.projects.map((project) => <label key={project.id} className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-surface-container-highest/70"><span className="relative flex h-5 w-5 shrink-0 items-center justify-center"><input type="checkbox" checked={selectedIds.has(project.id)} disabled={applying} onChange={() => toggle(project.id)} className="peer h-5 w-5 appearance-none rounded border border-border bg-surface-container-lowest transition-colors checked:border-[var(--color-primary)] checked:bg-[var(--color-primary)] disabled:opacity-60" aria-label={t("batchShell.selectProjectAria", { name: project.name })} /><Check size={13} strokeWidth={2.4} className="pointer-events-none absolute text-white opacity-0 transition-opacity peer-checked:opacity-100" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-on-surface">{project.name}</span><span className="mt-0.5 block truncate text-xs text-on-surface-variant" title={project.path}>{project.path}</span></span><span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-on-surface-variant ring-1 ring-border/70">{shellLabelFor(project.shell)}</span></label>)}</div></section>)}</div></div>
+      <div className="flex items-center justify-between gap-3 border-b border-border/60 px-5 py-3"><div className="text-sm text-on-surface-variant">{t("batchShell.selectedSummary", { count: selectedProjectIds.length })}</div><div className="flex items-center gap-2"><Button variant="ghost" size="sm" disabled={applying || selectableProjectIds.size === 0} onClick={() => setSelectedIds(new Set(selectableProjectIds))}>{t("batchShell.selectAll")}</Button><Button variant="ghost" size="sm" disabled={applying || selectableProjectIds.size === 0} onClick={() => setSelectedIds(new Set())}>{t("batchShell.clearAll")}</Button></div></div>
+      <div className="max-h-[340px] overflow-y-auto px-3 py-3"><div className="space-y-4">{sections.map((section) => <section key={section.key} className="space-y-1"><div className="px-3 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">{section.name}</div><div className="space-y-1">{section.projects.map((project) => <label key={project.id} className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-surface-container-highest/70"><span className="relative flex h-5 w-5 shrink-0 items-center justify-center"><input type="checkbox" checked={selectedIds.has(project.id)} disabled={applying} onChange={() => toggle(project.id)} className="peer h-5 w-5 appearance-none rounded border border-border bg-surface-container-lowest transition-colors checked:border-[var(--color-primary)] checked:bg-[var(--color-primary)] disabled:opacity-60" aria-label={t("batchShell.selectProjectAria", { name: project.name })} /><Check size={13} strokeWidth={2.4} className="pointer-events-none absolute text-white opacity-0 transition-opacity peer-checked:opacity-100" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-on-surface">{project.name}</span><span className="mt-0.5 block truncate text-xs text-on-surface-variant" title={resolveProjectPath(project, groups)}>{resolveProjectPath(project, groups)}</span></span><span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-on-surface-variant ring-1 ring-border/70">{shellLabelFor(project.shell)}</span></label>)}</div></section>)}</div></div>
       <div className="border-t border-border/60 px-5 py-3"><label className="ui-config-form-label">{t("groupEdit.boundPath")}</label><div className="flex items-center gap-2">{!isRootGroup && <Select value={boundPathMode} onChange={(e) => setBoundPathMode(e.target.value as "inherit" | "custom")} disabled={applying} className="w-32 shrink-0 text-sm"><option value="inherit">{t("groupEdit.inherit")}</option><option value="custom">{t("configModal.pathMode.custom")}</option></Select>}<div className="relative min-w-0 flex-1"><Input value={effectiveBoundPath} onChange={(e) => setBoundPath(e.target.value)} disabled={applying || boundPathMode === "inherit"} placeholder={t("groupEdit.boundPathPlaceholder")} className="pr-10 text-sm" /><button type="button" className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-text-muted hover:text-primary disabled:opacity-50" onClick={() => void handleBrowse()} disabled={applying || boundPathMode === "inherit"} aria-label={t("groupEdit.chooseBoundPath")} title={t("groupEdit.chooseBoundPath")}><FolderOpen className="h-4 w-4" /></button></div></div></div>
-      <DialogFooter className="border-t border-border/70 px-5 py-4"><div className="mr-auto flex items-center gap-2"><label htmlFor={shellFieldId} className="shrink-0 text-xs text-on-surface-variant">{t("batchShell.shellLabel")}</label><Select id={shellFieldId} value={shell} disabled={applying} onChange={(e) => setShell(e.target.value)} className="w-40 text-sm">{shellOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</Select></div><Button variant="outline" disabled={applying} onClick={() => void handleSavePath()}>{t("groupEdit.savePath")}</Button><Button variant="outline" disabled={applying} onClick={onClose}>{t("batchShell.cancel")}</Button><Button variant="default" disabled={applying || selectedIds.size === 0 || !shell.trim()} onClick={() => void handleApply()}>{applying ? t("batchShell.applying") : t("batchShell.apply", { count: selectedIds.size })}</Button></DialogFooter>
+      <DialogFooter className="border-t border-border/70 px-5 py-4"><div className="mr-auto flex items-center gap-2"><label htmlFor={shellFieldId} className="shrink-0 text-xs text-on-surface-variant">{t("batchShell.shellLabel")}</label><Select id={shellFieldId} value={shell} disabled={applying} onChange={(e) => setShell(e.target.value)} className="w-40 text-sm">{shellOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</Select></div><Button variant="outline" disabled={applying} onClick={() => void handleSavePath()}>{t("groupEdit.savePath")}</Button><Button variant="outline" disabled={applying} onClick={onClose}>{t("batchShell.cancel")}</Button><Button variant="default" disabled={applying || selectedProjectIds.length === 0 || !shell.trim()} onClick={() => void handleApply()}>{applying ? t("batchShell.applying") : t("batchShell.apply", { count: selectedProjectIds.length })}</Button></DialogFooter>
     </DialogContent>
   </Dialog>
   {confirmDialog}

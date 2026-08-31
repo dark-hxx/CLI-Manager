@@ -1703,6 +1703,8 @@ pub fn run() {
             app_paths::app_get_data_paths,
             commands::db_repair::db_repair_known_migration_drift,
             commands::db_repair::db_backfill_request_log_project_paths,
+            commands::project_groups::project_group_save_binding,
+            commands::project_groups::project_group_delete,
             commands::fonts::list_system_fonts,
             commands::background::save_background_image,
             commands::background::cleanup_unused_backgrounds,
@@ -2126,7 +2128,8 @@ mod provider_migration_tests {
         MIGRATION_CREATE_NATIVE_PROVIDERS_VERSION, MIGRATION_LEGACY_PROVIDERS_VERSION,
     };
     use crate::{
-        MIGRATION_ADD_NODE_APPEARANCE_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+        MIGRATION_ADD_GROUP_BOUND_PATH_VERSION, MIGRATION_ADD_NODE_APPEARANCE_VERSION,
+        MIGRATION_ADD_PROJECT_PATH_MODE_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
         MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
         MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
         MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
@@ -2217,9 +2220,27 @@ mod provider_migration_tests {
         assert!(project_path_migration.version < project_path_backfill.version);
         assert!(project_path_backfill.version < error_detail_migration.version);
         assert!(error_detail_migration.version < node_appearance_migration.version);
+        let group_bound_path_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_GROUP_BOUND_PATH_VERSION)
+            .expect("group bound path migration must be registered");
+        assert_eq!(group_bound_path_migration.version, 35);
+        assert!(group_bound_path_migration
+            .sql
+            .contains("ALTER TABLE groups ADD COLUMN bound_path TEXT"));
+        let project_path_mode_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_PROJECT_PATH_MODE_VERSION)
+            .expect("project path mode migration must be registered");
+        assert_eq!(project_path_mode_migration.version, 36);
+        assert!(project_path_mode_migration
+            .sql
+            .contains("ALTER TABLE projects ADD COLUMN path_mode TEXT"));
+        assert!(node_appearance_migration.version < group_bound_path_migration.version);
+        assert!(group_bound_path_migration.version < project_path_mode_migration.version);
         assert!(registry
             .iter()
-            .all(|migration| migration.version <= node_appearance_migration.version));
+            .all(|migration| migration.version <= project_path_mode_migration.version));
         assert!(registry.iter().any(|migration| migration.version == 29
             && migration.description == "optimize_unified_usage_record_queries"));
     }

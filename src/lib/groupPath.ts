@@ -25,6 +25,27 @@ export function resolveProjectPath(project: Project, groups: Group[]): string {
   return project.path;
 }
 
+/** 返回指定分组及其全部后代分组，供选择和级联操作共用。 */
+export function collectGroupSubtreeIds(groupId: string, groups: Group[]): Set<string> {
+  const children = new Map<string, Group[]>();
+  for (const group of groups) {
+    const parentId = group.parent_id ?? "";
+    children.set(parentId, [...(children.get(parentId) ?? []), group]);
+  }
+
+  const ids = new Set<string>([groupId]);
+  const pending = [groupId];
+  while (pending.length > 0) {
+    const currentId = pending.pop()!;
+    for (const child of children.get(currentId) ?? []) {
+      if (ids.has(child.id)) continue;
+      ids.add(child.id);
+      pending.push(child.id);
+    }
+  }
+  return ids;
+}
+
 export interface InheritedDescendantIds {
   groupIds: string[];
   projectIds: string[];
@@ -49,14 +70,19 @@ export function findInheritedDescendants(
 
   const groupIds: string[] = [];
   const projectIds: string[] = [];
-  const visit = (parentId: string, sourceId: string | null) => {
-    for (const group of children.get(parentId) ?? []) {
+  const visited = new Set<string>();
+  const visit = (currentId: string, sourceId: string | null) => {
+    if (visited.has(currentId)) return;
+    visited.add(currentId);
+
+    for (const project of projectsByGroup.get(currentId) ?? []) {
+      if (project.path_mode === "inherit" && sourceId === groupId) projectIds.push(project.id);
+    }
+
+    for (const group of children.get(currentId) ?? []) {
       const bound = group.bound_path?.trim() ?? "";
       const nextSource = bound ? group.id : sourceId;
       if (!bound && sourceId === groupId) groupIds.push(group.id);
-      for (const project of projectsByGroup.get(group.id) ?? []) {
-        if (project.path_mode === "inherit" && nextSource === groupId) projectIds.push(project.id);
-      }
       visit(group.id, nextSource);
     }
   };
