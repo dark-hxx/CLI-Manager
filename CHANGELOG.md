@@ -1,5 +1,13 @@
 # Changelog
 
+## [TEMP]
+
+### 修复 Grok Build 本地/WSL 换行
+
+- 宿主换行快捷键对 Codex 与 Grok Build 统一写入 `\x1b\r`（Alt+Enter 编码），不再给 Grok 发 `\n`。本地 PowerShell、WSL 与 SSH 使用同一套按键决策，Grok 不再把 Shift+Enter 当成提交。
+- Grok / Codex 会话上，未匹配的 Alt+Enter 不再吞掉，交给 xterm 发送原生 `\x1b\r`；未匹配的 Shift/Ctrl+Enter 仍拦截，避免漏出裸 `\r`。Kimi Code 与普通 Shell 仍写 `\n`，不加入该特例。
+- Refs #236
+
 ## [V1.3.8] - 2026-08-21
 
 ### 侧边栏底部同步状态单行显示

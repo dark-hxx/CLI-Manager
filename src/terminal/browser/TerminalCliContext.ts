@@ -2,6 +2,8 @@ import type { Project, TerminalSession } from "../../lib/types";
 
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const GROK_COMMAND_PATTERN = /(?:^|\s)grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const GROK_OUTPUT_SIGNATURE_PATTERN = /grok\s+build/i;
 const PI_COMMAND_PATTERN = /^\s*(?:&\s*)?pi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const OPENCODE_TOOL_VALUES = new Set(["opencode", "opencode.cmd", "opencode.exe", "opencode.ps1"]);
 const OPENCODE_COMMAND_PATTERN = /^opencode(?:\.(?:cmd|exe|ps1))?$/i;
@@ -31,6 +33,11 @@ const isOpenCodeToolValue = (value: string): boolean => (
 const hasPiOutputSignature = (text: string): boolean => {
   CSI_PATTERN.lastIndex = 0;
   return PI_OUTPUT_SIGNATURE_PATTERN.test(text.replace(CSI_PATTERN, ""));
+};
+
+const hasGrokOutputSignature = (text: string): boolean => {
+  CSI_PATTERN.lastIndex = 0;
+  return GROK_OUTPUT_SIGNATURE_PATTERN.test(text.replace(CSI_PATTERN, ""));
 };
 
 export const createTerminalCliContext = (
@@ -68,6 +75,34 @@ export const isClaudeTerminalContext = ({
 
 export const isClaudeOrCodexTerminalContext = (context: TerminalCliContext): boolean => (
   isCodexTerminalContext(context) || isClaudeTerminalContext(context)
+);
+
+const isGrokToolValue = (value: string): boolean => {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed === "grok" || trimmed === "grokbuild" || trimmed.includes("grokbuild");
+};
+
+export const isGrokTerminalContext = ({
+  projectTool,
+  sessionTool,
+  startupCmd,
+  titleTool,
+  outputHint = "",
+}: TerminalCliContext): boolean => {
+  const startupToken = commandExecutableToken(startupCmd).toLowerCase();
+  return isGrokToolValue(sessionTool)
+    || isGrokToolValue(projectTool)
+    || isGrokToolValue(titleTool)
+    || startupToken === "grok"
+    || startupToken === "grok.exe"
+    || startupToken === "grok.cmd"
+    || startupToken === "grok.ps1"
+    || GROK_COMMAND_PATTERN.test(startupCmd)
+    || hasGrokOutputSignature(outputHint);
+};
+
+export const usesEscCrComposerNewline = (context: TerminalCliContext): boolean => (
+  isCodexTerminalContext(context) || isGrokTerminalContext(context)
 );
 
 export const isPiTerminalContext = ({
