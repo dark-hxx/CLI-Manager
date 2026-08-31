@@ -70,6 +70,7 @@ import { FontSizeControl, useFontSizeControlVisibility } from "./ui/FontSizeCont
 import { useProjectStore } from "../stores/projectStore";
 import { formatStartupInputForPty, useTerminalStore } from "../stores/terminalStore";
 import {
+  ArrowDown,
   Eye,
   EyeOff,
 } from "./icons";
@@ -501,6 +502,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const [assetUrl, setAssetUrl] = useState<string | null>(null);
   const [visibilityRestorePending, setVisibilityRestorePending] = useState(false);
   const [suggestionGhost, setSuggestionGhost] = useState<TerminalSuggestionGhostState | null>(null);
+  const [isScrolledAwayFromBottom, setIsScrolledAwayFromBottom] = useState(false);
   const { fontSizeControlVisible, showFontSizeControl } = useFontSizeControlVisibility();
   const [linuxGraphicsConstrained, setLinuxGraphicsConstrained] = useState(false);
   const [linuxGraphicsDisableWebgl, setLinuxGraphicsDisableWebgl] = useState(false);
@@ -1346,6 +1348,11 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     terminal.unicode.activeVersion = "11";
     terminal.loadAddon(webLinksAddon);
     terminal.open(containerRef.current);
+    const updateScrollToBottomButton = () => {
+      const buffer = terminal.buffer.active;
+      const next = buffer.type === "normal" && buffer.viewportY < buffer.baseY;
+      setIsScrolledAwayFromBottom((current) => current === next ? current : next);
+    };
     const updateCtrlKeyState = (event: KeyboardEvent) => {
       if (event.key === "Control") ctrlKeyDown = event.type === "keydown";
     };
@@ -1830,12 +1837,17 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const detachViewport = attachViewport(terminal);
     displayDisposables.push({ dispose: detachViewport });
     displayDisposables.push(terminal.onRender((range) => {
+      updateScrollToBottomButton();
       handleVisibilityRestoreRender(terminal, range);
       if (isVisibleRef.current) tuiColorSync.schedule(terminal);
     }));
     displayDisposables.push(terminal.onScroll(() => {
+      updateScrollToBottomButton();
       if (isVisibleRef.current) tuiColorSync.schedule(terminal);
     }));
+    displayDisposables.push(terminal.onWriteParsed(updateScrollToBottomButton));
+    displayDisposables.push(terminal.onResize(updateScrollToBottomButton));
+    updateScrollToBottomButton();
     const detachIme = attachIme(terminal, {
       forwarding: inputForwarding,
       osPlatformRef,
@@ -1890,6 +1902,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       terminalRef.current = null;
       fitAddonRef.current = null;
       searchAddonRef.current = null;
+      setIsScrolledAwayFromBottom(false);
     };
   }, [sessionId, tuiColorSync]);
 
@@ -1953,6 +1966,12 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   };
   const handleTerminalFontSizeWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
     if (event.ctrlKey && event.deltaY !== 0) showFontSizeControl();
+  };
+  const handleScrollToBottom = () => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    terminal.scrollToBottom();
+    setIsScrolledAwayFromBottom(false);
   };
 
   const handleMenuCopy = () => {
@@ -2151,20 +2170,36 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
           onWheelCapture={handleTerminalFontSizeWheel}
         >
           <div ref={containerRef} className="relative h-full w-full overflow-hidden pl-2" style={terminalContainerStyle} />
-          {fontSizeControlVisible && (
-            <FontSizeControl
-              fontSize={fontSize}
-              defaultFontSize={TERMINAL_FONT_SIZE_DEFAULT}
-              min={TERMINAL_FONT_SIZE_MIN}
-              max={TERMINAL_FONT_SIZE_MAX}
-              onChange={(next) => {
-                showFontSizeControl();
-                void updateSettings("fontSize", next);
-              }}
-              className="absolute bottom-3 right-3 z-20"
-              style={terminalFontSizeControlStyle}
-              variant="terminal"
-            />
+          {(isScrolledAwayFromBottom || fontSizeControlVisible) && (
+            <div className="absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
+              {isScrolledAwayFromBottom && (
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={handleScrollToBottom}
+                  className="terminal-scroll-to-bottom ui-focus-ring inline-flex h-7 w-7 items-center justify-center rounded-full border backdrop-blur-md transition hover:brightness-110"
+                  style={terminalFontSizeControlStyle}
+                  aria-label={t("terminal.scrollToBottom")}
+                  title={t("terminal.scrollToBottom")}
+                >
+                  <ArrowDown size={14} aria-hidden="true" />
+                </button>
+              )}
+              {fontSizeControlVisible && (
+                <FontSizeControl
+                  fontSize={fontSize}
+                  defaultFontSize={TERMINAL_FONT_SIZE_DEFAULT}
+                  min={TERMINAL_FONT_SIZE_MIN}
+                  max={TERMINAL_FONT_SIZE_MAX}
+                  onChange={(next) => {
+                    showFontSizeControl();
+                    void updateSettings("fontSize", next);
+                  }}
+                  style={terminalFontSizeControlStyle}
+                  variant="terminal"
+                />
+              )}
+            </div>
           )}
         </div>
         {markdownPreviewOpen && (

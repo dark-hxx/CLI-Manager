@@ -54,6 +54,35 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 
 **Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalResizeDebouncer.test.mjs scripts/terminalResizeRenderBarrier.test.mjs scripts/terminalSplitLayout.test.mjs scripts/terminalReflowPolicy.test.mjs`; manually verify background output, reconnect replay, rapid split/fullscreen shrink, equal text sharpness across adjacent panes, transparent terminal backgrounds, IME, WebGL fallback, and no duplicate output after daemon reconnect.
 
+## Convention: Terminal scroll-to-bottom affordances use xterm Buffer state
+
+**What**: A terminal-local jump-to-bottom control derives its visibility from the active xterm Buffer, not from browser scrollbar geometry. Show it only when `buffer.type === "normal" && buffer.viewportY < buffer.baseY`.
+
+**Why**: xterm's Buffer is the source of truth for normal scrollback, alternate-screen state, reflow, and programmatic scrolling. Reading `.xterm-viewport.scrollTop` can miss xterm state changes and can couple UI behavior to WebView scrollbar implementation details.
+
+**Contracts**:
+
+- Keep the state in the `XTermTerminal` instance so hidden, split, and Workspan sessions do not share scroll position UI.
+- Recompute after `onScroll`, `onWriteParsed`, `onResize`, and `onRender`; retain any existing event behavior in those handlers.
+- Clicking the control calls the current terminal's public `scrollToBottom()` API and sends no PTY input.
+- Do not show the control for the alternate buffer or for a normal buffer already at `viewportY === baseY`.
+- If another terminal control occupies the same corner, compose both controls in one positioned vertical group instead of stacking independent absolute elements.
+
+**Correct**:
+
+```tsx
+const buffer = terminal.buffer.active;
+const showScrollToBottom = buffer.type === "normal" && buffer.viewportY < buffer.baseY;
+```
+
+**Wrong**:
+
+```tsx
+const showScrollToBottom = terminal.element?.querySelector(".xterm-viewport")?.scrollTop !== 0;
+```
+
+**Tests**: Assert the normal-buffer predicate, all four xterm event subscriptions, public `scrollToBottom()` use, and no PTY write in the control handler. Manually verify normal scrollback, alternate-buffer TUI, output, scrollbar/keyboard scrolling, reflow, split panes, hidden sessions, and coexistence with other bottom-corner controls.
+
 ### Convention: Terminal CLI-specific input uses immutable metadata plus bounded runtime detection
 
 **What**: Input behavior that differs by CLI must first use the `TerminalSession.cliTool` captured when the Agent terminal was created, then compatible project/title/startup metadata. A plain Shell that manually starts a CLI may use exact submitted-command evidence plus a current viewport TUI signature as a bounded runtime fallback.
