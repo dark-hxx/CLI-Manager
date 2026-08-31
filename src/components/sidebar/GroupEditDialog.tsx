@@ -75,7 +75,7 @@ export function GroupEditDialog({ group, groups, projects, onClose }: Props) {
         return false;
       }
     }
-    const clearingOwnBinding = boundPathMode === "custom" && !boundPath.trim() && Boolean(group.bound_path?.trim());
+    const clearingOwnBinding = !updateBoundPath.bound_path && Boolean(group.bound_path?.trim());
     if (clearingOwnBinding) {
       const descendants = findInheritedDescendants(group.id, groups, projects);
       const affectedCount = descendants.groupIds.length + descendants.projectIds.length;
