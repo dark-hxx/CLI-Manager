@@ -446,11 +446,27 @@ corresponding detection or persistence transition.
 
 - `provider_common_config_validate` accepts the same `CommonConfigSetInput` as
   `provider_common_config_set` and returns no document or secret data.
-- It validates app type, expected format, JSON object shape, TOML syntax and
-  managed-secret exclusion without opening a write transaction or changing the
-  `settings` row.
+- It validates app type, expected format, JSON object shape and TOML syntax
+  without opening a write transaction or changing the `settings` row.
 - `provider_common_config_set` calls the same repository validator before its
   database write; validate and save therefore cannot drift in accepted syntax.
+
+## Common configuration is format-validated only (2026-09-01, issue #241)
+
+- Common configuration validation is **format-only**: JSON object shape for
+  Claude, TOML syntax for Codex/Grok Build. There is no secret-field gate, and
+  `provider_common_config_contains_secret` is no longer emitted by any path.
+- Rationale: the gate matched `token`/`key`/`secret`/`password`/`credential`/
+  `authorization` as **substrings of field names**, so ordinary CLI options such
+  as `model_auto_compact_token_limit` and `requires_openai_auth` were rejected as
+  secrets. Substring field-name matching cannot distinguish a credential from an
+  option that merely mentions one.
+- `provider_common_config_get` / `_set` return the stored document **verbatim,
+  never redacted**. The editor is a round-trip surface: masking a value the user
+  just typed would make the next save persist `[REDACTED]`. Redaction stays on
+  the provider document and effective-preview DTOs, which are display-only.
+- Whether a credential belongs in common configuration is the user's decision.
+  The key manager remains the recommended place, not an enforced one.
 
 ## Provider editor and current-state feedback contract (2026-08-04)
 

@@ -2168,3 +2168,50 @@ KaTeX's package stylesheet owns the `.katex` base font size. Shared Markdown CSS
 ```
 
 **Tests**: Run `npx tsc --noEmit`; manually verify the page at a wide window, a narrow window, and both `zh-CN` and `en-US`, checking that cards use the available width and headers/actions do not overflow.
+
+### Common Mistake: Leaving `@monaco-editor/react` fully controlled
+
+**Symptom**: While the user types quickly in a config editor, the caret suddenly jumps to the last
+line of the document, or characters land out of order (typing `12345` yields `"124"35`). Reported
+against the provider common-configuration editor (issue #241 follow-up).
+
+**Root cause**: `@monaco-editor/react` synchronises a controlled `value` by comparing it with
+`editor.getValue()`; on any mismatch it replaces the **full model range** with
+`forceMoveMarkers: true`, which collapses the selection to the end of the document. Monaco emits
+content changes from its own DOM listeners, so `onChange` -> `setState` is a default-lane React
+update. When the tree is busy — `NativeProviderSettingsPage` polls failover state every second —
+React can commit props that lag the model by several keystrokes. Every lagging commit rewrites the
+whole document: the caret is pushed to the end, and a caret restored against pre-replacement
+content makes the following keystrokes land at the wrong offset, which is what scrambles the text
+(auto-closed quotes make the misplacement obvious).
+
+**Rules for provider config editors** (`NativeProviderCodeEditor`, shared by common config,
+provider-specific config, the full-document editor, effective-config preview and header/body
+overrides):
+
+- Pass `defaultValue`, never `value`, to `<Editor>`. The library's built-in sync must stay inert;
+  this component owns the sync policy.
+- Queue every value emitted from `onChange` in order. When an incoming prop matches a queued
+  emission, acknowledge up to that entry and **never write the model** — the model already holds
+  that text or newer text the user just typed. Matching by queue (not by "the previous value")
+  is required: React batching can skip intermediate values and the lag is not bounded to one
+  keystroke. Cap the queue so a consumer that normalises the value cannot grow it without bound.
+- Any genuine external replacement (refresh, save write-back, provider/document switch, generated
+  config) must save and restore selections plus `scrollTop` / `scrollLeft` around the edit. Monaco
+  clamps out-of-range selections, so restoring is safe after the content shrinks.
+- Use `model.pushEditOperations`, not `editor.executeEdits`: read-only editors block
+  `executeEdits`, and the read-only preview surfaces must still refresh without losing scroll.
+- Suppress the `onChange` callback while applying an external value, otherwise consumers that track
+  dirty state mark themselves dirty on every refresh.
+- Keep the `options` object and the change handler referentially stable. An unstable `onChange`
+  makes the library dispose and re-subscribe `onDidChangeModelContent` on every render, which the
+  one-second failover poll would otherwise trigger every second.
+- Reset the emitted-value queue when `path` changes: a new `path` means a new (or cached) model,
+  and stale echo bookkeeping would suppress a legitimate content write.
+
+`FileEditorContent` still uses the plain controlled pattern. It has the same latent behaviour and
+must adopt the same policy if caret jumps are reported there.
+
+**Tests**: `npx tsc --noEmit`; manually hold a key in a long common configuration to confirm the
+caret stays in place and the characters keep their order, then verify refresh / save / provider
+switch / document switch still reload content and keep the viewport.
