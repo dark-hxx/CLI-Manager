@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, ProjectFileContentMatch, ProjectFileEntry, ProjectFilePreviewKind } from "./types";
-import { buildSshAgentProjectLaunch, type SshAgentProjectLaunch } from "./sshAgentHistory";
+import type { Project, ProjectFileContentMatch, ProjectFileEntry, ProjectFilePreviewKind, TerminalSession } from "./types";
+import { buildSshAgentHostLaunch, buildSshAgentProjectLaunch, type SshAgentProjectLaunch } from "./sshAgentHistory";
 import { useBackgroundOperationStore } from "../stores/backgroundOperationStore";
 import type { TranslationKey } from "./i18n";
 
@@ -81,6 +81,30 @@ export async function buildSshRemoteFileContext(project: Project): Promise<SshRe
   };
 }
 
+export async function buildSshRemoteAttachmentContext(
+  hostId: string,
+): Promise<SshRemoteFileContext> {
+  const launch = await buildSshAgentHostLaunch(hostId, "/");
+  return {
+    consumerId: `attachment-browser:${launch.clientInstanceId}:${launch.hostId}:${crypto.randomUUID()}`,
+    launch,
+    rootPath: "",
+  };
+}
+
+export async function resolveSshRemoteAttachmentRoot(
+  context: SshRemoteFileContext,
+): Promise<string> {
+  const result = await invoke<{ rootPath?: string }>("ssh_remote_file_attachment_root", {
+    consumerId: context.consumerId,
+    sshLaunch: context.launch,
+    attachmentRoot: context.launch.attachmentRoot.trim() || null,
+  });
+  const rootPath = result.rootPath?.trim() ?? "";
+  if (!rootPath.startsWith("/")) throw new Error("ssh_remote_attachment_root_invalid");
+  return rootPath;
+}
+
 export type SshRemoteAttachmentInput =
   | { kind: "data"; fileName: string; dataBase64: string }
   | { kind: "localPath"; path: string };
@@ -99,6 +123,48 @@ export async function sshRemoteAttachFiles(
 ): Promise<string[]> {
   if (inputs.length === 0) return [];
   const context = await buildSshRemoteFileContext(project);
+  return attachFilesWithContext(context, sessionId, inputs);
+}
+
+export async function sshRemoteAttachFilesForSession(
+  session: Pick<TerminalSession, "id" | "sshHostId" | "remotePath">,
+  inputs: SshRemoteAttachmentInput[],
+): Promise<string[]> {
+  if (inputs.length === 0) return [];
+  if (!session.sshHostId?.trim() || !session.remotePath?.trim()) {
+    throw new Error("ssh_terminal_context_invalid");
+  }
+  const launch = await buildSshAgentHostLaunch(session.sshHostId, session.remotePath);
+  return attachFilesWithContext({
+    consumerId: "",
+    launch,
+    rootPath: launch.remotePath,
+  }, session.id, inputs);
+}
+
+export function sshHostAttachmentSessionId(hostId: string): string {
+  const safeHostId = hostId.trim().replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 110);
+  return `host-${safeHostId || "unknown"}`;
+}
+
+export async function sshRemoteAttachFilesForHost(
+  hostId: string,
+  inputs: SshRemoteAttachmentInput[],
+): Promise<string[]> {
+  if (inputs.length === 0) return [];
+  const launch = await buildSshAgentHostLaunch(hostId, "/");
+  return attachFilesWithContext({
+    consumerId: "",
+    launch,
+    rootPath: "/",
+  }, sshHostAttachmentSessionId(hostId), inputs);
+}
+
+async function attachFilesWithContext(
+  context: SshRemoteFileContext,
+  sessionId: string,
+  inputs: SshRemoteAttachmentInput[],
+): Promise<string[]> {
   context.consumerId = [
     "attachments",
     context.launch.clientInstanceId,
@@ -113,6 +179,9 @@ export async function sshRemoteAttachFiles(
         consumerId: context.consumerId,
         sshLaunch: context.launch,
         sessionId,
+        ...(context.launch.attachmentRoot.trim()
+          ? { attachmentRoot: context.launch.attachmentRoot.trim() }
+          : {}),
       };
       const path = input.kind === "data"
         ? await invoke<string>("ssh_remote_file_attach_data", {

@@ -73,6 +73,8 @@ export interface SshHost {
   server_alive_interval_sec: number;
   server_alive_count_max: number;
   terminal_encoding: string;
+  /** Optional remote parent directory for Host-scoped Agent attachments. */
+  attachment_root: string;
   startup_script: string;
   notes: string;
   sort_order: number;
@@ -102,6 +104,7 @@ export interface CreateSshHostInput {
   server_alive_interval_sec?: number;
   server_alive_count_max?: number;
   terminal_encoding?: string;
+  attachment_root?: string;
   startup_script?: string;
   notes?: string;
 }

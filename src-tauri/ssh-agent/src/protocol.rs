@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use crate::files::{
     FileAttachAbortRequest, FileAttachBeginRequest, FileAttachChunkRequest,
-    FileAttachFinishRequest, FileAttachmentUploads, FileListRequest, FileReadRequest,
-    FileSearchRequest,
+    FileAttachFinishRequest, FileAttachmentRootRequest, FileAttachmentUploads, FileListRequest,
+    FileReadRequest, FileSearchRequest,
 };
 use crate::history::{
     HistoryGetRequest, HistoryResumePreflightRequest, HistoryScopeRequest, HistorySearchRequest,
@@ -279,6 +279,8 @@ fn capabilities() -> Value {
         "fileSearch",
         "fileAttach",
         "fileAttachAny",
+        "fileAttachCustomRoot",
+        "fileAttachmentRoot",
         "gitListRepositories",
         "gitChanges",
         "gitDiff",
@@ -540,6 +542,26 @@ pub fn run_bridge(
                         json!({ "code": "remote_file_attachment_request_invalid" }),
                     ),
                 },
+            };
+            write_frame(writer, &response)?;
+            continue;
+        }
+        if frame.kind == "fileAttachmentRoot" {
+            let response = match serde_json::from_value::<FileAttachmentRootRequest>(frame.payload)
+            {
+                Ok(request) => match crate::files::attachment_root(request) {
+                    Ok(result) => response(
+                        request_id,
+                        "response",
+                        serde_json::to_value(result).unwrap_or(Value::Null),
+                    ),
+                    Err(code) => response(request_id, "error", json!({ "code": code })),
+                },
+                Err(_) => response(
+                    request_id,
+                    "error",
+                    json!({ "code": "remote_file_attachment_request_invalid" }),
+                ),
             };
             write_frame(writer, &response)?;
             continue;
@@ -900,6 +922,8 @@ mod tests {
             "fileSearch",
             "fileAttach",
             "fileAttachAny",
+            "fileAttachCustomRoot",
+            "fileAttachmentRoot",
             "gitListRepositories",
             "gitChanges",
             "gitDiff",

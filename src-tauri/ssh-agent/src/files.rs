@@ -57,11 +57,26 @@ pub struct FileSearchRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FileAttachmentRootRequest {
+    #[serde(default)]
+    pub attachment_root: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttachmentRootResult {
+    pub root_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileAttachBeginRequest {
     pub session_id: String,
     pub file_name: String,
     pub size_bytes: u64,
     pub sha256: String,
+    #[serde(default)]
+    pub attachment_root: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -142,7 +157,7 @@ impl FileAttachmentUploads {
         &mut self,
         request: FileAttachBeginRequest,
     ) -> Result<FileAttachBeginResult, String> {
-        let root = attachment_cache_root()?;
+        let root = attachment_cache_root(&request.attachment_root)?;
         self.begin_in_root(request, root, AttachmentKind::LegacyImage)
     }
 
@@ -150,7 +165,7 @@ impl FileAttachmentUploads {
         &mut self,
         request: FileAttachBeginRequest,
     ) -> Result<FileAttachBeginResult, String> {
-        let root = attachment_cache_root()?;
+        let root = attachment_cache_root(&request.attachment_root)?;
         self.begin_in_root(request, root, AttachmentKind::AnyFile)
     }
 
@@ -323,16 +338,65 @@ impl Drop for FileAttachmentUploads {
     }
 }
 
-fn attachment_cache_root() -> Result<PathBuf, String> {
-    let layout = resolve_layout().map_err(str::to_string)?;
-    let cache_base = env::var_os("XDG_CACHE_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| layout.home.join(".cache"));
+const MAX_CUSTOM_ATTACHMENT_ROOT_LENGTH: usize = 4096;
+const ATTACHMENT_NAMESPACE: &str = "cli-manager-ssh-agent";
+
+fn attachment_cache_root(custom_root: &str) -> Result<PathBuf, String> {
+    if custom_root.len() > MAX_CUSTOM_ATTACHMENT_ROOT_LENGTH
+        || custom_root.chars().any(char::is_control)
+    {
+        return Err("attachment_root_invalid".to_string());
+    }
+    let custom_root = custom_root.trim();
+    let cache_base = if custom_root.is_empty() {
+        let layout = resolve_layout().map_err(str::to_string)?;
+        env::var_os("XDG_CACHE_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| layout.home.join(".cache"))
+    } else if custom_root.starts_with('/') {
+        PathBuf::from(custom_root)
+    } else {
+        let layout = resolve_layout().map_err(str::to_string)?;
+        expand_custom_attachment_root(custom_root, &layout.home)?
+    };
     if !cache_base.is_absolute() {
         return Err("attachment_cache_root_invalid".to_string());
     }
-    Ok(cache_base.join("cli-manager-ssh-agent").join("attachments"))
+    Ok(cache_base.join(ATTACHMENT_NAMESPACE).join("attachments"))
+}
+
+pub fn attachment_root(
+    request: FileAttachmentRootRequest,
+) -> Result<FileAttachmentRootResult, String> {
+    let root = ensure_private_dir(&attachment_cache_root(&request.attachment_root)?)?;
+    let root_path = root
+        .to_str()
+        .ok_or_else(|| "attachment_path_invalid".to_string())?
+        .to_string();
+    Ok(FileAttachmentRootResult { root_path })
+}
+
+fn expand_custom_attachment_root(value: &str, home: &Path) -> Result<PathBuf, String> {
+    if value.len() > MAX_CUSTOM_ATTACHMENT_ROOT_LENGTH
+        || value.chars().any(char::is_control)
+        || value.contains(['\\', '$', '`'])
+        || !(value.starts_with('/') || value == "~" || value.starts_with("~/"))
+        || value.split('/').any(|part| part == "..")
+    {
+        return Err("attachment_root_invalid".to_string());
+    }
+    let expanded = if value == "~" {
+        home.to_path_buf()
+    } else if let Some(suffix) = value.strip_prefix("~/") {
+        home.join(suffix)
+    } else {
+        PathBuf::from(value)
+    };
+    if !expanded.is_absolute() {
+        return Err("attachment_root_invalid".to_string());
+    }
+    Ok(expanded)
 }
 
 fn validate_attachment_session_id(value: &str) -> Result<(), String> {
@@ -384,7 +448,9 @@ fn normalize_sha256(value: &str) -> Result<String, String> {
 }
 
 fn ensure_private_dir(path: &Path) -> Result<PathBuf, String> {
+    ensure_no_symlink_components(path)?;
     fs::create_dir_all(path).map_err(|_| "attachment_cache_create_failed".to_string())?;
+    ensure_no_symlink_components(path)?;
     let metadata =
         fs::symlink_metadata(path).map_err(|_| "attachment_cache_unavailable".to_string())?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -393,6 +459,22 @@ fn ensure_private_dir(path: &Path) -> Result<PathBuf, String> {
     set_private_dir_permissions(path)?;
     path.canonicalize()
         .map_err(|_| "attachment_cache_unavailable".to_string())
+}
+
+fn ensure_no_symlink_components(path: &Path) -> Result<(), String> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err("attachment_cache_invalid".to_string())
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => return Err("attachment_cache_unavailable".to_string()),
+        }
+    }
+    Ok(())
 }
 
 fn ensure_private_child_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
@@ -922,6 +1004,7 @@ mod tests {
             file_name: "screenshot.png".into(),
             size_bytes: bytes.len() as u64,
             sha256: format!("{:x}", Sha256::digest(bytes)),
+            attachment_root: String::new(),
         }
     }
 
@@ -937,6 +1020,34 @@ mod tests {
         let root = root.path().canonicalize().unwrap();
         assert!(super::resolve_relative(&root, "../secret").is_err());
         assert!(super::resolve_relative(&root, "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn custom_attachment_roots_expand_home_and_reject_unsafe_paths() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path().canonicalize().unwrap();
+        assert_eq!(
+            super::expand_custom_attachment_root("~/attachments", &home).unwrap(),
+            home.join("attachments")
+        );
+        assert!(super::expand_custom_attachment_root("attachments", &home).is_err());
+        assert!(super::expand_custom_attachment_root("~/../outside", &home).is_err());
+        assert!(super::expand_custom_attachment_root("$HOME/files", &home).is_err());
+        assert!(super::expand_custom_attachment_root("~/files\\uploads", &home).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attachment_root_returns_the_managed_directory() {
+        let parent = tempfile::tempdir().unwrap();
+        let result = super::attachment_root(super::FileAttachmentRootRequest {
+            attachment_root: parent.path().display().to_string(),
+        })
+        .unwrap();
+        let root = std::path::PathBuf::from(result.root_path);
+        assert!(root.is_dir());
+        assert!(root.ends_with("cli-manager-ssh-agent/attachments"));
+        assert!(parent.path().join("cli-manager-ssh-agent").is_dir());
     }
 
     #[cfg(unix)]
@@ -1318,6 +1429,31 @@ mod tests {
         let attachments = root.path().join("attachments");
         fs::create_dir(&attachments).unwrap();
         symlink(outside.path(), attachments.join("session-1")).unwrap();
+        let bytes = test_png(root.path());
+        let mut uploads = FileAttachmentUploads::default();
+        assert_eq!(
+            uploads
+                .begin_in_root(
+                    begin_request(&bytes),
+                    attachments,
+                    AttachmentKind::LegacyImage,
+                )
+                .unwrap_err(),
+            "attachment_cache_invalid"
+        );
+        assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attachment_upload_rejects_a_symlinked_custom_root_component() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let custom_parent = root.path().join("custom-parent");
+        symlink(outside.path(), &custom_parent).unwrap();
+        let attachments = custom_parent.join(ATTACHMENT_NAMESPACE).join("attachments");
         let bytes = test_png(root.path());
         let mut uploads = FileAttachmentUploads::default();
         assert_eq!(

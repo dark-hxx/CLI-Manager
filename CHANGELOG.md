@@ -29,6 +29,18 @@
 - 按钮与字号控件垂直排列，滚动状态按终端实例独立维护，兼容终端 Tab、分屏和多会话；按钮提示与无障碍标签支持中英文。
 - 新增终端滚动快捷键：`Ctrl+End` 跳转到底部，`PageUp` / `PageDown` 按可视区域翻页；仅作用于普通缓冲区，全屏 TUI 的 alternate buffer 仍接收原生按键。
 
+### SSH 终端 Host 级图片与文件粘贴
+
+- SSH 终端仅需当前会话的 SSH Host/远程目录和已安装 Agent，不再要求绑定登记的 SSH 项目；Ctrl+V、右键粘贴和文件拖放均按当前会话上传，文本粘贴保持不变。
+- SSH Host 新增可选远程附件父目录；留空使用 Agent 默认缓存目录，配置后由 Agent 在该目录下创建隔离的 `cli-manager-ssh-agent/attachments` 子目录。
+- SSH Agent 升级到 `0.1.11` / protocol `1.12`，新增 `fileAttachCustomRoot` 能力；旧 Agent 继续支持未配置目录的默认缓存，配置自定义目录时明确提示升级。
+
+### SSH Host 远程附件传输
+
+- SSH Host 列表不再展示认证方式徽标；认证方式编辑、连接测试和 OpenSSH 实际认证行为保持不变。
+- 每个 SSH Host 新增 SFTP 风格远程附件面板：左侧选择一个或多个本地文件，右侧浏览 Agent 附件目录，底部显示排队、上传中、完成或失败状态；上传不要求关联 SSH 项目或活动终端。
+- Agent 新增可选 `fileAttachmentRoot` 目录查询能力，面板使用远端实际解析出的默认/XDG 或自定义附件目录，不猜测远端 HOME；旧 Agent 缺少该能力时仍保留上传链路。
+
 ## [V1.3.8] - 2026-08-21
 
 ### 侧边栏底部同步状态单行显示

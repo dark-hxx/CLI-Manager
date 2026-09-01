@@ -29,12 +29,16 @@ const BACKUP_RESTORE_DELETE_STATEMENTS: [&str; 7] = [
 ];
 // 当前列清单必须与 src/stores/syncStore.ts 的 buildBatchInsertStatements 调用逐字一致（含顺序）。
 // 旧列清单继续放行，以便恢复新增绑定字段前生成的备份；缺失列由数据库默认值补齐。
-const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 9] = [
+const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 10] = [
     ("groups", "id,name,parent_id,sort_order,icon,color,bound_path,created_at"),
     ("groups", "id,name,parent_id,sort_order,icon,color,created_at"),
     (
         "ssh_host_groups",
         "id,name,parent_id,sort_order,created_at",
+    ),
+    (
+        "ssh_hosts",
+        "id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,attachment_root,startup_script,notes,sort_order,created_at,updated_at",
     ),
     (
         "ssh_hosts",
@@ -706,6 +710,7 @@ mod tests {
                 server_alive_interval_sec INTEGER NOT NULL,
                 server_alive_count_max INTEGER NOT NULL,
                 terminal_encoding TEXT NOT NULL,
+                attachment_root TEXT NOT NULL DEFAULT '',
                 startup_script TEXT NOT NULL,
                 notes TEXT NOT NULL,
                 sort_order INTEGER NOT NULL,
@@ -778,7 +783,7 @@ mod tests {
                 ],
             },
             BackupDatabaseStatement {
-                sql: "INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,startup_script,notes,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)".to_string(),
+                sql: "INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,attachment_root,startup_script,notes,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)".to_string(),
                 values: vec![
                     Value::String("ssh-host".to_string()),
                     Value::String("Server".to_string()),
@@ -802,6 +807,7 @@ mod tests {
                     Value::Number(30.into()),
                     Value::Number(3.into()),
                     Value::String("UTF-8".to_string()),
+                    Value::String("".to_string()),
                     Value::String("".to_string()),
                     Value::String("".to_string()),
                     Value::Number(0.into()),

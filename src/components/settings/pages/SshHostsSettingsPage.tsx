@@ -14,6 +14,7 @@ import {
   Server,
   Terminal,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
@@ -23,6 +24,7 @@ import type {
   SshHostGroup,
 } from "../../../lib/types";
 import { buildSshConnectionSpec } from "../../../lib/ssh";
+import { isValidSshAttachmentRoot } from "../../../lib/sshAttachment";
 import { useSshHostStore } from "../../../stores/sshHostStore";
 import { useTerminalStore } from "../../../stores/terminalStore";
 import { useSshAgentIntegrationStore } from "../../../stores/sshAgentIntegrationStore";
@@ -32,6 +34,7 @@ import { Button } from "../../ui/button";
 import { SshHostEditor } from "./SshHostEditor";
 import { SshCliIntegrationDialog } from "./SshCliIntegrationDialog";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
+import { SshHostAttachmentDialog } from "./SshHostAttachmentDialog";
 
 interface Props { searchValue: string; onTerminalOpened?: () => void }
 interface SshClientStatus { available: boolean; version: string | null; error: string | null }
@@ -41,7 +44,7 @@ const EMPTY_FORM: CreateSshHostInput = {
   auth_mode: "credential_ref", identity_file: "", jump_mode: "none", jump_host_id: null,
   proxy_type: "none", proxy_host: "", proxy_port: 0, proxy_command: "",
   connect_timeout_sec: 15, server_alive_interval_sec: 30, server_alive_count_max: 3,
-  terminal_encoding: "UTF-8", startup_script: "", notes: "",
+  terminal_encoding: "UTF-8", attachment_root: "", startup_script: "", notes: "",
 };
 
 const ERROR_LABELS: Record<string, TranslationKey> = {
@@ -57,6 +60,7 @@ const ERROR_LABELS: Record<string, TranslationKey> = {
   ssh_host_port_invalid: "settings.sshHosts.error.portInvalid",
   ssh_connect_timeout_invalid: "settings.sshHosts.error.timeoutInvalid",
   ssh_identity_file_required: "settings.sshHosts.error.identityRequired",
+  ssh_attachment_root_invalid: "settings.sshHosts.error.attachmentRootInvalid",
   ssh_jump_host_required: "settings.sshHosts.error.jumpRequired",
   ssh_proxy_command_required: "settings.sshHosts.error.proxyCommandRequired",
   ssh_password_required: "settings.sshHosts.error.passwordRequired",
@@ -87,7 +91,7 @@ function hostFromForm(form: CreateSshHostInput, id: string): SshHost {
     jump_host_id: form.jump_host_id ?? null, proxy_type: form.proxy_type ?? "none", proxy_host: form.proxy_host ?? "",
     proxy_port: form.proxy_port ?? 0, proxy_command: form.proxy_command ?? "", connect_timeout_sec: form.connect_timeout_sec ?? 15,
     server_alive_interval_sec: form.server_alive_interval_sec ?? 30, server_alive_count_max: form.server_alive_count_max ?? 3,
-    terminal_encoding: form.terminal_encoding ?? "UTF-8", startup_script: form.startup_script ?? "", notes: form.notes ?? "",
+    terminal_encoding: form.terminal_encoding ?? "UTF-8", attachment_root: form.attachment_root ?? "", startup_script: form.startup_script ?? "", notes: form.notes ?? "",
     sort_order: 0, created_at: "", updated_at: "",
   };
 }
@@ -128,6 +132,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
   const [credentialStored, setCredentialStored] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
+  const [attachmentHost, setAttachmentHost] = useState<SshHost | null>(null);
 
   useEffect(() => {
     void fetchHosts();
@@ -206,6 +211,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
     if (source === "address" && (!Number.isInteger(form.port) || (form.port ?? 0) < 1 || (form.port ?? 0) > 65535)) return "ssh_host_port_invalid";
     if (form.auth_mode === "identity_file" && !form.identity_file?.trim()) return "ssh_identity_file_required";
     if (form.auth_mode === "credential_ref" && !credentialStored && !password) return "ssh_password_required";
+    if (!isValidSshAttachmentRoot(form.attachment_root)) return "ssh_attachment_root_invalid";
     if (form.jump_mode !== "none" && !form.jump_host_id) return "ssh_jump_host_required";
     if (form.proxy_type === "proxy_command" && !form.proxy_command?.trim()) return "ssh_proxy_command_required";
     if ((form.proxy_type === "http" || form.proxy_type === "socks5") && form.proxy_host?.includes("@")) return "ssh_proxy_credentials_forbidden";
@@ -368,7 +374,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
       <div className="overflow-hidden rounded-2xl border border-border bg-surface-lowest">
         {!loaded ? <div className="p-8 text-center text-sm text-text-muted">{t("common.loading")}</div> : filteredHosts.length === 0 && groups.length === 0 ? (
           <div className="p-10 text-center"><Server className="mx-auto mb-3 h-8 w-8 text-text-muted" /><div className="font-bold text-text-primary">{t("settings.sshHosts.empty")}</div><div className="mt-1 text-xs text-text-muted">{t("settings.sshHosts.emptyDescription")}</div></div>
-        ) : <SshHostTree groups={groups} hosts={filteredHosts} collapsed={collapsedGroups} onToggle={(id) => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onAddHost={openCreate} onAddGroup={(group) => void addGroup(group)} onDeleteGroup={(group) => void removeGroup(group)} onOpenTerminal={(host) => void openTerminal(host)} onOpenIntegration={setIntegrationHost} onEditHost={openEdit} onDeleteHost={(host) => void remove(host)} />}
+        ) : <SshHostTree groups={groups} hosts={filteredHosts} collapsed={collapsedGroups} onToggle={(id) => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onAddHost={openCreate} onAddGroup={(group) => void addGroup(group)} onDeleteGroup={(group) => void removeGroup(group)} onOpenTerminal={(host) => void openTerminal(host)} onOpenAttachment={setAttachmentHost} onOpenIntegration={setIntegrationHost} onEditHost={openEdit} onDeleteHost={(host) => void remove(host)} />}
       </div>
       {visibleLoadError && <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">{visibleLoadError}</div>}
       {visibleError && !editorOpen && <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{visibleError}</div>}
@@ -402,12 +408,17 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
         hosts={hosts}
         onOpenChange={(nextOpen) => { if (!nextOpen) setIntegrationHost(null); }}
       />
+      <SshHostAttachmentDialog
+        open={attachmentHost !== null}
+        host={attachmentHost}
+        onOpenChange={(nextOpen) => { if (!nextOpen) setAttachmentHost(null); }}
+      />
       {confirmDialog}{promptDialog}
     </div>
   );
 }
 
-function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup, onDeleteGroup, onOpenTerminal, onOpenIntegration, onEditHost, onDeleteHost }: {
+function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup, onDeleteGroup, onOpenTerminal, onOpenAttachment, onOpenIntegration, onEditHost, onDeleteHost }: {
   groups: SshHostGroup[];
   hosts: SshHost[];
   collapsed: Set<string>;
@@ -416,6 +427,7 @@ function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup
   onAddGroup: (group: SshHostGroup) => void;
   onDeleteGroup: (group: SshHostGroup) => void;
   onOpenTerminal: (host: SshHost) => void;
+  onOpenAttachment: (host: SshHost) => void;
   onOpenIntegration: (host: SshHost) => void;
   onEditHost: (host: SshHost) => void;
   onDeleteHost: (host: SshHost) => void;
@@ -435,14 +447,14 @@ function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup
     const children = (childGroups.get(group.id) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
     const groupHosts = (hostsByGroup.get(group.id) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
     const isCollapsed = collapsed.has(group.id);
-    return <div key={group.id} className="border-b border-border last:border-b-0"><div className="flex h-11 items-center gap-2 bg-surface-low px-3" style={{ paddingLeft: 12 + depth * 18 }}><button type="button" className="ui-icon-button h-7 w-7" aria-label={isCollapsed ? t("settings.sshHosts.groupExpand") : t("settings.sshHosts.groupCollapse")} onClick={() => onToggle(group.id)}><ChevronRight className={`h-4 w-4 transition-transform ${isCollapsed ? "" : "rotate-90"}`} /></button><Folder className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">{group.name}</span><span className="text-xs text-text-muted">{groupHosts.length}</span><button type="button" className="ui-icon-button text-primary" title={t("settings.sshHosts.groupAddHost")} aria-label={t("settings.sshHosts.groupAddHost")} onClick={() => onAddHost(group)}><Plus className="h-4 w-4" /></button><button type="button" className="ui-icon-button" title={t("settings.sshHosts.groupAddChild")} aria-label={t("settings.sshHosts.groupAddChild")} onClick={() => onAddGroup(group)}><FolderPlus className="h-4 w-4" /></button><button type="button" className="ui-icon-button text-danger" title={t("settings.sshHosts.groupDelete")} aria-label={t("settings.sshHosts.groupDelete")} onClick={() => onDeleteGroup(group)}><Trash2 className="h-4 w-4" /></button></div>{!isCollapsed && <>{children.map((child) => renderGroup(child, depth + 1, childSet))}{groupHosts.map((host) => <SshHostRow key={host.id} host={host} depth={depth + 1} onOpenTerminal={onOpenTerminal} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</>}</div>;
+    return <div key={group.id} className="border-b border-border last:border-b-0"><div className="flex h-11 items-center gap-2 bg-surface-low px-3" style={{ paddingLeft: 12 + depth * 18 }}><button type="button" className="ui-icon-button h-7 w-7" aria-label={isCollapsed ? t("settings.sshHosts.groupExpand") : t("settings.sshHosts.groupCollapse")} onClick={() => onToggle(group.id)}><ChevronRight className={`h-4 w-4 transition-transform ${isCollapsed ? "" : "rotate-90"}`} /></button><Folder className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">{group.name}</span><span className="text-xs text-text-muted">{groupHosts.length}</span><button type="button" className="ui-icon-button text-primary" title={t("settings.sshHosts.groupAddHost")} aria-label={t("settings.sshHosts.groupAddHost")} onClick={() => onAddHost(group)}><Plus className="h-4 w-4" /></button><button type="button" className="ui-icon-button" title={t("settings.sshHosts.groupAddChild")} aria-label={t("settings.sshHosts.groupAddChild")} onClick={() => onAddGroup(group)}><FolderPlus className="h-4 w-4" /></button><button type="button" className="ui-icon-button text-danger" title={t("settings.sshHosts.groupDelete")} aria-label={t("settings.sshHosts.groupDelete")} onClick={() => onDeleteGroup(group)}><Trash2 className="h-4 w-4" /></button></div>{!isCollapsed && <>{children.map((child) => renderGroup(child, depth + 1, childSet))}{groupHosts.map((host) => <SshHostRow key={host.id} host={host} depth={depth + 1} onOpenTerminal={onOpenTerminal} onOpenAttachment={onOpenAttachment} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</>}</div>;
   };
   const roots = (childGroups.get(null) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
   const ungrouped = (hostsByGroup.get(null) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-  return <>{roots.map((group) => renderGroup(group, 0, new Set()))}{ungrouped.length > 0 && <div><div className="flex h-10 items-center gap-2 border-b border-border bg-surface-low px-4"><Folder className="h-4 w-4 text-text-muted" /><span className="text-xs font-bold text-text-muted">{t("settings.sshHosts.groupNone")}</span></div>{ungrouped.map((host) => <SshHostRow key={host.id} host={host} depth={1} onOpenTerminal={onOpenTerminal} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</div>}</>;
+  return <>{roots.map((group) => renderGroup(group, 0, new Set()))}{ungrouped.length > 0 && <div><div className="flex h-10 items-center gap-2 border-b border-border bg-surface-low px-4"><Folder className="h-4 w-4 text-text-muted" /><span className="text-xs font-bold text-text-muted">{t("settings.sshHosts.groupNone")}</span></div>{ungrouped.map((host) => <SshHostRow key={host.id} host={host} depth={1} onOpenTerminal={onOpenTerminal} onOpenAttachment={onOpenAttachment} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</div>}</>;
 }
 
-function SshHostRow({ host, depth, onOpenTerminal, onOpenIntegration, onEdit, onDelete }: { host: SshHost; depth: number; onOpenTerminal: (host: SshHost) => void; onOpenIntegration: (host: SshHost) => void; onEdit: (host: SshHost) => void; onDelete: (host: SshHost) => void }) {
+function SshHostRow({ host, depth, onOpenTerminal, onOpenAttachment, onOpenIntegration, onEdit, onDelete }: { host: SshHost; depth: number; onOpenTerminal: (host: SshHost) => void; onOpenAttachment: (host: SshHost) => void; onOpenIntegration: (host: SshHost) => void; onEdit: (host: SshHost) => void; onDelete: (host: SshHost) => void }) {
   const { t } = useI18n();
-  return <div className="flex items-center gap-3 border-t border-border px-4 py-2.5" style={{ paddingLeft: 16 + depth * 18 }}><Server className="h-4 w-4 shrink-0 text-primary" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-text-primary">{host.name}</div><div className="truncate text-xs text-text-muted">{host.config_alias || `${host.username ? `${host.username}@` : ""}${host.host}:${host.port}`}</div></div><span className="ui-badge-neutral">{t(`settings.sshHosts.auth.${host.auth_mode}` as const)}</span><button className="ui-icon-button" aria-label={t("settings.sshHosts.openTerminal")} title={t("settings.sshHosts.openTerminal")} onClick={() => onOpenTerminal(host)}><Terminal className="h-4 w-4" /></button><button className="ui-icon-button" aria-label={t("settings.sshHosts.cliIntegration.open")} title={t("settings.sshHosts.cliIntegration.open")} onClick={() => onOpenIntegration(host)}><Plug className="h-4 w-4" /></button><button className="ui-icon-button" aria-label={t("common.edit")} onClick={() => onEdit(host)}><Pencil className="h-4 w-4" /></button><button className="ui-icon-button text-danger" aria-label={t("common.delete")} onClick={() => onDelete(host)}><Trash2 className="h-4 w-4" /></button></div>;
+  return <div className="flex items-center gap-3 border-t border-border px-4 py-2.5" style={{ paddingLeft: 16 + depth * 18 }}><Server className="h-4 w-4 shrink-0 text-primary" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-text-primary">{host.name}</div><div className="truncate text-xs text-text-muted">{host.config_alias || `${host.username ? `${host.username}@` : ""}${host.host}:${host.port}`}</div></div><button type="button" className="ui-icon-button" aria-label={t("settings.sshHosts.attachmentDialog.open")} title={t("settings.sshHosts.attachmentDialog.open")} onClick={() => onOpenAttachment(host)}><Upload className="h-4 w-4" /></button><button type="button" className="ui-icon-button" aria-label={t("settings.sshHosts.openTerminal")} title={t("settings.sshHosts.openTerminal")} onClick={() => onOpenTerminal(host)}><Terminal className="h-4 w-4" /></button><button type="button" className="ui-icon-button" aria-label={t("settings.sshHosts.cliIntegration.open")} title={t("settings.sshHosts.cliIntegration.open")} onClick={() => onOpenIntegration(host)}><Plug className="h-4 w-4" /></button><button type="button" className="ui-icon-button" aria-label={t("common.edit")} onClick={() => onEdit(host)}><Pencil className="h-4 w-4" /></button><button type="button" className="ui-icon-button text-danger" aria-label={t("common.delete")} onClick={() => onDelete(host)}><Trash2 className="h-4 w-4" /></button></div>;
 }

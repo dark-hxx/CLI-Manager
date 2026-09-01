@@ -7,6 +7,7 @@ import { buildBatchInsertStatements, getDb, type DatabaseStatement } from "../li
 import { normalizeNodeAccentToken, normalizeNodeIcon } from "../lib/nodeAppearance";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../lib/shell";
 import { singleFlight } from "../lib/singleFlight";
+import { isValidSshAttachmentRoot, normalizeSshAttachmentRoot } from "../lib/sshAttachment";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import { pickSyncableSettings, SYNCABLE_SETTING_KEYS, type SyncableSettingKey } from "../lib/syncSettings";
 import { sanitizeThirdPartyHookTargets } from "../lib/thirdPartyNotifications";
@@ -133,7 +134,7 @@ const ALL_DOMAINS: BackupDomain[] = ["workspace", "preferences", "model_prices",
 const PROJECT_SELECT = "SELECT id, name, path, path_mode, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at FROM projects ORDER BY sort_order";
 const GROUP_SELECT = "SELECT id, name, parent_id, sort_order, icon, color, bound_path, created_at FROM groups ORDER BY sort_order";
 const SSH_HOST_GROUP_SELECT = "SELECT id, name, parent_id, sort_order, created_at FROM ssh_host_groups ORDER BY sort_order";
-const SSH_HOST_SELECT = "SELECT id, name, group_name, group_id, host, port, username, config_alias, auth_mode, jump_mode, jump_host_id, proxy_type, proxy_host, proxy_port, connect_timeout_sec, server_alive_interval_sec, server_alive_count_max, terminal_encoding, startup_script, notes, sort_order, created_at, updated_at FROM ssh_hosts ORDER BY sort_order";
+const SSH_HOST_SELECT = "SELECT id, name, group_name, group_id, host, port, username, config_alias, auth_mode, jump_mode, jump_host_id, proxy_type, proxy_host, proxy_port, connect_timeout_sec, server_alive_interval_sec, server_alive_count_max, terminal_encoding, attachment_root, startup_script, notes, sort_order, created_at, updated_at FROM ssh_hosts ORDER BY sort_order";
 const LOCAL_SSH_HOST_FIELDS_SELECT = "SELECT id, identity_file, credential_ref, config_file, proxy_command FROM ssh_hosts";
 const TEMPLATE_SELECT = "SELECT id, project_id, name, command, description, sort_order FROM command_templates ORDER BY sort_order";
 const WORKTREE_SELECT = "SELECT id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at FROM worktrees WHERE status = 'active' ORDER BY created_at DESC";
@@ -144,7 +145,7 @@ const SSH_HOST_COLUMNS = [
   "id", "name", "group_name", "group_id", "host", "port", "username", "config_alias", "config_file",
   "auth_mode", "identity_file", "credential_ref", "jump_mode", "jump_host_id", "proxy_type", "proxy_host",
   "proxy_port", "proxy_command", "connect_timeout_sec", "server_alive_interval_sec", "server_alive_count_max",
-  "terminal_encoding", "startup_script", "notes", "sort_order", "created_at", "updated_at",
+  "terminal_encoding", "attachment_root", "startup_script", "notes", "sort_order", "created_at", "updated_at",
 ] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
@@ -345,11 +346,17 @@ function normalizeSshProxyType(value: unknown, localFields: LocalSshHostFields |
 }
 
 function sanitizePortableSshHost(host: Record<string, unknown>): Record<string, unknown> {
+  const attachmentRoot = typeof host.attachment_root === "string"
+    ? normalizeSshAttachmentRoot(host.attachment_root)
+    : "";
+  const sanitized = isValidSshAttachmentRoot(attachmentRoot)
+    ? { ...host, attachment_root: attachmentRoot }
+    : { ...host, attachment_root: "" };
   if ((host.proxy_type === "http" || host.proxy_type === "socks5")
     && typeof host.proxy_host === "string" && host.proxy_host.includes("@")) {
-    return { ...host, proxy_type: "none", proxy_host: "", proxy_port: 0 };
+    return { ...sanitized, proxy_type: "none", proxy_host: "", proxy_port: 0 };
   }
-  return host;
+  return sanitized;
 }
 
 async function applyPreferences(preferences: Record<string, unknown>) {
@@ -411,6 +418,10 @@ async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Prom
       const localFields = localSshHostFields.get(hostId);
       const jumpMode = normalizeSshJumpMode(item.jump_mode);
       const proxyType = normalizeSshProxyType(item.proxy_type, localFields);
+      const rawAttachmentRoot = typeof item.attachment_root === "string" ? item.attachment_root : "";
+      const attachmentRoot = isValidSshAttachmentRoot(rawAttachmentRoot)
+        ? normalizeSshAttachmentRoot(rawAttachmentRoot)
+        : "";
       return [
         item.id, item.name, item.group_name ?? "",
         typeof item.group_id === "string" && sshHostGroupIds.has(item.group_id) ? item.group_id : null,
@@ -423,7 +434,9 @@ async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Prom
         proxyType, proxyType === "none" ? "" : item.proxy_host ?? "",
         proxyType === "none" ? 0 : integerOr(item.proxy_port, 0), localFields?.proxy_command ?? "",
         integerOr(item.connect_timeout_sec, 15), integerOr(item.server_alive_interval_sec, 30),
-        integerOr(item.server_alive_count_max, 3), item.terminal_encoding ?? "UTF-8", item.startup_script ?? "",
+        integerOr(item.server_alive_count_max, 3), item.terminal_encoding ?? "UTF-8",
+        attachmentRoot,
+        item.startup_script ?? "",
         item.notes ?? "", integerOr(item.sort_order, 0), item.created_at ?? now, item.updated_at ?? now,
       ];
     }));

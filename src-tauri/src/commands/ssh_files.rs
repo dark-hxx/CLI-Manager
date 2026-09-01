@@ -1,5 +1,6 @@
 use crate::daemon::client::DaemonBridge;
 use crate::ssh_launch::SshLaunchPlan;
+use crate::ssh_transport::{validate_remote_home_path, SshRemoteHomePathError};
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -12,6 +13,7 @@ const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
 const MAX_LEGACY_IMAGE_PIXELS: u64 = 12_000_000;
 const MAX_ATTACHMENT_BASE64_BYTES: usize = MAX_ATTACHMENT_BYTES.div_ceil(3) * 4;
 const ATTACHMENT_CHUNK_BYTES: usize = 512 * 1024;
+const MAX_ATTACHMENT_ROOT_LENGTH: usize = 4096;
 const LEGACY_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
 #[derive(Clone, Copy)]
@@ -183,6 +185,27 @@ fn validate_remote_attachment_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_attachment_root(value: Option<String>) -> Result<String, String> {
+    let value = value.unwrap_or_default();
+    if value.len() > MAX_ATTACHMENT_ROOT_LENGTH || value.chars().any(char::is_control) {
+        return Err("ssh_attachment_root_invalid".to_string());
+    }
+    let root = value.trim().to_string();
+    if root.is_empty() {
+        return Ok(root);
+    }
+    if root.len() > MAX_ATTACHMENT_ROOT_LENGTH {
+        return Err("ssh_attachment_root_invalid".to_string());
+    }
+    validate_remote_home_path(&root).map_err(|error| match error {
+        SshRemoteHomePathError::Invalid => "ssh_attachment_root_invalid".to_string(),
+        SshRemoteHomePathError::ParentTraversal => {
+            "ssh_attachment_root_parent_forbidden".to_string()
+        }
+    })?;
+    Ok(root)
+}
+
 fn upload_attachment(
     client: &crate::daemon::client::DaemonClient,
     consumer_id: String,
@@ -190,17 +213,22 @@ fn upload_attachment(
     session_id: String,
     file_name: String,
     data: Vec<u8>,
+    attachment_root: String,
 ) -> Result<String, String> {
     validate_plan(&ssh_launch)?;
     validate_attachment_name(&file_name)?;
     validate_attachment_bytes(&data)?;
+    let attachment_root = normalize_attachment_root(Some(attachment_root))?;
     let sha256 = format!("{:x}", Sha256::digest(&data));
-    let begin_payload = json!({
+    let mut begin_payload = json!({
         "sessionId": session_id,
         "fileName": file_name,
         "sizeBytes": data.len(),
         "sha256": sha256,
     });
+    if !attachment_root.is_empty() {
+        begin_payload["attachmentRoot"] = Value::String(attachment_root);
+    }
     let mut protocol = AttachmentProtocol::AnyFile;
     let begin = match client.ssh_agent_request(
         consumer_id.clone(),
@@ -282,8 +310,10 @@ async fn attach(
     consumer_id: String,
     ssh_launch: SshLaunchPlan,
     session_id: String,
+    attachment_root: Option<String>,
     attachment: AttachmentSource,
 ) -> Result<String, String> {
+    let attachment_root = normalize_attachment_root(attachment_root)?;
     let client = daemon_bridge
         .get()
         .ok_or_else(|| "daemon_unavailable".to_string())?;
@@ -296,6 +326,7 @@ async fn attach(
             session_id,
             file_name,
             data,
+            attachment_root,
         )
     })
     .await
@@ -310,12 +341,14 @@ pub async fn ssh_remote_file_attach_data(
     session_id: String,
     file_name: String,
     data_base64: String,
+    attachment_root: Option<String>,
 ) -> Result<String, String> {
     attach(
         daemon_bridge,
         consumer_id,
         ssh_launch,
         session_id,
+        attachment_root,
         AttachmentSource::Data {
             file_name,
             data_base64,
@@ -331,13 +364,33 @@ pub async fn ssh_remote_file_attach_path(
     ssh_launch: SshLaunchPlan,
     session_id: String,
     local_path: String,
+    attachment_root: Option<String>,
 ) -> Result<String, String> {
     attach(
         daemon_bridge,
         consumer_id,
         ssh_launch,
         session_id,
+        attachment_root,
         AttachmentSource::LocalPath(local_path),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn ssh_remote_file_attachment_root(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    attachment_root: Option<String>,
+) -> Result<Value, String> {
+    let attachment_root = normalize_attachment_root(attachment_root)?;
+    request(
+        daemon_bridge,
+        consumer_id,
+        ssh_launch,
+        "fileAttachmentRoot",
+        json!({ "attachmentRoot": attachment_root }),
     )
     .await
 }
@@ -400,8 +453,9 @@ pub async fn ssh_remote_file_search(
 #[cfg(test)]
 mod tests {
     use super::{
-        can_fallback_to_legacy_image, decode_attachment, is_legacy_image_name, read_attachment,
-        validate_attachment_name, validate_remote_attachment_path, MAX_ATTACHMENT_BYTES,
+        can_fallback_to_legacy_image, decode_attachment, is_legacy_image_name,
+        normalize_attachment_root, read_attachment, validate_attachment_name,
+        validate_remote_attachment_path, MAX_ATTACHMENT_BYTES,
     };
     use base64::{engine::general_purpose, Engine as _};
     use std::fs;
@@ -437,6 +491,22 @@ mod tests {
             "/home/dev/.cache/cli-manager-ssh-agent/attachments/../secret.png"
         )
         .is_err());
+    }
+
+    #[test]
+    fn attachment_roots_allow_home_paths_but_reject_escape_inputs() {
+        assert_eq!(
+            normalize_attachment_root(Some(" ~/attachments ".to_string())).unwrap(),
+            "~/attachments"
+        );
+        assert!(normalize_attachment_root(Some("attachments".to_string())).is_err());
+        assert_eq!(
+            normalize_attachment_root(Some("~/../outside".to_string())).unwrap_err(),
+            "ssh_attachment_root_parent_forbidden"
+        );
+        assert!(normalize_attachment_root(Some("$HOME/files".to_string())).is_err());
+        assert!(normalize_attachment_root(Some("/tmp/files\nmore".to_string())).is_err());
+        assert_eq!(normalize_attachment_root(None).unwrap(), "");
     }
 
     #[test]

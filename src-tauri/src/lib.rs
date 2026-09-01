@@ -891,6 +891,11 @@ pub(crate) const MIGRATION_ADD_PROJECT_PATH_MODE_VERSION: i64 = 36;
 pub(crate) const MIGRATION_ADD_PROJECT_PATH_MODE_DESCRIPTION: &str = "add_project_path_mode";
 pub(crate) const MIGRATION_ADD_PROJECT_PATH_MODE_SQL: &str =
     "ALTER TABLE projects ADD COLUMN path_mode TEXT NOT NULL DEFAULT 'custom';";
+pub(crate) const MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION: i64 = 37;
+pub(crate) const MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION: &str =
+    "add_attachment_root_to_ssh_hosts";
+pub(crate) const MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL: &str =
+    "ALTER TABLE ssh_hosts ADD COLUMN attachment_root TEXT NOT NULL DEFAULT '';";
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -1211,6 +1216,12 @@ fn migrations() -> Vec<Migration> {
             version: MIGRATION_ADD_PROJECT_PATH_MODE_VERSION,
             description: MIGRATION_ADD_PROJECT_PATH_MODE_DESCRIPTION,
             sql: MIGRATION_ADD_PROJECT_PATH_MODE_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION,
+            description: MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION,
+            sql: MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL,
             kind: MigrationKind::Up,
         },
     ]
@@ -1655,6 +1666,7 @@ pub fn run() {
             commands::ssh_files::ssh_remote_file_search,
             commands::ssh_files::ssh_remote_file_attach_data,
             commands::ssh_files::ssh_remote_file_attach_path,
+            commands::ssh_files::ssh_remote_file_attachment_root,
             commands::ssh_git::ssh_remote_git_request,
             commands::history::history_get_conversion_matrix,
             commands::history::history_refresh_index,
@@ -1893,8 +1905,9 @@ pub fn run() {
 #[cfg(test)]
 mod ssh_migration_tests {
     use super::{
-        MIGRATION_ADD_SSH_CONFIG_FILE_SQL, MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL,
-        MIGRATION_CREATE_SSH_HOSTS_SQL, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+        MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL, MIGRATION_ADD_SSH_CONFIG_FILE_SQL,
+        MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL, MIGRATION_CREATE_SSH_HOSTS_SQL,
+        MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
     };
     use sqlx::{Connection, Row, SqliteConnection};
 
@@ -2119,6 +2132,48 @@ mod ssh_migration_tests {
             .unwrap();
         assert_eq!(row.get::<String, _>("config_file"), "");
     }
+
+    #[tokio::test]
+    async fn ssh_attachment_root_migration_defaults_existing_hosts_to_agent_cache() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_CREATE_SSH_HOSTS_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO ssh_hosts (id, name, host, created_at, updated_at)
+             VALUES ('host-1', 'Server', 'example.com', '1', '1')",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        let row = sqlx::query("SELECT attachment_root FROM ssh_hosts WHERE id = 'host-1'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("attachment_root"), "");
+
+        sqlx::query("UPDATE ssh_hosts SET attachment_root = '~/attachments' WHERE id = 'host-1'")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let row = sqlx::query("SELECT attachment_root FROM ssh_hosts WHERE id = 'host-1'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("attachment_root"), "~/attachments");
+    }
 }
 
 #[cfg(test)]
@@ -2129,7 +2184,8 @@ mod provider_migration_tests {
     };
     use crate::{
         MIGRATION_ADD_GROUP_BOUND_PATH_VERSION, MIGRATION_ADD_NODE_APPEARANCE_VERSION,
-        MIGRATION_ADD_PROJECT_PATH_MODE_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+        MIGRATION_ADD_PROJECT_PATH_MODE_VERSION, MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION,
+        MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
         MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
         MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
         MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
@@ -2236,11 +2292,20 @@ mod provider_migration_tests {
         assert!(project_path_mode_migration
             .sql
             .contains("ALTER TABLE projects ADD COLUMN path_mode TEXT"));
+        let ssh_attachment_root_migration = registry
+            .iter()
+            .find(|migration| migration.version == MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION)
+            .expect("SSH attachment root migration must be registered");
+        assert_eq!(ssh_attachment_root_migration.version, 37);
+        assert!(ssh_attachment_root_migration
+            .sql
+            .contains("ALTER TABLE ssh_hosts ADD COLUMN attachment_root TEXT"));
         assert!(node_appearance_migration.version < group_bound_path_migration.version);
         assert!(group_bound_path_migration.version < project_path_mode_migration.version);
+        assert!(project_path_mode_migration.version < ssh_attachment_root_migration.version);
         assert!(registry
             .iter()
-            .all(|migration| migration.version <= project_path_mode_migration.version));
+            .all(|migration| migration.version <= ssh_attachment_root_migration.version));
         assert!(registry.iter().any(|migration| migration.version == 29
             && migration.description == "optimize_unified_usage_record_queries"));
     }

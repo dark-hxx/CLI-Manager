@@ -100,7 +100,7 @@ export function SshHostEditor(props: Props) {
       ? "auth"
       : props.errorCode.includes("jump") || props.errorCode.includes("proxy")
         ? "routing"
-        : props.errorCode.includes("timeout") || props.errorCode.includes("alive") || props.errorCode.includes("encoding")
+        : props.errorCode.includes("timeout") || props.errorCode.includes("alive") || props.errorCode.includes("encoding") || props.errorCode.includes("attachment")
           ? "connection"
           : "basic";
     scrollToSection(section);
@@ -257,7 +257,7 @@ function parseProxyUrl(value: string): { type: "http" | "socks5"; host: string; 
 
 function ConnectionFields({ form, setValue }: { form: CreateSshHostInput; setValue: SetValue }) {
   const { t } = useI18n();
-  return <div className="space-y-3"><FieldRow label={t("settings.sshHosts.timeout")} required><input type="number" min={1} max={300} value={form.connect_timeout_sec} onChange={(e) => setValue("connect_timeout_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveInterval")}><input type="number" min={0} value={form.server_alive_interval_sec} onChange={(e) => setValue("server_alive_interval_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveCount")}><input type="number" min={1} max={100} value={form.server_alive_count_max} onChange={(e) => setValue("server_alive_count_max", Number(e.target.value))} /></FieldRow></div>;
+  return <div className="space-y-3"><FieldRow label={t("settings.sshHosts.timeout")} required><input type="number" min={1} max={300} value={form.connect_timeout_sec} onChange={(e) => setValue("connect_timeout_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveInterval")}><input type="number" min={0} value={form.server_alive_interval_sec} onChange={(e) => setValue("server_alive_interval_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveCount")}><input type="number" min={1} max={100} value={form.server_alive_count_max} onChange={(e) => setValue("server_alive_count_max", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.attachmentRoot")} description={t("settings.sshHosts.attachmentRootDescription")}><input value={form.attachment_root ?? ""} onChange={(e) => setValue("attachment_root", e.target.value)} placeholder={t("settings.sshHosts.attachmentRootPlaceholder")} /></FieldRow></div>;
 }
 
 function StartupFields({ form, setValue }: { form: CreateSshHostInput; setValue: SetValue }) {
