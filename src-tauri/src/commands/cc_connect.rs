@@ -4,8 +4,8 @@ use crate::codex_app_server_proxy::{
     SshCodexLaunch, CODEX_BASE_URL_OVERRIDE_ENV, CODEX_ENV_KEY_OVERRIDE_ENV,
     CODEX_LAUNCHER_ARGS_ENV, CODEX_LAUNCHER_ENV, CODEX_MODEL_CATALOG_OVERRIDE_ENV,
     CODEX_MODEL_OVERRIDE_ENV, CODEX_MODEL_PROVIDER_ENV, CODEX_PROFILE_NAME_ENV,
-    CODEX_PROVIDER_NAME_OVERRIDE_ENV, CODEX_SSH_LAUNCH_ENV, CODEX_WIRE_API_OVERRIDE_ENV,
-    EXPECTED_SESSION_ID_ENV, PROXY_EXECUTABLE_ENV,
+    CODEX_PROTOCOL_TRACE_PATH_ENV, CODEX_PROVIDER_NAME_OVERRIDE_ENV, CODEX_SSH_LAUNCH_ENV,
+    CODEX_WIRE_API_OVERRIDE_ENV, EXPECTED_SESSION_ID_ENV, PROXY_EXECUTABLE_ENV,
 };
 #[cfg(target_os = "windows")]
 use crate::process_job::ChildJob;
@@ -2987,6 +2987,7 @@ fn managed_project_environment(
 struct RemoteCodexProviderLaunch {
     name: String,
     profile_name: String,
+    profile_text: String,
     model_provider: String,
     provider_name_override: String,
     model: Option<String>,
@@ -3007,6 +3008,7 @@ struct RemoteCodexLaunch {
     expected_session_id: Option<String>,
     codex_home: Option<PathBuf>,
     discovery_codex_home: Option<PathBuf>,
+    protocol_trace_path: Option<PathBuf>,
     provider: Option<RemoteCodexProviderLaunch>,
     ssh_launch: Option<SshCodexLaunch>,
 }
@@ -3344,6 +3346,11 @@ fn write_codex_model_discovery_home(
         &directory.join(CONFIG_FILE_NAME),
         config.as_bytes(),
         "Codex model discovery config",
+    )?;
+    write_file_atomically(
+        &directory.join(format!("{}.config.toml", provider.profile_name)),
+        provider.profile_text.as_bytes(),
+        "Codex model discovery Provider profile",
     )
 }
 
@@ -3509,6 +3516,7 @@ fn prepare_remote_codex_launch(
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
             let profile_name = runtime.profile.profile_name.clone();
+            let profile_text = runtime.profile.profile_text.clone();
             let model_provider = runtime.profile.model_provider.clone();
             Some(RemoteCodexProviderLaunch {
                 name: project
@@ -3518,6 +3526,7 @@ fn prepare_remote_codex_launch(
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| provider_id.to_string()),
                 profile_name,
+                profile_text,
                 model_provider: model_provider.clone(),
                 provider_name_override: codex_wrapper_override(
                     &codex_provider_override_key(&model_provider, "name")?,
@@ -3569,6 +3578,7 @@ fn prepare_remote_codex_launch(
         expected_session_id,
         codex_home,
         discovery_codex_home,
+        protocol_trace_path: profile.logging_enabled.then(log_path).transpose()?,
         provider,
         ssh_launch,
     }))
@@ -3629,6 +3639,14 @@ fn apply_remote_codex_launch_environment(
         }
         None => {
             command.env_remove(EXPECTED_SESSION_ID_ENV);
+        }
+    }
+    match launch.protocol_trace_path.as_ref() {
+        Some(path) => {
+            command.env(CODEX_PROTOCOL_TRACE_PATH_ENV, path);
+        }
+        None => {
+            command.env_remove(CODEX_PROTOCOL_TRACE_PATH_ENV);
         }
     }
     match launch.provider.as_ref() {
@@ -7177,6 +7195,7 @@ allow_from = ""
         let provider = provider.then(|| RemoteCodexProviderLaunch {
             name: "Project Provider".to_string(),
             profile_name: "cli-manager-project-provider-123".to_string(),
+            profile_text: "model_provider = \"custom\"\nservice_tier = \"fast\"\n\n[model_providers.custom]\nname = \"Project Provider\"\nbase_url = \"https://provider.example.com/v1\"\nenv_key = \"CLI_MANAGER_CODEX_PROVIDER_API_KEY\"\nwire_api = \"responses\"\n".to_string(),
             model_provider: "custom".to_string(),
             provider_name_override: "model_providers.custom.name=CLI-Manager remote".to_string(),
             model: Some("gpt-5.4".to_string()),
@@ -7203,6 +7222,7 @@ allow_from = ""
             discovery_codex_home: provider.is_some().then(|| {
                 PathBuf::from(r"C:\Users\test\.cli-manager\remote-manager\codex-model-discovery")
             }),
+            protocol_trace_path: None,
             provider,
             ssh_launch: None,
         }
@@ -7262,6 +7282,14 @@ allow_from = ""
             config["model_catalog_json"].as_str(),
             Some(CODEX_MODEL_CATALOG_FILE_NAME)
         );
+        let profile = fs::read_to_string(
+            directory
+                .path()
+                .join("cli-manager-project-provider-123.config.toml"),
+        )
+        .unwrap();
+        assert!(profile.contains("service_tier = \"fast\""));
+        assert!(!profile.contains("sk-provider-secret"));
         let raw_catalog =
             fs::read_to_string(directory.path().join(CODEX_MODEL_CATALOG_FILE_NAME)).unwrap();
         let catalog = serde_json::from_str::<serde_json::Value>(&raw_catalog).unwrap();
@@ -7353,7 +7381,10 @@ allow_from = ""
     #[test]
     fn codex_launch_environment_forces_provider_without_embedding_secrets() {
         let mut command = Command::new("cc-connect");
-        let launch = sample_remote_codex_launch(true);
+        let mut launch = sample_remote_codex_launch(true);
+        launch.protocol_trace_path = Some(PathBuf::from(
+            r"C:\Users\test\.cli-manager\logs\cc-connect.log",
+        ));
         apply_remote_codex_launch_environment(&mut command, &launch).unwrap();
         let environment = command
             .get_envs()
@@ -7408,6 +7439,12 @@ allow_from = ""
             Some(&Some("thread-original".to_string()))
         );
         assert_eq!(
+            environment.get(CODEX_PROTOCOL_TRACE_PATH_ENV),
+            Some(&Some(
+                r"C:\Users\test\.cli-manager\logs\cc-connect.log".to_string()
+            ))
+        );
+        assert_eq!(
             environment.get(CODEX_LAUNCHER_ARGS_ENV),
             Some(&Some(serde_json::to_string(&launch.launcher_args).unwrap()))
         );
@@ -7441,6 +7478,7 @@ allow_from = ""
             CODEX_MODEL_CATALOG_OVERRIDE_ENV,
             CODEX_MODEL_OVERRIDE_ENV,
             CODEX_WIRE_API_OVERRIDE_ENV,
+            CODEX_PROTOCOL_TRACE_PATH_ENV,
         ] {
             assert_eq!(environment.get(key), Some(&None));
         }
