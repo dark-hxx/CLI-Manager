@@ -2,6 +2,9 @@ import type { Project, TerminalSession } from "../../lib/types";
 
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const GROK_EXECUTABLE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?$/i;
+const GROK_TOOL_VALUE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?(?:\s+build)?$/i;
+const GROK_WSL_COMMAND_PATTERN = /^\s*(?:&\s*)?wsl(?:\.exe)?\s+(?:--\s+)?grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const PI_COMMAND_PATTERN = /^\s*(?:&\s*)?pi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const OPENCODE_TOOL_VALUES = new Set(["opencode", "opencode.cmd", "opencode.exe", "opencode.ps1"]);
 const OPENCODE_COMMAND_PATTERN = /^opencode(?:\.(?:cmd|exe|ps1))?$/i;
@@ -23,6 +26,10 @@ function commandExecutableToken(command: string): string {
   const match = trimmed.match(/^(?:"([^"]+)"|'([^']+)'|([^\s]+))/);
   return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").replace(/\\/g, "/").split("/").pop() ?? "";
 }
+
+export const isGrokLaunchCommand = (command: string): boolean => (
+  GROK_EXECUTABLE_PATTERN.test(commandExecutableToken(command))
+);
 
 const isOpenCodeToolValue = (value: string): boolean => (
   OPENCODE_TOOL_VALUES.has(value.trim().toLowerCase())
@@ -54,6 +61,42 @@ export const isCodexTerminalContext = ({
   || projectTool === "codex"
   || titleTool === "codex"
   || CODEX_COMMAND_PATTERN.test(startupCmd)
+);
+
+const isGrokToolValue = (value: string): boolean => (
+  value.trim().toLowerCase() === "grokbuild"
+  || GROK_TOOL_VALUE_PATTERN.test(value.trim())
+);
+
+export const isGrokTerminalContext = ({
+  projectTool,
+  sessionTool,
+  startupCmd,
+  titleTool,
+}: TerminalCliContext): boolean => (
+  isGrokToolValue(sessionTool)
+  || isGrokToolValue(projectTool)
+  || isGrokToolValue(titleTool)
+  || isGrokLaunchCommand(startupCmd)
+  || GROK_WSL_COMMAND_PATTERN.test(startupCmd)
+);
+
+export const isGrokRuntimeContext = (
+  context: TerminalCliContext,
+  {
+    manualLaunchDetected,
+    hasVisibleTuiPrompt,
+  }: {
+    manualLaunchDetected: boolean;
+    hasVisibleTuiPrompt: boolean;
+  },
+): boolean => (
+  isGrokTerminalContext(context)
+  || (manualLaunchDetected && hasVisibleTuiPrompt)
+);
+
+export const usesEscCrComposerNewline = (context: TerminalCliContext): boolean => (
+  isCodexTerminalContext(context) || isGrokTerminalContext(context)
 );
 
 export const isClaudeTerminalContext = ({

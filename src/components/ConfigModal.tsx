@@ -39,6 +39,8 @@ import {
   type CliArgsHistoryEntry,
 } from "../lib/cliArgsHistory";
 import { useSshDirectoryBrowser } from "../hooks/useSshDirectoryBrowser";
+import { resolveGroupBoundPath } from "../lib/groupPath";
+import { pathExists } from "../lib/pathValidation";
 
 interface Props {
   project?: Project;
@@ -137,6 +139,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
     cloneFrom ? t("configModal.cloneName", { name: cloneFrom.name }) : (project?.name ?? "")
   );
   const [path, setPath] = useState(cloneFrom?.path ?? project?.path ?? "");
+  const [pathMode, setPathMode] = useState<"inherit" | "custom">(project?.path_mode ?? (cloneFrom ? "custom" : "inherit"));
+  const pathModeUserSelectedRef = useRef(false);
   const sourceProject = cloneFrom ?? project;
   const [projectType, setProjectType] = useState<"local" | "ssh">(
     sourceProject?.environment_type === "ssh" ? "ssh" : "local"
@@ -172,6 +176,37 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [wslPickerEntries, setWslPickerEntries] = useState<ProjectFileEntry[]>([]);
   const [wslPickerLoading, setWslPickerLoading] = useState(false);
   const [wslPickerError, setWslPickerError] = useState("");
+  const parentBoundPath = useMemo(
+    () => resolveGroupBoundPath(groups, groupId ?? defaultGroupId),
+    [defaultGroupId, groupId, groups]
+  );
+
+  useEffect(() => {
+    if (!groupId) {
+      setPathMode("custom");
+      return;
+    }
+    if (!parentBoundPath) {
+      if (pathMode === "inherit") setPathMode("custom");
+      return;
+    }
+    if (pathMode === "inherit") {
+      setPath(parentBoundPath);
+      return;
+    }
+    if (project?.path_mode === "inherit" && !pathModeUserSelectedRef.current) {
+      setPath(parentBoundPath);
+      setPathMode("inherit");
+      return;
+    }
+    if (isClone) return;
+    if (parentBoundPath && !project && !pathModeUserSelectedRef.current) {
+      setPath(parentBoundPath);
+      setPathMode("inherit");
+    } else if (!project) {
+      setPathMode("custom");
+    }
+  }, [defaultGroupId, groupId, isClone, parentBoundPath, pathMode, project]);
   const cliArgsHistorySuggestions = useMemo(
     () => getCliArgsHistorySuggestions(cliArgsHistory, cliTool, undefined, cliArgs),
     [cliArgsHistory, cliTool, cliArgs]
@@ -376,14 +411,16 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   };
 
   const validatePath = useCallback(async (rawPath: string) => {
-    try {
-      const results = await invoke<boolean[]>("check_paths_exist", { paths: [rawPath] });
-      return Boolean(results[0]);
-    } catch (err) {
-      logError("Path validation failed in ConfigModal", { rawPath, err });
-      return false;
-    }
+    const valid = await pathExists(rawPath);
+    if (!valid) logError("Path validation failed in ConfigModal", { rawPath });
+    return valid;
   }, []);
+
+  const handleDisabledPathModeClick = useCallback((value: string) => {
+    if (value === "inherit" && !parentBoundPath) {
+      toast.info(t("configModal.pathMode.parentUnavailable"));
+    }
+  }, [parentBoundPath, t]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -442,6 +479,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
         await updateProject(project.id, {
           name: name.trim(),
           path: projectType === "ssh" ? "" : path.trim(),
+          path_mode: projectType === "ssh" ? "custom" : pathMode,
           group_id: groupId,
           cli_tool: trimmedCliTool,
           cli_args: trimmedCliArgs,
@@ -461,6 +499,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
         await createProject({
           name: name.trim(),
           path: projectType === "ssh" ? "" : path.trim(),
+          path_mode: projectType === "ssh" ? "custom" : pathMode,
           group_id: groupId,
           cli_tool: trimmedCliTool || undefined,
           cli_args: trimmedCliArgs || undefined,
@@ -604,25 +643,32 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                 <label htmlFor={pathFieldId} className="ui-config-form-label">
                   {t("configModal.path")} <span className="text-danger">*</span>
                 </label>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                {groupId && (
+                  <Select value={pathMode} onChange={(event) => {
+                    const next = event.target.value as "inherit" | "custom";
+                    pathModeUserSelectedRef.current = true;
+                    setPathMode(next);
+                    if (next === "inherit" && parentBoundPath) setPath(parentBoundPath);
+                  }} onDisabledOptionClick={handleDisabledPathModeClick} className="w-32 shrink-0 text-sm">
+                    <option value="inherit" disabled={!parentBoundPath}>{t("configModal.pathMode.inherit")}</option>
+                    <option value="custom">{t("configModal.pathMode.custom")}</option>
+                  </Select>
+                )}
+                <div className="relative min-w-0 flex-1">
                   <Input
                     id={pathFieldId}
                     type="text"
                     value={path}
+                    disabled={pathMode === "inherit" && Boolean(parentBoundPath)}
                     onChange={(e) => setPath(e.target.value)}
                     placeholder={t("configModal.pathPlaceholder")}
-                    className="min-w-0 flex-1 text-sm"
+                    className="min-w-0 pr-10 text-sm"
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleBrowse}
-                    className="h-9 shrink-0 px-3"
-                  >
-                    {t("common.browse")}
-                  </Button>
-                  {symlinkCompatibilityEnabled && (
+                  {pathMode === "custom" && <button type="button" className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-text-muted hover:text-primary" onClick={() => void handleBrowse()} aria-label={t("common.browse")} title={t("common.browse")}>
+                    <FolderOpen className="h-4 w-4" />
+                  </button>}
+                  {symlinkCompatibilityEnabled && pathMode === "custom" && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -630,11 +676,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                       onClick={handleBrowseSymlink}
                       aria-label={t("configModal.chooseSymlinkPath")}
                       title={t("configModal.chooseSymlinkPath")}
-                      className="h-9 shrink-0 px-2 text-[11px]"
+                      className="absolute inset-y-0 right-10 h-9 shrink-0 px-2 text-[11px]"
                     >
                       WSL
                     </Button>
                   )}
+                </div>
                 </div>
               </div> : (
                 <>
@@ -1380,17 +1427,28 @@ function GroupSelector({
             {t("configModal.group.none")}
           </button>
 
-          {flatList.map(({ group: g, depth }) => (
-            <button
-              key={g.id}
-              type="button"
-              onClick={() => { onChange(g.id); setOpen(false); }}
-              className={`mx-1 w-[calc(100%-0.5rem)] rounded-lg py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${value === g.id ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
-              style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
-            >
-              {g.name}
-            </button>
-          ))}
+          {flatList.map(({ group: g, depth }) => {
+            const bindingPath = resolveGroupBoundPath(groups, g.id);
+            return (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => { onChange(g.id); setOpen(false); }}
+                className={`mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${value === g.id ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
+                style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
+              >
+                <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                {bindingPath && (
+                  <span
+                    className="max-w-[55%] shrink-0 truncate text-xs text-text-muted opacity-75"
+                    title={bindingPath}
+                  >
+                    {bindingPath}
+                  </span>
+                )}
+              </button>
+            );
+          })}
 
           {flatList.length === 0 && (
             <div className="px-3 py-2 text-xs text-text-muted">{t("configModal.group.empty")}</div>

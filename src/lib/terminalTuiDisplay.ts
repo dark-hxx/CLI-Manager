@@ -16,6 +16,7 @@ const SLASH_COMMAND_MENU_LINE_PATTERN = /^\/[a-z0-9][a-z0-9:_-]*(?:\s|$)/i;
 // A single dark cell can be a TUI block cursor; a painted block always spans several.
 const DARK_BLOCK_MIN_CELLS = 4;
 const CODEX_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|\/model\s+to\s+change)/i;
+const GROK_TUI_VIEWPORT_PATTERN = /grok\s+build/i;
 const OTHER_AI_TUI_VIEWPORT_PATTERN = /(?:claude\s+code|yolo\s+mode)/i;
 
 type MutableXtermCell = IBufferCell & {
@@ -61,6 +62,15 @@ export function hasCodexTuiViewport(terminal: Terminal): boolean {
   for (let row = 0; row < terminal.rows; row += 1) {
     const line = buffer.getLine(buffer.viewportY + row);
     if (line && CODEX_TUI_VIEWPORT_PATTERN.test(line.translateToString(true))) return true;
+  }
+  return false;
+}
+
+export function hasGrokTuiViewport(terminal: Terminal): boolean {
+  const buffer = terminal.buffer.active;
+  for (let row = 0; row < terminal.rows; row += 1) {
+    const line = buffer.getLine(buffer.viewportY + row);
+    if (line && GROK_TUI_VIEWPORT_PATTERN.test(line.translateToString(true))) return true;
   }
   return false;
 }

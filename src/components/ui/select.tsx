@@ -65,6 +65,8 @@ interface SelectProps {
   id?: string;
   "aria-label"?: string;
   placeholder?: string;
+  /** Invoked when a disabled option is clicked, without changing the value. */
+  onDisabledOptionClick?: (value: string) => void;
 }
 
 export function Select({
@@ -78,6 +80,7 @@ export function Select({
   id,
   "aria-label": ariaLabel,
   placeholder,
+  onDisabledOptionClick,
 }: SelectProps) {
   const options = useMemo(() => {
     const list: ParsedOption[] = [];
@@ -147,6 +150,11 @@ export function Select({
                 key={opt.value}
                 value={opt.value}
                 disabled={opt.disabled}
+                onPointerDownCapture={(event) => {
+                  if (!opt.disabled) return;
+                  event.preventDefault();
+                  onDisabledOptionClick?.(opt.value);
+                }}
                 className={cn(
                   "relative flex cursor-pointer items-center gap-2 px-3 py-1.5 outline-none",
                   "data-[highlighted]:bg-surface-container-highest",

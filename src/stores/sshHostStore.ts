@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type Database from "@tauri-apps/plugin-sql";
 import { getDb } from "../lib/db";
+import { isValidSshAttachmentRoot, normalizeSshAttachmentRoot } from "../lib/sshAttachment";
 import type { CreateSshHostInput, SshHost, SshHostGroup, UpdateSshHostInput } from "../lib/types";
 
 interface SshHostSchema {
@@ -74,6 +75,7 @@ function buildSshHost(input: CreateSshHostInput): SshHost {
     server_alive_interval_sec: Math.max(0, Math.trunc(input.server_alive_interval_sec ?? 30)),
     server_alive_count_max: Math.max(1, Math.trunc(input.server_alive_count_max ?? 3)),
     terminal_encoding: input.terminal_encoding?.trim() || "UTF-8",
+    attachment_root: normalizeSshAttachmentRoot(input.attachment_root),
     startup_script: input.startup_script?.trim() ?? "",
     notes: input.notes?.trim() ?? "",
     sort_order: 0,
@@ -103,6 +105,9 @@ function validateSshHost(host: SshHost, currentId?: string): void {
   }
   if (host.auth_mode === "identity_file" && !host.identity_file.trim()) {
     throw new Error("ssh_identity_file_required");
+  }
+  if (!isValidSshAttachmentRoot(host.attachment_root)) {
+    throw new Error("ssh_attachment_root_invalid");
   }
   if (/\w+:\/\/[^\s/@]+:[^\s/@]+@/i.test(host.proxy_command)) {
     throw new Error("ssh_proxy_credentials_forbidden");
@@ -141,10 +146,10 @@ async function insertSshHost(db: Database, schema: SshHostSchema, host: SshHost)
          identity_file, credential_ref, jump_mode, jump_host_id, proxy_type,
          proxy_host, proxy_port, proxy_command, connect_timeout_sec,
          server_alive_interval_sec, server_alive_count_max, terminal_encoding,
-         startup_script, notes, sort_order, created_at, updated_at
+         attachment_root, startup_script, notes, sort_order, created_at, updated_at
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
        )`,
       [
         host.id, host.name, host.group_name, host.group_id, host.host, host.port, host.username,
@@ -152,8 +157,8 @@ async function insertSshHost(db: Database, schema: SshHostSchema, host: SshHost)
         host.jump_mode, host.jump_host_id, host.proxy_type, host.proxy_host,
         host.proxy_port, host.proxy_command, host.connect_timeout_sec,
         host.server_alive_interval_sec, host.server_alive_count_max,
-        host.terminal_encoding, host.startup_script, host.notes, host.sort_order,
-        host.created_at, host.updated_at,
+        host.terminal_encoding, host.attachment_root, host.startup_script, host.notes,
+        host.sort_order, host.created_at, host.updated_at,
       ],
     );
     return;
@@ -164,10 +169,10 @@ async function insertSshHost(db: Database, schema: SshHostSchema, host: SshHost)
        identity_file, credential_ref, jump_mode, jump_host_id, proxy_type,
        proxy_host, proxy_port, proxy_command, connect_timeout_sec,
        server_alive_interval_sec, server_alive_count_max, terminal_encoding,
-       startup_script, notes, sort_order, created_at, updated_at
+       attachment_root, startup_script, notes, sort_order, created_at, updated_at
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
+       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
      )`,
     [
       host.id, host.name, host.group_name, host.host, host.port, host.username,
@@ -175,8 +180,8 @@ async function insertSshHost(db: Database, schema: SshHostSchema, host: SshHost)
       host.jump_mode, host.jump_host_id, host.proxy_type, host.proxy_host,
       host.proxy_port, host.proxy_command, host.connect_timeout_sec,
       host.server_alive_interval_sec, host.server_alive_count_max,
-      host.terminal_encoding, host.startup_script, host.notes, host.sort_order,
-      host.created_at, host.updated_at,
+      host.terminal_encoding, host.attachment_root, host.startup_script, host.notes,
+      host.sort_order, host.created_at, host.updated_at,
     ],
   );
 }
@@ -211,6 +216,7 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
         hosts: hosts.map((host) => ({
           ...host,
           group_id: schema.hasGroupId ? host.group_id ?? null : null,
+          attachment_root: normalizeSshAttachmentRoot(host.attachment_root),
         })),
         groups,
         loaded: true,
@@ -306,17 +312,17 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
            jump_mode = $12, jump_host_id = $13, proxy_type = $14, proxy_host = $15,
            proxy_port = $16, proxy_command = $17, connect_timeout_sec = $18,
            server_alive_interval_sec = $19, server_alive_count_max = $20,
-           terminal_encoding = $21, startup_script = $22, notes = $23,
-           sort_order = $24, updated_at = $25
-         WHERE id = $26`,
+           terminal_encoding = $21, attachment_root = $22, startup_script = $23, notes = $24,
+           sort_order = $25, updated_at = $26
+         WHERE id = $27`,
         [
           next.name, next.group_name, next.group_id, next.host, next.port, next.username,
           next.config_alias, next.config_file, next.auth_mode, next.identity_file, next.credential_ref,
           next.jump_mode, next.jump_host_id, next.proxy_type, next.proxy_host,
           next.proxy_port, next.proxy_command, next.connect_timeout_sec,
           next.server_alive_interval_sec, next.server_alive_count_max,
-          next.terminal_encoding, next.startup_script, next.notes, next.sort_order,
-          next.updated_at, id,
+          next.terminal_encoding, next.attachment_root, next.startup_script, next.notes,
+          next.sort_order, next.updated_at, id,
         ],
       );
     } else {
@@ -327,17 +333,17 @@ export const useSshHostStore = create<SshHostStore>((set, get) => ({
            jump_mode = $11, jump_host_id = $12, proxy_type = $13, proxy_host = $14,
            proxy_port = $15, proxy_command = $16, connect_timeout_sec = $17,
            server_alive_interval_sec = $18, server_alive_count_max = $19,
-           terminal_encoding = $20, startup_script = $21, notes = $22,
-           sort_order = $23, updated_at = $24
-         WHERE id = $25`,
+           terminal_encoding = $20, attachment_root = $21, startup_script = $22, notes = $23,
+           sort_order = $24, updated_at = $25
+         WHERE id = $26`,
         [
           next.name, next.group_name, next.host, next.port, next.username,
           next.config_alias, next.config_file, next.auth_mode, next.identity_file, next.credential_ref,
           next.jump_mode, next.jump_host_id, next.proxy_type, next.proxy_host,
           next.proxy_port, next.proxy_command, next.connect_timeout_sec,
           next.server_alive_interval_sec, next.server_alive_count_max,
-          next.terminal_encoding, next.startup_script, next.notes, next.sort_order,
-          next.updated_at, id,
+          next.terminal_encoding, next.attachment_root, next.startup_script, next.notes,
+          next.sort_order, next.updated_at, id,
         ],
       );
     }

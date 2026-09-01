@@ -20,6 +20,9 @@ const SHORTCUT_LABELS: Record<ShortcutAction, TranslationKey> = {
   sessionHistory: "settings.shortcuts.action.sessionHistory",
   copyAi: "settings.shortcuts.action.copyAi",
   copyTerminalSelection: "settings.shortcuts.action.copyTerminalSelection",
+  scrollToBottom: "terminal.scrollToBottom",
+  pageUp: "settings.shortcuts.action.pageUp",
+  pageDown: "settings.shortcuts.action.pageDown",
   toggleSidebar: "settings.shortcuts.action.toggleSidebar",
   toggleTerminalFullscreen: "settings.shortcuts.action.toggleTerminalFullscreen",
 };

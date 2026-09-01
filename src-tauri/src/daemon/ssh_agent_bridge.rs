@@ -270,6 +270,11 @@ impl BridgeLane {
                 | "fileAttachAnyChunk"
                 | "fileAttachAnyFinish"
                 | "fileAttachAnyAbort"
+                | "filePutBegin"
+                | "filePutChunk"
+                | "filePutFinish"
+                | "filePutAbort"
+                | "fileAttachmentRoot"
                 | "agentCapabilitiesInspect"
                 | "agentCapabilitiesProbe"
                 | "gitListRepositories"
@@ -467,7 +472,7 @@ impl SshAgentBridgeManager {
             || plan.agent_installation_id.is_empty()
             || plan.agent_remote_machine_id.is_empty()
             || plan.client_instance_id.is_empty()
-            || plan.project_id.is_empty()
+            || (lane == BridgeLane::Primary && plan.project_id.is_empty())
             || plan.bridge_epoch.is_empty()
             || (lane.requires_tool_source() && plan.tool_source.is_empty())
         {
@@ -584,6 +589,11 @@ impl SshAgentBridgeManager {
                     | "fileAttachAnyChunk"
                     | "fileAttachAnyFinish"
                     | "fileAttachAnyAbort"
+                    | "filePutBegin"
+                    | "filePutChunk"
+                    | "filePutFinish"
+                    | "filePutAbort"
+                    | "fileAttachmentRoot"
                     | "agentCapabilitiesInspect"
                     | "agentCapabilitiesProbe"
                     | "gitListRepositories"
@@ -770,9 +780,19 @@ fn required_capability(kind: &str) -> Option<&'static str> {
         | "fileAttachAnyChunk"
         | "fileAttachAnyFinish"
         | "fileAttachAnyAbort" => Some("fileAttachAny"),
+        "filePutBegin" | "filePutChunk" | "filePutFinish" | "filePutAbort" => Some("filePut"),
+        "fileAttachmentRoot" => Some("fileAttachmentRoot"),
         "agentCapabilitiesInspect" | "agentCapabilitiesProbe" => Some("agentCapabilitiesV1"),
         _ => None,
     }
+}
+
+fn custom_attachment_root_requested(kind: &str, payload: &Value) -> bool {
+    matches!(kind, "fileAttachBegin" | "fileAttachAnyBegin")
+        && payload
+            .get("attachmentRoot")
+            .and_then(Value::as_str)
+            .is_some_and(|root| !root.trim().is_empty())
 }
 
 fn handle_agent_request(
@@ -793,6 +813,16 @@ fn handle_agent_request(
                 .send(Err(format!("ssh_agent_capability_missing:{required}")));
             return Ok(());
         }
+    }
+    if custom_attachment_root_requested(&agent_request.kind, &agent_request.payload)
+        && !capabilities
+            .iter()
+            .any(|value| value.as_str() == Some("fileAttachCustomRoot"))
+    {
+        let _ = agent_request.response.send(Err(
+            "ssh_agent_capability_missing:fileAttachCustomRoot".to_string(),
+        ));
+        return Ok(());
     }
     let request_id = format!("agent-request-{}", *request_number);
     *request_number = request_number.saturating_add(1);
@@ -1611,6 +1641,7 @@ mod tests {
                 "fileAttachAnyBegin",
                 "ssh_agent_capability_missing:fileAttachAny",
             ),
+            ("filePutBegin", "ssh_agent_capability_missing:filePut"),
         ] {
             let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
             let (response_sender, response_receiver) = mpsc::sync_channel(1);
@@ -1844,6 +1875,36 @@ mod tests {
         assert_eq!(
             required_capability("fileAttachAnyBegin"),
             Some("fileAttachAny")
+        );
+        assert_eq!(
+            required_capability("fileAttachmentRoot"),
+            Some("fileAttachmentRoot")
+        );
+        assert_eq!(required_capability("filePutBegin"), Some("filePut"));
+        let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        let mut writer = Vec::new();
+        let mut request_number = 10;
+        handle_agent_request(
+            &mut writer,
+            &reader_receiver,
+            "host-1",
+            &mut request_number,
+            &[json!("fileAttachAny")],
+            AgentBridgeRequest {
+                kind: "fileAttachAnyBegin".to_string(),
+                payload: json!({
+                    "attachmentRoot": "~/custom-files"
+                }),
+                response: response_sender,
+            },
+        )
+        .unwrap();
+        assert!(writer.is_empty());
+        assert_eq!(request_number, 10);
+        assert_eq!(
+            response_receiver.recv().unwrap().unwrap_err(),
+            "ssh_agent_capability_missing:fileAttachCustomRoot"
         );
         assert!(!BridgeLane::Primary.is_request_driven());
         assert!(BridgeLane::Readonly.is_request_driven());
