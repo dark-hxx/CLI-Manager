@@ -1447,6 +1447,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn attachment_upload_rejects_a_symlinked_custom_root_component() {
+        use super::ATTACHMENT_NAMESPACE;
         use std::os::unix::fs::symlink;
 
         let root = tempfile::tempdir().unwrap();
