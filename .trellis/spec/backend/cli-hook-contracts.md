@@ -1068,7 +1068,11 @@ validate_explicit_transcript_path(path) -> PathBuf | error
 - One global sink remains the sole classifier before app, daemon, third-party, and remote-handoff fan-out; no downstream sink may independently defer or duplicate an approval.
 - Only a message-less Codex child event from `local` or `wsl` is a provisional candidate. SSH spool/replay events always deliver immediately.
 - A provisional approval may resolve only against the same source, environment, tab, parent session, and child-agent scope. `Some(session)` and `None` are never equivalent.
+- Local/WSL Codex installs internal `PreToolUse -> ToolStart` and `PostToolUse -> ToolStop` reporters. These events are admitted only to shared arbitration and never reach app, pet, toast, taskbar, system, third-party, or remote-handoff delivery sinks.
+- Tool progress and approval delivery may arrive in either order. A short-lived, bounded, single-consumption progress tombstone uses the exact scoped tool ID when both sides provide one, otherwise the exact tool name; it never crosses source, environment, tab, parent session, or child-agent boundaries.
+- Progress resolves pending approvals before deadline polling, so a matching event received at the grace boundary cannot first fan out a stale approval. Real unresolved approvals retain bounded fallback delivery exactly once.
 - Transcript metadata is read only after explicit path normalization and transcript-root validation. Native metadata polling of `\\wsl$` / `\\wsl.localhost` paths is forbidden.
+- Trusted child and parent transcript candidates are evaluated independently. The Hook-provided byte baseline applies only to the exact path it measured; when absent, the backend captures a native baseline after validation, while WSL UNC candidates never trigger native metadata access.
 - Missing, untrusted, unreadable, or non-local transcript metadata leaves the approval unresolved; the bounded fallback delivery remains authoritative and must never suppress it permanently.
 
 ### 4. Validation & Error Matrix
@@ -1077,6 +1081,8 @@ validate_explicit_transcript_path(path) -> PathBuf | error
 |---|---|
 | SSH `PermissionRequest` from spool replay | Forward immediately; do not enter provisional state. |
 | Local/WSL message-less Codex child request | Hold only for the bounded arbitration window. |
+| Matching Codex ToolStart/ToolStop before or after a provisional request | Resolve it silently; no downstream fan-out. |
+| Progress event lacks tool ID | Match only an exact tool name inside the exact child scope. |
 | Source/environment/tab/session/agent mismatch | Do not resolve or cancel the other approval. |
 | Explicit path outside a trusted transcript root | Do not read metadata; use normal fallback delivery. |
 | WSL UNC transcript path | Do not call native `fs::metadata`; rely on Hook event/timing flow. |
@@ -1092,7 +1098,9 @@ validate_explicit_transcript_path(path) -> PathBuf | error
 ### 6. Tests Required
 
 - Rust tests cover SSH immediate delivery, local/WSL candidate admission, source/environment/session isolation, and timeout fallback delivery.
+- Rust tests cover ToolStart/ToolStop before and after PermissionRequest, exact-name fallback, tool-ID mismatch, multi-child isolation, deadline ordering, tombstone expiry, and zero downstream delivery for internal progress.
 - Rust tests cover rejected untrusted paths and WSL UNC paths without native metadata polling.
+- Hook settings tests cover Codex lifecycle install/status/trust/uninstall; an older installation without `PostToolUse -> ToolStop` must report partial until explicitly reinstalled.
 - Run `cargo fmt --check`, targeted approval/remote Hook tests, `cargo check --lib`, and `git diff --check`.
 
 ### 7. Wrong vs Correct
