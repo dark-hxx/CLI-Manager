@@ -81,6 +81,17 @@ pub struct FileAttachBeginRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FilePutBeginRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub relative_path: String,
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileAttachChunkRequest {
     pub upload_id: String,
     pub offset: u64,
@@ -167,6 +178,65 @@ impl FileAttachmentUploads {
     ) -> Result<FileAttachBeginResult, String> {
         let root = attachment_cache_root(&request.attachment_root)?;
         self.begin_in_root(request, root, AttachmentKind::AnyFile)
+    }
+
+    pub fn begin_put(
+        &mut self,
+        request: FilePutBeginRequest,
+    ) -> Result<FileAttachBeginResult, String> {
+        if self.active.len() >= MAX_ACTIVE_ATTACHMENT_UPLOADS {
+            return Err("attachment_upload_limit_reached".to_string());
+        }
+        if request.size_bytes == 0 {
+            return Err("attachment_empty".to_string());
+        }
+        if request.size_bytes > MAX_ATTACHMENT_BYTES {
+            return Err("attachment_too_large".to_string());
+        }
+        validate_attachment_name(&request.file_name)?;
+        let expected_sha256 = normalize_sha256(&request.sha256)?;
+        let root = resolve_root(&request.root_path)?;
+        let parent_dir = resolve_relative(&root, &request.relative_path)?;
+        if !parent_dir.is_dir() {
+            return Err("remote_file_not_directory".to_string());
+        }
+
+        for _ in 0..4 {
+            let upload_id = uuid::Uuid::new_v4().to_string();
+            let temporary_path = parent_dir.join(format!(".{upload_id}.upload"));
+            let file = match OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary_path)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => return Err("attachment_create_failed".to_string()),
+            };
+            if let Err(error) = set_private_file_permissions(&temporary_path) {
+                drop(file);
+                let _ = fs::remove_file(&temporary_path);
+                return Err(error);
+            }
+            self.active.insert(
+                upload_id.clone(),
+                PendingFileAttachment {
+                    cache_root: root.clone(),
+                    parent_dir: parent_dir.clone(),
+                    temporary_path,
+                    target_path: parent_dir.join(&request.file_name),
+                    cleanup_dir: None,
+                    file,
+                    expected_size: request.size_bytes,
+                    written: 0,
+                    expected_sha256,
+                    hasher: Sha256::new(),
+                    validate_image: false,
+                },
+            );
+            return Ok(FileAttachBeginResult { upload_id });
+        }
+        Err("attachment_create_failed".to_string())
     }
 
     fn begin_in_root(
@@ -826,14 +896,21 @@ fn walk_search(
 
 fn resolve_root(value: &str) -> Result<PathBuf, String> {
     let value = value.trim();
-    if !Path::new(value).is_absolute()
+    if value.is_empty()
         || value.contains(['\0', '\r', '\n'])
         || (!cfg!(windows) && value.contains('\\'))
         || value.split('/').any(|part| part == "..")
     {
         return Err("remote_file_root_invalid".to_string());
     }
-    let root = Path::new(value)
+    let root = if value.starts_with('/') || Path::new(value).is_absolute() {
+        PathBuf::from(value)
+    } else {
+        let layout = resolve_layout().map_err(|_| "remote_file_root_invalid".to_string())?;
+        expand_custom_attachment_root(value, &layout.home)
+            .map_err(|_| "remote_file_root_invalid".to_string())?
+    };
+    let root = root
         .canonicalize()
         .map_err(|_| "remote_file_root_unavailable".to_string())?;
     if !root.is_dir() {
@@ -974,9 +1051,9 @@ mod tests {
     use super::{
         base64_encode, cleanup_expired_attachments, list, read, search, AttachmentKind,
         FileAttachAbortRequest, FileAttachBeginRequest, FileAttachChunkRequest,
-        FileAttachFinishRequest, FileAttachmentUploads, FileListRequest, FileReadRequest,
-        FileSearchRequest, ATTACHMENT_RETENTION, MAX_ATTACHMENT_BYTES, MAX_ENTRIES,
-        MAX_SEARCH_RESULTS, MAX_TEXT_READ_BYTES,
+        FileAttachFinishRequest, FileAttachmentUploads, FileListRequest, FilePutBeginRequest,
+        FileReadRequest, FileSearchRequest, ATTACHMENT_RETENTION, MAX_ATTACHMENT_BYTES,
+        MAX_ENTRIES, MAX_SEARCH_RESULTS, MAX_TEXT_READ_BYTES,
     };
     use base64::{engine::general_purpose, Engine as _};
     use sha2::{Digest, Sha256};
@@ -1387,6 +1464,39 @@ mod tests {
                 .unwrap_err(),
             "attachment_too_large"
         );
+    }
+
+    #[test]
+    fn direct_file_upload_writes_to_the_selected_directory_without_uuid_children() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("uploads");
+        fs::create_dir(&target).unwrap();
+        let bytes = b"not-an-image";
+        let mut uploads = FileAttachmentUploads::default();
+        let upload_id = uploads
+            .begin_put(FilePutBeginRequest {
+                root_path: root.path().display().to_string(),
+                relative_path: "uploads".into(),
+                file_name: "notes.txt".into(),
+                size_bytes: bytes.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(bytes)),
+            })
+            .unwrap()
+            .upload_id;
+        uploads
+            .append(FileAttachChunkRequest {
+                upload_id: upload_id.clone(),
+                offset: 0,
+                data_base64: general_purpose::STANDARD.encode(bytes),
+            })
+            .unwrap();
+        let result = uploads
+            .finish(FileAttachFinishRequest { upload_id })
+            .unwrap();
+        let path = std::path::PathBuf::from(result.path);
+        assert_eq!(path, target.join("notes.txt").canonicalize().unwrap());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
     }
 
     #[test]

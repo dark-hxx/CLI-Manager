@@ -53,6 +53,11 @@
     uploads available when an older Agent lacks this optional capability.
 12. [x] Add bilingual UI/error copy, update V1.3.9 changelog and feature inventory, and extend
     this task's scenario/acceptance notes without changing terminal or project binding rules.
+13. [x] Repair known `attachment_root` migration drift before the SQL plugin opens the database;
+    add the Host-only `filePut` Agent protocol and route Host SFTP uploads directly to the
+    configured/current remote directory without an automatically generated UUID child. Add
+    editable remote-path navigation, directory/file listing, collision-safe upload handling,
+    bilingual errors, and regression tests.
 
 ## Required focused assertions
 
@@ -61,8 +66,9 @@
   absolute Agent path.
 - [x] Two Host IDs and two sessions do not share the configured root/session upload namespace;
   changing the selected project or pane does not change the target.
-- [x] Empty Host root sends no custom-root directive and retains old Agent behavior. A configured
-  root returns a path below its Agent-managed child namespace.
+- [x] Empty Host root keeps terminal-paste default behavior. Host SFTP starts at the configured
+  directory (or the Agent default when empty) and returns a path directly below the current
+  directory without a generated UUID child.
 - [x] Invalid root forms (relative, `..`, control, backslash, shell-expansion markers, and symlink
   component) fail before remote upload; unrelated files in the configured parent survive Agent
   cleanup.
@@ -72,7 +78,8 @@
   their existing target/path behavior.
 - [x] Host list no longer renders auth mode; Host editor and OpenSSH auth behavior remain intact.
 - [x] Each Host opens an isolated two-pane attachment dialog; selected local files upload through
-  the installed Host Agent and appear in the transfer queue/remote listing without project IDs.
+  the installed Host Agent, appear in the transfer queue/remote listing without project IDs, and
+  can be routed to a manually entered remote directory.
 
 ## Validation commands
 

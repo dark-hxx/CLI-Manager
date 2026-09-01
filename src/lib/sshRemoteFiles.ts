@@ -160,6 +160,34 @@ export async function sshRemoteAttachFilesForHost(
   }, sshHostAttachmentSessionId(hostId), inputs);
 }
 
+export async function sshRemotePutFilesForHost(
+  hostId: string,
+  remoteDirectory: string,
+  inputs: Array<{ kind: "localPath"; path: string }>,
+): Promise<string[]> {
+  if (inputs.length === 0) return [];
+  const launch = await buildSshAgentHostLaunch(hostId, "/");
+  const context: SshRemoteFileContext = {
+    consumerId: `file-put:${launch.clientInstanceId}:${launch.hostId}:${crypto.randomUUID()}`,
+    launch,
+    rootPath: remoteDirectory,
+  };
+  try {
+    const paths: string[] = [];
+    for (const input of inputs) {
+      paths.push(await invoke<string>("ssh_remote_file_put_path", {
+        consumerId: context.consumerId,
+        sshLaunch: context.launch,
+        rootPath: remoteDirectory,
+        localPath: input.path,
+      }));
+    }
+    return paths;
+  } finally {
+    await releaseSshRemoteFileContext(context).catch(() => undefined);
+  }
+}
+
 async function attachFilesWithContext(
   context: SshRemoteFileContext,
   sessionId: string,

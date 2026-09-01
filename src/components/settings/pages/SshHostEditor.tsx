@@ -135,8 +135,8 @@ export function SshHostEditor(props: Props) {
             {SECTIONS.map(({ id, icon: Icon, label }) => <button key={id} type="button" role="tab" aria-selected={activeSection === id} className={`ui-focus-ring flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${activeSection === id ? "bg-primary/15 text-primary ring-1 ring-primary/40" : "text-text-muted hover:bg-surface-container-high hover:text-text-primary"}`} onClick={() => scrollToSection(id)}><Icon className="h-3.5 w-3.5" />{t(label)}</button>)}
           </div>
         </div>
+        {props.error && <div className="shrink-0 whitespace-pre-wrap break-words border-b border-danger/40 bg-danger/10 px-5 py-2 text-xs text-danger" role="alert" aria-live="assertive">{props.error}</div>}
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4" onScroll={handleScroll}>
-          {props.error && <div className="mb-4 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{props.error}</div>}
           <FormSection section="basic" title={t("settings.sshHosts.section.basic")} description={t("settings.sshHosts.section.basicDescription")} sectionRefs={sectionRefs}>
             <BasicFields form={props.form} groups={props.groups} source={props.source} setSource={changeSource} setValue={props.setValue} />
           </FormSection>

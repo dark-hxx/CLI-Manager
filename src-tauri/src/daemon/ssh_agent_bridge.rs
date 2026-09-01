@@ -270,6 +270,10 @@ impl BridgeLane {
                 | "fileAttachAnyChunk"
                 | "fileAttachAnyFinish"
                 | "fileAttachAnyAbort"
+                | "filePutBegin"
+                | "filePutChunk"
+                | "filePutFinish"
+                | "filePutAbort"
                 | "fileAttachmentRoot"
                 | "agentCapabilitiesInspect"
                 | "agentCapabilitiesProbe"
@@ -585,6 +589,10 @@ impl SshAgentBridgeManager {
                     | "fileAttachAnyChunk"
                     | "fileAttachAnyFinish"
                     | "fileAttachAnyAbort"
+                    | "filePutBegin"
+                    | "filePutChunk"
+                    | "filePutFinish"
+                    | "filePutAbort"
                     | "fileAttachmentRoot"
                     | "agentCapabilitiesInspect"
                     | "agentCapabilitiesProbe"
@@ -772,6 +780,7 @@ fn required_capability(kind: &str) -> Option<&'static str> {
         | "fileAttachAnyChunk"
         | "fileAttachAnyFinish"
         | "fileAttachAnyAbort" => Some("fileAttachAny"),
+        "filePutBegin" | "filePutChunk" | "filePutFinish" | "filePutAbort" => Some("filePut"),
         "fileAttachmentRoot" => Some("fileAttachmentRoot"),
         "agentCapabilitiesInspect" | "agentCapabilitiesProbe" => Some("agentCapabilitiesV1"),
         _ => None,
@@ -1632,6 +1641,7 @@ mod tests {
                 "fileAttachAnyBegin",
                 "ssh_agent_capability_missing:fileAttachAny",
             ),
+            ("filePutBegin", "ssh_agent_capability_missing:filePut"),
         ] {
             let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
             let (response_sender, response_receiver) = mpsc::sync_channel(1);
@@ -1870,6 +1880,7 @@ mod tests {
             required_capability("fileAttachmentRoot"),
             Some("fileAttachmentRoot")
         );
+        assert_eq!(required_capability("filePutBegin"), Some("filePut"));
         let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         let mut writer = Vec::new();

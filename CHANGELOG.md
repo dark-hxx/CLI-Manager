@@ -38,8 +38,10 @@
 ### SSH Host 远程附件传输
 
 - SSH Host 列表不再展示认证方式徽标；认证方式编辑、连接测试和 OpenSSH 实际认证行为保持不变。
-- 每个 SSH Host 新增 SFTP 风格远程附件面板：左侧选择一个或多个本地文件，右侧浏览 Agent 附件目录，底部显示排队、上传中、完成或失败状态；上传不要求关联 SSH 项目或活动终端。
-- Agent 新增可选 `fileAttachmentRoot` 目录查询能力，面板使用远端实际解析出的默认/XDG 或自定义附件目录，不猜测远端 HOME；旧 Agent 缺少该能力时仍保留上传链路。
+- 每个 SSH Host 新增 SFTP 风格远程文件面板：左侧选择本地文件，右侧展示当前远程目录下的文件和子目录，支持进入子目录、返回上级、刷新及手动输入远程路径；上传不要求关联 SSH 项目或活动终端。
+- Host 面板上传到当前配置的远程上传目录，不再创建 Host/session/UUID 隔离子目录；终端粘贴仍保持 Agent 管理的隔离附件空间，避免改变终端附件安全边界。
+- SSH Agent 升级到 `0.1.12` / protocol `1.13`，新增 `filePut` 直传能力；旧 Agent 会明确提示升级，不会回退为终端附件协议或把本机路径发送到远端。
+- 启动前补齐旧数据库缺失的 `ssh_hosts.attachment_root` 列并同步修复 migration 登记漂移，避免编辑 SSH Host 时出现 `no such column: attachment_root`；编辑器错误提示固定在滚动区域外，始终可见。
 - 修复 SSH Agent 发布测试中 `ATTACHMENT_NAMESPACE` 未导入导致 `0.1.11` CI 构建失败的问题。
 
 ## [V1.3.8] - 2026-08-21

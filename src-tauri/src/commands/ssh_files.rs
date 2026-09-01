@@ -185,6 +185,18 @@ fn validate_remote_attachment_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_remote_file_path(path: &str) -> Result<(), String> {
+    if path.is_empty()
+        || path.len() > MAX_ATTACHMENT_ROOT_LENGTH
+        || !path.starts_with('/')
+        || path.contains(['\0', '\r', '\n', '\\'])
+        || path.split('/').any(|part| part == "..")
+    {
+        return Err("remote_file_path_invalid".to_string());
+    }
+    Ok(())
+}
+
 fn normalize_attachment_root(value: Option<String>) -> Result<String, String> {
     let value = value.unwrap_or_default();
     if value.len() > MAX_ATTACHMENT_ROOT_LENGTH || value.chars().any(char::is_control) {
@@ -305,6 +317,88 @@ fn upload_attachment(
     result
 }
 
+fn upload_file_to_remote_directory(
+    client: &crate::daemon::client::DaemonClient,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    remote_directory: String,
+    file_name: String,
+    data: Vec<u8>,
+) -> Result<String, String> {
+    validate_plan(&ssh_launch)?;
+    validate_attachment_name(&file_name)?;
+    validate_attachment_bytes(&data)?;
+    let remote_directory = normalize_attachment_root(Some(remote_directory))?;
+    if remote_directory.is_empty() {
+        return Err("remote_file_root_invalid".to_string());
+    }
+    let sha256 = format!("{:x}", Sha256::digest(&data));
+    let begin = client.ssh_agent_request(
+        consumer_id.clone(),
+        ssh_launch.clone(),
+        "filePutBegin".to_string(),
+        json!({
+            "rootPath": remote_directory,
+            "relativePath": "",
+            "fileName": file_name,
+            "sizeBytes": data.len(),
+            "sha256": sha256,
+        }),
+    )?;
+    let upload_id = begin
+        .get("uploadId")
+        .and_then(Value::as_str)
+        .filter(|value| uuid::Uuid::parse_str(value).is_ok())
+        .ok_or_else(|| "remote_file_put_begin_response_invalid".to_string())?
+        .to_string();
+
+    let result = (|| {
+        let mut offset = 0usize;
+        for chunk in data.chunks(ATTACHMENT_CHUNK_BYTES) {
+            let expected = offset + chunk.len();
+            let response = client.ssh_agent_request(
+                consumer_id.clone(),
+                ssh_launch.clone(),
+                "filePutChunk".to_string(),
+                json!({
+                    "uploadId": upload_id,
+                    "offset": offset,
+                    "dataBase64": general_purpose::STANDARD.encode(chunk),
+                }),
+            )?;
+            if response.get("receivedBytes").and_then(Value::as_u64) != Some(expected as u64) {
+                return Err("remote_file_put_chunk_response_invalid".to_string());
+            }
+            offset = expected;
+        }
+        let response = client.ssh_agent_request(
+            consumer_id.clone(),
+            ssh_launch.clone(),
+            "filePutFinish".to_string(),
+            json!({ "uploadId": upload_id }),
+        )?;
+        if response.get("sizeBytes").and_then(Value::as_u64) != Some(data.len() as u64) {
+            return Err("remote_file_put_finish_response_invalid".to_string());
+        }
+        let path = response
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "remote_file_put_finish_response_invalid".to_string())?;
+        validate_remote_file_path(path)?;
+        Ok(path.to_string())
+    })();
+
+    if result.is_err() {
+        let _ = client.ssh_agent_request(
+            consumer_id,
+            ssh_launch,
+            "filePutAbort".to_string(),
+            json!({ "uploadId": upload_id }),
+        );
+    }
+    result
+}
+
 async fn attach(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -375,6 +469,36 @@ pub async fn ssh_remote_file_attach_path(
         AttachmentSource::LocalPath(local_path),
     )
     .await
+}
+
+#[tauri::command]
+pub async fn ssh_remote_file_put_path(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    root_path: String,
+    local_path: String,
+) -> Result<String, String> {
+    let root_path = normalize_attachment_root(Some(root_path))?;
+    if root_path.is_empty() {
+        return Err("remote_file_root_invalid".to_string());
+    }
+    let client = daemon_bridge
+        .get()
+        .ok_or_else(|| "daemon_unavailable".to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let (file_name, data) = read_attachment(local_path)?;
+        upload_file_to_remote_directory(
+            client.as_ref(),
+            consumer_id,
+            ssh_launch,
+            root_path,
+            file_name,
+            data,
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -455,7 +579,7 @@ mod tests {
     use super::{
         can_fallback_to_legacy_image, decode_attachment, is_legacy_image_name,
         normalize_attachment_root, read_attachment, validate_attachment_name,
-        validate_remote_attachment_path, MAX_ATTACHMENT_BYTES,
+        validate_remote_attachment_path, validate_remote_file_path, MAX_ATTACHMENT_BYTES,
     };
     use base64::{engine::general_purpose, Engine as _};
     use std::fs;
@@ -491,6 +615,14 @@ mod tests {
             "/home/dev/.cache/cli-manager-ssh-agent/attachments/../secret.png"
         )
         .is_err());
+    }
+
+    #[test]
+    fn remote_file_put_paths_are_absolute_without_traversal() {
+        assert!(validate_remote_file_path("/data/file.txt").is_ok());
+        assert!(validate_remote_file_path("/data/../etc/passwd").is_err());
+        assert!(validate_remote_file_path("~/data/file.txt").is_err());
+        assert!(validate_remote_file_path("/data\\file.txt").is_err());
     }
 
     #[test]

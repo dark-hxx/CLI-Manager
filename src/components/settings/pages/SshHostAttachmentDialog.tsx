@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
+  ArrowRight,
   CheckCircle2,
   ChevronLeft,
   CircleAlert,
@@ -12,15 +13,15 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { isValidSshAttachmentRoot } from "../../../lib/sshAttachment";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
 import type { ProjectFileEntry, SshHost } from "../../../lib/types";
 import {
   buildSshRemoteAttachmentContext,
   releaseSshRemoteFileContext,
   resolveSshRemoteAttachmentRoot,
-  sshHostAttachmentSessionId,
-  sshRemoteAttachFilesForHost,
   sshRemoteListDir,
+  sshRemotePutFilesForHost,
   type SshRemoteFileContext,
 } from "../../../lib/sshRemoteFiles";
 import { Button } from "../../ui/button";
@@ -68,6 +69,10 @@ const ERROR_LABELS: Record<string, TranslationKey> = {
   attachment_local_path_invalid: "settings.sshHosts.attachmentDialog.error.localFileUnavailable",
   attachment_empty: "settings.sshHosts.attachmentDialog.error.fileInvalid",
   attachment_too_large: "settings.sshHosts.attachmentDialog.error.fileTooLarge",
+  "ssh_agent_capability_missing:filePut": "settings.sshHosts.attachmentDialog.error.fileCapability",
+  ssh_attachment_root_invalid: "settings.sshHosts.attachmentDialog.error.rootInvalid",
+  remote_file_path_invalid: "settings.sshHosts.attachmentDialog.error.rootInvalid",
+  attachment_target_exists: "settings.sshHosts.attachmentDialog.error.targetExists",
 };
 
 function errorCode(error: unknown): string {
@@ -87,15 +92,16 @@ function formatBytes(bytes: number): string {
 }
 
 function parentRemotePath(path: string): string {
+  if (path === "/" || path === "~") return path;
   const index = path.lastIndexOf("/");
-  return index < 0 ? "" : path.slice(0, index);
+  if (index < 0 || index === 0) return "/";
+  if (path.startsWith("~/") && index === 1) return "~";
+  return path.slice(0, index);
 }
 
-function inferAttachmentRoot(remotePath: string): string | null {
-  const marker = "/cli-manager-ssh-agent/attachments";
-  const index = remotePath.indexOf(marker);
-  if (index <= 0) return null;
-  return remotePath.slice(0, index + marker.length);
+function joinRemotePath(parent: string, child: string): string {
+  if (parent === "/") return `/${child}`;
+  return `${parent.replace(/\/$/u, "")}/${child}`;
 }
 
 function statusIcon(status: TransferStatus) {
@@ -110,7 +116,7 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
   const hostId = host?.id ?? "";
   const [context, setContext] = useState<SshRemoteFileContext | null>(null);
   const [rootPath, setRootPath] = useState("");
-  const [currentPath, setCurrentPath] = useState("");
+  const [remotePathDraft, setRemotePathDraft] = useState("");
   const [entries, setEntries] = useState<ProjectFileEntry[]>([]);
   const [queue, setQueue] = useState<TransferItem[]>([]);
   const [initializing, setInitializing] = useState(false);
@@ -127,7 +133,7 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
 
     setContext(null);
     setRootPath("");
-    setCurrentPath("");
+    setRemotePathDraft("");
     setEntries([]);
     setRootError(null);
     setRemoteError(null);
@@ -150,9 +156,11 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
         }
         setContext(nextContext);
         try {
-          const nextRoot = await resolveSshRemoteAttachmentRoot(nextContext);
+          const configuredRoot = host?.attachment_root?.trim() ?? "";
+          const nextRoot = configuredRoot || await resolveSshRemoteAttachmentRoot(nextContext);
           if (!cancelled) {
             setRootPath(nextRoot);
+            setRemotePathDraft(nextRoot);
             setContext({ ...nextContext, rootPath: nextRoot });
           }
         } catch (nextError) {
@@ -177,7 +185,7 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
     const listContext = { ...context, rootPath };
     setRemoteLoading(true);
     setRemoteError(null);
-    void sshRemoteListDir(listContext, currentPath, { silent: true })
+    void sshRemoteListDir(listContext, "", { silent: true })
       .then((nextEntries) => {
         if (!cancelled) setEntries(nextEntries);
       })
@@ -190,12 +198,12 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [context, currentPath, refreshToken, rootPath]);
+  }, [context, refreshToken, rootPath]);
 
   const rootLabel = rootPath || host?.attachment_root?.trim() || t("settings.sshHosts.attachmentDialog.defaultRoot");
-  const displayedRemotePath = rootPath && currentPath ? `${rootPath}/${currentPath}` : rootPath || rootLabel;
+  const displayedRemotePath = rootPath || rootLabel;
   const pendingCount = useMemo(() => queue.filter((item) => item.status === "queued").length, [queue]);
-  const canUpload = Boolean(hostId && context) && !initializing && !uploading && pendingCount > 0;
+  const canUpload = Boolean(hostId && context && rootPath) && !initializing && !uploading && pendingCount > 0;
   const remoteEntries = useMemo(
     () => [...entries].sort((left, right) => Number(right.kind === "directory") - Number(left.kind === "directory") || left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
     [entries],
@@ -231,6 +239,19 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
 
   const refreshRemote = () => setRefreshToken((current) => current + 1);
 
+  const goToRemotePath = () => {
+    const nextPath = remotePathDraft.trim();
+    if (!nextPath || !isValidSshAttachmentRoot(nextPath)) {
+      setRemoteError("remote_file_root_invalid");
+      return;
+    }
+    setRemoteError(null);
+    setRootError(null);
+    setRootPath(nextPath);
+    setRemotePathDraft(nextPath);
+    refreshRemote();
+  };
+
   const uploadQueuedFiles = async () => {
     if (!canUpload) return;
     setUploading(true);
@@ -241,16 +262,10 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
         ? { ...candidate, status: "uploading", error: undefined }
         : candidate));
       try {
-        const [remotePath] = await sshRemoteAttachFilesForHost(hostId, [{ kind: "localPath", path: item.path }]);
+        const [remotePath] = await sshRemotePutFilesForHost(hostId, rootPath, [{ kind: "localPath", path: item.path }]);
         setQueue((current) => current.map((candidate) => candidate.id === item.id
           ? { ...candidate, status: "success", remotePath }
           : candidate));
-        const inferredRoot = remotePath ? inferAttachmentRoot(remotePath) : null;
-        if (!rootPath && inferredRoot) {
-          setRootPath(inferredRoot);
-          setContext((current) => current ? { ...current, rootPath: inferredRoot } : current);
-        }
-        setCurrentPath(sshHostAttachmentSessionId(hostId));
         refreshRemote();
       } catch (nextError) {
         setQueue((current) => current.map((candidate) => candidate.id === item.id
@@ -262,10 +277,19 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
   };
 
   const openRemoteDirectory = (entry: ProjectFileEntry) => {
-    if (entry.kind === "directory") setCurrentPath(entry.path);
+    if (entry.kind !== "directory" || !rootPath) return;
+    const nextPath = joinRemotePath(rootPath, entry.path);
+    setRootPath(nextPath);
+    setRemotePathDraft(nextPath);
+    setRemoteError(null);
   };
 
-  const goToParent = () => setCurrentPath(parentRemotePath(currentPath));
+  const goToParent = () => {
+    const nextPath = parentRemotePath(rootPath);
+    setRootPath(nextPath);
+    setRemotePathDraft(nextPath);
+    setRemoteError(null);
+  };
 
   const formatError = (value: string | null): string | null => {
     if (!value) return null;
@@ -335,10 +359,36 @@ export function SshHostAttachmentDialog({ open, host, onOpenChange }: Props) {
                 <Folder className="h-4 w-4 text-primary" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-text-primary">{t("settings.sshHosts.attachmentDialog.remotePane")}</div>
-                  <div className="truncate text-[11px] text-text-muted" title={displayedRemotePath}>{displayedRemotePath}</div>
+                  <div className="mt-1 flex min-w-0 items-center gap-1">
+                    <input
+                      className="ui-input h-7 min-w-0 flex-1 px-2 font-mono text-[11px]"
+                      aria-label={t("settings.sshHosts.attachmentDialog.remotePath")}
+                      placeholder={t("settings.sshHosts.attachmentDialog.remotePathPlaceholder")}
+                      value={remotePathDraft}
+                      onChange={(event) => setRemotePathDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          goToRemotePath();
+                        }
+                      }}
+                      disabled={initializing || uploading}
+                    />
+                    <button
+                      type="button"
+                      className="ui-icon-button h-7 w-7"
+                      aria-label={t("settings.sshHosts.attachmentDialog.goToRemotePath")}
+                      title={t("settings.sshHosts.attachmentDialog.goToRemotePath")}
+                      disabled={!remotePathDraft.trim() || initializing || uploading || remoteLoading}
+                      onClick={goToRemotePath}
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="truncate text-[10px] text-text-muted" title={displayedRemotePath}>{displayedRemotePath}</div>
                 </div>
-                <button type="button" className="ui-icon-button h-7 w-7" aria-label={t("settings.sshHosts.attachmentDialog.parentDirectory")} title={t("settings.sshHosts.attachmentDialog.parentDirectory")} disabled={!currentPath || remoteLoading} onClick={goToParent}><ChevronLeft className="h-4 w-4" /></button>
-                <button type="button" className="ui-icon-button h-7 w-7" aria-label={t("settings.sshHosts.attachmentDialog.refreshRemote")} title={t("settings.sshHosts.attachmentDialog.refreshRemote")} disabled={!rootPath || remoteLoading} onClick={refreshRemote}><RefreshCw className={`h-4 w-4 ${remoteLoading ? "animate-spin" : ""}`} /></button>
+                <button type="button" className="ui-icon-button h-7 w-7" aria-label={t("settings.sshHosts.attachmentDialog.parentDirectory")} title={t("settings.sshHosts.attachmentDialog.parentDirectory")} disabled={!rootPath || rootPath === "/" || rootPath === "~" || remoteLoading || uploading} onClick={goToParent}><ChevronLeft className="h-4 w-4" /></button>
+                <button type="button" className="ui-icon-button h-7 w-7" aria-label={t("settings.sshHosts.attachmentDialog.refreshRemote")} title={t("settings.sshHosts.attachmentDialog.refreshRemote")} disabled={!rootPath || remoteLoading || uploading} onClick={refreshRemote}><RefreshCw className={`h-4 w-4 ${remoteLoading ? "animate-spin" : ""}`} /></button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2 ui-thin-scroll" aria-busy={initializing || remoteLoading}>
                 {initializing || remoteLoading ? (

@@ -4,7 +4,7 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex/Kimi/Grok Hook configuration, the one-shot Hook runtime, Claude/Codex-only remote history/resume RPCs, and daemon-owned protocol `1.12` bridges per active SSH Host. Protocol 1.5 introduced read-only file RPCs; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, protocol 1.8 adds negotiated Diff generation options, protocol 1.9 adds bounded terminal image attachments outside project roots, protocol 1.10 generalizes attachment upload to arbitrary regular files, protocol 1.11 adds session-bound Agent MCP/Skill diagnostics through `agentCapabilitiesV1`, and protocol 1.12 adds Host-scoped attachment roots. Realtime/historical stats remain separate stages.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex/Kimi/Grok Hook configuration, the one-shot Hook runtime, Claude/Codex-only remote history/resume RPCs, and daemon-owned protocol `1.13` bridges per active SSH Host. Protocol 1.5 introduced read-only file RPCs; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, protocol 1.8 adds negotiated Diff generation options, protocol 1.9 adds bounded terminal image attachments outside project roots, protocol 1.10 generalizes attachment upload to arbitrary regular files, protocol 1.11 adds session-bound Agent MCP/Skill diagnostics through `agentCapabilitiesV1`, protocol 1.12 adds Host-scoped attachment roots, and protocol 1.13 adds direct Host SFTP uploads. Realtime/historical stats remain separate stages.
 
 Grok compatibility isolation is a stateful `config.toml` mutation: installing and uninstalling must
 distinguish Agent-owned `compat.<vendor>.hooks` values from values already chosen or subsequently
@@ -34,6 +34,9 @@ edited by the user.
   `fileAttachCustomRoot`; empty roots retain the existing XDG cache behavior. The same release
   optionally advertises `fileAttachmentRoot`, a read-only request that returns the resolved
   managed attachment directory without requiring the desktop to guess HOME or `XDG_CACHE_HOME`.
+  Agent `0.1.12` reports protocol `1.13` and adds `filePut` for direct Host SFTP uploads into
+  the selected remote directory; terminal attachment requests retain their managed
+  session/upload isolation.
 - The independent Agent release tag is exactly `ssh-agent-v<agent-version>`. Its signed manifest
   must carry that Agent version and point only to assets on that same tag.
 - Independent Agent releases are GitHub prereleases with `make_latest: false`. The desktop
@@ -185,6 +188,15 @@ The Host-level attachment panel may request `fileAttachmentRoot` with the same o
 an absolute `rootPath`. This is an additive capability: a desktop may continue Host uploads when
 an older Agent lacks `fileAttachmentRoot`, but it must not guess the default remote cache path.
 
+Protocol 1.13 Host SFTP uploads use `filePutBegin`, `filePutChunk`, `filePutFinish`, and
+`filePutAbort`. `filePutBegin` contains `rootPath`, an optional confined `relativePath`,
+`fileName`, `sizeBytes`, and `sha256`; the Agent writes the verified file directly below the
+selected directory without session or UUID child directories. The `filePut` capability is
+required before the daemon forwards any of these requests. Root paths may be absolute POSIX or
+`~/...` paths without `..`; the Agent canonicalizes the existing directory, rejects symlink
+entries/escape paths, verifies size and SHA-256, and atomically renames the same-directory
+temporary file. Existing target files are rejected rather than overwritten.
+
 Protocol 1.11 Agent diagnostics use `agentCapabilitiesInspect` and
 `agentCapabilitiesProbe`. Both require `agentCapabilitiesV1`, run in the exact remote project
 cwd, and return only normalized/redacted snapshots. Capability absence is an actionable upgrade
@@ -219,6 +231,8 @@ GitFileDiffPayload {
 - Remote file browsing for an SSH project still uses that project's Host/root context. Terminal attachment upload uses the live SSH session's `sshHostId` and `remotePath`, so a registered SSH project is not required; it still requires an installed Agent and valid Host/session context. Neither path requires a configured CLI tool, Hook integration, or history source. Their launch contexts must be built independently from the remote-history context; an empty `toolSource` and, for Host-only attachments, an empty `projectId` are valid for these request-driven lanes.
 - The desktop first requests protocol-minor-10 `fileAttachAny` for every attachment so file contents are never inferred from the extension. If that capability is missing, only a valid legacy image within 5 MiB and 12 million pixels retries through protocol-minor-9 `fileAttach`. The daemon checks each negotiated capability before sending a frame; Agent 0.1.6 therefore continues accepting legacy images while unsupported arbitrary files return an actionable upgrade error instead of receiving a desktop-local path.
 - A non-empty Host attachment root is sent only in the Begin payload and requires the negotiated `fileAttachCustomRoot` capability in addition to `fileAttachAny` or `fileAttach`. Missing custom-root capability is rejected before the Agent frame is written; Desktop does not silently fall back to the default directory.
+- Host SFTP browsing uses the configured Host upload directory directly, or the resolved Agent default directory when the setting is empty. Manual directory input is validated as an absolute POSIX/`~/...` path without `..`; changing it replaces the current browsing root and does not change terminal attachment routing.
+- Host SFTP direct upload uses protocol `1.13` `filePut` and the current browsing directory. It never reuses `fileAttachAny`, never creates a session/UUID directory, and never sends a local path to the Agent. Older Agents return `ssh_agent_capability_missing:filePut` and the UI shows an upgrade action.
 - Arbitrary-file upload accepts any non-empty regular file up to 20 MiB without an extension or MIME allowlist. Directories and symlinks remain rejected. The Desktop checks metadata and then reads at most 20 MiB + 1 byte so a file-growth race cannot cause unbounded allocation. A basename must be 1–255 bytes, cannot be `.` / `..`, and cannot contain path separators, NUL, CR, or LF. Legacy `fileAttach` remains limited to PNG, JPG/JPEG, GIF, WebP, and BMP, 5 MiB, and 12 million pixels.
 - Begin declares byte length and SHA-256, chunks carry an exact monotonic offset, finish verifies length/hash and performs a same-directory atomic rename. Legacy images additionally verify dimensions and decodability. Abort, bridge shutdown, and failed finish remove partial files and empty per-upload directories.
 - With an empty Host root, legacy images live at `${XDG_CACHE_HOME:-$HOME/.cache}/cli-manager-ssh-agent/attachments/<session-id>/<uuid>.<ext>`. With a configured root, the Agent uses `<expanded-root>/cli-manager-ssh-agent/attachments` and keeps the same session/upload layout. Arbitrary files preserve the safe original basename without permitting traversal or collisions. Directories use `0700` and files `0600` on Unix. Attachments never enter the SSH project root; bounded cleanup removes files older than 48 hours only below the Agent-managed child and never follows symlinks or removes unrelated parent files.
@@ -345,6 +359,9 @@ GitFileDiffPayload {
 | Configured attachment root is relative, traverses `..`, contains control characters/backslashes, or resolves through a symlink/non-directory | `ssh_attachment_root_*` / `attachment_root_invalid`; do not create an upload directory |
 | Configured attachment root is non-empty but Agent lacks `fileAttachCustomRoot` | `ssh_agent_capability_missing:fileAttachCustomRoot`; reject before writing the Begin frame and do not use the default root |
 | Host attachment directory discovery is requested but Agent lacks `fileAttachmentRoot` | show the remote directory as unavailable; Host uploads remain available and must use the negotiated attachment protocol |
+| Host SFTP upload is requested but Agent lacks `filePut` | return `ssh_agent_capability_missing:filePut`; do not fall back to `fileAttachAny` or send a local path |
+| Host SFTP root is invalid, unavailable, or not a directory | return `remote_file_root_invalid` / `remote_file_root_unavailable` / `remote_file_not_directory`; create no partial file |
+| Host SFTP target basename is invalid or the target already exists | return `attachment_name_invalid` / `attachment_target_exists`; preserve the existing target |
 | Attachment chunk offset, final size, or SHA-256 differs | stable `attachment_*_mismatch`; delete partial content and its empty upload directory |
 | Spool record is malformed or over 1 MiB | stable `hook_spool_record_*` error; preserve original spool |
 | Custom Hook config root is missing | `hook_config_root_missing` |
@@ -396,6 +413,8 @@ GitFileDiffPayload {
 - Good: a Unicode-named extensionless file below 20 MiB is stored as `<session>/<uuid>/<original-name>` and the terminal receives only that remote path.
 - Good: two Hosts configure different attachment parents; each receives its own Agent-managed child and cleanup in one Host's subtree never removes the other Host's files or unrelated parent files.
 - Good: the SSH Host list opens a two-pane attachment panel; the remote pane uses `fileAttachmentRoot` instead of guessing the remote HOME/XDG cache, while an older Agent can still upload and report the returned absolute path.
+- Good: the SSH Host list opens a two-pane SFTP panel at the configured `/data` directory, lists its existing files, accepts a manually entered child directory, and writes an uploaded file directly to that directory without a UUID child.
+- Base: an older Agent can still serve the existing read-only listing/default-root discovery paths, but a Host SFTP upload stops with an explicit `filePut` upgrade error; terminal pastes continue using their existing attachment protocol.
 - Base: Agent 0.1.6 lacks `fileAttachAny`; a valid 5 MiB-or-smaller image retries through `fileAttach`, while a ZIP returns an update-required error.
 - Bad: infer file contents from `.png` and force the legacy image protocol; an arbitrary file with that suffix would be rejected despite the no-type-restriction contract.
 - Bad: fall back to pasting the desktop-local path when arbitrary upload is unsupported; the remote CLI cannot read it and may receive sensitive local path text.
@@ -454,7 +473,7 @@ GitFileDiffPayload {
 - Assert remote file root/path confinement, symlink escape rejection, binary refusal, 1 MiB text and 5 MiB image limits, the exact 12,000,000-pixel boundary, video refusal, directory/search/visited limits, image data URLs, request-driven read-only scheduling, Primary-only `toolSource` enforcement, empty-source Readonly/Git admission, primary Hook-poll exclusion, loaded-directory reuse, consumer release, and UI/store read-only routing.
 - Assert protocol minor 7 and `gitFull`, dedicated Git-lane serialization and identity isolation, exact launch-root binding, strict per-RPC payloads, full Git mutation/network operations, write timeout/no-retry result-unknown handling, path/branch/patch validation, untracked symlink rejection, and SSH-pending fail-closed transport selection.
 - Assert protocol minor 8 and `gitDiffOptions`, legacy `exact+3` payload compatibility, pre-serialization capability rejection, all three whitespace flags, 3/10/20 context values, invalid-option rejection, and non-exact partial-revert disablement.
-- Assert protocol minor 10/12, legacy `fileAttach`, `fileAttachAny`, `fileAttachCustomRoot`, and optional `fileAttachmentRoot`; safe arbitrary basenames, 20 MiB admission, legacy image limits, default/custom cache/session/upload confinement, POSIX/Home root validation, symlink-component rejection, managed-child cleanup isolation, chunk size and offset validation, size/pixel/SHA-256 verification, atomic commit, abort/drop cleanup, nested 48-hour expiry, Agent 0.1.6 image compatibility, old-Agent arbitrary-file/custom-root/root-discovery rejection, Host-only versus project SSH paste routing, Host-list transfer isolation, and local-versus-SSH paste routing.
+- Assert protocol minor 10/12/13, legacy `fileAttach`, `fileAttachAny`, `fileAttachCustomRoot`, optional `fileAttachmentRoot`, and `filePut`; safe arbitrary basenames, 20 MiB admission, legacy image limits, default/custom cache/session/upload confinement, direct Host root/relative path validation, no-UUID direct commit, existing-target rejection, POSIX/Home root validation, symlink-component rejection, managed-child cleanup isolation, chunk size and offset validation, size/pixel/SHA-256 verification, atomic commit, abort/drop cleanup, nested 48-hour expiry, Agent 0.1.6 image compatibility, old-Agent arbitrary-file/custom-root/root-discovery/filePut rejection, Host-only versus project SSH paste routing, Host-list transfer isolation, and local-versus-SSH paste routing.
 - Assert tracked/untracked payload metadata, inclusive 768 KiB and 20000-line boundaries, and stable `git_diff_too_large` parity with Desktop.
 - Assert `validate_relative("", true)` succeeds for the root repository, while `validate_relative("", false)` and empty file paths remain rejected.
 - Assert ordinary untracked directories expand to concrete files and nested repositories are excluded from the parent repository's change list.
