@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 102
-- **Last Active**: 2026-08-31
+- **Total Sessions**: 103
+- **Last Active**: 2026-09-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1334 | Active |
+| `journal-2.md` | ~1355 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 103 | 2026-09-01 | SSH Agent SFTP 发布与远程目录选择器 | `4601e769` | `master` |
 | 102 | 2026-08-31 | 终端滚动快捷键 | `7ce0c105` | `master` |
 | 101 | 2026-08-31 | 终端滚动到底部快捷跳转按钮 | `37cc08a3` | `master` |
 | 100 | 2026-08-31 | 修复 Grok Build Alt+Enter 换行并合并 PR #240 | `f6b8ca66`, `66ba0fba` | `master` |

@@ -1332,3 +1332,24 @@ Added a global local smart-title prompt, persisted save feedback, non-blocking P
 ### Status
 
 [OK] **Completed**
+
+
+## Session 103: SSH Agent SFTP 发布与远程目录选择器
+
+**Date**: 2026-09-01
+**Task**: SSH Agent SFTP 发布与远程目录选择器
+**Branch**: `master`
+
+### Summary
+
+完成 SSH 文件浏览器 SFTP 入口与 Host 面板复用；增加远程目录选择器，支持手动输入、子目录导航、返回上级、刷新和选择当前目录。Agent 升级到 0.1.13 / protocol 1.14，新增 fileGet/fileDelete，完成前端构建、Rust 检查和 Agent 测试，并推送 ssh-agent-v0.1.13 触发 GitHub 预发布。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4601e769` | (see git log) |
+
+### Status
+
+[OK] **Completed**
