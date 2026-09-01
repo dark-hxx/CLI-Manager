@@ -59,6 +59,14 @@
     editable remote-path navigation, directory/file listing, collision-safe upload handling,
     bilingual errors, and regression tests.
 
+14. [x] Make the Host SFTP local pane an independent local directory browser: start at the
+    platform Desktop directory, list files/directories through the existing bounded `file_list_dir`
+    command, reuse the File Explorer material icons, support nested navigation, parent/refresh,
+    manual path input and directory selection, and add clicked files to the existing transfer queue.
+15. [x] Align the local and remote pane headers, bound both file-list viewports to a fixed height
+    with independent scrolling, and render remote files/directories with the File Explorer material
+    icons as well.
+
 ## Required focused assertions
 
 - [x] A Host-only SSH session with installed Agent uploads both an image and a regular file; the
@@ -80,6 +88,11 @@
 - [x] Each Host opens an isolated two-pane attachment dialog; selected local files upload through
   the installed Host Agent, appear in the transfer queue/remote listing without project IDs, and
   can be routed to a manually entered remote directory.
+- [x] The local Host SFTP pane starts at Desktop on Windows/macOS, lists real local entries with
+  File Explorer icons, supports directory navigation/path switching, and keeps browsing state
+  independent from the remote Agent initialization state.
+- [x] Host SFTP local/remote headers are aligned; both file-list viewports have a fixed height with
+  overflow scrolling, and the remote listing reuses File Explorer material icons.
 
 ## Validation commands
 
