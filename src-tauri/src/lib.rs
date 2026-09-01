@@ -1667,6 +1667,8 @@ pub fn run() {
             commands::ssh_files::ssh_remote_file_attach_data,
             commands::ssh_files::ssh_remote_file_attach_path,
             commands::ssh_files::ssh_remote_file_put_path,
+            commands::ssh_files::ssh_remote_file_download,
+            commands::ssh_files::ssh_remote_file_delete,
             commands::ssh_files::ssh_remote_file_attachment_root,
             commands::ssh_git::ssh_remote_git_request,
             commands::history::history_get_conversion_matrix,

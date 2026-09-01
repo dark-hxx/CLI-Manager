@@ -264,6 +264,36 @@ export async function sshRemoteReadFile(
   };
 }
 
+export async function sshRemoteDownloadFile(
+  context: SshRemoteFileContext,
+  relativePath: string,
+  localPath: string,
+  options?: SshRemoteFileOperationOptions,
+): Promise<{ path: string; sizeBytes: number }> {
+  return runFileOperation(context, "backgroundOperations.remoteFiles.downloading", () =>
+    invoke<{ path: string; sizeBytes: number }>("ssh_remote_file_download", {
+      consumerId: context.consumerId,
+      sshLaunch: context.launch,
+      rootPath: context.rootPath,
+      relativePath,
+      localPath,
+    }), options);
+}
+
+export async function sshRemoteDeleteFile(
+  context: SshRemoteFileContext,
+  relativePath: string,
+  options?: SshRemoteFileOperationOptions,
+): Promise<{ relativePath: string; kind: string }> {
+  return runFileOperation(context, "backgroundOperations.remoteFiles.deleting", () =>
+    invoke<{ relativePath: string; kind: string }>("ssh_remote_file_delete", {
+      consumerId: context.consumerId,
+      sshLaunch: context.launch,
+      rootPath: context.rootPath,
+      relativePath,
+    }), options);
+}
+
 export async function sshRemoteSearch(
   context: SshRemoteFileContext,
   query: string,

@@ -26,6 +26,9 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const HISTORY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_HISTORY_DETAIL_CHUNKS: usize = 257;
 const MAX_HISTORY_DETAIL_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_FILE_GET_CHUNKS: usize = 64;
+const MAX_FILE_GET_RESPONSE_BYTES: usize = 20 * 1024 * 1024;
+const MAX_FILE_GET_BASE64_BYTES: usize = MAX_FILE_GET_RESPONSE_BYTES.div_ceil(3) * 4;
 const HOOK_DRAIN_WAIT_MS: u64 = 2_000;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 const REQUEST_QUEUE_WAIT: Duration = Duration::from_millis(250);
@@ -262,6 +265,8 @@ impl BridgeLane {
             "fileList"
                 | "fileRead"
                 | "fileSearch"
+                | "fileGet"
+                | "fileDelete"
                 | "fileAttachBegin"
                 | "fileAttachChunk"
                 | "fileAttachFinish"
@@ -581,6 +586,8 @@ impl SshAgentBridgeManager {
                     | "fileList"
                     | "fileRead"
                     | "fileSearch"
+                    | "fileGet"
+                    | "fileDelete"
                     | "fileAttachBegin"
                     | "fileAttachChunk"
                     | "fileAttachFinish"
@@ -781,6 +788,8 @@ fn required_capability(kind: &str) -> Option<&'static str> {
         | "fileAttachAnyFinish"
         | "fileAttachAnyAbort" => Some("fileAttachAny"),
         "filePutBegin" | "filePutChunk" | "filePutFinish" | "filePutAbort" => Some("filePut"),
+        "fileGet" => Some("fileGet"),
+        "fileDelete" => Some("fileDelete"),
         "fileAttachmentRoot" => Some("fileAttachmentRoot"),
         "agentCapabilitiesInspect" | "agentCapabilitiesProbe" => Some("agentCapabilitiesV1"),
         _ => None,
@@ -1133,6 +1142,9 @@ fn request(
     if kind == "historyGet" && first.kind == "historyDetailChunk" {
         return receive_history_detail_chunks(receiver, first, &request_id, deadline);
     }
+    if kind == "fileGet" && first.kind == "fileGetChunk" {
+        return receive_file_get_chunks(receiver, first, &request_id, deadline);
+    }
     checked_response(first, &request_id, response_kind)
 }
 
@@ -1179,6 +1191,82 @@ fn receive_history_detail_chunks(
         if expected_index == total {
             return serde_json::from_str(&serialized)
                 .map_err(|_| "ssh_agent_bridge_history_chunk_invalid".to_string());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("ssh_agent_bridge_response_timeout".to_string());
+        }
+        frame = receive_frame(receiver, remaining)?;
+    }
+}
+
+fn receive_file_get_chunks(
+    receiver: &Receiver<ReaderMessage>,
+    mut frame: ServerFrame,
+    request_id: &str,
+    deadline: Instant,
+) -> Result<Value, String> {
+    let mut data_base64 = String::new();
+    let mut expected_index = 0usize;
+    let mut expected_total = None;
+    let mut relative_path = None;
+    let mut size_bytes = None;
+    loop {
+        if frame.request_id != request_id || frame.kind != "fileGetChunk" {
+            return Err("ssh_agent_bridge_file_get_chunk_invalid".to_string());
+        }
+        let index = frame
+            .payload
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let total = frame
+            .payload
+            .get("total")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|value| (1..=MAX_FILE_GET_CHUNKS).contains(value))
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let chunk = frame
+            .payload
+            .get("dataBase64")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let path = frame
+            .payload
+            .get("relativePath")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let size = frame
+            .payload
+            .get("sizeBytes")
+            .and_then(Value::as_u64)
+            .filter(|value| *value <= MAX_FILE_GET_RESPONSE_BYTES as u64)
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        if index != expected_index
+            || expected_total.is_some_and(|value| value != total)
+            || relative_path.as_deref().is_some_and(|value| value != path)
+            || size_bytes.is_some_and(|value| value != size)
+        {
+            return Err("ssh_agent_bridge_file_get_chunk_invalid".to_string());
+        }
+        if chunk.len() > MAX_FILE_GET_BASE64_BYTES
+            || data_base64.len().saturating_add(chunk.len()) > MAX_FILE_GET_BASE64_BYTES
+        {
+            return Err("ssh_agent_bridge_file_get_chunk_too_large".to_string());
+        }
+        expected_total = Some(total);
+        relative_path = Some(path.to_string());
+        size_bytes = Some(size);
+        data_base64.push_str(chunk);
+        expected_index += 1;
+        if expected_index == total {
+            return Ok(json!({
+                "relativePath": relative_path.unwrap_or_default(),
+                "sizeBytes": size_bytes.unwrap_or_default(),
+                "dataBase64": data_base64,
+            }));
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -1642,6 +1730,8 @@ mod tests {
                 "ssh_agent_capability_missing:fileAttachAny",
             ),
             ("filePutBegin", "ssh_agent_capability_missing:filePut"),
+            ("fileGet", "ssh_agent_capability_missing:fileGet"),
+            ("fileDelete", "ssh_agent_capability_missing:fileDelete"),
         ] {
             let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
             let (response_sender, response_receiver) = mpsc::sync_channel(1);
@@ -1866,6 +1956,8 @@ mod tests {
     fn readonly_requests_use_an_isolated_bridge_identity() {
         assert_eq!(BridgeLane::for_request("historySync"), BridgeLane::Primary);
         assert_eq!(BridgeLane::for_request("fileList"), BridgeLane::Readonly);
+        assert_eq!(BridgeLane::for_request("fileGet"), BridgeLane::Readonly);
+        assert_eq!(BridgeLane::for_request("fileDelete"), BridgeLane::Readonly);
         assert_eq!(
             BridgeLane::for_request("fileAttachChunk"),
             BridgeLane::Readonly
@@ -1881,6 +1973,8 @@ mod tests {
             Some("fileAttachmentRoot")
         );
         assert_eq!(required_capability("filePutBegin"), Some("filePut"));
+        assert_eq!(required_capability("fileGet"), Some("fileGet"));
+        assert_eq!(required_capability("fileDelete"), Some("fileDelete"));
         let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         let mut writer = Vec::new();
@@ -1979,6 +2073,44 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, "ssh_agent_bridge_history_chunk_invalid");
+    }
+
+    #[test]
+    fn file_get_chunks_are_reassembled_with_metadata() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        for (index, data) in ["aGVs", "bG8="].into_iter().enumerate() {
+            sender
+                .send(ReaderMessage::Frame(ServerFrame {
+                    request_id: "file-get-1".to_string(),
+                    kind: "fileGetChunk".to_string(),
+                    payload: json!({
+                        "index": index,
+                        "total": 2,
+                        "dataBase64": data,
+                        "relativePath": "notes.txt",
+                        "sizeBytes": 5,
+                    }),
+                }))
+                .unwrap();
+        }
+        let value = request(
+            &mut Vec::new(),
+            &receiver,
+            "file-get-1".to_string(),
+            "fileGet",
+            json!({}),
+            "response",
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "relativePath": "notes.txt",
+                "sizeBytes": 5,
+                "dataBase64": "aGVsbG8=",
+            })
+        );
     }
 
     #[test]

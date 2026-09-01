@@ -33,9 +33,10 @@ SSH Host editor
 SSH Host 行只保留连接地址和操作入口，不展示认证方式徽标；认证方式仍由 Host 编辑器和
 OpenSSH 连接测试使用。新增的上传入口打开 Host 级双栏面板：本地栏通过系统文件选择器
 加入待传文件，远程栏读取该 Host Agent 实际解析出的附件根目录，底部传输队列逐项显示
-等待、上传中、成功或失败。上传复用 `fileAttachAny`/旧版图片回退协议，使用 Host-only
-Readonly bridge 和独立的管理会话 ID，因此不需要登记项目或活动终端，也不会改变终端
-粘贴的会话上下文。
+等待、上传中、下载中、成功或失败。上传复用 `fileAttachAny`/旧版图片回退协议，使用 Host-only
+Readonly bridge 和独立的管理会话 ID；SSH 项目文件浏览器中的 SFTP 按钮复用同一面板，
+下载和删除也使用该 Host-only Readonly bridge，因此不需要登记项目或活动终端，也不会改变
+终端粘贴的会话上下文。
 
 为兼容默认目录中的 `XDG_CACHE_HOME` 和远端 HOME，不在桌面端猜测缓存路径。Agent 增加
 只读的 `fileAttachmentRoot` 请求，按与上传相同的自定义目录规则返回规范化的 Agent
@@ -97,7 +98,8 @@ Hook/history/project binding while enabling Host-only file attachment.
 
 - Keep command names `ssh_remote_file_attach_data` and `ssh_remote_file_attach_path`.
 - Add an optional `attachmentRoot` argument to those two Tauri commands and pass it through
-  the existing blocking upload worker. File listing/read/search commands are unchanged.
+  the existing blocking upload worker. Existing file listing/read/search commands remain
+  unchanged; add separate download/delete commands for Host SFTP operations.
 - The desktop upload code validates and trims this value before creating a Begin request.
   Both `fileAttachAnyBegin` and legacy image `fileAttachBegin` carry the same optional
   `attachmentRoot`; chunks, finish, and abort remain upload-ID-only.
@@ -112,6 +114,22 @@ Hook/history/project binding while enabling Host-only file attachment.
 - Preserve the existing upload policy: prefer `fileAttachAny` up to 20 MiB; fallback to
   validated legacy images only when `fileAttachAny` is missing; never paste a desktop local
   path to SSH. A missing custom-root capability maps through the existing upgrade error path.
+
+### Host SFTP download/delete contract
+
+- `ssh_remote_file_download` validates an absolute local destination whose parent is an existing
+  non-symlink directory, requests Agent `fileGet` with the current remote root and relative file
+  path, reassembles bounded `fileGetChunk` frames, verifies the declared byte count, and writes
+  the original bytes. The maximum is 20 MiB; directories, symlinks, root deletion, traversal,
+  and unsupported filesystem entries are rejected.
+- `ssh_remote_file_delete` requests Agent `fileDelete` for the current remote root and relative
+  entry path. Regular files and empty directories may be removed; non-empty directories must
+  return `remote_file_directory_not_empty` without recursive deletion. Both operations require
+  their explicit capabilities and never fall back to local filesystem operations.
+- The Host SFTP panel also exposes a remote directory picker. It reuses the remote list contract
+  to show directories only, supports manual path entry, child/parent navigation and refresh, and
+  applies the selected existing remote directory as the upload target without changing the Agent
+  storage boundary.
 
 ## Remote Agent storage contract
 
@@ -143,6 +161,11 @@ The Begin request adds `attachmentRoot` with a default empty value for wire comp
 Older Agents continue to support the default root because the field is omitted when empty;
 custom-root uploads fail explicitly with `ssh_agent_capability_missing:fileAttachCustomRoot`
 until the Host Agent is upgraded.
+
+Agent `0.1.13` reports protocol `1.14` and advertises `fileGet` and `fileDelete`. `fileGet` emits
+ordered `fileGetChunk` frames with at most 512 KiB of raw bytes per frame; the daemon accepts at
+most 64 chunks and 20 MiB of Base64 response data. `fileDelete` removes only a regular file or an
+empty directory below the resolved root and refuses symlinks, traversal, and root deletion.
 
 ## Error and compatibility behavior
 
@@ -183,15 +206,15 @@ error only for Hosts that configured a custom root.
 - [x] `src/stores/syncStore.ts`: portable Host backup/restore and machine-local credential
   separation.
 - [x] `src-tauri/src/lib.rs`: migration registry and migration tests.
-- [x] `src-tauri/src/commands/ssh_files.rs`: Tauri upload boundary, Begin payload, path
-  validation, and legacy fallback.
+- [x] `src-tauri/src/commands/ssh_files.rs`: Tauri upload/download/delete boundaries, Begin
+  payload, path validation, and legacy fallback.
 - [x] `src-tauri/src/daemon/ssh_agent_bridge.rs`: Readonly bridge project gate and capability
   gate; Primary Hook/history behavior is confirmed unrelated.
 - [x] `src-tauri/ssh-agent/src/files.rs` and `protocol.rs`: remote root resolution, cleanup,
-  Begin schema, and advertised capabilities.
+  Begin schema, fileGet/fileDelete handling, and advertised capabilities.
 - [x] `src-tauri/ssh-agent/Cargo.toml`, lockfile, and `src/lib.rs`: Agent release identity.
 - [x] `.trellis/spec/backend/ssh-agent-contracts.md`: update the cross-layer contract for
-  Host-only attachments and protocol 1.12.
+  Host-only attachments and protocol 1.14.
 - [x] `CHANGELOG.md` and `docs/功能清单.md`: V1.3.9 delivery records.
 - [x] Confirmed unrelated: SSH project file browsing, Git, history, Hook installation,
   remote handoff, local/WSL attachment commands, and terminal time-format/i18n behavior.

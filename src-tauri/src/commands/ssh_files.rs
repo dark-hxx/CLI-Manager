@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Cursor, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const LEGACY_IMAGE_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
@@ -195,6 +195,66 @@ fn validate_remote_file_path(path: &str) -> Result<(), String> {
         return Err("remote_file_path_invalid".to_string());
     }
     Ok(())
+}
+
+fn validate_remote_relative_path(path: &str) -> Result<(), String> {
+    if path.is_empty()
+        || path.len() > MAX_ATTACHMENT_ROOT_LENGTH
+        || path.contains(['\0', '\r', '\n', '\\'])
+        || Path::new(path).is_absolute()
+        || path.split('/').any(|part| part == "..")
+    {
+        return Err("remote_file_path_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn validate_local_download_path(path: &str) -> Result<PathBuf, String> {
+    if path.is_empty() || path.chars().any(char::is_control) || !Path::new(path).is_absolute() {
+        return Err("attachment_local_path_invalid".to_string());
+    }
+    let target = Path::new(path);
+    let file_name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "attachment_local_path_invalid".to_string())?;
+    validate_attachment_name(file_name).map_err(|_| "attachment_local_path_invalid".to_string())?;
+    let parent = target
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .ok_or_else(|| "local_directory_unavailable".to_string())?;
+    let parent_metadata =
+        fs::symlink_metadata(parent).map_err(|_| "local_directory_unavailable".to_string())?;
+    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+        return Err("local_directory_unavailable".to_string());
+    }
+    if let Ok(metadata) = fs::symlink_metadata(target) {
+        if metadata.file_type().is_symlink() || metadata.is_dir() {
+            return Err("attachment_local_path_invalid".to_string());
+        }
+    }
+    Ok(target.to_path_buf())
+}
+
+fn write_download(
+    local_path: PathBuf,
+    data_base64: String,
+    expected_size: u64,
+) -> Result<u64, String> {
+    if expected_size > MAX_ATTACHMENT_BYTES as u64
+        || data_base64.is_empty() && expected_size != 0
+        || data_base64.len() > MAX_ATTACHMENT_BASE64_BYTES
+    {
+        return Err("remote_file_download_too_large".to_string());
+    }
+    let data = general_purpose::STANDARD
+        .decode(data_base64)
+        .map_err(|_| "remote_file_download_invalid".to_string())?;
+    if data.len() as u64 != expected_size {
+        return Err("remote_file_download_invalid".to_string());
+    }
+    fs::write(&local_path, &data).map_err(|_| "remote_file_download_write_failed".to_string())?;
+    Ok(data.len() as u64)
 }
 
 fn normalize_attachment_root(value: Option<String>) -> Result<String, String> {
@@ -499,6 +559,69 @@ pub async fn ssh_remote_file_put_path(
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn ssh_remote_file_download(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    root_path: String,
+    relative_path: String,
+    local_path: String,
+) -> Result<Value, String> {
+    let root_path = normalize_attachment_root(Some(root_path))?;
+    if root_path.is_empty() {
+        return Err("remote_file_root_invalid".to_string());
+    }
+    validate_remote_relative_path(&relative_path)?;
+    let local_path = validate_local_download_path(&local_path)?;
+    let result = request(
+        daemon_bridge,
+        consumer_id,
+        ssh_launch,
+        "fileGet",
+        json!({ "rootPath": root_path, "relativePath": relative_path }),
+    )
+    .await?;
+    let data_base64 = result
+        .get("dataBase64")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "remote_file_download_invalid".to_string())?
+        .to_string();
+    let expected_size = result
+        .get("sizeBytes")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "remote_file_download_invalid".to_string())?;
+    let display_path = local_path.to_string_lossy().to_string();
+    let size_bytes =
+        tokio::task::spawn_blocking(move || write_download(local_path, data_base64, expected_size))
+            .await
+            .map_err(|err| err.to_string())??;
+    Ok(json!({ "path": display_path, "sizeBytes": size_bytes }))
+}
+
+#[tauri::command]
+pub async fn ssh_remote_file_delete(
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+    consumer_id: String,
+    ssh_launch: SshLaunchPlan,
+    root_path: String,
+    relative_path: String,
+) -> Result<Value, String> {
+    let root_path = normalize_attachment_root(Some(root_path))?;
+    if root_path.is_empty() {
+        return Err("remote_file_root_invalid".to_string());
+    }
+    validate_remote_relative_path(&relative_path)?;
+    request(
+        daemon_bridge,
+        consumer_id,
+        ssh_launch,
+        "fileDelete",
+        json!({ "rootPath": root_path, "relativePath": relative_path }),
+    )
+    .await
 }
 
 #[tauri::command]

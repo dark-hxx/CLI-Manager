@@ -66,6 +66,18 @@
 15. [x] Align the local and remote pane headers, bound both file-list viewports to a fixed height
     with independent scrolling, and render remote files/directories with the File Explorer material
     icons as well.
+16. [x] Add an SFTP action to the SSH project file browser and reuse the Host attachment dialog by
+    resolving the exact `ssh_host_id` from the SSH Host store; keep missing-host/open failures
+    localized and do not change the file browser's read-only behavior.
+17. [x] Extend the Host SFTP dialog with remote-file download and delete actions. Use a save-file
+    destination for downloads, preserve arbitrary bytes through bounded `fileGetChunk` frames,
+    confirm deletes, and permit only regular files or empty directories to be removed.
+18. [x] Add Agent `fileGet`/`fileDelete` capabilities, protocol `1.14`, daemon chunk reassembly and
+    capability gates, Tauri IPC commands, bilingual copy, contract/spec updates, and regression
+    coverage for binary download, path confinement, and empty-directory deletion.
+19. [x] Add a remote directory picker to the Host SFTP dialog with directory-only browsing, parent
+    navigation, refresh, manual path entry, and selecting the current directory as the upload target;
+    update bilingual copy and V1.3.9 documentation.
 
 ## Required focused assertions
 
@@ -93,6 +105,9 @@
   independent from the remote Agent initialization state.
 - [x] Host SFTP local/remote headers are aligned; both file-list viewports have a fixed height with
   overflow scrolling, and the remote listing reuses File Explorer material icons.
+- [x] The SSH project file browser exposes an SFTP button that opens the same Host attachment
+  dialog as SSH Host settings; remote files can be downloaded to a selected local path or deleted
+  after confirmation, while non-empty directories are not recursively removed.
 
 ## Validation commands
 

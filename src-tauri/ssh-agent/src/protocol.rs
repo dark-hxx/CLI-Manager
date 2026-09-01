@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
@@ -9,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use crate::files::{
     FileAttachAbortRequest, FileAttachBeginRequest, FileAttachChunkRequest,
-    FileAttachFinishRequest, FileAttachmentRootRequest, FileAttachmentUploads, FileListRequest,
-    FilePutBeginRequest, FileReadRequest, FileSearchRequest,
+    FileAttachFinishRequest, FileAttachmentRootRequest, FileAttachmentUploads, FileDeleteRequest,
+    FileGetRequest, FileListRequest, FilePutBeginRequest, FileReadRequest, FileSearchRequest,
 };
 use crate::history::{
     HistoryGetRequest, HistoryResumePreflightRequest, HistoryScopeRequest, HistorySearchRequest,
@@ -27,6 +28,7 @@ pub const MAX_PREAMBLE_BANNER_BYTES: usize = 8 * 1024;
 const MAX_CANCELLED_REQUESTS: usize = 1024;
 const HISTORY_DETAIL_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_HISTORY_DETAIL_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const FILE_GET_CHUNK_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -277,6 +279,8 @@ fn capabilities() -> Value {
         "fileList",
         "fileRead",
         "fileSearch",
+        "fileGet",
+        "fileDelete",
         "fileAttach",
         "fileAttachAny",
         "fileAttachCustomRoot",
@@ -322,6 +326,37 @@ fn write_history_detail_chunks(
                 request_id.to_string(),
                 "historyDetailChunk",
                 json!({ "index": index, "total": total, "data": data }),
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn write_file_get_chunks(
+    writer: &mut impl Write,
+    request_id: &str,
+    download: crate::files::FileDownload,
+) -> Result<(), String> {
+    let total = download.data.len().div_ceil(FILE_GET_CHUNK_BYTES).max(1);
+    for index in 0..total {
+        let start = index * FILE_GET_CHUNK_BYTES;
+        let end = start
+            .saturating_add(FILE_GET_CHUNK_BYTES)
+            .min(download.data.len());
+        let chunk = &download.data[start..end];
+        write_frame(
+            writer,
+            &response(
+                request_id.to_string(),
+                "fileGetChunk",
+                json!({
+                    "index": index,
+                    "total": total,
+                    "dataBase64": general_purpose::STANDARD.encode(chunk),
+                    "relativePath": download.relative_path.clone(),
+                    "sizeBytes": download.size_bytes,
+                    "modifiedMs": download.modified_ms,
+                }),
             ),
         )?;
     }
@@ -611,6 +646,45 @@ pub fn run_bridge(
                         json!({ "code": "remote_file_attachment_request_invalid" }),
                     ),
                 },
+            };
+            write_frame(writer, &response)?;
+            continue;
+        }
+        if frame.kind == "fileGet" {
+            match serde_json::from_value::<FileGetRequest>(frame.payload) {
+                Ok(request) => match crate::files::read_download(request) {
+                    Ok(download) => write_file_get_chunks(writer, &request_id, download)?,
+                    Err(code) => write_frame(
+                        writer,
+                        &response(request_id, "error", json!({ "code": code })),
+                    )?,
+                },
+                Err(_) => write_frame(
+                    writer,
+                    &response(
+                        request_id,
+                        "error",
+                        json!({ "code": "remote_file_request_invalid" }),
+                    ),
+                )?,
+            }
+            continue;
+        }
+        if frame.kind == "fileDelete" {
+            let response = match serde_json::from_value::<FileDeleteRequest>(frame.payload) {
+                Ok(request) => match crate::files::delete(request) {
+                    Ok(result) => response(
+                        request_id,
+                        "response",
+                        serde_json::to_value(result).unwrap_or(Value::Null),
+                    ),
+                    Err(code) => response(request_id, "error", json!({ "code": code })),
+                },
+                Err(_) => response(
+                    request_id,
+                    "error",
+                    json!({ "code": "remote_file_request_invalid" }),
+                ),
             };
             write_frame(writer, &response)?;
             continue;
@@ -989,6 +1063,8 @@ mod tests {
             "fileList",
             "fileRead",
             "fileSearch",
+            "fileGet",
+            "fileDelete",
             "fileAttach",
             "fileAttachAny",
             "fileAttachCustomRoot",

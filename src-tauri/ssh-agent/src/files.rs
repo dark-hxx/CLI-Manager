@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::layout::resolve_layout;
@@ -42,6 +42,20 @@ pub struct FileListRequest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileReadRequest {
+    pub root_path: String,
+    pub relative_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileGetRequest {
+    pub root_path: String,
+    pub relative_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDeleteRequest {
     pub root_path: String,
     pub relative_path: String,
 }
@@ -142,6 +156,20 @@ pub struct RemoteFileRead {
     pub size_bytes: u64,
     pub modified_ms: Option<i64>,
     pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDeleteResult {
+    pub relative_path: String,
+    pub kind: String,
+}
+
+pub struct FileDownload {
+    pub relative_path: String,
+    pub size_bytes: u64,
+    pub modified_ms: Option<i64>,
+    pub data: Vec<u8>,
 }
 
 struct PendingFileAttachment {
@@ -817,6 +845,59 @@ pub fn read(request: FileReadRequest) -> Result<RemoteFileRead, String> {
     })
 }
 
+pub fn read_download(request: FileGetRequest) -> Result<FileDownload, String> {
+    let root = resolve_root(&request.root_path)?;
+    let path = resolve_relative(&root, &request.relative_path)?;
+    let metadata = fs::symlink_metadata(&path).map_err(|_| "remote_file_not_found".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("remote_file_not_file".to_string());
+    }
+    if metadata.len() > MAX_ATTACHMENT_BYTES {
+        return Err("remote_file_download_too_large".to_string());
+    }
+    let data = fs::read(&path).map_err(|_| "remote_file_read_failed".to_string())?;
+    Ok(FileDownload {
+        relative_path: relative_path(&root, &path)?,
+        size_bytes: data.len() as u64,
+        modified_ms: modified_ms(&metadata),
+        data,
+    })
+}
+
+pub fn delete(request: FileDeleteRequest) -> Result<FileDeleteResult, String> {
+    if request.relative_path.trim().is_empty() {
+        return Err("remote_file_path_invalid".to_string());
+    }
+    let root = resolve_root(&request.root_path)?;
+    let path = resolve_relative(&root, &request.relative_path)?;
+    if path == root {
+        return Err("remote_file_path_invalid".to_string());
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(|_| "remote_file_not_found".to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Err("remote_file_path_confined".to_string());
+    }
+    let kind = if metadata.is_dir() {
+        fs::remove_dir(&path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::DirectoryNotEmpty {
+                "remote_file_directory_not_empty".to_string()
+            } else {
+                "remote_file_delete_failed".to_string()
+            }
+        })?;
+        "directory"
+    } else if metadata.is_file() {
+        fs::remove_file(&path).map_err(|_| "remote_file_delete_failed".to_string())?;
+        "file"
+    } else {
+        return Err("remote_file_delete_unsupported".to_string());
+    };
+    Ok(FileDeleteResult {
+        relative_path: relative_path(&root, &path)?,
+        kind: kind.to_string(),
+    })
+}
+
 pub fn search(request: FileSearchRequest) -> Result<Vec<RemoteFileEntry>, String> {
     let query = request.query.trim().to_lowercase();
     if query.chars().count() < 2 || query.len() > 256 {
@@ -926,6 +1007,7 @@ fn resolve_relative(root: &Path, relative: &str) -> Result<PathBuf, String> {
     {
         return Err("remote_file_path_invalid".to_string());
     }
+    reject_symlink_components(root, relative)?;
     let path = root.join(relative);
     let canonical = path
         .canonicalize()
@@ -934,6 +1016,25 @@ fn resolve_relative(root: &Path, relative: &str) -> Result<PathBuf, String> {
         return Err("remote_file_path_confined".to_string());
     }
     Ok(canonical)
+}
+
+fn reject_symlink_components(root: &Path, relative: &str) -> Result<(), String> {
+    let mut current = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err("remote_file_path_confined".to_string());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => return Err("remote_file_not_found".to_string()),
+        }
+    }
+    Ok(())
 }
 
 fn relative_path(root: &Path, path: &Path) -> Result<String, String> {
@@ -1049,11 +1150,12 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_encode, cleanup_expired_attachments, list, read, search, AttachmentKind,
-        FileAttachAbortRequest, FileAttachBeginRequest, FileAttachChunkRequest,
-        FileAttachFinishRequest, FileAttachmentUploads, FileListRequest, FilePutBeginRequest,
-        FileReadRequest, FileSearchRequest, ATTACHMENT_RETENTION, MAX_ATTACHMENT_BYTES,
-        MAX_ENTRIES, MAX_SEARCH_RESULTS, MAX_TEXT_READ_BYTES,
+        base64_encode, cleanup_expired_attachments, delete, list, read, read_download, search,
+        AttachmentKind, FileAttachAbortRequest, FileAttachBeginRequest, FileAttachChunkRequest,
+        FileAttachFinishRequest, FileAttachmentUploads, FileDeleteRequest, FileGetRequest,
+        FileListRequest, FilePutBeginRequest, FileReadRequest, FileSearchRequest,
+        ATTACHMENT_RETENTION, MAX_ATTACHMENT_BYTES, MAX_ENTRIES, MAX_SEARCH_RESULTS,
+        MAX_TEXT_READ_BYTES,
     };
     use base64::{engine::general_purpose, Engine as _};
     use sha2::{Digest, Sha256};
@@ -1097,6 +1199,64 @@ mod tests {
         let root = root.path().canonicalize().unwrap();
         assert!(super::resolve_relative(&root, "../secret").is_err());
         assert!(super::resolve_relative(&root, "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn file_download_reads_binary_and_delete_removes_files() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("archive.bin");
+        fs::write(&file, [0_u8, 1, 2, 255]).unwrap();
+        let download = read_download(FileGetRequest {
+            root_path: root.path().display().to_string(),
+            relative_path: "archive.bin".into(),
+        })
+        .unwrap();
+        assert_eq!(download.relative_path, "archive.bin");
+        assert_eq!(download.size_bytes, 4);
+        assert_eq!(download.data, [0, 1, 2, 255]);
+
+        let deleted = delete(FileDeleteRequest {
+            root_path: root.path().display().to_string(),
+            relative_path: "archive.bin".into(),
+        })
+        .unwrap();
+        assert_eq!(deleted.relative_path, "archive.bin");
+        assert_eq!(deleted.kind, "file");
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn delete_only_allows_empty_directories_and_never_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        let non_empty = root.path().join("non-empty");
+        fs::create_dir(&non_empty).unwrap();
+        fs::write(non_empty.join("file.txt"), b"content").unwrap();
+        assert_eq!(
+            delete(FileDeleteRequest {
+                root_path: root.path().display().to_string(),
+                relative_path: "non-empty".into(),
+            })
+            .unwrap_err(),
+            "remote_file_directory_not_empty"
+        );
+
+        let empty = root.path().join("empty");
+        fs::create_dir(&empty).unwrap();
+        let deleted = delete(FileDeleteRequest {
+            root_path: root.path().display().to_string(),
+            relative_path: "empty".into(),
+        })
+        .unwrap();
+        assert_eq!(deleted.kind, "directory");
+        assert!(!empty.exists());
+        assert_eq!(
+            delete(FileDeleteRequest {
+                root_path: root.path().display().to_string(),
+                relative_path: "".into(),
+            })
+            .unwrap_err(),
+            "remote_file_path_invalid"
+        );
     }
 
     #[test]
