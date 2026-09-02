@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 103
-- **Last Active**: 2026-09-01
+- **Total Sessions**: 104
+- **Last Active**: 2026-09-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1355 | Active |
+| `journal-2.md` | ~1376 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 104 | 2026-09-03 | Fix Codex CLI output recovery | `c51a0bcf` | `master` |
 | 103 | 2026-09-01 | SSH Agent SFTP 发布与远程目录选择器 | `4601e769` | `master` |
 | 102 | 2026-08-31 | 终端滚动快捷键 | `7ce0c105` | `master` |
 | 101 | 2026-08-31 | 终端滚动到底部快捷跳转按钮 | `37cc08a3` | `master` |

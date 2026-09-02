@@ -1353,3 +1353,24 @@ Added a global local smart-title prompt, persisted save feedback, non-blocking P
 ### Status
 
 [OK] **Completed**
+
+
+## Session 104: Fix Codex CLI output recovery
+
+**Date**: 2026-09-03
+**Task**: Fix Codex CLI output recovery
+**Branch**: `master`
+
+### Summary
+
+Fixed Issue #245: hardened terminal output scheduling and daemon ACK recovery; separated checkpoint snapshots from live frames, detected spool truncation gaps and reused reconnect replay_reset recovery, moved spool reads outside the global clients lock, and added regression tests plus V1.3.9 documentation.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c51a0bcf` | (see git log) |
+
+### Status
+
+[OK] **Completed**
