@@ -1825,6 +1825,7 @@ function App() {
         confirmText="恢复"
         cancelText="不恢复"
         confirmAutoFocus
+        explicitCloseOnly
         contentClassName="w-[calc(100vw-2rem)] max-w-[460px]"
         onConfirm={handleConfirmRestoreSessions}
         onClose={handleRejectRestoreSessions}
