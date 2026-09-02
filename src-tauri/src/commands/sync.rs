@@ -27,9 +27,10 @@ const BACKUP_RESTORE_DELETE_STATEMENTS: [&str; 7] = [
     "DELETE FROM groups",
     "DELETE FROM model_prices",
 ];
-// 列清单必须与 src/stores/syncStore.ts 的 buildBatchInsertStatements 调用逐字一致（含顺序）。
-// 任何一侧单独改动都会让恢复整批失败，因为 validate_backup_database_statement 是精确前缀匹配。
-const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 7] = [
+// 当前列清单必须与 src/stores/syncStore.ts 的 buildBatchInsertStatements 调用逐字一致（含顺序）。
+// 旧列清单继续放行，以便恢复新增绑定字段前生成的备份；缺失列由数据库默认值补齐。
+const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 10] = [
+    ("groups", "id,name,parent_id,sort_order,icon,color,bound_path,created_at"),
     ("groups", "id,name,parent_id,sort_order,icon,color,created_at"),
     (
         "ssh_host_groups",
@@ -37,7 +38,15 @@ const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 7] = [
     ),
     (
         "ssh_hosts",
+        "id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,attachment_root,startup_script,notes,sort_order,created_at,updated_at",
+    ),
+    (
+        "ssh_hosts",
         "id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,startup_script,notes,sort_order,created_at,updated_at",
+    ),
+    (
+        "projects",
+        "id,name,path,path_mode,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,icon,color,created_at,updated_at",
     ),
     (
         "projects",
@@ -553,6 +562,7 @@ mod tests {
                 sort_order INTEGER NOT NULL,
                 icon TEXT NOT NULL DEFAULT '',
                 color TEXT NOT NULL DEFAULT '',
+                bound_path TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             )",
         )
@@ -620,6 +630,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn database_restore_preserves_group_binding_path() {
+        let mut conn = restore_test_connection().await;
+        let statements = [
+            delete_groups_statement(),
+            BackupDatabaseStatement {
+                sql: "INSERT INTO groups (id,name,parent_id,sort_order,icon,color,bound_path,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+                    .to_string(),
+                values: vec![
+                    Value::String("bound".to_string()),
+                    Value::String("Bound".to_string()),
+                    Value::Null,
+                    Value::Number(1.into()),
+                    Value::String(String::new()),
+                    Value::String(String::new()),
+                    Value::String("D:/bound".to_string()),
+                    Value::String("2".to_string()),
+                ],
+            },
+        ];
+
+        execute_backup_database_restore(&mut conn, &statements)
+            .await
+            .unwrap();
+
+        let bound_path: String =
+            sqlx::query_scalar("SELECT bound_path FROM groups WHERE id = 'bound'")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(bound_path, "D:/bound");
+    }
+
+    #[test]
+    fn database_restore_accepts_project_path_mode_column() {
+        let statement = BackupDatabaseStatement {
+            sql: "INSERT INTO projects (id,name,path,path_mode,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,icon,color,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)".to_string(),
+            values: vec![Value::Null],
+        };
+
+        assert!(validate_backup_database_statement(&statement).is_ok());
+    }
+
+    #[tokio::test]
     async fn database_restore_preserves_ssh_host_project_binding() {
         let mut conn = restore_test_connection().await;
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -657,6 +710,7 @@ mod tests {
                 server_alive_interval_sec INTEGER NOT NULL,
                 server_alive_count_max INTEGER NOT NULL,
                 terminal_encoding TEXT NOT NULL,
+                attachment_root TEXT NOT NULL DEFAULT '',
                 startup_script TEXT NOT NULL,
                 notes TEXT NOT NULL,
                 sort_order INTEGER NOT NULL,
@@ -729,7 +783,7 @@ mod tests {
                 ],
             },
             BackupDatabaseStatement {
-                sql: "INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,startup_script,notes,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)".to_string(),
+                sql: "INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,attachment_root,startup_script,notes,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)".to_string(),
                 values: vec![
                     Value::String("ssh-host".to_string()),
                     Value::String("Server".to_string()),
@@ -753,6 +807,7 @@ mod tests {
                     Value::Number(30.into()),
                     Value::Number(3.into()),
                     Value::String("UTF-8".to_string()),
+                    Value::String("".to_string()),
                     Value::String("".to_string()),
                     Value::String("".to_string()),
                     Value::Number(0.into()),

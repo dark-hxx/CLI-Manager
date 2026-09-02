@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 98
-- **Last Active**: 2026-08-26
+- **Total Sessions**: 103
+- **Last Active**: 2026-09-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1235 | Active |
+| `journal-2.md` | ~1355 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,11 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 103 | 2026-09-01 | SSH Agent SFTP 发布与远程目录选择器 | `4601e769` | `master` |
+| 102 | 2026-08-31 | 终端滚动快捷键 | `7ce0c105` | `master` |
+| 101 | 2026-08-31 | 终端滚动到底部快捷跳转按钮 | `37cc08a3` | `master` |
+| 100 | 2026-08-31 | 修复 Grok Build Alt+Enter 换行并合并 PR #240 | `f6b8ca66`, `66ba0fba` | `master` |
+| 99 | 2026-08-31 | 修复 Grok Build Alt+Enter 换行 | `f175f706` | `master` |
 | 98 | 2026-08-26 | 修复 macOS Fcitx5 终端中文重复输入 | `b669c1db` | `master` |
 | 97 | 2026-08-26 | History smart-title prompt and responsiveness | `65a6b5cf` | `master` |
 | 96 | 2026-08-24 | Fix file preview refresh and file tab menu | `9c6aa22d` | `master` |

@@ -12,6 +12,7 @@ const terminalTabs = read("../src/components/TerminalTabs.tsx");
 const gitPanel = read("../src/components/git/GitChangesPanel.tsx");
 const gitTree = read("../src/components/git/GitChangesTree.tsx");
 const gitNode = read("../src/components/git/GitTreeNode.tsx");
+const attachmentDialog = read("../src/components/settings/pages/SshHostAttachmentDialog.tsx");
 
 test("terminal tab CLI icons inherit the terminal tab foreground color", () => {
   assert.equal((terminalTabs.match(/<CliToolIcon icon=\{cliToolIcon\} size=\{14\} className="text-current" \/>/g) ?? []).length, 3);
@@ -65,4 +66,19 @@ test("Git change files and directories share the terminal pointer-drag source", 
   assert.match(formatter, /kind === "directory" && normalizedPath \? `\$\{absolutePath\}\$\{separator\}` : absolutePath/);
   assert.match(gitNode, /toggleDir\(displayCollapseKey\)/);
   assert.match(gitNode, /isTerminalFilePointerDragClickHandled/);
+});
+
+test("SSH Host attachment local pane browses Desktop and reuses File Explorer icons", () => {
+  assert.match(attachmentDialog, /import \{ dirname as localDirname, desktopDir, join as joinLocalPath \} from "@tauri-apps\/api\/path"/);
+  assert.match(attachmentDialog, /invoke<ProjectFileEntry\[\]>\("file_list_dir", \{ rootPath: localPath, relativePath: "" \}\)/);
+  assert.match(attachmentDialog, /getMaterialFolderIcon\(entry\.name, false\)/);
+  assert.match(attachmentDialog, /getMaterialFileIcon\(entry\.name\)/);
+  assert.match(attachmentDialog, /setLocalPath\(nextPath\)/);
+  assert.match(attachmentDialog, /addPathsToQueue\(\[path\]\)/);
+});
+
+test("SSH Host attachment panes share aligned headers and bounded scrolling lists", () => {
+  assert.equal((attachmentDialog.match(/h-\[108px\] shrink-0/g) ?? []).length, 2);
+  assert.equal((attachmentDialog.match(/h-\[360px\] shrink-0 overflow-y-auto/g) ?? []).length, 2);
+  assert.match(attachmentDialog, /src=\{entry\.kind === "directory" \? getMaterialFolderIcon\(entry\.name, false\) : getMaterialFileIcon\(entry\.name\)\}/);
 });

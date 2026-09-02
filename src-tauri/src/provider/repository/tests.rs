@@ -3,8 +3,8 @@ use super::dto::ClaudeConfigInput;
 use super::keys::{activate_key_in_transaction, delete_key_in_transaction};
 use super::support::{
     apply_claude_config_fields, apply_claude_meta, apply_config_fields,
-    claude_config_from_settings, config_summary, contains_secret_fields, duplicate_settings_config,
-    normalize_app_type, project_key_into_settings, redact_settings_config,
+    claude_config_from_settings, config_summary, duplicate_settings_config, normalize_app_type,
+    project_key_into_settings, redact_settings_config,
 };
 use crate::provider::database;
 use serde_json::Map;
@@ -130,17 +130,6 @@ fn claude_advanced_fields_reject_unknown_api_format() {
         result.unwrap_err(),
         "provider_claude_api_format_invalid:unknown"
     );
-}
-
-#[test]
-fn common_config_detects_nested_secret_fields() {
-    let value: Value = serde_json::from_str(
-        r#"{"env":{"ANTHROPIC_BASE_URL":"https://example.test","OPENAI_API_KEY":"secret"}}"#,
-    )
-    .unwrap();
-    assert!(contains_secret_fields(&value));
-    let safe: Value = serde_json::from_str(r#"{"timeout":30,"features":{"hooks":true}}"#).unwrap();
-    assert!(!contains_secret_fields(&safe));
 }
 
 #[test]

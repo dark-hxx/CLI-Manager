@@ -11,8 +11,39 @@ process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 writeFileSync(join(tempDir, "terminalTui.mjs"), `
 export const TUI_BORDER_PREFIX_PATTERN = /^$/;
-export const TUI_COMPOSER_PROMPT_PATTERN = /^$/;
+export const TUI_COMPOSER_PROMPT_PATTERN = /^[\\u203a\\u276f\\u00bb\\u2023>]\\s?/u;
 `);
+
+const cliContextSource = readFileSync(new URL("../src/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
+const cliContextOutput = ts.transpileModule(cliContextSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: "TerminalCliContext.ts",
+}).outputText;
+const cliContextModulePath = join(tempDir, "TerminalCliContext.mjs");
+writeFileSync(cliContextModulePath, cliContextOutput, "utf8");
+const {
+  isGrokLaunchCommand,
+  isGrokRuntimeContext,
+  isGrokTerminalContext,
+} = await import(pathToFileURL(cliContextModulePath).href);
+
+const newlineSource = readFileSync(new URL("../src/terminal/browser/TerminalNewlineShortcut.ts", import.meta.url), "utf8");
+const newlineModulePath = join(tempDir, "TerminalNewlineShortcut.mjs");
+writeFileSync(newlineModulePath, ts.transpileModule(newlineSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: "TerminalNewlineShortcut.ts",
+}).outputText, "utf8");
+const {
+  ESC_CR_COMPOSER_NEWLINE,
+  LF_NEWLINE,
+  resolveTerminalNewlineKeyEvent,
+} = await import(pathToFileURL(newlineModulePath).href);
 
 const colorSource = readFileSync(new URL("../src/lib/terminalColor.ts", import.meta.url), "utf8");
 writeFileSync(join(tempDir, "terminalColor.mjs"), ts.transpileModule(colorSource, {
@@ -36,7 +67,11 @@ const transpiled = ts.transpileModule(source, {
 const modulePath = join(tempDir, "terminalTuiDisplay.mjs");
 writeFileSync(modulePath, transpiled, "utf8");
 
-const { hasCodexTuiViewport, normalizeTerminalTuiComposerBackground } = await import(pathToFileURL(modulePath).href);
+const {
+  hasCodexTuiViewport,
+  hasTuiComposerPromptViewport,
+  normalizeTerminalTuiComposerBackground,
+} = await import(pathToFileURL(modulePath).href);
 
 const XTERM_BG_COLOR_MASK = 0x03ffffff;
 const XTERM_INVERSE_FLAG = 0x04000000;
@@ -105,6 +140,16 @@ function createTerminal(lines, viewportY = 0, rows = lines.length, type = "norma
   };
 }
 
+const keyEvent = (overrides = {}) => ({
+  type: "keydown",
+  key: "Enter",
+  shiftKey: false,
+  ctrlKey: false,
+  altKey: false,
+  metaKey: false,
+  ...overrides,
+});
+
 test("detects a manually launched Codex TUI from its visible viewport", () => {
   assert.equal(hasCodexTuiViewport(createTerminal(["OpenAI Codex", "› prompt"])), true);
   assert.equal(hasCodexTuiViewport(createTerminal(["› prompt", "/model to change"])), true);
@@ -119,6 +164,148 @@ test("does not classify ordinary shells or Claude Code as Codex", () => {
 test("only scans the current viewport", () => {
   const terminal = createTerminal(["OpenAI Codex", "PS F:\\\\github>", "ready"], 1, 2);
   assert.equal(hasCodexTuiViewport(terminal), false);
+});
+
+test("recognizes Grok Build from stable terminal context metadata", () => {
+  const contexts = [
+    { sessionTool: "grok" },
+    { projectTool: "grokbuild" },
+    { titleTool: "Grok Build" },
+    { startupCmd: "wsl.exe grok --continue" },
+  ];
+
+  for (const context of contexts) {
+    assert.equal(
+      isGrokTerminalContext({
+        projectTool: "",
+        sessionTool: "",
+        startupCmd: "",
+        titleTool: "",
+        outputHint: "",
+        ...context,
+      }),
+      true,
+      JSON.stringify(context),
+    );
+  }
+});
+
+test("does not classify an ordinary shell or a similarly named tool as Grok Build", () => {
+  assert.equal(isGrokTerminalContext({
+    projectTool: "",
+    sessionTool: "",
+    startupCmd: "pwsh",
+    titleTool: "",
+    outputHint: "",
+  }), false);
+  assert.equal(isGrokTerminalContext({
+    projectTool: "grok-helper",
+    sessionTool: "",
+    startupCmd: "",
+    titleTool: "",
+    outputHint: "",
+  }), false);
+});
+
+test("recognizes exact manually submitted Grok launch commands", () => {
+  assert.equal(isGrokLaunchCommand("grok"), true);
+  assert.equal(isGrokLaunchCommand("grok --continue"), true);
+  assert.equal(isGrokLaunchCommand('& "C:\\Program Files\\grok.exe" --continue'), true);
+  assert.equal(isGrokLaunchCommand("echo grok"), false);
+  assert.equal(isGrokLaunchCommand("grok-helper"), false);
+  assert.equal(isGrokLaunchCommand(""), false);
+});
+
+test("gates manual Grok runtime detection by the visible TUI prompt", () => {
+  const context = {
+    projectTool: "",
+    sessionTool: "",
+    startupCmd: "pwsh",
+    titleTool: "",
+    outputHint: "",
+  };
+  const promptTerminal = createTerminal(["› prompt"]);
+  const shellTerminal = createTerminal(["PS F:\\\\github\\\\CLI-Manager>"]);
+
+  assert.equal(hasTuiComposerPromptViewport(promptTerminal), true);
+  assert.equal(hasTuiComposerPromptViewport(shellTerminal), false);
+  assert.equal(isGrokRuntimeContext(context, {
+    manualLaunchDetected: true,
+    hasVisibleTuiPrompt: true,
+  }), true);
+  assert.equal(isGrokRuntimeContext(context, {
+    manualLaunchDetected: true,
+    hasVisibleTuiPrompt: false,
+  }), false);
+  assert.equal(isGrokRuntimeContext({ ...context, projectTool: "grok" }, {
+    manualLaunchDetected: false,
+    hasVisibleTuiPrompt: false,
+  }), true);
+});
+
+test("routes the selected Grok shortcut through Esc+CR", () => {
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ shiftKey: true }), {
+      shortcut: "Shift+Enter",
+      usesEscCrComposerNewline: true,
+    }),
+    { action: "write", data: ESC_CR_COMPOSER_NEWLINE },
+  );
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ ctrlKey: true }), {
+      shortcut: "Ctrl+Enter",
+      usesEscCrComposerNewline: true,
+    }),
+    { action: "write", data: ESC_CR_COMPOSER_NEWLINE },
+  );
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ altKey: true }), {
+      shortcut: "Alt+Enter",
+      usesEscCrComposerNewline: true,
+    }),
+    { action: "write", data: ESC_CR_COMPOSER_NEWLINE },
+  );
+});
+
+test("passes native Grok Alt+Enter when another app shortcut is selected", () => {
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ altKey: true }), {
+      shortcut: "Shift+Enter",
+      usesEscCrComposerNewline: true,
+    }),
+    { action: "pass" },
+  );
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ altKey: true }), {
+      shortcut: "Ctrl+Enter",
+      usesEscCrComposerNewline: true,
+    }),
+    { action: "pass" },
+  );
+});
+
+test("keeps ordinary Shell newline and managed-key behavior unchanged", () => {
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ shiftKey: true }), {
+      shortcut: "Shift+Enter",
+      usesEscCrComposerNewline: false,
+    }),
+    { action: "write", data: LF_NEWLINE },
+  );
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ altKey: true }), {
+      shortcut: "Shift+Enter",
+      usesEscCrComposerNewline: false,
+    }),
+    { action: "swallow" },
+  );
+  assert.deepEqual(
+    resolveTerminalNewlineKeyEvent(keyEvent({ altKey: true, shiftKey: true }), {
+      shortcut: "Shift+Enter",
+      usesEscCrComposerNewline: true,
+    }),
+    { action: "none" },
+  );
 });
 
 test("transparent Claude normalization preserves an isolated inverse software cursor", () => {
@@ -273,10 +460,25 @@ function eraseDarkBlocks(fixture, overrides = {}) {
 test("shared CLI context includes immutable session metadata for XTermTerminal", () => {
   const componentSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
   const contextSource = readFileSync(new URL("../src/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
+  const inputSource = readFileSync(new URL("../src/hooks/useTerminalInput.ts", import.meta.url), "utf8");
   assert.match(componentSource, /createTerminalCliContext\(session, project\)/u);
   assert.match(contextSource, /sessionTool:\s*session\?\.cliTool/u);
   assert.match(contextSource, /sessionTool\s*===\s*"codex"/u);
-  assert.match(componentSource, /isCodexSession\(getSessionToolContext\(\), terminal\)/u);
+  assert.match(componentSource, /isCodexSession\(sessionContext, terminal\)/u);
+  assert.match(contextSource, /isGrokTerminalContext/u);
+  assert.match(contextSource, /isGrokLaunchCommand/u);
+  assert.match(contextSource, /isGrokRuntimeContext/u);
+  assert.match(componentSource, /grokSessionDetectedRef/u);
+  assert.match(componentSource, /hasTuiComposerPromptViewport/u);
+  assert.match(componentSource, /isGrokSession\(sessionContext, terminal\)/u);
+  assert.match(componentSource, /onCommandSubmitted:\s*\(command\)/u);
+  assert.match(inputSource, /onCommandSubmitted\?:\s*\(command:\s*string\)\s*=>\s*void/u);
+  assert.match(inputSource, /data\s*===\s*"\\r"[\s\S]{0,220}onCommandSubmitted\?\.\(inputBufferBefore\)/u);
+  assert.match(componentSource, /resolveTerminalNewlineKeyEvent/u);
+  assert.match(componentSource, /newlineDecision\.action === "pass"/u);
+  assert.match(componentSource, /newlineDecision\.data/u);
+  assert.match(newlineSource, /ESC_CR_COMPOSER_NEWLINE\s*=\s*"\\x1b\\r"/u);
+  assert.match(newlineSource, /LF_NEWLINE\s*=\s*"\\n"/u);
 });
 
 test("light theme erases a dark CLI message block and keeps light highlights", () => {

@@ -122,6 +122,10 @@ pub fn cli_manager_data_dir() -> Result<PathBuf, String> {
 - Legacy SQLite DB recovery may copy the legacy DB family only when the legacy DB has user rows and the current DB has no user rows.
 - SQLite DB family operations must include `cli-manager.db`, `cli-manager.db-wal`, and `cli-manager.db-shm`.
 - Current DB user data always wins over legacy DB user data.
+- `db_repair_known_migration_drift` runs before the frontend SQL plugin opens the database. For
+  known additive columns such as `ssh_hosts.attachment_root`, it repairs the physical column and
+  the `_sqlx_migrations` marker independently, so either side may be missing without causing a
+  later `no such column` or duplicate-`ADD COLUMN` failure.
 
 ### 4. Validation & Error Matrix
 
@@ -139,6 +143,9 @@ pub fn cli_manager_data_dir() -> Result<PathBuf, String> {
 | Legacy DB has rows and current DB has none | Backup current DB family, copy legacy DB family. |
 | Current DB has any user rows | Do not copy legacy DB. |
 | Recovery fails | Log warning and continue normal migration repair. |
+| `ssh_hosts.attachment_root` is missing while migration 37 is registered | Add the column before `Database.load`; do not insert a duplicate marker. |
+| `ssh_hosts.attachment_root` exists while migration 37 is missing | Register migration 37 with the exact SQL checksum; do not replay `ALTER TABLE`. |
+| Both the column and migration 37 are missing | Add the column and register migration 37 in one short transaction; rollback both on failure. |
 
 ### 5. Good/Base/Bad Cases
 
@@ -155,6 +162,9 @@ pub fn cli_manager_data_dir() -> Result<PathBuf, String> {
 - Rust unit test for development/installed session store file-name selection.
 - Rust unit test for development/installed history cache directory selection.
 - Rust unit tests for legacy DB recovery when current DB has no user rows and rejection when current DB has user rows.
+- Rust unit tests for additive-column drift with the column missing, the marker missing, both missing,
+  and a second idempotent repair; the assertion must inspect both `PRAGMA table_info` and
+  `_sqlx_migrations`.
 - `cargo check` after backend path or DB repair changes.
 - `cargo test --lib` or focused `cargo test app_paths db_repair --lib` after persistence migration changes.
 - `npx tsc --noEmit` after changing frontend path payloads or store consumers.

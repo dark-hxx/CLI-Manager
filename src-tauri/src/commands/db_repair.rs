@@ -1,10 +1,14 @@
 use crate::app_paths;
 use crate::{
     MIGRATION_ADD_CLI_ARGS_DESCRIPTION, MIGRATION_ADD_CLI_ARGS_SQL, MIGRATION_ADD_CLI_ARGS_VERSION,
-    MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION, MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL,
-    MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION, MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION,
-    MIGRATION_ADD_WORKTREE_ISOLATION_SQL, MIGRATION_ADD_WORKTREE_ISOLATION_VERSION,
-    MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+    MIGRATION_ADD_GROUP_BOUND_PATH_DESCRIPTION, MIGRATION_ADD_GROUP_BOUND_PATH_SQL,
+    MIGRATION_ADD_GROUP_BOUND_PATH_VERSION, MIGRATION_ADD_PROJECT_PATH_MODE_DESCRIPTION,
+    MIGRATION_ADD_PROJECT_PATH_MODE_SQL, MIGRATION_ADD_PROJECT_PATH_MODE_VERSION,
+    MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION, MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL,
+    MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION,
+    MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+    MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION, MIGRATION_ADD_WORKTREE_ISOLATION_SQL,
+    MIGRATION_ADD_WORKTREE_ISOLATION_VERSION, MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
     MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION,
     MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_SQL,
@@ -185,6 +189,14 @@ pub async fn db_repair_known_migration_drift(
     if ensure_node_appearance_columns(&mut conn).await? {
         result.repaired = true;
         result.status = append_repair_status(&result.status, "repaired_node_appearance_columns");
+    }
+    if ensure_group_binding_columns(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_group_binding_columns");
+    }
+    if ensure_ssh_attachment_root_column(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_ssh_attachment_root_column");
     }
     if defer_request_log_project_path_backfill(&mut conn).await? {
         result.repaired = true;
@@ -390,6 +402,176 @@ async fn ensure_node_appearance_columns(conn: &mut SqliteConnection) -> Result<b
                 .execute(&mut *conn)
                 .await
                 .map_err(|err| format!("node_appearance_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
+/// 文件夹绑定路径与项目路径模式的列缺失自愈。
+///
+/// 绑定路径迁移在 SQLx `Database.load` 前无法依赖插件自动执行：已存在的旧库可能已经
+/// 登记了后续迁移，或迁移登记与实际列发生漂移。先补齐列并登记对应 checksum，确保
+/// 前端首次写入分组时不会撞到 `no such column: bound_path`。
+async fn ensure_group_binding_columns(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
+        || !table_exists(conn, "groups").await?
+        || !table_exists(conn, "projects").await?
+    {
+        return Ok(false);
+    }
+
+    let group_columns = table_columns(conn, "groups").await?;
+    let project_columns = table_columns(conn, "projects").await?;
+    let mut missing_statements: Vec<&str> = Vec::new();
+    if !group_columns.contains("bound_path") {
+        missing_statements.push(MIGRATION_ADD_GROUP_BOUND_PATH_SQL);
+    }
+    if !project_columns.contains("path_mode") {
+        missing_statements.push(MIGRATION_ADD_PROJECT_PATH_MODE_SQL);
+    }
+
+    let migrations = [
+        (
+            MIGRATION_ADD_GROUP_BOUND_PATH_VERSION,
+            MIGRATION_ADD_GROUP_BOUND_PATH_DESCRIPTION,
+            MIGRATION_ADD_GROUP_BOUND_PATH_SQL,
+        ),
+        (
+            MIGRATION_ADD_PROJECT_PATH_MODE_VERSION,
+            MIGRATION_ADD_PROJECT_PATH_MODE_DESCRIPTION,
+            MIGRATION_ADD_PROJECT_PATH_MODE_SQL,
+        ),
+    ];
+    let mut unregistered = Vec::new();
+    for (version, description, sql) in migrations {
+        let registered: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                 SELECT 1 FROM _sqlx_migrations
+                 WHERE version = ?1 AND success = 1
+             )",
+        )
+        .bind(version)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|err| format!("group_binding_migration_query_failed: {err}"))?;
+        if registered == 0 {
+            unregistered.push((version, description, sql));
+        }
+    }
+
+    if missing_statements.is_empty() && unregistered.is_empty() {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("group_binding_repair_begin_failed: {err}"))?;
+    let result = async {
+        for statement in &missing_statements {
+            sqlx::query(statement)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("group_binding_repair_alter_failed: {err}"))?;
+        }
+        for (version, description, sql) in &unregistered {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(version)
+            .bind(description)
+            .bind(migration_checksum(sql))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("group_binding_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("group_binding_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
+/// SSH Host 附件目录列缺失自愈。
+///
+/// migration 37 只有一条 `ADD COLUMN`。如果旧库在 migration 登记与实际 schema 之间发生漂移，
+/// 编辑 SSH Host 时读取 `attachment_root` 会直接失败；这里在 SQLx `Database.load` 前同时修复
+/// “列缺失但版本已登记”、“列存在但版本未登记”和“两者都缺失”三种状态。
+async fn ensure_ssh_attachment_root_column(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? || !table_exists(conn, "ssh_hosts").await?
+    {
+        return Ok(false);
+    }
+
+    let columns = table_columns(conn, "ssh_hosts").await?;
+    let has_column = columns.contains("attachment_root");
+    let registered: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("ssh_attachment_root_migration_query_failed: {err}"))?;
+
+    if has_column && registered != 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("ssh_attachment_root_repair_begin_failed: {err}"))?;
+    let result = async {
+        if !has_column {
+            sqlx::query(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("ssh_attachment_root_repair_alter_failed: {err}"))?;
+        }
+        if registered == 0 {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION)
+            .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION)
+            .bind(migration_checksum(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("ssh_attachment_root_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("ssh_attachment_root_repair_commit_failed: {err}"))?;
             Ok(true)
         }
         Err(err) => {
@@ -2211,6 +2393,60 @@ mod tests {
         .unwrap();
     }
 
+    async fn create_group_binding_drift_schema(conn: &mut SqliteConnection, with_columns: bool) {
+        let group_extra = if with_columns {
+            ", bound_path TEXT NOT NULL DEFAULT ''"
+        } else {
+            ""
+        };
+        let project_extra = if with_columns {
+            ", path_mode TEXT NOT NULL DEFAULT 'custom'"
+        } else {
+            ""
+        };
+        conn.execute(
+            format!("CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL{group_extra})")
+                .as_str(),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            format!(
+                "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL{project_extra})"
+            )
+            .as_str(),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn create_ssh_attachment_drift_schema(conn: &mut SqliteConnection, with_column: bool) {
+        let attachment_extra = if with_column {
+            ", attachment_root TEXT NOT NULL DEFAULT ''"
+        } else {
+            ""
+        };
+        conn.execute(
+            format!(
+                "CREATE TABLE ssh_hosts (id TEXT PRIMARY KEY, name TEXT NOT NULL{attachment_extra})"
+            )
+            .as_str(),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn binding_migration_registered(conn: &mut SqliteConnection, version: i64) -> bool {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?1 AND success = 1)",
+        )
+        .bind(version)
+        .fetch_one(conn)
+        .await
+        .unwrap()
+            != 0
+    }
+
     async fn register_legacy_node_appearance_v33_migration(conn: &mut SqliteConnection) {
         sqlx::query(
             "INSERT INTO _sqlx_migrations
@@ -2246,6 +2482,107 @@ mod tests {
 
         // 幂等：第二次不再改动。
         assert!(!ensure_node_appearance_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn group_binding_repair_adds_columns_and_registers_migrations() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_group_binding_drift_schema(&mut conn, false).await;
+
+        assert!(ensure_group_binding_columns(&mut conn).await.unwrap());
+        assert!(table_columns(&mut conn, "groups")
+            .await
+            .unwrap()
+            .contains("bound_path"));
+        assert!(table_columns(&mut conn, "projects")
+            .await
+            .unwrap()
+            .contains("path_mode"));
+        assert!(
+            binding_migration_registered(&mut conn, MIGRATION_ADD_GROUP_BOUND_PATH_VERSION).await
+        );
+        assert!(
+            binding_migration_registered(&mut conn, MIGRATION_ADD_PROJECT_PATH_MODE_VERSION).await
+        );
+        assert!(!ensure_group_binding_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn group_binding_repair_registers_migrations_when_columns_exist() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_group_binding_drift_schema(&mut conn, true).await;
+
+        assert!(ensure_group_binding_columns(&mut conn).await.unwrap());
+        assert!(
+            binding_migration_registered(&mut conn, MIGRATION_ADD_GROUP_BOUND_PATH_VERSION).await
+        );
+        assert!(
+            binding_migration_registered(&mut conn, MIGRATION_ADD_PROJECT_PATH_MODE_VERSION).await
+        );
+        assert!(!ensure_group_binding_columns(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn ssh_attachment_root_repair_adds_column_and_registers_migration() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_ssh_attachment_drift_schema(&mut conn, false).await;
+
+        assert!(ensure_ssh_attachment_root_column(&mut conn).await.unwrap());
+        assert!(table_columns(&mut conn, "ssh_hosts")
+            .await
+            .unwrap()
+            .contains("attachment_root"));
+        assert!(
+            binding_migration_registered(&mut conn, MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION,)
+                .await
+        );
+        assert!(!ensure_ssh_attachment_root_column(&mut conn).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn ssh_attachment_root_repair_handles_registered_and_preexisting_states() {
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_ssh_attachment_drift_schema(&mut conn, false).await;
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+                 (version, description, installed_on, success, checksum, execution_time)
+             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+        )
+        .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION)
+        .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION)
+        .bind(migration_checksum(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        // 版本已登记但列缺失时，只补列，不重复插入 migration 记录。
+        assert!(ensure_ssh_attachment_root_column(&mut conn).await.unwrap());
+        assert!(table_columns(&mut conn, "ssh_hosts")
+            .await
+            .unwrap()
+            .contains("attachment_root"));
+        let registered_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ?1 AND success = 1",
+        )
+        .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(registered_count, 1);
+
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        create_migration_table(&mut conn).await;
+        create_ssh_attachment_drift_schema(&mut conn, true).await;
+        assert!(ensure_ssh_attachment_root_column(&mut conn).await.unwrap());
+        assert!(
+            binding_migration_registered(&mut conn, MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION,)
+                .await
+        );
+        assert!(!ensure_ssh_attachment_root_column(&mut conn).await.unwrap());
     }
 
     #[tokio::test]

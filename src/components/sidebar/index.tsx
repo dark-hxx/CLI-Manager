@@ -46,6 +46,7 @@ import { logError } from "../../lib/logger";
 import { SidebarHeader, type ProjectListFilter } from "./SidebarHeader";
 import { ProjectTree } from "./ProjectTree";
 import { BatchShellDialog } from "./BatchShellDialog";
+import { GroupEditDialog } from "./GroupEditDialog";
 import { NodeAppearancePanel } from "./NodeAppearancePanel";
 import { SidebarFooter } from "./SidebarFooter";
 import { groupSyncedExternalSessions } from "../../lib/externalSessionGrouping";
@@ -74,6 +75,7 @@ import {
 import type { SettingsTab } from "../SettingsModal";
 import { useI18n } from "../../lib/i18n";
 import { getOsPlatform } from "../../lib/shell";
+import { resolveProjectPath } from "../../lib/groupPath";
 import { SIDEBAR_TOGGLE_REQUEST_EVENT } from "../../lib/sidebarCommands";
 
 interface SidebarProps {
@@ -136,10 +138,11 @@ function resolveHistorySourceFilter(cliTool: string | null | undefined): History
 
 function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
   const envVars = parseProjectEnvVars(project);
+  const cwd = resolveProjectPath(project, useProjectStore.getState().groups);
 
   return {
     projectId: project.id,
-    cwd: project.path,
+    cwd,
     title: project.name,
     startupCmd: resolveProjectStartupCommand(project),
     envVars,
@@ -307,6 +310,7 @@ export function Sidebar({
   );
 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [cloningProject, setCloningProject] = useState<Project | null>(null);
   const [providerSwitchTarget, setProviderSwitchTarget] = useState<
     | { kind: "project"; project: Project }
@@ -769,6 +773,12 @@ export function Sidebar({
       const overId = over.id as string;
       const isGroup = (id: string) => groups.some((g) => g.id === id);
       const isProject = (id: string) => projects.some((p) => p.id === id);
+      const isInheritedNode = (id: string) => {
+        const group = groups.find((item) => item.id === id);
+        if (group) return group.parent_id !== null && !(group.bound_path ?? "").trim();
+        const project = projects.find((item) => item.id === id);
+        return project?.path_mode === "inherit" && project.group_id !== null;
+      };
 
       // 1) 拖入指定分组
       if (overId.startsWith("into:")) {
@@ -806,6 +816,21 @@ export function Sidebar({
       const newIndex = ids.indexOf(overId);
       if (newIndex === -1) return;
 
+      const preservesInheritedPrefix = (orderedIds: string[], movedId: string) => {
+        // 只有被移动的节点本身是继承节点时才限制落点；自定义节点可以正常
+        // 在继承节点前后排序，不应因为目标节点类型不同而失去拖拽能力。
+        if (!isInheritedNode(movedId)) return true;
+        let sawCustom = false;
+        for (const id of orderedIds) {
+          if (isInheritedNode(id)) {
+            if (sawCustom) return false;
+          } else {
+            sawCustom = true;
+          }
+        }
+        return true;
+      };
+
       // active 不在同层 → 跨层移到 over 所在父级
       if (oldIndex === -1) {
         const targetParent = overContext.parentId;
@@ -820,6 +845,7 @@ export function Sidebar({
         }
         const reordered = [...ids];
         reordered.splice(newIndex, 0, activeId);
+        if (!preservesInheritedPrefix(reordered, activeId)) return;
         void (async () => {
           if (isGroup(activeId)) await moveGroupToParent(activeId, targetParent);
           else if (isProject(activeId)) await moveProjectToGroup(activeId, targetParent);
@@ -833,6 +859,7 @@ export function Sidebar({
       const reordered = [...ids];
       reordered.splice(oldIndex, 1);
       reordered.splice(newIndex, 0, activeId);
+      if (!preservesInheritedPrefix(reordered, activeId)) return;
       void reorderItems(overContext.parentId, reordered);
     },
     [groups, projects, tree, reorderItems, moveGroupToParent, moveProjectToGroup]
@@ -1058,7 +1085,7 @@ export function Sidebar({
       return;
     }
     const launchItems = items.map((project) => ({
-      cwd: project.path,
+      cwd: resolveProjectPath(project, useProjectStore.getState().groups),
       title: project.name,
       startupCmd: resolveProjectStartupCommand(project, { includeCodexProviderProfile: false }),
       shell: project.shell || undefined,
@@ -1231,17 +1258,17 @@ export function Sidebar({
     async (project: Project) => {
       if (compactMode || useExternalTerminal) {
         if (rejectUnsupportedCapability(project, "externalTerminal")) return;
-        await openWindowsTerminal([{ title: project.name, cwd: project.path }]);
+        await openWindowsTerminal([{ title: project.name, cwd: resolveProjectPath(project, groups) }]);
       } else {
         // 空字符串表示显式创建普通 Shell；undefined 会继承项目的 CLI/启动命令。
-        await createSession(project.id, project.path, project.name, "", undefined, project.shell || undefined);
+        await createSession(project.id, resolveProjectPath(project, groups), project.name, "", undefined, project.shell || undefined);
       }
       if (projectScopedTerminalViewEnabled) {
         onTerminalScopeChange?.({ kind: "project", projectId: project.id });
       }
       closeHistory();
     },
-    [closeHistory, compactMode, createSession, onTerminalScopeChange, projectScopedTerminalViewEnabled, rejectUnsupportedCapability, useExternalTerminal]
+    [closeHistory, compactMode, createSession, groups, onTerminalScopeChange, projectScopedTerminalViewEnabled, rejectUnsupportedCapability, useExternalTerminal]
   );
 
   const handleNewWorktreeTerminal = useCallback(
@@ -1314,12 +1341,12 @@ export function Sidebar({
   const handleOpenProjectDirectory = useCallback(async (project: Project) => {
     if (rejectUnsupportedCapability(project, "files")) return;
     try {
-      await invoke("open_folder_in_explorer", { path: project.path });
+      await invoke("open_folder_in_explorer", { path: resolveProjectPath(project, groups) });
     } catch (err) {
       logError("Failed to open project directory", err);
       toast.error(t("sidebar.toast.openDirectoryFailed"), { description: String(err) });
     }
-  }, [rejectUnsupportedCapability, t]);
+  }, [groups, rejectUnsupportedCapability, t]);
 
   const handleOpenWorktreeDirectory = useCallback(async (worktree: WorktreeRecord) => {
     if (rejectMissingWorktree(worktree)) return;
@@ -1452,7 +1479,7 @@ export function Sidebar({
     (project: Project, worktree: WorktreeRecord) => {
       void openHistory({
         sourceFilter: resolveHistorySourceFilter(project.cli_tool),
-        projectPath: project.path,
+        projectPath: resolveProjectPath(project, groups),
         projectId: project.id,
         scopedProjectPath: worktree.path,
       }).then(() => {
@@ -1461,7 +1488,7 @@ export function Sidebar({
         toast.error(t("sidebar.toast.openHistoryFailed"), { description: String(err) });
       });
     },
-    [openHistory, t, triggerGlobalSearchFocus]
+    [groups, openHistory, t, triggerGlobalSearchFocus]
   );
   const handleRequestDeleteProject = useCallback((project: Project) => {
     setConfirmAction({ kind: "delete-project", project });
@@ -1685,10 +1712,14 @@ export function Sidebar({
 
   const handleCreateGroup = useCallback(
     (parentId: string | null, name: string, appearance?: { icon: string; color: string }) => {
-      void createGroup({ name, parent_id: parentId, icon: appearance?.icon, color: appearance?.color });
+      void createGroup({ name, parent_id: parentId, icon: appearance?.icon, color: appearance?.color })
+        .catch((err) => {
+          logError("Failed to create group", err);
+          toast.error(t("sidebar.toast.groupCreateFailed"), { description: String(err) });
+        });
       setNewGroupParentId(null);
     },
-    [createGroup]
+    [createGroup, t]
   );
 
   const handleUpdateAppearance = useCallback(
@@ -2668,6 +2699,18 @@ export function Sidebar({
                 <button
                   className="context-menu-item"
                   role="menuitem"
+                  onClick={() => {
+                    ensureSidebarExpanded();
+                    setEditingGroup(contextMenuGroup ?? null);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Settings size={14} strokeWidth={1.5} />
+                  {t("sidebar.menu.edit")}
+                </button>
+                <button
+                  className="context-menu-item"
+                  role="menuitem"
                   aria-expanded={appearanceMenuOpen}
                   onClick={() => setAppearanceMenuOpen((prev) => !prev)}
                 >
@@ -2681,19 +2724,6 @@ export function Sidebar({
                     onChange={(next) => handleUpdateAppearance({ kind: "group", id: contextMenu.groupId }, next)}
                     onAfterPick={() => setContextMenu(null)}
                   />
-                )}
-                {contextMenuGroupProjectIds && contextMenuGroupProjectIds.size > 1 && (
-                  <button
-                    className="context-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setBatchShellPreselected(contextMenuGroupProjectIds);
-                      setContextMenu(null);
-                    }}
-                  >
-                    <Terminal size={14} strokeWidth={1.5} />
-                    {t("sidebar.menu.batchShellGroup")}
-                  </button>
                 )}
                 <div className="context-menu-separator" role="separator" />
                 {selectedProjectIds.size + selectedGroupIds.size > 1 && (
@@ -2949,6 +2979,14 @@ export function Sidebar({
             onOpenSettings("ssh-hosts");
           }}
           onClose={() => setEditingProject(null)}
+        />
+      )}
+      {editingGroup && (
+        <GroupEditDialog
+          group={editingGroup}
+          groups={groups}
+          projects={projects}
+          onClose={() => setEditingGroup(null)}
         />
       )}
       {batchShellPreselected && (

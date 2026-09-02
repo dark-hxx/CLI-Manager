@@ -318,16 +318,6 @@ pub(crate) fn apply_config_fields(
     serde_json::to_string(&value).map_err(|_| error("provider_settings_serialize_failed", ""))
 }
 
-pub(crate) fn contains_secret_fields(value: &Value) -> bool {
-    match value {
-        Value::Object(object) => object
-            .iter()
-            .any(|(key, child)| is_secret_key(key) || contains_secret_fields(child)),
-        Value::Array(items) => items.iter().any(contains_secret_fields),
-        _ => false,
-    }
-}
-
 pub(crate) fn unix_timestamp_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

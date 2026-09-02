@@ -134,16 +134,6 @@ pub(crate) fn redact_toml_document(raw: &str) -> (String, bool, bool) {
     (document.to_string(), has_secret, true)
 }
 
-pub(crate) fn redact_common_document(app_type: &str, raw: &str) -> (String, bool, bool, String) {
-    if app_type == "claude" {
-        let (value, has_secret, valid) = redact_settings_config(raw);
-        (value, has_secret, valid, "json".to_string())
-    } else {
-        let (value, has_secret, valid) = redact_toml_document(raw);
-        (value, has_secret, valid, "toml".to_string())
-    }
-}
-
 fn merge_json_values(common: &mut JsonValue, provider: JsonValue) {
     if let (Some(common_object), Some(provider_object)) =
         (common.as_object_mut(), provider.as_object())
@@ -195,6 +185,10 @@ fn parse_toml_document(raw: &str, kind: &str) -> Result<DocumentMut, String> {
     }
     raw.parse::<DocumentMut>()
         .map_err(|_| error("provider_common_config_invalid_toml", kind))
+}
+
+pub(crate) fn is_valid_toml_document(raw: &str) -> bool {
+    parse_toml_document(raw, "value").is_ok()
 }
 
 pub(crate) fn merge_common_into_settings(

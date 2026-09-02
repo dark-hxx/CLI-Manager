@@ -32,7 +32,7 @@ import {
   isFileExplorerIgnoreCaseInsensitive,
   type FileExplorerIgnoreMatcher,
 } from "../../lib/fileExplorerIgnore";
-import type { GitFileChange, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode } from "../../lib/types";
+import type { GitFileChange, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode, SshHost } from "../../lib/types";
 import { isDefaultCollapsedDirectoryName, useFileExplorerStore } from "../../stores/fileExplorerStore";
 import {
   createGitDiffWorkspaceContext,
@@ -40,15 +40,17 @@ import {
 } from "../../stores/gitDiffWorkspaceStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { useSshHostStore } from "../../stores/sshHostStore";
 import { STATUS_CONFIG } from "../git/GitStatusIcon";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
-import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Search, Trash2, X } from "../icons";
+import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Search, Trash2, Upload, X } from "../icons";
 import { TERM } from "../stats/termStatsUi";
 import { TerminalPanelHeader } from "../terminal/TerminalPanelHeader";
 import { PathCopyMenu } from "../PathCopyMenu";
+import { SshHostAttachmentDialog } from "../settings/pages/SshHostAttachmentDialog";
 import {
   LiveServerFileMenuItem,
   LiveServerRootMenuItem,
@@ -696,6 +698,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const [menuPortalContainer, setMenuPortalContainer] = useState<HTMLDivElement | null>(null);
   const project = useFileExplorerStore((s) => s.project);
   const readOnly = project?.environment_type === "ssh";
+  const sshHostsLoaded = useSshHostStore((s) => s.loaded);
+  const fetchSshHosts = useSshHostStore((s) => s.fetchHosts);
+  const [attachmentHost, setAttachmentHost] = useState<SshHost | null>(null);
+  const [openingAttachment, setOpeningAttachment] = useState(false);
   const tree = useFileExplorerStore((s) => s.tree);
   const loading = useFileExplorerStore((s) => s.loading);
   const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
@@ -737,6 +743,25 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   );
   const [searchControlsVisible, setSearchControlsVisible] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const openSftp = useCallback(async () => {
+    const hostId = project?.environment_type === "ssh" ? project.ssh_host_id?.trim() ?? "" : "";
+    if (!hostId || openingAttachment) return;
+    setOpeningAttachment(true);
+    try {
+      if (!sshHostsLoaded) await fetchSshHosts();
+      const host = useSshHostStore.getState().hosts.find((candidate) => candidate.id === hostId);
+      if (!host) {
+        toast.error(t("files.sshSftpHostUnavailable"));
+        return;
+      }
+      setAttachmentHost(host);
+    } catch (error) {
+      toast.error(t("files.sshSftpOpenFailed"), { description: String(error) });
+    } finally {
+      setOpeningAttachment(false);
+    }
+  }, [fetchSshHosts, openingAttachment, project, sshHostsLoaded, t]);
 
   useEffect(() => {
     setSearchControlsVisible(false);
@@ -1382,6 +1407,18 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       >
         {searchControlsVisible ? <EyeOff size={13} /> : <Search size={13} />}
       </button>
+      {readOnly && (
+        <button
+          type="button"
+          className="ui-file-tooltip ui-icon-action"
+          data-tooltip={t("files.openSftp")}
+          aria-label={t("files.openSftp")}
+          disabled={!project.ssh_host_id?.trim() || openingAttachment}
+          onClick={() => void openSftp()}
+        >
+          <Upload size={13} />
+        </button>
+      )}
       <button className="ui-file-tooltip ui-icon-action" data-tooltip={t("common.refresh")} aria-label={t("files.refreshList")} onClick={() => void refresh()}>
         <RefreshCw size={13} />
       </button>
@@ -1453,7 +1490,8 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     : undefined;
 
   return (
-    <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
+    <>
+      <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
       {terminalFileDragPreview}
       <LiveServerStatusBridge project={project} />
       {mode === "panel" ? (
@@ -1569,6 +1607,14 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           }
         }}
       />
-    </div>
+      </div>
+      <SshHostAttachmentDialog
+        open={attachmentHost !== null}
+        host={attachmentHost}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setAttachmentHost(null);
+        }}
+      />
+    </>
   );
 }

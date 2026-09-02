@@ -59,6 +59,17 @@ provider command or permit the frontend to open SQLite directly.
 - Every schema step runs in one SQLite transaction: create/verify schema,
   seed settings, record the SHA-384 checksum, set `PRAGMA user_version`, then
   commit. A failed step must leave the previous version and rows intact.
+- Initialization also seeds the built-in Fluxion provider for each app type
+  with the stable IDs `builtin-fluxion-<app_type>` and `INSERT OR IGNORE`, so
+  a rename, reorder, disable, current-selection or key added later survives.
+  Because `open_connection` initializes on every open, the seed is not a
+  first-run-only step: it must consult the `settings` key
+  `builtin_provider_dismissals.v1`
+  (`{"schemaVersion":1,"items":["<app_type>:<provider_id>"]}`) and skip every
+  dismissed identity. Without that list, deleting a built-in provider looks
+  like a no-op and silently resets its name, URL, order and meta (issue #242).
+  An unparsable dismissal row means "nothing dismissed"; it must never block
+  seeding permanently.
 - Before applying any newer schema to an existing non-empty database, the WAL is
   checkpointed and the database is copied to
   `.cli-manager/backups/providers/providers.db.backup-<unix-ms>-<pid>.db`.
@@ -105,6 +116,9 @@ provider command or permit the frontend to open SQLite directly.
   backup, rejects future versions without mutation, and rolls back both backup
   failure and malformed-routing-schema failure before `user_version` changes.
 - Assert version-2 reopen is idempotent.
+- Assert a deleted built-in provider is not reseeded by later initialization,
+  that the dismissal is scoped to one app type, and that a corrupt dismissal
+  row still seeds.
 - Keep the historical v25/v26 migration checksum/registration tests passing.
 
 ### 7. Wrong vs Correct
@@ -446,11 +460,27 @@ corresponding detection or persistence transition.
 
 - `provider_common_config_validate` accepts the same `CommonConfigSetInput` as
   `provider_common_config_set` and returns no document or secret data.
-- It validates app type, expected format, JSON object shape, TOML syntax and
-  managed-secret exclusion without opening a write transaction or changing the
-  `settings` row.
+- It validates app type, expected format, JSON object shape and TOML syntax
+  without opening a write transaction or changing the `settings` row.
 - `provider_common_config_set` calls the same repository validator before its
   database write; validate and save therefore cannot drift in accepted syntax.
+
+## Common configuration is format-validated only (2026-09-01, issue #241)
+
+- Common configuration validation is **format-only**: JSON object shape for
+  Claude, TOML syntax for Codex/Grok Build. There is no secret-field gate, and
+  `provider_common_config_contains_secret` is no longer emitted by any path.
+- Rationale: the gate matched `token`/`key`/`secret`/`password`/`credential`/
+  `authorization` as **substrings of field names**, so ordinary CLI options such
+  as `model_auto_compact_token_limit` and `requires_openai_auth` were rejected as
+  secrets. Substring field-name matching cannot distinguish a credential from an
+  option that merely mentions one.
+- `provider_common_config_get` / `_set` return the stored document **verbatim,
+  never redacted**. The editor is a round-trip surface: masking a value the user
+  just typed would make the next save persist `[REDACTED]`. Redaction stays on
+  the provider document and effective-preview DTOs, which are display-only.
+- Whether a credential belongs in common configuration is the user's decision.
+  The key manager remains the recommended place, not an enforced one.
 
 ## Provider editor and current-state feedback contract (2026-08-04)
 
@@ -1463,6 +1493,10 @@ ProviderSwitchModal.applyProvider(provider) -> persist target provider_overrides
 - `providers.db.provider_import_refs` records import provenance only. It must
   never block lifecycle operations; its existing foreign-key cascade remains
   responsible for cleanup after a provider deletion.
+- Deleting a built-in provider (`builtin-fluxion-<app_type>`) writes its
+  dismissal token in the same transaction as the `DELETE`. A failed dismissal
+  rolls the deletion back rather than leaving a row the initializer reseeds.
+  User-created providers write no dismissal.
 - A missing app database returns zero references. Lifecycle scanning counts
   only successfully parsed schema-v2 values. Malformed or legacy CCS
   overrides do not resolve to a native catalog ID and therefore cannot block

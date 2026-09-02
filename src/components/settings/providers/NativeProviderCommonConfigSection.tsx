@@ -16,7 +16,6 @@ const ERROR_TRANSLATIONS: Partial<Record<string, TranslationKey>> = {
   provider_common_config_required: "providerCatalog.commonConfig.errors.required",
   provider_common_config_invalid_json: "providerCatalog.commonConfig.errors.invalidJson",
   provider_common_config_must_be_object: "providerCatalog.commonConfig.errors.mustBeObject",
-  provider_common_config_contains_secret: "providerCatalog.commonConfig.errors.containsSecret",
   provider_common_config_invalid_toml: "providerCatalog.commonConfig.errors.invalidToml",
   provider_common_config_format_invalid: "providerCatalog.commonConfig.errors.formatInvalid",
 };

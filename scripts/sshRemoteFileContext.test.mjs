@@ -42,7 +42,7 @@ export const resolveSshHistorySource = resolveSshToolSource;
 writeModule("sshHostStore.mjs", `
 const state = {
   loaded: true,
-  hosts: [{ id: "host-1" }],
+  hosts: [{ id: "host-1", attachment_root: "~/host-files" }],
   fetchHosts: async () => undefined,
 };
 export const useSshHostStore = { getState: () => state };
@@ -84,7 +84,7 @@ const remoteFilesPath = transpile("../src/lib/sshRemoteFiles.ts", "sshRemoteFile
   "./i18n": "./i18n.mjs",
 });
 
-const { buildSshAgentHistoryContext } = await import(pathToFileURL(historyPath).href);
+const { buildSshAgentHistoryContext, buildSshAgentHostLaunch } = await import(pathToFileURL(historyPath).href);
 const { buildSshRemoteFileContext } = await import(pathToFileURL(remoteFilesPath).href);
 
 const sshProjectWithoutCliTool = {
@@ -97,13 +97,30 @@ const sshProjectWithoutCliTool = {
   cli_config_root: "",
 };
 
+const sshHostOnlySession = {
+  id: "session-1",
+  sshHostId: "host-1",
+  remotePath: "/srv/session",
+};
+
 test("SSH file context does not require a configured CLI tool", async () => {
   const context = await buildSshRemoteFileContext(sshProjectWithoutCliTool);
 
   assert.equal(context.rootPath, "/srv/project");
   assert.equal(context.launch.toolSource, "");
   assert.equal(context.launch.agentInstallationId, "installation-1");
+  assert.equal(context.launch.attachmentRoot, "~/host-files");
   assert.match(context.consumerId, /^files:client-1:host-1:project-1$/);
+});
+
+test("Host-only SSH attachment launch uses the session target and Host root", async () => {
+  const launch = await buildSshAgentHostLaunch(sshHostOnlySession.sshHostId, sshHostOnlySession.remotePath);
+
+  assert.equal(launch.projectId, "");
+  assert.equal(launch.projectName, "");
+  assert.equal(launch.toolSource, "");
+  assert.equal(launch.remotePath, "/srv/session");
+  assert.equal(launch.attachmentRoot, "~/host-files");
 });
 
 test("remote history still requires a supported CLI source", async () => {

@@ -54,9 +54,41 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 
 **Tests**: Run `npx tsc --noEmit` and `node --test scripts/ptyHostSocket.test.mjs scripts/terminalProcessManager.test.mjs scripts/terminalReplay.test.mjs scripts/terminalResizeDebouncer.test.mjs scripts/terminalResizeRenderBarrier.test.mjs scripts/terminalSplitLayout.test.mjs scripts/terminalReflowPolicy.test.mjs`; manually verify background output, reconnect replay, rapid split/fullscreen shrink, equal text sharpness across adjacent panes, transparent terminal backgrounds, IME, WebGL fallback, and no duplicate output after daemon reconnect.
 
+## Convention: Terminal scroll-to-bottom affordances use xterm Buffer state
+
+**What**: A terminal-local jump-to-bottom control derives its visibility from the active xterm Buffer, not from browser scrollbar geometry. Show it only when `buffer.type === "normal" && buffer.viewportY < buffer.baseY`.
+
+**Why**: xterm's Buffer is the source of truth for normal scrollback, alternate-screen state, reflow, and programmatic scrolling. Reading `.xterm-viewport.scrollTop` can miss xterm state changes and can couple UI behavior to WebView scrollbar implementation details.
+
+**Contracts**:
+
+- Keep the state in the `XTermTerminal` instance so hidden, split, and Workspan sessions do not share scroll position UI.
+- Recompute after `onScroll`, `onWriteParsed`, `onResize`, and `onRender`; retain any existing event behavior in those handlers.
+- Clicking the control calls the current terminal's public `scrollToBottom()` API and sends no PTY input.
+- Do not show the control for the alternate buffer or for a normal buffer already at `viewportY === baseY`.
+- If another terminal control occupies the same corner, compose both controls in one positioned vertical group instead of stacking independent absolute elements.
+- The persisted `keyboardShortcuts.scrollToBottom`, `keyboardShortcuts.pageUp`, and `keyboardShortcuts.pageDown` bindings are handled by the xterm custom key handler only while `buffer.active.type === "normal"`; `scrollToBottom()` and `scrollPages(±1)` must not be sent to or replace input for an alternate-screen TUI.
+
+**Correct**:
+
+```tsx
+const buffer = terminal.buffer.active;
+const showScrollToBottom = buffer.type === "normal" && buffer.viewportY < buffer.baseY;
+```
+
+**Wrong**:
+
+```tsx
+const showScrollToBottom = terminal.element?.querySelector(".xterm-viewport")?.scrollTop !== 0;
+```
+
+**Tests**: Assert the normal-buffer predicate, all four xterm event subscriptions, public `scrollToBottom()` use, and no PTY write in the control handler. Manually verify normal scrollback, alternate-buffer TUI, output, scrollbar/keyboard scrolling, reflow, split panes, hidden sessions, and coexistence with other bottom-corner controls.
+
 ### Convention: Terminal CLI-specific input uses immutable metadata plus bounded runtime detection
 
-**What**: Input behavior that differs by CLI must first use the `TerminalSession.cliTool` captured when the Agent terminal was created, then compatible project/title/startup metadata. A plain Shell that manually starts a CLI may use current viewport TUI signatures as a bounded runtime fallback.
+**What**: Input behavior that differs by CLI must first use the `TerminalSession.cliTool` captured when the Agent terminal was created, then compatible project/title/startup metadata. A plain Shell that manually starts a CLI may use exact submitted-command evidence plus a current viewport TUI signature as a bounded runtime fallback.
+
+The host Enter handler routes through `resolveTerminalNewlineKeyEvent(event, { shortcut, usesEscCrComposerNewline })`, which returns `write` with either `ESC + CR` or `LF`, `swallow` for unmatched host-managed combinations, and `pass` for a native `Alt + Enter` owned by a confirmed Grok/Codex session.
 
 **Why**: Project records, Tab titles, and startup commands are not a complete runtime identity. A locally created terminal may intentionally omit `projectId`, and users may start Codex manually. Persisting a guessed runtime CLI back into the session is also unsafe because the process can exit back to the Shell.
 
@@ -64,35 +96,41 @@ terminalProcessManager.subscribeOutput(sessionId, (delivery) => {
 // Wrong: misses immutable session identity and manually launched CLIs.
 const codex = project.cli_tool === "codex" || CODEX_COMMAND_PATTERN.test(session.startupCmd);
 
-// Correct: stable metadata first; runtime fallback is limited to the current viewport.
-const codex = session.cliTool === "codex"
-  || project.cli_tool === "codex"
-  || matchesCodexStartupMetadata(session)
-  || hasCodexTuiViewport(terminal);
+// Correct: stable metadata first; manual evidence is component-local and limited to the current viewport.
+const multilineInput = isCodexTerminalContext(context)
+  || isGrokTerminalContext(context)
+  || hasCodexTuiViewport(terminal)
+  ? "\x1b\r"
+  : "\n";
 ```
 
 **Contracts**:
 
 - Configured shortcut matching remains authoritative; runtime detection chooses only the PTY byte sequence.
-- Codex multiline input uses `ESC + CR`; ordinary Shell and Claude input keep their existing sequence.
+- Codex and Grok Build multiline input use `ESC + CR`; ordinary Shell and Claude input keep their existing sequence.
+- When Grok Build or Codex is active, an unmatched native `Alt+Enter` is passed through to xterm so the CLI can emit its own `ESC + CR`; unmatched Shift/Ctrl+Enter remain swallowed by the host shortcut policy.
 - Runtime detection must inspect only the current viewport; off-viewport scrollback is historical evidence and must never establish current CLI identity.
+- A plain Shell may establish a manual CLI fallback only after an exact launch command was submitted through the input buffer and the current viewport still contains the CLI's TUI composer prompt. The fallback is component-local, is cleared when that prompt disappears or the terminal detaches, and is never persisted as `TerminalSession.cliTool`.
 - Do not assume Codex uses the alternate buffer. Normal/alternate behavior depends on CLI version, launch arguments, and user configuration.
-- Project-managed Codex sessions should still prefer `TerminalSession.cliTool` or other immutable startup metadata over viewport text.
+- Project-managed Codex and Grok Build sessions should still prefer `TerminalSession.cliTool` or other immutable startup metadata over viewport text.
 - Do not introduce foreground-process IPC solely to infer this input behavior unless local, WSL, and SSH process ownership contracts are designed together.
 
 **Good/Base/Bad Cases**:
 
 - Good: a project Agent terminal remains identifiable after project metadata changes because its session captured `cliTool`.
-- Base: a normal Shell uses normal newline behavior; manually running `codex` in either normal or alternate buffer enables Codex newline encoding without requiring Hook installation.
+- Base: a normal Shell uses normal newline behavior; manually running `codex` in either normal or alternate buffer enables Codex newline encoding without requiring Hook installation, while Grok Build uses the same encoding when stable session metadata identifies it.
 - Good: once Codex TUI signatures leave the current viewport, runtime fallback stops matching.
+- Good: a plain Shell that submits the exact `grok` executable command receives the Grok fallback only while its current viewport still shows the TUI composer prompt; returning to the Shell clears the fallback.
 - Bad: requiring `buffer.type === "alternate"`; `--no-alt-screen` and user configuration make legitimate Codex sessions stay in the normal buffer.
+- Bad: classifying `echo grok`, `grok-helper`, or arbitrary scrollback text as a running Grok session.
 - Bad: permanently setting `session.cliTool = "codex"` from viewport text or one Hook event without an authoritative exit transition.
 
 **Tests Required**:
 
-- Assert project-session detection reads `TerminalSession.cliTool`.
+- Assert project-session detection reads `TerminalSession.cliTool` and recognizes Grok Build stable metadata.
 - Assert visible normal- and alternate-buffer `OpenAI Codex` and `/model to change` signatures are recognized.
 - Assert ordinary Shell, Claude, and off-viewport Codex text are rejected.
+- Assert an exact manually submitted `grok` command can enable the component-local fallback only with a visible TUI composer prompt, and that `echo grok` / `grok-helper` plus a returned Shell prompt are rejected.
 - Run `node --test scripts/terminalNewlineShortcut.test.mjs` and `npx tsc --noEmit`.
 
 ### Convention: OSC color-query normalization has no frontend PTY side effects
@@ -2130,3 +2168,80 @@ KaTeX's package stylesheet owns the `.katex` base font size. Shared Markdown CSS
 ```
 
 **Tests**: Run `npx tsc --noEmit`; manually verify the page at a wide window, a narrow window, and both `zh-CN` and `en-US`, checking that cards use the available width and headers/actions do not overflow.
+
+### Convention: Host SFTP panes use the bounded File Explorer listing contract
+
+**What**: The local side of the SSH Host attachment dialog is a local directory browser, not a
+second rendering of the upload queue. It starts at the platform Desktop directory, lists entries
+through the existing Rust `file_list_dir` command with the selected directory as `rootPath` and an
+empty `relativePath`, and uses the same `@baybreezy/file-extension-icon` material file/folder icons
+as `FileExplorerSidebar`. The remote side uses the same material icon contract. Both pane headers
+stay aligned and both listing viewports use a fixed height with their own overflow scrolling.
+
+**Contracts**:
+
+- Directory rows navigate into the child directory; the local path field, directory picker,
+  parent button, and refresh button all replace or reload the current local browsing root.
+- File rows add the resolved local path to the existing transfer queue. The queue remains the
+  source of truth for upload status and is independent from the currently browsed directory.
+- Local browsing does not wait for SSH Agent initialization. A local directory failure is shown in
+  the local pane and must not be converted into an SSH or remote-directory error.
+- The `file_list_dir` Rust command remains the filesystem boundary: it canonicalizes the supplied
+  absolute directory and returns bounded metadata only. Do not grant the WebView a broad
+  `@tauri-apps/plugin-fs` scope or read local file bytes in the dialog.
+- All local path controls and accessibility labels use the shared i18n keys in both `zh-CN` and
+  `en-US`; changing the UI language must not change the selected local path or queue.
+- The local and remote headers reserve the same height so their list boundaries align; a long
+  listing scrolls inside its fixed viewport instead of expanding the dialog.
+
+**Tests**: Run `npx tsc --noEmit` and `npm run build`; manually verify Desktop defaults and
+listing on Windows/macOS, empty/unavailable directories, nested navigation, parent/root boundary,
+manual and native directory selection, refresh after a filesystem change, multiple file selection,
+duplicate suppression, upload progress, and language switching.
+
+### Common Mistake: Leaving `@monaco-editor/react` fully controlled
+
+**Symptom**: While the user types quickly in a config editor, the caret suddenly jumps to the last
+line of the document, or characters land out of order (typing `12345` yields `"124"35`). Reported
+against the provider common-configuration editor (issue #241 follow-up).
+
+**Root cause**: `@monaco-editor/react` synchronises a controlled `value` by comparing it with
+`editor.getValue()`; on any mismatch it replaces the **full model range** with
+`forceMoveMarkers: true`, which collapses the selection to the end of the document. Monaco emits
+content changes from its own DOM listeners, so `onChange` -> `setState` is a default-lane React
+update. When the tree is busy — `NativeProviderSettingsPage` polls failover state every second —
+React can commit props that lag the model by several keystrokes. Every lagging commit rewrites the
+whole document: the caret is pushed to the end, and a caret restored against pre-replacement
+content makes the following keystrokes land at the wrong offset, which is what scrambles the text
+(auto-closed quotes make the misplacement obvious).
+
+**Rules for provider config editors** (`NativeProviderCodeEditor`, shared by common config,
+provider-specific config, the full-document editor, effective-config preview and header/body
+overrides):
+
+- Pass `defaultValue`, never `value`, to `<Editor>`. The library's built-in sync must stay inert;
+  this component owns the sync policy.
+- Queue every value emitted from `onChange` in order. When an incoming prop matches a queued
+  emission, acknowledge up to that entry and **never write the model** — the model already holds
+  that text or newer text the user just typed. Matching by queue (not by "the previous value")
+  is required: React batching can skip intermediate values and the lag is not bounded to one
+  keystroke. Cap the queue so a consumer that normalises the value cannot grow it without bound.
+- Any genuine external replacement (refresh, save write-back, provider/document switch, generated
+  config) must save and restore selections plus `scrollTop` / `scrollLeft` around the edit. Monaco
+  clamps out-of-range selections, so restoring is safe after the content shrinks.
+- Use `model.pushEditOperations`, not `editor.executeEdits`: read-only editors block
+  `executeEdits`, and the read-only preview surfaces must still refresh without losing scroll.
+- Suppress the `onChange` callback while applying an external value, otherwise consumers that track
+  dirty state mark themselves dirty on every refresh.
+- Keep the `options` object and the change handler referentially stable. An unstable `onChange`
+  makes the library dispose and re-subscribe `onDidChangeModelContent` on every render, which the
+  one-second failover poll would otherwise trigger every second.
+- Reset the emitted-value queue when `path` changes: a new `path` means a new (or cached) model,
+  and stale echo bookkeeping would suppress a legitimate content write.
+
+`FileEditorContent` still uses the plain controlled pattern. It has the same latent behaviour and
+must adopt the same policy if caret jumps are reported there.
+
+**Tests**: `npx tsc --noEmit`; manually hold a key in a long common configuration to confirm the
+caret stays in place and the characters keep their order, then verify refresh / save / provider
+switch / document switch still reload content and keep the viewport.
