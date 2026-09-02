@@ -158,7 +158,8 @@ impl BridgeControl {
     }
 
     fn try_reserve_idle(&self) -> bool {
-        if self.finished.load(Ordering::Acquire)
+        if self.stop.load(Ordering::Acquire)
+            || self.finished.load(Ordering::Acquire)
             || (!self.connecting.load(Ordering::Acquire) && !self.connected.load(Ordering::Acquire))
         {
             return false;
@@ -217,6 +218,8 @@ struct BridgeEntry {
     consumers: HashSet<String>,
     request_sender: SyncSender<AgentBridgeRequest>,
     control: Arc<BridgeControl>,
+    plan: SshLaunchPlan,
+    lane: BridgeLane,
 }
 
 struct AgentBridgeRequest {
@@ -226,6 +229,7 @@ struct AgentBridgeRequest {
 }
 
 struct BridgeHandle {
+    slot: String,
     request_sender: SyncSender<AgentBridgeRequest>,
     control: Arc<BridgeControl>,
 }
@@ -234,6 +238,7 @@ impl BridgeHandle {
     fn reserve(self) -> BridgeRequestReservation {
         self.control.reserve();
         BridgeRequestReservation {
+            slot: self.slot,
             request_sender: self.request_sender,
             control: self.control,
         }
@@ -241,6 +246,7 @@ impl BridgeHandle {
 }
 
 struct BridgeRequestReservation {
+    slot: String,
     request_sender: SyncSender<AgentBridgeRequest>,
     control: Arc<BridgeControl>,
 }
@@ -343,6 +349,22 @@ fn bridge_plan(plan: &SshLaunchPlan, lane: BridgeLane) -> SshLaunchPlan {
             isolated_client_instance_id(&plan.host_id, &plan.client_instance_id, lane)
         };
     }
+    plan
+}
+
+fn bridge_refresh_plan(
+    current_plan: &SshLaunchPlan,
+    stale_plan: &SshLaunchPlan,
+    lane: BridgeLane,
+) -> SshLaunchPlan {
+    let mut plan = if lane == BridgeLane::Primary && current_plan.project_id.is_empty() {
+        stale_plan.clone()
+    } else {
+        bridge_plan(current_plan, lane)
+    };
+    plan.agent_path = current_plan.agent_path.clone();
+    plan.agent_installation_id = current_plan.agent_installation_id.clone();
+    plan.agent_remote_machine_id = current_plan.agent_remote_machine_id.clone();
     plan
 }
 
@@ -497,7 +519,10 @@ impl SshAgentBridgeManager {
             .unwrap_or_default();
         let mut replaced_control = None;
         if let Some(existing) = bridges.get_mut(&slot) {
-            if existing.identity == identity && !existing.control.finished.load(Ordering::Acquire) {
+            if existing.identity == identity
+                && !existing.control.stop.load(Ordering::Acquire)
+                && !existing.control.finished.load(Ordering::Acquire)
+            {
                 if let Some(session_id) = session_id {
                     existing.sessions.insert(session_id.to_string());
                 }
@@ -505,6 +530,7 @@ impl SshAgentBridgeManager {
                     existing.consumers.insert(consumer_id.to_string());
                 }
                 return Some(BridgeHandle {
+                    slot: slot.clone(),
                     request_sender: existing.request_sender.clone(),
                     control: Arc::clone(&existing.control),
                 });
@@ -518,13 +544,15 @@ impl SshAgentBridgeManager {
         let thread_control = Arc::clone(&control);
         let thread_plan = plan.clone();
         bridges.insert(
-            slot,
+            slot.clone(),
             BridgeEntry {
                 identity,
                 sessions,
                 consumers,
                 request_sender: request_sender.clone(),
                 control: Arc::clone(&control),
+                plan: plan.clone(),
+                lane,
             },
         );
         drop(bridges);
@@ -542,6 +570,7 @@ impl SshAgentBridgeManager {
             )
         });
         Some(BridgeHandle {
+            slot,
             request_sender,
             control,
         })
@@ -561,9 +590,27 @@ impl SshAgentBridgeManager {
         }
         entry.consumers.insert(consumer_id.to_string());
         Some(BridgeRequestReservation {
+            slot,
             request_sender: entry.request_sender.clone(),
             control: Arc::clone(&entry.control),
         })
+    }
+
+    fn invalidate_reservation(
+        &self,
+        reservation: &BridgeRequestReservation,
+    ) -> Option<(SshLaunchPlan, BridgeLane)> {
+        let stale = self.bridges.lock().ok().and_then(|bridges| {
+            let entry = bridges.get(&reservation.slot)?;
+            Arc::ptr_eq(&entry.control, &reservation.control)
+                .then(|| (Arc::clone(&entry.control), entry.plan.clone(), entry.lane))
+        });
+        if let Some((control, plan, lane)) = stale {
+            control.stop();
+            Some((plan, lane))
+        } else {
+            None
+        }
     }
 
     pub fn request(
@@ -655,35 +702,61 @@ impl SshAgentBridgeManager {
         };
         let result = (|| {
             let lane = BridgeLane::for_request(kind);
-            let reservation = if lane == BridgeLane::Readonly {
-                self.try_reserve_primary(&plan.host_id, &bridge_identity(plan), consumer_id)
-                    .or_else(|| {
-                        let request_plan = bridge_plan(plan, lane);
-                        self.ensure_bridge(host, &request_plan, lane, None, Some(consumer_id))
+            let mut capability_refresh_attempted = false;
+            loop {
+                let reservation = if lane == BridgeLane::Readonly {
+                    self.try_reserve_primary(&plan.host_id, &bridge_identity(plan), consumer_id)
+                        .or_else(|| {
+                            let request_plan = bridge_plan(plan, lane);
+                            self.ensure_bridge(
+                                host.clone(),
+                                &request_plan,
+                                lane,
+                                None,
+                                Some(consumer_id),
+                            )
                             .map(BridgeHandle::reserve)
+                        })
+                } else {
+                    self.ensure_bridge(
+                        host.clone(),
+                        &bridge_plan(plan, lane),
+                        lane,
+                        None,
+                        Some(consumer_id),
+                    )
+                    .map(BridgeHandle::reserve)
+                }
+                .ok_or_else(|| "ssh_agent_identity_required".to_string())?;
+                let (response_sender, response_receiver) = mpsc::sync_channel(1);
+                let timeout = response_timeout(kind);
+                reservation
+                    .request_sender
+                    .send(AgentBridgeRequest {
+                        kind: kind.to_string(),
+                        payload: payload.clone(),
+                        response: response_sender,
                     })
-            } else {
-                self.ensure_bridge(
-                    host,
-                    &bridge_plan(plan, lane),
-                    lane,
-                    None,
-                    Some(consumer_id),
-                )
-                .map(BridgeHandle::reserve)
+                    .map_err(|_| "ssh_agent_bridge_request_queue_closed".to_string())?;
+                let result = receive_agent_response(&response_receiver, timeout + RESPONSE_TIMEOUT);
+                if should_refresh_capability_error(capability_refresh_attempted, &result) {
+                    if let Some((refresh_plan, refresh_lane)) =
+                        self.invalidate_reservation(&reservation)
+                    {
+                        let refresh_plan = bridge_refresh_plan(plan, &refresh_plan, refresh_lane);
+                        let _ = self.ensure_bridge(
+                            host.clone(),
+                            &refresh_plan,
+                            refresh_lane,
+                            None,
+                            Some(consumer_id),
+                        );
+                    }
+                    capability_refresh_attempted = true;
+                    continue;
+                }
+                break result;
             }
-            .ok_or_else(|| "ssh_agent_identity_required".to_string())?;
-            let (response_sender, response_receiver) = mpsc::sync_channel(1);
-            let timeout = response_timeout(kind);
-            reservation
-                .request_sender
-                .send(AgentBridgeRequest {
-                    kind: kind.to_string(),
-                    payload,
-                    response: response_sender,
-                })
-                .map_err(|_| "ssh_agent_bridge_request_queue_closed".to_string())?;
-            receive_agent_response(&response_receiver, timeout + RESPONSE_TIMEOUT)
         })();
         if result.is_err() {
             if let (Some(claim_key), Ok(mut claims)) =
@@ -773,6 +846,15 @@ fn request_error_requires_disconnect(error: &str) -> bool {
     error.starts_with("ssh_agent_bridge_")
 }
 
+fn should_refresh_capability_error(attempted: bool, result: &Result<Value, String>) -> bool {
+    !attempted
+        && result.as_ref().err().is_some_and(|error| {
+            error
+                .strip_prefix("ssh_agent_capability_missing:")
+                .is_some_and(|capability| !capability.is_empty())
+        })
+}
+
 fn bridge_failure_should_fail_pending(error: &str) -> bool {
     error != "bridge_already_active"
 }
@@ -817,10 +899,9 @@ fn handle_agent_request(
             .iter()
             .any(|value| value.as_str() == Some(required));
         if !supported {
-            let _ = agent_request
-                .response
-                .send(Err(format!("ssh_agent_capability_missing:{required}")));
-            return Ok(());
+            let error = format!("ssh_agent_capability_missing:{required}");
+            let _ = agent_request.response.send(Err(error.clone()));
+            return Err(error);
         }
     }
     if custom_attachment_root_requested(&agent_request.kind, &agent_request.payload)
@@ -828,10 +909,9 @@ fn handle_agent_request(
             .iter()
             .any(|value| value.as_str() == Some("fileAttachCustomRoot"))
     {
-        let _ = agent_request.response.send(Err(
-            "ssh_agent_capability_missing:fileAttachCustomRoot".to_string(),
-        ));
-        return Ok(());
+        let error = "ssh_agent_capability_missing:fileAttachCustomRoot".to_string();
+        let _ = agent_request.response.send(Err(error.clone()));
+        return Err(error);
     }
     let request_id = format!("agent-request-{}", *request_number);
     *request_number = request_number.saturating_add(1);
@@ -1677,20 +1757,55 @@ fn run_bridge_once_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_failure_should_fail_pending, bridge_slot, checked_response, classify_bridge_stderr,
-        fail_pending_requests, handle_agent_request, permanent_bridge_error, read_preamble,
-        readonly_client_instance_id, receive_agent_response, receive_frame, request,
-        request_error_requires_disconnect, required_capability, response_timeout, retry_delay,
-        validate_hook_batch, AgentBridgeRequest, BridgeControl, BridgeEntry, BridgeLane,
-        ClientFrame, CounterPermit, EventDedup, PermitPool, ReaderMessage, ServerFrame,
-        SshAgentBridgeManager, DEDUP_EVENT_IDS,
+        bridge_failure_should_fail_pending, bridge_refresh_plan, bridge_slot, checked_response,
+        classify_bridge_stderr, fail_pending_requests, handle_agent_request,
+        permanent_bridge_error, read_preamble, readonly_client_instance_id, receive_agent_response,
+        receive_frame, request, request_error_requires_disconnect, required_capability,
+        response_timeout, retry_delay, should_refresh_capability_error, validate_hook_batch,
+        AgentBridgeRequest, BridgeControl, BridgeEntry, BridgeLane, ClientFrame, CounterPermit,
+        EventDedup, PermitPool, ReaderMessage, ServerFrame, SshAgentBridgeManager, DEDUP_EVENT_IDS,
     };
+    use crate::ssh_launch::SshLaunchPlan;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
     use std::io::{BufReader, Cursor};
     use std::sync::atomic::Ordering;
     use std::sync::{mpsc, Arc, OnceLock};
     use std::time::Duration;
+
+    fn test_bridge_plan() -> SshLaunchPlan {
+        SshLaunchPlan {
+            host_id: "host-1".to_string(),
+            host: "example.com".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            config_alias: String::new(),
+            config_file: String::new(),
+            auth_mode: "identity_file".to_string(),
+            identity_file: "C:/Users/test/.ssh/id_ed25519".to_string(),
+            credential_ref: String::new(),
+            jump_target: String::new(),
+            proxy_type: String::new(),
+            proxy_host: String::new(),
+            proxy_port: 0,
+            proxy_command: String::new(),
+            connect_timeout_sec: 15,
+            server_alive_interval_sec: 30,
+            server_alive_count_max: 3,
+            remote_path: "/root".to_string(),
+            client_instance_id: "client-1".to_string(),
+            project_id: "project-1".to_string(),
+            project_name: "Project".to_string(),
+            bridge_epoch: "epoch-1".to_string(),
+            agent_path: "/root/.local/bin/cli-manager-ssh-agent".to_string(),
+            agent_installation_id: "installation-1".to_string(),
+            agent_remote_machine_id: "machine-1".to_string(),
+            tool_source: "codex".to_string(),
+            environment_overrides: HashMap::new(),
+            initialization_command: None,
+            startup_command: None,
+        }
+    }
 
     #[test]
     fn missing_diff_options_capability_is_rejected_before_request_write() {
@@ -1711,7 +1826,7 @@ mod tests {
                 response: response_sender,
             },
         )
-        .unwrap();
+        .unwrap_err();
 
         assert!(writer.is_empty());
         assert_eq!(request_number, 7);
@@ -1750,7 +1865,7 @@ mod tests {
                     response: response_sender,
                 },
             )
-            .unwrap();
+            .unwrap_err();
 
             assert!(writer.is_empty());
             assert_eq!(request_number, 9);
@@ -1918,6 +2033,8 @@ mod tests {
                     consumers: HashSet::new(),
                     request_sender,
                     control: Arc::clone(&control),
+                    plan: test_bridge_plan(),
+                    lane: BridgeLane::Primary,
                 },
             )])),
             resume_claims: std::sync::Mutex::new(HashMap::new()),
@@ -1950,6 +2067,107 @@ mod tests {
         assert!(manager
             .try_reserve_primary("host-1", "identity-1", "files-3")
             .is_none());
+    }
+
+    #[test]
+    fn invalidating_a_reservation_only_stops_the_same_bridge_slot_and_control() {
+        let old_control = Arc::new(BridgeControl::new());
+        old_control.connecting.store(false, Ordering::Release);
+        old_control.connected.store(true, Ordering::Release);
+        let (old_sender, _old_receiver) = mpsc::sync_channel(1);
+        let slot = bridge_slot("host-1", BridgeLane::Primary);
+        let manager = SshAgentBridgeManager {
+            bridges: std::sync::Mutex::new(HashMap::from([(
+                slot.clone(),
+                BridgeEntry {
+                    identity: "identity-1".to_string(),
+                    sessions: HashSet::new(),
+                    consumers: HashSet::new(),
+                    request_sender: old_sender,
+                    control: Arc::clone(&old_control),
+                    plan: test_bridge_plan(),
+                    lane: BridgeLane::Primary,
+                },
+            )])),
+            resume_claims: std::sync::Mutex::new(HashMap::new()),
+        };
+
+        let reservation = manager
+            .try_reserve_primary("host-1", "identity-1", "files-1")
+            .unwrap();
+        let (refresh_plan, refresh_lane) = manager.invalidate_reservation(&reservation).unwrap();
+        assert_eq!(refresh_plan.host_id, "host-1");
+        assert_eq!(refresh_lane, BridgeLane::Primary);
+        assert!(manager
+            .bridges
+            .lock()
+            .unwrap()
+            .get(&slot)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.control, &old_control)));
+        assert!(old_control.stop.load(Ordering::Acquire));
+        assert!(manager
+            .try_reserve_primary("host-1", "identity-1", "files-2")
+            .is_none());
+
+        let new_control = Arc::new(BridgeControl::new());
+        let (new_sender, _new_receiver) = mpsc::sync_channel(1);
+        manager.bridges.lock().unwrap().insert(
+            slot.clone(),
+            BridgeEntry {
+                identity: "identity-2".to_string(),
+                sessions: HashSet::new(),
+                consumers: HashSet::new(),
+                request_sender: new_sender,
+                control: Arc::clone(&new_control),
+                plan: test_bridge_plan(),
+                lane: BridgeLane::Primary,
+            },
+        );
+        assert!(manager.invalidate_reservation(&reservation).is_none());
+        let bridges = manager.bridges.lock().unwrap();
+        assert!(bridges.contains_key(&slot));
+        assert!(!new_control.stop.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn capability_missing_requests_refresh_once_and_only_for_capability_errors() {
+        let missing = Err("ssh_agent_capability_missing:fileDelete".to_string());
+        assert!(should_refresh_capability_error(false, &missing));
+        assert!(!should_refresh_capability_error(true, &missing));
+        assert!(!should_refresh_capability_error(
+            false,
+            &Err("ssh_agent_capability_missing:".to_string())
+        ));
+        assert!(!should_refresh_capability_error(
+            false,
+            &Err("ssh_agent_bridge_request_failed".to_string())
+        ));
+        assert!(!should_refresh_capability_error(false, &Ok(json!({}))));
+    }
+
+    #[test]
+    fn refresh_plan_keeps_primary_context_but_uses_current_agent_identity() {
+        let stale_plan = test_bridge_plan();
+        let mut current_plan = test_bridge_plan();
+        current_plan.project_id.clear();
+        current_plan.remote_path = "/tmp/uploads".to_string();
+        current_plan.agent_path = "/root/.local/bin/cli-manager-ssh-agent-new".to_string();
+        current_plan.agent_installation_id = "installation-new".to_string();
+        current_plan.agent_remote_machine_id = "machine-new".to_string();
+
+        let refreshed = bridge_refresh_plan(&current_plan, &stale_plan, BridgeLane::Primary);
+        assert_eq!(refreshed.project_id, stale_plan.project_id);
+        assert_eq!(refreshed.remote_path, stale_plan.remote_path);
+        assert_eq!(refreshed.client_instance_id, stale_plan.client_instance_id);
+        assert_eq!(refreshed.agent_path, current_plan.agent_path);
+        assert_eq!(
+            refreshed.agent_installation_id,
+            current_plan.agent_installation_id
+        );
+        assert_eq!(
+            refreshed.agent_remote_machine_id,
+            current_plan.agent_remote_machine_id
+        );
     }
 
     #[test]
@@ -1993,7 +2211,7 @@ mod tests {
                 response: response_sender,
             },
         )
-        .unwrap();
+        .unwrap_err();
         assert!(writer.is_empty());
         assert_eq!(request_number, 10);
         assert_eq!(
@@ -2173,6 +2391,8 @@ mod tests {
                     consumers: HashSet::new(),
                     request_sender,
                     control: Arc::clone(&control),
+                    plan: test_bridge_plan(),
+                    lane: BridgeLane::Primary,
                 },
             )])),
             resume_claims: std::sync::Mutex::new(HashMap::new()),
@@ -2198,6 +2418,8 @@ mod tests {
                     consumers: HashSet::from(["history-1".to_string()]),
                     request_sender,
                     control: Arc::clone(&control),
+                    plan: test_bridge_plan(),
+                    lane: BridgeLane::Primary,
                 },
             )])),
             resume_claims: std::sync::Mutex::new(HashMap::new()),
@@ -2226,6 +2448,8 @@ mod tests {
                         consumers: HashSet::from(["history:client:host:codex:project".to_string()]),
                         request_sender: primary_sender,
                         control: Arc::clone(&primary_control),
+                        plan: test_bridge_plan(),
+                        lane: BridgeLane::Primary,
                     },
                 ),
                 (
@@ -2239,6 +2463,8 @@ mod tests {
                         ]),
                         request_sender: readonly_sender,
                         control: Arc::clone(&readonly_control),
+                        plan: test_bridge_plan(),
+                        lane: BridgeLane::Readonly,
                     },
                 ),
             ])),

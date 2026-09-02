@@ -45,6 +45,7 @@
 - 远程目录新增文件夹选择器入口；可通过远程目录列表进入子目录、返回上级并选择当前目录作为上传目标，保留手动输入远程路径方式。
 - 启动前补齐旧数据库缺失的 `ssh_hosts.attachment_root` 列并同步修复 migration 登记漂移，避免编辑 SSH Host 时出现 `no such column: attachment_root`；编辑器错误提示固定在滚动区域外，始终可见。
 - 修复 SSH Agent 发布测试中 `ATTACHMENT_NAMESPACE` 未导入导致 `0.1.11` CI 构建失败的问题。
+- 修复 SSH Agent 原地升级后 SFTP 删除仍沿用旧 bridge 能力缓存的问题；检测到能力缺失时会精确失效对应 bridge、重新握手并最多重试一次，旧 Agent 仍保留明确的升级提示。
 
 ### 修复通用配置误判敏感字段
 

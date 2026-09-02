@@ -213,6 +213,94 @@ Protocol 1.11 Agent diagnostics use `agentCapabilitiesInspect` and
 cwd, and return only normalized/redacted snapshots. Capability absence is an actionable upgrade
 state and must never fall back to desktop-local inspection.
 
+### Stale bridge capability refresh
+
+#### 1. Scope / Trigger
+
+This contract applies when an installed Agent binary is replaced in place while a daemon-owned
+bridge is still alive. The bridge capabilities are negotiated at handshake time, so a request can
+observe a missing capability from an old Agent process even though the current Agent path now
+resolves to a newer installation. The refresh belongs to the daemon bridge lifecycle, not to the
+one-shot Agent probe, Tauri commands, or the Agent wire protocol.
+
+#### 2. Signatures
+
+```rust
+SshAgentBridgeManager::request(
+    &self,
+    host: Weak<DaemonHost>,
+    consumer_id: &str,
+    plan: &SshLaunchPlan,
+    kind: &str,
+    payload: Value,
+) -> Result<Value, String>;
+
+handle_agent_request(
+    writer: &mut impl Write,
+    reader_receiver: &Receiver<ReaderMessage>,
+    host_id: &str,
+    request_number: &mut u64,
+    capabilities: &[Value],
+    agent_request: AgentBridgeRequest,
+) -> Result<(), String>;
+```
+
+No public IPC signature, Desktop payload schema, or Agent protocol request kind changes as part of
+this refresh.
+
+#### 3. Contracts
+
+- `handle_agent_request` checks the required capability before assigning a request number or
+  writing a frame. Missing capabilities return exactly
+  `ssh_agent_capability_missing:<capability>` and terminate the stale bridge loop.
+- `request` retries the original payload at most once after that exact capability error. It
+  invalidates only the reservation's matching bridge slot and `Arc` control, stops that bridge,
+  and rebuilds the same `Primary`, `Readonly`, or `Git` lane.
+- Bridge replacement preserves the slot's sessions and consumers. The refresh plan uses the
+  current Agent path, installation id, and remote machine id; Host-only Primary context is kept
+  from the stale plan when the current request plan has no project id.
+- A capability error after the one permitted refresh is returned unchanged. There is no shell,
+  local-path, or unrelated-lane fallback.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+|---|---|
+| First request receives `ssh_agent_capability_missing:<capability>` | Stop only the exact stale bridge, re-handshake, and retry the original request once before frame serialization on the replacement bridge |
+| Replacement bridge still lacks the capability | Return the same stable capability error; do not refresh again |
+| Reservation slot or control does not match the current bridge entry | Do not stop the current bridge; preserve it for normal request/lifecycle handling |
+| Remote command, transport, timeout, or validation error is not a capability error | Preserve existing error and retry/disconnect policy; do not refresh for it |
+| Refresh races with another request or a newer bridge replacement | Never invalidate a newer control; lane and Host/project identity remain isolated |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: after an in-place Agent upgrade, `fileDelete` receives the old bridge's missing-capability
+  response, the bridge is replaced with current Agent identity, and the original delete succeeds.
+- Base: a fresh bridge advertises the requested capability and completes the request without a
+  refresh.
+- Bad: keep the old bridge alive after reporting the capability error, retry indefinitely, delete
+  through a shell fallback, or route the request through another lane.
+
+#### 6. Tests Required
+
+- Assert missing capability is returned before any frame/request-number mutation.
+- Assert stopped controls cannot reserve new requests and invalidation requires both the exact slot
+  and the same `Arc` control, including replacement races.
+- Assert one capability refresh retries once, while non-capability errors never refresh and a
+  second missing-capability response is final.
+- Assert refresh plans preserve Host-only Primary context and overlay current Agent identity.
+- Assert Primary, Readonly, and Git bridges remain isolated, and existing fileGet/fileDelete path
+  confinement and no-shell-fallback tests remain green.
+
+#### 7. Wrong vs Correct
+
+Wrong: return the missing-capability error but leave the negotiated bridge reusable, or loop until
+the Agent changes.
+
+Correct: send the stable error, return `Err` so the stale bridge exits, match and stop only the
+offending reservation, rebuild the same lane with current Agent identity, and retry the original
+request once.
+
 Remote Git Diff responses contain:
 
 ```rust
