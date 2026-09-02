@@ -19,6 +19,12 @@ interface Props {
   zIndex?: number;
   confirmAutoFocus?: boolean;
   contentClassName?: string;
+  /**
+   * Keep the dialog open until one of its explicit action buttons is clicked.
+   * Useful for prompts where an accidental outside click must not discard the
+   * user's decision opportunity.
+   */
+  explicitCloseOnly?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }
@@ -33,6 +39,7 @@ export function ConfirmDialog({
   zIndex,
   confirmAutoFocus = false,
   contentClassName,
+  explicitCloseOnly = false,
   onConfirm,
   onClose,
 }: Props) {
@@ -50,6 +57,20 @@ export function ConfirmDialog({
         showCloseButton={false}
         style={zIndex !== undefined ? { zIndex } : undefined}
         overlayStyle={zIndex !== undefined ? { zIndex } : undefined}
+        onInteractOutside={
+          explicitCloseOnly
+            ? (event) => {
+                event.preventDefault();
+              }
+            : undefined
+        }
+        onEscapeKeyDown={
+          explicitCloseOnly
+            ? (event) => {
+                event.preventDefault();
+              }
+            : undefined
+        }
         onOpenAutoFocus={
           confirmAutoFocus
             ? (event) => {
