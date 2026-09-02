@@ -1,0 +1,32 @@
+{
+  "id": "fix-stale-codex-approval-notifications",
+  "name": "fix-stale-codex-approval-notifications",
+  "title": "Fix stale Codex approval notifications",
+  "description": "Correlate Codex child-agent permission hooks with internal tool lifecycle events so resolved or non-interactive work cannot surface as delayed approval alerts across shared notification sinks.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "Codex hook installation, shared approval arbitration, notification fan-out",
+  "package": null,
+  "priority": "P0",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-09-01",
+  "completedAt": "2026-09-01",
+  "branch": "fix/windows-codex-launcher-space-path",
+  "base_branch": "fix/windows-codex-launcher-space-path",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src-tauri/src/claude_hook.rs",
+    "src-tauri/src/commands/hook_settings.rs",
+    ".trellis/spec/backend/cli-hook-contracts.md",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "GitNexus and codebase-memory indexes are unavailable in this session; use the Hook contract, source inspection, rg, focused tests, and full diff as the documented fallback.",
+  "meta": {}
+}

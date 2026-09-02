@@ -1,5 +1,17 @@
 # Changelog
 
+## [TEMP] - 2026-09-01
+
+### cc-connect 多平台配置校验
+
+- 修复全新远程连接配置默认启用空白 Telegram，导致飞书、企业微信等平台配置正确仍被隐藏的 Telegram allowlist 阻断保存的问题；新 Profile 不再预启用任何空白平台，历史单平台和已保存多平台配置保持兼容。
+- 设置页新增全部已启用平台摘要，可直接切换到对应平台编辑；保存时 Telegram、飞书、微信、企业微信的 allowlist 错误会明确显示所属平台以及必填、通配符或格式错误原因。
+- Rust 保存边界继续对全部已启用平台严格校验，未启用平台草稿不参与校验；微信扫码授权隔离和 cc-connect 配置格式不变。
+- 修复从历史会话保存到侧边栏的项目因 `cli_args` 携带旧 `resume` / `--session` 参数而无法远程托管的问题；启动 cc-connect Agent 前会移除旧会话选择参数，实际托管仍以当前会话的 `cliSessionId` 为唯一恢复目标，其他启动参数保持不变。该处理覆盖 Codex、Claude Code、Pi 与 OpenCode，并对飞书、Telegram、微信和企业微信统一生效。
+- 修复本地 Codex 托管 app-server 只继承 Provider 地址、密钥和模型参数子集，导致同一 `cliSessionId` 与本地 TUI 的快速服务、压缩等运行配置漂移并可能长期无回复的问题；代理现在结构化加载 Native Provider 生成的完整 profile，将其展开为 app-server 支持的 `-c` 覆盖后再锁定登记 Provider/模型。普通 Codex 命令仍使用原 profile，超出 Windows 安全命令行预算时明确失败且不截断。
+- cc-connect 日志开启时新增 Codex app-server initialize、thread/resume、turn/start、完成、错误与审批阶段诊断；日志关闭时不输出该诊断，且任何模式均不记录用户消息、响应正文、文件内容或 Provider 密钥。Telegram、飞书、微信和企业微信共享同一链路，SSH 与其他 Agent 托管不受影响。
+- 修复 Codex 子 Agent 已经继续执行或完成工具调用后，延迟 15 秒再次弹出待审批提醒的问题：Codex Hook 现在通过静默的 `ToolStart` / `ToolStop` 生命周期事件在共享后端入口消解旧审批，支持事件乱序、缺少 tool ID 时的精确工具名关联和多子 Agent 隔离；内部进度不会进入终端、桌面宠物、toast、任务栏、系统/第三方或远程托管通知。真实未解决审批仍只投递一次，SSH 审批保持即时投递，WSL 不读取 UNC 转录元数据。升级后旧 Codex Hook 会显示为部分安装，重新安装 Hook 即可补齐生命周期事件与信任状态。
+
 ## [V1.3.9] - 2026-08-31
 
 ### 启动恢复弹窗关闭行为

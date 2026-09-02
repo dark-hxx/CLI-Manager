@@ -390,6 +390,13 @@ env_key = "CLI_MANAGER_CODEX_PROVIDER_<hash>_API_KEY"
   enabled. Empty or stale invalid Weixin IDs may be replaced by the scanned explicit `@im.wechat`
   identity. Normal profile save/start remains fail-closed for every enabled platform, and setup output
   must still contain a non-empty token plus an explicit Weixin user ID before credentials are saved.
+- **Messaging platform profile validation**: the platform selector identifies the draft currently
+  being edited; only `platforms[].enabled` determines which adapters run. A fresh unsaved profile has
+  no enabled adapter, so an empty Telegram placeholder cannot block the first Feishu, Weixin, or WeCom
+  setup. Normal save remains fail-closed for every enabled adapter and ignores disabled drafts. An
+  allowlist failure returns `platform_allow_from_<required|wildcard|invalid>:<platform>` so the WebView
+  can localize the exact adapter and reason; the persisted profile and generated cc-connect TOML schema
+  remain unchanged.
 - **Legacy connection migration**: when no handoff owns the process, an old project-bound profile
   is migrated atomically to the control identity. Existing cc-connect session state plus Weixin
   `context_tokens.json` and `get_updates.buf` are copied without deleting the legacy files. An
