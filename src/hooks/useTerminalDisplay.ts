@@ -26,6 +26,7 @@ const MIN_TERMINAL_ROWS = 8;
 const HIDDEN_WEBGL_DISPOSE_DELAY_MS = 10_000;
 const PTY_LIVE_WRITE_BATCH_BYTES = 64 * 1024;
 const PTY_VISIBLE_WRITE_BURST = 3;
+const PTY_WRITE_SCHEDULER_FALLBACK_DELAY_MS = 250;
 
 interface ScheduledTerminalWrite {
   token: symbol;
@@ -35,42 +36,102 @@ interface ScheduledTerminalWrite {
 
 const scheduledTerminalWrites = new Map<symbol, ScheduledTerminalWrite>();
 let terminalWriteSchedulerRafId: number | null = null;
+let terminalWriteSchedulerTimerId: number | null = null;
+let terminalWriteVisibilityListenerAttached = false;
 let visibleWriteBurst = 0;
 
-const scheduleGlobalTerminalWrite = () => {
-  if (terminalWriteSchedulerRafId !== null || scheduledTerminalWrites.size === 0) return;
-  terminalWriteSchedulerRafId = requestAnimationFrame(() => {
+const isDocumentHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+
+const clearGlobalTerminalWriteScheduler = () => {
+  if (terminalWriteSchedulerRafId !== null) {
+    cancelAnimationFrame(terminalWriteSchedulerRafId);
     terminalWriteSchedulerRafId = null;
-    const entries = [...scheduledTerminalWrites.values()];
-    const visible = entries.find((entry) => entry.isVisible());
-    const hidden = entries.find((entry) => !entry.isVisible());
-    const selected = visible && (!hidden || visibleWriteBurst < PTY_VISIBLE_WRITE_BURST)
-      ? visible
-      : hidden ?? visible;
-    if (!selected) return;
-    visibleWriteBurst = selected.isVisible() ? visibleWriteBurst + 1 : 0;
-    scheduledTerminalWrites.delete(selected.token);
-    selected.flush();
+  }
+  if (terminalWriteSchedulerTimerId !== null) {
+    window.clearTimeout(terminalWriteSchedulerTimerId);
+    terminalWriteSchedulerTimerId = null;
+  }
+};
+
+const runGlobalTerminalWrite = () => {
+  if (terminalWriteSchedulerRafId !== null) {
+    cancelAnimationFrame(terminalWriteSchedulerRafId);
+    terminalWriteSchedulerRafId = null;
+  }
+  if (terminalWriteSchedulerTimerId !== null) {
+    window.clearTimeout(terminalWriteSchedulerTimerId);
+    terminalWriteSchedulerTimerId = null;
+  }
+  const entries = [...scheduledTerminalWrites.values()];
+  const visible = entries.find((entry) => entry.isVisible());
+  const hidden = entries.find((entry) => !entry.isVisible());
+  const selected = visible && (!hidden || visibleWriteBurst < PTY_VISIBLE_WRITE_BURST)
+    ? visible
+    : hidden ?? visible;
+  if (!selected) {
     if (scheduledTerminalWrites.size === 0) {
       visibleWriteBurst = 0;
-      return;
+      removeTerminalVisibilityListener();
     }
-    scheduleGlobalTerminalWrite();
-  });
+    return;
+  }
+  visibleWriteBurst = selected.isVisible() ? visibleWriteBurst + 1 : 0;
+  scheduledTerminalWrites.delete(selected.token);
+  selected.flush();
+  if (scheduledTerminalWrites.size === 0) {
+    visibleWriteBurst = 0;
+    return;
+  }
+  scheduleGlobalTerminalWrite();
+};
+
+const scheduleGlobalTerminalWrite = () => {
+  if (
+    terminalWriteSchedulerRafId !== null
+    || terminalWriteSchedulerTimerId !== null
+    || scheduledTerminalWrites.size === 0
+  ) return;
+  if (!isDocumentHidden()) {
+    terminalWriteSchedulerRafId = requestAnimationFrame(runGlobalTerminalWrite);
+  }
+  // Background WebViews may stop rAF, and some hosts do not reliably update
+  // document.visibilityState on minimize/occlusion. Keep a watchdog so a
+  // pending PTY write cannot depend on either signal forever.
+  terminalWriteSchedulerTimerId = window.setTimeout(
+    runGlobalTerminalWrite,
+    PTY_WRITE_SCHEDULER_FALLBACK_DELAY_MS,
+  );
+};
+
+const onTerminalDocumentVisibilityChange = () => {
+  if (scheduledTerminalWrites.size === 0) return;
+  clearGlobalTerminalWriteScheduler();
+  scheduleGlobalTerminalWrite();
+};
+
+const ensureTerminalVisibilityListener = () => {
+  if (typeof document === "undefined" || terminalWriteVisibilityListenerAttached) return;
+  document.addEventListener("visibilitychange", onTerminalDocumentVisibilityChange);
+  terminalWriteVisibilityListenerAttached = true;
+};
+
+const removeTerminalVisibilityListener = () => {
+  if (typeof document === "undefined" || !terminalWriteVisibilityListenerAttached) return;
+  document.removeEventListener("visibilitychange", onTerminalDocumentVisibilityChange);
+  terminalWriteVisibilityListenerAttached = false;
 };
 
 const requestGlobalTerminalWrite = (entry: ScheduledTerminalWrite) => {
   scheduledTerminalWrites.set(entry.token, entry);
+  ensureTerminalVisibilityListener();
   scheduleGlobalTerminalWrite();
 };
 
 const cancelGlobalTerminalWrite = (token: symbol) => {
   scheduledTerminalWrites.delete(token);
   if (scheduledTerminalWrites.size === 0) {
-    if (terminalWriteSchedulerRafId !== null) {
-      cancelAnimationFrame(terminalWriteSchedulerRafId);
-      terminalWriteSchedulerRafId = null;
-    }
+    clearGlobalTerminalWriteScheduler();
+    removeTerminalVisibilityListener();
     visibleWriteBurst = 0;
   }
 };

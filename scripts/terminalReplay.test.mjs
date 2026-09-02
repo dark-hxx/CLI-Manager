@@ -9,7 +9,29 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-replay-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-globalThis.window = globalThis;
+let nextTimerId = 1;
+const timerCallbacks = new Map();
+const visibilityListeners = new Set();
+let documentVisibilityState = "visible";
+globalThis.window = {
+  setTimeout: (callback) => {
+    const id = nextTimerId++;
+    timerCallbacks.set(id, callback);
+    return id;
+  },
+  clearTimeout: (id) => timerCallbacks.delete(id),
+};
+globalThis.document = {
+  get visibilityState() {
+    return documentVisibilityState;
+  },
+  addEventListener: (type, callback) => {
+    if (type === "visibilitychange") visibilityListeners.add(callback);
+  },
+  removeEventListener: (type, callback) => {
+    if (type === "visibilitychange") visibilityListeners.delete(callback);
+  },
+};
 let nextRafId = 1;
 const rafCallbacks = new Map();
 globalThis.requestAnimationFrame = (callback) => {
@@ -31,6 +53,20 @@ function flushNextAnimationFrame() {
 
 function flushAnimationFrames() {
   while (rafCallbacks.size > 0) flushNextAnimationFrame();
+}
+
+function flushNextTimer() {
+  const next = timerCallbacks.entries().next().value;
+  if (!next) return false;
+  const [id, callback] = next;
+  timerCallbacks.delete(id);
+  callback();
+  return true;
+}
+
+function setDocumentVisibility(state) {
+  documentVisibilityState = state;
+  [...visibilityListeners].forEach((listener) => listener());
 }
 
 writeFileSync(join(tempDir, "react.mjs"), "export const useRef = (value) => ({ current: value });\n");
@@ -568,6 +604,56 @@ test("continuous live output yields between bounded xterm writes", async () => {
   ]);
   output.dispose();
   detachViewport();
+});
+
+test("hidden document drains pending PTY output with timer fallback", async () => {
+  managerStub.resetManager();
+  setDocumentVisibility("hidden");
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const commits = [];
+  const output = display.attachPtyOutput();
+  await output.ready;
+
+  managerStub.emitOutput(delivery(frame(3, "background", 120, 30), commits));
+
+  assert.equal(rafCallbacks.size, 0);
+  assert.equal(timerCallbacks.size, 1);
+  assert.deepEqual(events, []);
+  assert.deepEqual(commits, []);
+
+  assert.equal(flushNextTimer(), true);
+  assert.deepEqual(events, ["write:background"]);
+  assert.deepEqual(commits, []);
+  terminal.finishNextWrite();
+  assert.deepEqual(commits, [{ sequence: 3, charCount: 10 }]);
+
+  output.dispose();
+  detachViewport();
+  setDocumentVisibility("visible");
+  assert.equal(timerCallbacks.size, 0);
+});
+
+test("timer watchdog drains output if a visible rAF is stalled", async () => {
+  managerStub.resetManager();
+  setDocumentVisibility("visible");
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const commits = [];
+  const output = display.attachPtyOutput();
+  await output.ready;
+
+  managerStub.emitOutput(delivery(frame(3, "watchdog", 120, 30), commits));
+
+  assert.equal(rafCallbacks.size, 1);
+  assert.equal(timerCallbacks.size, 1);
+  rafCallbacks.clear();
+  assert.equal(flushNextTimer(), true);
+  assert.deepEqual(events, ["write:watchdog"]);
+  terminal.finishNextWrite();
+  assert.deepEqual(commits, [{ sequence: 3, charCount: 8 }]);
+
+  output.dispose();
+  detachViewport();
+  assert.equal(timerCallbacks.size, 0);
 });
 
 test("multiple terminals start only one xterm write per animation frame", async () => {

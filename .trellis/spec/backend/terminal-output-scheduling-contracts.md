@@ -28,6 +28,7 @@ interface ScheduledTerminalWrite {
 - A single pre-existing safe chunk is never split in the daemon; an abnormal oversized control sequence may therefore exceed the target budget rather than corrupt ANSI/UTF-8 state.
 - All mounted terminals share one frontend scheduler. Each animation frame starts at most one xterm write batch.
 - Visible terminals have priority, limited to three consecutive batches while hidden work is pending; hidden terminals must then receive one turn.
+- When the document is hidden, pending terminal writes use a timer fallback instead of depending only on `requestAnimationFrame`; the visible path keeps rAF and a watchdog timer, and `visibilitychange` reschedules the pending entry. A fallback callback cancels the other scheduled handle before consuming work.
 - Per-terminal FIFO, Replay/Reset barriers, and frame ownership stay in `useTerminalDisplay`.
 - `TerminalOutputDelivery.commit()` and daemon ACK happen only after the matching xterm write callback.
 
@@ -40,6 +41,7 @@ interface ScheduledTerminalWrite {
 | One safe chunk exceeds 64 KiB | Preserve the chunk; do not split ANSI/UTF-8 state |
 | Two terminals become ready in one browser frame | Start only one xterm write |
 | Visible output remains continuous while hidden output waits | Run at most three visible batches before one hidden batch |
+| Document is hidden or rAF is stalled | Timer fallback eventually starts the pending xterm write |
 | Display is reset or disposed while queued | Remove its scheduler token and never flush it later |
 | Replay or Reset reaches the frontend queue | Preserve the existing barrier and commit order |
 

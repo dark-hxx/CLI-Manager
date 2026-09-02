@@ -106,8 +106,11 @@ WebView -> Tauri routing command -> validate + persist provider DB
 
 - WebSocket 仅绑定 `127.0.0.1`，路径固定 `/pty`；Origin 仅允许 Tauri localhost 与本地 dev origin；首帧 token 鉴权。
 - Output/replay 必须使用 binary frame；Tauri command 仅用于 endpoint bootstrap 和 provider/hook 环境准备，真正的 create/write/resize/close 由同一 WebSocket 客户端执行。
-- daemon 输出最多合并 5ms；客户端未确认字符达到 `100000` 后暂停 PTY reader，直到降到 `5000` 以下；ACK 只能前进，重复/倒序 ACK 不得重复扣减。
+- daemon 输出最多合并 5ms；客户端未确认字符达到 `100000` 后只暂停该客户端该会话的实时投递，PTY reader/输出 worker 继续把帧写入 SessionBuffer/spool；降到 `5000` 以下后按 sequence 补发保留的实际输出帧；ACK 只能前进，重复/倒序 ACK 不得重复扣减。
 - daemon 每个客户端使用独立 writer queue；`clients` 全局锁内只更新订阅/ACK 状态和入队，禁止执行 TCP/WebSocket IO，慢客户端只能通过自身未确认字符触发该会话背压。
+- 慢客户端补发不得等待缺失 sequence：只发送 `last_sent_sequence` 之后仍保留在 SessionBuffer/spool 的实际输出，resize 空帧不单独制造 ACK，客户端队列与会话缓存上限仍然有效。xterm checkpoint 是完整快照，只能通过 attach replay/reset 消费，绝不能作为 live `Output` 追加；补发前要用包含空 resize sequence 的原始 live 事件检查连续性，若首个保留事件已经越过客户端游标，则关闭该连接，由既有重连 attach 触发 `replay_reset`，禁止把不完整 ANSI 后缀接到当前终端。
+- ACK 恢复读取 SessionBuffer/spool 时不得持有全局 `clients` 锁：可在 session entry 锁内取得有界 live-frame 快照，再短暂取得 `clients` 锁校验暂停状态并入队；磁盘回读不能拖住其他会话的输出投递。
+- 输出生产与 ACK 补发统一按 `session entry lock -> clients lock -> ClientWriter queue lock` 串行化，避免恢复 ACK 时新 live frame 越过旧缓冲帧；锁内不得等待 ACK、PTY 或 socket 实际写出。
 - Replay entry 为 `{ cols, rows, sequence, data }`；output 与 resize 共用严格递增的事件 sequence，连续空 resize 合并。Attach 在同一锁序内取得 replay 并注册订阅，订阅注册后到 attached control 入队前产生的 live 帧进入 attach barrier，发送顺序严格为 replay binary → attached control → live binary。
 - WebSocket writer 必须把 Attach Replay 展开为可独立调度的 wire frame；普通 `ok/err/pong` 控制响应可以在 Replay entry 之间抢占，避免大 Replay 饿死 15 秒控制请求。抢占不得改变同一 Attach 内 `replay reset → replay entries → attached barrier → buffered live output` 的相对顺序。
 - 活跃会话的完整 Replay 不得在 2 MiB 后静默裁剪：内存保留最近 2 MiB 安全帧，更早的整帧写入 daemon 专属磁盘 spool；关闭会话时删除对应 spool，daemon 新实例启动时清理同环境旧 spool。磁盘写入失败时保留内存数据并告警，不得丢帧。
@@ -130,6 +133,7 @@ WebView -> Tauri routing command -> validate + persist provider DB
 - 非 loopback / Origin 非白名单 / token 错误 → 握手或 auth 拒绝。
 - binary header 长度、kind、version 或 payload 长度非法 → 客户端断开并触发重连。
 - ACK sequence 重复、倒序或大于 last sent → 忽略，不改变未确认字符数。
+- 客户端达到高水位 → 只暂停该客户端该 session 的实时投递；PTY 生产继续入有界 SessionBuffer/spool，ACK 降至低水位后按 sequence 补发，不得在输出 worker 中等待 ACK。
 - WebSocket 中断 → daemon 保留会话和 Replay；前端心跳重连、attach、sequence 去重。
 - XTerm/Pane 卸载或移动 → `TerminalProcessManager` 保留已接收但尚未由 xterm write callback 提交的帧；新 Display 接管并重写，旧 Display 的迟到 callback 无权 ACK。
 - Replay 中的历史 resize → 仅恢复 xterm 回放尺寸，不向 live PTY 转发；回放结束后强制按当前容器重新 fit。

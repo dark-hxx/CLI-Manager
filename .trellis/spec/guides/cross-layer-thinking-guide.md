@@ -128,6 +128,32 @@ duplicate actions, and clear it only if the same request still owns that key.
 Do not invent terminal data or persist the visual state merely to render a
 spinner.
 
+### Mistake 9: Reusing a snapshot-bearing replay for live recovery
+
+**Bad**: A session buffer exposes one replay list to both attach and live
+backlog recovery. A checkpoint in that list is a serialized xterm snapshot,
+not an incremental PTY frame; appending it after already-rendered output
+corrupts terminal state and makes flow-control accounting lie.
+
+**Good**: Keep checkpoint-bearing replay and raw live events as separate
+views. Attach consumes the checkpoint only through the existing replay/reset
+boundary. Live recovery excludes checkpoints, retains empty resize events for
+sequence-gap detection, and closes a stale connection when the retained raw
+stream no longer reaches the client's cursor so reconnect/attach can emit the
+existing reset and replay.
+
+### Mistake 10: Performing replay I/O under a global fan-out lock
+
+**Bad**: An ACK handler holds the global client registry lock while reading
+and cloning a potentially multi-megabyte disk spool. Output for unrelated
+sessions then queues behind recovery and can fill the one-slot PTY event
+channel.
+
+**Good**: Hold the session lock long enough to snapshot the bounded replay,
+keep the paused state as the ordering barrier, and acquire the global clients
+lock only to validate state and enqueue the snapshot. Disk replay must never
+run inside the global fan-out critical section.
+
 ---
 
 ## Checklist for Cross-Layer Features
