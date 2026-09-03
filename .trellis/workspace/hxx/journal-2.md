@@ -1374,3 +1374,24 @@ Fixed Issue #245: hardened terminal output scheduling and daemon ACK recovery; s
 ### Status
 
 [OK] **Completed**
+
+
+## Session 105: Hook 系统通知自定义声音
+
+**Date**: 2026-09-03
+**Task**: Hook 系统通知自定义声音
+**Branch**: `master`
+
+### Summary
+
+实现 Windows 本地 Hook 自定义 WAV 通知声音，支持选择、试听、清除、失效回退与本机路径隔离；设置页在选择按钮左侧提示仅支持 .wav 格式，关联 issue #239。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dace561f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
