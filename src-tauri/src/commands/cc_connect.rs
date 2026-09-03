@@ -4,8 +4,8 @@ use crate::codex_app_server_proxy::{
     SshCodexLaunch, CODEX_BASE_URL_OVERRIDE_ENV, CODEX_ENV_KEY_OVERRIDE_ENV,
     CODEX_LAUNCHER_ARGS_ENV, CODEX_LAUNCHER_ENV, CODEX_MODEL_CATALOG_OVERRIDE_ENV,
     CODEX_MODEL_OVERRIDE_ENV, CODEX_MODEL_PROVIDER_ENV, CODEX_PROFILE_NAME_ENV,
-    CODEX_PROVIDER_NAME_OVERRIDE_ENV, CODEX_SSH_LAUNCH_ENV, CODEX_WIRE_API_OVERRIDE_ENV,
-    EXPECTED_SESSION_ID_ENV, PROXY_EXECUTABLE_ENV,
+    CODEX_PROTOCOL_TRACE_PATH_ENV, CODEX_PROVIDER_NAME_OVERRIDE_ENV, CODEX_SSH_LAUNCH_ENV,
+    CODEX_WIRE_API_OVERRIDE_ENV, EXPECTED_SESSION_ID_ENV, PROXY_EXECUTABLE_ENV,
 };
 #[cfg(target_os = "windows")]
 use crate::process_job::ChildJob;
@@ -2478,7 +2478,7 @@ fn normalize_profile(
         item.allow_from = item.allow_from.trim().to_string();
         if item.enabled {
             enabled_count += 1;
-            item.allow_from = normalize_allow_from(item.platform, &item.allow_from)?;
+            item.allow_from = normalize_profile_allow_from(item.platform, &item.allow_from)?;
         }
     }
     if enabled_count == 0 {
@@ -2563,6 +2563,17 @@ fn normalize_allow_from(platform: CcConnectPlatform, raw: &str) -> Result<String
         return Err("allow_from must contain at least one explicit user ID".to_string());
     }
     Ok(values.join(","))
+}
+
+fn normalize_profile_allow_from(platform: CcConnectPlatform, raw: &str) -> Result<String, String> {
+    normalize_allow_from(platform, raw).map_err(|error| {
+        let reason = match error.as_str() {
+            "allow_from must contain at least one explicit user ID" => "required",
+            "allow_from wildcard is forbidden" => "wildcard",
+            _ => "invalid",
+        };
+        format!("platform_allow_from_{reason}:{}", platform_type(platform))
+    })
 }
 
 fn profile_issue_codes(profile: &CcConnectProfile) -> Vec<String> {
@@ -2700,6 +2711,127 @@ fn has_handoff_session_argument(agent: CcConnectAgent, argument: &str) -> bool {
     common
         || matches!(agent, CcConnectAgent::Codex) && option == "resume"
         || matches!(agent, CcConnectAgent::Claude) && option == "-c"
+        || matches!(agent, CcConnectAgent::Pi) && option == "-c"
+        || matches!(agent, CcConnectAgent::Opencode) && matches!(option.as_str(), "-c" | "-s")
+}
+
+fn codex_resume_option_takes_value(argument: &str) -> bool {
+    if argument.contains('=')
+        || argument
+            .strip_prefix('-')
+            .is_some_and(|value| !value.starts_with('-') && value.len() > 1)
+    {
+        return false;
+    }
+    let option = argument.to_ascii_lowercase();
+    matches!(
+        option.as_str(),
+        "-a" | "--add-dir"
+            | "--ask-for-approval"
+            | "-c"
+            | "--cd"
+            | "--config"
+            | "--disable"
+            | "--enable"
+            | "-i"
+            | "--image"
+            | "--local-provider"
+            | "-m"
+            | "--model"
+            | "-p"
+            | "--profile"
+            | "--remote"
+            | "--remote-auth-token-env"
+            | "-s"
+            | "--sandbox"
+    )
+}
+
+fn handoff_session_argument_takes_value(agent: CcConnectAgent, argument: &str) -> bool {
+    let option = argument
+        .split_once('=')
+        .map(|(name, _)| name)
+        .unwrap_or(argument)
+        .to_ascii_lowercase();
+    match agent {
+        CcConnectAgent::Claude => matches!(
+            option.as_str(),
+            "-c" | "-r" | "--continue" | "--resume" | "--session" | "--session-id" | "--fork"
+        ),
+        CcConnectAgent::Codex => matches!(
+            option.as_str(),
+            "--continue" | "--resume" | "--session" | "--session-id" | "--fork" | "-r"
+        ),
+        CcConnectAgent::Pi => matches!(
+            option.as_str(),
+            "-c" | "-r" | "--continue" | "--resume" | "--session" | "--session-id" | "--fork"
+        ),
+        CcConnectAgent::Opencode => matches!(
+            option.as_str(),
+            "-c" | "-s" | "--continue" | "--session" | "--fork"
+        ),
+    }
+}
+
+fn strip_registered_launcher_session_arguments(
+    agent: CcConnectAgent,
+    args: Vec<String>,
+) -> Vec<String> {
+    let mut kept = Vec::with_capacity(args.len());
+    let mut index = 0;
+    let mut in_codex_resume = false;
+
+    while index < args.len() {
+        let argument = &args[index];
+        let option = argument
+            .split_once('=')
+            .map(|(name, _)| name)
+            .unwrap_or(argument)
+            .to_ascii_lowercase();
+
+        if agent == CcConnectAgent::Codex && !in_codex_resume && option == "resume" {
+            in_codex_resume = true;
+            index += 1;
+            continue;
+        }
+
+        if has_handoff_session_argument(agent, argument) {
+            if !argument.contains('=')
+                && handoff_session_argument_takes_value(agent, argument)
+                && args
+                    .get(index + 1)
+                    .is_some_and(|next| !next.starts_with('-'))
+            {
+                index += 1;
+            }
+            index += 1;
+            continue;
+        }
+
+        if in_codex_resume {
+            if argument == "--"
+                || matches!(
+                    option.as_str(),
+                    "--all" | "--include-non-interactive" | "--no-alt-screen"
+                )
+                || !argument.starts_with('-')
+            {
+                index += 1;
+                continue;
+            }
+        }
+
+        kept.push(argument.clone());
+        if agent == CcConnectAgent::Codex && codex_resume_option_takes_value(argument) {
+            if let Some(value) = args.get(index + 1) {
+                kept.push(value.clone());
+                index += 1;
+            }
+        }
+        index += 1;
+    }
+
+    kept
 }
 
 fn validate_registered_launcher_arguments(
@@ -2768,6 +2900,7 @@ fn ensure_local_agent_available(
     if command.len() > MAX_REGISTERED_LAUNCHER_ARGS {
         return Err("handoff_agent_launcher_invalid".to_string());
     }
+    command = strip_registered_launcher_session_arguments(project.agent, command);
     validate_registered_launcher_arguments(project.agent, &command)?;
     let executable = resolve_local_agent_program(&program, Path::new(&project.path))?;
     #[cfg(target_os = "windows")]
@@ -2854,6 +2987,7 @@ fn managed_project_environment(
 struct RemoteCodexProviderLaunch {
     name: String,
     profile_name: String,
+    profile_text: String,
     model_provider: String,
     provider_name_override: String,
     model: Option<String>,
@@ -2874,6 +3008,7 @@ struct RemoteCodexLaunch {
     expected_session_id: Option<String>,
     codex_home: Option<PathBuf>,
     discovery_codex_home: Option<PathBuf>,
+    protocol_trace_path: Option<PathBuf>,
     provider: Option<RemoteCodexProviderLaunch>,
     ssh_launch: Option<SshCodexLaunch>,
 }
@@ -3211,6 +3346,11 @@ fn write_codex_model_discovery_home(
         &directory.join(CONFIG_FILE_NAME),
         config.as_bytes(),
         "Codex model discovery config",
+    )?;
+    write_file_atomically(
+        &directory.join(format!("{}.config.toml", provider.profile_name)),
+        provider.profile_text.as_bytes(),
+        "Codex model discovery Provider profile",
     )
 }
 
@@ -3376,6 +3516,7 @@ fn prepare_remote_codex_launch(
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
             let profile_name = runtime.profile.profile_name.clone();
+            let profile_text = runtime.profile.profile_text.clone();
             let model_provider = runtime.profile.model_provider.clone();
             Some(RemoteCodexProviderLaunch {
                 name: project
@@ -3385,6 +3526,7 @@ fn prepare_remote_codex_launch(
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| provider_id.to_string()),
                 profile_name,
+                profile_text,
                 model_provider: model_provider.clone(),
                 provider_name_override: codex_wrapper_override(
                     &codex_provider_override_key(&model_provider, "name")?,
@@ -3436,6 +3578,7 @@ fn prepare_remote_codex_launch(
         expected_session_id,
         codex_home,
         discovery_codex_home,
+        protocol_trace_path: profile.logging_enabled.then(log_path).transpose()?,
         provider,
         ssh_launch,
     }))
@@ -3496,6 +3639,14 @@ fn apply_remote_codex_launch_environment(
         }
         None => {
             command.env_remove(EXPECTED_SESSION_ID_ENV);
+        }
+    }
+    match launch.protocol_trace_path.as_ref() {
+        Some(path) => {
+            command.env(CODEX_PROTOCOL_TRACE_PATH_ENV, path);
+        }
+        None => {
+            command.env_remove(CODEX_PROTOCOL_TRACE_PATH_ENV);
         }
     }
     match launch.provider.as_ref() {
@@ -6828,10 +6979,68 @@ mod tests {
 
         let error = normalize_profile(&CcConnectManager::new(), profile).unwrap_err();
 
-        assert_eq!(
-            error,
-            "allow_from must contain at least one explicit user ID"
-        );
+        assert_eq!(error, "platform_allow_from_required:telegram");
+    }
+
+    #[test]
+    fn profile_allowlist_errors_identify_every_platform_and_reason() {
+        let invalid_values = [
+            (CcConnectPlatform::Telegram, "telegram-name"),
+            (CcConnectPlatform::Feishu, "123456789"),
+            (CcConnectPlatform::Weixin, "wechat-owner"),
+            (CcConnectPlatform::Wecom, "user with spaces"),
+        ];
+
+        for platform in CC_CONNECT_PLATFORMS {
+            assert_eq!(
+                normalize_profile_allow_from(platform, "").unwrap_err(),
+                format!("platform_allow_from_required:{}", platform_type(platform))
+            );
+            assert_eq!(
+                normalize_profile_allow_from(platform, "*").unwrap_err(),
+                format!("platform_allow_from_wildcard:{}", platform_type(platform))
+            );
+        }
+
+        for (platform, value) in invalid_values {
+            assert_eq!(
+                normalize_profile_allow_from(platform, value).unwrap_err(),
+                format!("platform_allow_from_invalid:{}", platform_type(platform))
+            );
+        }
+    }
+
+    #[test]
+    fn regular_profile_validation_ignores_disabled_platform_drafts() {
+        let project = tempfile::tempdir().unwrap();
+        let valid_values = [
+            (CcConnectPlatform::Telegram, "123456789"),
+            (CcConnectPlatform::Feishu, "ou_owner"),
+            (CcConnectPlatform::Weixin, "owner@im.wechat"),
+            (CcConnectPlatform::Wecom, "zhangsan"),
+        ];
+
+        for (selected, valid_value) in valid_values {
+            let mut profile = sample_profile(project.path());
+            profile.platform = selected;
+            profile.platforms = CC_CONNECT_PLATFORMS
+                .into_iter()
+                .map(|platform| CcConnectPlatformProfile {
+                    platform,
+                    enabled: platform == selected,
+                    allow_from: if platform == selected {
+                        valid_value.to_string()
+                    } else {
+                        "unfinished draft".to_string()
+                    },
+                })
+                .collect();
+
+            let normalized = normalize_profile(&CcConnectManager::new(), profile).unwrap();
+
+            assert_eq!(enabled_platforms(&normalized).len(), 1);
+            assert_eq!(normalized.allow_from, valid_value);
+        }
     }
 
     #[test]
@@ -6986,6 +7195,7 @@ allow_from = ""
         let provider = provider.then(|| RemoteCodexProviderLaunch {
             name: "Project Provider".to_string(),
             profile_name: "cli-manager-project-provider-123".to_string(),
+            profile_text: "model_provider = \"custom\"\nservice_tier = \"fast\"\n\n[model_providers.custom]\nname = \"Project Provider\"\nbase_url = \"https://provider.example.com/v1\"\nenv_key = \"CLI_MANAGER_CODEX_PROVIDER_API_KEY\"\nwire_api = \"responses\"\n".to_string(),
             model_provider: "custom".to_string(),
             provider_name_override: "model_providers.custom.name=CLI-Manager remote".to_string(),
             model: Some("gpt-5.4".to_string()),
@@ -7012,6 +7222,7 @@ allow_from = ""
             discovery_codex_home: provider.is_some().then(|| {
                 PathBuf::from(r"C:\Users\test\.cli-manager\remote-manager\codex-model-discovery")
             }),
+            protocol_trace_path: None,
             provider,
             ssh_launch: None,
         }
@@ -7071,6 +7282,14 @@ allow_from = ""
             config["model_catalog_json"].as_str(),
             Some(CODEX_MODEL_CATALOG_FILE_NAME)
         );
+        let profile = fs::read_to_string(
+            directory
+                .path()
+                .join("cli-manager-project-provider-123.config.toml"),
+        )
+        .unwrap();
+        assert!(profile.contains("service_tier = \"fast\""));
+        assert!(!profile.contains("sk-provider-secret"));
         let raw_catalog =
             fs::read_to_string(directory.path().join(CODEX_MODEL_CATALOG_FILE_NAME)).unwrap();
         let catalog = serde_json::from_str::<serde_json::Value>(&raw_catalog).unwrap();
@@ -7162,7 +7381,10 @@ allow_from = ""
     #[test]
     fn codex_launch_environment_forces_provider_without_embedding_secrets() {
         let mut command = Command::new("cc-connect");
-        let launch = sample_remote_codex_launch(true);
+        let mut launch = sample_remote_codex_launch(true);
+        launch.protocol_trace_path = Some(PathBuf::from(
+            r"C:\Users\test\.cli-manager\logs\cc-connect.log",
+        ));
         apply_remote_codex_launch_environment(&mut command, &launch).unwrap();
         let environment = command
             .get_envs()
@@ -7217,6 +7439,12 @@ allow_from = ""
             Some(&Some("thread-original".to_string()))
         );
         assert_eq!(
+            environment.get(CODEX_PROTOCOL_TRACE_PATH_ENV),
+            Some(&Some(
+                r"C:\Users\test\.cli-manager\logs\cc-connect.log".to_string()
+            ))
+        );
+        assert_eq!(
             environment.get(CODEX_LAUNCHER_ARGS_ENV),
             Some(&Some(serde_json::to_string(&launch.launcher_args).unwrap()))
         );
@@ -7250,6 +7478,7 @@ allow_from = ""
             CODEX_MODEL_CATALOG_OVERRIDE_ENV,
             CODEX_MODEL_OVERRIDE_ENV,
             CODEX_WIRE_API_OVERRIDE_ENV,
+            CODEX_PROTOCOL_TRACE_PATH_ENV,
         ] {
             assert_eq!(environment.get(key), Some(&None));
         }
@@ -7442,6 +7671,60 @@ allow_from = ""
             ]
         );
         assert!(parse_registered_command("codex && whoami").is_err());
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Codex,
+                vec!["resume".to_string(), "thread-original".to_string()]
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Codex,
+                vec![
+                    "resume".to_string(),
+                    "--no-alt-screen".to_string(),
+                    "thread-original".to_string(),
+                    "-c".to_string(),
+                    "model_reasoning_effort=high".to_string(),
+                ]
+            ),
+            vec!["-c".to_string(), "model_reasoning_effort=high".to_string()]
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Claude,
+                vec![
+                    "--resume".to_string(),
+                    "session-1".to_string(),
+                    "--verbose".to_string(),
+                ]
+            ),
+            vec!["--verbose".to_string()]
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Pi,
+                vec![
+                    "--session".to_string(),
+                    "session-1".to_string(),
+                    "--verbose".to_string(),
+                ]
+            ),
+            vec!["--verbose".to_string()]
+        );
+        assert_eq!(
+            strip_registered_launcher_session_arguments(
+                CcConnectAgent::Opencode,
+                vec![
+                    "-s".to_string(),
+                    "ses_123".to_string(),
+                    "--log-level".to_string(),
+                    "debug".to_string(),
+                ]
+            ),
+            vec!["--log-level".to_string(), "debug".to_string()]
+        );
         assert_eq!(
             validate_registered_launcher_arguments(
                 CcConnectAgent::Codex,

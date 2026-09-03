@@ -9,11 +9,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
+use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HELPER_SUBCOMMAND: &str = "__codex_app_server_proxy";
 pub(crate) const PROXY_EXECUTABLE_ENV: &str = "CLI_MANAGER_CODEX_APP_SERVER_PROXY";
@@ -31,12 +33,19 @@ pub(crate) const CODEX_PROVIDER_NAME_OVERRIDE_ENV: &str =
 pub(crate) const CODEX_PROFILE_NAME_ENV: &str = "CLI_MANAGER_CODEX_PROFILE_NAME";
 pub(crate) const CODEX_MODEL_PROVIDER_ENV: &str = "CLI_MANAGER_CODEX_MODEL_PROVIDER";
 pub(crate) const CODEX_SSH_LAUNCH_ENV: &str = "CLI_MANAGER_CODEX_SSH_LAUNCH";
+pub(crate) const CODEX_PROTOCOL_TRACE_PATH_ENV: &str = "CLI_MANAGER_CODEX_PROTOCOL_TRACE_PATH";
 
 // A resumed Codex thread can legitimately exceed cc-connect's 10 MB scanner limit.
 // Keep a finite ceiling so a broken child cannot exhaust the host process indefinitely.
 const MAX_PROTOCOL_LINE_BYTES: usize = 512 * 1024 * 1024;
 const MAX_CODEX_LAUNCHER_ARGS: usize = 64;
 const MAX_CODEX_LAUNCHER_ARG_BYTES: usize = 8 * 1024;
+const MAX_CODEX_PROFILE_BYTES: u64 = 20 * 1024;
+const MAX_CODEX_PROFILE_OVERRIDES: usize = 256;
+// Leave room below Windows' 32,767 UTF-16 command-line limit for the
+// executable path and shell launcher arguments used by .cmd/.ps1 installs.
+const MAX_CODEX_CHILD_ARGUMENT_UTF16_UNITS: usize = 20 * 1024;
+const MAX_PROTOCOL_TRACE_PENDING_REQUESTS: usize = 64;
 const STRICT_RESUME_ERROR_CODE: i64 = -32091;
 const SSH_HANDOFF_HOOK_QUEUE_CAPACITY: usize = 32;
 const LOCAL_HANDOFF_DELIVERY_INSTRUCTION: &str = "CLI-Manager remote handoff: deliver output files with `cc-connect send --file <absolute-path>` and output images with `cc-connect send --image <absolute-path>`.";
@@ -295,6 +304,9 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let protocol_trace_path =
+        optional_unicode_env(CODEX_PROTOCOL_TRACE_PATH_ENV)?.map(PathBuf::from);
+    append_protocol_trace(protocol_trace_path.as_deref(), "process.starting");
     let (mut command, expected_model_provider) = if let Some(ssh_launch) = ssh_launch.as_ref() {
         (
             command_from_ssh_launch(ssh_launch.build_launch(child_args)?),
@@ -307,6 +319,7 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
         let expected_model_provider = provider_overrides.model_provider.clone();
         let mut effective_args = launcher_args;
         effective_args.extend(build_codex_child_args(child_args, &provider_overrides)?);
+        validate_codex_app_server_argument_budget(child_args, &effective_args)?;
         (
             codex_command(&launcher, &effective_args)?,
             expected_model_provider,
@@ -329,9 +342,12 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
         .ok_or_else(|| "real Codex stdout pipe is unavailable".to_string())?;
 
     let pending = Arc::new(Mutex::new(HashMap::<String, PendingResume>::new()));
+    let trace_state = Arc::new(Mutex::new(ProtocolTraceState::default()));
     let parent_output = Arc::new(Mutex::new(io::stdout()));
     let input_pending = Arc::clone(&pending);
+    let input_trace_state = Arc::clone(&trace_state);
     let input_output = Arc::clone(&parent_output);
+    let input_trace_path = protocol_trace_path.clone();
     let hook_forwarder = ssh_launch
         .as_ref()
         .and_then(|_| SshHandoffHookForwarder::from_environment(expected_thread_id.clone()));
@@ -344,6 +360,8 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
             remote_work_dir.as_deref(),
             &input_pending,
             &input_output,
+            input_trace_path.as_deref(),
+            &input_trace_state,
         ) {
             eprintln!("CLI-Manager Codex app-server proxy input failed: {err}");
         }
@@ -354,6 +372,8 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
         &pending,
         &parent_output,
         hook_forwarder.as_ref(),
+        protocol_trace_path.as_deref(),
+        &trace_state,
     ) {
         let _ = child.kill();
         let _ = child.wait();
@@ -362,6 +382,7 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
     let status = child
         .wait()
         .map_err(|err| format!("wait for real Codex app-server failed: {err}"))?;
+    append_protocol_trace(protocol_trace_path.as_deref(), "process.exited");
     Ok(status.code().unwrap_or(1))
 }
 
@@ -454,6 +475,7 @@ fn parse_codex_launcher_args(value: &str) -> Result<Vec<String>, String> {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct CodexProviderOverrides {
     profile_name: Option<String>,
+    profile_overrides: Vec<String>,
     model_provider: Option<String>,
     provider_name: Option<String>,
     base_url: Option<String>,
@@ -465,8 +487,15 @@ struct CodexProviderOverrides {
 
 impl CodexProviderOverrides {
     fn from_environment() -> Result<Self, String> {
+        let profile_name = optional_unicode_env(CODEX_PROFILE_NAME_ENV)?;
+        let profile_overrides = profile_name
+            .as_deref()
+            .map(load_codex_profile_overrides)
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
-            profile_name: optional_unicode_env(CODEX_PROFILE_NAME_ENV)?,
+            profile_name,
+            profile_overrides,
             model_provider: optional_unicode_env(CODEX_MODEL_PROVIDER_ENV)?,
             provider_name: optional_unicode_env(CODEX_PROVIDER_NAME_OVERRIDE_ENV)?,
             base_url: optional_unicode_env(CODEX_BASE_URL_OVERRIDE_ENV)?,
@@ -479,6 +508,7 @@ impl CodexProviderOverrides {
 
     fn command_args(&self, include_profile: bool) -> Result<Vec<String>, String> {
         let has_any = self.profile_name.is_some()
+            || !self.profile_overrides.is_empty()
             || self.model_provider.is_some()
             || self.provider_name.is_some()
             || self.base_url.is_some()
@@ -520,6 +550,10 @@ impl CodexProviderOverrides {
                 .as_ref()
                 .ok_or_else(|| "Codex Provider profile name is missing".to_string())?;
             args.extend(["--profile".to_string(), profile_name.clone()]);
+        } else {
+            for value in &self.profile_overrides {
+                args.extend(["-c".to_string(), value.clone()]);
+            }
         }
         args.extend([
             "-c".to_string(),
@@ -555,16 +589,110 @@ fn optional_unicode_env(key: &str) -> Result<Option<String>, String> {
     }
 }
 
+fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, String> {
+    if profile_name.is_empty()
+        || profile_name.len() > 128
+        || !profile_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err("Codex Provider profile name is invalid".to_string());
+    }
+    let codex_home = env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "Codex home is unavailable for the Provider profile".to_string())?;
+    let path = codex_home.join(format!("{profile_name}.config.toml"));
+    let metadata = std::fs::metadata(&path)
+        .map_err(|err| format!("read Codex Provider profile metadata failed: {err}"))?;
+    if !metadata.is_file() || metadata.len() > MAX_CODEX_PROFILE_BYTES {
+        return Err("Codex Provider profile is missing or too large".to_string());
+    }
+    let profile = std::fs::read_to_string(&path)
+        .map_err(|err| format!("read Codex Provider profile failed: {err}"))?;
+    let document = toml::from_str::<toml::Value>(&profile)
+        .map_err(|err| format!("parse Codex Provider profile failed: {err}"))?;
+    let mut overrides = Vec::new();
+    flatten_codex_profile_value(None, &document, &mut overrides)?;
+    if overrides.len() > MAX_CODEX_PROFILE_OVERRIDES {
+        return Err("Codex Provider profile contains too many runtime options".to_string());
+    }
+    Ok(overrides)
+}
+
+fn flatten_codex_profile_value(
+    prefix: Option<&str>,
+    value: &toml::Value,
+    output: &mut Vec<String>,
+) -> Result<(), String> {
+    if let toml::Value::Table(table) = value {
+        for (key, child) in table {
+            let key = codex_profile_key_segment(key)?;
+            let path = prefix.map_or_else(|| key.clone(), |prefix| format!("{prefix}.{key}"));
+            flatten_codex_profile_value(Some(&path), child, output)?;
+        }
+        return Ok(());
+    }
+    let prefix = prefix.ok_or_else(|| "Codex Provider profile root is invalid".to_string())?;
+    output.push(format!("{prefix}={value}"));
+    Ok(())
+}
+
+fn codex_profile_key_segment(value: &str) -> Result<String, String> {
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return Err("Codex Provider profile key is invalid".to_string());
+    }
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Ok(value.to_string());
+    }
+    serde_json::to_string(value).map_err(|_| "Codex Provider profile key is invalid".to_string())
+}
+
 fn build_codex_child_args(
     child_args: &[String],
     overrides: &CodexProviderOverrides,
 ) -> Result<Vec<String>, String> {
-    // Codex rejects --profile for app-server, while runtime commands still use
-    // the generated profile. The complete -c overrides lock app-server to the
-    // registered Provider without relying on profile support.
+    // app-server rejects --profile even when it precedes the subcommand. Load
+    // the same generated profile as -c overrides, then append explicit locks
+    // for Provider identity, model catalog, and active model.
     let mut args = overrides.command_args(!is_app_server_command(child_args))?;
     args.extend_from_slice(child_args);
+    validate_codex_app_server_argument_budget(child_args, &args)?;
     Ok(args)
+}
+
+fn validate_codex_app_server_argument_budget(
+    child_args: &[String],
+    effective_args: &[String],
+) -> Result<(), String> {
+    if is_app_server_command(child_args)
+        && estimated_windows_argument_units(effective_args) > MAX_CODEX_CHILD_ARGUMENT_UTF16_UNITS
+    {
+        return Err(
+            "Codex app-server startup arguments exceed the safe Windows command-line budget"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn estimated_windows_argument_units(args: &[String]) -> usize {
+    args.iter()
+        .map(|arg| {
+            // Rust quotes Windows process arguments. Count the argument, a
+            // separator and outer quotes, plus conservative escaping space
+            // for quotes and backslashes so the check fails closed.
+            arg.encode_utf16().count()
+                + 3
+                + arg
+                    .chars()
+                    .filter(|character| matches!(character, '\\' | '"'))
+                    .count()
+        })
+        .sum()
 }
 
 #[cfg(target_os = "windows")]
@@ -577,6 +705,11 @@ fn windows_shell_path(path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     }
+}
+
+#[derive(Default)]
+struct ProtocolTraceState {
+    pending_requests: HashMap<String, &'static str>,
 }
 
 #[cfg(target_os = "windows")]
@@ -641,6 +774,8 @@ fn forward_parent_input(
     remote_work_dir: Option<&str>,
     pending: &Arc<Mutex<HashMap<String, PendingResume>>>,
     parent_output: &Arc<Mutex<io::Stdout>>,
+    protocol_trace_path: Option<&Path>,
+    trace_state: &Arc<Mutex<ProtocolTraceState>>,
 ) -> Result<(), String> {
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
@@ -649,6 +784,7 @@ fn forward_parent_input(
     while let Some(line) = read_protocol_line(&mut reader, MAX_PROTOCOL_LINE_BYTES)
         .map_err(|err| format!("read cc-connect request failed: {err}"))?
     {
+        trace_client_protocol_line(protocol_trace_path, trace_state, &line);
         let action = {
             let mut pending = pending
                 .lock()
@@ -682,11 +818,14 @@ fn forward_child_output(
     pending: &Arc<Mutex<HashMap<String, PendingResume>>>,
     parent_output: &Arc<Mutex<io::Stdout>>,
     hook_forwarder: Option<&SshHandoffHookForwarder>,
+    protocol_trace_path: Option<&Path>,
+    trace_state: &Arc<Mutex<ProtocolTraceState>>,
 ) -> Result<(), String> {
     let mut reader = BufReader::new(child_stdout);
     while let Some(line) = read_protocol_line(&mut reader, MAX_PROTOCOL_LINE_BYTES)
         .map_err(|err| format!("read real Codex response failed: {err}"))?
     {
+        trace_server_protocol_line(protocol_trace_path, trace_state, &line);
         if let Some(forwarder) = hook_forwarder {
             forwarder.inspect_server_line(&line);
         }
@@ -699,6 +838,98 @@ fn forward_child_output(
         write_parent_line(parent_output, transformed.as_deref().unwrap_or(&line))?;
     }
     Ok(())
+}
+
+fn trace_client_protocol_line(
+    path: Option<&Path>,
+    state: &Arc<Mutex<ProtocolTraceState>>,
+    line: &[u8],
+) {
+    if path.is_none() {
+        return;
+    }
+    let Ok(message) = serde_json::from_slice::<Value>(trim_line_ending(line)) else {
+        return;
+    };
+    let Some(method) = message.get("method").and_then(Value::as_str) else {
+        return;
+    };
+    let stage = match method {
+        "initialize" => "initialize",
+        "initialized" => "initialized",
+        "thread/resume" => "thread.resume",
+        "turn/start" => "turn.start",
+        _ => return,
+    };
+    if let Some(key) = message.get("id").and_then(rpc_id_key) {
+        if let Ok(mut state) = state.lock() {
+            if state.pending_requests.len() >= MAX_PROTOCOL_TRACE_PENDING_REQUESTS {
+                state.pending_requests.clear();
+            }
+            state.pending_requests.insert(key, stage);
+        }
+    }
+    append_protocol_trace(path, &format!("client.{stage}"));
+}
+
+fn trace_server_protocol_line(
+    path: Option<&Path>,
+    state: &Arc<Mutex<ProtocolTraceState>>,
+    line: &[u8],
+) {
+    if path.is_none() {
+        return;
+    }
+    let Ok(message) = serde_json::from_slice::<Value>(trim_line_ending(line)) else {
+        return;
+    };
+    if let Some(method) = message.get("method").and_then(Value::as_str) {
+        let stage = match method {
+            "turn/started" => "server.turn.started",
+            "turn/completed" => "server.turn.completed",
+            "error" => "server.error",
+            "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval"
+            | "item/tool/requestUserInput"
+            | "mcpServer/elicitation/request"
+            | "applyPatchApproval"
+            | "execCommandApproval" => "server.approval.requested",
+            _ => return,
+        };
+        append_protocol_trace(path, stage);
+        return;
+    }
+    let Some(key) = message.get("id").and_then(rpc_id_key) else {
+        return;
+    };
+    let stage = state
+        .lock()
+        .ok()
+        .and_then(|mut state| state.pending_requests.remove(&key));
+    let Some(stage) = stage else {
+        return;
+    };
+    let outcome = if message.get("error").is_some() {
+        "error"
+    } else {
+        "ok"
+    };
+    append_protocol_trace(path, &format!("server.{stage}.{outcome}"));
+}
+
+fn append_protocol_trace(path: Option<&Path>, stage: &str) {
+    let Some(path) = path else {
+        return;
+    };
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "[{timestamp_ms}] [codex-proxy] stage={stage}");
 }
 
 fn inspect_client_line(
@@ -1138,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn app_server_provider_overrides_omit_runtime_only_profile() {
+    fn app_server_provider_overrides_expand_complete_profile_before_subcommand() {
         let args = build_codex_child_args(
             &[
                 "app-server".to_string(),
@@ -1147,6 +1378,10 @@ mod tests {
             ],
             &CodexProviderOverrides {
                 profile_name: Some("cli-manager-project-provider-123".to_string()),
+                profile_overrides: vec![
+                    "service_tier=\"fast\"".to_string(),
+                    "features.enable_request_compression=true".to_string(),
+                ],
                 model_provider: Some("custom".to_string()),
                 provider_name: Some(
                     "model_providers.custom.name=CLI-Manager remote".to_string(),
@@ -1173,6 +1408,10 @@ mod tests {
             args,
             vec![
                 "-c",
+                "service_tier=\"fast\"",
+                "-c",
+                "features.enable_request_compression=true",
+                "-c",
                 "model_provider=\"custom\"",
                 "-c",
                 "model_providers.custom.name=CLI-Manager remote",
@@ -1195,11 +1434,53 @@ mod tests {
     }
 
     #[test]
+    fn protocol_trace_records_stages_without_message_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cc-connect.log");
+        let state = Arc::new(Mutex::new(ProtocolTraceState::default()));
+        trace_client_protocol_line(
+            Some(&path),
+            &state,
+            br#"{"jsonrpc":"2.0","id":7,"method":"turn/start","params":{"input":[{"type":"text","text":"private prompt sk-secret"}]}}"#,
+        );
+        trace_server_protocol_line(
+            Some(&path),
+            &state,
+            br#"{"jsonrpc":"2.0","id":7,"result":{"turn":{"id":"turn-1"}}}"#,
+        );
+        trace_server_protocol_line(
+            Some(&path),
+            &state,
+            br#"{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-private"}}"#,
+        );
+        trace_server_protocol_line(
+            Some(&path),
+            &state,
+            br#"{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"},"output":"private answer"}}"#,
+        );
+
+        let trace = std::fs::read_to_string(path).unwrap();
+        assert!(trace.contains("stage=client.turn.start"));
+        assert!(trace.contains("stage=server.turn.start.ok"));
+        assert!(trace.contains("stage=server.turn.started"));
+        assert!(trace.contains("stage=server.turn.completed"));
+        for private_value in [
+            "private prompt",
+            "sk-secret",
+            "thread-private",
+            "private answer",
+        ] {
+            assert!(!trace.contains(private_value));
+        }
+    }
+
+    #[test]
     fn runtime_provider_overrides_keep_the_generated_profile() {
         let args = build_codex_child_args(
             &["resume".to_string(), "thread-original".to_string()],
             &CodexProviderOverrides {
                 profile_name: Some("cli-manager-project-provider-123".to_string()),
+                profile_overrides: vec!["service_tier=\"fast\"".to_string()],
                 model_provider: Some("custom".to_string()),
                 provider_name: Some(
                     "model_providers.custom.name=CLI-Manager remote".to_string(),
@@ -1232,6 +1513,7 @@ mod tests {
                 .as_slice()
             )
         );
+        assert!(!args.iter().any(|arg| arg == "service_tier=\"fast\""));
         assert_eq!(
             args.get(args.len().saturating_sub(2)..),
             Some(["resume".to_string(), "thread-original".to_string()].as_slice())
@@ -1249,6 +1531,67 @@ mod tests {
             build_codex_child_args(&original, &CodexProviderOverrides::default()).unwrap(),
             original
         );
+    }
+
+    #[test]
+    fn complete_profile_is_flattened_into_codex_config_overrides() {
+        let profile = r#"
+model_provider = "custom"
+service_tier = "fast"
+
+[features]
+enable_request_compression = true
+
+[model_providers."custom.provider"]
+base_url = "https://provider.example.com/v1"
+wire_api = "responses"
+"#;
+        let profile = toml::from_str::<toml::Value>(profile).unwrap();
+        let mut overrides = Vec::new();
+        flatten_codex_profile_value(None, &profile, &mut overrides).unwrap();
+
+        assert!(overrides.contains(&"model_provider=\"custom\"".to_string()));
+        assert!(overrides.contains(&"service_tier=\"fast\"".to_string()));
+        assert!(overrides.contains(&"features.enable_request_compression=true".to_string()));
+        assert!(overrides.contains(
+            &"model_providers.\"custom.provider\".base_url=\"https://provider.example.com/v1\""
+                .to_string()
+        ));
+    }
+
+    #[test]
+    fn oversized_app_server_profile_fails_before_process_spawn() {
+        let error = build_codex_child_args(
+            &[
+                "app-server".to_string(),
+                "--listen".to_string(),
+                "stdio://".to_string(),
+            ],
+            &CodexProviderOverrides {
+                profile_name: Some("cli-manager-project-provider-123".to_string()),
+                profile_overrides: vec![format!(
+                    "developer_instructions={}",
+                    serde_json::to_string(&"x".repeat(MAX_CODEX_CHILD_ARGUMENT_UTF16_UNITS))
+                        .unwrap()
+                )],
+                model_provider: Some("custom".to_string()),
+                provider_name: Some("model_providers.custom.name=CLI-Manager remote".to_string()),
+                base_url: Some(
+                    "model_providers.custom.base_url=https://provider.example.com/v1".to_string(),
+                ),
+                env_key: Some(
+                    "model_providers.custom.env_key=CLI_MANAGER_CODEX_PROVIDER_API_KEY".to_string(),
+                ),
+                model_catalog: Some(
+                    r#"model_catalog_json="C:/Users/test/catalog.json""#.to_string(),
+                ),
+                wire_api: Some("model_providers.custom.wire_api=responses".to_string()),
+                ..CodexProviderOverrides::default()
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("command-line budget"));
     }
 
     #[test]
