@@ -57,6 +57,7 @@ import {
 } from "./terminal/TerminalSidePanel";
 import { ResizableTerminalPanelFrame } from "./terminal/ResizableTerminalPanelFrame";
 import { TerminalWorkspaceFrame } from "./terminal/TerminalWorkspaceFrame";
+import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "./terminal/terminalTabVisuals";
 import { RemoteHandoffOverlay } from "./terminal/RemoteHandoffOverlay";
 import { ProviderQuickSwitchPanel } from "./terminal/ProviderQuickSwitchPanel";
 import { WorktreeFinishDialog } from "./worktree/WorktreeFinishDialog";
@@ -125,6 +126,12 @@ import {
   resolveTerminalPaneMarker,
   type TerminalPaneMarkerSettings,
 } from "../lib/terminalPaneMarker";
+import {
+  WorkspanTabBar,
+  WORKSPAN_TABBAR_END_DROP_ID,
+  type WorkspanTabModel,
+  type WorkspanTabOverflowState,
+} from "./workspace/WorkspanTabBar";
 
 const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
@@ -187,14 +194,6 @@ const tabMenuHexToRgba = (value: string | undefined, alpha: number, fallback: st
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
-  none: "#565f89",
-  running: "#8b5cf6",
-  attention: "#ff9e64",
-  done: "#8fbf7f",
-  failed: "#f7768e",
-};
-
 const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, TranslationKey> = {
   none: "terminal.status.none",
   running: "terminal.status.running",
@@ -203,11 +202,9 @@ const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, TranslationKey> = {
   failed: "terminal.status.failed",
 };
 
-const PULSING_TAB_STATES = new Set<TabNotificationState>(["running", "attention"]);
 const PANE_DROP_PREFIX = "pane-drop:";
 const PANE_CENTER_DROP_PREFIX = "pane-center:";
 const PANE_EDGE_DROP_PREFIX = "pane-edge:";
-const WORKSPAN_TABBAR_END_DROP_ID = "workspan-tabbar:end";
 const WORKSPAN_SPLIT_ACTIVATION_RATIO = 0.08;
 const PANE_DROP_EDGES: TerminalPaneDropEdge[] = ["left", "right", "top", "bottom"];
 const WORKSPAN_NOTIFICATION_PRIORITY: Record<TabNotificationState, number> = {
@@ -220,10 +217,6 @@ const WORKSPAN_NOTIFICATION_PRIORITY: Record<TabNotificationState, number> = {
 const SPLIT_PICKER_OUTSIDE_GUARD_MS = 250;
 type SplitPickerAnchor = DOMRect | { x: number; y: number };
 
-interface WorkspanTabOverflowState {
-  isOverflowing: boolean;
-  hiddenIds: string[];
-}
 type SplitPickerAlign = "start" | "end";
 
 type SplitPickerState = {
@@ -1115,11 +1108,6 @@ function SortableWorkspanTab({
       )}
     </>
   );
-}
-
-function WorkspanTabbarEndDropTarget({ disabled }: { disabled: boolean }) {
-  const { setNodeRef } = useDroppable({ id: WORKSPAN_TABBAR_END_DROP_ID, disabled });
-  return <div ref={setNodeRef} className="h-full min-w-0 flex-1" aria-hidden="true" />;
 }
 
 function DragOverlayTab({
@@ -2555,6 +2543,7 @@ export function TerminalTabs({
   }, []);
   const terminalBackgroundImagePath = useSettingsStore((s) => s.terminalBackground.imagePath);
   const terminalSidePanelSide = useSettingsStore((s) => s.workspaceLayout.terminalSidePanelSide);
+  const workspanTabBarPosition = useSettingsStore((s) => s.workspaceLayout.workspanTabBarPosition);
   const workspanEnabled = useSettingsStore((s) => s.workspanEnabled);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
@@ -2767,7 +2756,7 @@ export function TerminalTabs({
   const sidePanelProjectPath = panelProject?.environment_type === "ssh"
     ? panelProject.remote_path.trim() || null
     : panelSession?.cwd?.trim() || filePanelProject?.path.trim() || null;
-  const workspanTabModels = useMemo(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
+  const workspanTabModels = useMemo<WorkspanTabModel[]>(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
     const memberSessions = sessionIds
       .map((sessionId) => sessions.find((session) => session.id === sessionId))
       .filter((session): session is TerminalSession => Boolean(session));
@@ -2788,10 +2777,6 @@ export function TerminalTabs({
   const workspanTabSignature = workspanTabModels
     .map(({ workspan, title, vendor, cliToolIcon }) => `${workspan.id}:${title}:${vendor ?? "none"}:${cliToolIcon ?? "none"}`)
     .join("|");
-  const hiddenWorkspanTabModels = useMemo(() => {
-    const hiddenIds = new Set(workspanTabOverflow.hiddenIds);
-    return workspanTabModels.filter(({ workspan }) => hiddenIds.has(workspan.id));
-  }, [workspanTabModels, workspanTabOverflow.hiddenIds]);
   const activateWorkspanTab = useCallback((workspanId: string) => {
     setActiveWorkspaceTab("terminal");
     setActiveWorkspan(workspanId);
@@ -4601,213 +4586,130 @@ export function TerminalTabs({
                 onDragCancel={clearDragState}
                 onDragEnd={handleDragEnd}
               >
+                <div
+                  className="ui-workspan-terminal-body"
+                  data-workspan-tabbar-position={workspanTabBarPosition}
+                >
                 {workspanEnabled && (
-                  <div
-                    ref={workspanTabBarRef}
-                    className="ui-terminal-pane-chrome ui-workspan-tabbar relative flex h-9 shrink-0 items-center px-1"
-                  >
-                  <div
-                    className="ui-workspan-detach-insertion"
-                    data-visible={workspanDetachPreview.visible ? "true" : "false"}
-                    style={{ transform: `translate3d(${workspanDetachPreview.left}px, -50%, 0)` }}
-                    aria-hidden="true"
-                  />
-                  <div
-                    ref={workspanTabScrollRef}
-                    className="ui-workspan-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto"
-                    role="tablist"
-                    aria-label={t("terminal.workspan.tabList")}
-                    onWheel={(event) => {
-                      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-                      event.currentTarget.scrollLeft += event.deltaY;
-                      event.preventDefault();
-                    }}
-                  >
-                    <SortableContext
-                      items={workspanTabModels.map(({ workspan }) => `${WORKSPAN_DRAG_PREFIX}${workspan.id}`)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      {workspanTabModels.map((model, index) => (
-                        <SortableWorkspanTab
-                          key={model.workspan.id}
-                          workspan={model.workspan}
-                          title={model.title}
-                          notification={model.notification}
-                          vendor={model.vendor}
-                          cliToolIcon={model.cliToolIcon}
-                          hoverInfo={model.singleSession ? buildTerminalTabHoverInfo(model.singleSession, model.singleSession.projectId ? projectById.get(model.singleSession.projectId) : undefined) : undefined}
-                          isActive={model.workspan.id === effectiveActiveWorkspanId}
-                          dragDisabled={hasScopedTerminalFilter}
-                          renameDisabled={!model.singleSession}
-                          onActivate={() => activateWorkspanTab(model.workspan.id)}
-                          onClose={(anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
-                          onRename={(title) => {
-                            if (model.singleSession) void handleSubmitTabEdit(model.singleSession.id, title);
-                          }}
-                          menuStyle={splitPickerMenuStyle}
-                          menuContent={(getAnchor) => (
-                            <>
-                              <ContextMenuItem onSelect={() => handleCloseSessions(model.closeSessionIds, getAnchor())}>
-                                {t("terminal.workspan.closeCurrent")}
-                              </ContextMenuItem>
-                              <ContextMenuItem onSelect={() => window.setTimeout(() => {
-                                void prompt({
-                                  title: t("terminal.workspan.renamePrompt"),
-                                  initialValue: model.workspan.customTitle ?? "",
-                                  placeholder: t("terminal.workspan.renamePlaceholder"),
-                                  allowEmpty: true,
-                                }).then((title) => {
-                                  if (title !== null) renameWorkspan(model.workspan.id, title);
-                                });
-                              }, 0)}>
-                                {t("terminal.workspan.rename")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                disabled={model.sessionIds.length <= 1 || Boolean(scopedSessionIds)}
-                                title={scopedSessionIds ? t("terminal.workspan.restoreSinglePaneScopedDisabled") : undefined}
-                                onSelect={() => handleRestoreWorkspanToSinglePane(model.workspan.id)}
-                              >
-                                {t("terminal.workspan.restoreSinglePane")}
-                              </ContextMenuItem>
-                              {/*
-                                Reachability: in the default single-pane layout the pane-level tab bar
-                                is hidden (hideTabBar when the workspan carries a single visible session),
-                                so the pane-tab context menu that hosts the primary "Save session to
-                                sidebar" item is unreachable. Mirror the item on the workspan-tab context
-                                menu whenever the workspan carries a single session, so the feature stays
-                                reachable from the visible tab in the default layout. Disabled with the
-                                same tooltip semantics as the pane-menu twin.
-                              */}
-                              {(() => {
-                                const singleSession = model.singleSession;
-                                if (!singleSession) return null;
-                                const saveProject = singleSession.projectId ? projectById.get(singleSession.projectId) ?? null : null;
-                                const canSave = canSaveSessionToSidebar(singleSession, saveProject);
-                                return (
-                                  <ContextMenuItem
-                                    disabled={!canSave}
-                                    onSelect={() => {
-                                      // Same setTimeout(0) deferral as the pane-menu twin at
-                                      // TerminalTabs.tsx ~line 1402 — avoids the Radix focus-restore
-                                      // race that would blur the useAppPrompt Modal's autofocused input.
-                                      window.setTimeout(() => handleSaveSessionToSidebar(singleSession), 0);
-                                    }}
-                                    title={!canSave ? t("saveSession.noSessionId") : undefined}
-                                  >
-                                    {t("terminal.tab.saveSession")}
-                                  </ContextMenuItem>
-                                );
-                              })()}
-                              <ContextMenuItem
-                                disabled={workspanTabModels.length <= 1}
-                                onSelect={() => handleCloseSessions(
-                                  workspanTabModels
-                                    .filter((item) => item.workspan.id !== model.workspan.id)
-                                    .flatMap((item) => item.closeSessionIds),
-                                  getAnchor()
-                                )}
-                              >
-                                {t("terminal.workspan.closeOthers")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                disabled={index === 0}
-                                onSelect={() => handleCloseSessions(
-                                  workspanTabModels.slice(0, index).flatMap((item) => item.closeSessionIds),
-                                  getAnchor()
-                                )}
-                              >
-                                {t("terminal.workspan.closeLeft")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                disabled={index === workspanTabModels.length - 1}
-                                onSelect={() => handleCloseSessions(
-                                  workspanTabModels.slice(index + 1).flatMap((item) => item.closeSessionIds),
-                                  getAnchor()
-                                )}
-                              >
-                                {t("terminal.workspan.closeRight")}
-                              </ContextMenuItem>
-                            </>
-                          )}
-                        />
-                      ))}
-                    </SortableContext>
-                    <WorkspanTabbarEndDropTarget disabled={hasScopedTerminalFilter} />
-                  </div>
-                  {workspanTabOverflow.isOverflowing && (
-                    <Popover open={workspanTabListOpen} onOpenChange={setWorkspanTabListOpen}>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className="ui-terminal-tab-list-button"
-                          aria-label={t("terminal.workspan.openList")}
-                          aria-expanded={workspanTabListOpen}
-                          title={t("terminal.workspan.list")}
-                        >
-                          <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="end"
-                        className="terminal-skin ui-terminal-tab-list-popover w-72 p-1.5"
-                        style={splitPickerMenuStyle}
-                        onOpenAutoFocus={(event) => event.preventDefault()}
-                        onCloseAutoFocus={(event) => event.preventDefault()}
-                      >
-                        <div className="ui-terminal-tab-list-title px-2 py-1 text-[11px] font-semibold">
-                          {t("terminal.workspan.tabs")}
-                        </div>
-                        <div className="max-h-72 overflow-y-auto">
-                          {hiddenWorkspanTabModels.map((model) => (
-                            <div
-                              key={model.workspan.id}
-                              className="ui-interactive ui-terminal-tab-list-item flex w-full items-center gap-1 rounded-lg px-1 py-1 text-xs text-on-surface-variant"
-                              data-selected={model.workspan.id === effectiveActiveWorkspanId ? "true" : "false"}
+                  <WorkspanTabBar
+                    position={workspanTabBarPosition}
+                    models={workspanTabModels}
+                    overflow={workspanTabOverflow}
+                    listOpen={workspanTabListOpen}
+                    activeWorkspanId={effectiveActiveWorkspanId}
+                    hasScopedTerminalFilter={hasScopedTerminalFilter}
+                    menuStyle={splitPickerMenuStyle}
+                    tabBarRef={workspanTabBarRef}
+                    tabScrollRef={workspanTabScrollRef}
+                    detachPreview={workspanDetachPreview}
+                    onToggleList={setWorkspanTabListOpen}
+                    onActivate={activateWorkspanTab}
+                    onClose={(model, anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
+                    renderTab={(model, index) => (
+                      <SortableWorkspanTab
+                        key={model.workspan.id}
+                        workspan={model.workspan}
+                        title={model.title}
+                        notification={model.notification}
+                        vendor={model.vendor}
+                        cliToolIcon={model.cliToolIcon}
+                        hoverInfo={model.singleSession ? buildTerminalTabHoverInfo(model.singleSession, model.singleSession.projectId ? projectById.get(model.singleSession.projectId) : undefined) : undefined}
+                        isActive={model.workspan.id === effectiveActiveWorkspanId}
+                        dragDisabled={hasScopedTerminalFilter}
+                        renameDisabled={!model.singleSession}
+                        onActivate={() => activateWorkspanTab(model.workspan.id)}
+                        onClose={(anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
+                        onRename={(title) => {
+                          if (model.singleSession) void handleSubmitTabEdit(model.singleSession.id, title);
+                        }}
+                        menuStyle={splitPickerMenuStyle}
+                        menuContent={(getAnchor) => (
+                          <>
+                            <ContextMenuItem onSelect={() => handleCloseSessions(model.closeSessionIds, getAnchor())}>
+                              {t("terminal.workspan.closeCurrent")}
+                            </ContextMenuItem>
+                            <ContextMenuItem onSelect={() => window.setTimeout(() => {
+                              void prompt({
+                                title: t("terminal.workspan.renamePrompt"),
+                                initialValue: model.workspan.customTitle ?? "",
+                                placeholder: t("terminal.workspan.renamePlaceholder"),
+                                allowEmpty: true,
+                              }).then((title) => {
+                                if (title !== null) renameWorkspan(model.workspan.id, title);
+                              });
+                            }, 0)}>
+                              {t("terminal.workspan.rename")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={model.sessionIds.length <= 1 || Boolean(scopedSessionIds)}
+                              title={scopedSessionIds ? t("terminal.workspan.restoreSinglePaneScopedDisabled") : undefined}
+                              onSelect={() => handleRestoreWorkspanToSinglePane(model.workspan.id)}
                             >
-                              <button
-                                type="button"
-                                className="ui-focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left"
-                                onClick={() => {
-                                  activateWorkspanTab(model.workspan.id);
-                                  setWorkspanTabListOpen(false);
-                                }}
-                                title={model.title}
-                              >
-                                <span
-                                  className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
-                                  data-pulsing={PULSING_TAB_STATES.has(model.notification) ? "true" : "false"}
-                                  style={{ backgroundColor: TAB_NOTIFICATION_COLORS[model.notification], color: TAB_NOTIFICATION_COLORS[model.notification] }}
-                                  aria-hidden="true"
-                                />
-                                {model.vendor ? (
-                                  <span className="inline-flex shrink-0 items-center" aria-hidden="true">
-                                    <VendorIcon vendor={model.vendor} size={14} />
-                                  </span>
-                                ) : (
-                                  <Terminal size={14} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
-                                )}
-                                <span className="min-w-0 flex-1 truncate">{model.title}</span>
-                              </button>
-                              <button
-                                type="button"
-                                className="ui-focus-ring ui-terminal-tab-close inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setWorkspanTabListOpen(false);
-                                  handleCloseSessions(model.closeSessionIds, event.currentTarget.getBoundingClientRect());
-                                }}
-                                aria-label={t("terminal.workspan.close", { title: model.title })}
-                                title={t("terminal.workspan.close", { title: model.title })}
-                              >
-                                <X size={13} strokeWidth={2} aria-hidden="true" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                  </div>
+                              {t("terminal.workspan.restoreSinglePane")}
+                            </ContextMenuItem>
+                            {/*
+                              Reachability: in the default single-pane layout the pane-level tab bar
+                              is hidden (hideTabBar when the workspan carries a single visible session),
+                              so the pane-tab context menu that hosts the primary "Save session to
+                              sidebar" item is unreachable. Mirror the item on the workspan-tab context
+                              menu whenever the workspan carries a single session, so the feature stays
+                              reachable from the visible tab in the default layout. Disabled with the
+                              same tooltip semantics as the pane-menu twin.
+                            */}
+                            {(() => {
+                              const singleSession = model.singleSession;
+                              if (!singleSession) return null;
+                              const saveProject = singleSession.projectId ? projectById.get(singleSession.projectId) ?? null : null;
+                              const canSave = canSaveSessionToSidebar(singleSession, saveProject);
+                              return (
+                                <ContextMenuItem
+                                  disabled={!canSave}
+                                  onSelect={() => {
+                                    // Same setTimeout(0) deferral as the pane-menu twin at
+                                    // TerminalTabs.tsx ~line 1402 — avoids the Radix focus-restore
+                                    // race that would blur the useAppPrompt Modal's autofocused input.
+                                    window.setTimeout(() => handleSaveSessionToSidebar(singleSession), 0);
+                                  }}
+                                  title={!canSave ? t("saveSession.noSessionId") : undefined}
+                                >
+                                  {t("terminal.tab.saveSession")}
+                                </ContextMenuItem>
+                              );
+                            })()}
+                            <ContextMenuItem
+                              disabled={workspanTabModels.length <= 1}
+                              onSelect={() => handleCloseSessions(
+                                workspanTabModels
+                                  .filter((item) => item.workspan.id !== model.workspan.id)
+                                  .flatMap((item) => item.closeSessionIds),
+                                getAnchor()
+                              )}
+                            >
+                              {t("terminal.workspan.closeOthers")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={index === 0}
+                              onSelect={() => handleCloseSessions(
+                                workspanTabModels.slice(0, index).flatMap((item) => item.closeSessionIds),
+                                getAnchor()
+                              )}
+                            >
+                              {t("terminal.workspan.closeLeft")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={index === workspanTabModels.length - 1}
+                              onSelect={() => handleCloseSessions(
+                                workspanTabModels.slice(index + 1).flatMap((item) => item.closeSessionIds),
+                                getAnchor()
+                              )}
+                            >
+                              {t("terminal.workspan.closeRight")}
+                            </ContextMenuItem>
+                          </>
+                        )}
+                      />
+                    )}
+                  />
                 )}
                 <div className="relative min-h-0 flex-1 overflow-hidden">
                   {mountedWorkspanLayouts.map((layout) => {
@@ -4839,6 +4741,7 @@ export function TerminalTabs({
                       </div>
                     );
                   })}
+                </div>
                 </div>
                 <TerminalTabDragOverlay style={terminalWellStyle} themeTone={terminalThemeTone} />
               </DndContext>
