@@ -66,8 +66,7 @@ export function GitHistoryView({ active, transport, repositoryId, branchContext 
     void transport.listCommits(repositoryId, cursor, search).then((result) => {
       if (generation !== listGenerationRef.current) return;
       setPage(result.value);
-      const firstId = result.value.commits[0]?.id ?? null;
-      setSelectedId((current) => result.value.commits.some((item) => item.id === current) ? current : firstId);
+      setSelectedId((current) => result.value.commits.some((item) => item.id === current) ? current : null);
     }).catch((reason) => {
       if (generation !== listGenerationRef.current) return;
       setPage({ commits: [], nextCursor: null });
@@ -82,6 +81,8 @@ export function GitHistoryView({ active, transport, repositoryId, branchContext 
   useEffect(() => {
     if (!active || !transport || repositoryId === null || !selectedId) {
       setDetail(null);
+      setDetailLoading(false);
+      setDetailError(null);
       return;
     }
     const generation = ++detailGenerationRef.current;
@@ -108,6 +109,17 @@ export function GitHistoryView({ active, transport, repositoryId, branchContext 
   }), [language]);
 
   const submitSearch = useCallback(() => setSearch(query.trim()), [query]);
+  const loadSelectedFileDiff = useCallback((filePath: string) => {
+    if (!transport || repositoryId === null || !selectedId) {
+      return Promise.reject(new Error("git_history_diff_context_missing"));
+    }
+    return transport.getCommitFileDiff(
+      repositoryId,
+      selectedId,
+      filePath,
+      selectedFile?.oldPath,
+    ).then((result) => result.value);
+  }, [repositoryId, selectedFile?.oldPath, selectedId, transport]);
   const nextPage = () => {
     if (!page.nextCursor) return;
     const nextIndex = pageIndex + 1;
@@ -166,7 +178,7 @@ export function GitHistoryView({ active, transport, repositoryId, branchContext 
                     commit={commit}
                     selected={selected}
                     date={formatDate.format(new Date(commit.authoredAt))}
-                    onSelect={() => setSelectedId(commit.id)}
+                    onSelect={() => setSelectedId((current) => current === commit.id ? null : commit.id)}
                   />
                   {selected && (
                     <div className="border-y px-2 py-2" style={{ borderColor: TERM.dim }}>
@@ -216,7 +228,7 @@ export function GitHistoryView({ active, transport, repositoryId, branchContext 
           filePath={selectedFile.path}
           fileName={fileName(selectedFile.path)}
           status={selectedFile.status}
-          loadDiff={() => transport.getCommitFileDiff(repositoryId, selectedId, selectedFile.path, selectedFile.oldPath).then((result) => result.value)}
+          loadDiff={loadSelectedFileDiff}
           useTerminalTheme
         />
       )}

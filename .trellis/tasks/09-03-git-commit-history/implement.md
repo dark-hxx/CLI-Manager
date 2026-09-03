@@ -7,6 +7,7 @@
 - [x] 实现 WSL 固定 argv/超时链路及结构化输出解析。
 - [x] 扩展 `GitTransport`、SSH bridge、SSH Agent dispatch 和 `gitHistory` 能力协商。
 - [x] 实现 `GitHistoryView`，接入 Git 面板分段切换、搜索、分页、详情和只读 Diff。
+- [x] 修复提交默认展开、无法收起及父级 Git 状态刷新导致历史 Diff 反复加载的问题。
 - [x] 增加 zh-CN/en-US 文案、加载态、空态、错误态和旧 Agent 升级提示。
 - [x] 更新 Git 契约、`CHANGELOG.md` 的 `TEMP` 版本及 `docs/功能清单.md`。
 - [x] 增加 native/WSL/SSH/前端关键逻辑测试。

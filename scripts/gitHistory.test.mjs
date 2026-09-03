@@ -26,7 +26,7 @@ test("old SSH agents are rejected before history frames are written", () => {
 
 test("history viewer keeps commit diffs read-only", () => {
   assert.match(historyView, /transport\.getCommitFileDiff/);
-  assert.match(historyView, /selectedFile\.path, selectedFile\.oldPath/);
+  assert.match(historyView, /filePath,\s+selectedFile\?\.oldPath,/);
   assert.doesNotMatch(historyView, /revertHunk=|revertLines=|onRequestDiscard=/);
   assert.match(historyView, /repositoryId === null/);
   assert.doesNotMatch(historyView, /!repositoryId/);
@@ -37,4 +37,16 @@ test("history requests use independent stale-result generations", () => {
   assert.match(historyView, /detailGenerationRef/);
   assert.match(historyView, /generation !== listGenerationRef\.current/);
   assert.match(historyView, /generation === detailGenerationRef\.current/);
+});
+
+test("history rows start collapsed and toggle without forcing the newest commit open", () => {
+  assert.doesNotMatch(historyView, /const firstId = result\.value\.commits\[0\]/);
+  assert.match(historyView, /current === commit\.id \? null : commit\.id/);
+  assert.match(historyView, /item\.id === current\) \? current : null/);
+});
+
+test("history diff loader keeps a stable callback across parent refreshes", () => {
+  assert.match(historyView, /const loadSelectedFileDiff = useCallback/);
+  assert.match(historyView, /loadDiff=\{loadSelectedFileDiff\}/);
+  assert.doesNotMatch(historyView, /loadDiff=\{\(\) => transport\.getCommitFileDiff/);
 });
