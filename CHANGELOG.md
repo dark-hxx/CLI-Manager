@@ -14,6 +14,13 @@
 
 ## [V1.3.9] - 2026-08-31
 
+### Tauri 开发构建与缓存优化
+
+- Windows `npm run tauri dev` 预构建主程序与 Codex proxy 时统一 Cargo 的 feature、target、profile、target-dir 和 `TAURI_CONFIG` fingerprint 输入，减少共享 Rust library 的重复构建；源码未变化时继续由 Cargo fingerprint 复用已有产物。
+- 开发 profile 保留主程序基本源码定位并关闭依赖的完整调试符号，降低 `.pdb`、对象文件和增量缓存占用；新增 `npm run tauri:clean:dev` 与 `npm run tauri:clean`，用于手动清理当前仓库的开发或全部 Cargo 产物。
+- Tauri 开发 wrapper 增加 Rust 预构建阶段和耗时日志，Codex proxy 仍在 Windows 启动 Tauri 前准备，release、跨平台和自定义 target/profile/target-dir 行为保持不变。
+- Vite 冷启动或依赖重新优化较慢时，开发服务探测会保留更长等待窗口，避免 Tauri 将尚未完成响应的 CLI-Manager 服务误判为端口冲突。
+
 ### 工作区背景铺满范围
 
 - 终端背景设置新增“背景铺满工作区”开关；关闭时保持现有仅终端 Pane 显示背景图，开启时由主工作区唯一背景层覆盖侧边栏、Tab 区域和终端辅助面板。

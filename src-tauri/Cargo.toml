@@ -105,6 +105,13 @@ nix = { version = "0.31.3", features = ["fs", "ioctl", "process", "signal", "ter
 [dev-dependencies]
 tempfile = "3"
 
+[profile.dev]
+debug = 1
+incremental = true
+
+[profile.dev.package."*"]
+debug = 0
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

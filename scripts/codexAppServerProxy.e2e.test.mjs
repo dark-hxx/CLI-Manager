@@ -100,6 +100,7 @@ function runProxy({
   launcher,
   childArgs,
   capturePath,
+  codexHome,
   provider = false,
   exitCode = 0,
   requestId,
@@ -108,6 +109,7 @@ function runProxy({
     CLI_MANAGER_CODEX_LAUNCHER: launcher,
     FAKE_CODEX_CAPTURE_PATH: capturePath,
     FAKE_CODEX_EXIT_CODE: String(exitCode),
+    ...(codexHome ? { CODEX_HOME: codexHome } : {}),
   });
   if (provider) {
     Object.assign(environment, {
@@ -174,6 +176,14 @@ const temporaryDirectory = mkdtempSync(
 );
 
 try {
+  const codexHome = path.join(temporaryDirectory, "codex-home");
+  mkdirSync(codexHome, { recursive: true });
+  writeFileSync(
+    path.join(codexHome, "cli-manager-project-provider-123.config.toml"),
+    "# Empty profile fixture: provider-specific overrides are supplied by the test.\n",
+    "utf8",
+  );
+
   const launcherDirectory = path.join(temporaryDirectory, "Codex Launcher With Spaces 中文");
   mkdirSync(launcherDirectory, { recursive: true });
   const fakeCodexScript = path.join(launcherDirectory, "fake-codex.mjs");
@@ -232,6 +242,7 @@ process.exitCode = Number(process.env.FAKE_CODEX_EXIT_CODE || "0");
     launcher: verbatimFakeCodexCmd,
     childArgs: ["app-server", "--listen", "stdio://"],
     capturePath: providerCapture,
+    codexHome,
     provider: true,
     requestId: 202,
   });
@@ -268,6 +279,7 @@ process.exitCode = Number(process.env.FAKE_CODEX_EXIT_CODE || "0");
     launcher: fakeCodexCmd,
     childArgs: ["--version"],
     capturePath: passthroughCapture,
+    codexHome,
     provider: true,
     exitCode: 17,
   });
