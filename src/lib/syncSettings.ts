@@ -90,6 +90,7 @@ export const SETTING_BACKUP_POLICY = {
   piHookBridgeEnabled: "excluded",
   grokHookBridgeEnabled: "excluded",
   systemNotificationsEnabled: "preferences",
+  systemNotificationSoundPath: "excluded",
   suppressSystemNotificationsWhenFocused: "preferences",
   systemNotificationEvents: "preferences",
   taskbarAttentionEnabled: "preferences",

@@ -408,7 +408,13 @@ async function sendSystemNotification(payload: CliHookPayload, tabId: string | n
     }
 
     try {
-      await invoke("send_interactive_system_notification", { title, body, tabId, actionLabel });
+      await invoke("send_interactive_system_notification", {
+        title,
+        body,
+        tabId,
+        actionLabel,
+        customSoundPath: settings.systemNotificationSoundPath,
+      });
       return;
     } catch (notificationErr) {
       const isWsl = await invoke<boolean>("is_wsl").catch(() => false);

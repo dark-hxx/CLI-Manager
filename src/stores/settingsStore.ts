@@ -456,6 +456,7 @@ export interface Settings {
   piHookBridgeEnabled: boolean;
   grokHookBridgeEnabled: boolean;
   systemNotificationsEnabled: boolean;
+  systemNotificationSoundPath: string | null;
   suppressSystemNotificationsWhenFocused: boolean;
   systemNotificationEvents: Record<HookEventType, boolean>;
   taskbarAttentionEnabled: boolean;
@@ -654,6 +655,7 @@ const DEFAULTS: Settings = {
   piHookBridgeEnabled: true,
   grokHookBridgeEnabled: true,
   systemNotificationsEnabled: true,
+  systemNotificationSoundPath: null,
   suppressSystemNotificationsWhenFocused: true,
   systemNotificationEvents: {
     SessionStart: false,
@@ -794,6 +796,10 @@ function migrateSystemNotificationEvents(value: unknown): Record<HookEventType, 
     }
   }
   return result;
+}
+
+function migrateSystemNotificationSoundPath(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function migrateTaskbarAttentionMode(value: unknown): TaskbarAttentionMode {
@@ -1603,6 +1609,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.systemNotificationsEnabled === "boolean"
         ? entries.systemNotificationsEnabled
         : DEFAULTS.systemNotificationsEnabled;
+    entries.systemNotificationSoundPath = migrateSystemNotificationSoundPath(entries.systemNotificationSoundPath);
     entries.suppressSystemNotificationsWhenFocused =
       typeof entries.suppressSystemNotificationsWhenFocused === "boolean"
         ? entries.suppressSystemNotificationsWhenFocused

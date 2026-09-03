@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { ActionIcon, Badge, Box, Button, Card, Divider, Group, NumberInput, SegmentedControl, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
-import { Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X, Activity, Bell, ShieldAlert, ToggleRight, AlertTriangle, BellOff, XCircle, Layers } from "lucide-react";
+import { Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X, Activity, Bell, ShieldAlert, ToggleRight, AlertTriangle, BellOff, XCircle, Layers, Volume2, Trash2 } from "lucide-react";
 import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "@/stores/settingsStore";
 import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "@/lib/hookErrors";
 import { pickByLanguage, useI18n, type AppLanguage } from "@/lib/i18n";
@@ -60,6 +61,20 @@ function pickText(language: AppLanguage, zh: string, en: string) {
 
 function isWindowsPlatform(): boolean {
   return typeof navigator !== "undefined" && /win/i.test(navigator.platform);
+}
+
+type NotificationSoundStatus = "idle" | "checking" | "valid" | "invalid";
+
+function getNotificationSoundFileName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function getNotificationSoundErrorCode(error: unknown): string {
+  return typeof error === "string"
+    ? error
+    : error instanceof Error
+      ? error.message
+      : String(error);
 }
 
 function formatPath(value: string | null, language: AppLanguage): string {
@@ -400,6 +415,7 @@ export function HookSettingsPage() {
   const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
   const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
   const systemNotificationsEnabled = useSettingsStore((s) => s.systemNotificationsEnabled);
+  const systemNotificationSoundPath = useSettingsStore((s) => s.systemNotificationSoundPath);
   const suppressSystemNotificationsWhenFocused = useSettingsStore((s) => s.suppressSystemNotificationsWhenFocused);
   const systemNotificationEvents = useSettingsStore((s) => s.systemNotificationEvents);
   const taskbarAttentionEnabled = useSettingsStore((s) => s.taskbarAttentionEnabled);
@@ -420,6 +436,10 @@ export function HookSettingsPage() {
   const [piInfoOpen, setPiInfoOpen] = useState(false);
   const [grokPathsOpen, setGrokPathsOpen] = useState(false);
   const [grokInfoOpen, setGrokInfoOpen] = useState(false);
+  const [notificationSoundStatus, setNotificationSoundStatus] = useState<NotificationSoundStatus>(
+    systemNotificationSoundPath ? "checking" : "idle",
+  );
+  const [notificationSoundBusy, setNotificationSoundBusy] = useState<"select" | "preview" | "clear" | null>(null);
 
   const toggleHookSection = (key: HookSettingsSectionKey) => {
     const current = useSettingsStore.getState().hookSettingsSectionsExpanded;
@@ -453,11 +473,51 @@ export function HookSettingsPage() {
     setGrokSelectedDir(grokHookConfigDir);
   }, [grokHookConfigDir]);
 
+  useEffect(() => {
+    if (!isWindowsPlatform() || !systemNotificationSoundPath?.trim()) {
+      setNotificationSoundStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    setNotificationSoundStatus("checking");
+    void invoke("validate_system_notification_sound", { path: systemNotificationSoundPath })
+      .then(() => {
+        if (!cancelled) setNotificationSoundStatus("valid");
+      })
+      .catch(() => {
+        if (!cancelled) setNotificationSoundStatus("invalid");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [systemNotificationSoundPath]);
+
   const selectedDirArg = useMemo(() => selectedDir ?? undefined, [selectedDir]);
   const codexSelectedDirArg = useMemo(() => codexSelectedDir ?? undefined, [codexSelectedDir]);
   const kimiSelectedDirArg = useMemo(() => kimiSelectedDir ?? undefined, [kimiSelectedDir]);
   const piSelectedDirArg = useMemo(() => piSelectedDir ?? undefined, [piSelectedDir]);
   const grokSelectedDirArg = useMemo(() => grokSelectedDir ?? undefined, [grokSelectedDir]);
+
+  const getNotificationSoundErrorDescription = (error: unknown) => {
+    switch (getNotificationSoundErrorCode(error)) {
+      case "notification_sound_format_unsupported":
+      case "notification_sound_invalid_wave":
+        return t("settings.hooks.systemNotifications.sound.invalidFormat");
+      case "notification_sound_unavailable":
+      case "notification_sound_not_file":
+        return t("settings.hooks.systemNotifications.sound.unavailable");
+      case "notification_sound_too_large":
+        return t("settings.hooks.systemNotifications.sound.tooLarge");
+      case "notification_sound_path_empty":
+      case "notification_sound_path_contains_nul":
+      case "notification_sound_path_too_long":
+        return t("settings.hooks.systemNotifications.sound.invalidPath");
+      default:
+        return t("settings.hooks.systemNotifications.sound.operationFailed");
+    }
+  };
 
   const refreshStatus = async (
     dir = selectedDirArg,
@@ -502,6 +562,61 @@ export function HookSettingsPage() {
   useEffect(() => {
     void refreshStatus();
   }, []);
+
+  const handleSelectNotificationSound = async () => {
+    setNotificationSoundBusy("select");
+    try {
+      const selectedPath = await openDialog({
+        multiple: false,
+        directory: false,
+        title: t("settings.hooks.systemNotifications.sound.chooseDialogTitle"),
+        filters: [{ name: t("settings.hooks.systemNotifications.sound.filterName"), extensions: ["wav"] }],
+      });
+      if (!selectedPath || Array.isArray(selectedPath)) return;
+
+      await invoke("validate_system_notification_sound", { path: selectedPath });
+      await updateSetting("systemNotificationSoundPath", selectedPath);
+      setNotificationSoundStatus("valid");
+      toast.success(t("settings.hooks.systemNotifications.sound.saved"));
+    } catch (error) {
+      toast.error(t("settings.hooks.systemNotifications.sound.saveFailed"), {
+        description: getNotificationSoundErrorDescription(error),
+      });
+    } finally {
+      setNotificationSoundBusy(null);
+    }
+  };
+
+  const handlePreviewNotificationSound = async () => {
+    if (!systemNotificationSoundPath || notificationSoundStatus !== "valid") return;
+    setNotificationSoundBusy("preview");
+    try {
+      await invoke("play_system_notification_sound", { path: systemNotificationSoundPath });
+      toast.success(t("settings.hooks.systemNotifications.sound.previewed"));
+    } catch (error) {
+      setNotificationSoundStatus("invalid");
+      toast.error(t("settings.hooks.systemNotifications.sound.previewFailed"), {
+        description: getNotificationSoundErrorDescription(error),
+      });
+    } finally {
+      setNotificationSoundBusy(null);
+    }
+  };
+
+  const handleClearNotificationSound = async () => {
+    setNotificationSoundBusy("clear");
+    try {
+      await updateSetting("systemNotificationSoundPath", null);
+      setNotificationSoundStatus("idle");
+      toast.success(t("settings.hooks.systemNotifications.sound.cleared"));
+    } catch (error) {
+      toast.error(t("settings.hooks.systemNotifications.sound.clearFailed"), {
+        description: getNotificationSoundErrorDescription(error),
+      });
+    } finally {
+      setNotificationSoundBusy(null);
+    }
+  };
 
   const handleSelectDir = async () => {
     try {
@@ -1165,6 +1280,87 @@ export function HookSettingsPage() {
                   />
                 </Group>
               )}
+              <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
+                <Stack gap="xs">
+                  <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
+                    <Box className="min-w-0 flex-1">
+                      <Group gap="xs" wrap="nowrap">
+                        <Volume2 size={16} style={{ color: "var(--primary)" }} />
+                        <Text size="sm" fw={500} c="var(--on-surface)">
+                          {t("settings.hooks.systemNotifications.sound.title")}
+                        </Text>
+                      </Group>
+                      <Text mt={4} size="xs" c="var(--text-muted)">
+                        {t("settings.hooks.systemNotifications.sound.description")}
+                      </Text>
+                    </Box>
+                    <Group gap="xs" wrap="wrap">
+                      <Text component="span" size="xs" c="var(--text-muted)" className="whitespace-nowrap">
+                        {t("settings.hooks.systemNotifications.sound.onlyWav")}
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="default"
+                        loading={notificationSoundBusy === "select"}
+                        disabled={notificationSoundBusy !== null}
+                        onClick={() => void handleSelectNotificationSound()}
+                        leftSection={<Folder size={14} />}
+                      >
+                        {t("settings.hooks.systemNotifications.sound.choose")}
+                      </Button>
+                      {systemNotificationSoundPath && (
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          color="red"
+                          loading={notificationSoundBusy === "clear"}
+                          disabled={notificationSoundBusy !== null}
+                          onClick={() => void handleClearNotificationSound()}
+                          leftSection={<Trash2 size={14} />}
+                        >
+                          {t("settings.hooks.systemNotifications.sound.clear")}
+                        </Button>
+                      )}
+                    </Group>
+                  </Group>
+                  <Group justify="space-between" align="center" gap="sm" wrap="wrap">
+                    <Text
+                      component="code"
+                      size="xs"
+                      c={systemNotificationSoundPath ? "var(--on-surface)" : "var(--text-muted)"}
+                      className="min-w-0 break-all"
+                      title={systemNotificationSoundPath ?? undefined}
+                    >
+                      {systemNotificationSoundPath
+                        ? getNotificationSoundFileName(systemNotificationSoundPath)
+                        : t("settings.hooks.systemNotifications.sound.notSet")}
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="cliPrimary"
+                      leftSection={<Play size={14} />}
+                      loading={notificationSoundBusy === "preview"}
+                      disabled={notificationSoundBusy !== null || notificationSoundStatus !== "valid"}
+                      onClick={() => void handlePreviewNotificationSound()}
+                    >
+                      {t("settings.hooks.systemNotifications.sound.preview")}
+                    </Button>
+                  </Group>
+                  <Text
+                    size="xs"
+                    c={notificationSoundStatus === "invalid" ? "red" : "var(--text-muted)"}
+                  >
+                    {!systemNotificationSoundPath
+                      ? t("settings.hooks.systemNotifications.sound.notSetDescription")
+                      : notificationSoundStatus === "checking"
+                        ? t("settings.hooks.systemNotifications.sound.checking")
+                        : notificationSoundStatus === "invalid"
+                          ? t("settings.hooks.systemNotifications.sound.unavailable")
+                          : t("settings.hooks.systemNotifications.sound.active")}
+                  </Text>
+                </Stack>
+              </Card>
             </>
           )}
           <Group justify="space-between" align="center" gap="md">

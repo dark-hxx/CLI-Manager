@@ -1847,6 +1847,8 @@ pub fn run() {
             commands::model_pricing::model_prices_sync,
             commands::system_notification::is_wsl,
             commands::system_notification::send_notification_via_windows,
+            commands::system_notification::validate_system_notification_sound,
+            commands::system_notification::play_system_notification_sound,
             commands::system_notification::send_interactive_system_notification,
             commands::system_notification::set_taskbar_attention,
             statusline::statusline_get_status,
