@@ -120,6 +120,7 @@ export function WorkspanTabBar({
           <PopoverContent
             side={position === "bottom" ? "top" : "bottom"}
             align="end"
+            collisionPadding={8}
             className="terminal-skin ui-terminal-tab-list-popover w-72 p-1.5"
             style={menuStyle}
             onOpenAutoFocus={(event) => event.preventDefault()}

@@ -29,10 +29,6 @@
   flex-direction: column;
 }
 
-.ui-workspan-terminal-body[data-workspan-tabbar-position="bottom"] {
-  flex-direction: column-reverse;
-}
-
 /* Auxiliary panels keep the separator on the edge facing the terminal. */
 .ui-terminal-well > .ui-terminal-side-panel-frame[data-dock-side="left"] {
   box-shadow: inset -1px 0 0 color-mix(in srgb, #000 18%, transparent);

@@ -44,7 +44,8 @@ Tab bar 在 workspace 背景模式下使用半透明终端 chrome，在 terminal
 
 ## 6. 文件职责边界
 
-- `TerminalTabs`：只负责读取位置状态并安排 Tab bar 与 terminal body 的文档流顺序，不重写 Tab 的业务交互。
+- `TerminalTabs`：只负责读取位置状态并把 Tab bar、terminal body 接入布局，不重写 Tab 的业务交互。
+- `WorkspanTerminalLayout`：负责按顶部/底部生成稳定 key 的文档流槽位，保证位置切换不卸载 Tab 或终端 body，并让可访问顺序与视觉顺序一致。
 - `WorkspanTabBar`：只负责顶层 Workspan Tab 的渲染、横向排序、滚动、拖拽、溢出和菜单；不处理 Pane 内 Session Tab。
 - 布局/锚点适配模块：只负责顶部/底部几何位置、Popover 边界和插入预览锚点，不复制 Workspan 状态管理。
 - `WorkspaceLayoutSection`：只负责顶部/底部选项和恢复默认，不直接操作 DOM 或终端尺寸。

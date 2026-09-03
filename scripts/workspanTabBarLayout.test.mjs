@@ -7,6 +7,10 @@ const tabBarSource = readFileSync(
   new URL("../src/components/workspace/WorkspanTabBar.tsx", import.meta.url),
   "utf8",
 );
+const layoutComponentSource = readFileSync(
+  new URL("../src/components/workspace/WorkspanTerminalLayout.tsx", import.meta.url),
+  "utf8",
+);
 const settingsSource = readFileSync(
   new URL("../src/components/settings/pages/WorkspaceLayoutSection.tsx", import.meta.url),
   "utf8",
@@ -17,16 +21,20 @@ const layoutSource = readFileSync(new URL("../src/lib/workspaceLayout.ts", impor
 
 test("top-level Workspan tabs use one direction-aware document-flow slot", () => {
   assert.equal((tabsSource.match(/<WorkspanTabBar/g) ?? []).length, 1);
-  assert.match(tabsSource, /className="ui-workspan-terminal-body"/);
-  assert.match(tabsSource, /data-workspan-tabbar-position=\{workspanTabBarPosition\}/);
+  assert.match(tabsSource, /<WorkspanTerminalLayout/);
+  assert.match(layoutComponentSource, /key="workspan-tabbar"/);
+  assert.match(layoutComponentSource, /key="terminal-body"/);
+  assert.match(layoutComponentSource, /position === "top" \? topToBottom : bottomToTop/);
   assert.match(tabBarSource, /<SortableContext/);
   assert.match(tabBarSource, /data-workspan-tabbar-position=\{position\}/);
-  assert.match(stylesSource, /.ui-workspan-terminal-body\[data-workspan-tabbar-position="bottom"\]/);
-  assert.match(stylesSource, /flex-direction: column-reverse/);
+  assert.match(stylesSource, /.ui-workspan-terminal-body/);
+  assert.match(stylesSource, /flex-direction: column/);
 });
 
 test("bottom overflow list opens toward the terminal content", () => {
   assert.match(tabBarSource, /side=\{position === "bottom" \? "top" : "bottom"\}/);
+  assert.match(tabBarSource, /collisionPadding=\{8\}/);
+  assert.match(tabsSource, /<PopoverContent[\s\S]*collisionPadding=\{8\}/);
   assert.match(tabBarSource, /onWheel=\{\(event\) =>/);
   assert.match(tabBarSource, /WORKSPAN_TABBAR_END_DROP_ID/);
 });

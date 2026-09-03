@@ -34,7 +34,7 @@
 ### 顶层 Workspan Tab 上下停靠
 
 - 顶层 Workspan Tab 支持顶部/底部停靠，保持横向排序、拖拽、滚轮、重命名、关闭、溢出列表和菜单交互；默认顶部，切换只改变文档流位置，不重建 Pane 或 PTY。关联 issue：Refs #248。
-- 底部布局让 Tab 栏与终端内容处于同一 flex 文档流，终端自动获得剩余高度；底部溢出列表向上展开，Pane 内 Session Tab 仍保持在各 Pane 顶部。
+- 底部布局让 Tab 栏与终端内容处于同一 flex 文档流，终端自动获得剩余高度；底部溢出列表向上展开，列表与关闭确认浮层带 viewport 边界保护，Pane 内 Session Tab 仍保持在各 Pane 顶部。
 
 ### Hook 系统通知自定义声音
 

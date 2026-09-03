@@ -132,6 +132,7 @@ import {
   type WorkspanTabModel,
   type WorkspanTabOverflowState,
 } from "./workspace/WorkspanTabBar";
+import { WorkspanTerminalLayout } from "./workspace/WorkspanTerminalLayout";
 
 const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
@@ -2343,6 +2344,7 @@ function TerminalCloseConfirmBubble({
       </PopoverAnchor>
       <PopoverContent
         align={confirm?.align ?? "end"}
+        collisionPadding={8}
         className="terminal-skin w-auto p-1.5"
         style={menuStyle}
         onOpenAutoFocus={(event) => event.preventDefault()}
@@ -4586,12 +4588,10 @@ export function TerminalTabs({
                 onDragCancel={clearDragState}
                 onDragEnd={handleDragEnd}
               >
-                <div
-                  className="ui-workspan-terminal-body"
-                  data-workspan-tabbar-position={workspanTabBarPosition}
-                >
-                {workspanEnabled && (
-                  <WorkspanTabBar
+                <WorkspanTerminalLayout
+                  position={workspanTabBarPosition}
+                  tabBar={workspanEnabled ? (
+                    <WorkspanTabBar
                     position={workspanTabBarPosition}
                     models={workspanTabModels}
                     overflow={workspanTabOverflow}
@@ -4709,8 +4709,9 @@ export function TerminalTabs({
                         )}
                       />
                     )}
-                  />
-                )}
+                    />
+                  ) : null}
+                >
                 <div className="relative min-h-0 flex-1 overflow-hidden">
                   {mountedWorkspanLayouts.map((layout) => {
                     const layoutVisible = Boolean(layout.visiblePaneTree)
@@ -4742,7 +4743,7 @@ export function TerminalTabs({
                     );
                   })}
                 </div>
-                </div>
+                </WorkspanTerminalLayout>
                 <TerminalTabDragOverlay style={terminalWellStyle} themeTone={terminalThemeTone} />
               </DndContext>
             ) : null}
