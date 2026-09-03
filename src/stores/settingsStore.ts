@@ -41,6 +41,11 @@ import {
   type TerminalPaneMarkerSettings,
 } from "../lib/terminalPaneMarker";
 import type { HistorySmartTitleSettings } from "../lib/types";
+import {
+  migrateWorkspaceLayout,
+  WORKSPACE_LAYOUT_DEFAULTS,
+  type WorkspaceLayoutSettings,
+} from "../lib/workspaceLayout";
 
 export const HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES = 4096;
 
@@ -414,6 +419,7 @@ export interface Settings {
   terminalSidePanelSingleOpen: boolean;
   terminalSidePanelSkin: TerminalSidePanelSkin;
   terminalPanelWidths: TerminalPanelWidthSettings;
+  workspaceLayout: WorkspaceLayoutSettings;
   terminalStatsCardVisibility: TerminalStatsCardVisibilitySettings;
   terminalStatsCardOrder: TerminalStatsCardOrderSettings;
   systemResourceCardVisibility: SystemResourceCardVisibilitySettings;
@@ -589,6 +595,7 @@ const DEFAULTS: Settings = {
   terminalSidePanelSingleOpen: true,
   terminalSidePanelSkin: "terminal",
   terminalPanelWidths: { ...TERMINAL_PANEL_WIDTH_DEFAULTS },
+  workspaceLayout: { ...WORKSPACE_LAYOUT_DEFAULTS },
   terminalStatsCardVisibility: {
     session: true,
     tokenUsage: true,
@@ -1434,6 +1441,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         : DEFAULTS.terminalSidePanelSingleOpen;
     entries.terminalSidePanelSkin = migrateTerminalSidePanelSkin(entries.terminalSidePanelSkin);
     entries.terminalPanelWidths = migrateTerminalPanelWidths(entries.terminalPanelWidths);
+    entries.workspaceLayout = migrateWorkspaceLayout(entries.workspaceLayout);
     entries.terminalStatsCardVisibility = migrateTerminalStatsCardVisibility(entries.terminalStatsCardVisibility);
     entries.terminalStatsCardOrder = migrateTerminalStatsCardOrder(entries.terminalStatsCardOrder);
     entries.systemResourceCardVisibility = migrateSystemResourceCardVisibility(entries.systemResourceCardVisibility);

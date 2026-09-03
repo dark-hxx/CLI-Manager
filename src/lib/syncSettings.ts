@@ -48,6 +48,7 @@ export const SETTING_BACKUP_POLICY = {
   terminalSidePanelSingleOpen: "preferences",
   terminalSidePanelSkin: "preferences",
   terminalPanelWidths: "preferences",
+  workspaceLayout: "preferences",
   terminalStatsCardVisibility: "preferences",
   terminalStatsCardOrder: "preferences",
   systemResourceCardVisibility: "preferences",

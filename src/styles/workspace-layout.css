@@ -21,6 +21,11 @@
   flex-direction: column;
 }
 
+/* Auxiliary panels keep the separator on the edge facing the terminal. */
+.ui-terminal-well > .ui-terminal-side-panel-frame[data-dock-side="left"] {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, #000 18%, transparent);
+}
+
 .ui-workspace-background-layer {
   z-index: 0;
   overflow: hidden;
@@ -123,7 +128,16 @@
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-side-panel-frame {
-  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 76%, transparent) !important;
+  background: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 76%, transparent) !important;
+  background-color: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 76%, transparent) !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-action-sidebar {
+  background-color: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 76%, transparent) !important;
+}
+
+[data-theme="light"] .ui-terminal-well > .ui-terminal-side-panel-frame[data-dock-side="left"] {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 10%, transparent);
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] .ui-history-shell {

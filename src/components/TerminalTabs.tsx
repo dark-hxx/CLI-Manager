@@ -51,11 +51,12 @@ import { BackgroundTasksPanel, type BackgroundTaskMeta } from "./BackgroundTasks
 import { CliCat } from "./desktop-pet/CliCat";
 import { SystemResourcesPanel } from "./terminal/SystemResourcesPanel";
 import {
-  ResizableTerminalPanelFrame,
   TerminalSidePanel,
   TERMINAL_SIDE_PANEL_TAB_ORDER,
   type TerminalSidePanelTab,
 } from "./terminal/TerminalSidePanel";
+import { ResizableTerminalPanelFrame } from "./terminal/ResizableTerminalPanelFrame";
+import { TerminalWorkspaceFrame } from "./terminal/TerminalWorkspaceFrame";
 import { RemoteHandoffOverlay } from "./terminal/RemoteHandoffOverlay";
 import { ProviderQuickSwitchPanel } from "./terminal/ProviderQuickSwitchPanel";
 import { WorktreeFinishDialog } from "./worktree/WorktreeFinishDialog";
@@ -2553,6 +2554,7 @@ export function TerminalTabs({
     };
   }, []);
   const terminalBackgroundImagePath = useSettingsStore((s) => s.terminalBackground.imagePath);
+  const terminalSidePanelSide = useSettingsStore((s) => s.workspaceLayout.terminalSidePanelSide);
   const workspanEnabled = useSettingsStore((s) => s.workspanEnabled);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
@@ -4487,6 +4489,108 @@ export function TerminalTabs({
           data-terminal-theme-tone={terminalThemeTone}
           style={{ display: historyActive ? "none" : "flex" }}
         >
+          <TerminalWorkspaceFrame
+            dockSide={terminalSidePanelSide}
+            panels={[
+              sidePanelMerged ? (
+                <TerminalSidePanel
+                  key="merged"
+                  open={sidePanelOpen}
+                  dockSide={terminalSidePanelSide}
+                  activeTab={sidePanelTab}
+                  visibleTabs={visibleSidePanelTabs}
+                  activeSessionId={panelSessionId}
+                  projectPath={sidePanelProjectPath}
+                  projectId={panelSession?.projectId}
+                  filesTabDisabled={!filePanelProject}
+                  systemResourcesEnabled
+                  providerDefaultAppType={panelProviderAppType}
+                  filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
+                  onTabChange={handleSidePanelTabChange}
+                  onOpenProviderSettings={onOpenProviderSettings}
+                />
+              ) : null,
+              !sidePanelMerged && statsOpen && panelCapabilities.statistics ? (
+                <ResizableTerminalPanelFrame
+                  key="stats"
+                  widthKey="stats"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.stats}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeStatsLabel")}
+                  resizeTitle={t("terminal.panel.resizeStatsTitle")}
+                >
+                  <Suspense fallback={null}>
+                    <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
+                  </Suspense>
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && gitOpen && panelGitSupported ? (
+                <ResizableTerminalPanelFrame
+                  key="git"
+                  widthKey="git"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.git}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeGitLabel")}
+                  resizeTitle={t("terminal.panel.resizeGitTitle")}
+                >
+                  <Suspense fallback={null}>
+                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} projectId={panelSession?.projectId} embedded />
+                  </Suspense>
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && replayOpen && panelCapabilities.history ? (
+                <ResizableTerminalPanelFrame
+                  key="replay"
+                  widthKey="replay"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.replay}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeReplayLabel")}
+                  resizeTitle={t("terminal.panel.resizeReplayTitle")}
+                >
+                  <Suspense fallback={null}>
+                    <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} />
+                  </Suspense>
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && filesOpen && panelCapabilities.files ? (
+                <ResizableTerminalPanelFrame
+                  key="files"
+                  widthKey="files"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.files}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeFilesLabel")}
+                  resizeTitle={t("terminal.panel.resizeFilesTitle")}
+                >
+                  <FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && systemResourcesOpen ? (
+                <ResizableTerminalPanelFrame
+                  key="systemResources"
+                  widthKey="systemResources"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.systemResources}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeSystemResourcesLabel")}
+                  resizeTitle={t("terminal.panel.resizeSystemResourcesTitle")}
+                >
+                  <SystemResourcesPanel open={systemResourcesOpen} embedded />
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && providersOpen ? (
+                <ResizableTerminalPanelFrame
+                  key="providers"
+                  widthKey="providers"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.providers}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeProvidersLabel")}
+                  resizeTitle={t("terminal.panel.resizeProvidersTitle")}
+                >
+                  <ProviderQuickSwitchPanel open={providersOpen} defaultAppType={panelProviderAppType} onOpenSettings={onOpenProviderSettings} />
+                </ResizableTerminalPanelFrame>
+              ) : null,
+            ]}
+            actions={renderToolbarActions()}
+          >
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {visibleWorkspanLayouts.length > 0 ? (
               <DndContext
@@ -4762,92 +4866,7 @@ export function TerminalTabs({
               </div>
             )}
           </div>
-          {sidePanelMerged ? (
-            <TerminalSidePanel
-              open={sidePanelOpen}
-              activeTab={sidePanelTab}
-              visibleTabs={visibleSidePanelTabs}
-              activeSessionId={panelSessionId}
-              projectPath={sidePanelProjectPath}
-              projectId={panelSession?.projectId}
-              filesTabDisabled={!filePanelProject}
-              systemResourcesEnabled
-              providerDefaultAppType={panelProviderAppType}
-              filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
-              onTabChange={handleSidePanelTabChange}
-              onOpenProviderSettings={onOpenProviderSettings}
-            />
-          ) : (
-            <>
-              {statsOpen && panelCapabilities.statistics && (
-                <ResizableTerminalPanelFrame
-                  widthKey="stats"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.stats}
-                  resizeLabel={t("terminal.panel.resizeStatsLabel")}
-                  resizeTitle={t("terminal.panel.resizeStatsTitle")}
-                >
-                  <Suspense fallback={null}>
-                    <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
-                  </Suspense>
-                </ResizableTerminalPanelFrame>
-              )}
-              {gitOpen && panelGitSupported && (
-                <ResizableTerminalPanelFrame
-                  widthKey="git"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.git}
-                  resizeLabel={t("terminal.panel.resizeGitLabel")}
-                  resizeTitle={t("terminal.panel.resizeGitTitle")}
-                >
-                  <Suspense fallback={null}>
-                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} projectId={panelSession?.projectId} embedded />
-                  </Suspense>
-                </ResizableTerminalPanelFrame>
-              )}
-              {replayOpen && panelCapabilities.history && (
-                <ResizableTerminalPanelFrame
-                  widthKey="replay"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.replay}
-                  resizeLabel={t("terminal.panel.resizeReplayLabel")}
-                  resizeTitle={t("terminal.panel.resizeReplayTitle")}
-                >
-                  <Suspense fallback={null}>
-                    <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} />
-                  </Suspense>
-                </ResizableTerminalPanelFrame>
-              )}
-              {filesOpen && panelCapabilities.files && (
-                <ResizableTerminalPanelFrame
-                  widthKey="files"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.files}
-                  resizeLabel={t("terminal.panel.resizeFilesLabel")}
-                  resizeTitle={t("terminal.panel.resizeFilesTitle")}
-                >
-                  <FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />
-                </ResizableTerminalPanelFrame>
-              )}
-              {systemResourcesOpen && (
-                <ResizableTerminalPanelFrame
-                  widthKey="systemResources"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.systemResources}
-                  resizeLabel={t("terminal.panel.resizeSystemResourcesLabel")}
-                  resizeTitle={t("terminal.panel.resizeSystemResourcesTitle")}
-                >
-                  <SystemResourcesPanel open={systemResourcesOpen} embedded />
-                </ResizableTerminalPanelFrame>
-              )}
-              {providersOpen && (
-                <ResizableTerminalPanelFrame
-                  widthKey="providers"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.providers}
-                  resizeLabel={t("terminal.panel.resizeProvidersLabel")}
-                  resizeTitle={t("terminal.panel.resizeProvidersTitle")}
-                >
-                  <ProviderQuickSwitchPanel open={providersOpen} defaultAppType={panelProviderAppType} onOpenSettings={onOpenProviderSettings} />
-                </ResizableTerminalPanelFrame>
-              )}
-            </>
-          )}
-          {renderToolbarActions()}
+          </TerminalWorkspaceFrame>
         </div>
       </div>
     </div>
