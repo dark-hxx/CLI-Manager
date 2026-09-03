@@ -4,6 +4,7 @@
 @import "./styles/themes.css";
 @import "./styles/base.css";
 @import "./styles/components.css";
+@import "./styles/workspace-layout.css";
 
 /* @xterm/xterm 6.1.0-beta.288 still creates this DOM fallback but omits its hiding rule. */
 .xterm .xterm-char-measure-element {

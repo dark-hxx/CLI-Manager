@@ -335,6 +335,8 @@ export type TerminalBackgroundPosition =
 
 export interface TerminalBackgroundSettings {
   enabled: boolean;
+  /** Whether the background image should cover the whole main workspace. */
+  fillWorkspace: boolean;
   imagePath: string | null;
   imageSizeBytes: number | null;
   opacity: number;
@@ -623,6 +625,7 @@ const DEFAULTS: Settings = {
   linuxGraphicsMode: "auto",
   terminalBackground: {
     enabled: false,
+    fillWorkspace: false,
     imagePath: null,
     imageSizeBytes: null,
     opacity: 50,
@@ -1153,6 +1156,7 @@ export function migrateTerminalBackground(value: unknown): TerminalBackgroundSet
   const raw = value as Record<string, unknown>;
 
   const enabled = typeof raw.enabled === "boolean" ? raw.enabled : defaults.enabled;
+  const fillWorkspace = typeof raw.fillWorkspace === "boolean" ? raw.fillWorkspace : defaults.fillWorkspace;
   const imagePath =
     typeof raw.imagePath === "string" && raw.imagePath.length > 0
       ? raw.imagePath
@@ -1178,7 +1182,7 @@ export function migrateTerminalBackground(value: unknown): TerminalBackgroundSet
       ? (raw.position as TerminalBackgroundPosition)
       : defaults.position;
 
-  return { enabled, imagePath, imageSizeBytes, opacity, fit, position, blur, overlayDarken };
+  return { enabled, fillWorkspace, imagePath, imageSizeBytes, opacity, fit, position, blur, overlayDarken };
 }
 
 export function migrateDesktopPetSettings(value: unknown): DesktopPetSettings {

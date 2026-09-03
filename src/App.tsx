@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
+import { WorkspaceLayoutShell } from "./components/workspace/WorkspaceLayoutShell";
 import { ProjectFileRefreshController } from "./components/files/ProjectFileRefreshController";
 import { CommandPalette } from "./components/CommandPalette";
 import type { LucideIcon } from "lucide-react";
@@ -1751,40 +1752,42 @@ function App() {
         {t("app.skipToMain")}
       </a>
       {(!terminalFullscreen || viewMode === "compact") && <WindowTitleBar />}
-      {viewMode === "compact" ? (
-        <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
-          <Sidebar
-            onOpenSettings={handleOpenSettings}
-            onOpenStats={handleOpenStats}
-            compactMode
-            projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
-            terminalScope={terminalScope}
-            onTerminalScopeChange={setTerminalScope}
-          />
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          {!terminalFullscreen && (
+      <WorkspaceLayoutShell>
+        {viewMode === "compact" ? (
+          <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
             <Sidebar
               onOpenSettings={handleOpenSettings}
               onOpenStats={handleOpenStats}
+              compactMode
               projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
               terminalScope={terminalScope}
               onTerminalScopeChange={setTerminalScope}
             />
-          )}
-          <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
-            <TerminalTabs
-              fullscreen={terminalFullscreen}
-              onToggleFullscreen={handleToggleTerminalFullscreen}
-              projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
-              terminalScope={terminalScope}
-              onOpenProviderSettings={() => handleOpenSettings("native-providers")}
-              onOpenHistorySettings={() => handleOpenSettings("history-sources")}
-            />
-          </main>
-        </div>
-      )}
+          </div>
+        ) : (
+          <div className="flex min-h-0 h-full">
+            {!terminalFullscreen && (
+              <Sidebar
+                onOpenSettings={handleOpenSettings}
+                onOpenStats={handleOpenStats}
+                projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
+                terminalScope={terminalScope}
+                onTerminalScopeChange={setTerminalScope}
+              />
+            )}
+            <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
+              <TerminalTabs
+                fullscreen={terminalFullscreen}
+                onToggleFullscreen={handleToggleTerminalFullscreen}
+                projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
+                terminalScope={terminalScope}
+                onOpenProviderSettings={() => handleOpenSettings("native-providers")}
+                onOpenHistorySettings={() => handleOpenSettings("history-sources")}
+              />
+            </main>
+          </div>
+        )}
+      </WorkspaceLayoutShell>
       <CommandPalette />
       <ExternalSessionSyncDialog />
       <Suspense fallback={null}>

@@ -41,6 +41,7 @@ import {
 import { requestTerminalFileNavigation } from "../lib/terminalFileNavigation";
 import { findProjectByPath, findWorktreeByPath } from "../lib/terminalProject";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
+import { useWorkspaceBackground } from "./workspace/WorkspaceBackground";
 import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
 import { useTerminalOsc } from "../hooks/useTerminalOsc";
@@ -482,6 +483,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       overlayDarken: s.terminalBackground.overlayDarken,
     }))
   );
+  const workspaceBackground = useWorkspaceBackground();
   const hiddenForThisSession = useTerminalStore((s) => s.hiddenBackgroundSessionIds.has(sessionId));
   const terminalSession = useTerminalStore((state) => state.sessions.find((item) => item.id === sessionId) ?? null);
   const terminalSessionStatus = useTerminalStore((state) => state.sessionStatuses[sessionId] ?? null);
@@ -560,7 +562,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
   useEffect(() => {
     let cancelled = false;
-    if (!background.imagePath) {
+    if (workspaceBackground.requested || !background.imagePath) {
       setAssetUrl(null);
       return;
     }
@@ -570,7 +572,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     return () => {
       cancelled = true;
     };
-  }, [background.imagePath]);
+  }, [background.imagePath, workspaceBackground.requested]);
 
   const isTransparent = background.enabled && background.imagePath !== null && !hiddenForThisSession;
   const isTransparentRef = useRef(isTransparent);
@@ -1927,7 +1929,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   }, [sessionId, tuiColorSync]);
 
   const backgroundOverlayColor = getTerminalBackgroundOverlayColor(terminalTheme);
-  const showBackgroundImage = isTransparent && assetUrl !== null;
+  const showLocalBackgroundImage = isTransparent && !workspaceBackground.requested && assetUrl !== null;
+  const showWorkspaceBackground = isTransparent && workspaceBackground.active;
+  const showBackgroundImage = showLocalBackgroundImage || showWorkspaceBackground;
   const terminalForegroundColor = normalizeHexColor(terminalTheme.foreground, "#d8dee9");
   const terminalBackgroundColor = normalizeHexColor(terminalTheme.background, backgroundColor);
   useEffect(() => {
@@ -2058,7 +2062,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
   // When the background image is active, an opaque wrapper background would
   // cover the pseudo-element image layer and break the transparency model.
-  const wrapperStyle: CSSProperties = showBackgroundImage
+  const wrapperStyle: CSSProperties = showLocalBackgroundImage
     ? ({
         "--terminal-font-family": effectiveFontFamily,
         "--terminal-bg-image": `url("${assetUrl}")`,
@@ -2067,7 +2071,9 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         "--terminal-bg-darken": (background.overlayDarken / 100).toString(),
         "--terminal-bg-overlay-color": backgroundOverlayColor,
       } as CSSProperties)
-    : ({ "--terminal-font-family": effectiveFontFamily, backgroundColor } as CSSProperties);
+    : showWorkspaceBackground
+      ? ({ "--terminal-font-family": effectiveFontFamily } as CSSProperties)
+      : ({ "--terminal-font-family": effectiveFontFamily, backgroundColor } as CSSProperties);
   const visibilityRestoreStarting = isVisible && !isVisibleRef.current;
   const terminalContainerStyle: CSSProperties | undefined = visibilityRestorePending || visibilityRestoreStarting
     ? { visibility: "hidden" }
@@ -2078,9 +2084,10 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       ref={wrapperRef}
       className="ui-terminal-bg-layer relative h-full w-full overflow-hidden"
       style={wrapperStyle}
-      data-bg-enabled={showBackgroundImage ? "true" : undefined}
-      data-bg-fit={showBackgroundImage ? background.fit : undefined}
-      data-bg-position={showBackgroundImage ? background.position : undefined}
+      data-bg-enabled={showLocalBackgroundImage ? "true" : undefined}
+      data-bg-fit={showLocalBackgroundImage ? background.fit : undefined}
+      data-bg-position={showLocalBackgroundImage ? background.position : undefined}
+      data-workspace-bg-enabled={showWorkspaceBackground ? "true" : undefined}
     >
       {markdownPreviewButtonVisible && (
         <button
