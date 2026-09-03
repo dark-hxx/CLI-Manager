@@ -773,6 +773,7 @@ fn bridge_failure_should_fail_pending(error: &str) -> bool {
 fn required_capability(kind: &str) -> Option<&'static str> {
     match kind {
         "gitDiffWithOptions" => Some("gitDiffOptions"),
+        "gitListCommits" | "gitCommitDetail" | "gitCommitFileDiff" => Some("gitHistory"),
         "fileAttachBegin" | "fileAttachChunk" | "fileAttachFinish" | "fileAttachAbort" => {
             Some("fileAttach")
         }
@@ -1630,6 +1631,35 @@ mod tests {
         assert_eq!(
             response_receiver.recv().unwrap().unwrap_err(),
             "ssh_agent_capability_missing:gitDiffOptions"
+        );
+    }
+
+    #[test]
+    fn missing_git_history_capability_is_rejected_before_request_write() {
+        let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        let mut writer = Vec::new();
+        let mut request_number = 8;
+
+        handle_agent_request(
+            &mut writer,
+            &reader_receiver,
+            "host-1",
+            &mut request_number,
+            &[],
+            AgentBridgeRequest {
+                kind: "gitListCommits".to_string(),
+                payload: json!({}),
+                response: response_sender,
+            },
+        )
+        .unwrap();
+
+        assert!(writer.is_empty());
+        assert_eq!(request_number, 8);
+        assert_eq!(
+            response_receiver.recv().unwrap().unwrap_err(),
+            "ssh_agent_capability_missing:gitHistory"
         );
     }
 

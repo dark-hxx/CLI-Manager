@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, GitBranchInfo, GitBranchStatus, GitFileChange, GitPullStrategy } from "./types";
+import type { Project, GitBranchInfo, GitBranchStatus, GitCommitDetail, GitCommitPage, GitFileChange, GitPullStrategy } from "./types";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "./ssh";
 import { getSshClientInstanceId } from "./sshClientIdentity";
 import { useBackgroundOperationStore } from "../stores/backgroundOperationStore";
@@ -65,7 +65,9 @@ export function createSshRemoteGitConsumerId(
   ].join(":");
 }
 
-type ReadKind = "gitListRepositories" | "gitChanges" | "gitDiff" | "gitDiffWithOptions" | "gitBranchStatus" | "gitBranches";
+type ReadKind = "gitListRepositories" | "gitChanges" | "gitDiff" | "gitDiffWithOptions"
+  | "gitListCommits" | "gitCommitDetail" | "gitCommitFileDiff"
+  | "gitBranchStatus" | "gitBranches";
 type WriteKind =
   | "gitStage" | "gitUnstage" | "gitStageAll" | "gitUnstageAll"
   | "gitDiscardFile" | "gitDeleteUntracked" | "gitRevertHunk" | "gitRevertLines"
@@ -189,6 +191,51 @@ export async function sshRemoteGitListRepositories(context: SshRemoteGitContext)
 export async function sshRemoteGitChanges(context: SshRemoteGitContext, repoPath = ""): Promise<SshRemoteGitSnapshot<GitFileChange[]>> {
   const result = await request<{ changes: GitFileChange[]; asOf: number }>(context, "gitChanges", { repoPath }, true);
   return { value: result.changes, asOf: result.asOf };
+}
+
+export async function sshRemoteGitListCommits(
+  context: SshRemoteGitContext,
+  repoPath = "",
+  cursor?: string | null,
+  search?: string,
+): Promise<SshRemoteGitSnapshot<GitCommitPage>> {
+  const result = await request<{ page: GitCommitPage; asOf: number }>(
+    context,
+    "gitListCommits",
+    { repoPath, cursor: cursor ?? null, search: search?.trim() || null },
+    true,
+  );
+  return { value: result.page, asOf: result.asOf };
+}
+
+export async function sshRemoteGitCommitDetail(
+  context: SshRemoteGitContext,
+  repoPath: string,
+  commitId: string,
+): Promise<SshRemoteGitSnapshot<GitCommitDetail>> {
+  const result = await request<{ detail: GitCommitDetail; asOf: number }>(
+    context,
+    "gitCommitDetail",
+    { repoPath, commitId },
+    true,
+  );
+  return { value: result.detail, asOf: result.asOf };
+}
+
+export async function sshRemoteGitCommitFileDiff(
+  context: SshRemoteGitContext,
+  repoPath: string,
+  commitId: string,
+  relativePath: string,
+  oldRelativePath?: string | null,
+): Promise<SshRemoteGitSnapshot<SshRemoteGitDiff>> {
+  const result = await request<{ diff: SshRemoteGitDiff; asOf: number }>(
+    context,
+    "gitCommitFileDiff",
+    { repoPath, commitId, relativePath, oldRelativePath: oldRelativePath ?? null },
+    true,
+  );
+  return { value: result.diff, asOf: result.asOf };
 }
 
 export async function sshRemoteGitDiff(

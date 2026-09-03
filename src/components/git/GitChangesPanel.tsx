@@ -22,6 +22,7 @@ import type { GitTreeNode, GitPullStrategy, GitBranchInfo, Project } from "../..
 import { useGitTransportLease } from "../../hooks/useGitTransportLease";
 import { GIT_BACKGROUND_REFRESH_INTERVAL_MS } from "../../lib/gitRefreshPolicy";
 import { TerminalPanelHeader } from "../terminal/TerminalPanelHeader";
+import { GitHistoryView } from "./GitHistoryView";
 
 interface GitChangesPanelProps {
   open: boolean;
@@ -350,6 +351,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
   const [groupByMenuOpen, setGroupByMenuOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [hideFilterLabels, setHideFilterLabels] = useState(false);
+  const [viewMode, setViewMode] = useState<"changes" | "history">("changes");
   const filterRowRef = useRef<HTMLDivElement | null>(null);
   const panelActive = open && visible;
   const project = useMemo<Project | null>(() => (
@@ -810,9 +812,9 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       <TerminalPanelHeader
         icon={<GitBranch size={13} strokeWidth={2} />}
         accent={TERM.yellow}
-        title={t("git.title")}
+        title={t(viewMode === "changes" ? "git.title" : "git.history.title")}
         actions={(
-          <>
+          viewMode === "changes" ? <>
           {/* Group By 切换下拉 */}
           <div className="relative">
             <button
@@ -921,9 +923,30 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
           >
             <RefreshCw size={11} />
           </button>
-          </>
+          </> : null
         )}
       />
+
+      <div className="grid shrink-0 grid-cols-2 border-b p-1" style={{ borderColor: TERM.dim }}>
+        {(["changes", "history"] as const).map((mode) => {
+          const selected = viewMode === mode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewMode(mode)}
+              className="ui-focus-ring rounded px-2 py-1 text-[10px] transition-colors"
+              style={{
+                color: selected ? TERM.yellow : TERM.dim,
+                backgroundColor: selected ? panelColorTint(TERM.yellow, 10) : "transparent",
+              }}
+              aria-pressed={selected}
+            >
+              {t(mode === "changes" ? "git.view.changes" : "git.view.history")}
+            </button>
+          );
+        })}
+      </div>
 
       {/* 仓库切换：项目下检测到多个 Git 仓库时展示下拉（单仓库零 UI 变化） */}
       {repositories.length > 1 && (
@@ -992,6 +1015,16 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
           )}
         </div>
       )}
+
+      {viewMode === "history" ? (
+        <GitHistoryView
+          active={panelActive}
+          transport={transport}
+          repositoryId={projectPath ? (activeRepo?.absolutePath ?? (panelProject?.environment_type === "ssh" ? "" : projectPath)) : null}
+          branchContext={`${branchStatus?.detached ? "detached" : branchStatus?.branch ?? ""}:${activeRepo?.branch ?? ""}`}
+        />
+      ) : (
+      <>
 
       {/* Filter */}
       {changes.length > 0 && (
@@ -1424,6 +1457,8 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
         }}
         onClose={() => setConfirmAllOpen(false)}
       />
+      </>
+      )}
     </Container>
   );
 }

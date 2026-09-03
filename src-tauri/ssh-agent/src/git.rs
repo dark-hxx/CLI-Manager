@@ -236,6 +236,10 @@ fn validate_relative(value: &str, allow_empty: bool) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+pub(super) fn validate_repo_relative_path(value: &str) -> Result<String, String> {
+    validate_relative(value, false)
+}
+
 pub(super) fn resolve_repo(root_path: &str, repo_path: &str) -> Result<(PathBuf, PathBuf), String> {
     let root = resolve_root(root_path)?;
     let relative = validate_relative(repo_path, true)?;
@@ -250,7 +254,7 @@ pub(super) fn resolve_repo(root_path: &str, repo_path: &str) -> Result<(PathBuf,
 }
 
 pub(super) fn validate_file_path(repo: &Path, value: &str) -> Result<String, String> {
-    let value = validate_relative(value, false)?;
+    let value = validate_repo_relative_path(value)?;
     let candidate = repo.join(&value);
     let parent = candidate
         .parent()
@@ -1237,6 +1241,15 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
         "gitDiffWithOptions" => Ok(
             json!({ "diff": crate::git_diff::diff_with_options(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
+        "gitListCommits" => Ok(
+            json!({ "page": crate::git_history::list_commits(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
+        "gitCommitDetail" => Ok(
+            json!({ "detail": crate::git_history::commit_detail(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
+        "gitCommitFileDiff" => Ok(
+            json!({ "diff": crate::git_history::commit_file_diff(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
         "gitBranchStatus" => Ok(
             json!({ "status": branch_status(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
@@ -1488,5 +1501,24 @@ mod tests {
             .unwrap_err(),
             "remote_git_request_invalid"
         );
+        for (kind, payload) in [
+            (
+                "gitListCommits",
+                json!({ "rootPath": "/tmp", "repoPath": "", "cursor": null, "search": null, "extra": true }),
+            ),
+            (
+                "gitCommitDetail",
+                json!({ "rootPath": "/tmp", "repoPath": "", "commitId": "0123456789012345678901234567890123456789", "extra": true }),
+            ),
+            (
+                "gitCommitFileDiff",
+                json!({ "rootPath": "/tmp", "repoPath": "", "commitId": "0123456789012345678901234567890123456789", "relativePath": "file.txt", "oldRelativePath": null, "extra": true }),
+            ),
+        ] {
+            assert_eq!(
+                dispatch(kind, payload).unwrap_err(),
+                "remote_git_request_invalid"
+            );
+        }
     }
 }

@@ -1239,6 +1239,36 @@ export interface GitFileChange {
   deleted: number;
 }
 
+export interface GitCommitSummary {
+  id: string;
+  shortId: string;
+  parents: string[];
+  title: string;
+  authorName: string;
+  authorEmail: string | null;
+  authoredAt: number;
+  refs: string[];
+}
+
+export interface GitCommitPage {
+  commits: GitCommitSummary[];
+  nextCursor: string | null;
+}
+
+export interface GitCommitFile {
+  path: string;
+  oldPath: string | null;
+  status: "A" | "M" | "D" | "R" | "C";
+  added: number;
+  deleted: number;
+  binary: boolean;
+}
+
+export interface GitCommitDetail {
+  commit: GitCommitSummary;
+  files: GitCommitFile[];
+}
+
 /** 拉取策略：合并 / 变基 / 仅快进（对应后端 git_pull strategy 入参）。 */
 export type GitPullStrategy = "merge" | "rebase" | "ff-only";
 

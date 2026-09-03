@@ -1056,3 +1056,22 @@
 - `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
 - Trellis context 校验通过。GitNexus `detect-changes` 因 MCP/本机离线 CLI 不可用而降级，最终范围使用契约、调用链、Rust 全套 cc-connect 测试与真实代理 E2E 复核。
 - `npm run tauri:build:local -- --bundles nsis`：通过，仅生成 NSIS 安装包；SHA256 `CF929410CA2C602DB43927D33C23B1D77F52EF5104A422518F40F3AD278C0429`。
+
+## Git 提交历史（2026-09-04）
+
+### 实现与边界
+
+- Git 面板新增“变更 / 历史”只读视图，按 50 条分页展示并支持提交标题、作者、邮箱和完整 SHA 搜索；提交详情与文件 Diff 均按需加载。
+- 本地使用 libgit2，WSL/SSH 使用固定 argv 的 Git CLI；Merge 提交与第一父提交比较，根提交与空树比较，重命名 Diff 同时校验并传递新旧路径。
+- SSH Agent 升级为 `0.1.13` / protocol `1.14`，通过 `gitHistory` capability 协商；旧 Agent 在请求帧写入前被拒绝。
+- GitNexus MCP 未暴露，使用 codebase-memory moderate 索引、调用链影响分析与 `detect_changes`，并以源码、测试和最终 Git diff 复核。共享 Git Transport/SSH bridge 影响为 HIGH/CRITICAL，因此实现仅新增只读方法，未改已有 Git mutation 语义。
+
+### 验证结果
+
+- `npm run build`、`npx tsc --noEmit`：通过。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo check --manifest-path src-tauri/ssh-agent/Cargo.toml`：通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml git_history -- --nocapture`：10 项通过，覆盖空仓库、51+ 分页、搜索、Merge 第一父提交、重命名、新旧路径 Diff、二进制文件、OID/WSL 结构化解析和旧 Agent capability 拒绝。
+- `cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml --lib`：92 项通过。
+- `node --test scripts/gitHistory.test.mjs scripts/gitStoreRemote.test.mjs scripts/gitDiffViewerArchitecture.test.mjs`：14 项通过。
+- Desktop 与 SSH Agent `cargo fmt --check`、`git diff --check`：通过。
+- 当前 Windows 环境无法枚举 WSL distro（`Wsl/EnumerateDistros/Service/E_ACCESSDENIED`），因此 WSL Linux 文件系统和真实 SSH 主机交互未做本机人工冒烟；相关固定 argv、解析、能力协商和路径校验由自动测试与编译覆盖。

@@ -569,3 +569,34 @@ await releaseSshRemoteGitContext(context);
 // Correct: 组件只释放 lease，由 registry 决定是否关闭最后一个 consumer。
 await lease.release();
 ```
+
+---
+
+## Git 提交历史只读合约
+
+### 1. Scope / Trigger
+
+- Git 面板“历史”视图通过 Local/WSL/SSH Transport 浏览提交、详情和提交文件 Diff 时适用。
+
+### 2. Contracts
+
+- 提交列表固定每页 50 条，cursor 是最后一条已返回提交的完整 OID；搜索覆盖标题、作者名称/邮箱和 OID。
+- Local 使用 libgit2 Revwalk/tree diff；WSL 与 SSH 使用固定参数数组和有界批次扫描，禁止把搜索、OID 或路径拼入 shell 字符串。
+- 列表只返回元数据，详情和文件 Diff 按需请求。Merge 提交只与第一父提交比较，根提交与空树比较。
+- 历史 Diff 的 `canRevertHunks` 始终为 false，UI 与 Controller 均不得暴露 stage/discard/revert/cherry-pick/reset。
+- SSH 请求 `gitListCommits`、`gitCommitDetail`、`gitCommitFileDiff` 必须先协商 `gitHistory` capability；旧 Agent 在写 frame 前返回 `ssh_agent_capability_missing:gitHistory`。
+- SSH 根仓库的空字符串 repository id 是合法值；只有 null 表示缺少仓库上下文。
+- 项目、仓库、分支、transport 或搜索变化时重置分页与详情，请求返回时必须校验 generation，迟到结果不得覆盖新上下文。
+
+### 3. Edge Cases
+
+- 空/未出生分支返回空页；Detached HEAD 从当前 HEAD 遍历；浅克隆只展示本地可达历史。
+- Worktree 和嵌套仓库沿用当前有效 repository id；WSL `/mnt/<drive>` 映射继续回退 native Git。
+- 重命名保留 oldPath；二进制文件允许出现在详情中，但 Diff 继续走现有大小限制和只读降级。
+- 重命名文件打开 Diff 时必须同时传递新旧相对路径，使 native、WSL 与 SSH 都能保留 rename 元数据；两个路径均需独立校验。
+
+### 4. Tests Required
+
+- Desktop Rust：OID 校验、结构化 WSL 解析、搜索、空仓库、分页 cursor、第一父提交详情、重命名/二进制和 Diff 上限。
+- SSH Agent：history dispatch、root/repository/path confinement、capability 广告；Desktop bridge 验证旧 Agent 在发送前被拒绝。
+- Frontend：TypeScript、分页/搜索状态、上下文 generation 隔离和只读 Diff mutation 断言。

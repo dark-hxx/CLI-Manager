@@ -80,5 +80,5 @@ test("opening the same file location preserves the loaded tree", () => {
 });
 
 test("Agent capability diagnostics have a new immutable release identity", () => {
-  assert.match(sshAgentManifestSource, /^version = "0\.1\.8"$/m);
+  assert.match(sshAgentManifestSource, /^version = "0\.1\.13"$/m);
 });

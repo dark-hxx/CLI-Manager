@@ -286,6 +286,7 @@ fn capabilities() -> Value {
         "gitChanges",
         "gitDiff",
         "gitDiffOptions",
+        "gitHistory",
         "gitBranchStatus",
         "gitBranches",
         "gitFull"
@@ -998,6 +999,7 @@ mod tests {
             "gitChanges",
             "gitDiff",
             "gitDiffOptions",
+            "gitHistory",
             "gitBranchStatus",
             "gitBranches",
             "gitFull",

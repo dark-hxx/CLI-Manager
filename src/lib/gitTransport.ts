@@ -4,19 +4,22 @@ import {
   type NormalizedGitDiffPayload,
 } from "./gitDiffLimits";
 import type { GitDiffOptions } from "./gitDiffOptions";
-import type { GitBranchInfo, GitBranchStatus, GitFileChange, GitPullStrategy } from "./types";
+import type { GitBranchInfo, GitBranchStatus, GitCommitDetail, GitCommitPage, GitFileChange, GitPullStrategy } from "./types";
 import {
   sshRemoteGitBranchStatus,
   sshRemoteGitBranches,
   sshRemoteGitChanges,
   sshRemoteGitCheckout,
   sshRemoteGitCommit,
+  sshRemoteGitCommitDetail,
+  sshRemoteGitCommitFileDiff,
   sshRemoteGitCreateBranch,
   sshRemoteGitDeleteUntracked,
   sshRemoteGitDiff,
   sshRemoteGitDiscard,
   sshRemoteGitFetch,
   sshRemoteGitListRepositories,
+  sshRemoteGitListCommits,
   sshRemoteGitPull,
   sshRemoteGitPullAbort,
   sshRemoteGitPush,
@@ -48,6 +51,9 @@ export interface GitTransport {
   readonly remote: boolean;
   listRepositories(): Promise<GitTransportResult<GitRepositoryRef[]>>;
   getChanges(repoId: string): Promise<GitTransportResult<GitFileChange[]>>;
+  listCommits(repoId: string, cursor?: string | null, search?: string): Promise<GitTransportResult<GitCommitPage>>;
+  getCommitDetail(repoId: string, commitId: string): Promise<GitTransportResult<GitCommitDetail>>;
+  getCommitFileDiff(repoId: string, commitId: string, path: string, oldPath?: string | null, options?: GitDiffOptions): Promise<GitTransportResult<GitFileDiffPayload>>;
   getFileDiff(repoId: string, path: string, status: string, options?: GitDiffOptions): Promise<GitTransportResult<GitFileDiffPayload>>;
   getBranchStatus(repoId: string): Promise<GitTransportResult<GitBranchStatus>>;
   listBranches(repoId: string): Promise<GitTransportResult<GitBranchInfo[]>>;
@@ -77,6 +83,11 @@ export function createLocalGitTransport(projectRoot: string): GitTransport {
     remote: false,
     listRepositories: async () => localResult(await invoke<GitRepositoryRef[]>("git_list_repositories", { projectPath: projectRoot })),
     getChanges: async (repoId) => localResult(await invoke<GitFileChange[]>("git_get_changes", { projectPath: repoId })),
+    listCommits: async (repoId, cursor, search) => localResult(await invoke<GitCommitPage>("git_list_commits", { projectPath: repoId, cursor, search })),
+    getCommitDetail: async (repoId, commitId) => localResult(await invoke<GitCommitDetail>("git_get_commit_detail", { projectPath: repoId, commitId })),
+    getCommitFileDiff: async (repoId, commitId, filePath, oldFilePath, options) => localResult(normalizeGitDiffPayload(
+      await invoke<GitFileDiffPayload>("git_get_commit_file_diff", { projectPath: repoId, commitId, filePath, oldFilePath, options }),
+    )),
     getFileDiff: async (repoId, filePath, status, options) => localResult(normalizeGitDiffPayload(
       await invoke<GitFileDiffPayload>("git_get_file_diff", {
         projectPath: repoId,
@@ -117,6 +128,12 @@ export function createSshGitTransport(context: SshRemoteGitContext): GitTranspor
       return { value: result.value.map((repo) => ({ relativePath: repo.relativePath, absolutePath: repo.repoId, branch: repo.branch })), asOf: result.asOf };
     },
     getChanges: (repoId) => sshRemoteGitChanges(context, repoId),
+    listCommits: (repoId, cursor, search) => sshRemoteGitListCommits(context, repoId, cursor, search),
+    getCommitDetail: (repoId, commitId) => sshRemoteGitCommitDetail(context, repoId, commitId),
+    getCommitFileDiff: async (repoId, commitId, path, oldPath) => {
+      const result = await sshRemoteGitCommitFileDiff(context, repoId, commitId, path, oldPath);
+      return { ...result, value: normalizeGitDiffPayload(result.value) };
+    },
     getFileDiff: async (repoId, path, status, options) => {
       const result = await sshRemoteGitDiff(context, repoId, path, status, options);
       return { ...result, value: normalizeGitDiffPayload(result.value) };

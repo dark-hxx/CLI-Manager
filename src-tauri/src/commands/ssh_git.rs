@@ -58,6 +58,9 @@ pub async fn ssh_remote_git_request(
         "gitChanges" => "gitChanges",
         "gitDiff" => "gitDiff",
         "gitDiffWithOptions" => "gitDiffWithOptions",
+        "gitListCommits" => "gitListCommits",
+        "gitCommitDetail" => "gitCommitDetail",
+        "gitCommitFileDiff" => "gitCommitFileDiff",
         "gitBranchStatus" => "gitBranchStatus",
         "gitBranches" => "gitBranches",
         "gitStage" | "gitUnstage" | "gitStageAll" | "gitUnstageAll" | "gitDiscardFile"
