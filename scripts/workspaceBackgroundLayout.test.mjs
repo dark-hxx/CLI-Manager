@@ -44,6 +44,8 @@ test("workspace background is decorative and exposes the shared image through su
   assert.match(stylesSource, /data-workspace-bg-fit="contain"/);
   assert.match(stylesSource, /data-workspace-bg-position="bottom-right"/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-shell/);
+  assert.match(appSource, /<WorkspaceLayoutShell>\s*\{\(!terminalFullscreen \|\| viewMode === "compact"\) && <WindowTitleBar \/>\}/);
+  assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.window-titlebar[\s\S]*?background: transparent !important;/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \{\n  background-color: transparent;/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-shell,\n\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-top,[\s\S]*?background: transparent !important;/);
   assert.match(stylesSource, /data-terminal-side-panel-content\] > \*/);

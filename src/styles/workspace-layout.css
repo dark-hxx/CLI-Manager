@@ -103,8 +103,17 @@
 }
 
 /* The shared image must be the actual base surface in fill mode. Keep the
-   shell, its chrome, and project rows fully transparent; interaction states
-   below add only their own small tint where a state needs to remain visible. */
+   shell, its chrome, title bar, and project rows fully transparent;
+   interaction states below add only their own small tint where a state needs
+   to remain visible. */
+.ui-workspace-background-root[data-workspace-background="true"] .window-titlebar {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell,
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-top,
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-footer,

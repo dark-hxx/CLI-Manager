@@ -1751,8 +1751,8 @@ function App() {
       <a href="#main-content" className="skip-link">
         {t("app.skipToMain")}
       </a>
-      {(!terminalFullscreen || viewMode === "compact") && <WindowTitleBar />}
       <WorkspaceLayoutShell>
+        {(!terminalFullscreen || viewMode === "compact") && <WindowTitleBar />}
         {viewMode === "compact" ? (
           <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
             <Sidebar
