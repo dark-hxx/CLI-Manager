@@ -10,7 +10,7 @@
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] {
-  background-color: var(--surface);
+  background-color: transparent;
 }
 
 .ui-workspace-background-content {
@@ -37,7 +37,7 @@
 .ui-workspace-background-layer {
   z-index: 0;
   overflow: hidden;
-  background-color: var(--surface);
+  background-color: transparent;
   pointer-events: none;
 }
 
@@ -106,13 +106,36 @@
    well, and auxiliary panels. Use translucent colors instead of parent
    opacity so controls and text retain their own contrast. */
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell {
-  background: color-mix(in srgb, var(--surface-container-low) 72%, transparent) !important;
+  background: color-mix(in srgb, var(--surface-container-low) 64%, transparent) !important;
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-top,
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-footer,
 .ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-global-chrome {
-  background: color-mix(in srgb, var(--surface-container-low) 72%, transparent) !important;
+  background: color-mix(in srgb, var(--surface-container-low) 64%, transparent) !important;
+}
+
+/* Light themes give these tree surfaces opaque fills. They are still app
+   surfaces, but must let the shared image remain visible in fill mode. */
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-sidebar-search-shell,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-inline-input,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-group-shell {
+  background-color: color-mix(in srgb, var(--surface-container-low) 52%, transparent) !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-group {
+  background-color: color-mix(in srgb, var(--surface-container-low) 38%, transparent) !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-project,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-collapsed-item,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-synced-session {
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 70%, transparent) !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-project[data-selected="true"],
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-collapsed-item[data-selected="true"] {
+  background: color-mix(in srgb, var(--primary) 14%, transparent) !important;
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] .ui-main-shell,
@@ -130,14 +153,15 @@
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-pane-chrome,
-.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-panel-header,
-.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-side-panel-frame {
-  background: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 76%, transparent) !important;
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-panel-header {
+  background: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 68%, transparent) !important;
 }
 
-.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-side-panel-frame {
-  background: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 76%, transparent) !important;
-  background-color: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 76%, transparent) !important;
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-side-panel-frame,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-side-panel-frame > :not([role="separator"]),
+.ui-workspace-background-root[data-workspace-background="true"] [data-terminal-side-panel-content] > * {
+  background: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 68%, transparent) !important;
+  background-color: color-mix(in srgb, var(--term-panel-bg, var(--terminal-theme-background, #0c0e10)) 68%, transparent) !important;
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-action-sidebar {

@@ -177,7 +177,7 @@ export function TerminalSidePanel({
         })}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden" data-terminal-side-panel-content="true">
         {statsEnabled && (
           <Suspense fallback={null}>
             <TerminalStatsPanel activeSessionId={activeSessionId} open={open} visible={activeTab === "stats"} embedded />

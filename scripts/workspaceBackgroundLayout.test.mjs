@@ -8,6 +8,7 @@ const backgroundSource = readFileSync(
   "utf8",
 );
 const xtermSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
+const sidePanelSource = readFileSync(new URL("../src/components/terminal/TerminalSidePanel.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
 const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8");
 
@@ -43,6 +44,10 @@ test("workspace background is decorative and exposes the shared image through su
   assert.match(stylesSource, /data-workspace-bg-fit="contain"/);
   assert.match(stylesSource, /data-workspace-bg-position="bottom-right"/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-shell/);
+  assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \{\n  background-color: transparent;/);
+  assert.match(stylesSource, /data-terminal-side-panel-content\] > \*/);
+  assert.match(stylesSource, /\.ui-terminal-side-panel-frame > :not\(\[role="separator"\]\)/);
+  assert.match(sidePanelSource, /data-terminal-side-panel-content="true"/);
   assert.match(stylesSource, /\.ui-terminal-global-chrome \{\n  background: color-mix/);
   assert.match(stylesSource, /\.ui-terminal-bg-layer\[data-workspace-bg-enabled="true"\] \.xterm/);
 });
