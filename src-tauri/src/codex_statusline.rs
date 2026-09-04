@@ -281,10 +281,11 @@ pub fn codex_statusline_load(config_dir: Option<String>) -> Result<CodexStatusli
     let dir = resolve_config_dir(config_dir)?;
     let path = dir.join(CONFIG_FILE);
     let content = read_config(&path)?;
+    let items = canonicalize_items(parse_status_line(&content)?);
     Ok(CodexStatuslineConfig {
         config_dir: dir.to_string_lossy().to_string(),
         config_path: path.to_string_lossy().to_string(),
-        items: parse_status_line(&content)?,
+        items,
     })
 }
 
@@ -294,6 +295,7 @@ pub fn codex_statusline_save(
     items: Vec<String>,
 ) -> Result<CodexStatuslineConfig, String> {
     validate_items(&items)?;
+    let items = canonicalize_items(items);
     let dir = resolve_config_dir(config_dir)?;
     let path = dir.join(CONFIG_FILE);
     let content = read_config(&path)?;
@@ -302,8 +304,7 @@ pub fn codex_statusline_save(
 }
 
 pub(crate) fn validate_items(items: &[String]) -> Result<(), String> {
-    let allowed = statusline_item_ids();
-    if items.iter().any(|item| !allowed.contains(&item.as_str())) {
+    if items.iter().any(|item| canonical_item_id(item).is_none()) {
         return Err("codex_statusline_unknown_item".to_string());
     }
     Ok(())
@@ -311,14 +312,16 @@ pub(crate) fn validate_items(items: &[String]) -> Result<(), String> {
 
 fn statusline_item_ids() -> &'static [&'static str] {
     &[
-        "app-name",
-        "project-name",
+        "model",
+        "model-with-reasoning",
+        "reasoning",
         "current-dir",
-        "status",
-        "thread-title",
+        "project-name",
+        "hostname",
         "git-branch",
         "pull-request-number",
         "branch-changes",
+        "run-state",
         "permissions",
         "approval-mode",
         "context-remaining",
@@ -330,13 +333,40 @@ fn statusline_item_ids() -> &'static [&'static str] {
         "used-tokens",
         "total-input-tokens",
         "total-output-tokens",
-        "session-id",
+        "thread-credits",
+        "estimated-thread-cost",
+        "thread-id",
         "fast-mode",
         "raw-output",
-        "model",
-        "model-with-reasoning",
+        "thread-title",
+        "workspace-headline",
         "task-progress",
     ]
+}
+
+fn canonical_item_id(item: &str) -> Option<&'static str> {
+    if let Some(&id) = statusline_item_ids().iter().find(|id| **id == item) {
+        return Some(id);
+    }
+    match item {
+        "model-name" => Some("model"),
+        "project" | "project-root" => Some("project-name"),
+        "status" => Some("run-state"),
+        "approval" => Some("approval-mode"),
+        "context-usage" => Some("context-used"),
+        "session-id" => Some("thread-id"),
+        _ => None,
+    }
+}
+
+pub(crate) fn canonicalize_items(items: Vec<String>) -> Vec<String> {
+    items
+        .into_iter()
+        .map(|item| match canonical_item_id(&item) {
+            Some(canonical) => canonical.to_string(),
+            None => item,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -364,6 +394,47 @@ mod tests {
         assert_eq!(
             next,
             "model = \"gpt\"\n\n[tui]\nstatus_line = [\"model\"]\n"
+        );
+    }
+
+    #[test]
+    fn accepts_all_current_codex_statusline_item_ids() {
+        let items = statusline_item_ids()
+            .iter()
+            .map(|item| (*item).to_string())
+            .collect::<Vec<_>>();
+        assert!(validate_items(&items).is_ok());
+    }
+
+    #[test]
+    fn accepts_official_legacy_aliases_and_canonicalizes_them() {
+        let aliases = vec![
+            "model-name".to_string(),
+            "project-root".to_string(),
+            "status".to_string(),
+            "approval".to_string(),
+            "context-usage".to_string(),
+            "session-id".to_string(),
+        ];
+        assert!(validate_items(&aliases).is_ok());
+        assert_eq!(
+            canonicalize_items(aliases),
+            vec![
+                "model",
+                "project-name",
+                "run-state",
+                "approval-mode",
+                "context-used",
+                "thread-id",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_non_official_thread_name_item() {
+        assert_eq!(
+            validate_items(&["thread-name".to_string()]).unwrap_err(),
+            "codex_statusline_unknown_item"
         );
     }
 }
