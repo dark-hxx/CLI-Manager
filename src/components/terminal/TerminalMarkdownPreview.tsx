@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n, type AppLanguage } from "../../lib/i18n";
+import { unwrapFencedMarkdown } from "../../lib/markdownSource";
 import { normalizeFontFamilyStack } from "../../lib/systemFonts";
 import type { HistoryMessage, HistorySessionDetail, HistorySource, Project, TerminalSession } from "../../lib/types";
 import { resolveCliToolHistorySourceId } from "../../lib/cliTools";
@@ -81,15 +82,8 @@ function selectAssistantMarkdownMessages(detail: HistorySessionDetail): Markdown
   return messages;
 }
 
-const MARKDOWN_SOURCE_FENCE = /^[ \t]*(`{3,}|~{3,})[ \t]*(?:md|markdown)[ \t]*\n([\s\S]*?)\n\1[ \t]*$/i;
 const MARKDOWN_PREVIEW_FONT_SIZE_MIN = 8;
 const MARKDOWN_PREVIEW_FONT_SIZE_MAX = 32;
-
-function unwrapFencedMarkdown(content: string): string {
-  const normalized = content.replace(/\r\n?/g, "\n");
-  const match = MARKDOWN_SOURCE_FENCE.exec(normalized);
-  return match?.[2] ?? content;
-}
 
 function formatPreviewMessageTime(timestamp: string | null, language: AppLanguage): string {
   const parsed = timestamp ? Date.parse(timestamp) : Number.NaN;

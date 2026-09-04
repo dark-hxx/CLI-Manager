@@ -705,11 +705,12 @@ import { SessionTranscriptContent } from "./SessionTranscriptContent";
 
 - Keep transcript parsing render-only; do not mutate stored history data or backend parsing contracts for visual grouping.
 - Keep unsupported transcript text safe by falling back to the shared Markdown path.
+- `HistoryMarkdownContent` may unwrap one complete top-level `md` / `markdown` source fence before handing history content to `MarkdownContent`, so fenced GFM tables render as tables; ordinary, partial, mislabeled, and nested code fences remain literal code.
 - Do not use `dangerouslySetInnerHTML` for transcript highlighting.
 - Do not add a second Markdown parser inside history components.
 - Long transcript sections should remain bounded through collapse/preview behavior so virtualized message rows do not inflate unnecessarily.
 
-**Tests**: Run `npx tsc --noEmit`; manually inspect a history session containing XML-ish blocks, workflow-state blocks, Git changes, long lists, and normal Markdown.
+**Tests**: Run `npx tsc --noEmit`, `node --test scripts/historyMarkdownRendering.test.mjs`, and manually inspect a history session containing XML-ish blocks, workflow-state blocks, Git changes, long lists, normal Markdown, a fenced GFM table, ordinary code, and nested code fences in both app themes.
 
 ### Convention: History session parent-child grouping is render-only and conservative
 

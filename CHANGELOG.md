@@ -20,6 +20,11 @@
 - Codex 历史标题读取对应 `session_index.jsonl` 的 `thread_name`，覆盖 Windows 本地、WSL 与 SSH；手工别名和有效 AI 生成标题仍优先于该来源标题，索引缺失或失配时安全回退。
 - 修复历史原文倒序下虚拟列表将原始消息索引误当作显示行索引，导致消息高度测量错位并出现内容重叠的问题。
 
+### 历史会话 Markdown 渲染
+
+- 修复历史会话中完整 `md` / `markdown` 源码围栏被当作代码块展示的问题；GFM 表格现在直接渲染为表格，普通代码块和嵌套代码围栏仍保持代码展示。
+- 历史 Markdown 代码块的容器、标题栏和边框改用应用主题变量，浅色与深色主题切换后均保持可读；终端预览继续使用独立终端主题。
+
 ### Tauri 开发构建与缓存优化
 
 - Windows `npm run tauri dev` 预构建主程序与 Codex proxy 时统一 Cargo 的 feature、target、profile、target-dir 和 `TAURI_CONFIG` fingerprint 输入，减少共享 Rust library 的重复构建；源码未变化时继续由 Cargo fingerprint 复用已有产物。
@@ -37,11 +42,13 @@
 
 - 工作区布局新增终端辅助面板左/右停靠设置；合并与独立面板共用同一布局契约，默认保持右侧，操作工具栏继续固定在最右侧。
 - 左侧停靠按终端中心到外侧反向呈现多个面板，保留面板顺序、宽度键、PTY Pane 和会话状态；resize sash、边框与宽度计算随方向切换，恢复默认只重置布局位置。关联 issue：Refs #248。
+- 新增类似 VS Code 的标题栏布局控制：可直接显示/隐藏项目侧栏和终端辅助面板，并在“…”菜单中切换辅助面板左右停靠；隐藏辅助面板不会关闭已打开的具体面板，重新打开具体面板时会自动恢复区域显示。（Refs #248）
 
 ### 顶层 Workspan Tab 上下停靠
 
 - 顶层 Workspan Tab 支持顶部/底部停靠，保持横向排序、拖拽、滚轮、重命名、关闭、溢出列表和菜单交互；默认顶部，切换只改变文档流位置，不重建 Pane 或 PTY。关联 issue：Refs #248。
 - 底部布局让 Tab 栏与终端内容处于同一 flex 文档流，终端自动获得剩余高度；底部溢出列表向上展开，列表与关闭确认浮层带 viewport 边界保护，Pane 内 Session Tab 仍保持在各 Pane 顶部。
+- 标题栏布局菜单支持直接显示/隐藏 Workspan Tab 栏、切换顶部/底部位置和恢复默认；隐藏仅移除 Tab 栏占位，Workspan、Tab 顺序和 PTY 会话保持挂载。（Refs #248）
 
 ### Hook 系统通知自定义声音
 

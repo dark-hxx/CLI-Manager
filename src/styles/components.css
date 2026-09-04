@@ -3804,7 +3804,7 @@
   overflow: auto;
   border: 1px solid var(--md-border);
   border-radius: 6px;
-  background-color: #111827;
+  background-color: var(--md-canvas-subtle);
 }
 
 .ui-markdown-code-block pre {
@@ -3815,10 +3815,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--md-border);
   padding: 0.35rem 0.75rem;
-  background-color: rgba(255, 255, 255, 0.04);
-  color: #9ca3af;
+  background-color: var(--md-canvas-muted);
+  color: var(--md-subtle);
   font-family: var(--font-ui-mono);
   font-size: 0.68rem;
   font-weight: 700;

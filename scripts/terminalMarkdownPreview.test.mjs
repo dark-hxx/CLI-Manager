@@ -6,6 +6,10 @@ const previewSource = readFileSync(
   new URL("../src/components/terminal/TerminalMarkdownPreview.tsx", import.meta.url),
   "utf8",
 );
+const markdownSource = readFileSync(
+  new URL("../src/lib/markdownSource.ts", import.meta.url),
+  "utf8",
+);
 const historyStoreSource = readFileSync(
   new URL("../src/stores/historyStore.ts", import.meta.url),
   "utf8",
@@ -49,8 +53,9 @@ test("failed markdown preview loads are retryable and background terminal layout
 test("markdown preview can select every assistant response and unwrap source fences", () => {
   assert.match(previewSource, /function selectAssistantMarkdownMessages/);
   assert.match(previewSource, /message\?\.role\.toLowerCase\(\) !== "assistant"/);
-  assert.match(previewSource, /function unwrapFencedMarkdown/);
-  assert.match(previewSource, /MARKDOWN_SOURCE_FENCE/);
+  assert.match(markdownSource, /export function unwrapFencedMarkdown/);
+  assert.match(previewSource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/lib\/markdownSource"/);
+  assert.doesNotMatch(previewSource, /const MARKDOWN_SOURCE_FENCE/);
   assert.match(previewSource, /unwrapFencedMarkdown\(selectedMessage\.content\)/);
   assert.match(previewSource, /terminal-markdown-preview-message-select/);
   assert.match(previewSource, /terminal\.markdownPreview\.answerOption/);
