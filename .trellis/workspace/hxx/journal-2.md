@@ -1395,3 +1395,24 @@ Fixed Issue #245: hardened terminal output scheduling and daemon ACK recovery; s
 ### Status
 
 [OK] **Completed**
+
+
+## Session 106: 解除 AI 进展时间轴展开收起限制
+
+**Date**: 2026-09-04
+**Task**: 解除 AI 进展时间轴展开收起限制
+**Branch**: `master`
+
+### Summary
+
+修复 AI Replay 进展时间轴的展开状态：支持多个轮次同时展开、全部收起，并仅清理已移除轮次的失效状态。已通过 TypeScript、Vite 构建和 6 项回放模型测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eb1f2ee5` | (see git log) |
+
+### Status
+
+[OK] **Completed**
