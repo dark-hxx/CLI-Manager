@@ -774,6 +774,28 @@ fn required_capability(kind: &str) -> Option<&'static str> {
     match kind {
         "gitDiffWithOptions" => Some("gitDiffOptions"),
         "gitListCommits" | "gitCommitDetail" | "gitCommitFileDiff" => Some("gitHistory"),
+        "gitListCommitsFiltered"
+        | "gitTags"
+        | "gitCompareRefs"
+        | "gitCommitPatch"
+        | "gitExecuteOperation"
+        | "gitListStashes"
+        | "gitStashCreate"
+        | "gitStashAction"
+        | "gitListRemotes"
+        | "gitRemoteAction"
+        | "gitPushTag"
+        | "gitDeleteRemoteBranch"
+        | "gitForcePushWithLease"
+        | "gitListReflog"
+        | "gitRestoreReflog"
+        | "gitFileHistory"
+        | "gitBlameFile"
+        | "gitBisectStatus"
+        | "gitBisectAction"
+        | "gitListSubmodules"
+        | "gitSubmoduleAction"
+        | "gitRewriteCommits" => Some("gitWorkspaceTools"),
         "fileAttachBegin" | "fileAttachChunk" | "fileAttachFinish" | "fileAttachAbort" => {
             Some("fileAttach")
         }
@@ -1911,6 +1933,11 @@ mod tests {
             Some("fileAttachmentRoot")
         );
         assert_eq!(required_capability("filePutBegin"), Some("filePut"));
+        assert_eq!(
+            required_capability("gitRewriteCommits"),
+            Some("gitWorkspaceTools")
+        );
+        assert_eq!(required_capability("gitListCommits"), Some("gitHistory"));
         let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         let mut writer = Vec::new();

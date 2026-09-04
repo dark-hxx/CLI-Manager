@@ -289,6 +289,9 @@ fn capabilities() -> Value {
         "gitHistory",
         "gitBranchStatus",
         "gitBranches",
+        "gitOperationContinue",
+        "gitOperationAbort",
+        "gitWorkspaceTools",
         "gitFull"
     ])
 }
@@ -1002,6 +1005,9 @@ mod tests {
             "gitHistory",
             "gitBranchStatus",
             "gitBranches",
+            "gitOperationContinue",
+            "gitOperationAbort",
+            "gitWorkspaceTools",
             "gitFull",
         ] {
             assert!(frame.payload["capabilities"]

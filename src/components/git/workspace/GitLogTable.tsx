@@ -1,5 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useMemo, useRef } from "react";
+import { Copy, FileDown, GitMerge, ListTree, RotateCcw, Tag, Undo2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { GitCommitSummary } from "../../../lib/types";
 import { useI18n } from "../../../lib/i18n";
 import { TERM, EmptyHint, panelColorTint } from "../../stats/termStatsUi";
@@ -17,8 +18,11 @@ interface GitLogTableProps {
   searchActive: boolean;
   selectedId: string | null;
   onSelect: (commitId: string) => void;
+  onCommitAction?: (action: GitCommitAction, commit: GitCommitSummary) => void;
   onLoadMore: () => void;
 }
+
+export type GitCommitAction = "copy-sha" | "copy-info" | "view-parent" | "export-patch" | "cherry-pick" | "revert" | "reset" | "create-tag";
 
 const ROW_HEIGHT = 34;
 const LANE_OFFSET = 9;
@@ -86,6 +90,7 @@ export function GitLogTable({
   searchActive,
   selectedId,
   onSelect,
+  onCommitAction,
   onLoadMore,
 }: GitLogTableProps) {
   const { language, t } = useI18n();
@@ -114,6 +119,18 @@ export function GitLogTable({
     getItemKey: (index) => commits[index]?.id ?? "git-history-tail",
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
+  const [contextMenu, setContextMenu] = useState<{ commit: GitCommitSummary; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     const lastRow = virtualRows[virtualRows.length - 1];
@@ -193,6 +210,11 @@ export function GitLogTable({
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                   onClick={() => onSelect(commit.id)}
+                  onContextMenu={(event: MouseEvent<HTMLButtonElement>) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setContextMenu({ commit, x: event.clientX, y: event.clientY });
+                  }}
                   aria-pressed={selected}
                 >
                   <span className="flex min-w-0 items-center">
@@ -230,6 +252,47 @@ export function GitLogTable({
           </div>
         )}
       </div>
+      {contextMenu && onCommitAction && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} aria-hidden="true" />
+          <div
+            className="fixed z-50 min-w-[190px] overflow-hidden rounded border py-1 shadow-xl"
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - 206),
+              top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 292)),
+              backgroundColor: TERM.bg,
+              borderColor: TERM.dim,
+            }}
+            role="menu"
+          >
+            {([
+              ["copy-sha", t("git.commit.context.copySha"), <Copy size={12} />],
+              ["copy-info", t("git.commit.context.copyInfo"), <Copy size={12} />],
+              ["view-parent", t("git.commit.context.viewParent"), <ListTree size={12} />],
+              ["export-patch", t("git.commit.context.exportPatch"), <FileDown size={12} />],
+              ["cherry-pick", t("git.commit.context.cherryPick"), <GitMerge size={12} />],
+              ["revert", t("git.commit.context.revert"), <Undo2 size={12} />],
+              ["reset", t("git.commit.context.reset"), <RotateCcw size={12} />],
+              ["create-tag", t("git.commit.context.createTag"), <Tag size={12} />],
+            ] as [GitCommitAction, string, React.ReactNode][]).map(([action, label, icon]) => (
+              <button
+                key={action}
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-opacity hover:opacity-80"
+                style={{ color: TERM.fg }}
+                onClick={() => {
+                  onCommitAction(action, contextMenu.commit);
+                  setContextMenu(null);
+                }}
+              >
+                {icon}
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   );
 }

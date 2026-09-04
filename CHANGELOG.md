@@ -10,6 +10,13 @@
 - 提交详情与文件列表按需加载，点击文件继续复用现有只读 Diff Viewer；搜索结果不会跨被省略的提交绘制伪连线，项目、仓库、Transport 或搜索变化时会丢弃迟到请求。
 - “变更”页复用现有 Git 变更面板与 Local/WSL/SSH Transport Lease；SSH 根仓库空 ID、旧 Agent capability 提示及现有暂存、提交和网络操作边界保持兼容。
 
+### Git 工作区增强工具
+
+- 分支引用树支持最近分支、收藏分支和搜索；分支、远程分支与标签提供检出、比较、复制、创建分支、推送/删除标签及上下文相关操作。
+- 历史支持当前分支、全部引用或指定引用，并可按作者、日期和路径过滤；提交菜单增加复制 SHA/提交信息、查看父提交、导出 Patch、Cherry-pick、Revert、Reset 和创建标签。
+- 新增 Stash、Remote、Reflog、文件历史/Blame、Bisect、Submodule 和受控提交整理工具；危险操作二次确认，强制推送固定使用 `--force-with-lease`，提交整理前创建恢复引用。
+- 本地、WSL 和 SSH 共用 `GitTransport` 契约；SSH Agent 增加 `gitWorkspaceTools` capability（`0.1.14` / protocol `1.15`），旧 Agent 在发送请求前提示升级。
+
 ### 修复大型数据库间歇性写锁
 
 - 修复用量数据库每次建立连接都会重复执行历史请求日志全量回填、重建视图和写入迁移标记的问题；健康 Schema 现在只执行只读一致性检查，旧库缺表、缺列或缺少迁移登记时仍保留兼容自愈。
@@ -20,7 +27,7 @@
 
 - Git 面板新增“变更 / 历史”切换；提交历史按每页 50 条展示标题、短 SHA、作者、24 小时时间与引用标签，支持按提交信息、作者和 SHA 搜索。
 - 提交详情按需加载变更文件、增删行与二进制状态，点击文件复用现有只读 Diff 查看器；Merge 提交首版固定与第一父提交比较，不提供暂存、回滚等写操作。
-- 本地、WSL 与 SSH 项目使用统一 Transport 契约；SSH Agent 升级至 `0.1.13` / protocol `1.14` 并声明 `gitHistory` 能力，旧 Agent 会在请求发送前提示更新。
+- 本地、WSL 与 SSH 项目使用统一 Transport 契约；SSH Agent 升级至 `0.1.14` / protocol `1.15` 并声明 `gitHistory` 与 `gitWorkspaceTools` 能力，旧 Agent 会在请求发送前提示更新。
 - 历史请求按项目、仓库、分支和 transport 隔离，切换上下文时丢弃迟到结果；空仓库、Detached HEAD、浅克隆、Worktree、重命名和二进制文件保持只读兼容。
 - 修复历史视图首次打开时自动展开最新提交且无法再次点击收起的问题；提交现在默认收起并支持点击切换。提交 Diff 加载器保持稳定，不再因 Git 状态刷新或父组件重渲染而反复清空、重新加载。
 

@@ -154,6 +154,50 @@ pub struct PullRequest {
     pub strategy: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OperationRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub operation: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitRefCompareRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub base_ref: String,
+    #[serde(default)]
+    pub target_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitAdvancedOperationRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub operation: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitCommitPatchRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub commit_id: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitRepoInfo {
@@ -234,6 +278,15 @@ fn validate_relative(value: &str, allow_empty: bool) -> Result<String, String> {
         return Err("remote_git_path_invalid".to_string());
     }
     Ok(value.to_string())
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitTagInfo {
+    pub name: String,
+    pub target: String,
+    pub annotated: bool,
+    pub message: String,
 }
 
 pub(super) fn validate_repo_relative_path(value: &str) -> Result<String, String> {
@@ -613,6 +666,10 @@ fn branch_status(request: RepoRequest) -> Result<GitBranchStatus, String> {
             Some("merge".to_string())
         } else if dir.join("rebase-merge").exists() || dir.join("rebase-apply").exists() {
             Some("rebase".to_string())
+        } else if dir.join("CHERRY_PICK_HEAD").exists() {
+            Some("cherry-pick".to_string())
+        } else if dir.join("REVERT_HEAD").exists() {
+            Some("revert".to_string())
         } else {
             None
         }
@@ -1152,6 +1209,52 @@ fn network(request: RepoRequest, args: &[&str]) -> Result<Value, String> {
     Ok(mutation(run_git(&repo, args, true, NETWORK_TIMEOUT)?))
 }
 
+fn validate_ref(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 256
+        || value.starts_with('-')
+        || invalid_text(value)
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err("invalid_git_ref".to_string());
+    }
+    Ok(())
+}
+
+fn validate_commit(repo: &Path, value: &str) -> Result<(), String> {
+    validate_ref(value)?;
+    let revision = format!("{value}^{{commit}}");
+    run_git(
+        repo,
+        &["rev-parse", "--verify", &revision],
+        false,
+        READ_TIMEOUT,
+    )
+    .map(|_| ())
+    .map_err(|_| "git_history_commit_not_found".to_string())
+}
+
+fn pending_operation_args(operation: &str, action: &str) -> Result<Vec<&'static str>, String> {
+    let args = match (operation, action) {
+        ("merge", "continue") => vec!["-c", "core.editor=true", "merge", "--continue"],
+        ("rebase", "continue") => vec!["-c", "core.editor=true", "rebase", "--continue"],
+        ("cherry-pick", "continue") => vec!["-c", "core.editor=true", "cherry-pick", "--continue"],
+        ("revert", "continue") => vec!["-c", "core.editor=true", "revert", "--continue"],
+        ("merge", "abort") => vec!["merge", "--abort"],
+        ("rebase", "abort") => vec!["rebase", "--abort"],
+        ("cherry-pick", "abort") => vec!["cherry-pick", "--abort"],
+        ("revert", "abort") => vec!["revert", "--abort"],
+        _ => return Err("git_operation_invalid".to_string()),
+    };
+    Ok(args)
+}
+
+fn operation(request: OperationRequest, action: &str) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    let args = pending_operation_args(&request.operation, action)?;
+    Ok(mutation(run_git(&repo, &args, true, WRITE_TIMEOUT)?))
+}
+
 fn checkout(request: CheckoutRequest, smart: bool) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     validate_branch(&repo, &request.branch)?;
@@ -1227,7 +1330,195 @@ fn pull_abort(request: RepoRequest) -> Result<Value, String> {
     Ok(mutation(run_git(&repo, args, true, WRITE_TIMEOUT)?))
 }
 
+fn list_tags(request: RepoRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    let separator = '\x1f';
+    let format = format!(
+        "%(refname:short){separator}%(objectname){separator}%(objecttype){separator}%(subject)"
+    );
+    let output = run_git(
+        &repo,
+        &["for-each-ref", "--sort=-creatordate", &format, "refs/tags"],
+        false,
+        READ_TIMEOUT,
+    )?;
+    let tags = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let fields = line.splitn(4, separator).collect::<Vec<_>>();
+            (fields.len() == 4 && !fields[0].is_empty()).then(|| GitTagInfo {
+                name: fields[0].to_string(),
+                target: fields[1].to_string(),
+                annotated: fields[2] == "tag",
+                message: fields[3].to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({ "tags": tags, "asOf": as_of_ms() }))
+}
+
+fn compare_refs(request: GitRefCompareRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    validate_ref(&request.base_ref)?;
+    if let Some(target) = request.target_ref.as_deref() {
+        validate_ref(target)?;
+    }
+    let range = request
+        .target_ref
+        .as_deref()
+        .map(|target| format!("{}...{target}", request.base_ref));
+    let reference = range.as_deref().unwrap_or(&request.base_ref);
+    let output = run_git(
+        &repo,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--unified=3",
+            reference,
+        ],
+        false,
+        READ_TIMEOUT,
+    )?;
+    if output.stdout.len() > MAX_DIFF_BYTES {
+        return Err("git_diff_too_large".to_string());
+    }
+    let content = String::from_utf8_lossy(&output.stdout).into_owned();
+    let line_count = content.lines().count();
+    Ok(json!({
+        "diff": {
+            "content": content,
+            "canRevertHunks": false,
+            "byteLength": output.stdout.len(),
+            "lineCount": line_count
+        },
+        "asOf": as_of_ms()
+    }))
+}
+
+fn commit_patch(request: GitCommitPatchRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    validate_commit(&repo, &request.commit_id)?;
+    let output = run_git(
+        &repo,
+        &[
+            "format-patch",
+            "-1",
+            "--stdout",
+            "--binary",
+            &request.commit_id,
+        ],
+        false,
+        READ_TIMEOUT,
+    )?;
+    if output.stdout.is_empty() || output.stdout.len() > 4 * 1024 * 1024 {
+        return Err("git_patch_content_invalid".to_string());
+    }
+    Ok(json!({
+        "content": String::from_utf8_lossy(&output.stdout).into_owned(),
+        "asOf": as_of_ms()
+    }))
+}
+
+fn advanced_operation(request: GitAdvancedOperationRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    let branch = request.branch.as_deref();
+    let target = request.target.as_deref();
+    let require_branch = || branch.ok_or_else(|| "branch_required".to_string());
+    let require_target = || target.ok_or_else(|| "target_required".to_string());
+    let output = match request.operation.as_str() {
+        "create-branch" => {
+            let name = require_branch()?;
+            validate_branch(&repo, name)?;
+            if let Some(base) = target {
+                validate_ref(base)?;
+                run_git(&repo, &["checkout", "-b", name, base], true, WRITE_TIMEOUT)?
+            } else {
+                run_git(&repo, &["checkout", "-b", name], true, WRITE_TIMEOUT)?
+            }
+        }
+        "rename-branch" => {
+            let old = require_branch()?;
+            let new = require_target()?;
+            validate_branch(&repo, old)?;
+            validate_branch(&repo, new)?;
+            run_git(&repo, &["branch", "-m", old, new], true, WRITE_TIMEOUT)?
+        }
+        "delete-branch" => {
+            let name = require_branch()?;
+            validate_branch(&repo, name)?;
+            let flag = if request.mode.as_deref() == Some("force") {
+                "-D"
+            } else {
+                "-d"
+            };
+            run_git(&repo, &["branch", flag, name], true, WRITE_TIMEOUT)?
+        }
+        "set-upstream" => {
+            let name = require_branch()?;
+            let upstream = require_target()?;
+            validate_branch(&repo, name)?;
+            validate_ref(upstream)?;
+            run_git(
+                &repo,
+                &["branch", "--set-upstream-to", upstream, name],
+                true,
+                WRITE_TIMEOUT,
+            )?
+        }
+        "merge" => {
+            let name = require_branch()?;
+            validate_ref(name)?;
+            run_git(&repo, &["merge", "--no-edit", name], true, WRITE_TIMEOUT)?
+        }
+        "rebase" => {
+            let name = require_branch()?;
+            validate_ref(name)?;
+            run_git(&repo, &["rebase", name], true, WRITE_TIMEOUT)?
+        }
+        "cherry-pick" => {
+            let commit = require_target()?;
+            validate_commit(&repo, commit)?;
+            run_git(&repo, &["cherry-pick", commit], true, WRITE_TIMEOUT)?
+        }
+        "revert" => {
+            let commit = require_target()?;
+            validate_commit(&repo, commit)?;
+            run_git(&repo, &["revert", "--no-edit", commit], true, WRITE_TIMEOUT)?
+        }
+        "reset" => {
+            let commit = require_target()?;
+            validate_commit(&repo, commit)?;
+            let mode = match request.mode.as_deref() {
+                Some("soft") => "--soft",
+                Some("mixed") | None => "--mixed",
+                Some("hard") => "--hard",
+                _ => return Err("invalid_reset_mode".to_string()),
+            };
+            run_git(&repo, &["reset", mode, commit], true, WRITE_TIMEOUT)?
+        }
+        "create-tag" => {
+            let tag = require_branch()?;
+            let commit = require_target()?;
+            validate_ref(tag)?;
+            validate_commit(&repo, commit)?;
+            run_git(&repo, &["tag", tag, commit], true, WRITE_TIMEOUT)?
+        }
+        "delete-tag" => {
+            let tag = require_branch()?;
+            validate_ref(tag)?;
+            run_git(&repo, &["tag", "-d", tag], true, WRITE_TIMEOUT)?
+        }
+        _ => return Err("git_operation_invalid".to_string()),
+    };
+    Ok(mutation(output))
+}
+
 pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
+    if crate::git_tools::handles(kind) {
+        return crate::git_tools::dispatch(kind, payload);
+    }
     match kind {
         "gitListRepositories" => Ok(
             json!({ "repositories": list_repositories(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
@@ -1241,7 +1532,7 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
         "gitDiffWithOptions" => Ok(
             json!({ "diff": crate::git_diff::diff_with_options(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
-        "gitListCommits" => Ok(
+        "gitListCommits" | "gitListCommitsFiltered" => Ok(
             json!({ "page": crate::git_history::list_commits(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
         "gitCommitDetail" => Ok(
@@ -1255,6 +1546,18 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
         ),
         "gitBranches" => Ok(
             json!({ "branches": branches(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
+        "gitTags" => {
+            list_tags(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)
+        }
+        "gitCompareRefs" => {
+            compare_refs(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)
+        }
+        "gitCommitPatch" => {
+            commit_patch(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)
+        }
+        "gitExecuteOperation" => advanced_operation(
+            serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
         ),
         "gitStage" => {
             stage(
@@ -1370,6 +1673,14 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
         "gitRebaseContinue" => network(
             serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
             &["-c", "core.editor=true", "rebase", "--continue"],
+        ),
+        "gitOperationContinue" => operation(
+            serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
+            "continue",
+        ),
+        "gitOperationAbort" => operation(
+            serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
+            "abort",
         ),
         _ => Err("remote_git_kind_invalid".to_string()),
     }

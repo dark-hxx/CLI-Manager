@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { debugConsoleLog, debugConsoleWarn } from "../lib/debugConsole";
-import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy, GitBranchInfo } from "../lib/types";
+import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy, GitBranchInfo, GitPendingOperation } from "../lib/types";
 import { useSettingsStore } from "./settingsStore";
 import {
   type GitFileDiffPayload,
@@ -98,6 +98,8 @@ interface GitStore {
   pullAbort: () => Promise<void>;
   /** 变基冲突解决并暂存后继续。 */
   rebaseContinue: () => Promise<string>;
+  operationContinue: (operation: GitPendingOperation) => Promise<string>;
+  operationAbort: (operation: GitPendingOperation) => Promise<string>;
   toggleDir: (path: string) => void;
   collapseAllDirs: () => void;
   expandAllDirs: () => void;
@@ -928,6 +930,50 @@ export const useGitStore = create<GitStore>((set, get) => ({
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[GitStore] 继续变基失败:`, err);
+      set({ error: errorMsg });
+      await get().fetchChanges(currentProjectPath, true);
+      await get().fetchBranchStatus(currentProjectPath);
+      throw err;
+    } finally {
+      set({ pulling: false });
+    }
+  },
+
+  operationContinue: async (operation) => {
+    const { currentProjectPath } = get();
+    if (!currentProjectPath) throw new Error("no_project");
+    set({ pulling: true, error: null });
+    try {
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).operationContinue(repoPath, operation);
+      await get().fetchChanges(currentProjectPath, true);
+      await get().fetchBranchStatus(currentProjectPath);
+      return out;
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      set({ error: errorMsg });
+      await get().fetchChanges(currentProjectPath, true);
+      await get().fetchBranchStatus(currentProjectPath);
+      throw err;
+    } finally {
+      set({ pulling: false });
+    }
+  },
+
+  operationAbort: async (operation) => {
+    const { currentProjectPath } = get();
+    if (!currentProjectPath) throw new Error("no_project");
+    set({ pulling: true, error: null });
+    try {
+      const repoPath = effectiveRepoPath();
+      if (repoPath === null) throw new Error("no_project");
+      const out = await currentTransport(currentProjectPath).operationAbort(repoPath, operation);
+      await get().fetchChanges(currentProjectPath, true);
+      await get().fetchBranchStatus(currentProjectPath);
+      return out;
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       set({ error: errorMsg });
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);

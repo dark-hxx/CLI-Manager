@@ -1,5 +1,24 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, GitBranchInfo, GitBranchStatus, GitCommitDetail, GitCommitPage, GitFileChange, GitPullStrategy } from "./types";
+import type {
+  Project,
+  GitBranchInfo,
+  GitBranchStatus,
+  GitBisectStatus,
+  GitBlameLine,
+  GitCommitDetail,
+  GitCommitPage,
+  GitFileChange,
+  GitHistoryFilters,
+  GitFileHistoryEntry,
+  GitPendingOperation,
+  GitPullStrategy,
+  GitReflogEntry,
+  GitRemoteInfo,
+  GitRewriteStep,
+  GitStashInfo,
+  GitSubmoduleInfo,
+  GitTagInfo,
+} from "./types";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "./ssh";
 import { getSshClientInstanceId } from "./sshClientIdentity";
 import { useBackgroundOperationStore } from "../stores/backgroundOperationStore";
@@ -66,13 +85,20 @@ export function createSshRemoteGitConsumerId(
 }
 
 type ReadKind = "gitListRepositories" | "gitChanges" | "gitDiff" | "gitDiffWithOptions"
-  | "gitListCommits" | "gitCommitDetail" | "gitCommitFileDiff"
-  | "gitBranchStatus" | "gitBranches";
+  | "gitListCommits" | "gitListCommitsFiltered" | "gitCommitDetail" | "gitCommitFileDiff"
+  | "gitBranchStatus" | "gitBranches" | "gitTags" | "gitCompareRefs" | "gitCommitPatch"
+  | "gitListStashes" | "gitListRemotes" | "gitListReflog" | "gitFileHistory"
+  | "gitBlameFile" | "gitBisectStatus" | "gitListSubmodules";
+
 type WriteKind =
   | "gitStage" | "gitUnstage" | "gitStageAll" | "gitUnstageAll"
   | "gitDiscardFile" | "gitDeleteUntracked" | "gitRevertHunk" | "gitRevertLines"
   | "gitCommit" | "gitCommitPaths" | "gitFetch" | "gitPush" | "gitCheckout"
-  | "gitSmartCheckout" | "gitCreateBranch" | "gitPull" | "gitPullAbort" | "gitRebaseContinue";
+  | "gitSmartCheckout" | "gitCreateBranch" | "gitPull" | "gitPullAbort" | "gitRebaseContinue"
+  | "gitOperationContinue" | "gitOperationAbort" | "gitExecuteOperation"
+  | "gitStashCreate" | "gitStashAction" | "gitRemoteAction" | "gitPushTag"
+  | "gitDeleteRemoteBranch" | "gitForcePushWithLease" | "gitRestoreReflog"
+  | "gitBisectAction" | "gitSubmoduleAction" | "gitRewriteCommits";
 
 interface MutationResponse {
   output?: string;
@@ -198,11 +224,14 @@ export async function sshRemoteGitListCommits(
   repoPath = "",
   cursor?: string | null,
   search?: string,
+  reference?: string | null,
+  filters?: GitHistoryFilters | null,
 ): Promise<SshRemoteGitSnapshot<GitCommitPage>> {
+  const kind = filters ? "gitListCommitsFiltered" : "gitListCommits";
   const result = await request<{ page: GitCommitPage; asOf: number }>(
     context,
-    "gitListCommits",
-    { repoPath, cursor: cursor ?? null, search: search?.trim() || null },
+    kind,
+    { repoPath, cursor: cursor ?? null, search: search?.trim() || null, reference: reference?.trim() || null, filters: filters ? { allRefs: filters.scope === "all", references: filters.references, author: filters.author, since: filters.since, until: filters.until, path: filters.path } : null },
     true,
   );
   return { value: result.page, asOf: result.asOf };
@@ -300,3 +329,91 @@ export const sshRemoteGitPullAbort = (context: SshRemoteGitContext, repoPath: st
   request<MutationResponse>(context, "gitPullAbort", { repoPath }, false);
 export const sshRemoteGitRebaseContinue = (context: SshRemoteGitContext, repoPath: string) =>
   request<MutationResponse>(context, "gitRebaseContinue", { repoPath }, false);
+export const sshRemoteGitOperationContinue = (context: SshRemoteGitContext, repoPath: string, operation: GitPendingOperation) =>
+  request<MutationResponse>(context, "gitOperationContinue", { repoPath, operation }, false);
+export const sshRemoteGitOperationAbort = (context: SshRemoteGitContext, repoPath: string, operation: GitPendingOperation) =>
+  request<MutationResponse>(context, "gitOperationAbort", { repoPath, operation }, false);
+
+export async function sshRemoteGitTags(
+  context: SshRemoteGitContext,
+  repoPath: string,
+): Promise<SshRemoteGitSnapshot<GitTagInfo[]>> {
+  const result = await request<{ tags: GitTagInfo[]; asOf: number }>(context, "gitTags", { repoPath }, true);
+  return { value: result.tags, asOf: result.asOf };
+}
+
+export async function sshRemoteGitCompareRefs(
+  context: SshRemoteGitContext,
+  repoPath: string,
+  baseRef: string,
+  targetRef?: string | null,
+): Promise<SshRemoteGitSnapshot<SshRemoteGitDiff>> {
+  const result = await request<{ diff: SshRemoteGitDiff; asOf: number }>(context, "gitCompareRefs", { repoPath, baseRef, targetRef: targetRef ?? null }, true);
+  return { value: result.diff, asOf: result.asOf };
+}
+
+export async function sshRemoteGitCommitPatch(
+  context: SshRemoteGitContext,
+  repoPath: string,
+  commitId: string,
+): Promise<SshRemoteGitSnapshot<string>> {
+  const result = await request<{ content: string; asOf: number }>(context, "gitCommitPatch", { repoPath, commitId }, true);
+  return { value: result.content, asOf: result.asOf };
+}
+
+export const sshRemoteGitExecuteOperation = (
+  context: SshRemoteGitContext,
+  repoPath: string,
+  operation: string,
+  branch?: string | null,
+  target?: string | null,
+  mode?: string | null,
+) => request<MutationResponse>(context, "gitExecuteOperation", {
+  repoPath,
+  operation,
+  branch: branch ?? null,
+  target: target ?? null,
+  mode: mode ?? null,
+}, false);
+
+export async function sshRemoteGitListStashes(context: SshRemoteGitContext, repoPath: string): Promise<SshRemoteGitSnapshot<GitStashInfo[]>> {
+  const result = await request<{ stashes: GitStashInfo[]; asOf: number }>(context, "gitListStashes", { repoPath }, true);
+  return { value: result.stashes, asOf: result.asOf };
+}
+export const sshRemoteGitStashCreate = (context: SshRemoteGitContext, repoPath: string, message: string, includeUntracked: boolean) => request<MutationResponse>(context, "gitStashCreate", { repoPath, message, includeUntracked }, false);
+export const sshRemoteGitStashAction = (context: SshRemoteGitContext, repoPath: string, action: "apply" | "pop" | "drop", selector: string) => request<MutationResponse>(context, "gitStashAction", { repoPath, action, selector }, false);
+
+export async function sshRemoteGitListRemotes(context: SshRemoteGitContext, repoPath: string): Promise<SshRemoteGitSnapshot<GitRemoteInfo[]>> {
+  const result = await request<{ remotes: GitRemoteInfo[]; asOf: number }>(context, "gitListRemotes", { repoPath }, true);
+  return { value: result.remotes, asOf: result.asOf };
+}
+export const sshRemoteGitRemoteAction = (context: SshRemoteGitContext, repoPath: string, action: "add" | "set-url" | "rename" | "remove" | "fetch", name: string, value?: string | null) => request<MutationResponse>(context, "gitRemoteAction", { repoPath, action, name, value: value ?? null }, false);
+export const sshRemoteGitPushTag = (context: SshRemoteGitContext, repoPath: string, remote: string, tag: string) => request<MutationResponse>(context, "gitPushTag", { repoPath, remote, tag }, false);
+export const sshRemoteGitDeleteRemoteBranch = (context: SshRemoteGitContext, repoPath: string, remote: string, branch: string) => request<MutationResponse>(context, "gitDeleteRemoteBranch", { repoPath, remote, branch }, false);
+export const sshRemoteGitForcePushWithLease = (context: SshRemoteGitContext, repoPath: string, remote: string, branch: string) => request<MutationResponse>(context, "gitForcePushWithLease", { repoPath, remote, branch }, false);
+
+export async function sshRemoteGitListReflog(context: SshRemoteGitContext, repoPath: string): Promise<SshRemoteGitSnapshot<GitReflogEntry[]>> {
+  const result = await request<{ entries: GitReflogEntry[]; asOf: number }>(context, "gitListReflog", { repoPath }, true);
+  return { value: result.entries, asOf: result.asOf };
+}
+export const sshRemoteGitRestoreReflog = (context: SshRemoteGitContext, repoPath: string, selector: string, branch: string) => request<MutationResponse>(context, "gitRestoreReflog", { repoPath, selector, branch }, false);
+
+export async function sshRemoteGitFileHistory(context: SshRemoteGitContext, repoPath: string, path: string): Promise<SshRemoteGitSnapshot<GitFileHistoryEntry[]>> {
+  const result = await request<{ entries: GitFileHistoryEntry[]; asOf: number }>(context, "gitFileHistory", { repoPath, path }, true);
+  return { value: result.entries, asOf: result.asOf };
+}
+export async function sshRemoteGitBlameFile(context: SshRemoteGitContext, repoPath: string, path: string): Promise<SshRemoteGitSnapshot<GitBlameLine[]>> {
+  const result = await request<{ lines: GitBlameLine[]; asOf: number }>(context, "gitBlameFile", { repoPath, path }, true);
+  return { value: result.lines, asOf: result.asOf };
+}
+export async function sshRemoteGitBisectStatus(context: SshRemoteGitContext, repoPath: string): Promise<SshRemoteGitSnapshot<GitBisectStatus>> {
+  const result = await request<{ status: GitBisectStatus; asOf: number }>(context, "gitBisectStatus", { repoPath }, true);
+  return { value: result.status, asOf: result.asOf };
+}
+export const sshRemoteGitBisectAction = (context: SshRemoteGitContext, repoPath: string, action: "start" | "good" | "bad" | "skip" | "reset", good?: string | null, bad?: string | null) => request<MutationResponse>(context, "gitBisectAction", { repoPath, action, good: good ?? null, bad: bad ?? null }, false);
+export async function sshRemoteGitListSubmodules(context: SshRemoteGitContext, repoPath: string): Promise<SshRemoteGitSnapshot<GitSubmoduleInfo[]>> {
+  const result = await request<{ submodules: GitSubmoduleInfo[]; asOf: number }>(context, "gitListSubmodules", { repoPath }, true);
+  return { value: result.submodules, asOf: result.asOf };
+}
+export const sshRemoteGitSubmoduleAction = (context: SshRemoteGitContext, repoPath: string, action: "init" | "update" | "sync", path?: string | null) => request<MutationResponse>(context, "gitSubmoduleAction", { repoPath, action, path: path ?? null }, false);
+export const sshRemoteGitRewriteCommits = (context: SshRemoteGitContext, repoPath: string, upstream: string, steps: GitRewriteStep[]) => request<MutationResponse>(context, "gitRewriteCommits", { repoPath, upstream, steps }, false);

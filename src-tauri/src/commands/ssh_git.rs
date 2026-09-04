@@ -58,15 +58,52 @@ pub async fn ssh_remote_git_request(
         "gitChanges" => "gitChanges",
         "gitDiff" => "gitDiff",
         "gitDiffWithOptions" => "gitDiffWithOptions",
-        "gitListCommits" => "gitListCommits",
+        "gitListCommits" | "gitListCommitsFiltered" => kind.as_str(),
         "gitCommitDetail" => "gitCommitDetail",
         "gitCommitFileDiff" => "gitCommitFileDiff",
         "gitBranchStatus" => "gitBranchStatus",
         "gitBranches" => "gitBranches",
-        "gitStage" | "gitUnstage" | "gitStageAll" | "gitUnstageAll" | "gitDiscardFile"
-        | "gitDeleteUntracked" | "gitRevertHunk" | "gitRevertLines" | "gitCommit"
-        | "gitCommitPaths" | "gitFetch" | "gitPush" | "gitCheckout" | "gitSmartCheckout"
-        | "gitCreateBranch" | "gitPull" | "gitPullAbort" | "gitRebaseContinue" => kind.as_str(),
+        "gitStage"
+        | "gitUnstage"
+        | "gitStageAll"
+        | "gitUnstageAll"
+        | "gitDiscardFile"
+        | "gitDeleteUntracked"
+        | "gitRevertHunk"
+        | "gitRevertLines"
+        | "gitCommit"
+        | "gitCommitPaths"
+        | "gitFetch"
+        | "gitPush"
+        | "gitCheckout"
+        | "gitSmartCheckout"
+        | "gitCreateBranch"
+        | "gitPull"
+        | "gitPullAbort"
+        | "gitRebaseContinue"
+        | "gitOperationContinue"
+        | "gitOperationAbort"
+        | "gitExecuteOperation"
+        | "gitTags"
+        | "gitCompareRefs"
+        | "gitCommitPatch"
+        | "gitListStashes"
+        | "gitStashCreate"
+        | "gitStashAction"
+        | "gitListRemotes"
+        | "gitRemoteAction"
+        | "gitPushTag"
+        | "gitDeleteRemoteBranch"
+        | "gitForcePushWithLease"
+        | "gitListReflog"
+        | "gitRestoreReflog"
+        | "gitFileHistory"
+        | "gitBlameFile"
+        | "gitBisectStatus"
+        | "gitBisectAction"
+        | "gitListSubmodules"
+        | "gitSubmoduleAction"
+        | "gitRewriteCommits" => kind.as_str(),
         _ => return Err("remote_git_kind_invalid".to_string()),
     };
     let object = payload

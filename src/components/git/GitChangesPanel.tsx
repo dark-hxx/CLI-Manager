@@ -336,7 +336,8 @@ export function GitChangesPanel({
     createBranch,
     pull,
     pullAbort,
-    rebaseContinue,
+    operationContinue,
+    operationAbort,
     selectedUntracked,
     setUntrackedSelection,
     clearUntrackedSelection,
@@ -786,18 +787,25 @@ export function GitChangesPanel({
     }
   };
 
-  const handleRebaseContinue = async () => {
-    if (pulling) return;
+  const handlePendingOperationContinue = async () => {
+    if (!pendingOp || pulling || pendingOp === "merge") return;
     try {
-      await rebaseContinue();
-      toast.success(t("git.toast.rebaseContinued"));
+      await operationContinue(pendingOp);
+      toast.success(t("git.conflict.continued"));
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      if (m.includes("pull_conflict")) {
-        toast.error(t("git.toast.unresolvedConflicts"));
-      } else {
-        toast.error(formatGitNetError(t("git.error.continueRebaseFailed"), m, t));
-      }
+      toast.error(formatGitNetError(t("git.error.continueFailed"), m, t));
+    }
+  };
+
+  const handlePendingOperationAbort = async () => {
+    if (!pendingOp || pulling) return;
+    try {
+      await operationAbort(pendingOp);
+      toast.success(t("git.toast.aborted"));
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      toast.error(formatGitNetError(t("git.error.abortFailed"), m, t));
     }
   };
 
@@ -1306,30 +1314,34 @@ export function GitChangesPanel({
         >
           <span className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color: STATUS_CONFIG.C.color }}>
             <GitMerge size={12} strokeWidth={2} />
-            {pendingOp === "rebase" ? t("git.conflict.rebaseInProgress") : t("git.conflict.mergeInProgress")}
+            {pendingOp === "rebase" ? t("git.conflict.rebaseInProgress") : pendingOp === "cherry-pick" ? t("git.conflict.cherryPickInProgress") : pendingOp === "revert" ? t("git.conflict.revertInProgress") : t("git.conflict.mergeInProgress")}
             {hasConflicts && <span className="font-normal">· {t("git.conflict.hasConflicts")}</span>}
           </span>
           <span className="text-[10px] leading-snug" style={{ color: TERM.dim }}>
             {pendingOp === "rebase"
               ? t("git.conflict.rebaseHint")
-              : t("git.conflict.mergeHint")}
+              : pendingOp === "cherry-pick"
+                ? t("git.conflict.cherryPickHint")
+                : pendingOp === "revert"
+                  ? t("git.conflict.revertHint")
+                  : t("git.conflict.mergeHint")}
           </span>
           <span className="flex items-center gap-1.5">
-            {pendingOp === "rebase" && (
+            {pendingOp !== "merge" && (
               <button
                 type="button"
-                onClick={() => void handleRebaseContinue()}
+                onClick={() => void handlePendingOperationContinue()}
                 disabled={pulling || hasConflicts}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
                 style={{ color: TERM.green, border: `1px solid ${panelColorTint(TERM.green, 34)}` }}
-                title={hasConflicts ? t("git.conflict.resolveFirst") : t("git.conflict.continueRebase")}
+                title={hasConflicts ? t("git.conflict.resolveFirst") : t("git.conflict.continue")}
               >
                 <Check size={12} /> {t("git.conflict.continue")}
               </button>
             )}
             <button
               type="button"
-              onClick={() => void handlePullAbort()}
+              onClick={() => void (pendingOp === "merge" || pendingOp === "rebase" ? handlePullAbort() : handlePendingOperationAbort())}
               disabled={pulling}
               className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
               style={{ color: STATUS_CONFIG.C.color, border: `1px solid ${panelColorTint(STATUS_CONFIG.C.color, 34)}` }}

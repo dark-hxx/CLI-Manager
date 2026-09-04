@@ -16,6 +16,25 @@ pub struct ListCommitsRequest {
     pub repo_path: String,
     pub cursor: Option<String>,
     pub search: Option<String>,
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default)]
+    pub filters: Option<GitHistoryFilters>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitHistoryFilters {
+    #[serde(default)]
+    pub all_refs: bool,
+    #[serde(default)]
+    pub references: Vec<String>,
+    #[serde(default)]
+    pub author: String,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+    #[serde(default)]
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -138,6 +157,41 @@ fn matches(commit: &GitCommitSummary, search: Option<&str>) -> bool {
         || commit.id.to_lowercase().contains(search)
 }
 
+fn validate_reference(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 256
+        || value.starts_with('-')
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err("git_history_reference_invalid".to_string());
+    }
+    Ok(())
+}
+
+fn validate_filters(filters: &GitHistoryFilters) -> Result<(), String> {
+    if filters.references.len() > 64 {
+        return Err("git_history_too_many_references".to_string());
+    }
+    for reference in &filters.references {
+        validate_reference(reference)?;
+    }
+    if filters.author.len() > 256 || filters.author.chars().any(char::is_control) {
+        return Err("git_history_author_invalid".to_string());
+    }
+    if filters.since.is_some_and(|value| value < 0)
+        || filters.until.is_some_and(|value| value < 0)
+        || matches!((filters.since, filters.until), (Some(since), Some(until)) if since > until)
+    {
+        return Err("git_history_date_invalid".to_string());
+    }
+    if !filters.path.is_empty() {
+        validate_repo_relative_path(&filters.path)?;
+    }
+    Ok(())
+}
+
 pub fn list_commits(request: ListCommitsRequest) -> Result<GitCommitPage, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     if let Some(cursor) = request.cursor.as_deref() {
@@ -147,6 +201,13 @@ pub fn list_commits(request: ListCommitsRequest) -> Result<GitCommitPage, String
         .search
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
+    let reference = request.reference.filter(|value| !value.trim().is_empty());
+    if let Some(value) = reference.as_deref() {
+        validate_reference(value)?;
+    }
+    if let Some(filters) = request.filters.as_ref() {
+        validate_filters(filters)?;
+    }
     if let Err(error) = run_git(
         &repo,
         &["rev-parse", "--verify", "HEAD"],
@@ -166,7 +227,7 @@ pub fn list_commits(request: ListCommitsRequest) -> Result<GitCommitPage, String
     let mut cursor_seen = request.cursor.is_none();
     let mut commits = Vec::with_capacity(PAGE_SIZE + 1);
     loop {
-        let args = vec![
+        let mut args = vec![
             "log".to_string(),
             "--date-order".to_string(),
             "--decorate=short".to_string(),
@@ -174,6 +235,34 @@ pub fn list_commits(request: ListCommitsRequest) -> Result<GitCommitPage, String
             format!("--skip={skip}"),
             "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s".to_string(),
         ];
+        if request.filters.as_ref().is_some_and(|value| value.all_refs) {
+            args.push("--all".to_string());
+        } else if let Some(references) = request
+            .filters
+            .as_ref()
+            .filter(|value| !value.references.is_empty())
+            .map(|value| value.references.as_slice())
+        {
+            args.extend(references.iter().cloned());
+        } else if let Some(reference) = reference.as_deref() {
+            args.push(reference.to_string());
+        }
+        if let Some(filters) = request.filters.as_ref() {
+            let author = filters.author.trim();
+            if !author.is_empty() {
+                args.push(format!("--author={author}"));
+            }
+            if let Some(since) = filters.since {
+                args.push(format!("--since=@{}", since / 1000));
+            }
+            if let Some(until) = filters.until {
+                args.push(format!("--until=@{}", until / 1000));
+            }
+            if !filters.path.is_empty() {
+                args.push("--".to_string());
+                args.push(filters.path.clone());
+            }
+        }
         let output = run_git(
             &repo,
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -477,6 +566,8 @@ mod tests {
             repo_path: String::new(),
             cursor: None,
             search: None,
+            reference: None,
+            filters: None,
         })
         .unwrap();
         assert!(empty.commits.is_empty());
@@ -489,6 +580,8 @@ mod tests {
             repo_path: String::new(),
             cursor: None,
             search: None,
+            reference: None,
+            filters: None,
         })
         .unwrap();
         assert_eq!(first.commits.len(), 50);
@@ -498,6 +591,8 @@ mod tests {
             repo_path: String::new(),
             cursor: Some(cursor),
             search: Some("commit".to_string()),
+            reference: None,
+            filters: None,
         })
         .unwrap();
         assert_eq!(second.commits.len(), 2);

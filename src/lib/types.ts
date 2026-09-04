@@ -1255,6 +1255,84 @@ export interface GitCommitPage {
   nextCursor: string | null;
 }
 
+export type GitLogScope = "current" | "all" | "selected";
+
+export interface GitHistoryFilters {
+  scope: GitLogScope;
+  references: string[];
+  author: string;
+  since: number | null;
+  until: number | null;
+  path: string;
+}
+
+export interface GitTagInfo {
+  name: string;
+  target: string;
+  annotated: boolean;
+  message: string;
+}
+
+export interface GitStashInfo {
+  selector: string;
+  oid: string;
+  branch: string;
+  message: string;
+  createdAt: number;
+}
+
+export interface GitRemoteInfo {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+export interface GitReflogEntry {
+  selector: string;
+  oid: string;
+  shortId: string;
+  action: string;
+  message: string;
+  authoredAt: number;
+}
+
+export interface GitFileHistoryEntry {
+  id: string;
+  shortId: string;
+  author: string;
+  authoredAt: number;
+  title: string;
+}
+
+export interface GitBlameLine {
+  lineNumber: number;
+  commitId: string;
+  author: string;
+  authoredAt: number;
+  content: string;
+}
+
+export interface GitBisectStatus {
+  active: boolean;
+  summary: string;
+}
+
+export interface GitSubmoduleInfo {
+  name: string;
+  path: string;
+  url: string;
+  commitId: string;
+  status: string;
+}
+
+export type GitRewriteAction = "pick" | "reword" | "squash" | "fixup" | "drop";
+
+export interface GitRewriteStep {
+  action: GitRewriteAction;
+  commitId: string;
+  message: string;
+}
+
 export interface GitCommitFile {
   path: string;
   oldPath: string | null;
@@ -1271,6 +1349,9 @@ export interface GitCommitDetail {
 
 /** 拉取策略：合并 / 变基 / 仅快进（对应后端 git_pull strategy 入参）。 */
 export type GitPullStrategy = "merge" | "rebase" | "ff-only";
+
+/** Git can leave one of these operations pending while conflicts are resolved. */
+export type GitPendingOperation = "merge" | "rebase" | "cherry-pick" | "revert";
 
 export interface GitTreeNode {
   type: "file" | "directory";
@@ -1293,8 +1374,8 @@ export interface GitBranchStatus {
   behind: number;
   hasUpstream: boolean;
   detached: boolean;
-  /** 进行中的操作："merge" / "rebase"；无则 null。驱动冲突横幅与「中止/继续」入口。 */
-  pendingOp: "merge" | "rebase" | null;
+  /** 进行中的操作；无则 null。驱动冲突横幅与「中止/继续」入口。 */
+  pendingOp: GitPendingOperation | null;
 }
 
 export interface GitBranchInfo {

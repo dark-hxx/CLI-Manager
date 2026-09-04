@@ -3,6 +3,7 @@ pub mod files;
 pub mod git;
 mod git_diff;
 mod git_history;
+mod git_tools;
 pub mod history;
 pub mod hook_config;
 pub mod hook_runtime;
@@ -14,7 +15,7 @@ use serde::Serialize;
 
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PROTOCOL_MAJOR: u16 = 1;
-pub const PROTOCOL_MINOR: u16 = 14;
+pub const PROTOCOL_MINOR: u16 = 15;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,9 +51,9 @@ mod tests {
     fn version_report_uses_the_stable_agent_identity() {
         let report = version_report();
         assert_eq!(report.agent_name, "cli-manager-ssh-agent");
-        assert_eq!(report.agent_version, "0.1.13");
+        assert_eq!(report.agent_version, "0.1.14");
         assert_eq!(report.protocol_major, 1);
-        assert_eq!(report.protocol_minor, 14);
+        assert_eq!(report.protocol_minor, 15);
     }
 
     #[test]

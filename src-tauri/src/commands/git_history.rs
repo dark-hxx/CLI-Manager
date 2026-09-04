@@ -1,5 +1,5 @@
 use git2::{Delta, DiffFindOptions, DiffOptions, Oid, Repository, Sort};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -34,6 +34,43 @@ pub struct GitCommitSummary {
 pub struct GitCommitPage {
     pub commits: Vec<GitCommitSummary>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitHistoryFilters {
+    #[serde(default)]
+    pub all_refs: bool,
+    #[serde(default)]
+    pub references: Vec<String>,
+    #[serde(default)]
+    pub author: String,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+    #[serde(default)]
+    pub path: String,
+}
+
+fn validate_history_filters(filters: &GitHistoryFilters) -> Result<(), String> {
+    if filters.references.len() > 64 {
+        return Err("git_history_too_many_references".to_string());
+    }
+    for reference in &filters.references {
+        validate_history_reference(reference)?;
+    }
+    if filters.author.len() > 256 || filters.author.chars().any(char::is_control) {
+        return Err("git_history_author_invalid".to_string());
+    }
+    if filters.since.is_some_and(|value| value < 0)
+        || filters.until.is_some_and(|value| value < 0)
+        || matches!((filters.since, filters.until), (Some(since), Some(until)) if since > until)
+    {
+        return Err("git_history_date_invalid".to_string());
+    }
+    if !filters.path.is_empty() {
+        validate_repo_relative_path(&filters.path)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -72,6 +109,21 @@ fn normalize_search(search: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn validate_history_reference(reference: &str) -> Result<(), String> {
+    let value = reference.trim();
+    if value.is_empty()
+        || value != reference
+        || value.len() > 256
+        || value.starts_with('-')
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err("git_history_reference_invalid".to_string());
+    }
+    Ok(())
+}
+
 fn matches_search(commit: &GitCommitSummary, search: Option<&str>) -> bool {
     let Some(search) = search else { return true };
     commit.title.to_lowercase().contains(search)
@@ -81,6 +133,66 @@ fn matches_search(commit: &GitCommitSummary, search: Option<&str>) -> bool {
             .as_deref()
             .is_some_and(|email| email.to_lowercase().contains(search))
         || commit.id.to_lowercase().contains(search)
+}
+
+fn commit_touches_path(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+    path: &str,
+) -> Result<bool, String> {
+    if path.is_empty() {
+        return Ok(true);
+    }
+    let tree = commit
+        .tree()
+        .map_err(|error| format!("git_history_tree_failed:{error}"))?;
+    let parent_tree = if commit.parent_count() > 0 {
+        Some(
+            commit
+                .parent(0)
+                .and_then(|parent| parent.tree())
+                .map_err(|error| format!("git_history_parent_failed:{error}"))?,
+        )
+    } else {
+        None
+    };
+    let mut options = DiffOptions::new();
+    options.pathspec(path);
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut options))
+        .map_err(|error| format!("git_history_diff_failed:{error}"))?;
+    Ok(diff.deltas().len() > 0)
+}
+
+fn matches_filters(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+    summary: &GitCommitSummary,
+    filters: Option<&GitHistoryFilters>,
+) -> Result<bool, String> {
+    let Some(filters) = filters else {
+        return Ok(true);
+    };
+    let author = filters.author.trim().to_lowercase();
+    if !author.is_empty()
+        && !summary.author_name.to_lowercase().contains(&author)
+        && !summary
+            .author_email
+            .as_deref()
+            .is_some_and(|value| value.to_lowercase().contains(&author))
+    {
+        return Ok(false);
+    }
+    if filters
+        .since
+        .is_some_and(|since| summary.authored_at < since)
+        || filters
+            .until
+            .is_some_and(|until| summary.authored_at > until)
+    {
+        return Ok(false);
+    }
+    commit_touches_path(repo, commit, filters.path.trim())
 }
 
 fn reference_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
@@ -126,6 +238,8 @@ fn list_native(
     project_path: &str,
     cursor: Option<String>,
     search: Option<String>,
+    reference: Option<String>,
+    filters: Option<GitHistoryFilters>,
 ) -> Result<GitCommitPage, String> {
     let repo = open_git_repo(project_path)?;
     if repo
@@ -139,11 +253,48 @@ fn list_native(
     }
     let cursor = cursor.as_deref().map(validate_oid).transpose()?;
     let search = normalize_search(search);
+    let reference = reference
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| {
+            validate_history_reference(&value)?;
+            Ok::<_, String>(value)
+        })
+        .transpose()?;
+    if let Some(filters) = filters.as_ref() {
+        validate_history_filters(filters)?;
+    }
     let refs = reference_map(&repo);
     let mut revwalk = repo
         .revwalk()
         .map_err(|error| format!("git_history_walk_failed:{error}"))?;
-    match revwalk.push_head() {
+    let selected_references = filters
+        .as_ref()
+        .filter(|value| !value.references.is_empty())
+        .map(|value| value.references.as_slice());
+    let push_result = if let Some(references) = selected_references {
+        for reference in references {
+            let object = repo
+                .revparse_single(reference)
+                .map_err(|_| "git_history_reference_not_found".to_string())?;
+            revwalk
+                .push(object.id())
+                .map_err(|error| format!("git_history_head_failed:{error}"))?;
+        }
+        Ok(())
+    } else if filters.as_ref().is_some_and(|value| value.all_refs) {
+        revwalk
+            .push_glob("refs/heads/*")
+            .and_then(|_| revwalk.push_glob("refs/remotes/*"))
+            .and_then(|_| revwalk.push_glob("refs/tags/*"))
+    } else if let Some(reference) = reference.as_deref() {
+        let object = repo
+            .revparse_single(reference)
+            .map_err(|_| "git_history_reference_not_found".to_string())?;
+        revwalk.push(object.id())
+    } else {
+        revwalk.push_head()
+    };
+    match push_result {
         Ok(()) => {}
         Err(error)
             if matches!(
@@ -176,7 +327,9 @@ fn list_native(
             .find_commit(oid)
             .map_err(|error| format!("git_history_commit_failed:{error}"))?;
         let summary = commit_summary(&commit, &refs);
-        if matches_search(&summary, search.as_deref()) {
+        if matches_search(&summary, search.as_deref())
+            && matches_filters(&repo, &commit, &summary, filters.as_ref())?
+        {
             commits.push(summary);
             if commits.len() > PAGE_SIZE {
                 break;
@@ -237,16 +390,28 @@ fn list_wsl(
     linux_path: &str,
     cursor: Option<String>,
     search: Option<String>,
+    reference: Option<String>,
+    filters: Option<GitHistoryFilters>,
 ) -> Result<GitCommitPage, String> {
     if let Some(value) = cursor.as_deref() {
         validate_oid_text(value)?;
     }
     let search = normalize_search(search);
+    let reference = reference
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| {
+            validate_history_reference(&value)?;
+            Ok::<_, String>(value)
+        })
+        .transpose()?;
+    if let Some(filters) = filters.as_ref() {
+        validate_history_filters(filters)?;
+    }
     let mut skip = 0usize;
     let mut cursor_seen = cursor.is_none();
     let mut commits = Vec::with_capacity(PAGE_SIZE + 1);
     loop {
-        let args = vec![
+        let mut args = vec![
             "log".to_string(),
             "--date-order".to_string(),
             "--decorate=short".to_string(),
@@ -254,6 +419,33 @@ fn list_wsl(
             format!("--skip={skip}"),
             "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s".to_string(),
         ];
+        if filters.as_ref().is_some_and(|value| value.all_refs) {
+            args.push("--all".to_string());
+        } else if let Some(references) = filters
+            .as_ref()
+            .filter(|value| !value.references.is_empty())
+            .map(|value| value.references.as_slice())
+        {
+            args.extend(references.iter().cloned());
+        } else if let Some(reference) = reference.as_deref() {
+            args.push(reference.to_string());
+        }
+        if let Some(filters) = filters.as_ref() {
+            let author = filters.author.trim();
+            if !author.is_empty() {
+                args.push(format!("--author={author}"));
+            }
+            if let Some(since) = filters.since {
+                args.push(format!("--since=@{}", since / 1000));
+            }
+            if let Some(until) = filters.until {
+                args.push(format!("--until=@{}", until / 1000));
+            }
+            if !filters.path.is_empty() {
+                args.push("--".to_string());
+                args.push(filters.path.clone());
+            }
+        }
         let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
         let batch = match run_wsl_git(distro, linux_path, &refs) {
             Ok(bytes) => parse_shell_commits(&bytes),
@@ -558,15 +750,17 @@ pub async fn git_list_commits(
     project_path: String,
     cursor: Option<String>,
     search: Option<String>,
+    reference: Option<String>,
+    filters: Option<GitHistoryFilters>,
 ) -> Result<GitCommitPage, String> {
     tokio::task::spawn_blocking(move || {
         if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&project_path) {
             if let Some(windows_path) = resolve_wsl_mnt_git_project_path(&distro, &linux_path) {
-                return list_native(&windows_path, cursor, search);
+                return list_native(&windows_path, cursor, search, reference, filters);
             }
-            return list_wsl(&distro, &linux_path, cursor, search);
+            return list_wsl(&distro, &linux_path, cursor, search, reference, filters);
         }
-        list_native(&project_path, cursor, search)
+        list_native(&project_path, cursor, search, reference, filters)
     })
     .await
     .map_err(|error| format!("git_history_task_failed:{error}"))?
@@ -671,7 +865,7 @@ fn commit_file_diff_native(
 mod tests {
     use super::{
         commit_file_diff_native, detail_native, list_native, matches_search, parse_numstat,
-        parse_shell_commits, validate_oid, validate_oid_text, GitCommitSummary,
+        parse_shell_commits, validate_oid, validate_oid_text, GitCommitSummary, GitHistoryFilters,
     };
     use crate::commands::git_diff::GitDiffOptions;
     use git2::{IndexAddOption, Repository, Signature};
@@ -753,11 +947,17 @@ mod tests {
         commit_file(&repo, "one.txt", "one\n", "Initial commit");
         let second = commit_file(&repo, "one.txt", "one\ntwo\n", "Second commit");
 
-        let page = list_native(temp.path().to_str().unwrap(), None, None).unwrap();
+        let page = list_native(temp.path().to_str().unwrap(), None, None, None, None).unwrap();
         assert_eq!(page.commits.len(), 2);
         assert_eq!(page.commits[0].id, second.to_string());
-        let search =
-            list_native(temp.path().to_str().unwrap(), None, Some("initial".into())).unwrap();
+        let search = list_native(
+            temp.path().to_str().unwrap(),
+            None,
+            Some("initial".into()),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(search.commits.len(), 1);
         let detail = detail_native(temp.path().to_str().unwrap(), &second.to_string()).unwrap();
         assert_eq!(detail.files.len(), 1);
@@ -766,10 +966,33 @@ mod tests {
     }
 
     #[test]
+    fn native_history_filters_by_author_and_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = Repository::init(temp.path()).unwrap();
+        commit_file(&repo, "src.txt", "one\n", "Source");
+        commit_file(&repo, "docs.txt", "docs\n", "Docs");
+
+        let filtered = list_native(
+            temp.path().to_str().unwrap(),
+            None,
+            None,
+            None,
+            Some(GitHistoryFilters {
+                author: "alice@example.com".into(),
+                path: "src.txt".into(),
+                ..GitHistoryFilters::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(filtered.commits.len(), 1);
+        assert_eq!(filtered.commits[0].title, "Source");
+    }
+
+    #[test]
     fn native_history_handles_empty_repositories_and_cursor_pagination() {
         let temp = tempfile::tempdir().unwrap();
         let repo = Repository::init(temp.path()).unwrap();
-        let empty = list_native(temp.path().to_str().unwrap(), None, None).unwrap();
+        let empty = list_native(temp.path().to_str().unwrap(), None, None, None, None).unwrap();
         assert!(empty.commits.is_empty());
         assert!(empty.next_cursor.is_none());
 
@@ -781,12 +1004,19 @@ mod tests {
                 &format!("Commit {index}"),
             );
         }
-        let first = list_native(temp.path().to_str().unwrap(), None, None).unwrap();
+        let first = list_native(temp.path().to_str().unwrap(), None, None, None, None).unwrap();
         assert_eq!(first.commits.len(), 50);
         let cursor = first.next_cursor.clone().expect("second page cursor");
         assert_eq!(cursor, first.commits.last().unwrap().id);
 
-        let second = list_native(temp.path().to_str().unwrap(), Some(cursor), None).unwrap();
+        let second = list_native(
+            temp.path().to_str().unwrap(),
+            Some(cursor),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(second.commits.len(), 2);
         assert!(second.next_cursor.is_none());
         assert!(first

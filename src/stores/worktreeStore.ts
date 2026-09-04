@@ -56,6 +56,7 @@ interface WorktreeStore {
   validatingProjects: Record<string, ProjectGitValidationCacheEntry>;
   loadWorktrees: () => Promise<void>;
   createWorktreeForProject: (project: Project, name?: string) => Promise<WorktreeRecord>;
+  renameWorktree: (worktreeId: string, name: string) => Promise<void>;
   shouldIsolateNewSession: (
     project: Project,
     sessions: TerminalSession[]
@@ -237,6 +238,24 @@ export const useWorktreeStore = create<WorktreeStore>((set, get) => ({
     } finally {
       inFlightWorktreeCreates.delete(creationKey);
     }
+  },
+
+  renameWorktree: async (worktreeId, name) => {
+    const current = get().worktrees.find((worktree) => worktree.id === worktreeId);
+    if (!current) throw new Error("worktree_not_found");
+    const sanitized = sanitizeWorktreeTaskName(name);
+    if (!validateWorktreeTaskName(sanitized)) throw new Error("task_name_invalid");
+    if (get().worktrees.some((worktree) => worktree.project_id === current.project_id && worktree.id !== worktreeId && worktree.name.toLowerCase() === sanitized.toLowerCase())) {
+      throw new Error("worktree_name_exists");
+    }
+    const ts = Date.now().toString();
+    const db = await getDb();
+    await db.execute("UPDATE worktrees SET name = $1, updated_at = $2 WHERE id = $3", [sanitized, ts, worktreeId]);
+    set((state) => ({
+      worktrees: state.worktrees.map((worktree) => worktree.id === worktreeId
+        ? { ...worktree, name: sanitized, updated_at: ts }
+        : worktree),
+    }));
   },
 
   shouldIsolateNewSession: (project, sessions) => {

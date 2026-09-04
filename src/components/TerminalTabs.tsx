@@ -3176,6 +3176,42 @@ export function TerminalTabs({
     );
   }, [rejectMissingWorktree, t]);
 
+  const handleOpenGitWorkspaceWorktree = useCallback(async (worktree: WorktreeRecord) => {
+    if (rejectMissingWorktree(worktree)) return;
+    const project = projectById.get(worktree.project_id);
+    if (!project) {
+      toast.error(t("git.empty.noProject"));
+      return;
+    }
+    if (useExternalTerminal) {
+      handleOpenWorktreeDirectory(worktree);
+      return;
+    }
+    const existing = sessions.find((session) => session.worktreeId === worktree.id && (session.kind ?? "pty") === "pty");
+    if (existing) {
+      closeGitWorkspace();
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+      setActive(existing.id);
+      return;
+    }
+    const scoped = projectWithWorktreeProviderOverrides(project, worktree);
+    const options = buildProjectSplitOptions(scoped, groups);
+    await createSession(
+      options.projectId,
+      worktree.path,
+      worktree.name,
+      options.startupCmd,
+      options.envVars,
+      options.shell,
+      undefined,
+      worktree.id,
+    );
+    closeGitWorkspace();
+    closeHistory();
+    setActiveWorkspaceTab("terminal");
+  }, [buildProjectSplitOptions, closeGitWorkspace, closeHistory, createSession, groups, handleOpenWorktreeDirectory, projectById, rejectMissingWorktree, sessions, setActive, t, useExternalTerminal]);
+
   const handleOpenWorktreeChanges = useCallback((sessionId: string) => {
     const session = sessions.find((item) => item.id === sessionId);
     if (rejectMissingSessionWorktree(session)) return;
@@ -4546,6 +4582,7 @@ export function TerminalTabs({
                 project={gitWorkspaceProject}
                 projectPath={gitWorkspaceProjectPath}
                 onClose={closeGitWorkspace}
+                onOpenWorktreeSession={handleOpenGitWorkspaceWorktree}
               />
             </Suspense>
           </div>
