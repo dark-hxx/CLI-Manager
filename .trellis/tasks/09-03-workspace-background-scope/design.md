@@ -17,17 +17,18 @@ fillWorkspace: boolean;
 ```text
 settingsStore.terminalBackground
   -> App
-       -> WorkspaceLayoutShell                 (主工作区内容边界)
+       -> WorkspaceLayoutShell                 (主工作区内容边界与 Provider)
             -> WorkspaceBackground             (根层唯一伪元素)
             -> TerminalTabs / XTermTerminal    (透明 xterm，不重复显示图片)
             -> Sidebar / TerminalSidePanel     (半透明 surface)
+            -> SettingsModal / StatsPanel      (逻辑子树；DOM Portal 到 body)
 ```
 
 建议新增 `WorkspaceLayoutShell` 与 `WorkspaceBackground`；只有在终端子树确实需要跨层读取状态时再增加轻量 context/hook：
 
 - context/hook（如需要）只提供 `workspaceBackgroundActive` 与已解析的 `assetUrl`，不得成为第二个根布局壳。
-- `WorkspaceLayoutShell` 位于 `WindowTitleBar` 之后，负责主工作区内容边界；`WorkspaceBackground` 位于该内容区内、所有侧栏和主终端内容之前。
-- `WindowTitleBar` 不在 provider/背景层覆盖范围内。
+- `WorkspaceLayoutShell` 覆盖整个应用内容高度；`WindowTitleBar` 位于其背景 Provider 内，`WorkspaceBackground` 位于所有工作区内容之前。
+- 设置页和历史统计页通过 Portal 挂到 `body`，但逻辑上仍位于 Provider 内，并使用 `workspaceBackgroundActive` 数据标记切换壳层透明度；该标记只在 `fillWorkspace` 开启且图片 URL 成功解析时存在。
 - settings 异步加载、图片路径变更或 URL 失败时，背景层安全退出；不得显示旧图片。
 
 ## 3. 两种渲染路径
@@ -51,7 +52,7 @@ settingsStore.terminalBackground
 
 - 根图片/遮罩层 `pointer-events:none`，内容层拥有更高 z-index。
 - 不使用父级 `opacity`；Sidebar、Tab chrome 和辅助面板通过 `color-mix` 生成半透明颜色。
-- 输入框、项目节点、统计卡片、右键菜单、设置/确认弹层保持足够不透明。
+- 输入框、项目节点、统计卡片、右键菜单和确认弹层保持足够不透明；设置页/统计页的外层壳可透出背景，内部卡片不跟随透明化。
 - 保持既有 `.ui-terminal-bg-layer` 的 `z-index` 策略，不引入会提升 xterm 子树的 `isolation`/GPU 合成层。
 - `ui-workspace-shell` 的应用渐变在 workspace 模式下不能覆盖或改变背景图位置；未启用时保持现有渐变。
 

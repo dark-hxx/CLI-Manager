@@ -14,9 +14,9 @@
 1. 阅读并确认现有终端背景契约、`terminalBackgroundLayout.test.mjs` 和背景安全路径。
 2. 在 `TerminalBackgroundSettings`、默认值和 `migrateTerminalBackground` 中加入 `fillWorkspace`。
 3. 在 `TerminalBackgroundSection` 增加“背景铺满工作区”开关、禁用状态、说明和中英文 i18n。
-4. 新增职责单一的 `WorkspaceLayoutShell`/`WorkspaceBackground`，在 `App` 主工作区内容边界挂载一次，复用 `backgroundAssetUrl` 和现有图像参数；`App` 不承载背景实现细节。
+4. 新增职责单一的 `WorkspaceLayoutShell`/`WorkspaceBackground`，在 `App` 主工作区内容边界挂载一次，复用 `backgroundAssetUrl` 和现有图像参数；将设置页和历史统计页作为逻辑子树置于同一 Provider 内，Portal 仍保持 body 挂载；`App` 不承载背景实现细节。
 5. 调整 `XTermTerminal`：workspace 模式保留透明渲染，关闭局部图片伪元素和不透明 wrapper；terminal-only 模式保持原路径。终端组件不接管根背景。
-6. 调整 Sidebar、Tab chrome、终端辅助面板和必要的 terminal well surface，使 workspace 模式显示连续背景；新增 CSS 按背景 surface 职责组织，菜单、卡片和弹层保持高不透明度。
+6. 调整 Sidebar、Tab chrome、终端辅助面板、标题栏以及设置页/历史统计页外层 surface，使 workspace 模式显示连续背景；新增 CSS 按背景 surface 职责组织，确认弹层、右键菜单、卡片和控件保持高不透明度。
 7. 在独立的 `workspaceBackgroundLayout.test.mjs` 增加静态契约测试，验证根背景层唯一、local background 与 workspace 模式互斥、内容 z-index 和 pointer-events。
 8. 更新 `CHANGELOG.md` 的 `V1.3.9` 段及 `docs/功能清单.md` 背景图板块。
 
@@ -27,7 +27,7 @@ npx tsc --noEmit
 node --test scripts/workspaceBackgroundLayout.test.mjs
 ```
 
-人工验证必须覆盖：无图、图片缺失、开关热切换、全部 fit/position/opacity/blur/darken、亮暗主题、standard/compact、fullscreen、History、失焦/恢复、最小化/托盘、多 Pane 与会话级隐藏背景。
+人工验证必须覆盖：无图、图片缺失、开关热切换、全部 fit/position/opacity/blur/darken、亮暗主题、standard/compact、fullscreen、设置页、历史统计页、History、失焦/恢复、最小化/托盘、多 Pane 与会话级隐藏背景；确认 `fillWorkspace=false` 时仅 XTerm 显示局部背景，Portal 页面恢复原有主题表面。
 
 ## 回滚
 
