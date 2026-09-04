@@ -548,12 +548,22 @@ function ProgressView({
   onFork: (event: ReplayEvent, latestSnapshot: ReplayEvent) => void;
 }) {
   const { t } = useI18n();
-  const [expandedTurnId, setExpandedTurnId] = useState<string | null>(() => model.turns[0]?.id ?? null);
+  const [expandedTurnIds, setExpandedTurnIds] = useState<Set<string>>(
+    () => new Set<string>(model.turns[0] ? [model.turns[0].id] : [])
+  );
+  const hasInitializedExpansion = useRef(model.turns.length > 0);
 
   useEffect(() => {
-    if (!model.turns.length) setExpandedTurnId(null);
-    else if (!expandedTurnId || !model.turns.some((turn) => turn.id === expandedTurnId)) setExpandedTurnId(model.turns[0].id);
-  }, [expandedTurnId, model.turns]);
+    const turnIds = new Set(model.turns.map((turn) => turn.id));
+    const shouldInitializeExpansion = !hasInitializedExpansion.current && model.turns.length > 0;
+    if (shouldInitializeExpansion) hasInitializedExpansion.current = true;
+    setExpandedTurnIds((current) => {
+      const next = new Set([...current].filter((id) => turnIds.has(id)));
+      if (shouldInitializeExpansion) next.add(model.turns[0].id);
+      if (next.size === current.size && [...next].every((id) => current.has(id))) return current;
+      return next;
+    });
+  }, [model.turns]);
 
   if (model.turns.length === 0) return <EmptyHint text={t("aiReplay.empty.timeline")} />;
 
@@ -564,7 +574,7 @@ function ProgressView({
         <span>{historyLoading ? t("aiReplay.progress.syncing") : historyAvailable ? t("aiReplay.progress.synced") : t("aiReplay.progress.hookOnly")}</span>
       </div>
       {model.turns.map((turn, index) => {
-        const expanded = expandedTurnId === turn.id;
+        const expanded = expandedTurnIds.has(turn.id);
         const countParts = [
           turn.counts.tools ? t("aiReplay.progress.countTools", { count: turn.counts.tools }) : null,
           turn.counts.files ? t("aiReplay.progress.countFiles", { count: turn.counts.files }) : null,
@@ -577,7 +587,12 @@ function ProgressView({
             <button
               type="button"
               aria-expanded={expanded}
-              onClick={() => setExpandedTurnId(expanded ? null : turn.id)}
+              onClick={() => setExpandedTurnIds((current) => {
+                const next = new Set(current);
+                if (next.has(turn.id)) next.delete(turn.id);
+                else next.add(turn.id);
+                return next;
+              })}
               className="ui-focus-ring w-full rounded-xl px-3 py-2.5 text-left"
             >
               <div className="flex items-start justify-between gap-2">
