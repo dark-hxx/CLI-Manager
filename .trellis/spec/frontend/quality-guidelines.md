@@ -123,6 +123,12 @@ function GitChangesPanel() {
 
 **Required check**: Verify the header, title, maximum summary line count, metadata row, gaps, and vertical padding fit without flex shrink at every supported canvas zoom level.
 
+### Preserve the workspace background at shell boundaries
+
+When `WorkspaceBackground` is active (`data-workspace-background="true"`), normal workspace-level shells must use `background: transparent !important` so the single shared image remains visible through utility classes, Mantine defaults, and component surface rules. Settings and History are intentional opaque-page exceptions; Statistics remains an image-capable page. Do not use a high-opacity `color-mix` as a shell fallback for a page intended to expose the image: in the light theme it is visually opaque and hides the background.
+
+Keep readability surfaces on cards, fields, menus, dialogs, and other interactive content. Any settings/statistics page must carry the active marker through `useWorkspaceBackground`; image or opaque selectors must be scoped to that marker so `fillWorkspace=false` retains terminal-only behavior. Add a static regression assertion for each new shell boundary.
+
 ### Convention: File and Git path copy menus share one formatter
 
 **What**: File explorer and Git change tree context menus must expose absolute-path copy as the primary action and put AI-path and project-relative formats under the shared `PathCopyMenu` component. Absolute paths use the active local project root or SSH `remote_path`; nested Git repositories use the active repository root.

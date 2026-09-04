@@ -102,10 +102,10 @@
   transition: background-color 300ms ease;
 }
 
-/* The shared image must be the actual base surface in fill mode. Keep the
-   shell, its chrome, title bar, and project rows fully transparent;
-   interaction states below add only their own small tint where a state needs
-   to remain visible. */
+/* The shared image is the base surface in the normal workspace view. Keep the
+   shell, its chrome, title bar, and project rows transparent; page-specific
+   exceptions below restore opaque surfaces where the page is intentionally
+   isolated from the workspace image. */
 .ui-workspace-background-root[data-workspace-background="true"] .window-titlebar {
   background: transparent !important;
   background-color: transparent !important;
@@ -114,22 +114,23 @@
   -webkit-backdrop-filter: none;
 }
 
-/* Settings and statistics are body portals, so their React roots carry the
-   same active-state marker explicitly. Keep page shells translucent while
-   leaving their cards and controls responsible for readability. */
+/* Settings keeps its existing page surface even when the workspace image is
+   enabled. The active marker scopes this exception to fill mode. */
 .ui-workspace-settings-overlay[data-workspace-background="true"] .ui-workspace-settings-dialog,
 .ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-content,
 .ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-topbar {
-  background-color: color-mix(in srgb, var(--surface) 76%, transparent) !important;
+  background: var(--surface) !important;
+  background-image: none !important;
 }
 
 .ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-nav {
-  background-color: color-mix(in srgb, var(--surface-container-low) 76%, transparent) !important;
+  background: var(--surface-container-low) !important;
+  background-image: none !important;
 }
 
+/* Statistics remains a workspace-level surface and may show the image. */
 .ui-stats-panel[data-workspace-background="true"] {
-  background-color: color-mix(in srgb, var(--surface) 76%, transparent) !important;
-  background-image: none !important;
+  background: transparent !important;
 }
 
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell,
@@ -196,13 +197,48 @@
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 10%, transparent);
 }
 
-.ui-workspace-background-root[data-workspace-background="true"] .ui-history-shell {
-  background-color: color-mix(in srgb, var(--surface-container-low) 80%, transparent) !important;
+/* History is an isolated, readable page. The view marker is emitted by
+   TerminalTabs so a mounted-but-hidden history tree does not affect the
+   title bar or terminal view. */
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-shell {
+  background: var(--surface) !important;
+  background-image: none !important;
 }
 
-.ui-workspace-background-root[data-workspace-background="true"] .ui-history-sidebar,
-.ui-workspace-background-root[data-workspace-background="true"] .ui-history-detail {
-  background: color-mix(in srgb, var(--surface-container-low) 72%, transparent) !important;
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-sidebar {
+  background: var(--surface-container-lowest) !important;
+  background-image: none !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-detail,
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-detail-top,
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-transcript-chat-surface {
+  background: var(--surface) !important;
+  background-image: none !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-sidebar-top {
+  background: var(--surface-container-low) !important;
+  background-image: none !important;
+}
+
+/* The native title bar remains opaque while Settings or History is the page
+   being presented, so neither page shows the workspace image in its chrome. */
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-workspace-settings-overlay) .window-titlebar,
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .window-titlebar {
+  background: var(--surface-container-low) !important;
+  background-color: var(--surface-container-low) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme="light"] .ui-workspace-background-root[data-workspace-background="true"]:has(.ui-workspace-settings-overlay) .window-titlebar,
+[data-theme="light"] .ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .window-titlebar {
+  background: var(--surface-container-lowest) !important;
+  background-color: var(--surface-container-lowest) !important;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 24%, transparent) !important;
 }
 
 /* In workspace mode XTerm keeps its transparency theme but does not create a

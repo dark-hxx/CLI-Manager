@@ -16,7 +16,7 @@
 3. 在 `TerminalBackgroundSection` 增加“背景铺满工作区”开关、禁用状态、说明和中英文 i18n。
 4. 新增职责单一的 `WorkspaceLayoutShell`/`WorkspaceBackground`，在 `App` 主工作区内容边界挂载一次，复用 `backgroundAssetUrl` 和现有图像参数；将设置页和历史统计页作为逻辑子树置于同一 Provider 内，Portal 仍保持 body 挂载；`App` 不承载背景实现细节。
 5. 调整 `XTermTerminal`：workspace 模式保留透明渲染，关闭局部图片伪元素和不透明 wrapper；terminal-only 模式保持原路径。终端组件不接管根背景。
-6. 调整 Sidebar、Tab chrome、终端辅助面板、标题栏以及设置页/历史统计页外层 surface，使 workspace 模式显示连续背景；新增 CSS 按背景 surface 职责组织，确认弹层、右键菜单、卡片和控件保持高不透明度。
+6. 调整 Sidebar、Tab chrome、终端辅助面板、标题栏以及设置页/会话历史/历史统计页外层 surface，使 workspace 模式显示连续背景；正常工作区和统计页使用透明背景，设置页与会话历史页及其应用标题栏保持不透明，确认弹层、右键菜单、卡片和控件保持高不透明度。
 7. 在独立的 `workspaceBackgroundLayout.test.mjs` 增加静态契约测试，验证根背景层唯一、local background 与 workspace 模式互斥、内容 z-index 和 pointer-events。
 8. 更新 `CHANGELOG.md` 的 `V1.3.9` 段及 `docs/功能清单.md` 背景图板块。
 

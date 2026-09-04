@@ -51,8 +51,8 @@ settingsStore.terminalBackground
 ## 4. 层叠与可读性
 
 - 根图片/遮罩层 `pointer-events:none`，内容层拥有更高 z-index。
-- 不使用父级 `opacity`；Sidebar、Tab chrome 和辅助面板通过 `color-mix` 生成半透明颜色。
-- 输入框、项目节点、统计卡片、右键菜单和确认弹层保持足够不透明；设置页/统计页的外层壳可透出背景，内部卡片不跟随透明化。
+- 不使用父级 `opacity`；正常工作区和统计页外层壳在 active marker 下使用透明背景，History、设置页以及进入这两个页面时的应用标题栏保持不透明主题 surface。
+- 输入框、项目节点、统计卡片、右键菜单和确认弹层保持足够不透明；页面内部卡片不跟随外层透明化。
 - 保持既有 `.ui-terminal-bg-layer` 的 `z-index` 策略，不引入会提升 xterm 子树的 `isolation`/GPU 合成层。
 - `ui-workspace-shell` 的应用渐变在 workspace 模式下不能覆盖或改变背景图位置；未启用时保持现有渐变。
 

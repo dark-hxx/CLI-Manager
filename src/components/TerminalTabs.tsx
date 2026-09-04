@@ -4414,6 +4414,7 @@ export function TerminalTabs({
     <div
       className="ui-terminal-tabs-shell flex h-full min-h-0 flex-col"
       data-fullscreen={fullscreen ? "true" : "false"}
+      data-workspace-view={historyActive ? "history" : "terminal"}
       style={terminalWellStyle}
     >
       {promptDialog}
