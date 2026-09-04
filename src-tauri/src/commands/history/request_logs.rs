@@ -390,6 +390,31 @@ fn request_id(source: &str, file_path: &str, event_key: &str) -> String {
     format!("{digest:x}")
 }
 
+async fn delete_document_rows(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    file_path: &str,
+) -> Result<(), String> {
+    // request_logs has UNIQUE(file_path, event_key), while usage_records has a
+    // primary key on the same request ID. Resolve the small per-file ID set
+    // first so large databases never scan every session_log row.
+    sqlx::query(
+        "DELETE FROM usage_records
+         WHERE record_id IN (
+             SELECT request_id FROM request_logs WHERE file_path = ?1
+         )",
+    )
+    .bind(file_path)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| format!("usage_records_session_cleanup_failed: {err}"))?;
+    sqlx::query("DELETE FROM request_logs WHERE file_path = ?1")
+        .bind(file_path)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| format!("request_logs_delete_failed: {err}"))?;
+    Ok(())
+}
+
 async fn replace_document(
     conn: &mut SqliteConnection,
     document: &RequestLogDocument,
@@ -399,16 +424,7 @@ async fn replace_document(
         .begin()
         .await
         .map_err(|err| format!("request_logs_transaction_failed: {err}"))?;
-    sqlx::query("DELETE FROM request_logs WHERE file_path = ?1")
-        .bind(&document.file_path)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| format!("request_logs_delete_failed: {err}"))?;
-    sqlx::query("DELETE FROM usage_records WHERE data_source = 'session_log' AND file_path = ?1")
-        .bind(&document.file_path)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| format!("usage_records_session_cleanup_failed: {err}"))?;
+    delete_document_rows(&mut tx, &document.file_path).await?;
 
     for event in &document.events {
         let timestamp_ms = event
@@ -536,18 +552,7 @@ async fn remove_missing_files(
         .await
         .map_err(|err| format!("request_logs_cleanup_transaction_failed: {err}"))?;
     for path in stale_paths {
-        sqlx::query("DELETE FROM request_logs WHERE file_path = ?1")
-            .bind(path)
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| format!("request_logs_cleanup_failed: {err}"))?;
-        sqlx::query(
-            "DELETE FROM usage_records WHERE data_source = 'session_log' AND file_path = ?1",
-        )
-        .bind(path)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| format!("usage_records_cleanup_failed: {err}"))?;
+        delete_document_rows(&mut tx, path).await?;
         sqlx::query("DELETE FROM request_log_sync WHERE file_path = ?1")
             .bind(path)
             .execute(&mut *tx)
@@ -1390,12 +1395,49 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count, 1);
+        let usage_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM usage_records WHERE file_path = ?1")
+                .bind(&file_key)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(usage_count, 1);
 
         fs::remove_file(file).unwrap();
         let removed = sync_request_logs_with_connection(&mut conn, roots, true)
             .await
             .unwrap();
         assert_eq!(removed.removed_files, 1);
+        let remaining_usage: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM usage_records WHERE file_path = ?1")
+                .bind(&file_key)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(remaining_usage, 0);
+    }
+
+    #[tokio::test]
+    async fn document_cleanup_uses_indexed_request_ids() {
+        let mut conn = test_connection().await;
+        let rows = sqlx::query(
+            "EXPLAIN QUERY PLAN
+             DELETE FROM usage_records
+             WHERE record_id IN (
+                 SELECT request_id FROM request_logs WHERE file_path = ?1
+             )",
+        )
+        .bind("session.jsonl")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+        let plan = rows
+            .iter()
+            .filter_map(|row| row.try_get::<String, _>("detail").ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(plan.contains("sqlite_autoindex_usage_records_1"), "{plan}");
+        assert!(plan.contains("sqlite_autoindex_request_logs_2"), "{plan}");
     }
 
     #[tokio::test]

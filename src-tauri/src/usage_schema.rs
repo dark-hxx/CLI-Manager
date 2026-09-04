@@ -1,6 +1,78 @@
 use sha2::{Digest, Sha384};
-use sqlx::{Connection, SqliteConnection};
+use sqlx::{Connection, Row, SqliteConnection};
 use std::time::Duration;
+
+async fn sqlite_object_exists(
+    connection: &mut SqliteConnection,
+    object_type: &str,
+    name: &str,
+) -> Result<bool, String> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2
+         )",
+    )
+    .bind(object_type)
+    .bind(name)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|err| format!("usage_schema_object_inspect_failed:{object_type}:{name}:{err}"))
+}
+
+async fn usage_error_detail_column_exists(
+    connection: &mut SqliteConnection,
+) -> Result<bool, String> {
+    let column_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name = 'error_detail'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|err| format!("usage_schema_error_detail_inspect_failed:{err}"))?;
+    Ok(column_count != 0)
+}
+
+async fn usage_error_detail_marker_matches(
+    connection: &mut SqliteConnection,
+) -> Result<bool, String> {
+    if !sqlite_object_exists(connection, "table", "_sqlx_migrations").await? {
+        return Ok(false);
+    }
+    let marker = sqlx::query(
+        "SELECT description, checksum
+         FROM _sqlx_migrations
+         WHERE version = ?1 AND success = 1
+         LIMIT 1",
+    )
+    .bind(crate::MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|err| format!("usage_schema_error_detail_marker_inspect_failed:{err}"))?;
+    let Some(marker) = marker else {
+        return Ok(false);
+    };
+    let description: String = marker
+        .try_get("description")
+        .map_err(|err| format!("usage_schema_error_detail_marker_description_failed:{err}"))?;
+    let checksum: Vec<u8> = marker
+        .try_get("checksum")
+        .map_err(|err| format!("usage_schema_error_detail_marker_checksum_failed:{err}"))?;
+    Ok(
+        description == crate::MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION
+            && checksum
+                == Sha384::digest(crate::MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL.as_bytes()).to_vec(),
+    )
+}
+
+async fn usage_schema_is_ready(connection: &mut SqliteConnection) -> Result<bool, String> {
+    if !sqlite_object_exists(connection, "table", "request_logs").await?
+        || !sqlite_object_exists(connection, "table", "usage_records").await?
+        || !sqlite_object_exists(connection, "view", "unified_usage_records").await?
+        || !usage_error_detail_column_exists(connection).await?
+    {
+        return Ok(false);
+    }
+    usage_error_detail_marker_matches(connection).await
+}
 
 async fn apply_usage_schema_sql(
     connection: &mut SqliteConnection,
@@ -21,13 +93,7 @@ async fn apply_usage_schema_sql(
 }
 
 async fn ensure_usage_error_detail_column(connection: &mut SqliteConnection) -> Result<(), String> {
-    let column_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name = 'error_detail'",
-    )
-    .fetch_one(&mut *connection)
-    .await
-    .map_err(|err| format!("usage_schema_error_detail_inspect_failed:{err}"))?;
-    if column_count == 0 {
+    if !usage_error_detail_column_exists(connection).await? {
         sqlx::query("ALTER TABLE usage_records ADD COLUMN error_detail TEXT")
             .execute(&mut *connection)
             .await
@@ -70,11 +136,21 @@ async fn mark_usage_error_detail_migration(
 }
 
 async fn ensure_usage_error_detail_schema(connection: &mut SqliteConnection) -> Result<(), String> {
+    if usage_error_detail_column_exists(connection).await?
+        && usage_error_detail_marker_matches(connection).await?
+    {
+        return Ok(());
+    }
     sqlx::query("BEGIN IMMEDIATE")
         .execute(&mut *connection)
         .await
         .map_err(|err| format!("usage_schema_error_detail_begin_failed:{err}"))?;
     let result = async {
+        if usage_error_detail_column_exists(connection).await?
+            && usage_error_detail_marker_matches(connection).await?
+        {
+            return Ok(());
+        }
         ensure_usage_error_detail_column(connection).await?;
         apply_usage_schema_sql(
             connection,
@@ -99,11 +175,24 @@ async fn ensure_usage_error_detail_schema(connection: &mut SqliteConnection) -> 
 }
 
 pub(crate) async fn ensure_usage_schema(connection: &mut SqliteConnection) -> Result<(), String> {
-    for (name, sql) in [
-        ("request_logs", crate::MIGRATION_CREATE_REQUEST_LOGS_SQL),
-        ("usage_records", crate::MIGRATION_CREATE_USAGE_RECORDS_SQL),
-    ] {
-        apply_usage_schema_sql(connection, name, sql).await?;
+    if usage_schema_is_ready(connection).await? {
+        return Ok(());
+    }
+    if !sqlite_object_exists(connection, "table", "request_logs").await? {
+        apply_usage_schema_sql(
+            connection,
+            "request_logs",
+            crate::MIGRATION_CREATE_REQUEST_LOGS_SQL,
+        )
+        .await?;
+    }
+    if !sqlite_object_exists(connection, "table", "usage_records").await? {
+        apply_usage_schema_sql(
+            connection,
+            "usage_records",
+            crate::MIGRATION_CREATE_USAGE_RECORDS_SQL,
+        )
+        .await?;
     }
     for (name, sql) in [
         (
@@ -142,6 +231,7 @@ mod tests {
     use super::ensure_usage_schema;
     use sha2::{Digest, Sha384};
     use sqlx::migrate::{Migration as SqlxMigration, MigrationType, Migrator};
+    use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::{Connection, Row, SqliteConnection};
     use std::borrow::Cow;
     use tauri_plugin_sql::{Migration, MigrationKind};
@@ -262,5 +352,24 @@ mod tests {
             .run(&mut connection)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn ready_schema_bootstrap_succeeds_on_read_only_connection() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("usage.db");
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx_migrator(crate::migrations())
+            .run(&mut connection)
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+
+        let options = SqliteConnectOptions::new().filename(&path).read_only(true);
+        let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+        ensure_usage_schema(&mut connection).await.unwrap();
     }
 }
