@@ -337,6 +337,14 @@ struct CachedWslSessionFingerprint {
     cached_at: i64,
 }
 
+const CODEX_THREAD_NAME_INDEX_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+#[derive(Clone, Default)]
+pub(super) struct CodexThreadNameIndex {
+    names: HashMap<String, String>,
+    fingerprint: String,
+}
+
 type WslSessionFingerprintCache = HashMap<String, CachedWslSessionFingerprint>;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1008,9 +1016,14 @@ pub async fn history_list_sessions(
         grok_session_root.clone(),
     )
     .with_kimi_config_dir(kimi_config_dir.clone());
-    if catalog::is_dirty() {
+    let targeted_query = query
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    if catalog::is_dirty() || targeted_query {
         // Mutations invalidate the V2 catalog. Complete that refresh before
-        // reading so a successful edit/delete is visible immediately.
+        // reading so a successful edit/delete is visible immediately. A
+        // query also waits for refresh so a newly changed Codex thread name
+        // participates in SQL filtering during the same request.
         let _ = catalog::ensure_refresh(app.clone(), roots.clone(), false, true).await;
     }
     match catalog::list_sessions(
@@ -1451,7 +1464,7 @@ pub async fn history_get_session(
             aggregate_subtasks,
             fresh
         );
-        let detail = build_session_detail(&file_ref, aggregate_subtasks)?;
+        let detail = build_session_detail_with_roots(&file_ref, aggregate_subtasks, &roots)?;
         log_history_detail_oom_diagnostic(
             "history_get_session",
             &detail,
@@ -1539,7 +1552,7 @@ pub async fn history_convert_session(
             return Err("history_subagent_mutation_not_allowed".to_string());
         }
         let target_source = target_source.trim().to_lowercase();
-        let detail = build_session_detail(&file_ref, false)?;
+        let detail = build_session_detail_with_roots(&file_ref, false, &roots)?;
         let result = convert_history_session(&detail, &target_source, &roots)?;
         let codex_registration = if target_source == "codex" {
             Some(build_codex_thread_registration(&roots, &detail, &result))
@@ -1863,8 +1876,10 @@ pub async fn history_search(
     }
     let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
         .with_kimi_config_dir(kimi_config_dir);
+    // Search results include the current Codex thread_name, so complete any
+    // pending registry refresh before querying the catalog.
+    let _ = catalog::ensure_refresh(app.clone(), roots.clone(), false, true).await;
     let hits = catalog::search_sessions(&roots, &query, source, project_path, limit).await?;
-    let _ = catalog::ensure_refresh(app, roots, false, false).await;
     Ok(hits)
 }
 
@@ -3995,6 +4010,7 @@ fn build_history_index(
     previous: Option<HistorySessionIndex>,
     force_file_scan: bool,
 ) -> HistorySessionIndex {
+    let codex_thread_names = codex_thread_name_index(roots);
     let mut previous_entries: HashMap<String, HistoryIndexEntry> = previous
         .as_ref()
         .map(|index| {
@@ -4029,6 +4045,11 @@ fn build_history_index(
                     existing.computed.created_at = fingerprint.created_at;
                     existing.computed.updated_at = fingerprint.updated_at;
                 }
+                apply_codex_thread_name(
+                    &existing.file_ref,
+                    &codex_thread_names,
+                    &mut existing.computed,
+                );
                 entries.push(Some(existing));
                 continue;
             }
@@ -4055,11 +4076,12 @@ fn build_history_index(
                     let Some((slot, file_ref, fingerprint)) = pending.get(job) else {
                         break;
                     };
-                    let computed = scan_session_computation(
+                    let mut computed = scan_session_computation(
                         &file_ref.path,
                         fingerprint.created_at,
                         fingerprint.updated_at,
                     );
+                    apply_codex_thread_name(file_ref, &codex_thread_names, &mut computed);
                     let entry = HistoryIndexEntry {
                         file_ref: file_ref.clone(),
                         fingerprint: *fingerprint,
@@ -4370,14 +4392,18 @@ fn grok_summary_timestamp_ms(summary: &Value, keys: &[&str]) -> Option<i64> {
     None
 }
 
-fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDetailParts {
+fn scan_session_detail_parts_with_thread_names(
+    file_ref: &SessionFileRef,
+    codex_thread_names: &CodexThreadNameIndex,
+) -> SessionDetailParts {
     // detail 必然要读完整消息，单遍同时算出 stats，避免对同一文件二次读取/解析；
     let fingerprint = session_file_fingerprint(&file_ref.path);
-    let (computed, messages) = scan_session_computation_with_messages(
+    let (mut computed, messages) = scan_session_computation_with_messages(
         &file_ref.path,
         fingerprint.created_at,
         fingerprint.updated_at,
     );
+    apply_codex_thread_name(file_ref, codex_thread_names, &mut computed);
     let tool_events = scan_tool_events(&file_ref.path);
     let file_changes = scan_file_changes(&file_ref.path);
     SessionDetailParts {
@@ -4541,7 +4567,8 @@ fn build_v2_adapter_session(
     roots: &HistoryRoots,
 ) -> HistoryIndexV2AdapterSession {
     let fingerprint = session_file_fingerprint(&file_ref.path);
-    let parts = scan_session_detail_parts(file_ref);
+    let codex_thread_names = codex_thread_name_index(roots);
+    let parts = scan_session_detail_parts_with_thread_names(file_ref, &codex_thread_names);
     build_v2_adapter_session_from_parts(file_ref, roots, fingerprint, &parts)
 }
 
@@ -4614,7 +4641,16 @@ pub(crate) fn build_session_detail(
     file_ref: &SessionFileRef,
     aggregate_subtasks: bool,
 ) -> Result<HistorySessionDetail, String> {
-    let parent_parts = scan_session_detail_parts(file_ref);
+    build_session_detail_with_roots(file_ref, aggregate_subtasks, &HistoryRoots::default())
+}
+
+fn build_session_detail_with_roots(
+    file_ref: &SessionFileRef,
+    aggregate_subtasks: bool,
+    roots: &HistoryRoots,
+) -> Result<HistorySessionDetail, String> {
+    let codex_thread_names = codex_thread_name_index(roots);
+    let parent_parts = scan_session_detail_parts_for_roots(file_ref, &codex_thread_names);
     if !aggregate_subtasks {
         return Ok(finalize_session_detail(file_ref, parent_parts));
     }
@@ -4627,7 +4663,10 @@ pub(crate) fn build_session_detail(
     let mut parts = Vec::with_capacity(subtask_refs.len() + 1);
     parts.push(parent_parts);
     for subtask_ref in subtask_refs {
-        parts.push(scan_session_detail_parts(&subtask_ref));
+        parts.push(scan_session_detail_parts_for_roots(
+            &subtask_ref,
+            &codex_thread_names,
+        ));
     }
 
     Ok(finalize_session_detail(
@@ -4998,7 +5037,7 @@ fn convert_history_session(
         message_count,
         branch: detail.branch.clone(),
     };
-    let target_detail = build_session_detail(&file_ref, false)?;
+    let target_detail = build_session_detail_with_roots(&file_ref, false, roots)?;
     if target_detail.source != target_source
         || target_detail.session_id != session_id
         || target_detail.file_path != summary.file_path
@@ -5631,6 +5670,149 @@ fn resolve_codex_config_root(roots: &HistoryRoots) -> PathBuf {
         .or_else(|| crate::provider::home::default_config_root("codex"))
         .or_else(|| detect_home_dir().map(|home| home.join(".codex")))
         .unwrap_or_else(|| PathBuf::from(".codex"))
+}
+
+fn codex_thread_name_index(roots: &HistoryRoots) -> CodexThreadNameIndex {
+    let path = resolve_codex_config_root(roots).join("session_index.jsonl");
+    let path_text = path.to_string_lossy();
+    if crate::wsl::is_wsl_config_dir(&path_text) {
+        let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&path_text) else {
+            return CodexThreadNameIndex {
+                names: HashMap::new(),
+                fingerprint: "wsl-invalid".to_string(),
+            };
+        };
+        let fingerprint = wsl_session_fingerprint(&linux_path, &distro);
+        let fingerprint_text = format!(
+            "wsl:{}:{}:{}",
+            fingerprint.created_at, fingerprint.updated_at, fingerprint.size
+        );
+        if fingerprint.size > CODEX_THREAD_NAME_INDEX_MAX_BYTES {
+            return CodexThreadNameIndex {
+                names: HashMap::new(),
+                fingerprint: format!("{fingerprint_text}:oversized"),
+            };
+        }
+        let wsl_exe = crate::wsl::find_wsl_exe()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|| "wsl.exe".to_string());
+        let args = ["-d", distro.as_str(), "--exec", "cat", linux_path.as_str()];
+        let names = wsl_command_text(&wsl_exe, &args)
+            .ok()
+            .filter(|(text, _)| text.as_bytes().len() as u64 <= CODEX_THREAD_NAME_INDEX_MAX_BYTES)
+            .map(|(text, _)| parse_codex_thread_name_index(&text))
+            .unwrap_or_default();
+        return CodexThreadNameIndex {
+            names,
+            fingerprint: fingerprint_text,
+        };
+    }
+
+    let metadata = fs::metadata(&path).ok();
+    let fingerprint = metadata
+        .as_ref()
+        .map(|metadata| {
+            format!(
+                "local:{}:{}:{}",
+                metadata
+                    .modified()
+                    .ok()
+                    .map(system_time_to_millis)
+                    .unwrap_or_default(),
+                metadata.len(),
+                metadata
+                    .created()
+                    .ok()
+                    .map(system_time_to_millis)
+                    .unwrap_or_default(),
+            )
+        })
+        .unwrap_or_else(|| "local:missing".to_string());
+    let Some(metadata) = metadata else {
+        return CodexThreadNameIndex {
+            names: HashMap::new(),
+            fingerprint,
+        };
+    };
+    if metadata.len() > CODEX_THREAD_NAME_INDEX_MAX_BYTES {
+        return CodexThreadNameIndex {
+            names: HashMap::new(),
+            fingerprint: format!("{fingerprint}:oversized"),
+        };
+    }
+    let names = fs::read(&path)
+        .ok()
+        .filter(|bytes| bytes.len() as u64 <= CODEX_THREAD_NAME_INDEX_MAX_BYTES)
+        .map(|bytes| parse_codex_thread_name_index(&String::from_utf8_lossy(&bytes)))
+        .unwrap_or_default();
+    CodexThreadNameIndex { names, fingerprint }
+}
+
+fn parse_codex_thread_name_index(text: &str) -> HashMap<String, String> {
+    let mut names = HashMap::new();
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let Some(session_id) = value
+            .get("id")
+            .or_else(|| value.get("session_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(thread_name) = value
+            .get("thread_name")
+            .or_else(|| value.get("threadName"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        names.insert(session_id.to_string(), excerpt(thread_name, 80));
+    }
+    names
+}
+
+fn apply_codex_thread_name(
+    file_ref: &SessionFileRef,
+    index: &CodexThreadNameIndex,
+    computed: &mut CachedSessionComputation,
+) {
+    if file_ref.source != "codex" {
+        return;
+    }
+    if let Some(thread_name) = index.names.get(&computed.session_id) {
+        computed.title = thread_name.clone();
+    }
+}
+
+fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDetailParts {
+    let fingerprint = session_file_fingerprint(&file_ref.path);
+    let (computed, messages) = scan_session_computation_with_messages(
+        &file_ref.path,
+        fingerprint.created_at,
+        fingerprint.updated_at,
+    );
+    let tool_events = scan_tool_events(&file_ref.path);
+    let file_changes = scan_file_changes(&file_ref.path);
+    SessionDetailParts {
+        computed,
+        cwd: get_or_scan_session_project(&file_ref.path).cwd,
+        messages,
+        tool_events,
+        file_changes,
+    }
+}
+
+fn scan_session_detail_parts_for_roots(
+    file_ref: &SessionFileRef,
+    codex_thread_names: &CodexThreadNameIndex,
+) -> SessionDetailParts {
+    scan_session_detail_parts_with_thread_names(file_ref, codex_thread_names)
 }
 
 fn resolve_codex_history_root(roots: &HistoryRoots) -> PathBuf {
@@ -17097,6 +17279,24 @@ mod tests {
             computed.parent_session_id.as_deref(),
             Some("parent-session")
         );
+    }
+
+    #[test]
+    fn codex_thread_name_index_uses_last_valid_name_and_skips_invalid_rows() {
+        let names = parse_codex_thread_name_index(concat!(
+            r#"{"id":"session-1","thread_name":"Old name"}"#,
+            "\n",
+            "not json\n",
+            r#"{"id":"session-1","thread_name":"  New name  "}"#,
+            "\n",
+            r#"{"id":"session-2","thread_name":"   "}"#,
+            "\n",
+            r#"{"id":"","thread_name":"No session"}"#,
+            "\n",
+        ));
+
+        assert_eq!(names.get("session-1").map(String::as_str), Some("New name"));
+        assert!(!names.contains_key("session-2"));
     }
 
     #[test]

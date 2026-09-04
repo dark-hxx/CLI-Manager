@@ -31,7 +31,7 @@
 - Local, WSL, and SSH use the same kind names. SSH remains read-only and this view contract never routes remote messages into local mutation commands.
 - V2 catalog writes every parsed part and rehydrates it in `part_index` order. Old catalog rows without part records fall back from role/content; parser version changes must invalidate/rebuild derived rows when classification changes.
 - Outside batch selection, the complete session row is one keyboard-accessible open target. Tree toggles, selection checkboxes, delete, and other explicit actions stop propagation. The existing detail request sequence remains the last-request-wins boundary.
-- Every virtualized Conversation row must expose the configured index attribute (`data-index`) on the same node passed to `measureElement`; otherwise expanded details keep the estimate height and overlap or leave blank gaps. Conversation rows reuse the Transcript avatar/stack/bubble layout so visible text and detail sections share the same geometry.
+- Every virtualized Conversation or Transcript row must expose the projected display index (`data-index`) on the same node passed to `measureElement`; the raw message index remains a separate coordinate for refs, editing, selection, search, and jumps. Mixing these coordinates in a descending projection makes virtual height measurements land on the wrong row and causes adjacent content to overlap or leave blank gaps. Conversation rows reuse the Transcript avatar/stack/bubble layout so visible text and detail sections share the same geometry.
 
 ### 4. Validation & Error Matrix
 
@@ -800,3 +800,40 @@ const command = buildHistoryResumeCommand(session, project);
 <img src={getMaterialFileIcon(fileName)} alt="" />
 <GitDiffViewer filePath={path} fileName={fileName} status={status} diffText={patch} />
 ```
+
+## Scenario: History detail ordering and remembered direction
+
+### 1. Scope / Trigger
+
+- Trigger: changing the ordering controls or pagination of the Conversation, Transcript, Timeline, Changes, Tools, or Subtasks detail views.
+- Goal: expose a stable ascending/descending projection without changing raw message coordinates or the existing Canvas/Context semantics.
+
+### 2. Signatures
+
+- Setting: `Settings.historyDetailSortDirections` is a complete per-view map of `ascending | descending` values.
+- Message projection: `{ message: HistoryMessage, messageIndex: number }[]` preserves the source-array coordinate while changing display order.
+
+### 3. Contracts
+
+- The six sortable views default to ascending and persist one direction per view across sessions, history workspace reopen, and application restart. Canvas and Context have no ordering control.
+- Conversation and Transcript filter/display `activeSession.messages` through a projection; descending mode starts at the array tail and expands toward earlier raw indexes when loading more. Never use the visible-window index as an edit, selection, search, or jump coordinate.
+- Search and cross-view jumps retain raw `messageIndex`; match navigation follows the current visual direction. Direction changes reset to that direction's first visible item unless an active target must be restored.
+- Structured views filter first, then reverse only their time-sequence records. Changes keep file-name order, Tools keep aggregate counts, Subtasks keep the main-session root, and no view mutates its cached source array.
+- The dedicated settings action updates memory before persistence, serializes writes, and logs persistence failure without rolling back the current UI direction.
+- The toggle is a native keyboard-accessible button with localized label/tooltip, `aria-pressed`, and no hardcoded user-visible text.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Missing or malformed setting | Fill each known view with ascending and ignore unknown keys |
+| Descending long transcript | Render newest available messages first; load older raw indexes at the display tail |
+| Search/edit/jump in descending mode | Resolve the original `messageIndex`, never the projected row number |
+| Persistence write fails | Keep the immediate direction in memory, log the failure, and allow later writes |
+| Canvas or Context selected | Keep existing layout/statistical semantics and hide the ordering control |
+
+### 5. Tests Required
+
+- Pure projection tests cover both directions, tail-first pagination, stable raw indexes, and independent per-view defaults.
+- Source/interaction tests cover structured filter-then-reverse behavior, aggregate/statistical ordering exceptions, persistence migration/write serialization, and Canvas/Context exclusion.
+- Run `npx tsc --noEmit`, `npm run build`, and the focused history Node tests; manually verify `zh-CN`, `zh-TW`, and `en-US` copy with 24-hour time.

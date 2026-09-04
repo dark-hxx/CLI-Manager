@@ -19,6 +19,11 @@ import {
 import { buildHistoryResumeCommand } from "../lib/historyResumeCommand";
 import { sameHistorySessionIdentity } from "../lib/historySessionIdentity";
 import {
+  buildVisibleHistoryMessageEntries,
+  isHistorySortableDetailView,
+  type HistoryDetailSortDirection,
+} from "../lib/historySort";
+import {
   HISTORY_SOURCE_DESCRIPTOR_BY_ID,
   type HistorySourceId,
 } from "../lib/historySources";
@@ -238,8 +243,10 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
   const insertMessage = useHistoryStore((s) => s.insertMessage);
   const storedHistorySidebarWidth = useSettingsStore((s) => s.historySidebarWidth);
   const historySmartTitle = useSettingsStore((s) => s.historySmartTitle);
+  const historyDetailSortDirections = useSettingsStore((s) => s.historyDetailSortDirections);
   const historySidebarWidth = normalizeHistorySidebarWidth(storedHistorySidebarWidth);
   const updateSetting = useSettingsStore((s) => s.update);
+  const updateHistoryDetailSortDirections = useSettingsStore((s) => s.updateHistoryDetailSortDirections);
   const toggleSmartTitle = useCallback(() => {
     if (historySmartTitle.enabled) cancelAutomaticSmartTitles();
     void updateSetting("historySmartTitle", {
@@ -628,6 +635,14 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     return indices;
   }, [activeSession, debouncedSessionQuery]);
 
+  const detailSortDirection: HistoryDetailSortDirection = isHistorySortableDetailView(detailView)
+    ? historyDetailSortDirections[detailView]
+    : "ascending";
+  const orderedMatchIndices = useMemo(
+    () => detailSortDirection === "descending" ? [...matchIndices].reverse() : matchIndices,
+    [detailSortDirection, matchIndices]
+  );
+
   useEffect(() => {
     setMatchCursor(0);
   }, [debouncedSessionQuery, activeSession?.session_id]);
@@ -638,11 +653,23 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     setDiffFileChanges(null);
     pendingScrollMessageRef.current = null;
     messageRefs.current = {};
+    messageListRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [activeSession?.session_id]);
 
-  const visibleMessages = useMemo(
-    () => (activeSession?.messages ?? EMPTY_MESSAGES).slice(0, visibleMessageCount),
-    [activeSession?.messages, visibleMessageCount]
+  useEffect(() => {
+    setVisibleMessageCount(MESSAGE_PAGE_SIZE);
+    pendingScrollMessageRef.current = null;
+    messageRefs.current = {};
+    messageListRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }, [detailSortDirection]);
+
+  const visibleMessageEntries = useMemo(
+    () => buildVisibleHistoryMessageEntries(
+      activeSession?.messages ?? EMPTY_MESSAGES,
+      visibleMessageCount,
+      detailSortDirection,
+    ),
+    [activeSession?.messages, detailSortDirection, visibleMessageCount]
   );
 
   const processModel = useMemo(() => {
@@ -664,31 +691,39 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
       if (index < 0) return false;
       const total = activeSession?.messages.length ?? 0;
       if (index >= total) return false;
-      if (index >= visibleMessageCount) {
+      const isRendered = detailSortDirection === "descending"
+        ? index >= total - visibleMessageCount
+        : index < visibleMessageCount;
+      if (!isRendered) {
         pendingScrollMessageRef.current = index;
-        setVisibleMessageCount((prev) => Math.min(total, Math.max(prev, index + 40)));
+        setVisibleMessageCount((prev) => detailSortDirection === "descending"
+          ? Math.min(total, Math.max(prev, total - index + 40))
+          : Math.min(total, Math.max(prev, index + 40)));
         return false;
       }
       return true;
     },
-    [activeSession?.messages.length, visibleMessageCount]
+    [activeSession?.messages.length, detailSortDirection, visibleMessageCount]
   );
 
   useEffect(() => {
     const pendingIndex = pendingScrollMessageRef.current;
-    if (pendingIndex === null || pendingIndex >= visibleMessageCount) return;
+    if (
+      pendingIndex === null
+      || !visibleMessageEntries.some((entry) => entry.messageIndex === pendingIndex)
+    ) return;
     pendingScrollMessageRef.current = null;
     requestAnimationFrame(() => {
       messageRefs.current[pendingIndex]?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
-  }, [visibleMessageCount]);
+  }, [visibleMessageEntries]);
 
   useEffect(() => {
-    if (matchIndices.length === 0) return;
-    const targetIdx = matchIndices[Math.min(matchCursor, matchIndices.length - 1)];
+    if (orderedMatchIndices.length === 0) return;
+    const targetIdx = orderedMatchIndices[Math.min(matchCursor, orderedMatchIndices.length - 1)];
     if (!ensureMessageRendered(targetIdx)) return;
     messageRefs.current[targetIdx]?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [ensureMessageRendered, matchCursor, matchIndices]);
+  }, [ensureMessageRendered, matchCursor, orderedMatchIndices]);
 
   useEffect(() => {
     if (focusedMessageIndex === null) return;
@@ -703,6 +738,17 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     if (remaining > LOAD_MORE_THRESHOLD_PX) return;
     setVisibleMessageCount((prev) => Math.min(activeSession?.messages.length ?? 0, prev + MESSAGE_PAGE_SIZE));
   }, [activeSession?.messages.length, hasMoreMessages]);
+
+  const handleToggleSortDirection = useCallback(() => {
+    if (!isHistorySortableDetailView(detailView)) return;
+    const nextDirection: HistoryDetailSortDirection = detailSortDirection === "ascending"
+      ? "descending"
+      : "ascending";
+    updateHistoryDetailSortDirections({
+      ...historyDetailSortDirections,
+      [detailView]: nextDirection,
+    });
+  }, [detailSortDirection, detailView, historyDetailSortDirections, updateHistoryDetailSortDirections]);
 
   const saveMeta = async () => {
     if (!activeView) return;
@@ -1393,20 +1439,22 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
             tagsDraft={tagsDraft}
             tagSuggestions={tagSuggestions}
             sessionQuery={sessionQuery}
-            matchIndices={matchIndices}
+            matchIndices={orderedMatchIndices}
             matchCursor={matchCursor}
             focusedMessageIndex={focusedMessageIndex}
             focusedMessageSeq={focusedMessageSeq}
-            visibleMessages={visibleMessages}
+            visibleMessageEntries={visibleMessageEntries}
             visibleMessageCount={visibleMessageCount}
             hasMoreMessages={hasMoreMessages}
             totalMessageCount={activeSession?.messages.length ?? 0}
             processModel={processModel}
             detailView={detailView}
+            sortDirection={detailSortDirection}
             messageListRef={messageListRef}
             sessionSearchRef={sessionSearchRef}
             messageRefs={messageRefs}
             onDetailViewChange={setDetailView}
+            onToggleSortDirection={handleToggleSortDirection}
             onMessageListScroll={handleMessageListScroll}
             onAliasDraftChange={setAliasDraft}
             onTagsDraftChange={setTagsDraft}

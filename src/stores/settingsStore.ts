@@ -42,6 +42,11 @@ import {
 } from "../lib/terminalPaneMarker";
 import type { HistorySmartTitleSettings } from "../lib/types";
 import {
+  DEFAULT_HISTORY_DETAIL_SORT_DIRECTIONS,
+  HISTORY_SORTABLE_DETAIL_VIEWS,
+  type HistoryDetailSortDirections,
+} from "../lib/historySort";
+import {
   migrateWorkspaceLayout,
   WORKSPACE_LAYOUT_DEFAULTS,
   type WorkspaceLayoutSettings,
@@ -391,6 +396,7 @@ export interface Settings {
   sidebarWidth: number;
   historySidebarWidth: number;
   historySmartTitle: HistorySmartTitleSettings;
+  historyDetailSortDirections: HistoryDetailSortDirections;
   collapsedGroupIds: string[];
   useExternalTerminal: boolean;
   debugMode: boolean;
@@ -519,6 +525,7 @@ interface SettingsStore extends Settings {
   terminalBackgroundMissing: boolean;
   load: () => Promise<void>;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => Promise<void>;
+  updateHistoryDetailSortDirections: (value: HistoryDetailSortDirections) => void;
   recordTerminalInputSuggestionUsage: (event: TerminalInputSuggestionAiAttempt | { accepted: true }) => void;
   recordCliArgsHistory: (cliTool: string, cliArgs: string) => Promise<void>;
   setTheme: (mode: ThemeMode) => Promise<void>;
@@ -556,6 +563,7 @@ const DEFAULTS: Settings = {
     enabledAt: null,
     customPrompt: "",
   },
+  historyDetailSortDirections: { ...DEFAULT_HISTORY_DETAIL_SORT_DIRECTIONS },
   collapsedGroupIds: [],
   useExternalTerminal: false,
   debugMode: false,
@@ -874,6 +882,20 @@ export function migrateHistorySmartTitleSettings(value: unknown): HistorySmartTi
     enabledAt,
     customPrompt: migrateHistorySmartTitleCustomPrompt(raw.customPrompt),
   };
+}
+
+export function migrateHistoryDetailSortDirections(value: unknown): HistoryDetailSortDirections {
+  const raw = typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : {};
+  const next = { ...DEFAULT_HISTORY_DETAIL_SORT_DIRECTIONS };
+  for (const view of HISTORY_SORTABLE_DETAIL_VIEWS) {
+    const direction = raw[view];
+    if (direction === "ascending" || direction === "descending") {
+      next[view] = direction;
+    }
+  }
+  return next;
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -1255,6 +1277,7 @@ export function migrateDesktopPetSettings(value: unknown): DesktopPetSettings {
 let store: Store | null = null;
 const TERMINAL_INPUT_SUGGESTION_USAGE_SAVE_DELAY_MS = 800;
 let terminalInputSuggestionUsageSaveTimer: number | null = null;
+let historyDetailSortWriteQueue: Promise<void> = Promise.resolve();
 
 async function getStore() {
   if (!store) {
@@ -1398,6 +1421,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.sidebarWidth = clampNumber(entries.sidebarWidth, 64, 500, DEFAULTS.sidebarWidth);
     entries.historySidebarWidth = clampNumber(entries.historySidebarWidth, 180, 520, DEFAULTS.historySidebarWidth);
     entries.historySmartTitle = migrateHistorySmartTitleSettings(entries.historySmartTitle);
+    const storedHistoryDetailSortDirections = entries.historyDetailSortDirections;
+    const historyDetailSortDirections = migrateHistoryDetailSortDirections(storedHistoryDetailSortDirections);
+    entries.historyDetailSortDirections = historyDetailSortDirections;
+    if (
+      storedHistoryDetailSortDirections !== undefined
+      && JSON.stringify(storedHistoryDetailSortDirections) !== JSON.stringify(historyDetailSortDirections)
+    ) {
+      persistSetting("historyDetailSortDirections", historyDetailSortDirections);
+    }
     entries.uiFontSize = clampNumber(
       entries.uiFontSize,
       UI_FONT_SIZE_MIN,
@@ -1814,6 +1846,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (key === "debugMode") {
       void applyDebugMode(value as boolean);
     }
+  },
+
+  updateHistoryDetailSortDirections: (value) => {
+    const next = { ...value };
+    set({ historyDetailSortDirections: next });
+    historyDetailSortWriteQueue = historyDetailSortWriteQueue
+      .catch(() => {})
+      .then(async () => {
+        const s = await getStore();
+        await s.set("historyDetailSortDirections", next);
+      })
+      .catch((err) => {
+        console.warn("Failed to persist history detail sort directions:", err);
+      });
   },
 
   recordTerminalInputSuggestionUsage: (event) => {

@@ -79,6 +79,42 @@ let hits = catalog::search_sessions(&roots, &query, source, project_path, limit)
 catalog::ensure_refresh(app, roots, false, false).await?;
 ```
 
+## Scenario: Codex thread-name title candidates
+
+### 1. Scope / Trigger
+
+- Trigger: changing Codex history summary/detail/search title resolution or local/WSL/SSH history cache reuse.
+- Goal: expose the Codex `session_index.jsonl` thread name as a source title candidate without changing raw transcripts or crossing source-instance boundaries.
+
+### 2. Signatures
+
+- Source file: `<Codex config root>/session_index.jsonl`, parsed as bounded JSONL records containing `id` and `thread_name`.
+- Existing output fields remain authoritative: the matched name is applied to `HistorySessionSummary.title`, detail title, search hit title, and the SSH equivalent; no new IPC field is required.
+
+### 3. Contracts
+
+- Candidate precedence at the renderer is `alias > valid AI title > Codex thread_name > existing source title/first user message > session id`. A source name must never overwrite an alias or generated title.
+- Windows local, WSL (through the existing distro/path command boundary), and SSH (inside the resolved remote config root) read only their own source instance. Lookup requires the matching Codex session ID within that instance.
+- Parse line by line, ignore malformed/blank/mismatched records, and let the last valid non-empty record for an ID win. Enforce the 8 MiB index read bound and a bounded title length.
+- Store a file fingerprint with derived cache state. A changed or newly available index invalidates Codex summary/catalog reuse and refreshes titles; direct detail/list/search paths may overlay the current resolver so stale derived rows do not hide a new name.
+- Missing, inaccessible, oversized, or malformed index data is a local fallback condition and must not prevent other history sources from loading. Never write a thread name back to a transcript or Codex state file.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Valid matching record | Use its trimmed bounded `thread_name` as the source title |
+| Duplicate ID | Last valid non-empty record wins |
+| Bad row, blank name, or mismatched ID | Ignore it and retain the existing title fallback |
+| Index missing/oversized/unreadable | Continue history loading without a thread-name override |
+| Index fingerprint changes | Reparse affected Codex summaries/catalog rows on the next refresh |
+| Same session ID under another source instance | Never reuse the name across local, WSL, SSH, or unrelated roots |
+
+### 5. Tests Required
+
+- Rust tests cover valid/duplicate/invalid records, bounds, source matching, fallback, and local/WSL/SSH cache invalidation paths.
+- Run `cargo test history --lib`, `cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml`, `cargo check`, and `cargo fmt -- --check`.
+
 ## Scenario: Compact FTS catalog schema upgrade
 
 ### 1. Scope / Trigger

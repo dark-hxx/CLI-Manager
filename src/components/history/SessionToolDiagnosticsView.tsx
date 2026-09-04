@@ -1,10 +1,12 @@
 import { AlertTriangle, Gauge, Wrench } from "lucide-react";
 import type { HistoryToolCount, HistoryToolEvent } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
+import { sortHistoryItems, type HistoryDetailSortDirection } from "../../lib/historySort";
 import type { SessionProcessModel } from "./sessionEvents";
 
 interface SessionToolDiagnosticsViewProps {
   model: SessionProcessModel;
+  direction: HistoryDetailSortDirection;
   builtinCalls: HistoryToolCount[];
   mcpCalls: HistoryToolCount[];
   skillCalls: HistoryToolCount[];
@@ -33,6 +35,7 @@ function ToolCountSection({ title, items }: { title: string; items: HistoryToolC
 
 export function SessionToolDiagnosticsView({
   model,
+  direction,
   builtinCalls,
   mcpCalls,
   skillCalls,
@@ -42,6 +45,9 @@ export function SessionToolDiagnosticsView({
   const { t } = useI18n();
   const hasCounts = builtinCalls.length > 0 || mcpCalls.length > 0 || skillCalls.length > 0;
   const hasEvents = toolEvents.length > 0 || model.toolEvents.length > 0 || model.errorEvents.length > 0;
+  const orderedToolEvents = sortHistoryItems(toolEvents, direction);
+  const orderedErrorEvents = sortHistoryItems(model.errorEvents, direction);
+  const orderedSuspectedEvents = sortHistoryItems(model.toolEvents, direction).slice(0, 80);
 
   if (!hasCounts && !hasEvents) {
     return <div className="ui-session-process-empty">{t("history.tools.empty")}</div>;
@@ -73,7 +79,7 @@ export function SessionToolDiagnosticsView({
             {t("history.tools.structuredCalls")}
           </div>
           <div className="ui-session-diagnostic-list">
-            {toolEvents.map((event, index) => (
+            {orderedToolEvents.map((event, index) => (
               <button
                 key={event.call_id ?? `${event.name}-${index}`}
                 type="button"
@@ -91,14 +97,14 @@ export function SessionToolDiagnosticsView({
         </section>
       )}
 
-      {model.errorEvents.length > 0 && (
+      {orderedErrorEvents.length > 0 && (
         <section className="ui-session-process-card mt-2">
           <div className="ui-session-process-card-title danger">
             <AlertTriangle size={14} />
             {t("history.tools.errorClues")}
           </div>
           <div className="ui-session-diagnostic-list">
-            {model.errorEvents.map((event) => (
+            {orderedErrorEvents.map((event) => (
               <button
                 key={event.id}
                 type="button"
@@ -112,14 +118,14 @@ export function SessionToolDiagnosticsView({
         </section>
       )}
 
-      {model.toolEvents.length > 0 && (
+      {orderedSuspectedEvents.length > 0 && (
         <section className="ui-session-process-card mt-2">
           <div className="ui-session-process-card-title">
             <Wrench size={14} />
             {t("history.tools.suspectedEvents")}
           </div>
           <div className="ui-session-diagnostic-list">
-            {model.toolEvents.slice(0, 80).map((event) => (
+            {orderedSuspectedEvents.map((event) => (
               <button
                 key={event.id}
                 type="button"

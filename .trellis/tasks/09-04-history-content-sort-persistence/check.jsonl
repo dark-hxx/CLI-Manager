@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/history-session-contracts.md", "reason": "验收排序方向、倒序尾部分页、raw messageIndex、操作定位与持久化场景。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "复核双语文案、按钮可访问性、类型检查与前端质量门禁。"}
+{"file": ".trellis/spec/backend/history-index-contracts.md", "reason": "复核本地/WSL Codex thread_name 解析、指纹失效、fallback 与搜索一致性。"}
+{"file": ".trellis/spec/backend/ssh-agent-contracts.md", "reason": "复核 SSH Codex thread_name 的远端范围、身份隔离与旧索引兼容。"}

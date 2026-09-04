@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PARSER_VERSION: u32 = 3;
+pub const PARSER_VERSION: u32 = 4;
 pub const INDEX_SCHEMA_VERSION: u32 = 2;
 const SEARCH_TEXT_LIMIT: usize = 16 * 1024;
 const TITLE_LIMIT: usize = 240;

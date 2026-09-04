@@ -2,6 +2,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowRightLeft,
+  ArrowDownWideNarrow,
+  ArrowUpWideNarrow,
   BookCopy,
   Check,
   CheckSquare,
@@ -35,6 +37,12 @@ import type {
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
 import {
+  isHistorySortableDetailView,
+  type HistoryDetailSortDirection,
+  type HistoryMessageEntry,
+  type HistorySortableDetailView,
+} from "../../lib/historySort";
+import {
   effectiveHistoryMessageParts,
   isConversationVisibleMessage,
   isInjectedPromptContent,
@@ -55,7 +63,7 @@ import type { SessionProcessModel } from "./sessionEvents";
 
 export { isConversationVisibleMessage } from "../../lib/historyConversation";
 
-export type HistoryDetailView = "conversation" | "transcript" | "timeline" | "canvas" | "context" | "changes" | "tools" | "subtasks";
+export type HistoryDetailView = HistorySortableDetailView | "canvas" | "context";
 
 interface SessionDetailPaneProps {
   activeView: HistorySessionView | null;
@@ -70,16 +78,18 @@ interface SessionDetailPaneProps {
   matchCursor: number;
   focusedMessageIndex: number | null;
   focusedMessageSeq: number;
-  visibleMessages: HistoryMessage[];
+  visibleMessageEntries: HistoryMessageEntry[];
   visibleMessageCount: number;
   hasMoreMessages: boolean;
   totalMessageCount: number;
   processModel: SessionProcessModel;
   detailView: HistoryDetailView;
+  sortDirection: HistoryDetailSortDirection;
   messageListRef: RefObject<HTMLDivElement | null>;
   sessionSearchRef: RefObject<HTMLInputElement | null>;
   messageRefs: RefObject<Record<number, HTMLDivElement | null>>;
   onDetailViewChange: (view: HistoryDetailView) => void;
+  onToggleSortDirection: () => void;
   onMessageListScroll: () => void;
   onAliasDraftChange: (value: string) => void;
   onTagsDraftChange: (value: string) => void;
@@ -137,10 +147,10 @@ type ConversationMessageRow = {
 
 type ConversationRow = ConversationMessageRow;
 
-export function buildConversationRows(messages: HistoryMessage[]): ConversationRow[] {
+export function buildConversationRows(entries: HistoryMessageEntry[]): ConversationRow[] {
   const rows: ConversationRow[] = [];
 
-  messages.forEach((message, messageIndex) => {
+  entries.forEach(({ message, messageIndex }) => {
     if (!isConversationVisibleMessage(message)) return;
     const parts = effectiveHistoryMessageParts(message);
     const textParts = parts.filter((part) => part.kind === "text");
@@ -410,6 +420,7 @@ type InsertRole = "user" | "assistant";
 interface HistoryMessageCardProps {
   message: HistoryMessage;
   index: number;
+  virtualIndex: number;
   isMatched: boolean;
   isFocused: boolean;
   query: string;
@@ -442,6 +453,7 @@ interface HistoryMessageCardProps {
 function HistoryMessageCard({
   message,
   index,
+  virtualIndex,
   isMatched,
   isFocused,
   query,
@@ -534,7 +546,7 @@ function HistoryMessageCard({
 
   return (
     <div
-      data-index={index}
+      data-index={virtualIndex}
       data-role={roleKind}
       data-editing={isEditing ? "true" : undefined}
       data-inserting={isInserting ? "true" : undefined}
@@ -729,16 +741,18 @@ export function SessionDetailPane({
   matchCursor,
   focusedMessageIndex,
   focusedMessageSeq,
-  visibleMessages,
+  visibleMessageEntries,
   visibleMessageCount,
   hasMoreMessages,
   totalMessageCount,
   processModel,
   detailView,
+  sortDirection,
   messageListRef,
   sessionSearchRef,
   messageRefs,
   onDetailViewChange,
+  onToggleSortDirection,
   onMessageListScroll,
   onAliasDraftChange,
   onTagsDraftChange,
@@ -793,9 +807,9 @@ export function SessionDetailPane({
   // 当匹配数 N 和可见消息数 M 都达到几百时累计 O(N·M)。改 Set 后是 O(1) lookup。
   const matchSet = useMemo(() => new Set(matchIndices), [matchIndices]);
   const activeMatchIndex = matchIndices[Math.min(matchCursor, Math.max(0, matchIndices.length - 1))];
-  const conversationRows = useMemo(() => buildConversationRows(visibleMessages), [visibleMessages]);
+  const conversationRows = useMemo(() => buildConversationRows(visibleMessageEntries), [visibleMessageEntries]);
   const isConversationView = detailView === "conversation";
-  const virtualRowCount = isConversationView ? conversationRows.length : visibleMessages.length;
+  const virtualRowCount = isConversationView ? conversationRows.length : visibleMessageEntries.length;
   const messageVirtualizer = useVirtualizer({
     count: virtualRowCount,
     getScrollElement: () => messageListRef.current,
@@ -803,29 +817,32 @@ export function SessionDetailPane({
     overscan: 6,
     getItemKey: (index) => isConversationView
       ? conversationRows[index]?.key ?? `conversation:${index}`
-      : `${visibleMessages[index]?.role ?? "message"}:${index}`,
+      : `${visibleMessageEntries[index]?.message.role ?? "message"}:${visibleMessageEntries[index]?.messageIndex ?? index}`,
   });
 
   useEffect(() => {
     if (activeMatchIndex === undefined) return;
-    if (activeMatchIndex >= visibleMessages.length) return;
+    const visibleRowIndex = visibleMessageEntries.findIndex((entry) => entry.messageIndex === activeMatchIndex);
+    if (visibleRowIndex < 0) return;
     const rowIndex = isConversationView
       ? findConversationRowIndex(conversationRows, activeMatchIndex)
-      : activeMatchIndex;
+      : visibleRowIndex;
     if ((isConversationView || detailView === "transcript") && rowIndex >= 0) {
       messageVirtualizer.scrollToIndex(rowIndex, { align: "center" });
     }
-  }, [activeMatchIndex, conversationRows, detailView, isConversationView, messageVirtualizer, visibleMessages.length]);
+  }, [activeMatchIndex, conversationRows, detailView, isConversationView, messageVirtualizer, visibleMessageEntries]);
 
   useEffect(() => {
-    if (focusedMessageIndex === null || focusedMessageIndex >= visibleMessages.length) return;
+    if (focusedMessageIndex === null) return;
+    const visibleRowIndex = visibleMessageEntries.findIndex((entry) => entry.messageIndex === focusedMessageIndex);
+    if (visibleRowIndex < 0) return;
     const rowIndex = isConversationView
       ? findConversationRowIndex(conversationRows, focusedMessageIndex)
-      : focusedMessageIndex;
+      : visibleRowIndex;
     if ((isConversationView || detailView === "transcript") && rowIndex >= 0) {
       messageVirtualizer.scrollToIndex(rowIndex, { align: "center" });
     }
-  }, [conversationRows, detailView, focusedMessageIndex, focusedMessageSeq, isConversationView, messageVirtualizer, visibleMessages.length]);
+  }, [conversationRows, detailView, focusedMessageIndex, focusedMessageSeq, isConversationView, messageVirtualizer, visibleMessageEntries]);
 
   if (!activeView) {
     return (
@@ -937,7 +954,7 @@ export function SessionDetailPane({
     if (batchDeleting) return;
     const messages = Array.from(selectedMessageIndices)
       .sort((a, b) => a - b)
-      .map((index) => visibleMessages[index])
+      .map((index) => activeSession?.messages[index])
       .filter((message): message is HistoryMessage => Boolean(message?.editable));
     if (messages.length === 0) return;
     setBatchDeleting(true);
@@ -1139,19 +1156,42 @@ export function SessionDetailPane({
           onJumpNext={onJumpNext}
         />
 
-        <div className="ui-history-detail-tabs" role="tablist" aria-label={t("history.detail.viewsAria")}>
-          {DETAIL_VIEWS.map((item) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="ui-history-detail-tabs min-w-0 flex-1" role="tablist" aria-label={t("history.detail.viewsAria")}>
+            {DETAIL_VIEWS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={detailView === item.id}
+                data-active={detailView === item.id}
+                onClick={() => onDetailViewChange(item.id)}
+              >
+                {t(item.labelKey)}
+              </button>
+            ))}
+          </div>
+          {isHistorySortableDetailView(detailView) && (
             <button
-              key={item.id}
               type="button"
-              role="tab"
-              aria-selected={detailView === item.id}
-              data-active={detailView === item.id}
-              onClick={() => onDetailViewChange(item.id)}
+              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact shrink-0"
+              aria-pressed={sortDirection === "descending"}
+              aria-label={t(
+                sortDirection === "ascending"
+                  ? "history.detail.sortAscendingTitle"
+                  : "history.detail.sortDescendingTitle",
+              )}
+              title={t(
+                sortDirection === "ascending"
+                  ? "history.detail.sortAscendingTitle"
+                  : "history.detail.sortDescendingTitle",
+              )}
+              onClick={onToggleSortDirection}
             >
-              {t(item.labelKey)}
+              {sortDirection === "ascending" ? <ArrowDownWideNarrow size={12} /> : <ArrowUpWideNarrow size={12} />}
+              {t(sortDirection === "ascending" ? "history.detail.sortAscending" : "history.detail.sortDescending")}
             </button>
-          ))}
+          )}
         </div>
 
         {messageSelectionMode && (
@@ -1197,43 +1237,45 @@ export function SessionDetailPane({
           <div className="text-xs text-text-muted">{t("history.detail.noMessages")}</div>
         )}
 
-        {!loadingSessionDetail && detailView === "transcript" && visibleMessages.length > 0 && (
+        {!loadingSessionDetail && detailView === "transcript" && visibleMessageEntries.length > 0 && (
           <div className="relative w-full" style={{ height: messageVirtualizer.getTotalSize() }}>
             {messageVirtualizer.getVirtualItems().map((virtualRow) => {
-              const msg = visibleMessages[virtualRow.index];
-              if (!msg) return null;
-              const isMatched = matchSet.has(virtualRow.index);
-              const isFocused = focusedMessageIndex === virtualRow.index;
+              const entry = visibleMessageEntries[virtualRow.index];
+              if (!entry) return null;
+              const { message: msg, messageIndex } = entry;
+              const isMatched = matchSet.has(messageIndex);
+              const isFocused = focusedMessageIndex === messageIndex;
               return (
                 <div key={virtualRow.key} className="absolute left-0 top-0 w-full" style={{ transform: `translateY(${virtualRow.start}px)` }}>
                   <HistoryMessageCard
                     message={msg}
-                    index={virtualRow.index}
+                    index={messageIndex}
+                    virtualIndex={virtualRow.index}
                     isMatched={isMatched}
                     isFocused={isFocused}
                     query={sessionQuery}
                     messageRefs={messageRefs}
                     measureElement={messageVirtualizer.measureElement}
                     canEdit={canEditMessages}
-                    isEditing={editingIndex === virtualRow.index}
+                    isEditing={editingIndex === messageIndex}
                     editDraft={editDraft}
                     editSaving={editSaving}
                     onEditDraftChange={setEditDraft}
                     onStartEdit={() => {
-                      void startEditMessage(virtualRow.index, msg);
+                      void startEditMessage(messageIndex, msg);
                     }}
                     onCancelEdit={() => setEditingIndex(null)}
                     onSubmitEdit={() => {
                       void submitEditMessage(msg);
                     }}
-                    isInserting={insertIndex === virtualRow.index}
+                    isInserting={insertIndex === messageIndex}
                     insertRole={insertRole}
                     insertDraft={insertDraft}
                     insertSaving={insertSaving}
                     onInsertRoleChange={setInsertRole}
                     onInsertDraftChange={setInsertDraft}
                     onStartInsert={() => {
-                      void startInsertMessage(virtualRow.index);
+                      void startInsertMessage(messageIndex);
                     }}
                     onCancelInsert={() => setInsertIndex(null)}
                     onSubmitInsert={() => {
@@ -1242,8 +1284,8 @@ export function SessionDetailPane({
                     onCopyMessage={() => copyMessageContent(msg)}
                     onDeleteMessage={() => onDeleteMessage(msg)}
                     selectionMode={messageSelectionMode}
-                    isSelected={selectedMessageIndices.has(virtualRow.index)}
-                    onToggleSelect={() => toggleMessageSelected(virtualRow.index)}
+                    isSelected={selectedMessageIndices.has(messageIndex)}
+                    onToggleSelect={() => toggleMessageSelected(messageIndex)}
                   />
                 </div>
               );
@@ -1291,7 +1333,7 @@ export function SessionDetailPane({
         )}
 
         {!loadingSessionDetail && detailView === "timeline" && (
-          <SessionTimelineView model={processModel} onJumpToMessage={onJumpToMessage} />
+          <SessionTimelineView model={processModel} direction={sortDirection} onJumpToMessage={onJumpToMessage} />
         )}
 
         {!loadingSessionDetail && detailView === "canvas" && (
@@ -1309,6 +1351,7 @@ export function SessionDetailPane({
           <SessionFileChangesView
             fileChanges={activeSession?.file_changes}
             model={processModel}
+            direction={sortDirection}
             onOpenDiff={onOpenDiff}
             onJumpToMessage={onJumpToMessage}
           />
@@ -1321,12 +1364,13 @@ export function SessionDetailPane({
             mcpCalls={activeSession?.usage?.mcp_calls ?? []}
             skillCalls={activeSession?.usage?.skill_calls ?? []}
             toolEvents={activeSession?.tool_events ?? []}
+            direction={sortDirection}
             onJumpToMessage={onJumpToMessage}
           />
         )}
 
         {!loadingSessionDetail && detailView === "subtasks" && (
-          <SessionSubtaskTreeView model={processModel} onJumpToMessage={onJumpToMessage} />
+          <SessionSubtaskTreeView model={processModel} direction={sortDirection} onJumpToMessage={onJumpToMessage} />
         )}
 
         {!loadingSessionDetail && (detailView === "transcript" || detailView === "conversation") && hasMoreMessages && (

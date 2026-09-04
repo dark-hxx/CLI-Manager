@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/history-session-contracts.md", "reason": "历史详情六个顺序视图、原始消息坐标、分页、搜索跳转与排序持久化契约。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端状态、国际化、可访问性、虚拟列表与交付验证约束。"}
+{"file": ".trellis/spec/backend/history-index-contracts.md", "reason": "历史索引、Codex session_index 标题候选、来源身份边界与缓存刷新契约。"}
+{"file": ".trellis/spec/backend/ssh-agent-contracts.md", "reason": "SSH 远程历史同步、摘要/详情身份校验与远端索引兼容约束。"}

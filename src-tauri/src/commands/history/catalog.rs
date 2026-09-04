@@ -6,13 +6,13 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as AsyncMutex;
 
 const CATALOG_DB_FILE: &str = "history-catalog.db";
-const CATALOG_PARSER_VERSION: i64 = 1;
+const CATALOG_PARSER_VERSION: i64 = 2;
 const HISTORY_INDEX_SCHEMA_VERSION: i64 = 6;
 const HISTORY_INDEX_MODEL_VERSION: i64 = 1;
 const CATALOG_REFRESH_TTL_MS: i64 = 10_000;
@@ -28,6 +28,12 @@ static CATALOG_DIRTY: AtomicBool = AtomicBool::new(false);
 struct CatalogFile {
     file_ref: SessionFileRef,
     fingerprint: SessionFileFingerprint,
+    codex_thread_name_index: Option<Arc<super::CodexThreadNameIndex>>,
+}
+
+struct CatalogScan {
+    files: Vec<CatalogFile>,
+    codex_thread_name_fingerprint: String,
 }
 
 struct CatalogDocument {
@@ -1485,7 +1491,23 @@ pub(super) async fn list_sessions(
         Some(0),
     )
     .await?;
-    Ok(merge_session_summaries(v2, legacy, limit, offset))
+    let mut sessions = merge_session_summaries(v2, legacy, limit, offset);
+    if sessions.iter().any(|session| session.source == "codex") {
+        let roots_for_names = roots.clone();
+        if let Ok(index) =
+            tokio::task::spawn_blocking(move || super::codex_thread_name_index(&roots_for_names))
+                .await
+        {
+            for session in &mut sessions {
+                if session.source == "codex" {
+                    if let Some(thread_name) = index.names.get(&session.session_id) {
+                        session.title = thread_name.clone();
+                    }
+                }
+            }
+        }
+    }
+    Ok(sessions)
 }
 
 fn fts_literal(query: &str) -> String {
@@ -1778,7 +1800,23 @@ pub(super) async fn search_sessions(
         max_hits,
     )
     .await?;
-    Ok(merge_search_results(v2, legacy, max_hits))
+    let mut hits = merge_search_results(v2, legacy, max_hits);
+    if hits.iter().any(|hit| hit.source == "codex") {
+        let roots_for_names = roots.clone();
+        if let Ok(index) =
+            tokio::task::spawn_blocking(move || super::codex_thread_name_index(&roots_for_names))
+                .await
+        {
+            for hit in &mut hits {
+                if hit.source == "codex" {
+                    if let Some(thread_name) = index.names.get(&hit.session_id) {
+                        hit.title = thread_name.clone();
+                    }
+                }
+            }
+        }
+    }
+    Ok(hits)
 }
 
 fn stats_summary_matches_project_path(
@@ -2010,11 +2048,21 @@ pub(super) async fn get_session_detail_from_v2(
 
 async fn get_session_detail_from_v2_with_conn(
     conn: &mut SqliteConnection,
-    _roots: &HistoryRoots,
+    roots: &HistoryRoots,
     file_path: &str,
     source: &str,
     project_key: &str,
 ) -> Result<Option<HistorySessionDetail>, String> {
+    let codex_thread_names = if source.eq_ignore_ascii_case("codex") {
+        let roots_for_names = roots.clone();
+        Some(
+            tokio::task::spawn_blocking(move || super::codex_thread_name_index(&roots_for_names))
+                .await
+                .map_err(|err| err.to_string())?,
+        )
+    } else {
+        None
+    };
     let row = sqlx::query(
         "SELECT hs.id, i.source_id AS source, hs.source_session_id AS session_id,
                 hs.project_key, hs.title,
@@ -2045,6 +2093,13 @@ async fn get_session_detail_from_v2_with_conn(
 
     let session_row_id: i64 = row.try_get("id").map_err(|err| err.to_string())?;
     let source: String = row.try_get("source").map_err(|err| err.to_string())?;
+    let session_id: String = row.try_get("session_id").map_err(|err| err.to_string())?;
+    let mut title: String = row.try_get("title").map_err(|err| err.to_string())?;
+    if let Some(index) = codex_thread_names.as_ref() {
+        if let Some(thread_name) = index.names.get(&session_id) {
+            title = thread_name.clone();
+        }
+    }
     let file_path: String = row.try_get("file_path").map_err(|err| err.to_string())?;
     let source_path = Path::new(&file_path);
     let current_file_updated_at = source_path
@@ -2345,10 +2400,10 @@ async fn get_session_detail_from_v2_with_conn(
     }
 
     Ok(Some(HistorySessionDetail {
-        session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
+        session_id,
         source,
         project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
-        title: row.try_get("title").map_err(|err| err.to_string())?,
+        title,
         file_path,
         cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
         created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
@@ -2423,7 +2478,9 @@ fn collect_codex_catalog_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
-fn collect_catalog_files(roots: &HistoryRoots) -> Vec<CatalogFile> {
+fn collect_catalog_files_with_context(roots: &HistoryRoots) -> CatalogScan {
+    let codex_thread_name_index = Arc::new(super::codex_thread_name_index(roots));
+    let codex_thread_name_fingerprint = codex_thread_name_index.fingerprint.clone();
     let mut files = collect_claude_session_files(&resolve_claude_history_root(roots));
     files.extend(collect_codex_catalog_files(&resolve_codex_history_root(
         roots,
@@ -2447,21 +2504,35 @@ fn collect_catalog_files(roots: &HistoryRoots) -> Vec<CatalogFile> {
         files.extend(collect_cline_session_files(&root));
     }
     files.extend(collect_cursor_session_files(&resolve_cursor_history_root()));
-    files
+    let files = files
         .into_iter()
         .map(|file_ref| CatalogFile {
             fingerprint: session_file_fingerprint(&file_ref.path),
+            codex_thread_name_index: (file_ref.source == "codex")
+                .then(|| codex_thread_name_index.clone()),
             file_ref,
         })
-        .collect()
+        .collect();
+    CatalogScan {
+        files,
+        codex_thread_name_fingerprint,
+    }
+}
+
+#[cfg(test)]
+fn collect_catalog_files(roots: &HistoryRoots) -> Vec<CatalogFile> {
+    collect_catalog_files_with_context(roots).files
 }
 
 fn parse_catalog_file(file: CatalogFile) -> CatalogDocument {
-    let (computed, messages) = scan_session_computation_with_messages(
+    let (mut computed, messages) = scan_session_computation_with_messages(
         &file.file_ref.path,
         file.fingerprint.created_at,
         file.fingerprint.updated_at,
     );
+    if let Some(index) = file.codex_thread_name_index.as_ref() {
+        super::apply_codex_thread_name(&file.file_ref, index, &mut computed);
+    }
     let cwd = get_or_scan_session_project(&file.file_ref.path).cwd;
     let mut file_ref = file.file_ref;
     if file_ref.source != "claude" {
@@ -3326,7 +3397,11 @@ async fn replace_v2_session(
     generation: u64,
     row: &V2LegacySessionRow,
 ) -> Result<(), String> {
-    let parts = scan_session_detail_parts(&row.file_ref);
+    let mut parts = scan_session_detail_parts(&row.file_ref);
+    if row.file_ref.source == "codex" {
+        let codex_thread_names = super::codex_thread_name_index(roots);
+        super::apply_codex_thread_name(&row.file_ref, &codex_thread_names, &mut parts.computed);
+    }
     let adapted =
         build_v2_adapter_session_from_parts(&row.file_ref, roots, row.fingerprint, &parts);
     let session_ref = adapted.session_ref;
@@ -3689,6 +3764,7 @@ async fn shadow_build_v2_for_instance(
     roots_key: &str,
     generation: u64,
     instance: &V2SourceInstance,
+    codex_thread_name_changed: bool,
 ) -> Result<(), String> {
     let started_at = now_millis();
     let run_id = format!("shadow-{}-{}-{}", instance.id, generation, started_at);
@@ -3723,10 +3799,10 @@ async fn shadow_build_v2_for_instance(
     let mut failed_sessions = 0usize;
     for session in &sessions {
         let fingerprint_value = v2_fingerprint_value(session.fingerprint);
-        if existing
-            .get(&session.session_id)
-            .is_some_and(|existing| existing == &fingerprint_value)
-        {
+        if existing.get(&session.session_id).is_some_and(|existing| {
+            existing == &fingerprint_value
+                && !(codex_thread_name_changed && instance.source_id == "codex")
+        }) {
             continue;
         }
         match replace_v2_session(conn, roots, &instance.id, generation, session).await {
@@ -3855,9 +3931,18 @@ async fn shadow_build_v2(
     roots: &HistoryRoots,
     roots_key: &str,
     generation: u64,
+    codex_thread_name_changed: bool,
 ) -> Result<(), String> {
     for instance in active_v2_source_instances(conn).await? {
-        shadow_build_v2_for_instance(conn, roots, roots_key, generation, &instance).await?;
+        shadow_build_v2_for_instance(
+            conn,
+            roots,
+            roots_key,
+            generation,
+            &instance,
+            codex_thread_name_changed,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -3877,9 +3962,17 @@ async fn refresh_catalog(
     emit_status(app, &status);
 
     let roots_for_scan = roots.clone();
-    let files = tokio::task::spawn_blocking(move || collect_catalog_files(&roots_for_scan))
-        .await
-        .map_err(|err| err.to_string())?;
+    let catalog_scan =
+        tokio::task::spawn_blocking(move || collect_catalog_files_with_context(&roots_for_scan))
+            .await
+            .map_err(|err| err.to_string())?;
+    let files = catalog_scan.files;
+    let codex_thread_name_fingerprint = catalog_scan.codex_thread_name_fingerprint;
+    let codex_thread_name_meta_key = format!("codex_thread_name_fingerprint:{roots_key}");
+    let previous_codex_thread_name_fingerprint =
+        history_meta_value(&mut conn, &codex_thread_name_meta_key).await?;
+    let codex_thread_name_changed = previous_codex_thread_name_fingerprint.as_deref()
+        != Some(codex_thread_name_fingerprint.as_str());
     let (opencode_documents, preserve_opencode_rows) = match opencode_catalog_sessions().await {
         Ok(Some(sessions)) => (
             sessions
@@ -3945,14 +4038,16 @@ async fn refresh_catalog(
     let mut pending = Vec::new();
     for file in files {
         let path = file.file_ref.path.to_string_lossy().to_string();
-        let reusable = existing
-            .get(&path)
-            .is_some_and(|(_, created, updated, size, version)| {
-                *created == file.fingerprint.created_at
-                    && *updated == file.fingerprint.updated_at
-                    && *size == file.fingerprint.size
-                    && *version == CATALOG_PARSER_VERSION
-            });
+        let reusable =
+            existing
+                .get(&path)
+                .is_some_and(|(source, created, updated, size, version)| {
+                    *created == file.fingerprint.created_at
+                        && *updated == file.fingerprint.updated_at
+                        && *size == file.fingerprint.size
+                        && *version == CATALOG_PARSER_VERSION
+                        && !(codex_thread_name_changed && source == "codex")
+                });
         if !reusable {
             pending.push(file);
         }
@@ -4012,9 +4107,30 @@ async fn refresh_catalog(
     status.generation = status.generation.saturating_add(1);
     status.last_completed_at = Some(now_millis());
     status.error = None;
-    if let Err(err) = shadow_build_v2(&mut conn, roots, &roots_key, status.generation).await {
+    if let Err(err) = shadow_build_v2(
+        &mut conn,
+        roots,
+        &roots_key,
+        status.generation,
+        codex_thread_name_changed,
+    )
+    .await
+    {
         warn!("history v2 shadow build failed: roots={roots_key}, err={err}");
     }
+    sqlx::query(
+        "INSERT INTO history_meta(key, value, updated_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at",
+    )
+    .bind(&codex_thread_name_meta_key)
+    .bind(&codex_thread_name_fingerprint)
+    .bind(now_millis())
+    .execute(&mut conn)
+    .await
+    .map_err(|err| err.to_string())?;
     persist_status(&mut conn, &status).await?;
     emit_status(app, &status);
     CATALOG_DIRTY.store(false, Ordering::Release);
@@ -4046,12 +4162,40 @@ pub(super) async fn ensure_refresh(
     let status = get_status(&roots)
         .await
         .unwrap_or_else(|_| idle_status(&roots));
+    let codex_thread_name_changed = if !force
+        && !CATALOG_DIRTY.load(Ordering::Acquire)
+        && status.phase == "ready"
+        && status
+            .last_completed_at
+            .is_some_and(|completed| now_millis() - completed < CATALOG_REFRESH_TTL_MS)
+    {
+        let roots_for_scan = roots.clone();
+        let current_fingerprint = tokio::task::spawn_blocking(move || {
+            super::codex_thread_name_index(&roots_for_scan).fingerprint
+        })
+        .await
+        .ok();
+        if let Some(current_fingerprint) = current_fingerprint {
+            if let Ok(mut conn) = open_catalog().await {
+                let key = format!("codex_thread_name_fingerprint:{roots_key}");
+                let previous_fingerprint = history_meta_value(&mut conn, &key).await.ok().flatten();
+                previous_fingerprint.as_deref() != Some(current_fingerprint.as_str())
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     if !force
         && !CATALOG_DIRTY.load(Ordering::Acquire)
         && status.phase == "ready"
         && status
             .last_completed_at
             .is_some_and(|completed| now_millis() - completed < CATALOG_REFRESH_TTL_MS)
+        && !codex_thread_name_changed
     {
         return Ok(status);
     }
@@ -5571,7 +5715,7 @@ mod tests {
         .await
         .unwrap();
 
-        shadow_build_v2(&mut conn, &roots, &roots_key, 7)
+        shadow_build_v2(&mut conn, &roots, &roots_key, 7, false)
             .await
             .unwrap();
 
@@ -5656,7 +5800,7 @@ mod tests {
             .execute(&mut conn)
             .await
             .unwrap();
-        shadow_build_v2(&mut conn, &roots, &roots_key, 8)
+        shadow_build_v2(&mut conn, &roots, &roots_key, 8, false)
             .await
             .unwrap();
         let parser_version: i64 =
@@ -5674,7 +5818,7 @@ mod tests {
             .execute(&mut conn)
             .await
             .unwrap();
-        shadow_build_v2(&mut conn, &roots, &roots_key, 9)
+        shadow_build_v2(&mut conn, &roots, &roots_key, 9, false)
             .await
             .unwrap();
         let session_count_after_delete: i64 = sqlx::query_scalar(
@@ -5750,7 +5894,7 @@ mod tests {
         .await
         .unwrap();
 
-        shadow_build_v2(&mut conn, &roots, &roots_key, 7)
+        shadow_build_v2(&mut conn, &roots, &roots_key, 7, false)
             .await
             .unwrap();
 
@@ -5846,7 +5990,7 @@ mod tests {
         .await
         .unwrap();
 
-        shadow_build_v2(&mut conn, &roots, &roots_key, 7)
+        shadow_build_v2(&mut conn, &roots, &roots_key, 7, false)
             .await
             .unwrap();
 

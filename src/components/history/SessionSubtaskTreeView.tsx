@@ -1,15 +1,18 @@
 import { GitBranch, Info } from "lucide-react";
 import { useI18n } from "../../lib/i18n";
+import { sortHistoryItems, type HistoryDetailSortDirection } from "../../lib/historySort";
 import type { SessionProcessModel } from "./sessionEvents";
 
 interface SessionSubtaskTreeViewProps {
   model: SessionProcessModel;
+  direction: HistoryDetailSortDirection;
   onJumpToMessage: (messageIndex: number) => void;
 }
 
-export function SessionSubtaskTreeView({ model, onJumpToMessage }: SessionSubtaskTreeViewProps) {
+export function SessionSubtaskTreeView({ model, direction, onJumpToMessage }: SessionSubtaskTreeViewProps) {
   const { t } = useI18n();
-  if (model.subtaskEvents.length === 0) {
+  const orderedSubtaskEvents = sortHistoryItems(model.subtaskEvents, direction);
+  if (orderedSubtaskEvents.length === 0) {
     return (
       <div className="ui-session-process-empty">
         {t("history.subtasks.empty")}
@@ -28,7 +31,7 @@ export function SessionSubtaskTreeView({ model, onJumpToMessage }: SessionSubtas
           <GitBranch size={14} />
           {t("history.subtasks.root")}
         </div>
-        {model.subtaskEvents.map((event) => (
+        {orderedSubtaskEvents.map((event) => (
           <button
             key={event.id}
             type="button"

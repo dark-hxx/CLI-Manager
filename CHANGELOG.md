@@ -14,6 +14,12 @@
 
 ## [V1.3.9] - 2026-08-31
 
+### 会话历史内容排序与 Codex 标题
+
+- 会话历史的对话、原文、过程、变更、工具、子任务视图支持按页签独立切换正序/倒序；倒序从最新消息/记录开始并按需向更早内容分页，排序偏好持久化后在重启、切换会话和重新打开历史时恢复。
+- Codex 历史标题读取对应 `session_index.jsonl` 的 `thread_name`，覆盖 Windows 本地、WSL 与 SSH；手工别名和有效 AI 生成标题仍优先于该来源标题，索引缺失或失配时安全回退。
+- 修复历史原文倒序下虚拟列表将原始消息索引误当作显示行索引，导致消息高度测量错位并出现内容重叠的问题。
+
 ### Tauri 开发构建与缓存优化
 
 - Windows `npm run tauri dev` 预构建主程序与 Codex proxy 时统一 Cargo 的 feature、target、profile、target-dir 和 `TAURI_CONFIG` fingerprint 输入，减少共享 Rust library 的重复构建；源码未变化时继续由 Cargo fingerprint 复用已有产物。
