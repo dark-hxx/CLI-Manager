@@ -82,6 +82,7 @@ import { EmptyState } from "./ui/EmptyState";
 import { useAppPrompt } from "./ui/useAppPrompt";
 import { useAppConfirm } from "./ui/useAppConfirm";
 import { useHistoryStore } from "../stores/historyStore";
+import { useGitWorkspaceStore } from "../stores/gitWorkspaceStore";
 import { useSystemResources } from "../hooks/useSystemResources";
 import { useSaveSessionToSidebar } from "../hooks/useSaveSessionToSidebar";
 import { canSaveSessionToSidebar } from "../lib/saveSessionToSidebar";
@@ -131,6 +132,10 @@ const HistoryWorkspace = lazy(() =>
 
 const GitChangesPanel = lazy(() =>
   import("./git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
+);
+
+const GitWorkspace = lazy(() =>
+  import("./git/workspace/GitWorkspace").then((module) => ({ default: module.GitWorkspace }))
 );
 
 const TerminalStatsPanel = lazy(() =>
@@ -2571,6 +2576,8 @@ export function TerminalTabs({
   const openHistory = useHistoryStore((s) => s.openHistory);
   const closeHistory = useHistoryStore((s) => s.closeHistory);
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
+  const gitWorkspaceOpen = useGitWorkspaceStore((s) => s.isOpen);
+  const closeGitWorkspace = useGitWorkspaceStore((s) => s.close);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"terminal" | "history">("terminal");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [splitPicker, setSplitPicker] = useState<SplitPickerState>(null);
@@ -2765,6 +2772,12 @@ export function TerminalTabs({
   const sidePanelProjectPath = panelProject?.environment_type === "ssh"
     ? panelProject.remote_path.trim() || null
     : panelSession?.cwd?.trim() || filePanelProject?.path.trim() || null;
+  const gitWorkspaceProject = panelProject ?? scopedProject ?? filePanelProject;
+  const gitWorkspaceProjectPath = sidePanelProjectPath
+    ?? scopedWorktree?.path.trim()
+    ?? (gitWorkspaceProject?.environment_type === "ssh"
+      ? gitWorkspaceProject.remote_path.trim() || null
+      : gitWorkspaceProject?.path.trim() || null);
   const workspanTabModels = useMemo(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
     const memberSessions = sessionIds
       .map((sessionId) => sessions.find((session) => session.id === sessionId))
@@ -2973,6 +2986,7 @@ export function TerminalTabs({
     [panelCapabilities.files, panelCapabilities.history, panelCapabilities.statistics, panelGitSupported, terminalToolbarVisibility]
   );
   const historyActive = historyOpen && activeWorkspaceTab === "history";
+  const fullWorkspaceActive = historyActive || gitWorkspaceOpen;
   const statsPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "stats" : statsOpen;
   const replayPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "replay" : replayOpen;
   const gitPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "git" : gitOpen;
@@ -2992,6 +3006,14 @@ export function TerminalTabs({
   useEffect(() => {
     if (!historyOpen && activeWorkspaceTab === "history") setActiveWorkspaceTab("terminal");
   }, [activeWorkspaceTab, historyOpen]);
+
+  useEffect(() => {
+    if (!gitWorkspaceOpen) return;
+    closeHistory();
+    setActiveWorkspaceTab("terminal");
+    setGitOpen(false);
+    if (sidePanelMerged && sidePanelTab === "git") setSidePanelOpen(false);
+  }, [closeHistory, gitWorkspaceOpen, sidePanelMerged, sidePanelTab]);
 
   useEffect(() => {
     if (!terminalSidePanelSingleOpen || !historyOpen) return;
@@ -3467,6 +3489,7 @@ export function TerminalTabs({
     }
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
     if (project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
+    closeGitWorkspace();
     if (sidePanelMerged) {
       if (terminalSidePanelSingleOpen) {
         closeHistory();
@@ -3488,7 +3511,7 @@ export function TerminalTabs({
       }
       setGitOpen(true);
     }
-  }, [closeHistory, gitPanelActive, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
+  }, [closeGitWorkspace, closeHistory, gitPanelActive, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const handleToggleReplayPanel = useCallback(() => {
     if (replayPanelActive) {
@@ -3708,6 +3731,7 @@ export function TerminalTabs({
     }
     const project = activeSession?.projectId ? projects.find((item) => item.id === activeSession.projectId) : undefined;
     if (rejectUnsupportedCapability(project, "history")) return;
+    closeGitWorkspace();
     setActiveWorkspaceTab("history");
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project?.cli_tool),
@@ -3715,7 +3739,7 @@ export function TerminalTabs({
       projectId: project?.id ?? null,
       scopedProjectPath: activeWorktree?.path ?? null,
     });
-  }, [activeSession, activeWorktree?.path, closeHistory, historyOpen, openHistory, projects, rejectUnsupportedCapability, terminalSidePanelSingleOpen]);
+  }, [activeSession, activeWorktree?.path, closeGitWorkspace, closeHistory, historyOpen, openHistory, projects, rejectUnsupportedCapability, terminalSidePanelSingleOpen]);
 
   const handleOpenSplitPicker = useCallback((sessionId: string, direction: TerminalPaneSplitDirection, anchor?: SplitPickerAnchor) => {
     clearSplitPickerOpenSchedule();
@@ -4290,7 +4314,7 @@ export function TerminalTabs({
         worktrees={worktrees}
         allPanes={layoutPanes}
         activeSessionId={layoutActiveSessionId}
-        historyActive={historyActive}
+        historyActive={fullWorkspaceActive}
         editingSessionId={editingSessionId}
         tabNotifications={tabNotifications}
         hookNotifications={hookNotifications}
@@ -4359,7 +4383,7 @@ export function TerminalTabs({
     hiddenBackgroundSessionIds,
     hookNotifications,
     hideBackgroundForSession,
-    historyActive,
+    fullWorkspaceActive,
     isAppFocused,
     lightThemePalette,
     moveSessionToPane,
@@ -4481,11 +4505,23 @@ export function TerminalTabs({
             </Suspense>
           </div>
         )}
+        {gitWorkspaceOpen && (
+          <div className={`absolute z-[2] min-h-0 overflow-hidden ${fullscreen ? "inset-0" : "inset-3"}`}>
+            <Suspense fallback={null}>
+              <GitWorkspace
+                active={gitWorkspaceOpen}
+                project={gitWorkspaceProject}
+                projectPath={gitWorkspaceProjectPath}
+                onClose={closeGitWorkspace}
+              />
+            </Suspense>
+          </div>
+        )}
         <div
           className="ui-terminal-well absolute inset-0 min-h-0 flex"
           data-terminal-mode="independent"
           data-terminal-theme-tone={terminalThemeTone}
-          style={{ display: historyActive ? "none" : "flex" }}
+          style={{ display: fullWorkspaceActive ? "none" : "flex" }}
         >
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {visibleWorkspanLayouts.length > 0 ? (

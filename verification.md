@@ -1,3 +1,30 @@
+# JetBrains 风格 Git 工作区验证（2026-09-04）
+
+## 实现与影响面
+
+- 项目侧栏底部新增 Git 工作区入口；标准模式在终端容器上方挂载全屏工作区，紧凑模式点击入口时先恢复标准模式。关闭工作区只切换可见性，不卸载 PTY、分屏树或 Workspan。
+- 工作区通过现有 `useGitTransportLease` 读取本地、WSL 与 SSH Git，上层保留每批 50 条 cursor；提交表格使用虚拟列表连续加载，纯前端 DAG lane 算法覆盖线性、分叉、merge、根提交、跨页延续和搜索缺失父提交。
+- 左侧引用树展示当前分支、本地分支、按 remote 分组的远程分支与已加载标签，并支持引用筛选；仓库和搜索切换均使用独立 generation 丢弃迟到结果，SSH 根仓库空字符串 ID 保持合法。
+- 右侧提交详情按需读取文件，继续复用共享 `DiffViewerModal` 且不传入任何回滚/暂存 mutation；“变更”标签复用原 `GitChangesPanel` 与 Git Store，不复制写操作链。
+- codebase-memory 已用 `moderate` 模式重建索引；索引确认 Git 工作区触达 `TerminalTabs`、`SidebarFooter`、Git Transport Lease、变更面板和共享 Diff Viewer，属于 HIGH/CRITICAL UI 主流程，因此通过静态架构测试、类型检查、定向 Rust 测试和生产构建复核。
+
+## 验证结果
+
+- `node --test scripts/gitGraphLayout.test.mjs scripts/gitWorkspace.test.mjs scripts/gitHistory.test.mjs scripts/gitDiffViewerArchitecture.test.mjs scripts/gitTransportLease.test.mjs`：20 项通过。
+- `npx tsc --noEmit`：通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml git_history --lib`：10 项通过。
+- `cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml git_history --lib`：2 项通过。
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过。
+- `npm run build`：通过。
+- `git diff --check`：通过，仅提示工作区现有的 LF/CRLF 自动转换策略。
+
+## 未覆盖与测试边界
+
+- 浏览器 Vite 页面无法脱离 Tauri runtime 完成应用启动（bootstrap 读取 Tauri metadata 失败），因此未在纯浏览器中伪造项目数据做截图；需要在 Tauri 窗口中手动确认中英文切换、真实仓库拓扑和窄窗口横向滚动。
+- 本次未改变 Rust/SSH wire contract、Git 写操作、Diff 大小限制或凭证策略；未连接真实 SSH Host 执行端到端 Git 浏览。
+
+---
+
 # Grok TUI 鼠标点击恢复验证（2026-08-25）
 
 ## 根因与发现清单

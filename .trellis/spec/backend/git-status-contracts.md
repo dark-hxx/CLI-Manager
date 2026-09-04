@@ -587,6 +587,9 @@ await lease.release();
 - SSH 请求 `gitListCommits`、`gitCommitDetail`、`gitCommitFileDiff` 必须先协商 `gitHistory` capability；旧 Agent 在写 frame 前返回 `ssh_agent_capability_missing:gitHistory`。
 - SSH 根仓库的空字符串 repository id 是合法值；只有 null 表示缺少仓库上下文。
 - 项目、仓库、分支、transport 或搜索变化时重置分页与详情，请求返回时必须校验 generation，迟到结果不得覆盖新上下文。
+- 独立 Git 工作区只能在展示层把 50 条 cursor 页连续追加，不得改变 Transport 分页协议；跨页拓扑必须按全部已加载提交重新计算，保证既有行布局确定且不丢失 continuation。
+- 搜索结果不是完整拓扑。父提交不在搜索结果中时只显示中断标记，不得把当前提交直接连接到下一个可见但无父子关系的提交。
+- 工作区的“变更”页复用现有 Git 变更面板和 Transport Lease；历史文件仍复用共享只读 Diff Viewer，不得创建第二套 Diff 实现或写操作入口。
 
 ### 3. Edge Cases
 

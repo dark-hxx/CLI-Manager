@@ -30,6 +30,8 @@ interface GitChangesPanelProps {
   projectId?: string | null;
   visible?: boolean;
   embedded?: boolean;
+  workspaceMode?: boolean;
+  activeRepositoryPath?: string | null;
 }
 
 // 降级慢轮询间隔：仅当 fs-watcher 初始化失败（网络盘/WSL 等 notify 不可用）时启用。
@@ -282,7 +284,15 @@ function GitBranchMenu({
   );
 }
 
-export function GitChangesPanel({ open, projectPath, projectId, visible = true, embedded = false }: GitChangesPanelProps) {
+export function GitChangesPanel({
+  open,
+  projectPath,
+  projectId,
+  visible = true,
+  embedded = false,
+  workspaceMode = false,
+  activeRepositoryPath,
+}: GitChangesPanelProps) {
   const { t } = useI18n();
   const projects = useProjectStore((state) => state.projects);
   const {
@@ -418,6 +428,11 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       }
     };
   }, [panelActive, open, projectPath, panelProject, panelLease, fetchChanges, fetchRepositories, fetchBranches, reset, setTransport]);
+
+  useEffect(() => {
+    if (!workspaceMode || !projectPath) return;
+    setActiveRepo(activeRepositoryPath ?? null);
+  }, [activeRepositoryPath, projectPath, setActiveRepo, workspaceMode]);
 
   useEffect(() => {
     if (transportError) {
@@ -927,7 +942,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
         )}
       />
 
-      <div className="grid shrink-0 grid-cols-2 border-b p-1" style={{ borderColor: TERM.dim }}>
+      {!workspaceMode && <div className="grid shrink-0 grid-cols-2 border-b p-1" style={{ borderColor: TERM.dim }}>
         {(["changes", "history"] as const).map((mode) => {
           const selected = viewMode === mode;
           return (
@@ -946,10 +961,10 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
             </button>
           );
         })}
-      </div>
+      </div>}
 
       {/* 仓库切换：项目下检测到多个 Git 仓库时展示下拉（单仓库零 UI 变化） */}
-      {repositories.length > 1 && (
+      {!workspaceMode && repositories.length > 1 && (
         <div className="relative shrink-0 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
           <button
             type="button"
