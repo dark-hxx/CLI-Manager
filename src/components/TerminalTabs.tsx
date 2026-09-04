@@ -2578,6 +2578,8 @@ export function TerminalTabs({
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
   const gitWorkspaceOpen = useGitWorkspaceStore((s) => s.isOpen);
   const closeGitWorkspace = useGitWorkspaceStore((s) => s.close);
+  const [gitWorkspaceHeight, setGitWorkspaceHeight] = useState(420);
+  const gitWorkspaceResizeCleanupRef = useRef<(() => void) | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"terminal" | "history">("terminal");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [splitPicker, setSplitPicker] = useState<SplitPickerState>(null);
@@ -2986,7 +2988,7 @@ export function TerminalTabs({
     [panelCapabilities.files, panelCapabilities.history, panelCapabilities.statistics, panelGitSupported, terminalToolbarVisibility]
   );
   const historyActive = historyOpen && activeWorkspaceTab === "history";
-  const fullWorkspaceActive = historyActive || gitWorkspaceOpen;
+  const fullWorkspaceActive = historyActive;
   const statsPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "stats" : statsOpen;
   const replayPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "replay" : replayOpen;
   const gitPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "git" : gitOpen;
@@ -3014,6 +3016,27 @@ export function TerminalTabs({
     setGitOpen(false);
     if (sidePanelMerged && sidePanelTab === "git") setSidePanelOpen(false);
   }, [closeHistory, gitWorkspaceOpen, sidePanelMerged, sidePanelTab]);
+
+  useEffect(() => () => gitWorkspaceResizeCleanupRef.current?.(), []);
+
+  const beginGitWorkspaceResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    gitWorkspaceResizeCleanupRef.current?.();
+    const startY = event.clientY;
+    const startHeight = gitWorkspaceHeight;
+    const onMove = (moveEvent: PointerEvent) => {
+      const nextHeight = startHeight + startY - moveEvent.clientY;
+      setGitWorkspaceHeight(Math.max(260, Math.min(720, nextHeight)));
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", cleanup);
+      gitWorkspaceResizeCleanupRef.current = null;
+    };
+    gitWorkspaceResizeCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", cleanup, { once: true });
+  }, [gitWorkspaceHeight]);
 
   useEffect(() => {
     if (!terminalSidePanelSingleOpen || !historyOpen) return;
@@ -4506,7 +4529,17 @@ export function TerminalTabs({
           </div>
         )}
         {gitWorkspaceOpen && (
-          <div className={`absolute z-[2] min-h-0 overflow-hidden ${fullscreen ? "inset-0" : "inset-3"}`}>
+          <div
+            className={`absolute z-[2] min-h-0 overflow-hidden border-t shadow-2xl ${fullscreen ? "inset-x-0 bottom-0" : "inset-x-3 bottom-3"}`}
+            style={{ height: gitWorkspaceHeight, borderColor: "var(--border-subtle, rgba(255,255,255,0.12))" }}
+          >
+            <div
+              className="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize"
+              onPointerDown={beginGitWorkspaceResize}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("git.workspace.resizeHeight")}
+            />
             <Suspense fallback={null}>
               <GitWorkspace
                 active={gitWorkspaceOpen}

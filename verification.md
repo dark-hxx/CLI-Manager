@@ -1,5 +1,18 @@
 # JetBrains 风格 Git 工作区验证（2026-09-04）
 
+## Git 工作区底部工具窗口与目录树（2026-09-04）
+
+### 根因与发现清单
+
+- 原 Git 工作区替换整个终端区域，导致视觉上从左侧展开；本次仅调整前端布局，将其放入终端容器底部 Dock，终端 PTY、分屏和 Workspan 保持挂载。
+- 原提交详情按路径扁平渲染，无法表达模块目录层级；新增目录树构建与展开状态，文件点击仍复用只读 Diff Viewer。
+
+### 验证结果
+
+- `npx tsc --noEmit`、`npm run build`：通过。
+- `node --test scripts/gitGraphLayout.test.mjs scripts/gitWorkspace.test.mjs`：通过。
+- 未改变 Git Transport、IPC、Rust/SSH Agent 或写操作契约；底部面板真实 Tauri 窗口的拖拽手测仍需在本地完成。
+
 ## 实现与影响面
 
 - 项目侧栏底部新增 Git 工作区入口；标准模式在终端容器上方挂载全屏工作区，紧凑模式点击入口时先恢复标准模式。关闭工作区只切换可见性，不卸载 PTY、分屏树或 Workspan。

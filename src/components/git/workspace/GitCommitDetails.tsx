@@ -1,4 +1,4 @@
-import { FileCode2, GitCommitHorizontal } from "lucide-react";
+import { GitCommitHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitTransport } from "../../../lib/gitTransport";
 import type {
@@ -9,7 +9,7 @@ import type {
 import { useI18n } from "../../../lib/i18n";
 import { TERM, EmptyHint } from "../../stats/termStatsUi";
 import { DiffViewerModal } from "../DiffViewerModal";
-import { STATUS_CONFIG } from "../GitStatusIcon";
+import { GitChangedFilesTree } from "./GitChangedFilesTree";
 
 interface GitCommitDetailsProps {
   transport: GitTransport | null;
@@ -159,35 +159,7 @@ export function GitCommitDetails({
         ) : error ? (
           <EmptyHint text={error} />
         ) : detail?.files.length ? (
-          detail.files.map((file) => (
-            <button
-              key={`${file.oldPath ?? ""}:${file.path}`}
-              type="button"
-              className="ui-focus-ring flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-left text-[10px]"
-              style={{ color: TERM.fg }}
-              onClick={() => setSelectedFile(file)}
-              title={file.path}
-            >
-              <span
-                className="w-3 shrink-0 font-bold"
-                style={{ color: STATUS_CONFIG[file.status]?.color ?? TERM.fg }}
-              >
-                {file.status}
-              </span>
-              <FileCode2
-                size={11}
-                className="shrink-0"
-                style={{ color: TERM.dim }}
-              />
-              <span className="min-w-0 flex-1 truncate">{file.path}</span>
-              {!file.binary && (
-                <span className="shrink-0">
-                  <span style={{ color: TERM.green }}>+{file.added}</span>{" "}
-                  <span style={{ color: TERM.red }}>-{file.deleted}</span>
-                </span>
-              )}
-            </button>
-          ))
+          <GitChangedFilesTree files={detail.files} onSelect={setSelectedFile} selectedFile={selectedFile} />
         ) : (
           <EmptyHint text={t("git.history.noFiles")} />
         )}
