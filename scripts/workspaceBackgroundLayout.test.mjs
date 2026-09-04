@@ -45,9 +45,12 @@ test("workspace background is decorative and exposes the shared image through su
   assert.match(stylesSource, /data-workspace-bg-position="bottom-right"/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-shell/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \{\n  background-color: transparent;/);
+  assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-shell,\n\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-top,[\s\S]*?background: transparent !important;/);
   assert.match(stylesSource, /data-terminal-side-panel-content\] > \*/);
+  assert.match(stylesSource, /\.ui-terminal-side-panel-frame,[\s\S]*?background: transparent !important;/);
   assert.match(stylesSource, /\.ui-terminal-side-panel-frame > :not\(\[role="separator"\]\)/);
   assert.match(sidePanelSource, /data-terminal-side-panel-content="true"/);
-  assert.match(stylesSource, /\.ui-terminal-global-chrome \{\n  background: color-mix/);
+  assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-terminal-pane-chrome,[\s\S]*?background: transparent !important;/);
+  assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-terminal-well \{\n  background-color: transparent !important;/);
   assert.match(stylesSource, /\.ui-terminal-bg-layer\[data-workspace-bg-enabled="true"\] \.xterm/);
 });
