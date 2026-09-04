@@ -626,3 +626,17 @@ set((state) => ({
 ```
 
 **Prevention**: For file-tree move/copy/rename/delete flows, check whether the refreshed path can be root or an ancestor of an expanded folder. If yes, avoid intermediate `set()` calls that temporarily drop descendant children.
+
+### Common Mistake: Treating an empty disclosure set as invalid
+
+**Symptom**: Clicking the last expanded item in a timeline immediately opens it again, or expanding one item closes another.
+
+**Cause**: The UI models an accordion with one nullable ID and treats `null` as a synchronization error whenever data exists. An empty set is a valid user choice, and independent disclosures cannot be represented by one ID.
+
+**Fix**: For AI Replay timeline turns, keep the expanded IDs in a `Set<string>`. Toggle only the clicked ID, preserve the set across live model updates, and intersect it with the current turn IDs to remove stale entries. Seed the first turn only during the initial data population; never use an empty set as a reason to auto-open a turn later.
+
+**Tests Required**:
+
+- Verify one expanded turn can be collapsed, all turns can remain collapsed, and any turn can be reopened.
+- Verify multiple turns stay expanded independently while replay data updates.
+- Verify session remounts and model replacement remove IDs for turns that no longer exist without forcing a replacement turn open.
