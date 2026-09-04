@@ -1416,3 +1416,24 @@ Fixed Issue #245: hardened terminal output scheduling and daemon ACK recovery; s
 ### Status
 
 [OK] **Completed**
+
+
+## Session 107: history-content-sort-codex-title
+
+**Date**: 2026-09-04
+**Task**: history-content-sort-codex-title
+**Branch**: `master`
+
+### Summary
+
+v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-transcript-overlap-fix
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc3e2ddc` | (see git log) |
+
+### Status
+
+[OK] **Completed**
