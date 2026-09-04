@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 107
+- **Total Sessions**: 108
 - **Last Active**: 2026-09-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1439 | Active |
+| `journal-2.md` | ~1471 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 108 | 2026-09-04 | 修复历史会话 Markdown 表格渲染 | `25defb59` | `master` |
 | 107 | 2026-09-04 | history-content-sort-codex-title | `dc3e2ddc` | `master` |
 | 106 | 2026-09-04 | 解除 AI 进展时间轴展开收起限制 | `eb1f2ee5` | `master` |
 | 105 | 2026-09-03 | Hook 系统通知自定义声音 | `dace561f` | `master` |

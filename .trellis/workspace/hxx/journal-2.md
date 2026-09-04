@@ -1437,3 +1437,35 @@ v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-tran
 ### Status
 
 [OK] **Completed**
+
+
+## Session 108: 修复历史会话 Markdown 表格渲染
+
+**Date**: 2026-09-04
+**Task**: 修复历史会话 Markdown 表格渲染
+**Branch**: `master`
+
+### Summary
+
+历史会话完整 Markdown 源码围栏现在会在 history 渲染层严格解包，GFM 表格直接渲染；普通 Markdown 代码块容器改用应用主题变量，终端预览保持独立主题。
+
+### Main Changes
+
+- 抽取共享的 unwrapFencedMarkdown 工具，并由历史与终端预览复用。
+- 补充围栏边界、历史入口和主题覆盖回归测试，更新 V1.3.9 变更记录与功能清单。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `25defb59` | (see git log) |
+
+### Testing
+
+- [OK] npx tsc --noEmit
+- [OK] node --test scripts/historyMarkdownRendering.test.mjs scripts/markdownRendering.test.mjs scripts/terminalMarkdownPreview.test.mjs scripts/historyConversationView.test.mjs
+- [OK] npm run build
+
+### Status
+
+[OK] **Completed**
