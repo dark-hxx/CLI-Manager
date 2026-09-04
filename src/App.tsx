@@ -1787,9 +1787,6 @@ function App() {
             </main>
           </div>
         )}
-      </WorkspaceLayoutShell>
-      <CommandPalette />
-      <ExternalSessionSyncDialog />
       <Suspense fallback={null}>
         {settingsEverOpened && (
             <SettingsModal
@@ -1813,6 +1810,9 @@ function App() {
             />
           ))}
       </Suspense>
+      </WorkspaceLayoutShell>
+      <CommandPalette />
+      <ExternalSessionSyncDialog />
       <CloseConfirmDialog
         open={closeDialogOpen}
         onMinimize={handleCloseDialogMinimize}

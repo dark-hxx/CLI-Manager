@@ -23,6 +23,7 @@ import "@mantine/core/styles.css";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { AppMantineThemeProvider } from "./ui/MantineThemeProvider";
 import { SettingsLayout } from "./settings/SettingsLayout";
+import { useWorkspaceBackground } from "./workspace/WorkspaceBackground";
 import { GeneralSettingsPage } from "./settings/pages/GeneralSettingsPage";
 import { DeveloperSettingsPage } from "./settings/pages/DeveloperSettingsPage";
 import { SidebarSettingsPage } from "./settings/pages/SidebarSettingsPage";
@@ -248,6 +249,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
   const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
   const { t } = useI18n();
+  const { active: workspaceBackgroundActive } = useWorkspaceBackground();
   useFocusTrap(dialogRef, mounted && !closing);
 
   const requestClose = useCallback((_reason: "topbar" | "backdrop" | "escape") => {
@@ -329,15 +331,16 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   return (
     <AppMantineThemeProvider>
       <div
-        className={`fixed inset-x-0 bottom-0 ${isLikelyMacOs() ? "top-0" : "top-[26px]"} z-50 ${
+        className={`ui-workspace-settings-overlay fixed inset-x-0 bottom-0 ${isLikelyMacOs() ? "top-0" : "top-[26px]"} z-50 ${
           closing ? "animate-fade-out" : "animate-fade-in"
         }`}
+        data-workspace-background={workspaceBackgroundActive ? "true" : undefined}
         style={{ fontFamily: effectiveUiFontFamily }}
         onClick={() => requestClose("backdrop")}
       >
         <div
           ref={dialogRef}
-          className={`ui-surface-base flex h-full w-full overflow-hidden${
+          className={`ui-workspace-settings-dialog ui-surface-base flex h-full w-full overflow-hidden${
             closing ? "" : " animate-slide-down"
           }`}
           onClick={(e) => e.stopPropagation()}

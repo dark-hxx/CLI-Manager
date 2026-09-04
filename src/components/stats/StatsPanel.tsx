@@ -66,6 +66,7 @@ import { RequestLogsView } from "./RequestLogsView";
 import { projectSupportsCapability } from "../../lib/projectCapabilities";
 import { resolveHistoryProjectPath } from "../../lib/historyProjectPaths";
 import { logWarn } from "../../lib/logger";
+import { useWorkspaceBackground } from "../workspace/WorkspaceBackground";
 
 interface StatsPanelProps {
   open: boolean;
@@ -1436,6 +1437,7 @@ function StatsProjectFilterDropdown({
 
 export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const { language, t } = useI18n();
+  const { active: workspaceBackgroundActive } = useWorkspaceBackground();
   const projects = useProjectStore((s) => s.projects);
   const statisticsProjects = useMemo(
     () => projects.filter((project) => projectSupportsCapability(project, "statistics")),
@@ -1652,7 +1654,11 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
   return (
     <Portal>
-      <Card className="ui-stats-panel fixed inset-0 flex flex-col overflow-hidden rounded-none border-0 bg-bg-primary" style={{ zIndex: 57 }}>
+      <Card
+        className="ui-stats-panel fixed inset-0 flex flex-col overflow-hidden rounded-none border-0 bg-bg-primary"
+        data-workspace-background={workspaceBackgroundActive ? "true" : undefined}
+        style={{ zIndex: 57 }}
+      >
         <div className="ui-stats-panel-header flex items-center justify-between border-b border-border px-5 py-3">
           <div>
             <div className="inline-flex items-center gap-1.5 text-[16px] font-semibold text-text-primary">

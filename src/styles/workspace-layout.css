@@ -114,6 +114,24 @@
   -webkit-backdrop-filter: none;
 }
 
+/* Settings and statistics are body portals, so their React roots carry the
+   same active-state marker explicitly. Keep page shells translucent while
+   leaving their cards and controls responsible for readability. */
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-workspace-settings-dialog,
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-content,
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-topbar {
+  background-color: color-mix(in srgb, var(--surface) 76%, transparent) !important;
+}
+
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-nav {
+  background-color: color-mix(in srgb, var(--surface-container-low) 76%, transparent) !important;
+}
+
+.ui-stats-panel[data-workspace-background="true"] {
+  background-color: color-mix(in srgb, var(--surface) 76%, transparent) !important;
+  background-image: none !important;
+}
+
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell,
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-top,
 .ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-footer,

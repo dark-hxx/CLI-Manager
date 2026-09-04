@@ -22,7 +22,7 @@ export function SettingsTopBar({
   const { t } = useI18n();
 
   return (
-    <header className="ui-surface-base ui-glass z-10 border-b border-border px-4 py-3 min-[1280px]:px-6 min-[1280px]:py-4">
+    <header className="ui-settings-topbar ui-surface-base ui-glass z-10 border-b border-border px-4 py-3 min-[1280px]:px-6 min-[1280px]:py-4">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-3">
         <div className="min-w-0">
           <h2 className="truncate text-base font-medium text-on-surface min-[1280px]:text-lg">{title}</h2>

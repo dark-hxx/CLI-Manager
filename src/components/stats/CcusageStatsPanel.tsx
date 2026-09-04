@@ -13,6 +13,7 @@ import { resolveCcusageRuntimeScope, resolveCcusageWslTarget, useCcusageStore } 
 import { useSettingsStore } from "../../stores/settingsStore";
 import { EChart } from "./EChart";
 import { StatsDatePicker } from "./StatsDatePicker";
+import { useWorkspaceBackground } from "../workspace/WorkspaceBackground";
 import {
   CHART_TOOLTIP,
   COST_COLOR,
@@ -1564,6 +1565,7 @@ function PayloadOverviewFooter({ summary }: { summary: CcusageSummary }) {
 
 export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
   const { t } = useI18n();
+  const { active: workspaceBackgroundActive } = useWorkspaceBackground();
   const source = useCcusageStore((s) => s.source);
   const toolStatus = useCcusageStore((s) => s.toolStatus);
   const report = useCcusageStore((s) => s.report);
@@ -1657,7 +1659,11 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
 
   return (
     <Portal>
-      <Card className="ui-stats-panel fixed inset-0 flex flex-col overflow-hidden rounded-none border-0 bg-bg-primary" style={{ zIndex: 57 }}>
+      <Card
+        className="ui-stats-panel fixed inset-0 flex flex-col overflow-hidden rounded-none border-0 bg-bg-primary"
+        data-workspace-background={workspaceBackgroundActive ? "true" : undefined}
+        style={{ zIndex: 57 }}
+      >
           <div className="ui-stats-panel-header flex items-center justify-between border-b border-border px-5 py-3">
             <div>
               <div className="inline-flex items-center gap-1.5 text-[15px] font-semibold text-text-primary">

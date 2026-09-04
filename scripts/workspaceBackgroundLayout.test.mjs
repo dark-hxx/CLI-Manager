@@ -9,6 +9,9 @@ const backgroundSource = readFileSync(
 );
 const xtermSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
 const sidePanelSource = readFileSync(new URL("../src/components/terminal/TerminalSidePanel.tsx", import.meta.url), "utf8");
+const settingsModalSource = readFileSync(new URL("../src/components/SettingsModal.tsx", import.meta.url), "utf8");
+const statsSource = readFileSync(new URL("../src/components/stats/StatsPanel.tsx", import.meta.url), "utf8");
+const ccusageStatsSource = readFileSync(new URL("../src/components/stats/CcusageStatsPanel.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
 const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8");
 
@@ -45,6 +48,14 @@ test("workspace background is decorative and exposes the shared image through su
   assert.match(stylesSource, /data-workspace-bg-position="bottom-right"/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-shell/);
   assert.match(appSource, /<WorkspaceLayoutShell>\s*\{\(!terminalFullscreen \|\| viewMode === "compact"\) && <WindowTitleBar \/>\}/);
+  const workspaceShellSource = appSource.match(/<WorkspaceLayoutShell>[\s\S]*?<\/WorkspaceLayoutShell>/)?.[0] ?? "";
+  assert.match(workspaceShellSource, /<Suspense fallback=\{null\}>[\s\S]*?<SettingsModal/);
+  assert.match(settingsModalSource, /useWorkspaceBackground/);
+  assert.match(settingsModalSource, /data-workspace-background=\{workspaceBackgroundActive \? "true" : undefined\}/);
+  assert.match(statsSource, /data-workspace-background=\{workspaceBackgroundActive \? "true" : undefined\}/);
+  assert.match(ccusageStatsSource, /data-workspace-background=\{workspaceBackgroundActive \? "true" : undefined\}/);
+  assert.match(stylesSource, /\.ui-workspace-settings-overlay\[data-workspace-background="true"\]/);
+  assert.match(stylesSource, /\.ui-stats-panel\[data-workspace-background="true"\][\s\S]*?background-color: color-mix/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.window-titlebar[\s\S]*?background: transparent !important;/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \{\n  background-color: transparent;/);
   assert.match(stylesSource, /\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-shell,\n\.ui-workspace-background-root\[data-workspace-background="true"\] \.ui-sidebar-top,[\s\S]*?background: transparent !important;/);
