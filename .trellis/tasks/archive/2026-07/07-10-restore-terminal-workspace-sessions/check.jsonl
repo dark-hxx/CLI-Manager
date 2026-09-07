@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "前端质量检查入口，含 Quality Check 清单"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查代码是否踩前端禁止模式、是否符合项目标准"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "校验 store 改动是否符合状态管理约定（持久化时机、getState 互调等）"}
-{"file": ".trellis/spec/backend/app-startup-contracts.md", "reason": "校验启动时序改动（clear 改为检测/问询/restore）是否违反启动链路合约"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验证跨层（store 与 PTY）数据流一致性"}
-{"file": ".trellis/spec/guides/task-delivery-checklist.md", "reason": "交付前检查：CHANGELOG(TEMP) / docs 功能清单 / Refs #123 关联"}

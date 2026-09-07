@@ -1,2 +1,0 @@
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Defines shell runtime monitoring env contract, OSC marker behavior, setting semantics, and affected PowerShell/pwsh scope."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Defines settings page conventions and xterm construction/hot-update constraints relevant to terminal setting changes."}

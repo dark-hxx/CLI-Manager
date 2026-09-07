@@ -1,0 +1,30 @@
+{
+  "id": "workspace-custom-layout",
+  "name": "workspace-custom-layout",
+  "title": "Issue #248：VS Code 式工作区布局控制",
+  "description": "Issue #248：基于已完成的背景与停靠能力，增加 VS Code 式标题栏布局控制；保持终端会话/PTY/分屏身份不变，版本 V1.3.9。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-09-03",
+  "completedAt": "2026-09-07",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-03-workspace-background-scope",
+    "09-03-terminal-side-panel-docking",
+    "09-03-workspan-tabbar-docking"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

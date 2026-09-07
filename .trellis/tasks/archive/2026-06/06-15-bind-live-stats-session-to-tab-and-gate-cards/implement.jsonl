@@ -1,5 +1,0 @@
-{"type":"spec","path":"src/stores/historyStore.ts","reason":"fetchLatestProjectSessionDetail 查询逻辑、normalizeSummary/normalizeDetail、回退策略"}
-{"type":"spec","path":"src/components/terminal/TerminalStatsPanel.tsx","reason":"实时统计面板：轮询/scopeKey/awaitingSessionId、4 卡渲染、tokensBound 门控落点"}
-{"type":"spec","path":"src/components/stats/termStatsCards.tsx","reason":"TokenUsage/Trend/ModelContext/Tools 4 张卡片实现"}
-{"type":"spec","path":"src/stores/terminalStore.ts","reason":"TerminalSession.cliSessionId、handleCliHookEvent 写入逻辑"}
-{"type":"spec","path":"src/lib/types.ts","reason":"HistorySessionSummary.session_id、HistorySessionDetail 类型"}

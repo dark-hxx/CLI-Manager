@@ -1,0 +1,225 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="terminalGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1110"/>
+      <stop offset="1" stop-color="#09100d"/>
+    </linearGradient>
+    <linearGradient id="activeProvider" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#153427"/>
+      <stop offset="1" stop-color="#10271f"/>
+    </linearGradient>
+    <filter id="popoverShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.48"/>
+    </filter>
+    <style>
+      text { font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+      .title { fill:#f2f5f3; font-weight:700; }
+      .body { fill:#d7ddda; }
+      .muted { fill:#8f9894; }
+      .green { fill:#39d98a; }
+      .tiny { font-size:12px; }
+      .small { font-size:13px; }
+      .normal { font-size:14px; }
+      .label { font-size:11px; font-weight:700; letter-spacing:1.2px; }
+    </style>
+  </defs>
+
+  <!-- design board -->
+  <rect width="1920" height="1080" fill="#080a09"/>
+  <text x="36" y="38" class="muted tiny">CLI-MANAGER · DESIGN V1</text>
+  <text x="36" y="68" class="title" font-size="23">侧边栏供应商快捷切换</text>
+  <text x="385" y="66" class="muted normal">展开态 · 快捷面板打开 · 收起态入口</text>
+
+  <!-- application frame -->
+  <rect x="28" y="92" width="1864" height="950" rx="16" fill="#101212" stroke="#242826"/>
+  <rect x="28" y="92" width="1864" height="48" rx="16" fill="#151716"/>
+  <rect x="28" y="124" width="1864" height="16" fill="#151716"/>
+  <circle cx="52" cy="116" r="8" fill="#2f3431"/>
+  <path d="M48 116h8M52 112l4 4-4 4" fill="none" stroke="#8f9894" stroke-width="1.4" stroke-linecap="round"/>
+  <text x="73" y="121" class="title" font-size="15">CLI-Manager</text>
+  <path d="M1816 114h11M1847 108h10v10h-10zM1877 108l10 10m0-10-10 10" fill="none" stroke="#a8b0ac" stroke-width="1.4" stroke-linecap="round"/>
+
+  <!-- expanded sidebar -->
+  <rect x="28" y="140" width="258" height="902" fill="#141615"/>
+  <line x1="286" y1="140" x2="286" y2="1042" stroke="#262a28"/>
+  <text x="48" y="180" class="green normal" font-weight="700">Projects</text>
+  <rect x="178" y="154" width="88" height="36" rx="9" fill="#39c983"/>
+  <path d="M195 172h12M201 166v12" stroke="#07150f" stroke-width="2" stroke-linecap="round"/>
+  <text x="214" y="177" fill="#07150f" font-size="13" font-weight="700">新建</text>
+
+  <!-- project tree -->
+  <rect x="38" y="206" width="238" height="44" rx="9" fill="#191c1a"/>
+  <path d="M53 225l4 4 4-4M72 219h15l4 4v12H72z" fill="none" stroke="#39d98a" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="102" y="233" class="body normal" font-weight="650">CLI-Manager</text>
+  <text x="252" y="233" class="body small" text-anchor="end">3</text>
+
+  <g class="body normal">
+    <circle cx="58" cy="275" r="11" fill="#2d211c"/><path d="M58 266v18m-9-9h18m-15-6l12 12m0-12-12 12" stroke="#f1784a" stroke-width="1.4"/>
+    <text x="82" y="280">CLI-Manager</text>
+    <circle cx="58" cy="318" r="11" fill="#123127"/><path d="M53 313c7-5 13 4 7 7-3 2-7 0-7-4 0-6 10-9 15-3 5 7-2 15-9 15" fill="none" stroke="#39d98a" stroke-width="1.4"/>
+    <text x="82" y="323">CLI-Manager (cx)</text>
+    <path d="M53 357l7 7-7 7m9 0h8" fill="none" stroke="#39d98a" stroke-width="1.6" stroke-linecap="round"/>
+    <text x="82" y="367">CLI-Manager (run)</text>
+  </g>
+  <rect x="38" y="392" width="238" height="44" rx="9" fill="#191c1a"/>
+  <path d="M53 411l4 4 4-4M72 405h15l4 4v12H72z" fill="none" stroke="#39d98a" stroke-width="1.5"/>
+  <text x="102" y="419" class="body normal" font-weight="650">CPA</text>
+  <text x="252" y="419" class="body small" text-anchor="end">2</text>
+  <path d="M53 458l7 7-7 7m9 0h8M53 500l7 7-7 7m9 0h8" fill="none" stroke="#39d98a" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="82" y="469" class="body normal">CPA</text>
+  <text x="82" y="511" class="body normal">CPAM</text>
+
+  <!-- provider compact card in sidebar -->
+  <rect x="38" y="744" width="238" height="190" rx="12" fill="#181b19" stroke="#2a302c"/>
+  <text x="52" y="769" class="muted label">当前供应商</text>
+  <path d="M247 760l8 8-8 8" fill="none" stroke="#77807b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="46" y="783" width="222" height="42" rx="9" fill="#213129" stroke="#315b45"/>
+  <circle cx="66" cy="804" r="12" fill="#36251e"/>
+  <path d="M66 794v20m-10-10h20m-17-8l14 16m0-16-14 16" stroke="#f17b4c" stroke-width="1.5"/>
+  <text x="86" y="800" class="muted tiny">Claude Code</text>
+  <text x="86" y="816" class="title small">Anyrouter</text>
+  <circle cx="238" cy="804" r="4" fill="#39d98a"/>
+  <path d="M251 800l4 4-4 4" fill="none" stroke="#9ca5a0" stroke-width="1.4"/>
+
+  <rect x="46" y="830" width="222" height="42" rx="9" fill="#1b1e1c"/>
+  <circle cx="66" cy="851" r="12" fill="#1d2b28"/>
+  <path d="M61 846c5-4 12 1 8 7-3 4-10 2-9-3 1-6 10-8 14-2" fill="none" stroke="#78d6c4" stroke-width="1.5"/>
+  <text x="86" y="847" class="muted tiny">Codex</text>
+  <text x="86" y="863" class="body small">cpa</text>
+  <circle cx="238" cy="851" r="4" fill="#39d98a"/>
+  <path d="M251 847l4 4-4 4" fill="none" stroke="#707975" stroke-width="1.4"/>
+
+  <rect x="46" y="877" width="222" height="42" rx="9" fill="#1b1e1c"/>
+  <circle cx="66" cy="898" r="12" fill="#252535"/>
+  <path d="M59 898h14M66 891v14" stroke="#9a8cff" stroke-width="1.5"/>
+  <text x="86" y="894" class="muted tiny">Grok Build</text>
+  <text x="86" y="910" class="body small">Grok Official</text>
+  <circle cx="238" cy="898" r="4" fill="#f2b84b"/>
+  <path d="M251 894l4 4-4 4" fill="none" stroke="#707975" stroke-width="1.4"/>
+
+  <!-- sidebar footer -->
+  <line x1="38" y1="950" x2="276" y2="950" stroke="#262a28"/>
+  <circle cx="52" cy="986" r="5" fill="none" stroke="#858e89"/>
+  <text x="67" y="991" class="muted small">15:31</text>
+  <rect x="184" y="967" width="34" height="34" rx="8" fill="#191c1a"/>
+  <path d="M195 992v-10m6 10v-16m6 16v-7" stroke="#8f9894" stroke-width="1.4"/>
+  <rect x="228" y="967" width="34" height="34" rx="8" fill="#191c1a"/>
+  <circle cx="245" cy="984" r="5" fill="none" stroke="#8f9894" stroke-width="1.4"/>
+  <path d="M245 975v3m0 12v3m-9-9h3m12 0h3" stroke="#8f9894" stroke-width="1.3"/>
+
+  <!-- terminal workspace -->
+  <rect x="300" y="154" width="1578" height="874" rx="11" fill="url(#terminalGlow)" stroke="#202622"/>
+  <rect x="318" y="170" width="1542" height="42" rx="8" fill="#121614"/>
+  <circle cx="342" cy="191" r="7" fill="#39d98a" opacity="0.22"/>
+  <path d="M338 187l7 4-7 4" fill="none" stroke="#39d98a" stroke-width="1.5"/>
+  <text x="360" y="196" class="body small">CLI-Manager · PowerShell</text>
+  <text x="1837" y="196" class="muted normal" text-anchor="end">+</text>
+  <text x="340" y="258" fill="#68dfa5" font-family="Cascadia Mono, Consolas" font-size="14">PS D:\work\pythonProject\CLI-Manager&gt;</text>
+  <text x="632" y="258" fill="#d7ddda" font-family="Cascadia Mono, Consolas" font-size="14"> codex</text>
+  <text x="340" y="296" class="muted" font-family="Cascadia Mono, Consolas" font-size="13">╭────────────────────────────────────────────────────────────────────╮</text>
+  <text x="340" y="322" class="muted" font-family="Cascadia Mono, Consolas" font-size="13">│  Ready · provider cpa · model gpt-5.6                         │</text>
+  <text x="340" y="348" class="muted" font-family="Cascadia Mono, Consolas" font-size="13">╰────────────────────────────────────────────────────────────────────╯</text>
+  <text x="340" y="402" class="body" font-family="Cascadia Mono, Consolas" font-size="14">› Review the current workspace changes</text>
+
+  <!-- dim overlay behind open popover -->
+  <rect x="300" y="154" width="1578" height="874" rx="11" fill="#030504" opacity="0.25"/>
+
+  <!-- popover connector -->
+  <path d="M278 801l12-9v18z" fill="#1a1e1c" stroke="#343a36"/>
+
+  <!-- provider popover -->
+  <g filter="url(#popoverShadow)">
+    <rect x="290" y="420" width="438" height="566" rx="14" fill="#181b19" stroke="#343a36"/>
+  </g>
+  <text x="314" y="454" class="title" font-size="17">供应商快捷切换</text>
+  <text x="314" y="476" class="muted tiny">本机 · 默认 Home · 仅影响新启动的会话</text>
+  <circle cx="694" cy="446" r="12" fill="#202522"/>
+  <path d="M689 446h10m-5-5v10" stroke="#8f9894" stroke-width="1.5" transform="rotate(45 694 446)"/>
+
+  <!-- tabs -->
+  <rect x="314" y="495" width="390" height="38" rx="9" fill="#101311"/>
+  <rect x="318" y="499" width="125" height="30" rx="7" fill="#214532"/>
+  <text x="380" y="519" class="green small" font-weight="700" text-anchor="middle">Claude Code</text>
+  <text x="510" y="519" class="muted small" text-anchor="middle">Codex</text>
+  <text x="641" y="519" class="muted small" text-anchor="middle">Grok Build</text>
+
+  <!-- current summary -->
+  <rect x="314" y="548" width="390" height="72" rx="10" fill="url(#activeProvider)" stroke="#326d4f"/>
+  <circle cx="340" cy="574" r="14" fill="#38261f"/>
+  <path d="M340 563v22m-11-11h22m-18-8l15 16m0-16-15 16" stroke="#f17b4c" stroke-width="1.6"/>
+  <text x="366" y="571" class="title normal">Anyrouter</text>
+  <text x="366" y="592" class="muted tiny">claude-opus-4-7 · 主密钥</text>
+  <rect x="614" y="562" width="72" height="23" rx="11" fill="#103b28" stroke="#277a53"/>
+  <circle cx="629" cy="573.5" r="3.5" fill="#39d98a"/>
+  <text x="639" y="578" class="green tiny">生效中</text>
+  <text x="366" y="608" class="green tiny">配置已同步</text>
+
+  <!-- search -->
+  <rect x="314" y="635" width="390" height="38" rx="9" fill="#111412" stroke="#303632"/>
+  <circle cx="333" cy="654" r="6" fill="none" stroke="#7f8883" stroke-width="1.4"/>
+  <path d="M337 658l5 5" stroke="#7f8883" stroke-width="1.4" stroke-linecap="round"/>
+  <text x="351" y="659" class="muted small">搜索供应商</text>
+  <text x="687" y="659" class="muted tiny" text-anchor="end">4 个可用</text>
+
+  <!-- list items -->
+  <rect x="314" y="686" width="390" height="56" rx="9" fill="#202923" stroke="#315b45"/>
+  <circle cx="340" cy="714" r="12" fill="#35241e"/>
+  <path d="M340 705v18m-9-9h18m-15-6l12 12m0-12-12 12" stroke="#f17b4c" stroke-width="1.4"/>
+  <text x="364" y="710" class="title small">Anyrouter</text>
+  <text x="364" y="728" class="muted tiny">claude-opus-4-7 · 当前</text>
+  <circle cx="677" cy="714" r="8" fill="#39d98a"/>
+  <path d="M673 714l3 3 5-6" fill="none" stroke="#082016" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="314" y="748" width="390" height="56" rx="9" fill="#1b1f1c"/>
+  <circle cx="340" cy="776" r="12" fill="#202527"/>
+  <path d="M333 772c7-7 16 0 11 7-4 5-13 1-11-5 2-7 13-9 18-2" fill="none" stroke="#b9c3c0" stroke-width="1.4"/>
+  <text x="364" y="772" class="body small">cpa-cc</text>
+  <text x="364" y="790" class="muted tiny">claude-opus-4-8[1m] · 主密钥</text>
+  <text x="680" y="781" class="green tiny" text-anchor="end">切换</text>
+
+  <rect x="314" y="810" width="390" height="56" rx="9" fill="#1b1f1c"/>
+  <circle cx="340" cy="838" r="12" fill="#23232c"/>
+  <circle cx="340" cy="838" r="5" fill="none" stroke="#8c7cff" stroke-width="1.4"/>
+  <path d="M340 828v4m0 12v4m-10-10h4m12 0h4" stroke="#8c7cff" stroke-width="1.3"/>
+  <text x="364" y="834" class="body small">elysiver</text>
+  <text x="364" y="852" class="muted tiny">glm-5.1 · 备用密钥</text>
+  <text x="680" y="843" class="green tiny" text-anchor="end">切换</text>
+
+  <rect x="314" y="872" width="390" height="56" rx="9" fill="#171918" opacity="0.7"/>
+  <circle cx="340" cy="900" r="12" fill="#252525"/>
+  <text x="340" y="905" class="muted small" text-anchor="middle">W</text>
+  <text x="364" y="896" class="muted small">wong</text>
+  <text x="364" y="914" fill="#b39356" class="tiny">缺少可用密钥 · 请在设置中处理</text>
+  <path d="M674 896l8 8-8 8" fill="none" stroke="#7b7260" stroke-width="1.4"/>
+
+  <!-- popover footer -->
+  <line x1="314" y1="940" x2="704" y2="940" stroke="#2b302d"/>
+  <path d="M319 960h14v12h-14zM322 956h8v4" fill="none" stroke="#39d98a" stroke-width="1.4"/>
+  <text x="344" y="971" class="green small">管理供应商、密钥与高级配置</text>
+  <path d="M683 963l5 5-5 5" fill="none" stroke="#39d98a" stroke-width="1.4"/>
+
+  <!-- collapsed-state inset -->
+  <g>
+    <rect x="1498" y="742" width="330" height="234" rx="14" fill="#111412" stroke="#303632"/>
+    <text x="1520" y="772" class="muted label">侧边栏收起时</text>
+    <rect x="1520" y="790" width="56" height="162" rx="10" fill="#171a18" stroke="#292e2b"/>
+    <rect x="1530" y="804" width="36" height="36" rx="8" fill="#1b201d"/>
+    <path d="M1541 822h14m-7-7v14" stroke="#39d98a" stroke-width="1.5"/>
+    <rect x="1530" y="850" width="36" height="36" rx="8" fill="#213129" stroke="#315b45"/>
+    <path d="M1540 868h16m-12-5l-5 5 5 5m8-10l5 5-5 5" fill="none" stroke="#39d98a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="1560" cy="854" r="4" fill="#39d98a" stroke="#171a18" stroke-width="2"/>
+    <rect x="1530" y="896" width="36" height="36" rx="8" fill="#1b201d"/>
+    <circle cx="1548" cy="914" r="5" fill="none" stroke="#8f9894" stroke-width="1.4"/>
+    <text x="1600" y="824" class="title normal">保留单图标入口</text>
+    <text x="1600" y="850" class="muted small">状态圆点提示整体可用性</text>
+    <text x="1600" y="874" class="muted small">点击后打开同一快捷面板</text>
+    <text x="1600" y="912" class="green small">不牺牲收起态空间</text>
+  </g>
+
+  <!-- callout labels -->
+  <rect x="44" y="712" width="76" height="22" rx="11" fill="#0f3324"/>
+  <text x="82" y="727" class="green tiny" font-weight="700" text-anchor="middle">展示区</text>
+  <rect x="304" y="388" width="92" height="22" rx="11" fill="#0f3324"/>
+  <text x="350" y="403" class="green tiny" font-weight="700" text-anchor="middle">快捷切换层</text>
+</svg>

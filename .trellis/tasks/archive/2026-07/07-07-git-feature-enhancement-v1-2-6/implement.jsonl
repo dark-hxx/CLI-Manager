@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline entry point for Git UI changes"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "User-facing Git UI must use i18n and existing component patterns"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Git store changes must follow Zustand state patterns and avoid hot-path rerenders"}
-{"file": ".trellis/spec/backend/git-status-contracts.md", "reason": "Backend Git command/status changes must preserve existing Git panel contracts"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature spans Tauri commands, store, UI, i18n, and docs"}
-{"file": ".trellis/tasks/07-07-git-feature-enhancement-v1-2-6/research/jetbrains-git-comparison.md", "reason": "JetBrains comparison, scoring, scope, impact notes"}

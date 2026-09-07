@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "claude-anthropic-json",
+      "app": "claude",
+      "format": "anthropic",
+      "transport": "json",
+      "route": "/v1/messages",
+      "request": {
+        "model": "claude-fixture",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "fixture request"}]}],
+        "tools": [{"name": "fixture_lookup", "input_schema": {"type": "object"}}],
+        "thinking": {"type": "enabled", "budget_tokens": 2048},
+        "max_tokens": 4096
+      },
+      "response": {
+        "id": "msg_fixture_anthropic",
+        "type": "message",
+        "content": [
+          {"type": "thinking", "thinking": "fixture reasoning", "signature": "fixture-signature"},
+          {"type": "tool_use", "id": "tool_fixture", "name": "fixture_lookup", "input": {"query": "fixture"}}
+        ],
+        "usage": {"input_tokens": 12, "output_tokens": 8}
+      },
+      "features": ["tool_call", "thinking", "usage"],
+      "alternateTransport": {
+        "transport": "sse",
+        "requestPatch": {"stream": true},
+        "response": {"events": [
+          {"event": "message_start", "data": {"type": "message_start"}},
+          {"event": "content_block_start", "data": {"type": "tool_use", "name": "fixture_lookup"}},
+          {"event": "content_block_delta", "data": {"type": "thinking_delta", "thinking": "fixture reasoning"}},
+          {"event": "message_delta", "data": {"usage": {"output_tokens": 8}}}
+        ]}
+      }
+    },
+    {
+      "id": "claude-openai-chat-sse",
+      "app": "claude",
+      "format": "openai_chat",
+      "transport": "sse",
+      "route": "/v1/messages",
+      "request": {
+        "model": "claude-chat-fixture",
+        "messages": [{"role": "user", "content": "fixture request"}],
+        "tools": [{"type": "function", "function": {"name": "fixture_lookup"}}]
+      },
+      "response": {
+        "events": [
+          {"event": "message_start", "data": {"type": "message_start"}},
+          {"event": "content_block_delta", "data": {"type": "text_delta", "text": "fixture reasoning"}},
+          {"event": "content_block_delta", "data": {"type": "input_json_delta", "partial_json": "{\"query\":\"fixture\"}"}},
+          {"event": "message_delta", "data": {"usage": {"output_tokens": 9}}}
+        ]
+      },
+      "features": ["tool_call", "reasoning", "usage"],
+      "alternateTransport": {
+        "transport": "json",
+        "requestPatch": {"stream": false},
+        "response": {
+          "choices": [{"message": {"reasoning_content": "fixture reasoning", "tool_calls": [{"function": {"name": "fixture_lookup", "arguments": "{\"query\":\"fixture\"}"}}]}}],
+          "usage": {"prompt_tokens": 13, "completion_tokens": 9}
+        }
+      }
+    },
+    {
+      "id": "claude-openai-responses-json",
+      "app": "claude",
+      "format": "openai_responses",
+      "transport": "json",
+      "route": "/v1/messages",
+      "request": {
+        "model": "claude-responses-fixture",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": "fixture request"}, {"type": "input_image", "image_url": "fixture-image-url"}]}],
+        "tools": [{"type": "function", "name": "fixture_lookup"}]
+      },
+      "response": {
+        "id": "resp_fixture_claude",
+        "output": [
+          {"type": "reasoning", "summary": [{"type": "summary_text", "text": "fixture reasoning"}]},
+          {"type": "function_call", "name": "fixture_lookup", "arguments": "{\"query\":\"fixture\"}"}
+        ],
+        "usage": {"input_tokens": 14, "output_tokens": 10}
+      },
+      "features": ["tool_call", "reasoning", "media", "usage"],
+      "alternateTransport": {
+        "transport": "sse",
+        "requestPatch": {"stream": true},
+        "response": {"events": [
+          {"event": "response.output_text.delta", "data": {"delta": "fixture reasoning"}},
+          {"event": "response.function_call_arguments.delta", "data": {"name": "fixture_lookup", "delta": "{\"query\":\"fixture\"}"}},
+          {"event": "response.completed", "data": {"usage": {"input_tokens": 14, "output_tokens": 10}}}
+        ]}
+      }
+    },
+    {
+      "id": "claude-gemini-native-sse",
+      "app": "claude",
+      "format": "gemini_native",
+      "transport": "sse",
+      "route": "/v1/messages",
+      "request": {
+        "model": "claude-gemini-fixture",
+        "contents": [{"role": "user", "parts": [{"text": "fixture request"}, {"inline_data": {"mime_type": "image/png", "data": "fixture-image-bytes"}}]}],
+        "tools": [{"function_declarations": [{"name": "fixture_lookup"}]}]
+      },
+      "response": {
+        "events": [
+          {"event": "content", "data": {"parts": [{"text": "fixture reasoning"}]}},
+          {"event": "tool_call", "data": {"name": "fixture_lookup", "args": {"query": "fixture"}}},
+          {"event": "usage", "data": {"prompt_token_count": 15, "candidates_token_count": 11}}
+        ]
+      },
+      "features": ["tool_call", "thinking", "media", "usage"],
+      "alternateTransport": {
+        "transport": "json",
+        "requestPatch": {"stream": false},
+        "response": {
+          "candidates": [{"content": {"parts": [{"thought": true, "text": "fixture thinking"}, {"functionCall": {"name": "fixture_lookup", "args": {"query": "fixture"}}}]}}],
+          "usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 11}
+        }
+      }
+    },
+    {
+      "id": "codex-responses-json",
+      "app": "codex",
+      "format": "responses",
+      "transport": "json",
+      "route": "/v1/responses",
+      "request": {
+        "model": "codex-fixture",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": "fixture request"}, {"type": "input_file", "file_id": "fixture-file"}]}],
+        "tools": [{"type": "function", "name": "fixture_lookup"}]
+      },
+      "response": {
+        "id": "resp_fixture_codex",
+        "output": [
+          {"type": "reasoning", "summary": [{"type": "summary_text", "text": "fixture reasoning"}]},
+          {"type": "function_call", "name": "fixture_lookup", "arguments": "{\"query\":\"fixture\"}"}
+        ],
+        "usage": {"input_tokens": 16, "output_tokens": 12}
+      },
+      "features": ["tool_call", "reasoning", "media", "usage"],
+      "alternateTransport": {
+        "transport": "sse",
+        "requestPatch": {"stream": true},
+        "response": {"events": [
+          {"event": "response.output_text.delta", "data": {"delta": "fixture reasoning"}},
+          {"event": "response.function_call_arguments.delta", "data": {"name": "fixture_lookup", "delta": "{\"query\":\"fixture\"}"}},
+          {"event": "response.completed", "data": {"usage": {"input_tokens": 16, "output_tokens": 12}}}
+        ]}
+      }
+    },
+    {
+      "id": "codex-chat-completions-sse",
+      "app": "codex",
+      "format": "chat_completions",
+      "transport": "sse",
+      "route": "/v1/chat/completions",
+      "request": {
+        "model": "codex-chat-fixture",
+        "messages": [{"role": "user", "content": "fixture request"}],
+        "tools": [{"type": "function", "function": {"name": "fixture_lookup"}}]
+      },
+      "response": {
+        "events": [
+          {"event": "chat.completion.chunk", "data": {"choices": [{"delta": {"reasoning_content": "fixture reasoning"}}]}},
+          {"event": "chat.completion.chunk", "data": {"choices": [{"delta": {"tool_calls": [{"function": {"name": "fixture_lookup", "arguments": "{\"query\":\"fixture\"}"}}]}}]}},
+          {"event": "usage", "data": {"prompt_tokens": 17, "completion_tokens": 13}}
+        ]
+      },
+      "features": ["tool_call", "reasoning", "usage"],
+      "alternateTransport": {
+        "transport": "json",
+        "requestPatch": {"stream": false},
+        "response": {
+          "choices": [{"message": {"reasoning_content": "fixture reasoning", "tool_calls": [{"function": {"name": "fixture_lookup", "arguments": "{\"query\":\"fixture\"}"}}]}}],
+          "usage": {"prompt_tokens": 17, "completion_tokens": 13}
+        }
+      }
+    },
+    {
+      "id": "codex-anthropic-messages-json",
+      "app": "codex",
+      "format": "anthropic_messages",
+      "transport": "json",
+      "route": "/v1/responses",
+      "request": {
+        "model": "codex-anthropic-fixture",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "fixture request"}, {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "fixture-file-bytes"}}]}],
+        "tools": [{"name": "fixture_lookup", "input_schema": {"type": "object"}}]
+      },
+      "response": {
+        "id": "msg_fixture_codex",
+        "content": [
+          {"type": "thinking", "thinking": "fixture reasoning", "signature": "fixture-signature"},
+          {"type": "tool_use", "id": "tool_fixture_codex", "name": "fixture_lookup", "input": {"query": "fixture"}}
+        ],
+        "usage": {"input_tokens": 18, "output_tokens": 14}
+      },
+      "features": ["tool_call", "thinking", "media", "usage"],
+      "alternateTransport": {
+        "transport": "sse",
+        "requestPatch": {"stream": true},
+        "response": {"events": [
+          {"event": "content_block_start", "data": {"type": "tool_use", "name": "fixture_lookup"}},
+          {"event": "content_block_delta", "data": {"type": "thinking_delta", "thinking": "fixture reasoning"}},
+          {"event": "message_delta", "data": {"usage": {"input_tokens": 18, "output_tokens": 14}}}
+        ]}
+      }
+    },
+    {
+      "id": "grok-responses-sse",
+      "app": "grokbuild",
+      "publicApp": "grok",
+      "format": "responses",
+      "transport": "sse",
+      "route": "/grokbuild/v1/responses",
+      "request": {
+        "model": "grok-responses-fixture",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": "fixture request"}]}],
+        "tools": [{"type": "function", "name": "fixture_lookup"}]
+      },
+      "response": {
+        "events": [
+          {"event": "response.output_text.delta", "data": {"delta": "fixture reasoning"}},
+          {"event": "response.function_call_arguments.delta", "data": {"name": "fixture_lookup", "delta": "{\"query\":\"fixture\"}"}},
+          {"event": "response.completed", "data": {"usage": {"input_tokens": 19, "output_tokens": 15}}}
+        ]
+      },
+      "features": ["tool_call", "reasoning", "usage"],
+      "alternateTransport": {
+        "transport": "json",
+        "requestPatch": {"stream": false},
+        "response": {
+          "output": [{"type": "reasoning", "summary": [{"type": "summary_text", "text": "fixture reasoning"}]}, {"type": "function_call", "name": "fixture_lookup", "arguments": "{\"query\":\"fixture\"}"}],
+          "usage": {"input_tokens": 19, "output_tokens": 15}
+        }
+      }
+    },
+    {
+      "id": "grok-chat-completions-json",
+      "app": "grokbuild",
+      "publicApp": "grok",
+      "format": "chat_completions",
+      "transport": "json",
+      "route": "/grokbuild/v1/chat/completions",
+      "request": {
+        "model": "grok-chat-fixture",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "fixture request"}, {"type": "image_url", "image_url": {"url": "fixture-image-url"}}]}],
+        "tools": [{"type": "function", "function": {"name": "fixture_lookup"}}]
+      },
+      "response": {
+        "choices": [{"message": {"reasoning_content": "fixture reasoning", "tool_calls": [{"function": {"name": "fixture_lookup", "arguments": "{\"query\":\"fixture\"}"}}]}}],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 16}
+      },
+      "features": ["tool_call", "reasoning", "media", "usage"],
+      "alternateTransport": {
+        "transport": "sse",
+        "requestPatch": {"stream": true},
+        "response": {"events": [
+          {"event": "chat.completion.chunk", "data": {"choices": [{"delta": {"reasoning_content": "fixture reasoning"}}]}},
+          {"event": "chat.completion.chunk", "data": {"choices": [{"delta": {"tool_calls": [{"function": {"name": "fixture_lookup"}}]}}]}},
+          {"event": "usage", "data": {"prompt_tokens": 20, "completion_tokens": 16}}
+        ]}
+      }
+    },
+    {
+      "id": "grok-anthropic-messages-sse",
+      "app": "grokbuild",
+      "publicApp": "grok",
+      "format": "anthropic_messages",
+      "transport": "sse",
+      "route": "/grokbuild/v1/messages",
+      "request": {
+        "model": "grok-anthropic-fixture",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "fixture request"}]}],
+        "tools": [{"name": "fixture_lookup", "input_schema": {"type": "object"}}]
+      },
+      "response": {
+        "events": [
+          {"event": "content_block_start", "data": {"type": "thinking"}},
+          {"event": "content_block_delta", "data": {"type": "thinking_delta", "thinking": "fixture reasoning"}},
+          {"event": "content_block_delta", "data": {"type": "input_json_delta", "partial_json": "{\"query\":\"fixture\"}"}},
+          {"event": "message_delta", "data": {"usage": {"input_tokens": 21, "output_tokens": 17}}}
+        ]
+      },
+      "features": ["tool_call", "thinking", "usage"],
+      "alternateTransport": {
+        "transport": "json",
+        "requestPatch": {"stream": false},
+        "response": {
+          "content": [{"type": "thinking", "thinking": "fixture reasoning", "signature": "fixture-signature"}, {"type": "tool_use", "name": "fixture_lookup", "input": {"query": "fixture"}}],
+          "usage": {"input_tokens": 21, "output_tokens": 17}
+        }
+      }
+    }
+  ]
+}

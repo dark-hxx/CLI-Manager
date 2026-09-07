@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/05-29-optimize-history-sessions-with-memory-index/prd.md","reason":"Confirmed requirements, scope, acceptance criteria, and chosen in-memory index approach."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend/Tauri command contract requirements and required cargo check."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"History command return shape crosses Rust backend and frontend store boundaries."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Implementation will add helper/index logic and must reuse existing scan/parse code."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"History performance guidance warns against hot-scan allocations; relevant to preserving frontend behavior."}

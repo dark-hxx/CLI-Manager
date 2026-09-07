@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 36
-- **Last Active**: 2026-07-31
+- **Total Sessions**: 53
+- **Last Active**: 2026-09-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1200 | Active |
+| `journal-1.md` | ~1737 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,24 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 53 | 2026-09-07 | 修复 WSL AI CLI 图片粘贴 | `34dc164c`, `f81d31be` | `master` |
+| 52 | 2026-08-24 | 修复供应商目录残留选中态 | `320d4d6f` | `master` |
+| 51 | 2026-08-17 | 修复应用重启后本地路由未恢复 | `a3958343` | `master` |
+| 50 | 2026-08-17 | 修复自动故障转移当前供应商高亮 | `d9d04050` | `master` |
+| 49 | 2026-08-13 | 修复路由请求日志重复与布局 | `16b3e051` | `feat/native-provider-management` |
+| 48 | 2026-08-13 | 修复供应商故障转移排序持久化 | `d4df1777` | `feat/native-provider-management` |
+| 47 | 2026-08-12 | 修复路径复制菜单交互与图标 | `72538d0d` | `feat/native-provider-management` |
+| 46 | 2026-08-12 | 修复文件面板路径复制二级菜单裁剪 | `af5403f7` | `feat/native-provider-management` |
+| 45 | 2026-08-11 | Unify sidebar provider switching with CLI Home | `22c8b8b6` | `feat/native-provider-management` |
+| 44 | 2026-08-11 | 修复 Codex 历史 sub-agent 层级 | `c266572a` | `feat/native-provider-management` |
+| 43 | 2026-08-11 | Fix WSL Home cold-start detection | `cd1930b6` | `feat/native-provider-management` |
+| 42 | 2026-08-11 | 修复 WSL CLI Home 自动解析与目录选择 | `68be1e60` | `feat/native-provider-management` |
+| 41 | 2026-08-11 | 修复 WSL CLI Home 手动输入 | `ee8b4b98` | `feat/native-provider-management` |
+| 40 | 2026-08-10 | 对齐供应商快捷侧边栏 | `16e7b9e8` | `feat/native-provider-management` |
+| 39 | 2026-08-06 | 彻底修复多会话终端输出卡死 | `e46052c2` | `master` |
+| 38 | 2026-08-06 | 统一终端侧边栏标题与缓存命中率 | `fb89406a` | `master` |
+| 37 | 2026-08-05 | 修复项目切换丢失文件预览与 Tab 卡死 | `f5544d3b` | `master` |
+| 36 | 2026-08-03 | 修复子任务分屏滚动条与工具栏 | `b7c148b7` | `master` |
 | 35 | 2026-07-31 | 终端状态标记设置预览 | `2e73f3a7` | `feat/terminal-status-marker-settings` |
 | 34 | 2026-07-31 | 终端状态标记设置与视觉优化 | `5603bde1` | `feat/terminal-status-marker-settings` |
 | 34 | 2026-07-22 | 修复 Web Server 迁移校验漂移 | `2663048e` | `feat/web-management-capabilities` |

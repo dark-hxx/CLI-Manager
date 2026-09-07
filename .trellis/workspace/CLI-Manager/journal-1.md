@@ -1221,3 +1221,550 @@ Claude 启动阶段提前订阅子任务 transcript，Codex rollout 增加有界
 ### Next Steps
 
 - None - task complete
+
+
+## Session 36: 修复子任务分屏滚动条与工具栏
+
+**Date**: 2026-08-03
+**Task**: 修复子任务分屏滚动条与工具栏
+**Branch**: `master`
+
+### Summary
+
+完成子任务分屏工具栏按钮按会话类型过滤，并实现覆盖式滚动条、悬浮放大、拖拽同步及终端主题颜色复用；提交到 master，类型检查和差异检查通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b7c148b7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 37: 修复项目切换丢失文件预览与 Tab 卡死
+
+**Date**: 2026-08-05
+**Task**: 修复项目切换丢失文件预览与 Tab 卡死
+**Branch**: `master`
+
+### Summary
+
+按文件位置缓存项目编辑工作区，保留已打开文件与未保存内容；切断项目同步 effect 的状态反馈循环，并补充相关回归测试与规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f5544d3b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 38: 统一终端侧边栏标题与缓存命中率
+
+**Date**: 2026-08-06
+**Task**: 统一终端侧边栏标题与缓存命中率
+**Branch**: `master`
+
+### Summary
+
+统一实时统计、文件、Git 变更、时间轴和系统资源面板的标题尺寸与终端主题背景，并在 Token 用量卡片中补充缓存命中率。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fb89406a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 39: 彻底修复多会话终端输出卡死
+
+**Date**: 2026-08-06
+**Task**: 彻底修复多会话终端输出卡死
+**Branch**: `master`
+
+### Summary
+
+合并 PR #197，并补充 daemon 64 KiB 有界聚合、跨终端公平 xterm 调度、回归测试和可执行契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e46052c2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 40: 对齐供应商快捷侧边栏
+
+**Date**: 2026-08-10
+**Task**: 对齐供应商快捷侧边栏
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+统一供应商面板标题栏，简化路由与状态展示，并同步规范、文档和国际化文案。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `16e7b9e8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 41: 修复 WSL CLI Home 手动输入
+
+**Date**: 2026-08-11
+**Task**: 修复 WSL CLI Home 手动输入
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+修复供应商设置 CLI Home 在 WSL 自动模式下同时禁用目录选择和文本输入的死路；允许直接编辑或粘贴 WSL UNC，并在首次输入时切换为手动模式。完成契约、Changelog、功能清单同步，TypeScript 与 GitNexus staged 影响检查通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ee8b4b98` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 42: 修复 WSL CLI Home 自动解析与目录选择
+
+**Date**: 2026-08-11
+**Task**: 修复 WSL CLI Home 自动解析与目录选择
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+修复 Local→WSL 时沿用 host identity 导致 Home 自动解析错误的问题；后端自动探测默认发行版与真实 HOME，前端同步 identity，并启用 Local/WSL 目录选择与手动编辑。类型检查、12 个 Home 单测和 cargo check 均通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68be1e60` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 43: Fix WSL Home cold-start detection
+
+**Date**: 2026-08-11
+**Task**: Fix WSL Home cold-start detection
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+Reproduced default WSL Home detection taking 12.3 seconds, separated 30-second cold-start detection from 5-second directory validation, added timeout policy coverage, and verified 13 focused Rust tests plus cargo check.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cd1930b6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 44: 修复 Codex 历史 sub-agent 层级
+
+**Date**: 2026-08-11
+**Task**: 修复 Codex 历史 sub-agent 层级
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+贯通 Codex session_meta 的 parent_thread_id/forked_from_id，从 Rust 历史解析、SQLite catalog 到前端层级树；保留 Claude 路径兼容并补充回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c266572a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 45: Unify sidebar provider switching with CLI Home
+
+**Date**: 2026-08-11
+**Task**: Unify sidebar provider switching with CLI Home
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+Aligned sidebar provider switching with settings global CLI Home apply flow, added local/WSL mode indicators, recorded bilingual UI/docs/contracts, and archived the task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `22c8b8b6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 46: 修复文件面板路径复制二级菜单裁剪
+
+**Date**: 2026-08-12
+**Task**: 修复文件面板路径复制二级菜单裁剪
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+实现文件面板与 Git 变更面板的绝对路径、AI 路径和相对路径复制；修复窄侧栏中二级菜单被 overflow-x-hidden 裁剪的问题，统一通过 ContextMenu Portal 渲染子菜单。npx tsc --noEmit 通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `af5403f7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 47: 修复路径复制菜单交互与图标
+
+**Date**: 2026-08-12
+**Task**: 修复路径复制菜单交互与图标
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+将路径复制 Radix 旁侧子菜单改为原位替换菜单，隐藏一级菜单项，统一文件菜单样式，使用 Sparkles/Link2 语义图标并恢复切换后的键盘焦点；补充 TEMP 变更记录、功能清单与前端菜单契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `72538d0d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 48: 修复供应商故障转移排序持久化
+
+**Date**: 2026-08-13
+**Task**: 修复供应商故障转移排序持久化
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+移除供应商侧栏重复上下移动图标；关闭自动故障转移时保留已有队列和 sort_index 顺序；补充前后端回归测试、功能清单、CHANGELOG 与供应商域契约。验证通过 npx tsc --noEmit、cargo check、provider routing focused tests 22/22。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d4df1777` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 49: 修复路由请求日志重复与布局
+
+**Date**: 2026-08-13
+**Task**: 修复路由请求日志重复与布局
+**Branch**: `feat/native-provider-management`
+
+### Summary
+
+对照 CC Switch 的代理权威/会话回退策略，修复路由归属与缓存语义跨源去重，统一历史统计匹配，并让五张请求日志汇总卡片同排自适应。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `16b3e051` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 50: 修复自动故障转移当前供应商高亮
+
+**Date**: 2026-08-17
+**Task**: 修复自动故障转移当前供应商高亮
+**Branch**: `master`
+
+### Summary
+
+修复自动故障转移队列首个非当前供应商成功后未提交为当前供应商的问题，并精简供应商快捷面板路由开关辅助文字；补充回归测试、产品记录与后端契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d9d04050` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 51: 修复应用重启后本地路由未恢复
+
+**Date**: 2026-08-17
+**Task**: 修复应用重启后本地路由未恢复
+**Branch**: `master`
+
+### Summary
+
+daemon 连接完成后自动协调持久化路由意图，复用手动启停逻辑并恢复完整本地/WSL listener 与端口状态；补充回归测试、功能清单、CHANGELOG 和后端契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a3958343` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 52: 修复供应商目录残留选中态
+
+**Date**: 2026-08-24
+**Task**: 修复供应商目录残留选中态
+**Branch**: `master`
+
+### Summary
+
+供应商详情关闭后仅清除目录视觉选中态，保留缓存选择用于重新进入详情；新增回归测试并更新供应商契约与 TEMP 产品记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `320d4d6f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 53: 修复 WSL AI CLI 图片粘贴
+
+**Date**: 2026-09-07
+**Task**: 修复 WSL AI CLI 图片粘贴
+**Branch**: `master`
+
+### Summary
+
+实现 Alt+V 宿主机图片剪贴板桥接、常用图片转 PNG、WSL 路径转换和 AI CLI 能力分级，并更新 GitNexus 指引、测试及产品文档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `34dc164c` | (see git log) |
+| `f81d31be` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -3,16 +3,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getDb } from "../lib/db";
 import { createPerfMarker, logInfo, logWarn } from "../lib/logger";
+import { queryClient } from "../lib/queryClient";
 import { normalizeHistoryProjectPaths, resolveHistoryProjectPath } from "../lib/historyProjectPaths";
 import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../lib/sshAgentHistory";
 import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs, getHistoryPathArgsSync } from "../lib/historyPathArgs";
 import { inferSubagentParentSessionId } from "../lib/historySubagents";
 import { sameHistorySessionIdentity } from "../lib/historySessionIdentity";
+import { extractHistoryTitleCandidate, resolveHistoryDisplayTitle } from "../lib/historyTitle";
 import { useProjectStore } from "./projectStore";
+import { useSettingsStore } from "./settingsStore";
 import { useSshAgentIntegrationStore } from "./sshAgentIntegrationStore";
 import { useBackgroundOperationStore } from "./backgroundOperationStore";
 import type {
   HistoryBackupStatus,
+  HistoryGeneratedTitleMeta,
+  HistoryGeneratedTitleState,
+  HistoryGeneratedTitleTrigger,
   HistoryEditAuditEntry,
   HistoryFileChangeOperation,
   HistoryFileChangeSummary,
@@ -24,6 +30,7 @@ import type {
   HistorySessionSummary,
   HistorySessionRef,
   HistorySessionView,
+  HistoryTitleCandidate,
   HistoryStatsDailySeriesItem,
   HistoryStatsHeatmapDay,
   HistoryStatsHourlyActivityItem,
@@ -35,6 +42,11 @@ import type {
   HistoryTokenTrendPoint,
   HistoryToolEvent,
   HistoryToolCount,
+  RequestLogStatsModelItem,
+  RequestLogStatsPayload,
+  RequestLogStatsSourceItem,
+  RequestLogStatsTrendItem,
+  RequestLogSyncResult,
   PromptScope,
   Project,
   HistorySource,
@@ -45,6 +57,7 @@ import type {
 } from "../lib/types";
 
 type SessionMetaMap = Record<string, SessionMeta>;
+type GeneratedTitleMap = Record<string, HistoryGeneratedTitleMeta>;
 
 interface MetaPatchInput {
   alias?: string;
@@ -58,6 +71,10 @@ interface OpenHistoryOptions {
   /** 左侧/入口选中的具体项目 id；仅用于 UI 高亮，会话过滤仍按 path。 */
   projectId?: string | null;
   scopedProjectPath?: string | null;
+}
+
+interface OpenSessionOptions {
+  requireLiveDetail?: boolean;
 }
 
 interface HistoryStore {
@@ -93,6 +110,9 @@ interface HistoryStore {
   focusedMessageIndex: number | null;
   focusedMessageSeq: number;
   metaMap: SessionMetaMap;
+  generatedTitleMap: GeneratedTitleMap;
+  /** 当前 WebView 已发起、尚未收到最终标题结果的会话；不持久化。 */
+  smartTitleInFlightSessionKeys: Set<string>;
   focusGlobalSearchSeq: number;
   focusSessionSearchSeq: number;
   indexStatus: HistoryIndexStatus;
@@ -108,7 +128,7 @@ interface HistoryStore {
   loadIndexStatus: () => Promise<void>;
   refreshIndex: () => Promise<void>;
   addConvertedSession: (summary: unknown, detail: unknown) => string;
-  openSession: (sessionKey: string) => Promise<void>;
+  openSession: (sessionKey: string, options?: OpenSessionOptions) => Promise<void>;
   openSearchHit: (hit: HistorySearchHit) => Promise<void>;
   deleteSession: (sessionKey: string) => Promise<void>;
   setGlobalQuery: (query: string) => void;
@@ -133,6 +153,9 @@ interface HistoryStore {
   openSessionAtMessage: (sessionKey: string, messageIndex: number) => Promise<void>;
   clearFocusedMessage: () => void;
   updateMeta: (sessionKey: string, patch: MetaPatchInput) => Promise<void>;
+  cancelAutomaticSmartTitles: () => void;
+  generateSmartTitle: (sessionKey: string, triggerKind?: HistoryGeneratedTitleTrigger) => Promise<void>;
+  clearSmartTitle: (sessionKey: string) => Promise<void>;
   updateMessage: (sessionKey: string, message: HistoryMessage, newText: string) => Promise<void>;
   deleteMessage: (sessionKey: string, message: HistoryMessage) => Promise<void>;
   deleteMessages: (sessionKey: string, messages: HistoryMessage[]) => Promise<void>;
@@ -312,6 +335,7 @@ function normalizeSummary(raw: unknown): HistorySessionSummary {
     project_key: asString(rec.project_key ?? rec.projectKey),
     title: asString(rec.title),
     file_path: asString(rec.file_path ?? rec.filePath),
+    parent_session_id: asString(rec.parent_session_id ?? rec.parentSessionId ?? "") || null,
     cwd: asString(rec.cwd ?? "") || null,
     created_at: asNumber(rec.created_at ?? rec.createdAt),
     updated_at: asNumber(rec.updated_at ?? rec.updatedAt),
@@ -337,9 +361,27 @@ function normalizeDetail(raw: unknown): HistorySessionDetail {
     const m = msg as Record<string, unknown>;
     const rawLineIndex = m.line_index ?? m.lineIndex;
     const rawEditableText = m.editable_text ?? m.editableText;
+    const rawParts = Array.isArray(m.parts) ? m.parts : [];
+    const parts = rawParts.flatMap((part) => {
+      if (!part || typeof part !== "object") return [];
+      const value = part as Record<string, unknown>;
+      const kind = asString(value.kind);
+      if (!["text", "tool_call", "tool_result", "reasoning", "system", "metadata", "unknown"].includes(kind)) {
+        return [];
+      }
+      const content = asString(value.content);
+      if (!content.trim()) return [];
+      return [{
+        kind: kind as NonNullable<HistoryMessage["parts"]>[number]["kind"],
+        content,
+        tool_name: asString(value.tool_name ?? value.toolName) || undefined,
+        call_id: asString(value.call_id ?? value.callId) || undefined,
+      }];
+    });
     return {
       role: normalizeRole(m.role),
       content: asString(m.content),
+      parts: parts.length > 0 ? parts : undefined,
       timestamp: asString(m.timestamp ?? "") || null,
       model: asString(m.model ?? "") || undefined,
       input_tokens: asNumber(m.input_tokens ?? m.inputTokens),
@@ -703,6 +745,15 @@ function normalizeStats(raw: unknown): HistoryStatsPayload {
     source_distribution: sourceRaw.map((item) => normalizeSourceDistribution(item)),
     project_efficiency: efficiencyRaw.map((item) => normalizeProjectEfficiency(item)),
     hourly_activity: hourlyRaw.map((item) => normalizeHourlyActivity(item)),
+    data_quality: (() => {
+      const quality = (rec.data_quality ?? rec.dataQuality ?? {}) as Record<string, unknown>;
+      return {
+        route_records: asNumber(quality.route_records ?? quality.routeRecords),
+        session_fallback_records: asNumber(quality.session_fallback_records ?? quality.sessionFallbackRecords),
+        unattributed_records: asNumber(quality.unattributed_records ?? quality.unattributedRecords),
+        missing_usage_records: asNumber(quality.missing_usage_records ?? quality.missingUsageRecords),
+      };
+    })(),
   };
 }
 
@@ -730,6 +781,10 @@ export interface TodayProjectStats {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   unpricedTokens: number;
+  routeRecords?: number;
+  sessionFallbackRecords?: number;
+  unattributedRecords?: number;
+  missingUsageRecords?: number;
 }
 
 export interface FetchHistoryStatsOptions {
@@ -741,6 +796,69 @@ export interface FetchHistoryStatsOptions {
   startAt?: number | null;
   endAt?: number | null;
   force?: boolean;
+}
+
+export interface FetchHistoryRequestLogStatsOptions {
+  sourceFilter: HistorySourceFilter;
+  projectKey?: string | null;
+  projectPath?: string | null;
+  model?: string | null;
+  startAt?: number | null;
+  endAt?: number | null;
+  force?: boolean;
+}
+
+let requestLogSyncPromise: Promise<RequestLogSyncResult> | null = null;
+
+function requestLogSyncChanged(result: RequestLogSyncResult): boolean {
+  return result.changed_files > 0 || result.removed_files > 0 || result.written_rows > 0;
+}
+
+function invalidateRequestLogQueries(): void {
+  void queryClient.invalidateQueries({ queryKey: ["historyRequestLogs"] });
+  void queryClient.invalidateQueries({ queryKey: ["historyRequestLogStats"] });
+}
+
+function invalidateHistoryStatsQueries(): void {
+  void queryClient.invalidateQueries({ queryKey: ["historyStats"] });
+}
+
+export async function syncHistoryRequestLogs(force = false): Promise<RequestLogSyncResult> {
+  if (requestLogSyncPromise && !force) {
+    return requestLogSyncPromise;
+  }
+  const pathArgs = await getHistoryPathArgs();
+  const promise = invoke<RequestLogSyncResult>("history_sync_request_logs", {
+    ...pathArgs,
+    force,
+  });
+  requestLogSyncPromise = promise;
+  try {
+    const result = await promise;
+    if (requestLogSyncChanged(result)) invalidateRequestLogQueries();
+    invalidateHistoryStatsQueries();
+    return result;
+  } finally {
+    if (requestLogSyncPromise === promise) requestLogSyncPromise = null;
+  }
+}
+
+export async function fetchHistoryRequestLogStats(
+  options: FetchHistoryRequestLogStatsOptions,
+): Promise<RequestLogStatsPayload> {
+  const filters = {
+    source: normalizeSourceFilter(options.sourceFilter),
+    project_key: options.projectKey?.trim() || null,
+    project_path: options.projectPath?.trim() || null,
+    model: options.model?.trim() || null,
+    start_at: typeof options.startAt === "number" && Number.isFinite(options.startAt) ? options.startAt : null,
+    end_at: typeof options.endAt === "number" && Number.isFinite(options.endAt) ? options.endAt : null,
+  };
+  const raw = await invoke<unknown>("history_get_request_log_stats", {
+    filters,
+    ...(await getHistoryPathArgs()),
+  });
+  return normalizeRequestLogStats(raw);
 }
 
 export async function fetchHistoryStatsProjectOptions(sourceFilter: HistorySourceFilter): Promise<string[]> {
@@ -800,23 +918,26 @@ export async function fetchRemoteHistoryStatsPayload(
 // source 非空时只匹配对应 CLI（claude/codex），供按终端工具区分的场景使用。
 // 传入 prev（上次结果的 file_path/updated_at）时，若最近会话未变化则返回 "unchanged"，
 // 跳过整个 jsonl 的重新解析，供轮询场景使用。
-// forceCatalogRefresh：Hook 刚绑定 sessionId / 用量仍为 0 时后台触发扫盘索引；查询保持非阻塞。
+// forceCatalogRefresh：Hook 刚绑定 sessionId / 用量仍为 0 时触发扫盘索引。
+// waitForCatalogRefresh：需要严格绑定当前 session 的实时预览时，等待这次扫盘完成；默认不等待，保留统计轮询的非阻塞行为。
 export async function fetchLatestProjectSessionDetail(
   projectPath: string,
   prev?: { filePath: string; updatedAt: number },
   source?: HistorySource | null,
   cliSessionId?: string | null,
-  options?: { forceCatalogRefresh?: boolean; freshDetail?: boolean }
+  options?: { forceCatalogRefresh?: boolean; freshDetail?: boolean; waitForCatalogRefresh?: boolean }
 ): Promise<HistorySessionDetail | "unchanged" | null> {
   try {
     const forceCatalogRefresh = Boolean(options?.forceCatalogRefresh);
     const freshDetail = Boolean(options?.freshDetail);
+    const waitForCatalogRefresh = Boolean(options?.waitForCatalogRefresh);
     logInfo("history.realtime.lookup.start", {
       source: source ?? null,
       projectPath,
       cliSessionId: cliSessionId ?? null,
       forceCatalogRefresh,
       freshDetail,
+      waitForCatalogRefresh,
       previousFilePath: prev?.filePath ?? null,
       previousUpdatedAt: prev?.updatedAt ?? null,
     });
@@ -860,7 +981,7 @@ export async function fetchLatestProjectSessionDetail(
       if (summary?.session_id === sessionQuery) return summary;
       if (!forceCatalogRefresh) return null;
       try {
-        await invoke("history_refresh_index", { ...pathArgs, wait: false });
+        await invoke("history_refresh_index", { ...pathArgs, wait: waitForCatalogRefresh });
       } catch (error) {
         logWarn("history.realtime.lookup.refreshFailed", {
           source: source ?? null,
@@ -893,7 +1014,9 @@ export async function fetchLatestProjectSessionDetail(
       });
       return null;
     }
-    if (prev && summary.file_path === prev.filePath && summary.updated_at === prev.updatedAt) {
+    const summaryChanged =
+      !prev || summary.file_path !== prev.filePath || summary.updated_at !== prev.updatedAt;
+    if (prev && !summaryChanged && !freshDetail) {
       logInfo("history.realtime.lookup.unchanged", {
         source: summary.source,
         projectPath,
@@ -909,7 +1032,7 @@ export async function fetchLatestProjectSessionDetail(
       source: summary.source,
       projectKey: summary.project_key,
       aggregateSubtasks: false,
-      fresh: freshDetail,
+      fresh: freshDetail || summaryChanged,
     });
     const detail = normalizeDetail(detailRaw);
     logInfo("history.realtime.lookup.detail", {
@@ -992,6 +1115,10 @@ export async function fetchTodayProjectStats(
       cacheReadTokens: stats.total_cache_read_tokens,
       cacheCreationTokens: stats.total_cache_creation_tokens,
       unpricedTokens: stats.total_unpriced_tokens,
+      routeRecords: stats.data_quality?.route_records ?? 0,
+      sessionFallbackRecords: stats.data_quality?.session_fallback_records ?? 0,
+      unattributedRecords: stats.data_quality?.unattributed_records ?? 0,
+      missingUsageRecords: stats.data_quality?.missing_usage_records ?? 0,
     };
   } catch {
     return null;
@@ -1047,6 +1174,10 @@ export async function fetchRemoteTodayProjectStats(
       cacheReadTokens: stats.total_cache_read_tokens,
       cacheCreationTokens: stats.total_cache_creation_tokens,
       unpricedTokens: stats.total_unpriced_tokens,
+      routeRecords: stats.data_quality?.route_records ?? 0,
+      sessionFallbackRecords: stats.data_quality?.session_fallback_records ?? 0,
+      unattributedRecords: stats.data_quality?.unattributed_records ?? 0,
+      missingUsageRecords: stats.data_quality?.missing_usage_records ?? 0,
     },
   };
 }
@@ -1136,9 +1267,80 @@ export async function fetchRemoteProjectSessionSummaries(
   };
 }
 
+function normalizeRequestLogStatsTrend(raw: unknown): RequestLogStatsTrendItem {
+  const rec = (raw ?? {}) as Record<string, unknown>;
+  return {
+    bucket_start_ms: asNumber(rec.bucket_start_ms ?? rec.bucketStartMs),
+    requests: asNumber(rec.requests),
+    input_tokens: asNumber(rec.input_tokens ?? rec.inputTokens),
+    output_tokens: asNumber(rec.output_tokens ?? rec.outputTokens),
+    cache_read_tokens: asNumber(rec.cache_read_tokens ?? rec.cacheReadTokens),
+    cache_creation_tokens: asNumber(rec.cache_creation_tokens ?? rec.cacheCreationTokens),
+    total_tokens: asNumber(rec.total_tokens ?? rec.totalTokens),
+    total_cost_usd: asNumber(rec.total_cost_usd ?? rec.totalCostUsd ?? rec.totalCostUSD),
+    unpriced_tokens: asNumber(rec.unpriced_tokens ?? rec.unpricedTokens),
+  };
+}
+
+function normalizeRequestLogStatsSource(raw: unknown): RequestLogStatsSourceItem {
+  const rec = (raw ?? {}) as Record<string, unknown>;
+  return {
+    source: asString(rec.source) as RequestLogStatsSourceItem["source"],
+    requests: asNumber(rec.requests),
+    input_tokens: asNumber(rec.input_tokens ?? rec.inputTokens),
+    output_tokens: asNumber(rec.output_tokens ?? rec.outputTokens),
+    cache_read_tokens: asNumber(rec.cache_read_tokens ?? rec.cacheReadTokens),
+    cache_creation_tokens: asNumber(rec.cache_creation_tokens ?? rec.cacheCreationTokens),
+    total_tokens: asNumber(rec.total_tokens ?? rec.totalTokens),
+    ratio: asNumber(rec.ratio),
+    total_cost_usd: asNumber(rec.total_cost_usd ?? rec.totalCostUsd ?? rec.totalCostUSD),
+    unpriced_tokens: asNumber(rec.unpriced_tokens ?? rec.unpricedTokens),
+  };
+}
+
+function normalizeRequestLogStatsModel(raw: unknown): RequestLogStatsModelItem {
+  const rec = (raw ?? {}) as Record<string, unknown>;
+  return {
+    model: asString(rec.model),
+    requests: asNumber(rec.requests),
+    input_tokens: asNumber(rec.input_tokens ?? rec.inputTokens),
+    output_tokens: asNumber(rec.output_tokens ?? rec.outputTokens),
+    cache_read_tokens: asNumber(rec.cache_read_tokens ?? rec.cacheReadTokens),
+    cache_creation_tokens: asNumber(rec.cache_creation_tokens ?? rec.cacheCreationTokens),
+    total_tokens: asNumber(rec.total_tokens ?? rec.totalTokens),
+    ratio: asNumber(rec.ratio),
+    total_cost_usd: asNumber(rec.total_cost_usd ?? rec.totalCostUsd ?? rec.totalCostUSD),
+    unpriced_tokens: asNumber(rec.unpriced_tokens ?? rec.unpricedTokens),
+  };
+}
+
+function normalizeRequestLogStats(raw: unknown): RequestLogStatsPayload {
+  const rec = (raw ?? {}) as Record<string, unknown>;
+  const trendRaw = rec.trend;
+  const sourceRaw = rec.source_distribution ?? rec.sourceDistribution;
+  const modelRaw = rec.model_distribution ?? rec.modelDistribution;
+  return {
+    range_start_at: asNumber(rec.range_start_at ?? rec.rangeStartAt),
+    range_end_at: asNumber(rec.range_end_at ?? rec.rangeEndAt),
+    granularity: asString(rec.granularity) === "hour" ? "hour" : "day",
+    total_requests: asNumber(rec.total_requests ?? rec.totalRequests),
+    total_input_tokens: asNumber(rec.total_input_tokens ?? rec.totalInputTokens),
+    total_output_tokens: asNumber(rec.total_output_tokens ?? rec.totalOutputTokens),
+    total_cache_read_tokens: asNumber(rec.total_cache_read_tokens ?? rec.totalCacheReadTokens),
+    total_cache_creation_tokens: asNumber(rec.total_cache_creation_tokens ?? rec.totalCacheCreationTokens),
+    total_tokens: asNumber(rec.total_tokens ?? rec.totalTokens),
+    cache_hit_rate: asNumber(rec.cache_hit_rate ?? rec.cacheHitRate),
+    total_cost_usd: asNumber(rec.total_cost_usd ?? rec.totalCostUsd ?? rec.totalCostUSD),
+    total_unpriced_tokens: asNumber(rec.total_unpriced_tokens ?? rec.totalUnpricedTokens),
+    trend: Array.isArray(trendRaw) ? trendRaw.map((item) => normalizeRequestLogStatsTrend(item)) : [],
+    source_distribution: Array.isArray(sourceRaw) ? sourceRaw.map((item) => normalizeRequestLogStatsSource(item)) : [],
+    model_distribution: Array.isArray(modelRaw) ? modelRaw.map((item) => normalizeRequestLogStatsModel(item)) : [],
+  };
+}
+
 function getHistoryPathCacheKey(): string {
-  const { claudeConfigDir, codexConfigDir } = getHistoryPathArgsSync();
-  return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}`;
+  const { claudeConfigDir, codexConfigDir, grokSessionRoot, kimiConfigDir } = getHistoryPathArgsSync();
+  return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}|${grokSessionRoot ?? "__default__"}|${kimiConfigDir ?? "__default__"}`;
 }
 
 function makeSessionKey(
@@ -1231,11 +1433,15 @@ function parseTags(tagsJson: string): string[] {
   return [];
 }
 
-function toView(summary: HistorySessionSummary, meta?: SessionMeta): HistorySessionView {
+function toViewWithGeneratedTitle(
+  summary: HistorySessionSummary,
+  meta?: SessionMeta,
+  generatedTitle?: HistoryGeneratedTitleMeta,
+): HistorySessionView {
   const alias = meta?.alias ?? "";
   const starred = meta ? meta.starred === 1 : false;
   const tags = meta ? parseTags(meta.tags_json) : [];
-  const displayTitle = alias.trim() || summary.title;
+  const displayTitle = resolveHistoryDisplayTitle(alias, generatedTitle?.title, summary.title, summary.session_id);
   return {
     ...summary,
     sessionKey: summarySessionKey(summary),
@@ -1243,10 +1449,15 @@ function toView(summary: HistorySessionSummary, meta?: SessionMeta): HistorySess
     starred,
     tags,
     displayTitle,
+    generatedTitle,
   };
 }
 
-function applyMeta(summaries: HistorySessionSummary[], metaMap: SessionMetaMap): HistorySessionView[] {
+function applyMeta(
+  summaries: HistorySessionSummary[],
+  metaMap: SessionMetaMap,
+  generatedTitleMap: GeneratedTitleMap = {},
+): HistorySessionView[] {
   const metaBySourceSession = new Map<string, SessionMeta>();
   const metaBySourcePath = new Map<string, SessionMeta>();
   for (const meta of Object.values(metaMap)) {
@@ -1268,7 +1479,7 @@ function applyMeta(summaries: HistorySessionSummary[], metaMap: SessionMetaMap):
         ? undefined
         : metaBySourceSession.get(`${source}:${summary.session_id}`)) ??
       metaBySourcePath.get(`${source}:${normalizeMetaPath(summary.file_path)}`);
-    return toView(summary, meta);
+    return toViewWithGeneratedTitle(summary, meta, generatedTitleMap[key]);
   });
   return sortSessionViews(views);
 }
@@ -1311,6 +1522,76 @@ async function readMetaMap(): Promise<SessionMetaMap> {
   const result: SessionMetaMap = {};
   for (const row of rows) {
     result[row.session_key] = row;
+  }
+  return result;
+}
+
+function normalizeGeneratedTitleState(value: unknown): HistoryGeneratedTitleState {
+  return value === "pending" || value === "succeeded" || value === "failed" ? value : "idle";
+}
+
+function normalizeGeneratedTitleMeta(raw: unknown): HistoryGeneratedTitleMeta | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Record<string, unknown>;
+  const sessionKey = asString(rec.sessionKey ?? rec.session_key).trim();
+  const sourceId = asString(rec.sourceId ?? rec.source_id).trim() as HistorySource;
+  const sourceInstanceId = asString(rec.sourceInstanceId ?? rec.source_instance_id);
+  const sourceSessionId = asString(rec.sourceSessionId ?? rec.source_session_id);
+  if (!sessionKey || !sourceId || !sourceInstanceId || !sourceSessionId) return null;
+  const triggerRaw = asString(rec.triggerKind ?? rec.trigger_kind);
+  return {
+    sessionKey,
+    sourceId,
+    sourceInstanceId,
+    sourceSessionId,
+    transportKind: asString(rec.transportKind ?? rec.transport_kind) || "local",
+    title: (rec.title ?? rec.generatedTitle ?? rec.generated_title) == null
+      ? null
+      : asString(rec.title ?? rec.generatedTitle ?? rec.generated_title),
+    state: normalizeGeneratedTitleState(rec.state ?? rec.generationState ?? rec.generation_state),
+    revision: asNumber(rec.revision ?? rec.generationRevision ?? rec.generation_revision),
+    triggerKind: triggerRaw === "automatic" || triggerRaw === "manual" ? triggerRaw : null,
+    sourceMessageIdentity: (rec.sourceMessageIdentity ?? rec.source_message_identity) == null
+      ? null
+      : asString(rec.sourceMessageIdentity ?? rec.source_message_identity),
+    sourceContentSha256: (rec.sourceContentSha256 ?? rec.source_content_sha256) == null
+      ? null
+      : asString(rec.sourceContentSha256 ?? rec.source_content_sha256),
+    providerAppType: (rec.providerAppType ?? rec.provider_app_type) == null
+      ? null
+      : asString(rec.providerAppType ?? rec.provider_app_type),
+    providerId: (rec.providerId ?? rec.provider_id) == null
+      ? null
+      : asString(rec.providerId ?? rec.provider_id),
+    modelId: (rec.modelId ?? rec.model_id) == null
+      ? null
+      : asString(rec.modelId ?? rec.model_id),
+    failureCode: (rec.failureCode ?? rec.failure_code) == null
+      ? null
+      : asString(rec.failureCode ?? rec.failure_code),
+    autoSuppressed: rec.autoSuppressed === true || rec.auto_suppressed === 1 || rec.auto_suppressed === "1",
+    suppressedFingerprint: (rec.suppressedFingerprint ?? rec.suppressed_fingerprint) == null
+      ? null
+      : asString(rec.suppressedFingerprint ?? rec.suppressed_fingerprint),
+    requestedAt: (rec.requestedAt ?? rec.requested_at) == null
+      ? null
+      : asNumber(rec.requestedAt ?? rec.requested_at),
+    completedAt: (rec.completedAt ?? rec.completed_at) == null
+      ? null
+      : asNumber(rec.completedAt ?? rec.completed_at),
+    updatedAt: asNumber(rec.updatedAt ?? rec.updated_at),
+  };
+}
+
+async function readGeneratedTitleMap(): Promise<GeneratedTitleMap> {
+  const db = await getDb();
+  const rows = await db.select<unknown[]>(
+    "SELECT * FROM history_generated_titles ORDER BY updated_at DESC",
+  );
+  const result: GeneratedTitleMap = {};
+  for (const row of rows) {
+    const meta = normalizeGeneratedTitleMeta(row);
+    if (meta) result[meta.sessionKey] = meta;
   }
   return result;
 }
@@ -1519,7 +1800,12 @@ function mergeDetailIntoSessions(
             title: detail.title,
             updated_at: detail.updated_at,
             message_count: detail.message_count,
-            displayTitle: item.alias.trim() || detail.title,
+            displayTitle: resolveHistoryDisplayTitle(
+              item.alias,
+              item.generatedTitle?.title,
+              detail.title,
+              detail.session_id,
+            ),
           }
         : item
     )
@@ -1643,7 +1929,8 @@ async function applyFavoriteSnapshots(
   metaMap: SessionMetaMap,
   sourceFilter: HistorySourceFilter,
   projectPathFilter: string | null,
-  sourceSessionKeys?: Set<string>
+  sourceSessionKeys?: Set<string>,
+  generatedTitleMap: GeneratedTitleMap = {},
 ): Promise<HistorySessionView[]> {
   const summaryMap = new Map<string, HistorySessionSummary>();
   for (const summary of summaries) {
@@ -1659,7 +1946,7 @@ async function applyFavoriteSnapshots(
     }
   }
 
-  return applyMeta(Array.from(summaryMap.values()), metaMap).map((session) =>
+  return applyMeta(Array.from(summaryMap.values()), metaMap, generatedTitleMap).map((session) =>
     snapshotKeys.has(session.sessionKey) && !sourceKeys.has(session.sessionKey)
       ? { ...session, favoriteSnapshot: true }
       : session
@@ -1806,6 +2093,104 @@ async function syncRemoteHistoryContext(
   };
 }
 
+function titleSourceIdentity(session: HistorySessionView): {
+  sourceId: string;
+  sourceInstanceId: string;
+  sourceSessionId: string;
+  transportKind: string;
+} {
+  const ref = session.session_ref;
+  return {
+    sourceId: ref?.sourceId ?? session.source,
+    sourceInstanceId: ref?.sourceInstanceId ?? session.file_path,
+    sourceSessionId: ref?.sourceSessionId ?? session.session_id,
+    transportKind: ref?.transportKind ?? "local",
+  };
+}
+
+function generatedTitleView(
+  view: HistorySessionView,
+  generatedTitle: HistoryGeneratedTitleMeta | undefined,
+): HistorySessionView {
+  return {
+    ...view,
+    generatedTitle,
+    displayTitle: resolveHistoryDisplayTitle(
+      view.alias,
+      generatedTitle?.title,
+      view.title,
+      view.session_id,
+    ),
+  };
+}
+
+function normalizeGeneratedTitleResponse(raw: unknown): HistoryGeneratedTitleMeta | null {
+  const rec = raw && typeof raw === "object" && "meta" in raw
+    ? (raw as Record<string, unknown>).meta
+    : raw;
+  return normalizeGeneratedTitleMeta(rec);
+}
+
+const automaticTitleQueueKeys = new Set<string>();
+let automaticTitleQueue: Promise<void> = Promise.resolve();
+const smartTitleRequestKinds = new Map<string, HistoryGeneratedTitleTrigger>();
+const MAX_AUTOMATIC_TITLE_QUEUE_LENGTH = 32;
+
+function historyTimestampMs(value: number): number {
+  return value > 0 && value < 100_000_000_000 ? value * 1000 : value;
+}
+
+function queueAutomaticTitle(session: HistorySessionView): void {
+  const settings = useSettingsStore.getState().historySmartTitle;
+  if (!settings.enabled || !settings.enabledAt || historyTimestampMs(session.created_at) < settings.enabledAt) return;
+  if (session.read_only && session.session_ref?.transportKind !== "ssh") return;
+  if (automaticTitleQueueKeys.has(session.sessionKey)) return;
+  if (automaticTitleQueueKeys.size >= MAX_AUTOMATIC_TITLE_QUEUE_LENGTH) {
+    logWarn("history.smartTitle.queueFull", { limit: MAX_AUTOMATIC_TITLE_QUEUE_LENGTH });
+    return;
+  }
+  automaticTitleQueueKeys.add(session.sessionKey);
+  automaticTitleQueue = automaticTitleQueue
+    .then(async () => {
+      try {
+        if (!automaticTitleQueueKeys.has(session.sessionKey)) return;
+        await useHistoryStore.getState().generateSmartTitle(session.sessionKey, "automatic");
+      } catch (error) {
+        // 自动触发失败不打扰用户；后端已把失败与 revision 持久化，避免重复请求。
+        logWarn("history.smartTitle.autoFailed", { sessionKey: session.sessionKey, error: String(error) });
+      } finally {
+        automaticTitleQueueKeys.delete(session.sessionKey);
+      }
+    })
+    .catch((error) => {
+      automaticTitleQueueKeys.delete(session.sessionKey);
+      logWarn("history.smartTitle.queueFailed", { sessionKey: session.sessionKey, error: String(error) });
+    });
+}
+
+async function cancelAutomaticTitle(sessionKey: string): Promise<void> {
+  const activeAutomaticRequest = smartTitleRequestKinds.get(sessionKey) === "automatic";
+  const queued = automaticTitleQueueKeys.delete(sessionKey);
+  if (!queued && !activeAutomaticRequest) return;
+  try {
+    await invoke("history_title_cancel", { sessionKey });
+  } catch (error) {
+    if (queued) automaticTitleQueueKeys.add(sessionKey);
+    logWarn("history.smartTitle.cancelFailed", { sessionKey, error: String(error) });
+    throw new Error("history_title_cancel_failed");
+  }
+}
+
+function cancelAutomaticTitleQueue(): void {
+  const sessionKeys = [...automaticTitleQueueKeys];
+  automaticTitleQueueKeys.clear();
+  for (const sessionKey of sessionKeys) {
+    void invoke("history_title_cancel", { sessionKey }).catch((error) => {
+      logWarn("history.smartTitle.cancelFailed", { sessionKey, error: String(error) });
+    });
+  }
+}
+
 export const useHistoryStore = create<HistoryStore>((set, get) => ({
   isOpen: false,
   loadingSessions: false,
@@ -1838,6 +2223,8 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   focusedMessageIndex: null,
   focusedMessageSeq: 0,
   metaMap: {},
+  generatedTitleMap: {},
+  smartTitleInFlightSessionKeys: new Set(),
   focusGlobalSearchSeq: 0,
   focusSessionSearchSeq: 0,
   indexStatus: { ...DEFAULT_HISTORY_INDEX_STATUS },
@@ -1866,6 +2253,43 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         );
         await db.execute(
       "CREATE INDEX IF NOT EXISTS idx_session_meta_updated ON session_meta(updated_at DESC)"
+        );
+        await db.execute(`
+      CREATE TABLE IF NOT EXISTS history_generated_titles (
+        session_key             TEXT PRIMARY KEY,
+        source_id               TEXT NOT NULL,
+        source_instance_id      TEXT NOT NULL DEFAULT '',
+        source_session_id       TEXT NOT NULL,
+        transport_kind          TEXT NOT NULL DEFAULT 'local',
+        generated_title         TEXT,
+        generation_state        TEXT NOT NULL DEFAULT 'idle'
+                                CHECK (generation_state IN ('idle','pending','succeeded','failed')),
+        generation_revision     INTEGER NOT NULL DEFAULT 0,
+        trigger_kind            TEXT
+                                CHECK (trigger_kind IS NULL OR trigger_kind IN ('automatic','manual')),
+        source_message_identity TEXT,
+        source_content_sha256   TEXT,
+        provider_app_type       TEXT,
+        provider_id             TEXT,
+        model_id                TEXT,
+        failure_code            TEXT,
+        auto_suppressed         INTEGER NOT NULL DEFAULT 0 CHECK (auto_suppressed IN (0,1)),
+        suppressed_fingerprint  TEXT,
+        requested_at            INTEGER,
+        completed_at            INTEGER,
+        updated_at              INTEGER NOT NULL
+      )
+        `);
+        await db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_history_generated_titles_source_identity ON history_generated_titles(source_id, source_instance_id, source_session_id)"
+        );
+        await db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_history_generated_titles_state ON history_generated_titles(generation_state, updated_at DESC)"
+        );
+        // 应用异常退出后不允许把未完成请求当作可自动重试任务。
+        await db.execute(
+      "UPDATE history_generated_titles SET generation_state = 'failed', failure_code = 'interrupted', updated_at = $1 WHERE generation_state = 'pending'",
+          [Date.now()]
         );
         await db.execute(`
       CREATE TABLE IF NOT EXISTS session_favorite_snapshots (
@@ -2144,9 +2568,10 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       const allSummaries = (summariesRaw ?? []).map((item) => normalizeSummary(item));
       const summaries = allSummaries.slice(0, sessionLimit);
       const metaMap = await readMetaMap();
+      const generatedTitleMap = await readGeneratedTitleMap();
       const sessions = remoteContext
-        ? applyMeta(summaries, metaMap)
-        : await applyFavoriteSnapshots(summaries, metaMap, sourceFilter, projectPath);
+        ? applyMeta(summaries, metaMap, generatedTitleMap)
+        : await applyFavoriteSnapshots(summaries, metaMap, sourceFilter, projectPath, undefined, generatedTitleMap);
       if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       const activeSessionKey = get().activeSessionKey;
       const activeExists = activeSessionKey
@@ -2156,6 +2581,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       set({
         sessions,
         metaMap,
+        generatedTitleMap,
         hasMoreSessions: allSummaries.length > sessionLimit,
         sessionListOffset: summaries.length,
         sessionsIndexGeneration: get().indexStatus.generation,
@@ -2256,9 +2682,17 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         sourceSessionKeys.add(key);
       }
       const metaMap = get().metaMap;
+      const generatedTitleMap = get().generatedTitleMap;
       const sessions = remoteContext
-        ? applyMeta(Array.from(summaryMap.values()), metaMap)
-        : await applyFavoriteSnapshots(Array.from(summaryMap.values()), metaMap, sourceFilter, projectPath, sourceSessionKeys);
+        ? applyMeta(Array.from(summaryMap.values()), metaMap, generatedTitleMap)
+        : await applyFavoriteSnapshots(
+          Array.from(summaryMap.values()),
+          metaMap,
+          sourceFilter,
+          projectPath,
+          sourceSessionKeys,
+          generatedTitleMap,
+        );
       if (!isCurrentSessionListRequest(requestSeq, remoteConsumerId)) return;
       set({
         sessions,
@@ -2329,6 +2763,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       return;
     }
     await ensureHistoryIndexListener();
+    const activeSessionKey = get().activeSessionKey;
     const raw = await invoke<unknown>("history_refresh_index", {
       ...(await getHistoryPathArgs()),
       wait: true,
@@ -2339,6 +2774,16 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
     set({ indexStatus: normalizeIndexStatus(raw) });
     await get().loadSessions({ background: true });
+    // Refreshing the index must also replace the currently open detail; otherwise
+    // the editor can keep rendering the pre-delete snapshot until another session
+    // is opened.
+    if (activeSessionKey) {
+      if (get().sessions.some((session) => session.sessionKey === activeSessionKey)) {
+        await get().openSession(activeSessionKey);
+      } else {
+        set({ activeSessionKey: null, activeSession: null });
+      }
+    }
     const query = get().globalQuery;
     if ([...query.trim()].length >= MIN_GLOBAL_SEARCH_CHARS) {
       await get().runGlobalSearch(query);
@@ -2352,7 +2797,11 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       throw new Error("history_conversion_detail_mismatch");
     }
     const sessionKey = summarySessionKey(normalized);
-    const nextView = toView(normalized, get().metaMap[sessionKey]);
+    const nextView = toViewWithGeneratedTitle(
+      normalized,
+      get().metaMap[sessionKey],
+      get().generatedTitleMap[sessionKey],
+    );
     sessionDetailRequestSeq += 1;
     set((state) => ({
       sessions: sortSessionViews([
@@ -2371,7 +2820,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     return sessionKey;
   },
 
-  openSession: async (sessionKey) => {
+  openSession: async (sessionKey, options = {}) => {
     const requestSeq = ++sessionDetailRequestSeq;
     const stopPerf = createPerfMarker("history.session.detail", { sessionKey });
     const target = get().sessions.find((item) => item.sessionKey === sessionKey);
@@ -2385,6 +2834,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       loadingSessionDetail: true,
       focusedMessageIndex: null,
     });
+    let detailFromSnapshot = false;
     try {
       try {
         const remoteContext = get().remoteContext;
@@ -2411,12 +2861,18 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         if (!sameHistorySessionIdentity(target, detail)) {
           throw new Error("history_session_identity_mismatch");
         }
-        if (requestSeq === sessionDetailRequestSeq) set({ activeSession: detail });
+        if (requestSeq === sessionDetailRequestSeq) {
+          set({ activeSession: detail });
+          const currentView = get().sessions.find((item) => item.sessionKey === sessionKey);
+          if (currentView && !detailFromSnapshot) queueAutomaticTitle(currentView);
+        }
       } catch (err) {
+        if (options.requireLiveDetail) throw err;
         const snapshot = await readFavoriteSnapshotDetail(sessionKey);
         if (!snapshot) throw err;
         logWarn("history.favoriteSnapshot.fallback", { sessionKey, error: String(err) });
         if (!sameHistorySessionIdentity(target, snapshot)) throw err;
+        detailFromSnapshot = true;
         if (requestSeq === sessionDetailRequestSeq) set({ activeSession: snapshot });
       }
     } finally {
@@ -2491,7 +2947,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       if (requestSeq !== sessionDetailRequestSeq) return;
       set({
         activeSession: detail,
-        sessions: applyMeta(summaries, metaMap),
+        sessions: applyMeta(summaries, metaMap, get().generatedTitleMap),
       });
     } finally {
       if (requestSeq === sessionDetailRequestSeq) set({ loadingSessionDetail: false });
@@ -2531,18 +2987,22 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     const db = await getDb();
     for (const key of removedSessionKeys) {
       await db.execute("DELETE FROM session_meta WHERE session_key = $1", [key]);
+      await db.execute("DELETE FROM history_generated_titles WHERE session_key = $1", [key]);
       await deleteFavoriteSnapshot(key);
     }
 
     const sessions = get().sessions.filter((item) => !removedSessionKeys.has(item.sessionKey));
     const metaMap = { ...get().metaMap };
+    const generatedTitleMap = { ...get().generatedTitleMap };
     for (const key of removedSessionKeys) delete metaMap[key];
+    for (const key of removedSessionKeys) delete generatedTitleMap[key];
     const currentActiveKey = get().activeSessionKey;
     const activeWasDeleted = currentActiveKey !== null && removedSessionKeys.has(currentActiveKey);
     const nextActiveKey = activeWasDeleted ? sessions[0]?.sessionKey ?? null : currentActiveKey;
     set({
       sessions,
       metaMap,
+      generatedTitleMap,
       activeSessionKey: nextActiveKey,
       activeSession: activeWasDeleted ? null : get().activeSession,
       searchHits: get().searchHits.filter((hit) => !removedSessionKeys.has(hitSessionKey(hit))),
@@ -2634,7 +3094,15 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
           limit: DEFAULT_SEARCH_LIMIT,
         });
       }
-      const hits = (hitsRaw ?? []).map((item) => normalizeHit(item));
+      const hits = (hitsRaw ?? []).map((item) => normalizeHit(item)).map((hit) => {
+        const sessionKey = hitSessionKey(hit);
+        const meta = get().metaMap[sessionKey];
+        const generated = get().generatedTitleMap[sessionKey];
+        return {
+          ...hit,
+          title: resolveHistoryDisplayTitle(meta?.alias, generated?.title, hit.title, hit.session_id),
+        };
+      });
       if (requestSeq === globalSearchRequestSeq) {
         set({ searchHits: hits });
       }
@@ -2906,6 +3374,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       );
       await deleteFavoriteSnapshotsForSession(session.source, session.session_id);
     }
+    if (alias) {
+      await invoke("history_title_cancel", { sessionKey });
+    }
 
     const nextMeta: SessionMeta = {
       session_key: sessionKey,
@@ -2920,6 +3391,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     };
 
     const nextMetaMap = patch.starred === false ? await readMetaMap() : { ...get().metaMap, [sessionKey]: nextMeta };
+    const generatedTitleMap = get().generatedTitleMap;
     const sourceSessionKeys = new Set<string>();
     const visibleSessions = get().sessions.filter((item) => !(patch.starred === false && item.sessionKey === sessionKey && item.favoriteSnapshot));
     const summaries: HistorySessionSummary[] = visibleSessions.map((item) => {
@@ -2938,8 +3410,125 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         branch: item.branch,
       };
     });
-    const sessions = await applyFavoriteSnapshots(summaries, nextMetaMap, get().sourceFilter, effectiveProjectPathFilter(get()), sourceSessionKeys);
+    const sessions = await applyFavoriteSnapshots(
+      summaries,
+      nextMetaMap,
+      get().sourceFilter,
+      effectiveProjectPathFilter(get()),
+      sourceSessionKeys,
+      generatedTitleMap,
+    );
     set({ metaMap: nextMetaMap, sessions });
+  },
+
+  cancelAutomaticSmartTitles: () => {
+    cancelAutomaticTitleQueue();
+  },
+
+  generateSmartTitle: async (sessionKey, triggerKind = "manual") => {
+    if (triggerKind === "automatic" && !useSettingsStore.getState().historySmartTitle.enabled) {
+      throw new Error("history_title_auto_disabled");
+    }
+    const activeTrigger = smartTitleRequestKinds.get(sessionKey);
+    if (triggerKind === "manual" && activeTrigger === "automatic") {
+      await cancelAutomaticTitle(sessionKey);
+      smartTitleRequestKinds.delete(sessionKey);
+    } else if (activeTrigger) {
+      throw new Error("history_title_pending");
+    }
+    smartTitleRequestKinds.set(sessionKey, triggerKind);
+    set((state) => ({
+      smartTitleInFlightSessionKeys: new Set(state.smartTitleInFlightSessionKeys).add(sessionKey),
+    }));
+    try {
+      const target = get().sessions.find((item) => item.sessionKey === sessionKey);
+      if (!target) throw new Error("history_title_session_missing");
+      const identity = titleSourceIdentity(target);
+      if (identity.transportKind !== "ssh" && target.read_only) {
+        throw new Error("history_title_remote_not_supported");
+      }
+      if (
+        identity.transportKind === "ssh"
+        && (!get().remoteContext || get().remoteContext?.sourceInstanceId !== identity.sourceInstanceId)
+      ) {
+        throw new Error("history_title_remote_online_required");
+      }
+      const requireLiveDetail = identity.transportKind === "ssh";
+      if (requireLiveDetail || get().activeSessionKey !== sessionKey || !get().activeSession) {
+        await get().openSession(sessionKey, { requireLiveDetail });
+      }
+      const detail = get().activeSessionKey === sessionKey ? get().activeSession : null;
+      if (!detail) throw new Error("history_title_detail_missing");
+      const candidate: HistoryTitleCandidate | null = await extractHistoryTitleCandidate(detail, sessionKey);
+      if (!candidate) throw new Error("history_title_candidate_missing");
+
+      const selection = useSettingsStore.getState().historySmartTitle;
+      if (triggerKind === "automatic" && !selection.enabled) {
+        throw new Error("history_title_auto_disabled");
+      }
+      if (!selection.providerAppType || !selection.providerId || !selection.modelId) {
+        throw new Error("history_title_provider_not_selected");
+      }
+      const raw = await invoke<unknown>("history_title_generate", {
+        request: {
+          sessionKey,
+          sourceId: identity.sourceId,
+          sourceInstanceId: identity.sourceInstanceId,
+          sourceSessionId: identity.sourceSessionId,
+          transportKind: identity.transportKind,
+          sourceMessageIdentity: candidate.identity,
+          sourceContentSha256: candidate.contentSha256,
+          candidateTextSha256: candidate.inputContentSha256,
+          candidateText: candidate.text,
+          triggerKind,
+          providerAppType: selection.providerAppType,
+          providerId: selection.providerId,
+          modelId: selection.modelId,
+        },
+      });
+      const meta = normalizeGeneratedTitleResponse(raw);
+      if (!meta) throw new Error("history_title_invalid_response");
+      set((state) => ({
+        generatedTitleMap: { ...state.generatedTitleMap, [sessionKey]: meta },
+        sessions: state.sessions.map((view) =>
+          view.sessionKey === sessionKey ? generatedTitleView(view, meta) : view
+        ),
+      }));
+    } finally {
+      if (smartTitleRequestKinds.get(sessionKey) === triggerKind) {
+        smartTitleRequestKinds.delete(sessionKey);
+        set((state) => {
+          if (!state.smartTitleInFlightSessionKeys.has(sessionKey)) return {};
+          const smartTitleInFlightSessionKeys = new Set(state.smartTitleInFlightSessionKeys);
+          smartTitleInFlightSessionKeys.delete(sessionKey);
+          return { smartTitleInFlightSessionKeys };
+        });
+      }
+    }
+  },
+
+  clearSmartTitle: async (sessionKey) => {
+    const target = get().sessions.find((item) => item.sessionKey === sessionKey);
+    if (!target) throw new Error("history_title_session_missing");
+    const identity = titleSourceIdentity(target);
+    const raw = await invoke<unknown>("history_title_clear", {
+      request: {
+        sessionKey,
+        sourceId: identity.sourceId,
+        sourceInstanceId: identity.sourceInstanceId,
+        sourceSessionId: identity.sourceSessionId,
+        transportKind: identity.transportKind,
+        sourceContentSha256: get().generatedTitleMap[sessionKey]?.sourceContentSha256 ?? null,
+      },
+    });
+    const meta = normalizeGeneratedTitleResponse(raw);
+    if (!meta) throw new Error("history_title_invalid_response");
+    set((state) => ({
+      generatedTitleMap: { ...state.generatedTitleMap, [sessionKey]: meta },
+      sessions: state.sessions.map((view) =>
+        view.sessionKey === sessionKey ? generatedTitleView(view, meta) : view
+      ),
+    }));
   },
 
   updateMessage: async (sessionKey, message, newText) => {

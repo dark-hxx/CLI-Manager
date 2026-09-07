@@ -5,7 +5,7 @@
 //! 视为非法帧，调用方应断连。单帧上限 8 MiB 防 DoS。
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::ssh_launch::SshLaunchPlan;
 
@@ -27,6 +27,10 @@ pub const FEATURE_PIXEL_RESIZE: &str = "pixel_resize_v1";
 pub const FEATURE_PROCESS_TRAITS: &str = "process_traits_v1";
 pub const FEATURE_TERMINAL_COLORS: &str = "terminal_colors_v1";
 pub const FEATURE_SSH_AGENT_RPC: &str = "ssh_agent_rpc_v1";
+pub const FEATURE_LOCAL_ROUTING_V1: &str = "local_routing_v1";
+pub const ROUTING_ERROR_FEATURE_NOT_SUPPORTED: &str = "routing_feature_not_supported";
+pub const ROUTING_ERROR_PROTOCOL_UNSUPPORTED: &str = "routing_protocol_unsupported";
+pub const ROUTING_ERROR_SERVICE_UNAVAILABLE: &str = "routing_service_unavailable";
 
 pub fn supported_features() -> Vec<String> {
     [
@@ -37,6 +41,7 @@ pub fn supported_features() -> Vec<String> {
         FEATURE_PROCESS_TRAITS,
         FEATURE_TERMINAL_COLORS,
         FEATURE_SSH_AGENT_RPC,
+        FEATURE_LOCAL_ROUTING_V1,
     ]
     .into_iter()
     .map(str::to_string)
@@ -135,10 +140,178 @@ pub enum ClientFrame {
         host_id: String,
         consumer_id: String,
     },
+    RoutingReload {
+        id: u64,
+        #[serde(default)]
+        listen_address: Option<String>,
+        #[serde(default)]
+        preferred_port: Option<u16>,
+        #[serde(default)]
+        last_actual_port: Option<u16>,
+        #[serde(default)]
+        listener_addresses: Vec<String>,
+    },
+    RoutingStatus {
+        id: u64,
+    },
+    RoutingStart {
+        id: u64,
+        #[serde(default)]
+        listen_address: Option<String>,
+        #[serde(default)]
+        preferred_port: Option<u16>,
+        #[serde(default)]
+        last_actual_port: Option<u16>,
+        #[serde(default)]
+        listener_addresses: Vec<String>,
+    },
+    RoutingStop {
+        id: u64,
+    },
+    RoutingResetCircuit {
+        id: u64,
+        app_type: String,
+        provider_id: String,
+    },
     /// 请求 daemon 自杀（仅在无存活会话时被接受；版本升级路径用）。
     Shutdown {
         id: u64,
     },
+}
+
+pub fn routing_control_id(frame: &ClientFrame) -> Option<u64> {
+    match frame {
+        ClientFrame::RoutingReload { id, .. }
+        | ClientFrame::RoutingStatus { id }
+        | ClientFrame::RoutingStart { id, .. }
+        | ClientFrame::RoutingStop { id }
+        | ClientFrame::RoutingResetCircuit { id, .. } => Some(*id),
+        _ => None,
+    }
+}
+
+pub fn ensure_local_routing_capability(features: &[String]) -> Result<(), RoutingError> {
+    if features
+        .iter()
+        .any(|feature| feature == FEATURE_LOCAL_ROUTING_V1)
+    {
+        Ok(())
+    } else {
+        Err(RoutingError::feature_not_supported())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutingError {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+    pub hint: String,
+}
+
+impl RoutingError {
+    pub fn feature_not_supported() -> Self {
+        Self {
+            code: ROUTING_ERROR_FEATURE_NOT_SUPPORTED.to_string(),
+            params: BTreeMap::from([("feature".to_string(), FEATURE_LOCAL_ROUTING_V1.to_string())]),
+            hint: "restart_daemon".to_string(),
+        }
+    }
+
+    pub fn protocol_unsupported(transport: &str) -> Self {
+        let transport = match transport {
+            "websocket" => "websocket",
+            "pty_legacy_request" => "pty_legacy_request",
+            _ => "unknown",
+        };
+        Self {
+            code: ROUTING_ERROR_PROTOCOL_UNSUPPORTED.to_string(),
+            params: BTreeMap::from([("transport".to_string(), transport.to_string())]),
+            hint: "use_routing_tauri_command".to_string(),
+        }
+    }
+
+    pub fn service_unavailable() -> Self {
+        Self {
+            code: ROUTING_ERROR_SERVICE_UNAVAILABLE.to_string(),
+            params: BTreeMap::new(),
+            hint: "retry_or_restart_daemon".to_string(),
+        }
+    }
+
+    pub fn runtime_failure(code: &str) -> Self {
+        let code = match code {
+            "routing_listen_address_invalid"
+            | "routing_port_invalid"
+            | "routing_port_range_exhausted" => code,
+            _ => ROUTING_ERROR_SERVICE_UNAVAILABLE,
+        };
+        Self {
+            code: code.to_string(),
+            params: BTreeMap::new(),
+            hint: if code == "routing_port_range_exhausted" {
+                "choose_another_port".to_string()
+            } else {
+                "fix_input".to_string()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutingEvent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<u64>,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<RoutingError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<RoutingStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutingCircuitStatus {
+    pub app_type: String,
+    pub provider_id: String,
+    pub status: String,
+    pub consecutive_failures: u32,
+    pub successful_probes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutingStatus {
+    pub status: String,
+    #[serde(default)]
+    pub listener_addresses: Vec<String>,
+    pub preferred_port: u16,
+    #[serde(default)]
+    pub actual_port: Option<u16>,
+    #[serde(default)]
+    pub circuit_states: Vec<RoutingCircuitStatus>,
+}
+
+impl RoutingEvent {
+    pub fn error(request_id: u64, error: RoutingError) -> Self {
+        Self {
+            request_id: Some(request_id),
+            kind: "error".to_string(),
+            error: Some(error),
+            status: None,
+        }
+    }
+
+    pub fn status(request_id: u64, status: RoutingStatus) -> Self {
+        Self {
+            request_id: Some(request_id),
+            kind: status.status.clone(),
+            error: None,
+            status: Some(status),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -299,6 +472,9 @@ pub enum DaemonFrame {
     SshAgentResponse {
         id: u64,
         payload: serde_json::Value,
+    },
+    RoutingEvent {
+        event: RoutingEvent,
     },
     /// Attach 应答：base64 编码的 ring buffer 尾部（已保证 ANSI/UTF-8 安全边界）。
     Attached {
@@ -497,6 +673,11 @@ const CLIENT_FRAME_TYPES: &[&str] = &[
     "status",
     "ssh_agent_request",
     "ssh_agent_release",
+    "routing_reload",
+    "routing_status",
+    "routing_start",
+    "routing_stop",
+    "routing_reset_circuit",
     "shutdown",
 ];
 
@@ -511,6 +692,7 @@ const DAEMON_FRAME_TYPES: &[&str] = &[
     "statuses",
     "reconciled",
     "ssh_agent_response",
+    "routing_event",
     "attached",
     "output",
     "exit",
@@ -625,11 +807,72 @@ mod tests {
     }
 
     #[test]
+    fn routing_frames_roundtrip_and_drop_unknown_secret_fields() {
+        let decoded = decode_client_frame(
+            r#"{"type":"routing_reset_circuit","id":11,"app_type":"codex","provider_id":"provider-1","api_key":"sk-secret","proxy_password":"pw-secret","provider":{"key":"nested-secret"}}"#,
+        )
+        .unwrap();
+        assert_eq!(routing_control_id(&decoded), Some(11));
+        assert_eq!(
+            decoded,
+            ClientFrame::RoutingResetCircuit {
+                id: 11,
+                app_type: "codex".into(),
+                provider_id: "provider-1".into(),
+            }
+        );
+        let reencoded = encode_frame(&decoded);
+        assert!(!reencoded.contains("sk-secret"));
+        assert!(!reencoded.contains("pw-secret"));
+        assert!(!reencoded.contains("nested-secret"));
+    }
+
+    #[test]
+    fn routing_error_dto_is_stable_and_sanitizes_transport_params() {
+        let event = DaemonFrame::RoutingEvent {
+            event: RoutingEvent::error(
+                12,
+                RoutingError::protocol_unsupported("https://user:password@proxy"),
+            ),
+        };
+        let encoded = encode_frame(&event);
+        assert!(encoded.contains(ROUTING_ERROR_PROTOCOL_UNSUPPORTED));
+        assert!(encoded.contains(r#""transport":"unknown""#));
+        assert!(encoded.contains(r#""hint":"use_routing_tauri_command""#));
+        assert!(!encoded.contains("user"));
+        assert!(!encoded.contains("password"));
+        assert_eq!(decode_daemon_frame(encoded.trim_end()).unwrap(), event);
+    }
+
+    #[test]
+    fn local_routing_capability_is_advertised_without_protocol_bump() {
+        assert_eq!(CONTROL_PROTOCOL_VERSION, 3);
+        assert!(ensure_local_routing_capability(&supported_features()).is_ok());
+
+        let legacy_error = ensure_local_routing_capability(&[]).unwrap_err();
+        assert_eq!(legacy_error.code, ROUTING_ERROR_FEATURE_NOT_SUPPORTED);
+        assert_eq!(
+            legacy_error.params.get("feature").map(String::as_str),
+            Some(FEATURE_LOCAL_ROUTING_V1)
+        );
+        assert_eq!(legacy_error.hint, "restart_daemon");
+    }
+
+    #[test]
     fn unknown_type_is_forward_compatible_error() {
         let result = decode_client_frame(r#"{"type":"future_op","id":1}"#);
         assert_eq!(
             result.unwrap_err(),
             ProtocolError::UnknownType("future_op".to_string())
+        );
+    }
+
+    #[test]
+    fn unknown_daemon_type_is_forward_compatible_error() {
+        let result = decode_daemon_frame(r#"{"type":"future_daemon_event"}"#);
+        assert_eq!(
+            result.unwrap_err(),
+            ProtocolError::UnknownType("future_daemon_event".to_string())
         );
     }
 
@@ -648,6 +891,18 @@ mod tests {
         assert!(matches!(
             decode_client_frame(r#"{"id":1}"#),
             Err(ProtocolError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn oversized_control_frame_is_rejected_before_deserialization() {
+        let oversized = format!(
+            r#"{{"type":"routing_reload","id":1,"padding":"{}"}}"#,
+            "x".repeat(MAX_FRAME_BYTES)
+        );
+        assert!(matches!(
+            decode_client_frame(&oversized),
+            Err(ProtocolError::Malformed(reason)) if reason == "frame too large"
         ));
     }
 

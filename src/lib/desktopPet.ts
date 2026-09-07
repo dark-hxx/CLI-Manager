@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import {
   getRemoteHandoffEligibility,
+  resolveRemoteHandoffAgent,
   type CcConnectHandoffInfo,
   type CcConnectHandoffPlatformTarget,
 } from "./remoteHandoff";
@@ -25,6 +26,7 @@ import type { DesktopPetSettings, LanguagePreference } from "../stores/settingsS
 import { shouldIncludeAgentTerminal } from "./agentTerminal";
 import { desktopPetScaleFromPercent } from "./desktopPetSize";
 import { resolveDesktopPetOpenSessionStatus } from "./desktopPetStatus";
+import { parseProjectProviderOverrides } from "./providerSwitching";
 
 export {
   calculateDesktopPetMenuWindowGeometry,
@@ -137,6 +139,8 @@ export interface DesktopPetTarget {
   handoffCandidate: boolean;
   handoffEligible: boolean;
   handoffRecoverable: boolean;
+  handoffAgent: import("./remoteHandoff").RemoteHandoffAgent | null;
+  handoffProviderName: string | null;
   handoffReason: import("./remoteHandoff").RemoteHandoffEligibilityReason | null;
   handedOff: boolean;
   handoffPhase: RemoteHandoffPhase | null;
@@ -202,6 +206,10 @@ export interface DesktopPetConfigPayload {
     handoffTaskRunning: string;
     handoffStateUnknown: string;
     handoffUnavailable: string;
+    handoffRegisteredProvider: string;
+    handoffPiConfiguration: string;
+    handoffOpenCodeConfiguration: string;
+    handoffOpenCodeCapabilityLimited: string;
   };
 }
 
@@ -356,16 +364,31 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
     const handoffPhase = session.remoteHandoff?.phase
       ?? (input.activeHandoff?.localSessionId === session.id ? "active" : null);
     const handedOff = handoffPhase !== null && handoffPhase !== "recovery_failed";
+    const worktree = session.worktreeId ? worktreeById.get(session.worktreeId) ?? null : null;
     const eligibility = getRemoteHandoffEligibility({
       session,
       project,
       sshHost: project?.ssh_host_id ? sshHostById.get(project.ssh_host_id) : undefined,
-      worktree: session.worktreeId ? worktreeById.get(session.worktreeId) ?? null : null,
+      worktree,
       notification: status,
       processStatus: input.sessionStatuses[session.id],
       activeHandoff: input.activeHandoff,
     });
-    const handoffCandidate = eligibility.reason !== "codex_only"
+    const handoffAgent = resolveRemoteHandoffAgent(session, project).agent;
+    const worktreeProviderOverrides = worktree?.provider_overrides?.trim();
+    const providerOverrides = parseProjectProviderOverrides(
+      worktreeProviderOverrides && worktreeProviderOverrides !== "{}"
+        ? worktreeProviderOverrides
+        : project?.provider_overrides,
+    );
+    const handoffProviderName = handoffAgent === "claude"
+      ? providerOverrides.claude?.providerName ?? null
+      : handoffAgent === "codex"
+        ? providerOverrides.codex?.providerName ?? null
+        : null;
+    const handoffCandidate = eligibility.reason !== "unsupported_agent"
+      && eligibility.reason !== "agent_mismatch"
+      && eligibility.reason !== "ssh_agent_unsupported"
       && eligibility.reason !== "missing_project"
       && eligibility.reason !== "unsupported_session";
     const handoffRecoverable = project?.environment_type === "ssh"
@@ -381,6 +404,8 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
       handoffCandidate,
       handoffEligible: eligibility.eligible,
       handoffRecoverable,
+      handoffAgent,
+      handoffProviderName,
       handoffReason: eligibility.reason,
       handedOff,
       handoffPhase,
@@ -402,6 +427,8 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
       handoffCandidate: false,
       handoffEligible: false,
       handoffRecoverable: false,
+      handoffAgent: null,
+      handoffProviderName: null,
       handoffReason: "unsupported_session",
       handedOff: false,
       handoffPhase: null,
@@ -422,6 +449,8 @@ export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): 
       handoffCandidate: true,
       handoffEligible: false,
       handoffRecoverable: false,
+      handoffAgent: input.activeHandoff.agent,
+      handoffProviderName: input.activeHandoff.providerName,
       handoffReason: "already_handed_off",
       handedOff: true,
       handoffPhase: "active",

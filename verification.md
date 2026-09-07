@@ -1,3 +1,105 @@
+# 桌面宠物渲染边界验证（2026-09-06）
+
+## 根因与发现清单
+
+- 根因位于桌宠原生窗口固定尺寸与 WebView 实际渲染边界之间：状态气泡可能通过 CSS 变换或内容布局超出 `190 × 210` 的可视区域，窗口自身的 `overflow: hidden` 随后裁剪气泡。
+- 修复落在 `DesktopPetApp` 的渲染测量与 Tauri 窗口 bounds 调整边界；新增纯函数 `calculateDesktopPetRenderedBounds` 负责 CSS 像素到物理像素、底部中心锚点、DPI 和工作区限制，菜单窗口仍复用既有几何计算。
+- `ResizeObserver` 在 DOM 更新后等待两帧再测量状态气泡和宠物舞台；原生调整期间不把程序化移动误记为用户拖动，窗口尺寸变化不会污染持久化位置。
+
+## 验证结果
+
+- `node --test scripts/desktopPetRenderedBounds.test.mjs`：6 项通过，覆盖顶部裁剪、水平超出、扩展稳定、缩回、DPI 缩放和工作区边界。
+- `npx tsc --noEmit`：通过。
+- `git diff --check`：通过（仅保留仓库既有 LF/CRLF 转换提示）。
+
+## 未覆盖与测试边界
+
+- 尚未在 Windows Tauri 实机上对多显示器、125%/150% DPI、屏幕顶部停靠和菜单开关组合做端到端手测；生产构建与 NSIS 打包需在本次交付中继续验证。
+- Rust 窗口 bounds 命令契约未改变；需要在打包后确认透明无边框窗口的 outer size 与 WebView CSS viewport 在目标 Windows 版本上保持一致。
+
+---
+
+# JetBrains 风格 Git 工作区验证（2026-09-04）
+
+## Git 工作区底部工具窗口与目录树（2026-09-04）
+
+### 根因与发现清单
+
+- 原 Git 工作区替换整个终端区域，导致视觉上从左侧展开；本次仅调整前端布局，将其放入终端容器底部 Dock，终端 PTY、分屏和 Workspan 保持挂载。
+- 原提交详情按路径扁平渲染，无法表达模块目录层级；新增目录树构建与展开状态，文件点击仍复用只读 Diff Viewer。
+
+### 验证结果
+
+- `npx tsc --noEmit`、`npm run build`：通过。
+- `node --test scripts/gitGraphLayout.test.mjs scripts/gitWorkspace.test.mjs`：通过。
+- 未改变 Git Transport、IPC、Rust/SSH Agent 或写操作契约；底部面板真实 Tauri 窗口的拖拽手测仍需在本地完成。
+
+## 实现与影响面
+
+- 项目侧栏底部新增 Git 工作区入口；标准模式在终端容器上方挂载全屏工作区，紧凑模式点击入口时先恢复标准模式。关闭工作区只切换可见性，不卸载 PTY、分屏树或 Workspan。
+- 工作区通过现有 `useGitTransportLease` 读取本地、WSL 与 SSH Git，上层保留每批 50 条 cursor；提交表格使用虚拟列表连续加载，纯前端 DAG lane 算法覆盖线性、分叉、merge、根提交、跨页延续和搜索缺失父提交。
+- 左侧引用树展示当前分支、本地分支、按 remote 分组的远程分支与已加载标签，并支持引用筛选；仓库和搜索切换均使用独立 generation 丢弃迟到结果，SSH 根仓库空字符串 ID 保持合法。
+- 右侧提交详情按需读取文件，继续复用共享 `DiffViewerModal` 且不传入任何回滚/暂存 mutation；“变更”标签复用原 `GitChangesPanel` 与 Git Store，不复制写操作链。
+- codebase-memory 已用 `moderate` 模式重建索引；索引确认 Git 工作区触达 `TerminalTabs`、`SidebarFooter`、Git Transport Lease、变更面板和共享 Diff Viewer，属于 HIGH/CRITICAL UI 主流程，因此通过静态架构测试、类型检查、定向 Rust 测试和生产构建复核。
+
+## 验证结果
+
+- `node --test scripts/gitGraphLayout.test.mjs scripts/gitWorkspace.test.mjs scripts/gitHistory.test.mjs scripts/gitDiffViewerArchitecture.test.mjs scripts/gitTransportLease.test.mjs`：20 项通过。
+- `npx tsc --noEmit`：通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml git_history --lib`：10 项通过。
+- `cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml git_history --lib`：2 项通过。
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过。
+- `npm run build`：通过。
+- `git diff --check`：通过，仅提示工作区现有的 LF/CRLF 自动转换策略。
+
+## 未覆盖与测试边界
+
+- 浏览器 Vite 页面无法脱离 Tauri runtime 完成应用启动（bootstrap 读取 Tauri metadata 失败），因此未在纯浏览器中伪造项目数据做截图；需要在 Tauri 窗口中手动确认中英文切换、真实仓库拓扑和窄窗口横向滚动。
+- 本次未改变 Rust/SSH wire contract、Git 写操作、Diff 大小限制或凭证策略；未连接真实 SSH Host 执行端到端 Git 浏览。
+
+---
+
+# Grok TUI 鼠标点击恢复验证（2026-08-25）
+
+## 根因与发现清单
+
+- 根因位于宿主 xterm 鼠标策略：PR #212 将 `createTerminalMouseInteractionOptions` 的 `mouseEventsRequireAlt` 设为 `true`，TUI 开启鼠标协议后普通 click/drag/move 被宿主丢弃，Grok plan / 子 agent 点击无反应（#228）。
+- 修复落在同一常量，改回 `false`，使 TUI 直接接收未修饰鼠标报告；Shift 仍用于宿主选区。OSC 52 剪贴板路径不改。
+- 触点：`src/terminal/browser/TerminalMouseInteraction.ts`、`scripts/terminalMouseInteraction.test.mjs`、`src/components/XTermTerminal.tsx`（仅 spread 该 options，未改）。
+- 确认无关：`useTerminalOsc` / OSC 52 解析与写剪贴板、`Ctrl+Shift+C`、设置页开关。
+- 场景：本地 / WSL / SSH；Grok 及其他启用鼠标协议的 TUI；未开鼠标协议的普通 Shell 仍是宿主选区。
+
+## 验证结果
+
+- `node --test scripts/terminalMouseInteraction.test.mjs`：2 项通过。
+- `npx tsc --noEmit`、`git diff --check`：通过。
+- 未在 Windows Tauri 窗口对 Grok 做端到端手测。
+
+---
+
+# OSC 52 本机剪贴板验证（2026-08-17）
+
+## 根因与发现清单
+
+- 根因位于宿主终端 OSC / 鼠标边界：PTY 已转发 OSC 52，前端只处理颜色查询，不写入 Tauri 剪贴板。远端 GUI/`xclip` 写不到 Windows。修复落在 `terminalOscParse` + `useTerminalOsc` + `useTerminalDisplay` + `XTermTerminal`。
+- 触点：`src/lib/terminalOscParse.ts`、`src/hooks/useTerminalOsc.ts`、`src/hooks/useTerminalDisplay.ts`、`src/components/XTermTerminal.tsx`、`src/App.tsx`、`src/terminal/browser/TerminalMouseInteraction.ts`、`src/stores/settingsStore.ts`、`src/lib/syncSettings.ts`、`src/lib/i18n.ts`、`ShortcutSettingsPage.tsx`、`.trellis/spec/backend/terminal-osc-color-contracts.md`。
+- 确认无关：Rust `osc_color.rs` 仍放过非 10/11 OSC；`systemClipboard.ts` 复用；不改 PTY ACK / daemon 分帧。
+- 场景：live 写剪贴板；replay/reset 不写；query 回包；设置关闭；普通拖选 vs Alt 交给 TUI；`Ctrl+Shift+C` 阻止检查元素。
+
+## 验证结果
+
+- `node --test scripts/terminalOsc52.test.mjs scripts/terminalOsc.test.mjs scripts/terminalMouseInteraction.test.mjs`：26 项通过。
+- `DISPLAY=:11 bash scripts/terminalOsc52.clipboard.e2e.sh`：live / tmux / replay 三项本机 X11 剪贴板 e2e 通过。
+- `npx tsc --noEmit`、`git diff --check`：通过。
+- 未在 Windows Tauri 窗口对 Grok 做端到端手测。
+
+## 未覆盖
+
+- Tauri `clipboard-manager` 插件路径依赖桌面 WebView；此处用同一 hook + 本机 `xclip` 验证解码与写剪贴板语义。
+- Chromium 检查元素在部分 WebView 版本仍可能有独立绑定，需在 `tauri dev` 下确认 `preventDefault` 生效。
+
+---
+
 # SSH NVM Codex 启动环境修复验证（2026-07-28）
 
 ## 根因与发现清单
@@ -832,3 +934,186 @@
 - `npm run build`：通过，完成 6702 个模块转换。
 - `git diff --check`：通过，仅有仓库现有 Windows 行尾提示。
 - 尚未连接真实高延迟 SSH 主机做首次握手与后续逐级浏览的耗时对比；需在开发模式或安装包中完成实际网络冒烟。
+
+## cc-connect Codex 托管恢复 Provider 修复（2026-08-03）
+
+### 根因与发现清单
+
+- 根因位于 CLI-Manager app-server 代理与 Codex `thread/resume` 的配置边界：代理把只存在于进程级 `-c` 覆盖中的合成 Provider `cli_manager_remote` 再写入请求级 `modelProvider`；Codex 0.146.0 会从持久化配置层解析该请求字段，因此报 `Model provider cli_manager_remote not found`。
+- 微信、Telegram、飞书和企业微信共用该 Agent 链路，平台收发、cc-connect 启动、原 Session ID、工作目录、项目 Provider 数据、模型目录和真实 `CODEX_HOME` 均已确认不是本次失败源。
+- 修复删除请求级 Provider 注入及其无用参数传递；项目登记 Provider 继续由 app-server 启动时的 `-c model_provider`、Provider 定义和密钥环境强制生效。Session 防漂移、新线程拦截、SSH cwd 改写与文件投递提示保持不变。
+
+### 验证结果
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml codex_app_server_proxy::tests`：18 项通过。
+- `node scripts/codexAppServerProxy.e2e.test.mjs`：4 项通过。
+- 使用新编译代理和真实 Codex 0.146.0 恢复原失败会话 `019fc591-8a0b-7872-95b5-49c591ed4db1`：恢复成功，Session ID 保持不变，模型为 `gpt-5.6-sol`。
+- 对照验证保留请求级 `modelProvider` 时稳定复现原错误，删除该字段后同会话成功恢复。
+
+## SSH Config 用户身份与 PtyHost 升级修复（2026-08-04）
+
+### 根因与发现清单
+
+- Hook 失败根因位于 SSH Config 连接身份与 Hook 元数据持久化的边界：Config 别名主机按设计不保存 `username`，但 Hook 检查、安装和卸载完成后仍直接用该空字段写入集成记录，固定触发 `ssh_user_required`。
+- 修复通过本机 OpenSSH `ssh -G` 解析当前别名、Include、Match 和默认规则最终生效的 `User`，直连主机继续优先使用已登记用户名；解析结果接入 Hook 检查、安装、卸载及项目覆盖记录入口，不修改远端 SSH Agent 协议。
+- SSH 启动失败根因位于持久 PtyHost 与新版本应用的进程生命周期边界：旧 daemon 有存活会话时会被保留，而创建 SSH 会话要求 daemon 与应用版本一致；旧逻辑在会话结束后也只报错，不会重新尝试升级。
+- 修复统一 daemon 的版本和二进制传输能力检查：无存活会话时串行关闭旧 daemon、启动当前版本并重置前端旧传输；仍有存活会话时保留会话并显示明确的关闭提示，不强杀用户任务。
+- 触点包括 `commands/ssh.rs`、`SshCliIntegrationDialog`、Hook 元数据 Store、`commands/terminal.rs`、`TerminalProcessManager`、`PtyHostSocket`、终端错误映射和中英文文案；SSH 认证、代理、跳板机、远端 Agent 制品、cc-connect 和普通本地 PTY 创建逻辑已确认不改变。
+- GitNexus CLI 因其运行依赖缺少 `tree-sitter-kotlin` 无法建立索引；已降级使用 codebase-memory moderate 索引、调用路径、`rg`、源码和 Git diff 复核，工作区检测只包含上述预期链路。
+
+### 场景覆盖与验证结果
+
+- 覆盖直连显式用户名、SSH Config 别名解析、无法解析用户名、daemon 当前版本、旧 daemon 空闲自动升级、旧 daemon 存活会话阻塞，以及升级后的 WebSocket 重新连接。
+- `cargo test commands::ssh::tests::`：29 项通过。
+- `cargo test commands::terminal::tests::`：2 项通过。
+- `node scripts/ptyHostSocket.test.mjs`：11 项通过。
+- `node scripts/terminalProcessManager.test.mjs`：7 项通过。
+- `cargo check`、`npx tsc --noEmit`、`cargo fmt --all -- --check`、`git diff --check`：通过。
+- 尚未使用受影响用户的 SSH Config 和跨版本残留 daemon 做真实机器冒烟；需由安装包验证 Hook 检查/安装，以及保留旧会话和关闭旧会话后的 SSH 启动行为。
+
+## cc-connect 项目无关连接配置（2026-08-04）
+
+### 根因与发现清单
+
+- 日志中的 `remote profile is stale; save it again from the current project list` 来自远程连接 Profile 对项目 ID、名称和路径的强一致校验；该校验发生在宠物选中会话的目标解析之前，因此设置项目与托管项目不同、项目移动或重新登记都可能直接阻断启动。
+- 设置页已移除项目和 Agent 选择；后端使用固定控制工作区维持平台连接，宠物托管请求继续从真实终端会话传递项目、工作目录、CLI Session ID、Worktree/SSH 元数据，并在启动时读取该项目当前 Provider。
+- `/cli_manager_switch` 改为保存独立 `runtimeProjectId`，启动时动态解析；无效目标回退控制工作区。旧平台 Session 与微信状态会复制到控制身份，活动中的旧托管直到取消后才迁移。
+- 触点包括 cc-connect Profile 归一化/启动/自动启动、配置生成、项目切换、平台 Session 与微信状态迁移、托管预检/开始/取消、设置页和中英文说明；凭据存储、cc-connect 源码、SSH Agent 协议、终端挂起/恢复和 Hook 通知协议确认不改变。
+
+### 场景与验证
+
+- 覆盖无项目配置的控制待机、旧项目 Profile 迁移、平台 Session/微信状态保留、宠物选择不同本地项目、动态 Provider、持久化远程项目切换、项目移动/删除回退、活动旧托管取消兼容，以及本地/SSH 目标的既有工作目录验证。
+- `cargo test commands::cc_connect::tests::`：48 项通过。
+- `cargo test commands::cc_connect::handoff::tests::`：2 项通过。
+- `node scripts/remoteHandoff.test.mjs`：5 项通过。
+- `cargo fmt --all -- --check`、`cargo check`、`npx tsc --noEmit`、`npm run build`、`git diff --check`：通过。
+- 尚未执行真实 Telegram、微信、飞书、企业微信授权及安装包冒烟；该项留给后续打包测试阶段。
+
+## 桌宠状态气泡顶部裁切修复（2026-08-06）
+
+### 根因与发现清单
+
+- 根因位于桌宠 CSS 缩放与 Tauri 原生窗口尺寸的同步边界：宠物画面和状态气泡已按用户尺寸渲染时，隐藏窗口首次显示、WebView2 残留缩放或跨 DPI 显示器恢复可能仍保留基础 `190 x 210` 窗口，超出透明 WebView 顶边的气泡会被根节点裁切。
+- `desktop_pet_window_sync` 现在按目标显示器 DPI 直接计算物理窗口尺寸，先应用目标位置和尺寸，显示后校验并在窗口管理器改写几何信息时重新应用；Windows 桌宠 WebView 同时恢复为 100% 页面缩放。
+- 桌宠窗口发出 ready 事件后会强制重跑一次原生窗口同步，再发送配置与状态，覆盖首次显示时窗口尚未稳定的时序。
+- 已修改 `src-tauri/src/commands/desktop_pet.rs` 与 `src/hooks/useDesktopPetCoordinator.ts`；已复核但未修改状态气泡 CSS、宠物资源解析、目录扫描、菜单展开几何、任务状态和远程托管逻辑。
+- GitNexus MCP 当前未暴露；已降级使用 codebase-memory moderate 索引、调用路径、`rg`、源码和 Git diff。工作区检测仅包含上述两处实现及本验证记录。
+
+### 场景与验证
+
+- 覆盖宠物尺寸 40%～150%、显示器 DPI 100%/125%/150%、保存位置与默认位置、隐藏窗口首次显示、桌宠 ready 后恢复，以及 Windows WebView2 非 100% 残留缩放。
+- `cargo test desktop_pet --lib`：15 项通过，包含新增的尺寸与 DPI 组合测试。
+- `node --test scripts/desktopPetSize.test.mjs scripts/desktopPetMenuGeometry.test.mjs scripts/desktopPetTransport.test.mjs scripts/desktopPetStatus.test.mjs`：25 项通过。
+- `npx tsc --noEmit`、`npm run build`、`cargo check`、`cargo fmt -- --check`、`git diff --check`：通过。
+- 当前机器未复现 Issue #196 用户的 WebView2/显示器状态；最终仍需由受影响 Windows 11 机器验证内置小猫和 Codex Pets 在原尺寸设置下的气泡完整性。
+
+## Codex app-server Provider Profile 回归修复（2026-08-14）
+
+### 根因与发现清单
+
+- 根因位于 CLI-Manager 原生 Codex 代理的命令参数边界：提交 `b84a7d68` 为锁定登记 Provider，在公共参数构造器中重新加入 `--profile`；该构造器同时服务 app-server 和普通运行命令，而 Codex 0.147.0 明确禁止 app-server 使用 `--profile`，导致 cc-connect 启动探针以退出码 1 结束。
+- 修改 `src-tauri/src/codex_app_server_proxy.rs`：参数构造按命令类型区分；app-server 只接收完整的 `model_provider`、Provider name、base URL、env key、wire API、模型目录及可选模型 `-c` 覆盖，普通运行命令继续加载生成的 Provider profile。
+- 修改 `src-tauri/src/commands/cc_connect.rs`：删除只为 app-server strict probe 镜像 Provider profile 的失效逻辑；真实 `CODEX_HOME`、登记 Provider 环境、模型目录和密钥脱敏保持不变。
+- 修改 `scripts/codexAppServerProxy.e2e.test.mjs`：锁定 app-server 不得出现 `--profile`，同时保留普通命令必须携带 profile 的断言。
+- 已复核但未修改：微信、Telegram、飞书、企业微信的平台配置与授权、cc-connect 源码及安装、SSH Codex 直连、会话 ID/cwd/Provider 校验、用户消息透传和文件投递上下文。
+- GitNexus 与 codebase-memory MCP 当前未暴露；已按降级规则使用修复契约、`rg`、Git 历史和源码调用点完成影响分析。该启动边界影响全部本地 Codex 远程平台，风险为 HIGH。
+
+### 验证结果
+
+- 本机 Codex CLI 0.147.0：旧参数稳定复现 `--profile only applies to runtime commands`；去掉 profile、保留相同完整 `-c` Provider 覆盖后，`app-server --strict-config --listen stdio://` 正常启动并以 0 退出。
+- 新编译的 Windows `cli-manager-codex-proxy.exe` 使用隔离 `CODEX_HOME`、受管 Provider name 和完整覆盖启动真实 Codex app-server 成功；未发起模型请求。
+- `cargo test codex_app_server_proxy::tests --lib`：21 项通过。
+- `cargo test commands::cc_connect::tests --lib`：48 项通过。
+- `node scripts/codexAppServerProxy.e2e.test.mjs`：4 项通过，使用真实 Windows 原生代理二进制。
+
+## cc-connect Codex 子进程 Provider 密钥转发修复（2026-08-14）
+
+### 根因与发现清单
+
+- 根因位于 CLI-Manager 受管进程环境与 cc-connect Agent 子进程环境的边界：CLI-Manager 只把登记 Provider 的动态密钥变量注入 cc-connect 父进程，却没有写入 `[projects.agent.options.env]`；cc-connect app-server 恢复线程后能选中正确 Provider，但模型请求阶段的 Codex 子进程缺少该变量，因此远程平台持续显示输入中并报 `Missing environment variable`。
+- 日志确认平台消息已接收、Codex app-server 已启动且原 `cliSessionId` 已恢复；项目仍解析到登记 Provider，失败变量名也与该 Provider ID 的派生变量一致，排除了平台凭据、代理、工作目录、Session ID 和 Provider 选择错误。
+- 修改 `build_managed_config_with_codex`：把 Provider 动态变量通过 `${VAR_NAME}` 占位符显式加入 Agent 环境；真实密钥仍只存在于受管进程环境，不写入 `config.toml`、日志或命令行。微信、Telegram、飞书和企业微信复用同一 Codex Agent 配置，因此同时覆盖。
+- 已复核但未修改 app-server 代理参数、`thread/resume` 校验、Provider 数据库/密钥存储、SSH 托管和 cc-connect 源码。
+- GitNexus 与 codebase-memory MCP 当前未暴露；已降级使用 Provider 契约、`rg`、生成配置、运行日志与源码调用点完成影响分析。变更只影响本地 Codex 受管配置生成，风险为中等。
+
+### 验证结果
+
+- `cargo test managed_codex_config_forwards_provider_key_without_persisting_secret`：通过，断言配置包含动态变量占位符且不包含 Provider 密钥、地址或名称。
+- 使用本机 cc-connect `v1.5.0-beta.3` 执行 `managed_config_matches_installed_cc_connect_when_requested`：通过，生成配置可被已安装版本解析和格式化。
+- `cargo test commands::cc_connect::tests --lib`：48 项通过。
+- `cargo fmt --all -- --check`、`git diff --check`：通过，仅有仓库现有 Windows 行尾提示。
+- 用户已完成真实远程托管消息冒烟，确认问题解决。
+
+## 大型用量数据库首次升级启动修复（2026-08-14）
+
+### 根因与发现清单
+
+- 根因位于前端启动监控与 SQL 迁移的异步边界：上游迁移 27 会把旧 `request_logs` 全量写入 `usage_records`；当前环境有 1,398,185 条记录、主数据库约 1.2 GB，迁移超过固定 15 秒后仍在正常执行，但前端把“耗时较长”错误转换为 `startup_timeout:stores`，重试会重新加载 WebView 并中断迁移。
+- 修改 `src/App.tsx`：15 秒阈值只切换为长时间加载提示，不再制造伪启动错误；真实 rejected promise 仍由既有初始化错误页处理。会话 Store 与主数据库拆为独立启动阶段，便于界面和日志准确定位。
+- 修改 `src/lib/i18n.ts`：补齐中文和英文的会话恢复、数据库升级及长时间初始化提示。
+- 新增 `scripts/appStartupLongMigration.test.mjs`：锁定长迁移不得进入失败页、数据库阶段和双语提示必须接入真实启动界面。
+- 已确认未修改 SQLx 迁移 25～29 的版本、SQL 或校验和，未删除、裁剪或重写用户用量记录；项目加载、同步功能、会话恢复及真实启动异常处理保持原流程。
+- GitNexus 工具当前未暴露；codebase-memory 对 `runStartupStage` 的影响分析覆盖全局 `App` 启动链路并判定为 CRITICAL，已结合启动日志、SQLite 迁移表、源码和 Git diff 复核。
+
+### 验证结果
+
+- `node scripts/appStartupLongMigration.test.mjs`：2 项通过。
+- `npx tsc --noEmit`：通过。
+- `npm run build`：通过，完成 6822 个模块转换。
+- `git diff --check`：通过，仅有仓库现有 Windows 行尾提示。
+- 未在用户正在使用的 1.2 GB 数据库上启动新包，以免关闭或干扰现有 CLI-Manager；安装包首次运行仍需等待一次性迁移完成，后续启动不再重复迁移。
+
+## 百万级项目路径迁移后台化（2026-08-21）
+
+### 根因与发现清单
+
+- 根因位于 SQLx 启动迁移与历史用量维护边界：migration 32 对 `usage_records` 执行全表关联和相关更新，并要求一个启动事务完成；现场数据库约 3.3 GB，`usage_records` / `request_logs` 各约 164 万行，启动日志在 database 阶段等待超过 26 分钟仍未提交。
+- `src-tauri/src/commands/db_repair.rs` 在数据库插件加载前仅为有历史行、已有 `project_path` Schema 且尚未应用 v32 的旧库登记原 v32 description/checksum；空库、缺 Schema 和已应用 v32 均保持标准 SQLx 行为。
+- 同文件新增单飞后台回填：先构造唯一项目路径映射和临时 rowid 队列，再按 2,000 行短事务更新；route 路径按相同 source/session 从最新 session_log 继承。既有非空路径、重名项目和 SSH 项目不会被覆盖或猜测。
+- `src/lib/db.ts` 在 `Database.load` 成功后非阻塞触发真实后台入口；`src-tauri/src/lib.rs` 注册命令。请求日志读取对空路径已有 bounded legacy project-key 兼容，因此回填期间仍可使用。
+- 原 `MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL`、版本 32、视图和 checksum 未修改；统计口径、历史解析、Provider、远程托管与桌宠确认无关。
+- GitNexus 未暴露且本地 `npx` 因缓存权限不可用；按 app-startup/history-stats 契约、`rg`、源码调用链、SQLite 现场数据和 Git diff 降级。变更触达 `getDb` 后全部 SQLite 消费者，风险 HIGH。
+
+### 验证结果
+
+- `cargo test --manifest-path src-tauri/Cargo.toml db_repair --lib`：15 项通过；新增覆盖原 checksum 登记、空库/缺 Schema no-op、唯一/歧义映射、50,005 行跨批次回填、route 继承、已有路径保护及重复运行幂等。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
+- `npm run tauri:build:local -- --bundles nsis`：通过，复用 npm/Cargo 缓存，仅生成 `CLI-Manager_1.3.7_x64-setup.exe`；SHA256 `002700BBD64E9579DC8A12DC1FE17011D0099EFBAFA6C2D8FA80584877FE46B8`。
+- GitNexus `detect-changes` 无法执行：当前会话未暴露 MCP，本地无 CLI，`npx --offline` 也没有缓存包；已用契约、源码调用链、聚焦测试和最终 Git diff 完成降级范围复核。
+- 打包前未主动操作仍由已安装 CLI-Manager 使用的 3.3 GB 真实数据库，避免干扰当前会话；现场诊断阶段只执行只读 Schema、迁移状态、行数和日志检查。
+- 用户使用 NSIS 升级包对原 3.3 GB / 164 万行数据库完成真实升级启动冒烟，确认应用不再阻塞于 migration 32，测试通过。
+
+## 微信授权 Profile 隔离修复（2026-08-24）
+
+### 根因与发现清单
+
+- 根因位于微信授权专用配置与常规 cc-connect Profile 校验边界：`start_weixin_authorization` 在启动 setup 子进程前调用 `normalize_profile`，会校验所有已启用平台；任一 Telegram、飞书或企业微信草稿的 `allow_from` 为空都会提前返回 `allow_from must contain at least one explicit user ID`。
+- 新增 `prepare_weixin_authorization_platforms`：微信强制进入授权占位状态，旧微信 allowlist 无效时允许重新扫码；其他启用但 allowlist 无效的平台仅改为禁用并保留字段，配置有效的平台保持启用。随后仍复用严格 `normalize_profile` 校验公共字段，扫码完成后继续通过原 `parse_weixin_authorization_result` 强制 token 与 `@im.wechat` ID。
+- 常规保存/启动、代理、二进制检测、凭据存储、授权 TOML 协议和 cc-connect 源码均未放宽或修改；前端仍使用原 IPC 和错误展示。
+- GitNexus MCP/CLI 不可用且离线 npm 无缓存，已通过 cc-switch 契约、`rg`、源码、Git blame 和聚焦测试降级复核；影响仅限微信授权 Profile 准备及其结果保存，风险中等。
+
+### 验证结果
+
+- `cargo test --manifest-path src-tauri/Cargo.toml commands::cc_connect::tests:: --lib`：59 项通过；新增覆盖无效其他平台草稿隔离、有效平台保留、无效旧微信 ID 重授权和常规严格校验。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
+- Trellis context 校验通过。GitNexus `detect-changes` 因当前会话未暴露 MCP、本机无缓存 CLI 而无法运行；已使用契约、调用点、全部 cc-connect 单元测试和最终 diff 降级复核。
+
+## Windows Codex 空格路径启动修复（2026-08-24）
+
+### 根因与发现清单
+
+- 根因位于 CLI-Manager 原生 Codex 代理与 Windows CMD 脚本启动器边界：`.cmd/.bat` 原先通过 `cmd.exe /d /c <launcher> ...` 传递，`\\?\D:\code path\...` 会被 CMD 截断为第一个空格前的命令，导致 app-server proxy probe 退出 1。该问题与 cc-connect 路径配置、Provider、平台凭据和网络无关。
+- `codex_app_server_proxy::codex_command` 现在对 shell 脚本移除本地盘/UNC verbatim 前缀，`.cmd/.bat` 使用固定 `cmd /d /s /c call` 入口；`.ps1` 保持结构化 `powershell -File`，`.exe` 保持直接启动。已有命令拼接元字符拒绝扩展到 CR/LF，合法带双引号的 Codex `-c` Provider 配置继续支持。
+- `cc_connect::output_text` 复用 `text_encoding::decode_text` 的 UTF-8 快路径与 legacy 编码探测，GBK 中文“系统找不到指定的路径”不再显示乱码；无法识别才 lossy 回退。
+- 真实代理 E2E 将 fake Codex `.cmd` 放入含空格与中文的目录，并以 `\\?\` 路径传入，覆盖 app-server、普通透传、Provider 参数、stdin/stdout、密钥不泄漏与退出码。
+- GitNexus MCP/CLI 未暴露且离线 npm 无缓存，已通过 cc-switch 契约、`rg`、调用链、Rust 单测和真实代理 E2E 降级复核。`codex_command` 影响所有本地 Codex 远程托管，风险 HIGH。
+
+### 验证结果
+
+- `cargo test --manifest-path src-tauri/Cargo.toml codex_app_server_proxy::tests --lib`：24 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml process_output_decodes_utf8_and_gbk_diagnostics --lib`：1 项通过。
+- `node scripts/codexAppServerProxy.e2e.test.mjs`：4 项通过，真实 Windows 代理二进制从 verbatim + 空格 + 中文目录启动 `.cmd`。
+- `cargo test --manifest-path src-tauri/Cargo.toml commands::cc_connect::tests:: --lib`：60 项通过，包含此前微信授权隔离回归。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
+- Trellis context 校验通过。GitNexus `detect-changes` 因 MCP/本机离线 CLI 不可用而降级，最终范围使用契约、调用链、Rust 全套 cc-connect 测试与真实代理 E2E 复核。
+- `npm run tauri:build:local -- --bundles nsis`：通过，仅生成 NSIS 安装包；SHA256 `CF929410CA2C602DB43927D33C23B1D77F52EF5104A422518F40F3AD278C0429`。

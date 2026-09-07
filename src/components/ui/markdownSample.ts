@@ -39,6 +39,16 @@ export const MARKDOWN_STYLE_SAMPLE = `# Markdown H1 一级标题
 | Prompt 库 | Active | 64 | 表格隔行底色 |
 | 子 Agent 转录 | Running | 32 | 超长内容需要横向滚动：abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz |
 
+## 数学公式
+
+行内公式支持：$E = mc^2$、$a^2 + b^2 = c^2$。
+
+块级公式支持：
+
+$$
+\\int_{0}^{\\infty} e^{-x^2} \\, dx = \\frac{\\sqrt{\\pi}}{2}
+$$
+
 ---
 
 \`\`\`tsx

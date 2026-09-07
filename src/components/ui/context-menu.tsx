@@ -28,15 +28,22 @@ const ContextMenuSubTrigger = forwardRef<
 ));
 ContextMenuSubTrigger.displayName = ContextMenuPrimitive.SubTrigger.displayName;
 
+interface ContextMenuSubContentProps
+  extends ComponentPropsWithoutRef<typeof ContextMenuPrimitive.SubContent> {
+  portalContainer?: HTMLElement | null;
+}
+
 const ContextMenuSubContent = forwardRef<
   ElementRef<typeof ContextMenuPrimitive.SubContent>,
-  ComponentPropsWithoutRef<typeof ContextMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <ContextMenuPrimitive.SubContent
-    ref={ref}
-    className={cn("context-menu", className)}
-    {...props}
-  />
+  ContextMenuSubContentProps
+>(({ className, portalContainer, ...props }, ref) => (
+  <ContextMenuPrimitive.Portal container={portalContainer ?? undefined}>
+    <ContextMenuPrimitive.SubContent
+      ref={ref}
+      className={cn("context-menu", className)}
+      {...props}
+    />
+  </ContextMenuPrimitive.Portal>
 ));
 ContextMenuSubContent.displayName = ContextMenuPrimitive.SubContent.displayName;
 

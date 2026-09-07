@@ -12,9 +12,17 @@ export const normalizeShellForKnownOs = (
 
 export const quoteShellPath = (path: string, shell: string | null | undefined) => {
   const normalized = normalizeShellKey(shell);
-  if (normalized === "cmd") return `"${path.replace(/"/g, "\"\"")}"`;
-  if (normalized === "powershell" || normalized === "pwsh") return `'${path.replace(/'/g, "''")}'`;
-  return `'${path.replace(/'/g, "'\\''")}'`;
+  const shellPath = normalized === "wsl" ? windowsPathToWsl(path) : path;
+  if (normalized === "cmd") return `"${shellPath.replace(/"/g, "\"\"")}"`;
+  if (normalized === "powershell" || normalized === "pwsh") return `'${shellPath.replace(/'/g, "''")}'`;
+  return `'${shellPath.replace(/'/g, "'\\''")}'`;
+};
+
+export const windowsPathToWsl = (path: string): string => {
+  const match = /^([A-Za-z]):[\\/](.*)$/.exec(path.trim());
+  if (!match) return path;
+  const tail = match[2].replace(/\\/g, "/").replace(/^\/+/, "");
+  return tail ? `/mnt/${match[1].toLowerCase()}/${tail}` : `/mnt/${match[1].toLowerCase()}`;
 };
 
 export const formatShellPathList = (paths: string[], shell: string | null | undefined) => (

@@ -207,11 +207,14 @@ jobs:
             | 平台 | 格式 |
             |------|------|
             | Windows | `.msi` 安装包 |
+            | Windows x64 便携版 | `.zip` 压缩包 |
             | macOS (Apple Silicon) | `.dmg` 磁盘映像 |
             | Linux | `.deb` / `.AppImage` |
 
             > - Windows 首次安装可能触发 SmartScreen 提示，点击"仍要运行"继续
             > - macOS 应用未经 Apple 签名/公证，首次打开可能提示"已损坏"或"无法验证开发者"
+
+            Windows 便携版：下载 `Windows x64 portable .zip`，解压后直接运行 `cli-manager.exe`，无需安装。
 
             ### macOS 安装说明
 
@@ -232,6 +235,19 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      - name: Package Windows portable ZIP
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: .\scripts\package-portable.ps1 -Version "${{ steps.version.outputs.version }}" -OutputDir "dist/portable"
+
+      - name: Upload Windows portable artifact
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-release
+          path: dist/portable/*.zip
+          if-no-files-found: error
 
   publish:
     needs: [build, ssh-agent]
@@ -259,6 +275,12 @@ jobs:
           name: ssh-agent-release
           path: dist/ssh-agent
 
+      - name: Download Windows portable release
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-portable-release
+          path: dist/portable
+
       - name: Upload SSH Agent release files
         uses: softprops/action-gh-release@v2
         with:
@@ -270,6 +292,7 @@ jobs:
             dist/ssh-agent/ssh-agent-release-manifest.json
             dist/ssh-agent/ssh-agent-release-manifest.json.sig
             dist/ssh-agent/install-ssh-agent.sh
+            dist/portable/*.zip
 
       - name: Verify GitHub release assets
         env:
@@ -282,7 +305,8 @@ jobs:
             cli-manager-ssh-agent-linux-aarch64 \
             ssh-agent-release-manifest.json \
             ssh-agent-release-manifest.json.sig \
-            install-ssh-agent.sh
+            install-ssh-agent.sh \
+            "CLI-Manager-V${GITHUB_REF_NAME#V}-Windows-x64-portable.zip"
           do
             printf '%s\n' "$assets" | grep -Fxq "$required" || {
               echo "Missing required SSH Agent release asset: $required" >&2

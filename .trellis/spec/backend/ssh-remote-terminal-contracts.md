@@ -94,6 +94,15 @@ pub struct SshLaunchPlan {
 
 `pty_create` and the daemon `ClientFrame::Create` accept an optional structured `ssh_launch`. The frontend resolves the plan but must not build a complete shell-escaped `ssh` command string.
 
+`credential_ref` launches add this internal local-process environment contract:
+
+```text
+interactive PTY: CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK=1
+background one-shot: CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK=0
+```
+
+Only the exact value `1` enables control-terminal input. One-shot probes, directory operations, Agent bridges, and other background launches must explicitly set `0` so a parent-process value cannot accidentally enable blocking input. This key is never forwarded to the remote shell.
+
 ## 3. Contracts
 
 ### Host and project identity
@@ -112,6 +121,15 @@ pub struct SshLaunchPlan {
 - `credential_ref` means Username / Password: SQLite stores only the credential reference, while the secret lives in the platform credential store.
 - Saved SSH passwords must use the shared credential store: Windows Credential Manager, macOS Keychain, or Linux Secret Service. Native WSL support depends on Secret Service availability.
 - OpenSSH receives saved passwords only through the one-shot loopback AskPass helper. The command line, ordinary logs, WebDAV payloads, exports, session snapshots, and normal environment data must not contain the password.
+- AskPass may use the saved credential only for ordinary `password` or `passphrase` prompts. MFA, OTP, one-time password, verification, authenticator, security-code, passcode, and PIN prompts must skip the broker and read the owning SSH control terminal.
+- If the saved-password broker is consumed, expired, or unreachable, an interactive `credential_ref` launch falls back to the same control terminal so the user can correct the password. The helper writes the prompt to the control terminal and writes only the response bytes to helper stdout.
+- Control-terminal fallback is allowed only when `CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK=1` is explicitly present. Background one-shot launches set it to `0` and must fail quickly without opening `/dev/tty` or `CONIN$`, even if they inherit a control terminal or a parent process exported the value `1`.
+- AskPass broker token input is bounded before comparison. An oversized or mismatched token receives no password response and must not consume the broker; only the first matching token consumes the saved password, or the broker expires after its bounded lifetime.
+- Server-controlled AskPass prompts must normalize CR/LF, remove terminal control characters, and cap terminal output before writing to the owning terminal output; ANSI/OSC/CSI content must not execute in the local terminal.
+- On Windows ConPTY, AskPass manual input/output must reuse the helper's inherited standard input/error handles, because reopening `CONIN$`/`CONOUT$` can bind to a different console queue and disconnect the active SSH authentication session. Helper stdout remains reserved for the response returned to OpenSSH.
+- AskPass helper diagnostics are written to `<logs_dir>/ssh-askpass.log` before Tauri initialization. They may contain only timestamp, process id, prompt category (`password`/`mfa`/`interactive`), route/result, platform, error kind, and byte counts; they must never contain prompt text, password, MFA code, broker token, broker address, or response content. The log is rolling and can be collected together with the normal CLI-Manager log after reproducing an authentication failure.
+- Manual AskPass input disables terminal echo before displaying the prompt, accepts at most 16 KiB, strips trailing CR/LF, and restores the original terminal mode on success, EOF, or error.
+- SSH launch-generated local environment values are protected. Project/session/user environment values, including differently cased Windows keys, must not override `SSH_ASKPASS`, broker address/token, helper dispatch, `DISPLAY`, `SSH_ASKPASS_REQUIRE`, or the TTY fallback policy.
 - Passwords, private-key contents/passphrases, and proxy credentials must not enter SQLite, Tauri store, session snapshots, logs, WebDAV, or local exports.
 - `identity_file` is machine-local and must not be synchronized.
 - `config_file` is machine-local and must not be synchronized, exported, or written to ordinary logs.
@@ -192,12 +210,14 @@ pub struct SshLaunchPlan {
 - Handoff authentication must be unattended: SSH Config, Agent, identity file, or `credential_ref`. `password_prompt` and `interactive` must fail before the desktop PTY is suspended.
 - Run `cc_connect_handoff_preflight` before releasing the desktop PTY. It must validate the selected platform conversation, cc-connect version, host/jump/proxy/config references, saved credential, remote directory, and remote Codex app-server startup without loading or resuming the selected thread. Handoff requires an authoritative stopped state: Hook/daemon reports `done` or `failed`, or the PTY reports `exited` or `error`. Missing Hook state fails closed. The managed proxy continues to reject fresh threads and Session ID drift when cc-connect takes ownership.
 - cc-connect keeps its session files in a deterministic local placeholder under the CLI-Manager data directory. The remote POSIX path is transport metadata and must never be passed to local filesystem APIs.
+- The settings-side cc-connect profile is project-neutral. The desktop-pet SSH session supplies the authoritative registered project, host, POSIX work directory, Session ID, and Provider context for handoff; a previously selected local/default project must not participate in SSH target validation or startup.
+- The settings-side cc-connect profile is project-neutral. The desktop-pet SSH session supplies the authoritative registered project, host, POSIX work directory, Session ID, and Provider context for handoff; a previously selected local/default project must not participate in SSH target validation or startup.
 - The managed Codex proxy launches OpenSSH with the same validated transport settings as the SSH terminal, changes to the registered remote directory, exports the project environment plus effective `CODEX_HOME`, injects a scoped `safe.directory`, and starts remote `codex app-server` over stdio.
 - The managed Codex proxy resolves `codex` through the same interactive login-shell environment as the SSH terminal so NVM and equivalent user-managed tool paths remain available. Shell startup stdout must be redirected to stderr until `codex` is executed, then the app-server stdout must be restored to the original SSH stdout; profile banners and initialization output must never enter the JSON-RPC stream.
 - The serialized launch environment may contain only the credential reference. Password values remain in the local credential store and are delivered through the one-shot AskPass broker.
 - During SSH handoff, the proxy rewrites only matching `thread/resume` requests to the registered remote directory and rejects fresh-thread or session-drift requests.
 - Remote app-server turn, approval, completion, and non-retrying error events are converted locally into the existing handoff Hook events. Telegram, Feishu, Weixin, and WeCom therefore share the same progress, permission, completion, and failure notification path without a remote Hook installation.
-- Persist handoff transport, SSH host ID, and remote path with the existing schema-version-1 record using defaulted fields for backward compatibility.
+- Persist handoff transport, SSH host ID, remote path, and `agent=codex` in the schema-version-2 record. Schema v1 records migrate in memory with Codex as the default; unknown versions fail closed. Adding local Claude/Pi/OpenCode handoff must not widen this SSH Codex-only boundary.
 - On cancellation, re-resolve a structured SSH PTY launch and run `codex resume --no-alt-screen <cliSessionId>` on the same registered host and path. If the project host/path changed, fail closed and keep the recovery lock visible.
 
 ### Sync
@@ -218,6 +238,13 @@ pub struct SshLaunchPlan {
 | Unknown auth mode | `ssh_auth_mode_invalid`. |
 | Identity-file mode without a path | `ssh_identity_file_required`. |
 | Credential-reference mode without a saved credential | `ssh_credential_ref_required`. |
+| AskPass receives an MFA/OTP/verification/PIN prompt in an interactive launch | Skip the saved-password broker and read the owning control terminal with echo disabled. |
+| Interactive AskPass password broker is consumed, expired, or unreachable | Read the password from the owning control terminal; do not retry through an input-less helper. |
+| AskPass needs manual input when `CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK` is absent, `0`, or any value other than exact `1` | Exit nonzero without opening a control terminal; let the existing one-shot authentication classifier report the failure. |
+| AskPass broker client sends a mismatched token or a token longer than 128 bytes | Close that connection without returning password bytes; keep waiting for the first matching token until the broker deadline. |
+| SSH server sends a prompt containing terminal controls or more than 1024 display characters | Strip controls, normalize line endings, cap display length, and never execute the sequence in the local terminal. |
+| Project/session environment collides with SSH internal AskPass keys, including case variants | Keep the SSH launch-generated value authoritative and preserve unrelated environment values. |
+| AskPass control terminal is unavailable or manual response exceeds 16 KiB | Exit nonzero, restore any changed terminal mode, and never include the response in the error. |
 | Empty password when saving a credential | `ssh_password_required`. |
 | Invalid host id for credential account scoping | `ssh_host_id_invalid`. |
 | Host argument contains NUL/CR/LF | `ssh_launch_argument_invalid`. |
@@ -257,6 +284,10 @@ pub struct SshLaunchPlan {
 - Good: a path such as `/srv/project name/开发` is quoted once, opens correctly, and cannot inject shell syntax.
 - Good: application restart attaches a daemon-owned SSH PTY without repeating initialization commands.
 - Good: Username / Password host can test connection and browse/check a remote path through AskPass without exposing the password.
+- Good: an interactive Username / Password terminal consumes the saved password once, then reads `Please Enter MFA Code.` from the same PTY without exposing or reusing the password.
+- Good: on Windows ConPTY, the MFA prompt is written through AskPass inherited stderr and the code is read through inherited stdin; after authentication the same SSH PTY remains open for the remote shell.
+- Base: an incorrect/consumed saved password falls back to hidden manual password input in the owning interactive PTY.
+- Base: a background one-shot receives an MFA prompt, carries `CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK=0`, and fails quickly even if a control terminal or parent value `1` was inherited.
 - Good: project `~/state/claude` overrides the Host Claude root and launches with `CLAUDE_CONFIG_DIR="${HOME}"/'state/claude'`.
 - Good: two projects on one Host use independent Tab/epoch bindings while sharing one client/Host Hook bridge; events route only to the originating live Tab.
 - Good: an SSH project waits for its Agent Git context, then routes repository-relative operations through the dedicated Git lane without ever treating `remote_path` as a desktop path.
@@ -274,6 +305,8 @@ pub struct SshLaunchPlan {
 - Bad: calling `loadProjectFile(project, entry)` from an SSH refresh and thereby treating `project.path == ""` as a local root.
 - Bad: deriving an SSH Git panel root from `session.cwd`, which is intentionally empty for the desktop PTY launch.
 - Bad: falling back to default OpenSSH config after a custom `config_file` is moved or becomes unreadable.
+- Bad: classify `One-time password` as an ordinary password prompt and send the saved login password to the MFA challenge.
+- Bad: decide whether AskPass may block by probing for a control terminal; background one-shot work can accidentally inherit one.
 - Bad: synchronizing passwords, credential references, private-key paths, custom SSH Config paths, or ProxyCommand content.
 - Bad: quoting `~/.claude` as one literal shell token; this disables tilde expansion and points the CLI at a directory named `~`.
 
@@ -288,7 +321,10 @@ pub struct SshLaunchPlan {
 - Assert custom `config_file` reaches connection probes and terminal launches through `-F`, missing files fail, and legacy daemon frames deserialize with an empty default.
 - Assert launch-plan validation, POSIX quoting, environment-key validation, proxy credential rejection, jump targets, and legacy daemon frame compatibility.
 - Assert password/interactive/agent modes do not include stale identity-file arguments after auth-mode switches.
-- Assert AskPass serves a saved password only for the matching one-shot token and rejects reused or unknown prompts.
+- Assert AskPass serves a saved password only for the matching bounded one-shot token, rejects mismatched/oversized attempts without consuming the broker, requests the broker at most once per prompt, and never uses it for MFA, OTP, one-time password, verification, authenticator, security-code, passcode, or PIN prompts.
+- Assert interactive AskPass falls back to hidden control-terminal input after broker consumption/failure, keeps sanitized prompt output separate from helper stdout, strips CR/LF, filters ANSI/OSC controls, caps prompt/response sizes, and attempts terminal-mode restoration on success, EOF, and error.
+- Assert interactive `credential_ref` launch policy sets `CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK=1`, one-shot policy explicitly sets `0`, and only exact `1` may invoke control-terminal input.
+- Assert SSH launch-generated AskPass environment keys override project/session values case-insensitively while unrelated environment values survive.
 - Assert remote path checking accepts spaces/Unicode/single quotes and rejects traversal, relative paths, NUL, CR, and LF.
 - Assert project root overrides Host root, Host root overrides native default, and unrelated/local/WSL launches receive no SSH tool-root injection.
 - Assert absolute, `~`, and `~/...` config roots render safely; reject traversal, relative paths, expansion syntax, backslashes, NUL, CR, and LF at the Rust boundary.
@@ -308,6 +344,63 @@ pub struct SshLaunchPlan {
 - Manually verify OpenSSH Agent, private key, password/MFA, first host key, changed host key, ProxyJump, ProxyCommand, network interruption, zh-CN/en-US, and 24-hour time display.
 
 ## 7. Wrong vs Correct
+
+### Wrong: infer interactive AskPass from inherited terminal state
+
+```rust
+if control_terminal_exists() {
+    read_mfa_from_terminal();
+}
+```
+
+A background one-shot may accidentally inherit a control terminal and then block forever waiting for input no user can route to it.
+
+### Correct: enable fallback only for the interactive SSH launch
+
+```rust
+let allow_terminal_fallback = env
+    .get("CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK")
+    .is_some_and(|value| value == "1");
+let broker_response = is_password_prompt(prompt)
+    .then(|| broker_password())
+    .flatten();
+
+match (broker_response, allow_terminal_fallback) {
+    (Some(response), _) => Ok(response),
+    (None, true) => read_terminal(prompt),
+    (None, false) => Err("SSH input unavailable"),
+}
+```
+
+The launch mode owns whether blocking input is legal. Prompt classification owns whether the saved credential may be used.
+
+### Wrong: omit a false policy or let user environment write last
+
+```rust
+if !interactive {
+    env.remove("CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK");
+}
+ssh_env.extend(user_env);
+```
+
+Removing a key does not clear an inherited parent value, and writing user environment last can replace the helper path or broker token. Windows key comparison is case-insensitive.
+
+### Correct: serialize both policy states and protect launch-owned keys
+
+```rust
+env.insert(
+    "CLI_MANAGER_SSH_ASKPASS_TTY_FALLBACK".into(),
+    if interactive { "1".into() } else { "0".into() },
+);
+user_env.retain(|key, _| {
+    !ssh_env
+        .keys()
+        .any(|protected| key.eq_ignore_ascii_case(protected))
+});
+user_env.extend(ssh_env);
+```
+
+Explicit false survives parent inheritance, while launch-generated secret-channel metadata stays authoritative on every supported platform.
 
 ### Wrong: build SSH in the WebView
 

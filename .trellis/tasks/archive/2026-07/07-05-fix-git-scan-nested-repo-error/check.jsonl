@@ -1,2 +1,0 @@
-{"file": ".trellis/tasks/07-05-fix-git-scan-nested-repo-error/prd.md", "reason": "对照验收标准检查：嵌套仓库条目过滤 + 目录守卫 + 单测"}
-{"file": ".trellis/spec/backend/index.md", "reason": "后端合约检查清单"}

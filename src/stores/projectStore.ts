@@ -4,31 +4,28 @@ import { getDb, batchUpdateSortOrder, batchUpdateProjectShell as dbBatchUpdatePr
 import { resolveProjectFetchPolicy, type ProjectFetchReason } from "../lib/projectLoadPolicy";
 import { useSettingsStore } from "./settingsStore";
 import { logWarn } from "../lib/logger";
-import { getClaudeProviderOverride, getCodexProviderOverride, getProviderSwitchAppType } from "../lib/providerSwitching";
+import {
+  getClaudeProviderOverride,
+  getCodexProviderOverride,
+  getGrokProviderOverride,
+  getProviderSwitchAppType,
+  isNativeProviderReference,
+} from "../lib/providerSwitching";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey } from "../lib/shell";
 import { projectSupportsCapability } from "../lib/projectCapabilities";
+import { normalizeNodeAccentToken, normalizeNodeIcon } from "../lib/nodeAppearance";
 import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
+import { resolveGroupBoundPath, resolveProjectPath } from "../lib/groupPath";
 import type {
   Project, CreateProjectInput, UpdateProjectInput,
-  Group, CreateGroupInput, TreeNode, WorktreeRecord,
+  Group, CreateGroupInput, UpdateGroupInput, TreeNode, WorktreeRecord,
 } from "../lib/types";
 
 let inflightFetchAll: Promise<void> | null = null;
 let providerBadgeRefreshSeq = 0;
 
-interface CcSwitchProjectBadge {
-  path: string;
-  hasOverride: boolean;
-  providerName: string | null;
-  vendorHint: string | null;
-}
-
-interface CodexProfileCleanupResult {
-  deletedProfileNames: string[];
-}
-
 export interface ProviderBadge {
-  /** 匹配到的 cc-switch 供应商名；null 表示有覆盖但未匹配到（自定义配置） */
+  /** 项目或 Worktree 的原生供应商覆盖。 */
   providerName: string | null;
   vendorHint?: string | null;
 }
@@ -49,17 +46,30 @@ interface ProjectStore {
   fetchGroups: () => Promise<void>;
   refreshProjectDiagnostics: () => Promise<void>;
   refreshProviderBadges: () => Promise<void>;
-  cleanupUnusedCodexProfiles: () => Promise<void>;
   createProject: (input: CreateProjectInput) => Promise<Project>;
   updateProject: (id: string, input: UpdateProjectInput) => Promise<void>;
   batchUpdateProjectShell: (ids: string[], shell: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   createGroup: (input: CreateGroupInput) => Promise<Group>;
+  /** 只更新分组的外观列（icon / color），未传的字段保持不变。 */
+  updateGroupAppearance: (id: string, appearance: { icon?: string; color?: string }) => Promise<void>;
+  updateGroup: (id: string, input: UpdateGroupInput) => Promise<void>;
+  saveGroupBinding: (groupId: string, boundPath: string, shellProjectIds?: string[], shell?: string) => Promise<void>;
   renameGroup: (id: string, name: string) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
   reorderItems: (parentId: string | null, orderedIds: string[]) => Promise<void>;
   moveProjectToGroup: (projectId: string, targetGroupId: string | null) => Promise<void>;
   moveGroupToParent: (groupId: string, targetParentId: string | null) => Promise<void>;
+}
+
+/**
+ * 统计树节点下的项目数（含子分组递归，不计 Worktree）。
+ * 侧边栏折叠态徽章与展开态分组计数共用，保证两处口径一致。
+ */
+export function countProjectsInNode(node: TreeNode): number {
+  if (node.type === "project") return 1;
+  if (node.type === "worktree") return 0;
+  return node.children.reduce((sum, child) => sum + countProjectsInNode(child), 0);
 }
 
 function buildTree(groups: Group[], projects: Project[], search: string, worktrees: WorktreeRecord[] = []): TreeNode[] {
@@ -163,27 +173,6 @@ async function selectWorktreesOrEmpty(db: Awaited<ReturnType<typeof getDb>>): Pr
   }
 }
 
-function collectActiveCodexProfileNames(projects: Project[], worktrees: WorktreeRecord[] = []): string[] {
-  const profileNames = new Set<string>();
-  for (const project of projects) {
-    if (getProviderSwitchAppType(project) !== "codex") continue;
-    const override = getCodexProviderOverride(project);
-    if (override?.profileName) {
-      profileNames.add(override.profileName);
-    }
-  }
-  const projectsById = new Map(projects.map((project) => [project.id, project]));
-  for (const worktree of worktrees) {
-    const project = projectsById.get(worktree.project_id);
-    if (!project || getProviderSwitchAppType(project) !== "codex") continue;
-    const override = getCodexProviderOverride(worktree);
-    if (override?.profileName) {
-      profileNames.add(override.profileName);
-    }
-  }
-  return Array.from(profileNames);
-}
-
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   projects: [],
   groups: [],
@@ -216,7 +205,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         if (policy.includePathHealth && projects.length > 0) {
           try {
             const localProjects = projects.filter((project) => project.environment_type !== "ssh");
-            const paths = localProjects.map((project) => project.path);
+            const paths = localProjects.map((project) => resolveProjectPath(project, groups));
             const results = await invoke<boolean[]>("check_paths_exist", { paths });
             const health: Record<string, boolean> = {};
             localProjects.forEach((project, index) => { health[project.id] = results[index]; });
@@ -242,7 +231,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (projects.length > 0) {
       try {
         const localProjects = projects.filter((project) => project.environment_type !== "ssh");
-        const paths = localProjects.map((project) => project.path);
+        const paths = localProjects.map((project) => resolveProjectPath(project, get().groups));
         const results = await invoke<boolean[]>("check_paths_exist", { paths });
         const projectHealth: Record<string, boolean> = {};
         localProjects.forEach((project, index) => {
@@ -262,24 +251,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const projects = get().projects;
     const providerProjects = projects.filter((project) => projectSupportsCapability(project, "providerSwitch"));
     const worktrees = get().worktrees;
-    const claudeProjects = providerProjects.filter((p) => getProviderSwitchAppType(p) === "claude");
-    const codexProjects = providerProjects.filter((p) => getProviderSwitchAppType(p) === "codex");
     const projectsById = new Map(projects.map((project) => [project.id, project]));
     const providerBadges: Record<string, ProviderBadge> = {};
 
-    for (const project of codexProjects) {
-      const override = getCodexProviderOverride(project);
-      if (override) {
-        providerBadges[project.id] = {
-          providerName: override.providerName,
-          vendorHint: override.vendorHint,
-        };
-      }
-    }
-
-    for (const project of claudeProjects) {
-      const override = getClaudeProviderOverride(project);
-      if (override) {
+    for (const project of providerProjects) {
+      const appType = getProviderSwitchAppType(project);
+      const override = appType === "claude"
+        ? getClaudeProviderOverride(project)
+        : appType === "codex"
+          ? getCodexProviderOverride(project)
+          : appType === "grokbuild"
+            ? getGrokProviderOverride(project)
+            : undefined;
+      if (override && isNativeProviderReference(override)) {
         providerBadges[project.id] = {
           providerName: override.providerName,
           vendorHint: override.vendorHint,
@@ -295,8 +279,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ? getCodexProviderOverride(worktree)
         : appType === "claude"
           ? getClaudeProviderOverride(worktree)
-          : null;
-      if (override) {
+          : appType === "grokbuild"
+            ? getGrokProviderOverride(worktree)
+            : undefined;
+      if (override && isNativeProviderReference(override)) {
         providerBadges[`wt:${worktree.id}`] = {
           providerName: override.providerName,
           vendorHint: override.vendorHint,
@@ -304,42 +290,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     }
 
-    const legacyClaudeProjects = claudeProjects.filter((project) => !getClaudeProviderOverride(project));
-    if (legacyClaudeProjects.length > 0) {
-      try {
-        const badges = await invoke<CcSwitchProjectBadge[]>("ccswitch_probe_projects", {
-          projectPaths: legacyClaudeProjects.map((p) => p.path),
-          dbPath: useSettingsStore.getState().ccSwitchDbPath ?? undefined,
-        });
-        const byPath = new Map(badges.map((b) => [b.path, b]));
-        for (const p of legacyClaudeProjects) {
-          const badge = byPath.get(p.path);
-          if (badge?.hasOverride) {
-            providerBadges[p.id] = {
-              providerName: badge.providerName,
-              vendorHint: badge.vendorHint,
-            };
-          }
-        }
-      } catch (err) {
-        // db 不存在等任何失败：静默清空 claude 徽标，绝不打扰用户；codex 本地覆盖仍保留
-        logWarn("ccswitch probe projects failed", err);
-      }
-    }
-
     if (refreshSeq === providerBadgeRefreshSeq) {
       set({ providerBadges });
-    }
-  },
-
-  cleanupUnusedCodexProfiles: async () => {
-    try {
-      await invoke<CodexProfileCleanupResult>("ccswitch_cleanup_codex_profiles", {
-        keepProfileNames: collectActiveCodexProfileNames(get().projects, get().worktrees),
-        codexConfigDir: useSettingsStore.getState().codexHookConfigDir ?? undefined,
-      });
-    } catch (err) {
-      logWarn("ccswitch cleanup codex profiles failed", err);
     }
   },
 
@@ -373,6 +325,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       id,
       name: input.name,
       path: isSshProject ? "" : input.path,
+      path_mode: isSshProject ? "custom" : input.path_mode ?? "custom",
       group_name: input.group_name ?? "",
       group_id: input.group_id ?? null,
       sort_order: 0,
@@ -389,21 +342,24 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ssh_host_id: isSshProject ? input.ssh_host_id ?? null : null,
       remote_path: isSshProject ? input.remote_path?.trim() ?? "" : "",
       cli_config_root: cliConfigRoot,
+      icon: normalizeNodeIcon(input.icon),
+      color: normalizeNodeAccentToken(input.color),
       created_at: ts,
       updated_at: ts,
     };
     await db.execute(
       `INSERT INTO projects (
-         id, name, path, group_name, group_id, sort_order,
+         id, name, path, path_mode, group_name, group_id, sort_order,
          cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides,
          worktree_strategy, worktree_root, worktree_deps_prompt_enabled,
-         environment_type, ssh_host_id, remote_path, cli_config_root, created_at, updated_at
+         environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
       [
         project.id,
         project.name,
         project.path,
+        project.path_mode,
         project.group_name,
         project.group_id,
         project.sort_order,
@@ -420,6 +376,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project.ssh_host_id,
         project.remote_path,
         project.cli_config_root,
+        project.icon,
+        project.color,
         project.created_at,
         project.updated_at,
       ]
@@ -445,6 +403,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (cliConfigRootError) throw new Error(cliConfigRootError);
       normalizedInput.cli_config_root = cliConfigRoot;
     }
+    // 外观列先归一化：同步来的脏 color / 非法 token 落成空串走自动配色，不写脏值进库。
+    if (input.icon !== undefined) normalizedInput.icon = normalizeNodeIcon(input.icon);
+    if (input.color !== undefined) normalizedInput.color = normalizeNodeAccentToken(input.color);
 
     for (const [key, val] of Object.entries(normalizedInput)) {
       if (val !== undefined) {
@@ -464,7 +425,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     );
     await get().fetchAll();
     if (shouldCleanupCodexProfiles) {
-      await get().cleanupUnusedCodexProfiles();
     }
   },
 
@@ -490,7 +450,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await db.execute("DELETE FROM projects WHERE id = $1", [id]);
     await get().fetchAll();
     if (shouldCleanupCodexProfiles) {
-      await get().cleanupUnusedCodexProfiles();
     }
   },
 
@@ -503,14 +462,76 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       name: input.name,
       parent_id: input.parent_id ?? null,
       sort_order: 0,
+      // 外观随建组的同一条 INSERT 落库：避免 "先 INSERT 再 UPDATE" 与 fetchAll 刷新交错造成颜色跳变。
+      icon: normalizeNodeIcon(input.icon),
+      color: normalizeNodeAccentToken(input.color),
+      bound_path: input.bound_path?.trim() ?? "",
       created_at: ts,
     };
     await db.execute(
-      `INSERT INTO groups (id, name, parent_id, sort_order, created_at) VALUES ($1, $2, $3, $4, $5)`,
-      [group.id, group.name, group.parent_id, group.sort_order, group.created_at]
+      `INSERT INTO groups (id, name, parent_id, sort_order, icon, color, bound_path, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [group.id, group.name, group.parent_id, group.sort_order, group.icon, group.color, group.bound_path, group.created_at]
     );
     await get().fetchAll();
     return group;
+  },
+
+  updateGroup: async (id, input) => {
+    const db = await getDb();
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [key, value] of Object.entries(input)) {
+      if (value === undefined) continue;
+      fields.push(`${key} = $${idx}`);
+      values.push(key === "bound_path" ? String(value).trim() : value);
+      idx += 1;
+    }
+    if (fields.length === 0) return;
+    values.push(id);
+    await db.execute(`UPDATE groups SET ${fields.join(", ")} WHERE id = $${idx}`, values);
+    await get().fetchAll();
+  },
+
+  saveGroupBinding: async (groupId, boundPath, shellProjectIds = [], shell) => {
+    const uniqueProjectIds = Array.from(new Set(shellProjectIds.map((id) => id.trim()).filter(Boolean)));
+    let resolvedShell: string | undefined;
+    if (uniqueProjectIds.length > 0 && shell?.trim()) {
+      const os = await getOsPlatform();
+      const trimmedShell = shell.trim();
+      resolvedShell =
+        normalizeShellForOs(trimmedShell, os) ??
+        (!normalizeShellKey(trimmedShell) ? trimmedShell : defaultShellForOs(os));
+    }
+    await invoke("project_group_save_binding", {
+      groupId,
+      boundPath,
+      shellProjectIds: uniqueProjectIds,
+      shell: resolvedShell,
+    });
+    await get().fetchAll();
+  },
+
+  updateGroupAppearance: async (id, appearance) => {
+    const db = await getDb();
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    if (appearance.icon !== undefined) {
+      fields.push(`icon = $${idx}`);
+      values.push(normalizeNodeIcon(appearance.icon));
+      idx += 1;
+    }
+    if (appearance.color !== undefined) {
+      fields.push(`color = $${idx}`);
+      values.push(normalizeNodeAccentToken(appearance.color));
+      idx += 1;
+    }
+    if (fields.length === 0) return;
+    values.push(id);
+    // 只更新单行的外观列，不做整行重写：与并发的重命名 / 拖拽排序写入互不覆盖。
+    await db.execute(`UPDATE groups SET ${fields.join(", ")} WHERE id = $${idx}`, values);
+    await get().fetchAll();
   },
 
   renameGroup: async (id, name) => {
@@ -520,21 +541,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   deleteGroup: async (id) => {
-    const db = await getDb();
-    // Move child projects to ungrouped, then delete group (CASCADE deletes sub-groups)
-    await db.execute("UPDATE projects SET group_id = NULL WHERE group_id = $1", [id]);
-    // Also ungroup projects in sub-groups before cascade
-    await db.execute(
-      `UPDATE projects SET group_id = NULL WHERE group_id IN (
-        WITH RECURSIVE sg(gid) AS (
-          SELECT id FROM groups WHERE parent_id = $1
-          UNION ALL
-          SELECT g.id FROM groups g JOIN sg ON g.parent_id = sg.gid
-        ) SELECT gid FROM sg
-      )`,
-      [id]
-    );
-    await db.execute("DELETE FROM groups WHERE id = $1", [id]);
+    await invoke("project_group_delete", { groupId: id });
     await get().fetchAll();
   },
 
@@ -591,9 +598,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const maxOrder = siblings.reduce((m, p) => Math.max(m, p.sort_order ?? 0), -1);
     const nextOrder = maxOrder + 1;
     const ts = Date.now().toString();
+    // 根层没有父级可供继承：继承项目脱出文件夹时固化其当前有效路径。
+    // 移入任意文件夹则保留 path_mode，让它继续动态跟随新父级。
+    const movedProject = project.path_mode === "inherit" && targetGroupId === null
+      ? { ...project, path: resolveProjectPath(project, groups), path_mode: "custom" as const }
+      : project;
     const nextProjects = projects.map((item) =>
       item.id === projectId
-        ? { ...item, group_id: targetGroupId, sort_order: nextOrder, updated_at: ts }
+        ? { ...movedProject, group_id: targetGroupId, sort_order: nextOrder, updated_at: ts }
         : item
     );
 
@@ -604,10 +616,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     try {
       const db = await getDb();
-      await db.execute(
-        "UPDATE projects SET group_id = $1, sort_order = $2, updated_at = $3 WHERE id = $4",
-        [targetGroupId, nextOrder, ts, projectId]
-      );
+      if (movedProject.path_mode === "custom" && project.path_mode === "inherit" && targetGroupId === null) {
+        await db.execute(
+          "UPDATE projects SET group_id = $1, path = $2, path_mode = $3, sort_order = $4, updated_at = $5 WHERE id = $6",
+          [targetGroupId, movedProject.path, movedProject.path_mode, nextOrder, ts, projectId]
+        );
+      } else {
+        await db.execute(
+          "UPDATE projects SET group_id = $1, sort_order = $2, updated_at = $3 WHERE id = $4",
+          [targetGroupId, nextOrder, ts, projectId]
+        );
+      }
       await get().fetchAll();
     } catch (err) {
       set({ projects, tree });
@@ -645,9 +664,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const siblings = groups.filter((g) => g.parent_id === targetParentId && g.id !== groupId);
     const maxOrder = siblings.reduce((m, g) => Math.max(m, g.sort_order ?? 0), -1);
     const nextOrder = maxOrder + 1;
+    // 根层没有父级可供继承：继承分组脱出父级时固化其当前有效路径。
+    // 进入其他文件夹时保留空 bound_path（继承模式），由解析器跟随新父级。
+    const movedGroup = group.bound_path?.trim() || targetParentId !== null
+      ? group
+      : { ...group, bound_path: resolveGroupBoundPath(groups, group.parent_id) };
     const nextGroups = groups.map((item) =>
       item.id === groupId
-        ? { ...item, parent_id: targetParentId, sort_order: nextOrder }
+        ? { ...movedGroup, parent_id: targetParentId, sort_order: nextOrder }
         : item
     );
 
@@ -658,10 +682,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     try {
       const db = await getDb();
-      await db.execute(
-        "UPDATE groups SET parent_id = $1, sort_order = $2 WHERE id = $3",
-        [targetParentId, nextOrder, groupId]
-      );
+      if (movedGroup.bound_path !== group.bound_path) {
+        await db.execute(
+          "UPDATE groups SET parent_id = $1, bound_path = $2, sort_order = $3 WHERE id = $4",
+          [targetParentId, movedGroup.bound_path, nextOrder, groupId]
+        );
+      } else {
+        await db.execute(
+          "UPDATE groups SET parent_id = $1, sort_order = $2 WHERE id = $3",
+          [targetParentId, nextOrder, groupId]
+        );
+      }
       await get().fetchAll();
     } catch (err) {
       set({ groups, tree });

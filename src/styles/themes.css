@@ -345,6 +345,35 @@
   --surface-container-highest: #dfe3e7;
 }
 
+/* 项目栏节点外观调色板（issue #213）。只用于图标着色与选中态色条，不做整行背景铺色。
+   暗色取 400 级、亮色取 600 级，保证与 #141414 / #ffffff 的非文本对比度 ≥ 3:1。 */
+:root,
+[data-theme="dark"] {
+  --node-accent-p1: #f87171;
+  --node-accent-p2: #fb923c;
+  --node-accent-p3: #fbbf24;
+  --node-accent-p4: #4ade80;
+  --node-accent-p5: #2dd4bf;
+  --node-accent-p6: #38bdf8;
+  --node-accent-p7: #818cf8;
+  --node-accent-p8: #a78bfa;
+  --node-accent-p9: #f472b6;
+  --node-accent-p10: #94a3b8;
+}
+
+[data-theme="light"] {
+  --node-accent-p1: #dc2626;
+  --node-accent-p2: #ea580c;
+  --node-accent-p3: #b45309;
+  --node-accent-p4: #16a34a;
+  --node-accent-p5: #0d9488;
+  --node-accent-p6: #0284c7;
+  --node-accent-p7: #4f46e5;
+  --node-accent-p8: #7c3aed;
+  --node-accent-p9: #db2777;
+  --node-accent-p10: #475569;
+}
+
 [data-theme="dark"][data-dark-palette="investment-platform"] {
   --surface-container-lowest: color-mix(in srgb, var(--bg-primary) 88%, #020617 12%);
   --surface-container-low: color-mix(in srgb, var(--bg-secondary) 90%, #0b1120 10%);

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "request_id": "request-fixture-1",
+      "app_type": "codex",
+      "provider_id": "provider-fixture",
+      "provider_name": "Fixture Provider",
+      "requested_model": "a",
+      "upstream_model": "b",
+      "started_at_ms": 1000,
+      "duration_ms": 42,
+      "status_code": 200,
+      "outcome": "success",
+      "degraded": 1,
+      "attempt_count": 2,
+      "input_tokens": 12,
+      "output_tokens": 8,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "rectifier_flags": "[\"media_fallback\"]",
+      "error_code": null,
+      "created_at_ms": 1042
+    },
+    {
+      "request_id": "request-fixture-2",
+      "app_type": "claude",
+      "provider_id": "provider-fixture",
+      "provider_name": "Fixture Provider",
+      "requested_model": "claude-fixture",
+      "upstream_model": "claude-upstream-fixture",
+      "started_at_ms": 2000,
+      "duration_ms": 17,
+      "status_code": 502,
+      "outcome": "upstream_error",
+      "degraded": 0,
+      "attempt_count": 1,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "rectifier_flags": "[]",
+      "error_code": "routing_upstream_unavailable",
+      "created_at_ms": 2017
+    }
+  ],
+  "runtimeKeyAttempts": [
+    {
+      "provider_id": "provider-fixture",
+      "key_id": "key-fixture-1",
+      "key_label": "Fixture key …0001",
+      "outcome": "rate_limited",
+      "cooldown_ms": 30000
+    }
+  ],
+  "forbiddenFields": ["body", "request_body", "response_body", "headers", "authorization", "api_key", "password", "raw_error"]
+}

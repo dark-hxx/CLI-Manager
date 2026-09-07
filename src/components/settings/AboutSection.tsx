@@ -158,7 +158,7 @@ export function AboutSection() {
     return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
-  const canDownload = distribution !== "aur" && updateAvailable && updateInfo && !downloading && !readyToInstall && !installing;
+  const canDownload = distribution === "standalone" && updateAvailable && updateInfo && !downloading && !readyToInstall && !installing;
   const showLatest = distribution !== "aur" && Boolean(lastCheckedAt && !checking && !error && !updateAvailable);
   const progressLabel = downloadTotalBytes
     ? `${downloadProgress}%（${formatBytes(downloadedBytes)} / ${formatBytes(downloadTotalBytes)}）`
@@ -204,6 +204,13 @@ export function AboutSection() {
             V{currentVersion || "---"}
           </span>
         </div>
+
+        {distribution === "portable" && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-surface-container-high/60 p-3 text-xs text-on-surface-variant">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+            <span>{t("app.update.portableManaged")}</span>
+          </div>
+        )}
 
         {distribution === "aur" ? (
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-container-high/60 p-3">
@@ -289,6 +296,16 @@ export function AboutSection() {
                   >
                     <Download className="h-3.5 w-3.5" />
                     <span>{text("下载更新", "Download Update")}</span>
+                  </button>
+                )}
+                {distribution === "portable" && (
+                  <button
+                    type="button"
+                    onClick={handleOpenReleaseFallback}
+                    className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>{t("app.update.downloadPortable")}</span>
                   </button>
                 )}
                 {readyToInstall && !installConfirmVisible && (

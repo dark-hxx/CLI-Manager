@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality checklist for verification after terminal UI changes."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Validation and regression review guidance for changed frontend behavior."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review component identity/rendering stability after split layout refactor."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check TypeScript type correctness of layout calculations."}

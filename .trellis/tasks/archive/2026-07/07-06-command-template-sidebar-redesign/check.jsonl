@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index for verification."}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify i18n and component conventions."}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify local state and Zustand subscription conventions."}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify required frontend quality checks."}
-{"file": ".trellis/spec/guides/task-delivery-checklist.md", "reason": "Verify changelog and dirty-file handling."}

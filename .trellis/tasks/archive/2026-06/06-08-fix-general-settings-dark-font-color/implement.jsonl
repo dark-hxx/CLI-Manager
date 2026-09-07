@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component/settings conventions and manual UI verification expectations."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Settings are Zustand + persisted store; avoid unnecessary persisted schema changes."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality and manual runtime UI verification rule."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check before adding helper logic; avoid unnecessary abstraction."}

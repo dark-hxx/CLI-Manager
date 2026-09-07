@@ -1,7 +1,0 @@
-{"file":".trellis/tasks/06-22-cli-manager-agent/prd.md","reason":"Task requirements, constraints, current decisions, and acceptance criteria for built-in agent split panes."}
-{"file":".trellis/tasks/06-22-cli-manager-agent/research/cmux-agent-panes.md","reason":"Detailed research on how CMUX launches and renders agent panes, plus implementation implications for CLI-Manager."}
-{"file":".trellis/tasks/06-22-cli-manager-agent/research/current-findings-summary.md","reason":"Concise saved snapshot of current findings and recommended phased implementation path."}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Existing CLI hook and subagent transcript contracts that the implementation must preserve."}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Existing PTY/runtime status contracts relevant to agent pane status integration."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Existing terminal pane tree and session state contracts relevant to split-pane agent placement."}
-{"file":".trellis/tasks/06-22-cli-manager-agent/acceptance.md","reason":"Verify implementation against the agreed Phase 1 acceptance criteria and manual scenarios."}

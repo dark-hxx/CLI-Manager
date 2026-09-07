@@ -1,0 +1,32 @@
+{
+  "id": "inherit-parent-hint",
+  "name": "inherit-parent-hint",
+  "title": "提示未绑定父级路径时的继承选项",
+  "description": "在项目创建和编辑时，点击因父级未绑定路径而禁用的继承选项时显示本地化提示。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": "feat/sidebar-folder-shell-binding",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-29-sidebar-folder-shell-binding",
+  "relatedFiles": [
+    "src/components/ui/select.tsx",
+    "src/components/ConfigModal.tsx",
+    "src/lib/i18n.ts",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

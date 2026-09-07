@@ -1,10 +1,12 @@
 use std::{
     fs,
+    io::Cursor,
     path::{Component, Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use base64::{engine::general_purpose, Engine as _};
+use image::ImageDecoder;
 use memchr::memmem;
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -51,6 +53,7 @@ const CONTENT_SEARCH_SKIPPED_EXTENSIONS: &[&str] = &[
     "mov", "mp3", "mp4", "pdf", "png", "pyc", "rar", "so", "tar", "wasm", "webp", "zip",
 ];
 const ATTACHMENT_RETENTION_SECS: u64 = 2 * 24 * 60 * 60;
+const CLIPBOARD_IMAGE_MAX_FILES: usize = 8;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +102,15 @@ pub struct ContentSearchMatch {
     pub after: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardImageAttachments {
+    pub paths: Vec<String>,
+    pub had_files: bool,
+    pub rejected_count: usize,
+    pub rejection_code: Option<String>,
+}
+
 /// 读取系统剪贴板中的 `CF_HDROP` 文件路径列表（Windows 资源管理器复制文件时写入的格式）。
 /// WebView2 的 ClipboardEvent 拿不到该格式，需走原生 Win32 API。非 Windows 平台返回空列表。
 #[tauri::command]
@@ -106,6 +118,129 @@ pub async fn clipboard_read_file_paths() -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(read_clipboard_file_paths)
         .await
         .map_err(|err| err.to_string())?
+}
+
+/// Convert image files currently present in the Windows clipboard to PNG attachments.
+/// The command intentionally accepts no paths from the WebView: it reads CF_HDROP itself
+/// so a compromised renderer cannot turn this into an arbitrary file reader.
+#[tauri::command]
+pub async fn clipboard_attach_image_files() -> Result<ClipboardImageAttachments, String> {
+    tokio::task::spawn_blocking(attach_clipboard_image_files)
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn attach_clipboard_image_files() -> Result<ClipboardImageAttachments, String> {
+    let file_paths = read_clipboard_file_paths()?;
+    if file_paths.is_empty() {
+        return Ok(ClipboardImageAttachments {
+            paths: Vec::new(),
+            had_files: false,
+            rejected_count: 0,
+            rejection_code: None,
+        });
+    }
+
+    let data_dir = cli_manager_data_dir()?;
+    let attachments_dir = ensure_attachment_dir(&data_dir)?;
+    let mut paths = Vec::new();
+    let mut rejected_count = 0;
+    let mut rejection_code = None;
+    for source in file_paths.into_iter().take(CLIPBOARD_IMAGE_MAX_FILES) {
+        match convert_clipboard_image_file(Path::new(&source), &attachments_dir) {
+            Ok(path) => paths.push(path.to_string_lossy().into_owned()),
+            Err(code) => {
+                rejected_count += 1;
+                rejection_code.get_or_insert(code);
+            }
+        }
+    }
+    Ok(ClipboardImageAttachments {
+        paths,
+        had_files: true,
+        rejected_count,
+        rejection_code,
+    })
+}
+
+fn convert_clipboard_image_file(source: &Path, attachments_dir: &Path) -> Result<PathBuf, String> {
+    let metadata = fs::symlink_metadata(source).map_err(|_| "clipboard_image_unavailable")?;
+    if is_symlink_or_reparse(&metadata) || !metadata.is_file() {
+        return Err("clipboard_image_not_regular_file".into());
+    }
+    if metadata.len() == 0 || metadata.len() > IMAGE_FILE_MAX_BYTES {
+        return Err("clipboard_image_too_large".into());
+    }
+    if !is_clipboard_image_extension(source) {
+        return Err("unsupported_image".into());
+    }
+
+    let mut decoder = image::ImageReader::open(source)
+        .map_err(|_| "unsupported_image")?
+        .with_guessed_format()
+        .map_err(|_| "unsupported_image")?
+        .into_decoder()
+        .map_err(|_| "unsupported_image")?;
+    let (width, height) = decoder.dimensions();
+    validate_image_pixel_count(width, height)?;
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|_| "unsupported_image")?;
+    image.apply_orientation(orientation);
+
+    let mut encoded = Vec::new();
+    for _ in 0..5 {
+        encoded.clear();
+        image
+            .write_to(&mut Cursor::new(&mut encoded), image::ImageFormat::Png)
+            .map_err(|_| "image_encode_failed")?;
+        if encoded.len() as u64 <= IMAGE_FILE_MAX_BYTES {
+            break;
+        }
+        let (current_width, current_height) = image::GenericImageView::dimensions(&image);
+        let scale = (IMAGE_FILE_MAX_BYTES as f64 / encoded.len() as f64).sqrt() * 0.9;
+        let next_width = ((current_width as f64 * scale).round() as u32).max(1);
+        let next_height = ((current_height as f64 * scale).round() as u32).max(1);
+        if next_width >= current_width && next_height >= current_height {
+            break;
+        }
+        image = image.resize(
+            next_width,
+            next_height,
+            image::imageops::FilterType::Lanczos3,
+        );
+    }
+    if encoded.len() as u64 > IMAGE_FILE_MAX_BYTES {
+        return Err("clipboard_image_too_large".into());
+    }
+
+    let target = unique_attachment_target(attachments_dir, "clipboard-image.png")?;
+    fs::write(&target, encoded).map_err(|_| "write_file_failed")?;
+    Ok(target)
+}
+
+fn is_clipboard_image_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "png"
+                    | "apng"
+                    | "jpg"
+                    | "jpeg"
+                    | "jfif"
+                    | "gif"
+                    | "webp"
+                    | "bmp"
+                    | "dib"
+                    | "tif"
+                    | "tiff"
+                    | "ico"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "windows")]
@@ -1141,7 +1276,6 @@ fn is_video_path(path: &Path) -> bool {
                 | "mpg"
                 | "mts"
                 | "ogv"
-                | "ts"
                 | "webm"
                 | "wmv"
         )
@@ -1390,6 +1524,8 @@ mod tests {
             read_text_file_bytes(&root.to_string_lossy(), "clip.mp4").unwrap_err(),
             "video_preview_unsupported"
         );
+        fs::write(root.join("main.ts"), b"export const preview = true;\n").unwrap();
+        assert!(read_text_file_bytes(&root.to_string_lossy(), "main.ts").is_ok());
     }
 
     #[test]
@@ -1428,6 +1564,41 @@ mod tests {
             "name_contains_separator"
         );
         assert_eq!(validate_child_name("..").unwrap_err(), "invalid_name");
+    }
+
+    #[test]
+    fn clipboard_image_extensions_cover_common_desktop_formats() {
+        for extension in [
+            "png", "apng", "jpg", "jpeg", "jfif", "gif", "webp", "bmp", "dib", "tif", "tiff", "ico",
+        ] {
+            assert!(is_clipboard_image_extension(Path::new(&format!(
+                "image.{extension}"
+            ))));
+        }
+        for extension in ["svg", "avif", "heic", "heif", "txt"] {
+            assert!(!is_clipboard_image_extension(Path::new(&format!(
+                "image.{extension}"
+            ))));
+        }
+    }
+
+    #[test]
+    fn clipboard_image_file_is_normalized_to_png_attachment() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source.bmp");
+        let attachments = tmp.path().join("attachments");
+        fs::create_dir(&attachments).unwrap();
+        image::RgbImage::from_pixel(3, 2, image::Rgb([12, 34, 56]))
+            .save(&source)
+            .unwrap();
+
+        let target = convert_clipboard_image_file(&source, &attachments).unwrap();
+
+        assert_eq!(
+            target.extension().and_then(|value| value.to_str()),
+            Some("png")
+        );
+        assert_eq!(image::image_dimensions(target).unwrap(), (3, 2));
     }
 
     #[test]

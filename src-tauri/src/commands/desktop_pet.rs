@@ -1,4 +1,4 @@
-use crate::app_paths;
+use crate::{app_paths, provider::network_client};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -8,9 +8,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
-#[cfg(not(target_os = "windows"))]
-use tauri::PhysicalSize;
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, Runtime};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 use uuid::Uuid;
 use zip::ZipArchive;
 
@@ -684,7 +682,7 @@ fn write_catalog_cache(root: &Path, text: &str) -> Result<(), String> {
 }
 
 async fn fetch_remote_catalog() -> Result<(PetCatalog, String), String> {
-    let client = reqwest::Client::builder()
+    let client = network_client::configure_builder(reqwest::Client::builder())?
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|err| format!("pet_catalog_client_failed: {err}"))?;
@@ -762,7 +760,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 async fn download_package(entry: &PetCatalogEntry) -> Result<Vec<u8>, String> {
-    let client = reqwest::Client::builder()
+    let client = network_client::configure_builder(reqwest::Client::builder())?
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|err| format!("pet_download_client_failed: {err}"))?;
@@ -1148,6 +1146,102 @@ fn window_size(scale: f64) -> (f64, f64) {
     )
 }
 
+fn physical_window_size(scale: f64, scale_factor: f64) -> (u32, u32) {
+    let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    let (width, height) = window_size(scale);
+    (
+        (width * scale_factor).round().max(1.0) as u32,
+        (height * scale_factor).round().max(1.0) as u32,
+    )
+}
+
+fn desired_window_geometry<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    config: &DesktopPetWindowConfig,
+) -> ((u32, u32), Option<(i32, i32)>) {
+    // A hidden window can still report its previous monitor, so resolve DPI from the saved target.
+    let monitor = if let Some(position) = config.position.as_ref() {
+        window
+            .monitor_from_point(position.x as f64 + 1.0, position.y as f64 + 1.0)
+            .ok()
+            .flatten()
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten())
+    } else {
+        window
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| window.current_monitor().ok().flatten())
+    };
+    let scale_factor = monitor
+        .as_ref()
+        .map(|monitor| monitor.scale_factor())
+        .or_else(|| window.scale_factor().ok())
+        .unwrap_or(1.0);
+    let size = physical_window_size(config.scale, scale_factor);
+    let position = config
+        .position
+        .as_ref()
+        .map(|position| (position.x, position.y))
+        .or_else(|| {
+            monitor.map(|monitor| {
+                let monitor_position = monitor.position();
+                let monitor_size = monitor.size();
+                (
+                    monitor_position.x + monitor_size.width as i32
+                        - size.0 as i32
+                        - PET_WINDOW_MARGIN,
+                    monitor_position.y + monitor_size.height as i32
+                        - size.1 as i32
+                        - PET_WINDOW_MARGIN
+                        - 40,
+                )
+            })
+        });
+    (size, position)
+}
+
+fn apply_window_geometry<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    size: (u32, u32),
+    position: Option<(i32, i32)>,
+) -> Result<(), String> {
+    if let Some((x, y)) = position {
+        window
+            .set_position(PhysicalPosition::new(x, y))
+            .map_err(|err| format!("pet_window_position_failed: {err}"))?;
+    }
+    window
+        .set_size(PhysicalSize::new(size.0, size.1))
+        .map_err(|err| format!("pet_window_resize_failed: {err}"))
+}
+
+fn ensure_window_geometry<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    size: (u32, u32),
+    position: Option<(i32, i32)>,
+) -> Result<(), String> {
+    let size_mismatch = window
+        .inner_size()
+        .map(|actual| actual.width.abs_diff(size.0) > 1 || actual.height.abs_diff(size.1) > 1)
+        .unwrap_or(true);
+    let position_mismatch = position.is_some_and(|(x, y)| {
+        window
+            .outer_position()
+            .map(|actual| actual.x.abs_diff(x) > 1 || actual.y.abs_diff(y) > 1)
+            .unwrap_or(true)
+    });
+    if size_mismatch || position_mismatch {
+        apply_window_geometry(window, size, position)?;
+    }
+    Ok(())
+}
+
 fn place_default<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     let Ok(Some(monitor)) = window.primary_monitor() else {
         return;
@@ -1186,23 +1280,24 @@ pub fn desktop_pet_window_sync(
         return Ok(());
     }
 
-    let (width, height) = window_size(config.scale);
-    window
-        .set_size(LogicalSize::new(width, height))
-        .map_err(|err| format!("pet_window_resize_failed: {err}"))?;
+    // Pet scaling is application-controlled; persisted WebView2 zoom must not shrink its viewport.
+    #[cfg(target_os = "windows")]
+    let _ = window.set_zoom(1.0);
+
+    let (size, position) = desired_window_geometry(&window, &config);
+    apply_window_geometry(&window, size, position)?;
     window
         .set_always_on_top(config.always_on_top)
         .map_err(|err| format!("pet_window_topmost_failed: {err}"))?;
-    if let Some(position) = config.position {
-        window
-            .set_position(PhysicalPosition::new(position.x, position.y))
-            .map_err(|err| format!("pet_window_position_failed: {err}"))?;
-    } else {
-        place_default(&window);
-    }
     window
         .show()
         .map_err(|err| format!("pet_window_show_failed: {err}"))?;
+
+    #[cfg(target_os = "windows")]
+    window
+        .set_zoom(1.0)
+        .map_err(|err| format!("pet_window_zoom_reset_failed: {err}"))?;
+    ensure_window_geometry(&window, size, position)?;
 
     #[cfg(target_os = "windows")]
     window
@@ -1354,6 +1449,21 @@ mod tests {
         assert_eq!(window_size(2.0), (285.0, 315.0));
     }
 
+    #[test]
+    fn desktop_pet_physical_window_size_tracks_monitor_dpi() {
+        assert_eq!(physical_window_size(1.0, 1.0), (190, 210));
+        assert_eq!(physical_window_size(1.25, 1.0), (238, 263));
+        assert_eq!(physical_window_size(1.0, 1.25), (238, 263));
+        assert_eq!(physical_window_size(1.25, 1.25), (297, 328));
+        assert_eq!(physical_window_size(1.5, 1.5), (428, 473));
+    }
+
+    #[test]
+    fn desktop_pet_physical_window_size_rejects_invalid_dpi() {
+        assert_eq!(physical_window_size(1.0, 0.0), (190, 210));
+        assert_eq!(physical_window_size(1.0, f64::NAN), (190, 210));
+    }
+
     fn fake_png(width: u32, height: u32) -> Vec<u8> {
         let mut bytes = vec![0u8; 24];
         bytes[0..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
@@ -1419,7 +1529,10 @@ mod tests {
         assert!(!valid_codex_pet_id("banana--cat"));
         assert!(safe_relative_file("assets/pet.svg").is_some());
         assert!(safe_relative_file("../pet.svg").is_none());
+        #[cfg(windows)]
         assert!(safe_relative_file("C:/pet.svg").is_none());
+        #[cfg(not(windows))]
+        assert!(safe_relative_file("/pet.svg").is_none());
     }
 
     #[test]

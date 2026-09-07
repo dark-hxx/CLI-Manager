@@ -14,15 +14,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { copyAiText } from "../../lib/aiClipboard";
-import { formatAiPathBlock, formatAiRootTree, formatAiTree, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
-import { debugConsoleWarn } from "../../lib/debugConsole";
-import { POINTER_DRAG_START_PX } from "../../lib/dragInteraction";
+import { formatAiRootTree, formatAiTree, TERMINAL_FILE_PATH_MIME } from "../../lib/aiPathFormatter";
+import { isTerminalFilePointerDragClickHandled, useTerminalFilePointerDrag } from "../../hooks/useTerminalFilePointerDrag";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import {
   beginTerminalFileDrag,
   commitTerminalFileDragDrop,
+  createTerminalFileDragPayload,
   endTerminalFileDrag,
-  getTerminalFileDropZoneIdAtPoint,
+  TERMINAL_FILE_DRAG_MIME,
   updateTerminalFileDragPointFromEvent,
 } from "../../lib/terminalFileDrag";
 import {
@@ -32,7 +32,7 @@ import {
   isFileExplorerIgnoreCaseInsensitive,
   type FileExplorerIgnoreMatcher,
 } from "../../lib/fileExplorerIgnore";
-import type { GitFileChange, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode } from "../../lib/types";
+import type { GitFileChange, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode, SshHost } from "../../lib/types";
 import { isDefaultCollapsedDirectoryName, useFileExplorerStore } from "../../stores/fileExplorerStore";
 import {
   createGitDiffWorkspaceContext,
@@ -40,14 +40,22 @@ import {
 } from "../../stores/gitDiffWorkspaceStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { useSshHostStore } from "../../stores/sshHostStore";
 import { STATUS_CONFIG } from "../git/GitStatusIcon";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
-import { Portal } from "../ui/Portal";
-import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Search, Trash2, X } from "../icons";
+import { ChevronRight, Copy, EyeOff, File, FileCode, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Search, Trash2, Upload, X } from "../icons";
 import { TERM } from "../stats/termStatsUi";
+import { TerminalPanelHeader } from "../terminal/TerminalPanelHeader";
+import { PathCopyMenu } from "../PathCopyMenu";
+import { SshHostAttachmentDialog } from "../settings/pages/SshHostAttachmentDialog";
+import {
+  LiveServerFileMenuItem,
+  LiveServerRootMenuItem,
+  LiveServerStatusBridge,
+} from "./LiveServerMenuItems";
 
 interface FileExplorerSidebarProps {
   mode?: "sidebar" | "panel";
@@ -75,39 +83,12 @@ type DraggedFileEntry = Pick<ProjectFileEntry, "kind" | "name" | "path">;
 type Translate = ReturnType<typeof useI18n>["t"];
 
 const FILE_EXPLORER_ENTRY_MIME = "application/x-cli-manager-file-entry";
-const FILE_WATCH_REFRESH_DEBOUNCE_MS = 600;
-interface AutoCollapseGroupState {
-  expandedGroupPaths: Set<string>;
+interface FileIgnoreState {
   ignoredPaths: Set<string>;
   /** Project .gitignore matcher, or the built-in fallback matcher. */
   ignoreMatcher: FileExplorerIgnoreMatcher;
-  toggleGroup: (parentPath: string) => void;
   ignorePath: (path: string) => void;
   unignorePath: (path: string) => void;
-}
-
-interface FilePointerDragState {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  entry: ProjectFileEntry;
-  preview: FileDragPreviewSource;
-  dragging: boolean;
-}
-
-interface FileDragPreviewSource {
-  className: string;
-  html: string;
-  offsetX: number;
-  offsetY: number;
-  paddingLeft: string;
-  width: number;
-}
-
-interface FileDragPreviewState {
-  x: number;
-  y: number;
-  source: FileDragPreviewSource;
 }
 
 const GIT_STATUS_LABELS: Record<GitFileChange["status"], TranslationKey> = {
@@ -125,7 +106,6 @@ const SEARCH_MODES: Array<{ value: ProjectFileSearchMode; labelKey: TranslationK
   { value: "files", labelKey: "files.search.modeFiles" },
   { value: "content", labelKey: "files.search.modeCode" },
 ];
-const FALLBACK_POLL_INTERVAL_MS = 15000;
 
 function getDisplayPathName(path: string): string {
   const normalized = path.trim().replace(/[\\/]+$/g, "");
@@ -202,46 +182,32 @@ function collectCompactDirectoryChain(entry: ProjectFileEntry): {
   return { suffixParts, leaf, chainPaths };
 }
 
-function splitAutoCollapsedEntries(
-  entries: ProjectFileEntry[],
-  ignoredPaths: Set<string>,
-  ignoreMatcher: FileExplorerIgnoreMatcher
-): {
-  normalEntries: ProjectFileEntry[];
-  collapsedEntries: ProjectFileEntry[];
-} {
-  const normalEntries: ProjectFileEntry[] = [];
-  const collapsedEntries: ProjectFileEntry[] = [];
+/**
+ * Issue #227：VCS 元数据始终不进文件树（JetBrains / VSCode 同样是隐藏而非淡化）。
+ * 不限 kind——git worktree 中 `.git` 是文件而不是目录。
+ */
+const ALWAYS_HIDDEN_ENTRY_NAMES = new Set([".git", ".hg", ".svn"]);
 
-  for (const entry of entries) {
-    const ruleIgnored = ignoreMatcher.ignores(entry.path, entry.kind === "directory");
-    // Issue #147：ignore 命中的文件直接隐藏；目录进入「已折叠」分组
-    if (entry.kind === "file" && ruleIgnored) {
-      continue;
-    }
-    if (
-      entry.kind === "directory"
-      && (isDefaultCollapsedDirectoryName(entry.name) || ignoredPaths.has(entry.path) || ruleIgnored)
-    ) {
-      collapsedEntries.push(entry);
-      continue;
-    }
+function isAlwaysHiddenEntry(entry: ProjectFileEntry): boolean {
+  return ALWAYS_HIDDEN_ENTRY_NAMES.has(entry.name.toLowerCase());
+}
 
-    if (entry.kind === "directory" && entry.children) {
-      const nested = splitAutoCollapsedEntries(entry.children, ignoredPaths, ignoreMatcher);
-      collapsedEntries.push(...nested.collapsedEntries);
-      normalEntries.push(
-        nested.collapsedEntries.length > 0
-          ? { ...entry, children: nested.normalEntries }
-          : entry
-      );
-      continue;
-    }
+/**
+ * Issue #227：忽略项不再抽离到「已折叠文件」分组，改为原位渲染 + 整行淡化。
+ * 判定集合与旧折叠谓词保持等价（默认折叠目录名 ∪ 手动忽略 ∪ ignore 规则命中），
+ * 另把 Issue #147 起被直接隐藏的 ignore 文件放回文件树。
+ */
+function isEntryIgnored(entry: ProjectFileEntry, state: FileIgnoreState): boolean {
+  if (entry.kind === "directory" && isDefaultCollapsedDirectoryName(entry.name)) return true;
+  if (state.ignoredPaths.has(entry.path)) return true;
+  return state.ignoreMatcher.ignores(entry.path, entry.kind === "directory");
+}
 
-    normalEntries.push(entry);
-  }
-
-  return { normalEntries, collapsedEntries };
+/** 过滤 VCS 元数据条目；绝大多数层级不含它们，此时返回原数组引用避免无谓的新数组。 */
+function visibleTreeEntries(entries: ProjectFileEntry[]): ProjectFileEntry[] {
+  return entries.some(isAlwaysHiddenEntry)
+    ? entries.filter((entry) => !isAlwaysHiddenEntry(entry))
+    : entries;
 }
 
 function parentPath(path: string): string {
@@ -341,41 +307,6 @@ function InlineRenameInput({
   );
 }
 
-function AutoCollapsedGroupRow({
-  depth,
-  count,
-  isOpen,
-  onToggle,
-}: {
-  depth: number;
-  count: number;
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <button
-      type="button"
-      className="ui-file-tooltip ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px] text-text-muted"
-      style={{ paddingLeft: 8 + depth * 14 }}
-      data-tooltip={isOpen ? t("files.autoCollapse.collapse") : t("files.autoCollapse.expand")}
-      onClick={onToggle}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-    >
-      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-        <ChevronRight size={12} style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }} />
-      </span>
-      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
-        <Folder size={14} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{t("files.autoCollapse.count", { count })}</span>
-    </button>
-  );
-}
-
 function FileNode({
   entry,
   depth,
@@ -398,9 +329,9 @@ function FileNode({
   onFilePointerMove,
   onFilePointerUp,
   onFilePointerCancel,
-  autoCollapseGroups,
+  ignoreState,
   menuPortalContainer,
-  showRelativePath = false,
+  inheritedIgnored = false,
   readOnly = false,
 }: {
   entry: ProjectFileEntry;
@@ -424,9 +355,10 @@ function FileNode({
   onFilePointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
-  autoCollapseGroups: AutoCollapseGroupState;
+  ignoreState: FileIgnoreState;
   menuPortalContainer: HTMLDivElement | null;
-  showRelativePath?: boolean;
+  /** Issue #227：父级已判定为忽略时，整棵子树继承淡化。 */
+  inheritedIgnored?: boolean;
   readOnly?: boolean;
 }) {
   const { t } = useI18n();
@@ -447,7 +379,12 @@ function FileNode({
     : { suffixParts: [], leaf: entry, chainPaths: [entry.path] };
   const isOpen = isDir && expandedPaths.has(displayEntry.path);
   const isChainExpanded = isDir && chainPaths.some((path) => expandedPaths.has(path));
-  const isManuallyIgnored = isDir && autoCollapseGroups.ignoredPaths.has(entry.path);
+  const isManuallyIgnored = isDir && ignoreState.ignoredPaths.has(entry.path);
+  // Issue #227：紧凑目录链两端都要判定——`src/` 只含一个被忽略的 `generated/` 时
+  // 会合并成一行，此时链头正常而链尾被忽略。
+  const isIgnored = inheritedIgnored
+    || isEntryIgnored(entry, ignoreState)
+    || (isDir && displayEntry !== entry && isEntryIgnored(displayEntry, ignoreState));
   const icon = isDir ? getMaterialFolderIcon(entry.name, isOpen) : getMaterialFileIcon(entry.name);
   const paddingLeft = 8 + depth * 14;
   const displayStatus = getDisplayStatus(displayEntry);
@@ -482,7 +419,6 @@ function FileNode({
   const childRows = isDir && isOpen && displayEntry.children ? (
     <FileTreeRows
       entries={displayEntry.children}
-      parentPath={displayEntry.path}
       depth={depth + 1}
       getDisplayStatus={getDisplayStatus}
       getGitChange={getGitChange}
@@ -503,10 +439,10 @@ function FileNode({
       onFilePointerMove={onFilePointerMove}
       onFilePointerUp={onFilePointerUp}
       onFilePointerCancel={onFilePointerCancel}
-      autoCollapseGroups={autoCollapseGroups}
+      ignoreState={ignoreState}
       menuPortalContainer={menuPortalContainer}
       readOnly={readOnly}
-      renderAutoCollapsedGroup={false}
+      inheritedIgnored={isIgnored}
     />
   ) : null;
 
@@ -516,6 +452,7 @@ function FileNode({
         <div
           className="ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
           data-selected={activePath === displayEntry.path ? "true" : "false"}
+          data-ignored={isIgnored ? "true" : "false"}
           data-file-tree-path={displayEntry.path}
           style={{ paddingLeft }}
         >
@@ -545,6 +482,7 @@ function FileNode({
             tabIndex={0}
             className="ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
             data-selected={activePath === displayEntry.path ? "true" : "false"}
+            data-ignored={isIgnored ? "true" : "false"}
             data-file-tree-path={displayEntry.path}
             data-file-drop-target-path={displayEntry.kind === "directory" ? displayEntry.path : parentPath(displayEntry.path)}
             draggable={false}
@@ -568,7 +506,7 @@ function FileNode({
             onPointerUp={onFilePointerUp}
             onPointerCancel={onFilePointerCancel}
             onClick={(event) => {
-              if (event.currentTarget.dataset.pointerDragHandled === "true") return;
+              if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
               if (isDir) toggleDirectory();
               else onOpenFile(displayEntry);
             }}
@@ -583,7 +521,7 @@ function FileNode({
               className="flex min-w-0 flex-1 items-baseline gap-0.5 truncate"
               style={displayStatus ? { color: displayStatus.color } : undefined}
             >
-              <span className="truncate">{showRelativePath ? entry.path : entry.name}</span>
+              <span className="truncate">{entry.name}</span>
               {suffixParts.length > 0 && (
                 <span className="truncate text-[11px] font-normal text-text-muted">
                   /{suffixParts.join("/")}
@@ -602,6 +540,7 @@ function FileNode({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem project={project} entry={displayEntry} />
           {!readOnly && isDir && (
             <>
               <ContextMenuItem onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
@@ -614,12 +553,12 @@ function FileNode({
                 <Copy size={13} /> {t("files.menu.paste")}
               </ContextMenuItem>
               {isManuallyIgnored ? (
-                <ContextMenuItem onSelect={() => autoCollapseGroups.unignorePath(entry.path)}>
+                <ContextMenuItem onSelect={() => ignoreState.unignorePath(entry.path)}>
                   <X size={13} /> {t("files.menu.unignore")}
                 </ContextMenuItem>
               ) : (
                 <ContextMenuItem onSelect={() => {
-                  autoCollapseGroups.ignorePath(entry.path);
+                  ignoreState.ignorePath(entry.path);
                   if (isChainExpanded) collapseDir(entry.path);
                 }}>
                   <ChevronRight size={13} /> {t("files.menu.ignore")}
@@ -645,9 +584,7 @@ function FileNode({
                 <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
               </ContextMenuItem>}
               <ContextMenuSeparator />
-              <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(displayEntry.path, displayEntry.kind), t("files.toast.aiPathCopied"))}>
-                <Copy size={13} /> {t("files.menu.copyAiPath")}
-              </ContextMenuItem>
+              <PathCopyMenu project={project} relativePath={displayEntry.path} kind={displayEntry.kind} />
               {isDir && (
                 <ContextMenuItem onSelect={() => void copyAiText(formatAiTree(project, displayEntry), t("files.toast.aiTreeCopied"))}>
                   <Folder size={13} /> {t("files.menu.copyAiTree")}
@@ -668,7 +605,6 @@ function FileNode({
 
 function FileTreeRows({
   entries,
-  parentPath,
   depth,
   getDisplayStatus,
   getGitChange,
@@ -689,13 +625,12 @@ function FileTreeRows({
   onFilePointerMove,
   onFilePointerUp,
   onFilePointerCancel,
-  autoCollapseGroups,
+  ignoreState,
   menuPortalContainer,
-  renderAutoCollapsedGroup,
+  inheritedIgnored = false,
   readOnly = false,
 }: {
   entries: ProjectFileEntry[];
-  parentPath: string;
   depth: number;
   getDisplayStatus: (entry: ProjectFileEntry) => FileDisplayStatus | null;
   getGitChange: (path: string) => GitFileChange | null;
@@ -716,19 +651,15 @@ function FileTreeRows({
   onFilePointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   onFilePointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
-  autoCollapseGroups: AutoCollapseGroupState;
+  ignoreState: FileIgnoreState;
   menuPortalContainer: HTMLDivElement | null;
-  renderAutoCollapsedGroup: boolean;
+  /** Issue #227：父级已判定为忽略时，整棵子树继承淡化。 */
+  inheritedIgnored?: boolean;
   readOnly?: boolean;
 }) {
-  const { normalEntries, collapsedEntries } = renderAutoCollapsedGroup
-    ? splitAutoCollapsedEntries(entries, autoCollapseGroups.ignoredPaths, autoCollapseGroups.ignoreMatcher)
-    : { normalEntries: entries, collapsedEntries: [] };
-  const groupOpen = autoCollapseGroups.expandedGroupPaths.has(parentPath);
-
   return (
     <div>
-      {normalEntries.map((entry) => (
+      {visibleTreeEntries(entries).map((entry) => (
         <FileNode
           key={entry.path}
           entry={entry}
@@ -752,51 +683,12 @@ function FileTreeRows({
           onFilePointerMove={onFilePointerMove}
           onFilePointerUp={onFilePointerUp}
           onFilePointerCancel={onFilePointerCancel}
-          autoCollapseGroups={autoCollapseGroups}
+          ignoreState={ignoreState}
           menuPortalContainer={menuPortalContainer}
+          inheritedIgnored={inheritedIgnored}
           readOnly={readOnly}
         />
       ))}
-      {collapsedEntries.length > 0 && (
-        <>
-          <AutoCollapsedGroupRow
-            depth={depth}
-            count={collapsedEntries.length}
-            isOpen={groupOpen}
-            onToggle={() => autoCollapseGroups.toggleGroup(parentPath)}
-          />
-          {groupOpen && collapsedEntries.map((entry) => (
-            <FileNode
-              key={entry.path}
-              entry={entry}
-              depth={depth + 1}
-              getDisplayStatus={getDisplayStatus}
-              getGitChange={getGitChange}
-              onOpenFile={onOpenFile}
-              onOpenDiff={onOpenDiff}
-              onInput={onInput}
-              onConfirm={onConfirm}
-              renamingPath={renamingPath}
-              onRenameSubmit={onRenameSubmit}
-              onRenameCancel={onRenameCancel}
-              onFileKeyDown={onFileKeyDown}
-              onFileDragStart={onFileDragStart}
-              onFileDrag={onFileDrag}
-              onFileDragEnd={onFileDragEnd}
-              onFileDragOver={onFileDragOver}
-              onFileDrop={onFileDrop}
-              onFilePointerDown={onFilePointerDown}
-              onFilePointerMove={onFilePointerMove}
-              onFilePointerUp={onFilePointerUp}
-              onFilePointerCancel={onFilePointerCancel}
-              autoCollapseGroups={autoCollapseGroups}
-              menuPortalContainer={menuPortalContainer}
-              readOnly={readOnly}
-              showRelativePath
-            />
-          ))}
-        </>
-      )}
     </div>
   );
 }
@@ -806,6 +698,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const [menuPortalContainer, setMenuPortalContainer] = useState<HTMLDivElement | null>(null);
   const project = useFileExplorerStore((s) => s.project);
   const readOnly = project?.environment_type === "ssh";
+  const sshHostsLoaded = useSshHostStore((s) => s.loaded);
+  const fetchSshHosts = useSshHostStore((s) => s.fetchHosts);
+  const [attachmentHost, setAttachmentHost] = useState<SshHost | null>(null);
+  const [openingAttachment, setOpeningAttachment] = useState(false);
   const tree = useFileExplorerStore((s) => s.tree);
   const loading = useFileExplorerStore((s) => s.loading);
   const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
@@ -820,7 +716,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const clipboard = useFileExplorerStore((s) => s.clipboard);
   const closeProject = useFileExplorerStore((s) => s.closeProject);
   const refresh = useFileExplorerStore((s) => s.refresh);
-  const refreshVisibleState = useFileExplorerStore((s) => s.refreshVisibleState);
   const setSearchMode = useFileExplorerStore((s) => s.setSearchMode);
   const setSearchQuery = useFileExplorerStore((s) => s.setSearchQuery);
   const openFile = useFileExplorerStore((s) => s.openFile);
@@ -838,7 +733,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const [inputValue, setInputValue] = useState("");
   const [renamingAction, setRenamingAction] = useState<RenameAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
-  const [expandedAutoCollapseGroups, setExpandedAutoCollapseGroups] = useState<Set<string>>(new Set());
   /** null = not loaded or unavailable; fallback rules remain active. */
   const [projectGitIgnoreMatcher, setProjectGitIgnoreMatcher] = useState<FileExplorerIgnoreMatcher | null>(null);
   const [gitIgnoreLoadState, setGitIgnoreLoadState] = useState<"idle" | "loaded" | "missing">("idle");
@@ -848,23 +742,28 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     [project?.path]
   );
   const [searchControlsVisible, setSearchControlsVisible] = useState(false);
-  const [dragPreview, setDragPreview] = useState<FileDragPreviewState | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const pointerDragRef = useRef<FilePointerDragState | null>(null);
-  const dragPreviewElementRef = useRef<HTMLDivElement | null>(null);
-  const dragPreviewFrameRef = useRef<number | null>(null);
-  const pendingDragPreviewRef = useRef<{ source: FileDragPreviewSource; x: number; y: number } | null>(null);
 
-  useEffect(() => () => {
-    if (dragPreviewFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragPreviewFrameRef.current);
+  const openSftp = useCallback(async () => {
+    const hostId = project?.environment_type === "ssh" ? project.ssh_host_id?.trim() ?? "" : "";
+    if (!hostId || openingAttachment) return;
+    setOpeningAttachment(true);
+    try {
+      if (!sshHostsLoaded) await fetchSshHosts();
+      const host = useSshHostStore.getState().hosts.find((candidate) => candidate.id === hostId);
+      if (!host) {
+        toast.error(t("files.sshSftpHostUnavailable"));
+        return;
+      }
+      setAttachmentHost(host);
+    } catch (error) {
+      toast.error(t("files.sshSftpOpenFailed"), { description: String(error) });
+    } finally {
+      setOpeningAttachment(false);
     }
-    if (pointerDragRef.current?.dragging) endTerminalFileDrag();
-    document.body.style.removeProperty("user-select");
-  }, []);
+  }, [fetchSshHosts, openingAttachment, project, sshHostsLoaded, t]);
 
   useEffect(() => {
-    setExpandedAutoCollapseGroups(new Set());
     setSearchControlsVisible(false);
     setProjectGitIgnoreMatcher(null);
     setGitIgnoreLoadState("idle");
@@ -907,45 +806,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    let fallbackTimer: number | undefined;
-    let refreshTimer: number | undefined;
-    let pendingChangedPaths: Set<string> | null | undefined;
-
-    const isActive = () => document.visibilityState === "visible" && document.hasFocus();
-    const refreshIfActive = (changedPaths?: string[]) => {
-      if (isActive()) void refreshVisibleState(changedPaths);
-    };
-    const scheduleRefreshIfActive = (changedPaths?: string[]) => {
-      if (!isActive()) return;
-      if (!changedPaths?.length) {
-        pendingChangedPaths = null;
-      } else if (pendingChangedPaths !== null) {
-        pendingChangedPaths ??= new Set<string>();
-        for (const path of changedPaths) pendingChangedPaths.add(path);
-      }
-      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = undefined;
-        const paths = pendingChangedPaths === null
-          ? undefined
-          : pendingChangedPaths
-            ? Array.from(pendingChangedPaths)
-            : undefined;
-        pendingChangedPaths = undefined;
-        refreshIfActive(paths);
-      }, FILE_WATCH_REFRESH_DEBOUNCE_MS);
-    };
-    const startFallback = () => {
-      if (fallbackTimer === undefined) {
-        fallbackTimer = window.setInterval(refreshIfActive, FALLBACK_POLL_INTERVAL_MS);
-      }
-    };
-    const stopFallback = () => {
-      if (fallbackTimer !== undefined) {
-        window.clearInterval(fallbackTimer);
-        fallbackTimer = undefined;
-      }
-    };
 
     void listen<{ projectPath: string; changedPaths?: string[] }>("project-files-changed", (event) => {
       if (disposed) return;
@@ -953,34 +813,16 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       if (includesProjectGitIgnoreChange(event.payload.changedPaths)) {
         setGitIgnoreRefreshSeq((current) => current + 1);
       }
-      scheduleRefreshIfActive(event.payload.changedPaths);
     }).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;
     });
 
-    void invoke("file_watch_start", { projectPath: project.path }).catch((err) => {
-      debugConsoleWarn("[FileExplorerSidebar] file_watch_start failed, falling back to polling:", err);
-      if (!disposed) startFallback();
-    });
-
-    const onFocus = () => refreshIfActive();
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") refreshIfActive();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-
     return () => {
       disposed = true;
-      stopFallback();
-      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
       if (unlisten) unlisten();
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-      void invoke("file_watch_stop", { projectPath: project.path }).catch(() => {});
     };
-  }, [project?.path, readOnly, refreshVisibleState]);
+  }, [project?.path, readOnly]);
 
   const hasSearchQuery = Boolean(searchQuery.trim());
 
@@ -998,18 +840,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     () => new Set(project ? fileExplorerIgnoredPaths[project.id] ?? [] : []),
     [fileExplorerIgnoredPaths, project]
   );
-
-  const toggleAutoCollapseGroup = useCallback((parentPath: string) => {
-    setExpandedAutoCollapseGroups((current) => {
-      const next = new Set(current);
-      if (next.has(parentPath)) {
-        next.delete(parentPath);
-      } else {
-        next.add(parentPath);
-      }
-      return next;
-    });
-  }, []);
 
   const ignorePath = useCallback((path: string) => {
     if (!project) return;
@@ -1047,40 +877,18 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   useEffect(() => {
     if (!selectedTreePath) return;
-    const rootPath = selectedTreePath.split("/")[0];
-    const rootEntry = tree.find((entry) => entry.path === rootPath);
-    if (
-      rootEntry?.kind !== "directory"
-      || !(
-        isDefaultCollapsedDirectoryName(rootEntry.name)
-        || ignoredPaths.has(rootEntry.path)
-        || ignoreMatcher.ignores(rootEntry.path, true)
-      )
-    ) {
-      return;
-    }
-    setExpandedAutoCollapseGroups((current) => {
-      if (current.has("")) return current;
-      return new Set([...current, ""]);
-    });
-  }, [ignoreMatcher, ignoredPaths, selectedTreePath, tree]);
-
-  useEffect(() => {
-    if (!selectedTreePath) return;
     const escapedPath = typeof CSS !== "undefined" && typeof CSS.escape === "function"
       ? CSS.escape(selectedTreePath)
       : selectedTreePath.replace(/(["\\])/gu, "\\$1");
     document.querySelector<HTMLElement>(`[data-file-tree-path="${escapedPath}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [expandedAutoCollapseGroups, selectedTreePath, tree]);
+  }, [selectedTreePath, tree]);
 
-  const autoCollapseGroups = useMemo<AutoCollapseGroupState>(() => ({
-    expandedGroupPaths: expandedAutoCollapseGroups,
+  const ignoreState = useMemo<FileIgnoreState>(() => ({
     ignoredPaths,
     ignoreMatcher,
-    toggleGroup: toggleAutoCollapseGroup,
     ignorePath,
     unignorePath,
-  }), [expandedAutoCollapseGroups, ignoredPaths, ignoreMatcher, toggleAutoCollapseGroup, ignorePath, unignorePath]);
+  }), [ignoredPaths, ignoreMatcher, ignorePath, unignorePath]);
 
   const getDisplayStatus = useCallback((entry: ProjectFileEntry): FileDisplayStatus | null => {
     if (dirtyFilePaths.has(entry.path)) {
@@ -1189,43 +997,21 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     return target.dataset.fileDropTargetPath ?? "";
   }, []);
 
-  const markPointerDragHandled = useCallback((element: HTMLElement) => {
-    element.dataset.pointerDragHandled = "true";
-    window.setTimeout(() => {
-      delete element.dataset.pointerDragHandled;
-    }, 0);
-  }, []);
+  const handlePointerDropOutsideTerminal = useCallback((entry: ProjectFileEntry, { x, y }: { x: number; y: number }) => {
+    const targetPath = getPointerDropTargetPath(x, y);
+    if (targetPath !== null) void moveDraggedEntry(entry, targetPath);
+  }, [getPointerDropTargetPath, moveDraggedEntry]);
 
-  const resetPointerDrag = useCallback(() => {
-    pointerDragRef.current = null;
-    pendingDragPreviewRef.current = null;
-    if (dragPreviewFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragPreviewFrameRef.current);
-      dragPreviewFrameRef.current = null;
-    }
-    setDragPreview(null);
-    document.body.style.removeProperty("user-select");
-  }, []);
-
-  const updateDragPreview = useCallback((source: FileDragPreviewSource, x: number, y: number) => {
-    pendingDragPreviewRef.current = { source, x, y };
-    if (dragPreviewFrameRef.current !== null) return;
-
-    dragPreviewFrameRef.current = window.requestAnimationFrame(() => {
-      dragPreviewFrameRef.current = null;
-      const pending = pendingDragPreviewRef.current;
-      const element = dragPreviewElementRef.current;
-      if (!pending || !element) return;
-
-      const { source: pendingSource, x: nextX, y: nextY } = pending;
-      element.style.transform = `translate3d(${nextX - pendingSource.offsetX}px, ${nextY - pendingSource.offsetY}px, 0)`;
-      if (getTerminalFileDropZoneIdAtPoint(nextX, nextY)) {
-        element.dataset.overTerminal = "true";
-      } else {
-        delete element.dataset.overTerminal;
-      }
-    });
-  }, []);
+  const {
+    handlePointerDown: handleFilePointerDown,
+    handlePointerMove: handleFilePointerMove,
+    handlePointerUp: handleFilePointerUp,
+    handlePointerCancel: handleFilePointerCancel,
+    preview: terminalFileDragPreview,
+  } = useTerminalFilePointerDrag<ProjectFileEntry>({
+    project,
+    onDropOutsideTerminal: handlePointerDropOutsideTerminal,
+  });
 
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -1288,13 +1074,14 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   const handleFileDragStart = useCallback((event: ReactDragEvent<HTMLElement>, entry: ProjectFileEntry) => {
     if (!project) return;
-    const text = formatAiPathBlock(entry.path, entry.kind);
-    beginTerminalFileDrag(text);
+    const payload = createTerminalFileDragPayload(project, entry.path, entry.kind);
+    beginTerminalFileDrag(payload);
     updateTerminalFileDragPointFromEvent(event);
     event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(FILE_EXPLORER_ENTRY_MIME, JSON.stringify({ kind: entry.kind, name: entry.name, path: entry.path }));
-    event.dataTransfer.setData(TERMINAL_FILE_PATH_MIME, text);
-    event.dataTransfer.setData("text/plain", text);
+    event.dataTransfer.setData(TERMINAL_FILE_DRAG_MIME, JSON.stringify(payload));
+    event.dataTransfer.setData(TERMINAL_FILE_PATH_MIME, payload.text);
+    event.dataTransfer.setData("text/plain", payload.text);
   }, [project]);
 
   const handleFileDrag = useCallback((event: ReactDragEvent<HTMLElement>) => {
@@ -1318,86 +1105,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     if (commitTerminalFileDragDrop()) return;
     endTerminalFileDrag();
   }, []);
-
-  const handleFilePointerDown = useCallback((event: ReactPointerEvent<HTMLElement>, entry: ProjectFileEntry) => {
-    if (!project || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.pointerType === "mouse" && event.buttons !== 1) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    pointerDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      entry,
-      preview: {
-        className: event.currentTarget.className,
-        html: event.currentTarget.innerHTML,
-        offsetX: event.clientX - rect.left,
-        offsetY: event.clientY - rect.top,
-        paddingLeft: event.currentTarget.style.paddingLeft,
-        width: rect.width,
-      },
-      dragging: false,
-    };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [project]);
-
-  const handleFilePointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const state = pointerDragRef.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-
-    if (!state.dragging) {
-      const dx = event.clientX - state.startX;
-      const dy = event.clientY - state.startY;
-      if (Math.hypot(dx, dy) < POINTER_DRAG_START_PX) return;
-      state.dragging = true;
-      if (!project) {
-        resetPointerDrag();
-        return;
-      }
-      beginTerminalFileDrag(formatAiPathBlock(state.entry.path, state.entry.kind));
-      setDragPreview({
-        x: event.clientX - state.preview.offsetX,
-        y: event.clientY - state.preview.offsetY,
-        source: state.preview,
-      });
-      document.body.style.userSelect = "none";
-    }
-
-    updateTerminalFileDragPointFromEvent(event);
-    updateDragPreview(state.preview, event.clientX, event.clientY);
-    event.preventDefault();
-    event.stopPropagation();
-  }, [project, resetPointerDrag, updateDragPreview]);
-
-  const handleFilePointerUp = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const state = pointerDragRef.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-
-    if (!state.dragging) {
-      resetPointerDrag();
-      return;
-    }
-
-    markPointerDragHandled(event.currentTarget);
-    updateTerminalFileDragPointFromEvent(event);
-    if (!commitTerminalFileDragDrop()) {
-      const targetPath = getPointerDropTargetPath(event.clientX, event.clientY);
-      if (targetPath !== null) void moveDraggedEntry(state.entry, targetPath);
-      endTerminalFileDrag();
-    }
-
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    event.preventDefault();
-    event.stopPropagation();
-    resetPointerDrag();
-  }, [getPointerDropTargetPath, markPointerDragHandled, moveDraggedEntry, resetPointerDrag]);
-
-  const handleFilePointerCancel = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const state = pointerDragRef.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-    endTerminalFileDrag();
-    resetPointerDrag();
-  }, [resetPointerDrag]);
 
   const handleFileDragOver = useCallback((event: ReactDragEvent<HTMLElement>, _targetEntry: ProjectFileEntry) => {
     if (!hasFileExplorerDrag(event.dataTransfer)) return;
@@ -1453,6 +1160,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   const renderContentSearchRow = useCallback((match: ProjectFileContentMatch) => {
     if (!project) return null;
+    // Issue #227：搜索结果与文件树使用同一套淡化判定，避免「树里淡、搜索里亮」的割裂。
+    // match 必为文件，直接按路径判定，不构造伪 entry。
+    const matchIgnored = ignoreState.ignoredPaths.has(match.path)
+      || ignoreState.ignoreMatcher.ignores(match.path, false);
     return (
       <ContextMenu key={`${match.path}:${match.lineNumber}`}>
         <ContextMenuTrigger asChild>
@@ -1460,6 +1171,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             type="button"
             className="ui-file-tree-row flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[12px]"
             data-selected={activeFile?.path === match.path ? "true" : "false"}
+            data-ignored={matchIgnored ? "true" : "false"}
             onContextMenu={(event) => event.stopPropagation()}
             onClick={() => {
               void openFileAtSearchMatch(match);
@@ -1483,12 +1195,14 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem
+            project={project}
+            entry={{ kind: "file", name: match.name, path: match.path }}
+          />
           {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, match.path, t)}>
             <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
           </ContextMenuItem>}
-          <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(match.path, "file"), t("files.toast.aiPathCopied"))}>
-            <Copy size={13} /> {t("files.menu.copyAiPath")}
-          </ContextMenuItem>
+          <PathCopyMenu project={project} relativePath={match.path} kind="file" />
           {(() => {
             const change = getGitChange(match.path);
             return change ? (
@@ -1501,18 +1215,21 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, getGitChange, menuPortalContainer, openFileAtSearchMatch, openFileEditorPane, project, requestOpenDiff, t]);
+  }, [activeFile?.path, ignoreState, getGitChange, menuPortalContainer, openFileAtSearchMatch, openFileEditorPane, project, requestOpenDiff, t]);
 
   const renderSearchRow = useCallback((entry: ProjectFileEntry) => {
     if (!project) return null;
     const displayStatus = getDisplayStatus(entry);
     const gitChange = entry.kind === "file" ? getGitChange(entry.path) : null;
+    // Issue #227：搜索结果沿用文件树的淡化判定，保持两处表现一致。
+    const entryIgnored = isEntryIgnored(entry, ignoreState);
     if (renamingAction?.path === entry.path) {
       return (
         <div
           key={entry.path}
           className="ui-file-tree-row flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px]"
           data-selected={activeFile?.path === entry.path ? "true" : "false"}
+          data-ignored={entryIgnored ? "true" : "false"}
         >
           <img src={entry.kind === "directory" ? getMaterialFolderIcon(entry.name, false) : getMaterialFileIcon(entry.name)} alt="" width={16} height={16} />
           <InlineRenameInput
@@ -1531,10 +1248,11 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             tabIndex={0}
             className="ui-file-tree-row flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px]"
             data-selected={activeFile?.path === entry.path ? "true" : "false"}
+            data-ignored={entryIgnored ? "true" : "false"}
             data-file-drop-target-path={getDropTargetPath(entry)}
             draggable={false}
             onClick={(event) => {
-              if (event.currentTarget.dataset.pointerDragHandled === "true") return;
+              if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
               if (entry.kind === "file") requestOpenFile(entry);
             }}
             onContextMenu={(event) => event.stopPropagation()}
@@ -1574,12 +1292,11 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
+          <LiveServerFileMenuItem project={project} entry={entry} />
         {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, entry.path, t)}>
           <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
         </ContextMenuItem>}
-          <ContextMenuItem onSelect={() => void copyAiText(formatAiPathBlock(entry.path, entry.kind), t("files.toast.aiPathCopied"))}>
-            <Copy size={13} /> {t("files.menu.copyAiPath")}
-          </ContextMenuItem>
+          <PathCopyMenu project={project} relativePath={entry.path} kind={entry.kind} />
           {entry.kind === "directory" && (
             <ContextMenuItem onSelect={() => void copyAiText(formatAiTree(project, entry), t("files.toast.aiTreeCopied"))}>
               <Folder size={13} /> {t("files.menu.copyAiTree")}
@@ -1594,12 +1311,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, cancelRename, getDisplayStatus, getDropTargetPath, getGitChange, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, menuPortalContainer, openFile, project, renamingAction?.path, requestOpenDiff, submitRename, t]);
-
-  const copyRootAiPath = useCallback(() => {
-    if (!project) return;
-    void copyAiText(formatAiPathBlock("", "directory"), t("files.toast.aiPathCopied"));
-  }, [project, t]);
+  }, [activeFile?.path, ignoreState, cancelRename, getDisplayStatus, getDropTargetPath, getGitChange, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, menuPortalContainer, openFile, project, renamingAction?.path, requestOpenDiff, submitRename, t]);
 
   const copyRootAiTree = useCallback(() => {
     if (!project) return;
@@ -1635,7 +1347,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     return visibleRows.length > 0 ? (
       <FileTreeRows
         entries={visibleRows}
-        parentPath=""
         depth={0}
         getDisplayStatus={getDisplayStatus}
         getGitChange={getGitChange}
@@ -1656,16 +1367,15 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         onFilePointerMove={handleFilePointerMove}
         onFilePointerUp={handleFilePointerUp}
         onFilePointerCancel={handleFilePointerCancel}
-        autoCollapseGroups={autoCollapseGroups}
+        ignoreState={ignoreState}
         menuPortalContainer={menuPortalContainer}
         readOnly={readOnly}
-        renderAutoCollapsedGroup
       />
     ) : (
       <div className="px-3 py-8 text-center text-xs text-text-muted">{t("files.empty")}</div>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, tree.length, hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, getGitChange, requestOpenDiff, autoCollapseGroups, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, renamingAction?.path, submitRename, cancelRename, t]);
+  }, [loading, tree.length, hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, getGitChange, requestOpenDiff, ignoreState, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, renamingAction?.path, submitRename, cancelRename, t]);
 
   if (!project) return null;
 
@@ -1685,6 +1395,77 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const searchLabel = searchMode === "content" ? t("files.searchCodePlaceholder") : t("files.searchPlaceholder");
   const searchToggleLabel = searchControlsVisible ? t("files.hideSearch") : searchLabel;
   const displayPathName = getDisplayPathName(readOnly ? project.remote_path : project.path);
+  const hasHeaderExtras = searchControlsVisible || readOnly || Boolean(clipboard);
+  const headerActions = (
+    <>
+      <button
+        className="ui-file-tooltip ui-icon-action"
+        data-tooltip={searchToggleLabel}
+        aria-label={searchToggleLabel}
+        aria-pressed={searchControlsVisible}
+        onClick={toggleSearchControls}
+      >
+        {searchControlsVisible ? <EyeOff size={13} /> : <Search size={13} />}
+      </button>
+      {readOnly && (
+        <button
+          type="button"
+          className="ui-file-tooltip ui-icon-action"
+          data-tooltip={t("files.openSftp")}
+          aria-label={t("files.openSftp")}
+          disabled={!project.ssh_host_id?.trim() || openingAttachment}
+          onClick={() => void openSftp()}
+        >
+          <Upload size={13} />
+        </button>
+      )}
+      <button className="ui-file-tooltip ui-icon-action" data-tooltip={t("common.refresh")} aria-label={t("files.refreshList")} onClick={() => void refresh()}>
+        <RefreshCw size={13} />
+      </button>
+      <button className="ui-file-tooltip ui-icon-action" data-tooltip={closeLabel} aria-label={closeLabel} onClick={handleClose}>
+        <X size={14} />
+      </button>
+    </>
+  );
+  const headerExtras = (
+    <>
+      {searchControlsVisible && (
+        <div className="ui-file-search-input-shell flex items-center gap-1 rounded-md border border-border bg-surface-container-lowest px-1.5">
+          <Search size={13} className="text-text-muted" />
+          <input
+            ref={searchInputRef}
+            className="min-w-0 flex-1 bg-transparent py-1 text-xs text-on-surface outline-none"
+            value={searchQuery}
+            aria-label={searchLabel}
+            placeholder={searchLabel}
+            onChange={(event) => void setSearchQuery(event.currentTarget.value)}
+          />
+          <div className="ui-file-search-mode-inline flex shrink-0 items-center gap-0.5 rounded border border-border bg-surface-container-low p-0.5">
+            {SEARCH_MODES.map((searchModeOption) => {
+              const active = searchMode === searchModeOption.value;
+              return (
+                <button
+                  key={searchModeOption.value}
+                  type="button"
+                  className={[
+                    "ui-file-search-mode-option rounded px-1.5 py-0.5 text-[10px] leading-4 transition-colors",
+                    active ? "text-on-surface" : "text-text-muted hover:text-on-surface",
+                  ].join(" ")}
+                  data-selected={active ? "true" : "false"}
+                  aria-pressed={active}
+                  onClick={() => setSearchMode(searchModeOption.value)}
+                >
+                  {t(searchModeOption.labelKey)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {readOnly && <div className="mt-1 text-[10px] text-text-muted">{t("files.readOnly")}</div>}
+      {!readOnly && clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{clipboard.name}</div>}
+    </>
+  );
   const panelStyle = mode === "panel"
     ? ({
         "--surface-container": TERM.card,
@@ -1709,89 +1490,37 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     : undefined;
 
   return (
-    <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
-      {dragPreview && (
-        <Portal>
-          <div
-            ref={dragPreviewElementRef}
-            className="ui-file-drag-preview"
-            style={{
-              width: dragPreview.source.width,
-              transform: `translate3d(${dragPreview.x}px, ${dragPreview.y}px, 0)`,
-            }}
-            aria-hidden="true"
-          >
-            <div
-              className={dragPreview.source.className}
-              style={dragPreview.source.paddingLeft ? { paddingLeft: dragPreview.source.paddingLeft } : undefined}
-              dangerouslySetInnerHTML={{ __html: dragPreview.source.html }}
-            />
-          </div>
-        </Portal>
-      )}
-      <div className="shrink-0 border-b border-border px-2 py-2">
-        <div className="mb-2 flex items-center gap-2">
-          <span className="flex shrink-0" onDoubleClick={readOnly ? undefined : openProjectRootFolder}>
-            <Folder size={15} className="ui-file-explorer-root-icon" />
-          </span>
-          <div className="min-w-0 flex-1" onDoubleClick={readOnly ? undefined : openProjectRootFolder}>
-            <div className="ui-file-explorer-title truncate text-xs font-semibold">{project.name}</div>
-            <div className="ui-file-explorer-subtitle truncate text-[10px]">{displayPathName}</div>
-          </div>
-          <button
-            className="ui-file-tooltip ui-icon-action"
-            data-tooltip={searchToggleLabel}
-            aria-label={searchToggleLabel}
-            aria-pressed={searchControlsVisible}
-            onClick={toggleSearchControls}
-          >
-            {searchControlsVisible ? <EyeOff size={13} /> : <Search size={13} />}
-          </button>
-          <button className="ui-file-tooltip ui-icon-action" data-tooltip={t("common.refresh")} aria-label={t("files.refreshList")} onClick={() => void refresh()}>
-            <RefreshCw size={13} />
-          </button>
-          <button className="ui-file-tooltip ui-icon-action" data-tooltip={closeLabel} aria-label={closeLabel} onClick={handleClose}>
-            <X size={14} />
-          </button>
-        </div>
-        {searchControlsVisible && (
-          <>
-            <div className="ui-file-search-input-shell flex items-center gap-1 rounded-md border border-border bg-surface-container-lowest px-1.5">
-              <Search size={13} className="text-text-muted" />
-              <input
-                ref={searchInputRef}
-                className="min-w-0 flex-1 bg-transparent py-1 text-xs text-on-surface outline-none"
-                value={searchQuery}
-                aria-label={searchLabel}
-                placeholder={searchLabel}
-                onChange={(event) => void setSearchQuery(event.currentTarget.value)}
-              />
-              <div className="ui-file-search-mode-inline flex shrink-0 items-center gap-0.5 rounded border border-border bg-surface-container-low p-0.5">
-                {SEARCH_MODES.map((mode) => {
-                  const active = searchMode === mode.value;
-                  return (
-                    <button
-                      key={mode.value}
-                      type="button"
-                      className={[
-                        "ui-file-search-mode-option rounded px-1.5 py-0.5 text-[10px] leading-4 transition-colors",
-                        active ? "text-on-surface" : "text-text-muted hover:text-on-surface",
-                      ].join(" ")}
-                      data-selected={active ? "true" : "false"}
-                      aria-pressed={active}
-                      onClick={() => setSearchMode(mode.value)}
-                    >
-                      {t(mode.labelKey)}
-                    </button>
-                  );
-                })}
-              </div>
+    <>
+      <div ref={setMenuPortalContainer} className="ui-file-explorer-sidebar flex h-full min-h-0 flex-col" style={panelStyle} onKeyDown={handleSidebarKeyDown}>
+      {terminalFileDragPreview}
+      <LiveServerStatusBridge project={project} />
+      {mode === "panel" ? (
+        <>
+          <TerminalPanelHeader
+            icon={<Folder size={14} />}
+            accent={TERM.blue}
+            title={project.name}
+            subtitle={displayPathName}
+            onTitleDoubleClick={readOnly ? undefined : openProjectRootFolder}
+            actions={headerActions}
+          />
+          {hasHeaderExtras && <div className="shrink-0 border-b border-border px-2 py-2">{headerExtras}</div>}
+        </>
+      ) : (
+        <div className="shrink-0 border-b border-border px-2 py-2">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="flex shrink-0" onDoubleClick={readOnly ? undefined : openProjectRootFolder}>
+              <Folder size={15} className="ui-file-explorer-root-icon" />
+            </span>
+            <div className="min-w-0 flex-1" onDoubleClick={readOnly ? undefined : openProjectRootFolder}>
+              <div className="ui-file-explorer-title truncate text-xs font-semibold">{project.name}</div>
+              <div className="ui-file-explorer-subtitle truncate text-[10px]">{displayPathName}</div>
             </div>
-          </>
-        )}
-        {readOnly && <div className="mt-1 text-[10px] text-text-muted">{t("files.readOnly")}</div>}
-        {!readOnly && clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{clipboard.name}</div>}
-      </div>
+            {headerActions}
+          </div>
+          {headerExtras}
+        </div>
+      )}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
@@ -1819,12 +1548,11 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           {!readOnly && <ContextMenuItem onSelect={openProjectRootFolder}>
             <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
           </ContextMenuItem>}
-          <ContextMenuItem onSelect={copyRootAiPath}>
-            <Copy size={13} /> {t("files.menu.copyAiPath")}
-          </ContextMenuItem>
+          <PathCopyMenu project={project} relativePath="" kind="directory" />
           <ContextMenuItem onSelect={copyRootAiTree}>
             <Folder size={13} /> {t("files.menu.copyAiTree")}
           </ContextMenuItem>
+          <LiveServerRootMenuItem project={project} />
         </ContextMenuContent>
       </ContextMenu>
 
@@ -1879,6 +1607,14 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           }
         }}
       />
-    </div>
+      </div>
+      <SshHostAttachmentDialog
+        open={attachmentHost !== null}
+        host={attachmentHost}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setAttachmentHost(null);
+        }}
+      />
+    </>
   );
 }

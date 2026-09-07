@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量标准，用于验收检查"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TypeScript 类型检查规范"}
-{"file": "src/stores/settingsStore.ts", "reason": "验证新增字段与迁移逻辑"}
-{"file": "src/components/TerminalTabs.tsx", "reason": "验证工具栏拖拽实现"}
-{"file": "src/components/settings/pages/GeneralSettingsPage.tsx", "reason": "验证设置页拖拽列表"}

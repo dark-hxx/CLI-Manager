@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"Verify stats cache and UI state updates stay minimal and store-local where appropriate."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check new start/end date query types and normalization avoid loose any/assertion patterns."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check StatsPanel control changes remain scoped and accessible."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check frontend date boundaries and backend filtering semantics match exactly."}

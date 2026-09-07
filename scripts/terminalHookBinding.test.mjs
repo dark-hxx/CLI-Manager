@@ -15,7 +15,7 @@ const output = ts.transpileModule(source, {
 }).outputText;
 const modulePath = join(tempDir, "terminalHookBinding.mjs");
 writeFileSync(modulePath, output, "utf8");
-const { normalizeHookBindingPath, resolveCliHookTarget } = await import(pathToFileURL(modulePath).href);
+const { inferHookBindingSource, normalizeHookBindingPath, resolveCliHookTarget } = await import(pathToFileURL(modulePath).href);
 
 const candidate = (id, overrides = {}) => ({
   id,
@@ -35,6 +35,32 @@ test("精确 tabId 始终优先", () => {
     candidates: [candidate("tab-a"), candidate("tab-b")],
   });
   assert.deepEqual(result, { tabId: "tab-b", reason: "exact" });
+});
+
+test("OpenCode 启动命令映射到独立 Hook 来源", () => {
+  assert.equal(inferHookBindingSource("opencode --model test"), "opencode");
+  assert.equal(inferHookBindingSource("OpenCode.exe"), "opencode");
+});
+
+test("Kimi Code 裸命令与 Windows shim 映射到独立 Hook 来源", () => {
+  assert.equal(inferHookBindingSource("kimi --continue"), "kimi");
+  assert.equal(inferHookBindingSource('"C:\\Program Files\\Kimi\\kimi.cmd" --model moonshot'), "kimi");
+  assert.equal(inferHookBindingSource("kimi.ps1"), "kimi");
+});
+
+test("同路径多个 Kimi 会话保持歧义拒绝", () => {
+  const result = resolveCliHookTarget({
+    rawTabId: "external:kimi:session",
+    primaryTabId: "external:kimi:session",
+    source: "kimi",
+    cwd: "D:/work/project",
+    receivedAt: 10_000,
+    candidates: [
+      candidate("kimi-a", { source: "kimi" }),
+      candidate("kimi-b", { source: "kimi" }),
+    ],
+  });
+  assert.deepEqual(result, { tabId: null, reason: "ambiguous" });
 });
 
 test("外部 Hook 仅有一个路径候选时自动恢复", () => {

@@ -1,3 +1,4 @@
+use crate::app_paths;
 use serde::Serialize;
 
 /// 应用版本信息
@@ -6,13 +7,6 @@ pub struct AppVersion {
     pub version: String,
     pub name: String,
     pub distribution: String,
-}
-
-fn resolve_distribution(value: Option<&str>) -> &'static str {
-    match value {
-        Some(value) if value.eq_ignore_ascii_case("aur") => "aur",
-        _ => "standalone",
-    }
 }
 
 /// 获取应用版本号
@@ -28,10 +22,7 @@ pub fn get_app_version(app: tauri::AppHandle) -> AppVersion {
             .product_name
             .clone()
             .unwrap_or_else(|| "CLI-Manager".to_string()),
-        distribution: resolve_distribution(
-            std::env::var("CLI_MANAGER_DISTRIBUTION").ok().as_deref(),
-        )
-        .to_string(),
+        distribution: app_paths::app_distribution().as_str().to_string(),
     }
 }
 
@@ -58,13 +49,13 @@ pub fn get_os_platform() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_distribution;
+    use crate::app_paths::{app_distribution, AppDistribution};
 
     #[test]
-    fn recognizes_aur_distribution_case_insensitively() {
-        assert_eq!(resolve_distribution(Some("aur")), "aur");
-        assert_eq!(resolve_distribution(Some("AUR")), "aur");
-        assert_eq!(resolve_distribution(None), "standalone");
-        assert_eq!(resolve_distribution(Some("unknown")), "standalone");
+    fn distribution_has_a_stable_serialized_name() {
+        assert!(matches!(
+            app_distribution(),
+            AppDistribution::Standalone | AppDistribution::Portable | AppDistribution::Aur
+        ));
     }
 }

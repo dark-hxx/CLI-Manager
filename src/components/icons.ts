@@ -1,7 +1,9 @@
 export {
   Activity,
   AlertTriangle,
+  ArrowDown,
   ArrowLeftRight,
+  ArrowUp,
   BarChart3,
   Boxes,
   Braces,
@@ -29,7 +31,9 @@ export {
   Folder,
   FolderOpen,
   GitBranch,
+  GripVertical,
   Globe,
+  Handshake,
   Hash,
   Image,
   Info,
@@ -59,6 +63,7 @@ export {
   Undo2,
   Upload,
   X,
+  Zap,
 } from "lucide-react";
 
 export { ListClockIcon } from "./ListClockIcon";

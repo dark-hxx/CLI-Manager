@@ -1,9 +1,9 @@
-use crate::commands::ccswitch::{
-    apply_codex_provider_launch_env, refresh_claude_provider_launch_settings,
-    ClaudeProviderLaunchConfig, CodexProviderLaunchConfig,
-};
 use crate::daemon::client::{DaemonBridge, DaemonClient};
-use crate::daemon::protocol::{ClientFrame, SessionMeta, FEATURE_WS_BINARY_OUTPUT};
+use crate::daemon::protocol::{
+    routing_control_id, ClientFrame, DaemonFrame, SessionMeta, FEATURE_WS_BINARY_OUTPUT,
+    ROUTING_ERROR_PROTOCOL_UNSUPPORTED,
+};
+use crate::provider::scope::{self, ProviderLaunchConfig};
 use crate::pty::manager::{PtyOrphanCleanupSummary, PtyProcessStatus};
 use crate::ssh_launch::SshLaunchPlan;
 use log::{debug, warn};
@@ -16,19 +16,22 @@ use uuid::Uuid;
 
 const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
 const DAEMON_READY_WAIT_INTERVAL: Duration = Duration::from_millis(100);
+static DAEMON_UPGRADE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn provider_launch_configs(
     is_ssh: bool,
-    claude: Option<ClaudeProviderLaunchConfig>,
-    codex: Option<CodexProviderLaunchConfig>,
+    claude: Option<ProviderLaunchConfig>,
+    codex: Option<ProviderLaunchConfig>,
+    grok: Option<ProviderLaunchConfig>,
 ) -> (
-    Option<ClaudeProviderLaunchConfig>,
-    Option<CodexProviderLaunchConfig>,
+    Option<ProviderLaunchConfig>,
+    Option<ProviderLaunchConfig>,
+    Option<ProviderLaunchConfig>,
 ) {
     if is_ssh {
-        (None, None)
+        (None, None, None)
     } else {
-        (claude, codex)
+        (claude, codex, grok)
     }
 }
 
@@ -44,6 +47,45 @@ async fn wait_for_daemon(daemon_bridge: &DaemonBridge) -> Option<Arc<DaemonClien
     None
 }
 
+fn daemon_contract_is_current(version: &str, features: &[String]) -> bool {
+    version == env!("CARGO_PKG_VERSION")
+        && features
+            .iter()
+            .any(|feature| feature == FEATURE_WS_BINARY_OUTPUT)
+}
+
+fn daemon_is_current(client: &DaemonClient) -> bool {
+    daemon_contract_is_current(&client.info().version, &client.info().features)
+}
+
+async fn upgrade_daemon_if_idle(
+    app_handle: &AppHandle,
+    daemon_bridge: &DaemonBridge,
+    initial_client: Arc<DaemonClient>,
+) -> Result<Option<(Arc<DaemonClient>, bool)>, String> {
+    let _upgrade_guard = DAEMON_UPGRADE_LOCK.lock().await;
+    let client = daemon_bridge.get().unwrap_or(initial_client);
+    if daemon_is_current(&client) {
+        return Ok(Some((client, false)));
+    }
+    if client.list()?.iter().any(|session| session.alive) {
+        return Ok(None);
+    }
+    client.shutdown_if_idle()?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let data_dir = crate::app_paths::cli_manager_data_dir()?;
+    let replacement = crate::daemon::client::connect_or_spawn(
+        app_handle.clone(),
+        &data_dir,
+        cfg!(debug_assertions),
+    )?;
+    if !daemon_is_current(&replacement) {
+        return Err("pty_host_upgrade_failed".to_string());
+    }
+    daemon_bridge.set(replacement.clone());
+    Ok(Some((replacement, true)))
+}
+
 #[tauri::command]
 pub async fn pty_prepare_create(
     app_handle: AppHandle,
@@ -52,17 +94,28 @@ pub async fn pty_prepare_create(
     env_vars: Option<HashMap<String, String>>,
     shell: Option<String>,
     hook_env_enabled: Option<bool>,
-    claude_provider: Option<ClaudeProviderLaunchConfig>,
-    codex_provider: Option<CodexProviderLaunchConfig>,
+    claude_provider: Option<ProviderLaunchConfig>,
+    codex_provider: Option<ProviderLaunchConfig>,
+    grok_provider: Option<ProviderLaunchConfig>,
     ssh_launch: Option<SshLaunchPlan>,
 ) -> Result<PreparedPtyCreate, String> {
     let session_id = Uuid::new_v4().to_string();
     let mut env_vars = env_vars.unwrap_or_default();
-    let (claude_provider, codex_provider) =
-        provider_launch_configs(ssh_launch.is_some(), claude_provider, codex_provider);
-    refresh_claude_provider_launch_settings(&app_handle, claude_provider).await?;
-    apply_codex_provider_launch_env(&app_handle, codex_provider, shell.as_deref(), &mut env_vars)
-        .await?;
+    let (claude_provider, codex_provider, grok_provider) = provider_launch_configs(
+        ssh_launch.is_some(),
+        claude_provider,
+        codex_provider,
+        grok_provider,
+    );
+    if let Some(config) = claude_provider {
+        env_vars = scope::apply_launch_environment(config, shell.clone(), env_vars).await?;
+    }
+    if let Some(config) = codex_provider {
+        env_vars = scope::apply_launch_environment(config, shell.clone(), env_vars).await?;
+    }
+    if let Some(config) = grok_provider {
+        env_vars = scope::apply_launch_environment(config, shell.clone(), env_vars).await?;
+    }
     env_vars.insert("CLI_MANAGER_TAB_ID".to_string(), session_id.clone());
     let mut ssh_launch = ssh_launch;
     if let Some(plan) = ssh_launch.as_mut() {
@@ -100,16 +153,26 @@ pub async fn pty_prepare_create(
     }
 
     // Hook 上报指向 daemon 的稳定端口，确保 app 重启后仍然有效。
-    let daemon_client = wait_for_daemon(&daemon_bridge)
+    let mut daemon_client = wait_for_daemon(&daemon_bridge)
         .await
         .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
-    if ssh_launch.is_some() && daemon_client.info().version != env!("CARGO_PKG_VERSION") {
-        warn!(
-            "SSH launch rejected for stale daemon: daemon_version={}, app_version={}",
-            daemon_client.info().version,
-            env!("CARGO_PKG_VERSION")
-        );
-        return Err("SSH launch requires the current PtyHost daemon".to_string());
+    let mut daemon_restarted = false;
+    if ssh_launch.is_some() && !daemon_is_current(&daemon_client) {
+        let stale_version = daemon_client.info().version.clone();
+        match upgrade_daemon_if_idle(&app_handle, &daemon_bridge, daemon_client).await? {
+            Some((replacement, restarted)) => {
+                daemon_client = replacement;
+                daemon_restarted = restarted;
+            }
+            None => {
+                warn!(
+                    "SSH launch blocked by active sessions on stale daemon: daemon_version={}, app_version={}",
+                    stale_version,
+                    env!("CARGO_PKG_VERSION")
+                );
+                return Err("pty_host_upgrade_sessions_active".to_string());
+            }
+        }
     }
     if hook_env_enabled.unwrap_or(false) {
         let info = daemon_client.info();
@@ -134,6 +197,7 @@ pub async fn pty_prepare_create(
         env_vars,
         shell,
         ssh_launch,
+        daemon_restarted,
     })
 }
 
@@ -145,6 +209,7 @@ pub struct PreparedPtyCreate {
     pub env_vars: HashMap<String, String>,
     pub shell: Option<String>,
     pub ssh_launch: Option<SshLaunchPlan>,
+    pub daemon_restarted: bool,
 }
 
 #[tauri::command]
@@ -190,6 +255,22 @@ pub async fn pty_daemon_shutdown_if_idle(
     let Some(client) = daemon_bridge.get() else {
         return Ok(false);
     };
+
+    let status_id = client.next_request_id();
+    if let Ok(DaemonFrame::RoutingEvent { event }) =
+        client.request(status_id, &ClientFrame::RoutingStatus { id: status_id })
+    {
+        if event
+            .status
+            .as_ref()
+            .is_some_and(|status| status.status == "running")
+        {
+            // Route runtime is daemon-owned; GUI exit must detach instead of
+            // asking the daemon to terminate. The daemon also guards this at
+            // the Shutdown frame boundary to close the status-check race.
+            return Ok(false);
+        }
+    }
     client.shutdown_if_idle()?;
     Ok(true)
 }
@@ -254,8 +335,20 @@ fn client_frame_id(frame: &ClientFrame) -> Option<u64> {
         | ClientFrame::Status { id }
         | ClientFrame::SshAgentRequest { id, .. }
         | ClientFrame::SshAgentRelease { id, .. }
+        | ClientFrame::RoutingReload { id, .. }
+        | ClientFrame::RoutingStatus { id }
+        | ClientFrame::RoutingStart { id, .. }
+        | ClientFrame::RoutingStop { id }
+        | ClientFrame::RoutingResetCircuit { id, .. }
         | ClientFrame::Shutdown { id } => Some(*id),
     }
+}
+
+fn legacy_client_frame_id(frame: &ClientFrame) -> Result<u64, &'static str> {
+    if routing_control_id(frame).is_some() {
+        return Err(ROUTING_ERROR_PROTOCOL_UNSUPPORTED);
+    }
+    client_frame_id(frame).ok_or("legacy auth is not allowed")
 }
 
 /// 旧 daemon 的兼容 transport。只复用已鉴权的主进程 NDJSON 连接，
@@ -267,7 +360,7 @@ pub async fn pty_legacy_request(
 ) -> Result<serde_json::Value, String> {
     let frame: ClientFrame = serde_json::from_value(frame)
         .map_err(|err| format!("invalid legacy PtyHost request: {err}"))?;
-    let id = client_frame_id(&frame).ok_or_else(|| "legacy auth is not allowed".to_string())?;
+    let id = legacy_client_frame_id(&frame).map_err(str::to_string)?;
     let client = wait_for_daemon(&daemon_bridge)
         .await
         .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
@@ -283,24 +376,9 @@ pub async fn pty_daemon_upgrade_if_idle(
     let Some(client) = daemon_bridge.get() else {
         return Ok(false);
     };
-    if client
-        .info()
-        .features
-        .iter()
-        .any(|feature| feature == FEATURE_WS_BINARY_OUTPUT)
-    {
-        return Ok(true);
-    }
-    if client.list()?.iter().any(|session| session.alive) {
-        return Ok(false);
-    }
-    client.shutdown_if_idle()?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let data_dir = crate::app_paths::cli_manager_data_dir()?;
-    let client =
-        crate::daemon::client::connect_or_spawn(app_handle, &data_dir, cfg!(debug_assertions))?;
-    daemon_bridge.set(client);
-    Ok(true)
+    Ok(upgrade_daemon_if_idle(&app_handle, &daemon_bridge, client)
+        .await?
+        .is_some())
 }
 
 /// daemon 中的会话列表（启动恢复时优先 attach 的依据）。
@@ -323,36 +401,85 @@ pub async fn pty_daemon_sessions(
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_launch_configs, ClaudeProviderLaunchConfig, CodexProviderLaunchConfig};
+    use super::{
+        daemon_contract_is_current, legacy_client_frame_id, provider_launch_configs,
+        ProviderLaunchConfig,
+    };
+    use crate::daemon::protocol::{
+        ClientFrame, FEATURE_WS_BINARY_OUTPUT, ROUTING_ERROR_PROTOCOL_UNSUPPORTED,
+    };
 
     fn configs() -> (
-        Option<ClaudeProviderLaunchConfig>,
-        Option<CodexProviderLaunchConfig>,
+        Option<ProviderLaunchConfig>,
+        Option<ProviderLaunchConfig>,
+        Option<ProviderLaunchConfig>,
     ) {
         (
-            Some(ClaudeProviderLaunchConfig {
-                project_id: "project".to_string(),
+            Some(ProviderLaunchConfig {
+                app_type: "claude".to_string(),
                 provider_id: "claude-provider".to_string(),
-                db_path: Some("provider.db".to_string()),
+                snapshot_id: "snapshot".to_string(),
+                claude_settings_path: Some("claude/settings.json".to_string()),
+                generated_home: None,
+                grok_model: None,
             }),
-            Some(CodexProviderLaunchConfig {
+            Some(ProviderLaunchConfig {
+                app_type: "codex".to_string(),
                 provider_id: "codex-provider".to_string(),
-                db_path: Some("provider.db".to_string()),
-                codex_config_dir: Some("codex".to_string()),
+                snapshot_id: "snapshot".to_string(),
+                claude_settings_path: None,
+                generated_home: Some("codex".to_string()),
+                grok_model: None,
+            }),
+            Some(ProviderLaunchConfig {
+                app_type: "grokbuild".to_string(),
+                provider_id: "grok-provider".to_string(),
+                snapshot_id: "snapshot".to_string(),
+                claude_settings_path: None,
+                generated_home: None,
+                grok_model: Some("grok-test".to_string()),
             }),
         )
     }
 
     #[test]
     fn ssh_launch_discards_provider_configs() {
-        let (claude, codex) = configs();
-        let (claude, codex) = provider_launch_configs(true, claude, codex);
+        let (claude, codex, grok) = configs();
+        let (claude, codex, grok) = provider_launch_configs(true, claude, codex, grok);
         assert!(claude.is_none());
         assert!(codex.is_none());
+        assert!(grok.is_none());
 
-        let (claude, codex) = configs();
-        let (claude, codex) = provider_launch_configs(false, claude, codex);
+        let (claude, codex, grok) = configs();
+        let (claude, codex, grok) = provider_launch_configs(false, claude, codex, grok);
         assert!(claude.is_some());
         assert!(codex.is_some());
+        assert!(grok.is_some());
+    }
+
+    #[test]
+    fn daemon_contract_requires_matching_version_and_binary_transport() {
+        let features = vec![FEATURE_WS_BINARY_OUTPUT.to_string()];
+        assert!(daemon_contract_is_current(
+            env!("CARGO_PKG_VERSION"),
+            &features
+        ));
+        assert!(!daemon_contract_is_current("0.0.0", &features));
+        assert!(!daemon_contract_is_current(env!("CARGO_PKG_VERSION"), &[]));
+    }
+
+    #[test]
+    fn legacy_transport_rejects_routing_control_frames() {
+        assert_eq!(
+            legacy_client_frame_id(&ClientFrame::RoutingReload {
+                id: 7,
+                listen_address: None,
+                preferred_port: None,
+                last_actual_port: None,
+                listener_addresses: Vec::new(),
+            }),
+            Err(ROUTING_ERROR_PROTOCOL_UNSUPPORTED)
+        );
+        assert_eq!(legacy_client_frame_id(&ClientFrame::Ping { id: 8 }), Ok(8));
     }
 }

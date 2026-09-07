@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查是否违反终端面板主题与组件边界约定"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "确认共享网格组件抽取没有重复造轮子或漏掉同类调用点"}

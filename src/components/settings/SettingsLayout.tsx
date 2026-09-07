@@ -28,9 +28,9 @@ export function SettingsLayout<T extends string>({
   children,
 }: SettingsLayoutProps<T>) {
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 flex-row">
+    <div className="ui-settings-layout flex h-full min-h-0 w-full flex-1 flex-row">
       <SettingsNav tabs={tabs} activeTab={activeTab} onChange={onTabChange} />
-      <section className="ui-surface-base flex min-w-0 flex-1 flex-col">
+      <section className="ui-settings-content ui-surface-base flex min-w-0 flex-1 flex-col">
         <SettingsTopBar
           title={title}
           description={description}

@@ -151,6 +151,14 @@ mod tests {
     }
 
     #[test]
+    fn current_info_advertises_local_routing_capability() {
+        assert!(sample()
+            .features
+            .iter()
+            .any(|feature| feature == crate::daemon::protocol::FEATURE_LOCAL_ROUTING_V1));
+    }
+
+    #[test]
     fn pid_liveness() {
         assert!(is_pid_alive(std::process::id()));
         // u32::MAX 几乎不可能是真实 pid。

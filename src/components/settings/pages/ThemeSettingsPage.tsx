@@ -26,9 +26,9 @@ import {
   TERMINAL_THEME_PRESETS,
   getTerminalTheme,
   resolveTerminalThemeId,
-  type TerminalThemeGroupId,
 } from "../../../lib/terminalThemes";
 import { debugConsoleWarn } from "../../../lib/debugConsole";
+import { FOLLOW_TERMINAL_PREVIEW_THEME } from "../../../lib/terminalPreviewTheme";
 import { normalizeTerminalFontFamily } from "../../../lib/terminalFontFamily";
 import { normalizeShellKey, getOsPlatform } from "../../../lib/shell";
 import type { OsPlatform } from "../../../lib/shell";
@@ -54,6 +54,7 @@ import {
 } from "../../../stores/settingsStore";
 import { useTerminalStore } from "../../../stores/terminalStore";
 import { TerminalBackgroundSection } from "./TerminalBackgroundSection";
+import { SWATCH_KEYS, TerminalThemePresetGrid } from "./TerminalThemePresetGrid";
 import {
   listSystemFonts,
   mergeFontFamilyOptions,
@@ -66,10 +67,10 @@ import {
   type TerminalPaneMarkerStyle,
 } from "../../../lib/terminalPaneMarker";
 
-const SWATCH_KEYS = ["background", "foreground", "red", "green", "blue", "cyan"] as const;
 const TERMINAL_FONT_FALLBACK = "monospace";
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 type TerminalThemeLibraryMode = "light" | "dark" | "system";
+type TerminalPreviewThemeMode = "follow" | "independent";
 type PaneMarkerPreviewColorKey = "doneColor" | "failedColor" | "attentionColor";
 
 const PANE_MARKER_PREVIEW_COLOR_OPTIONS = [
@@ -214,36 +215,6 @@ const UNSPLIT_OPTIONS: { value: UnsplitBehavior; label: string; labelEn: string 
   { value: "merge", label: "合并到相邻 Pane", labelEn: "Merge into adjacent Pane" },
   { value: "close", label: "关闭当前 Pane 内终端", labelEn: "Close terminals in current Pane" },
 ];
-
-const TERMINAL_THEME_GROUP_LABEL_KEYS: Record<TerminalThemeGroupId, {
-  label: Parameters<ReturnType<typeof useI18n>["t"]>[0];
-  description: Parameters<ReturnType<typeof useI18n>["t"]>[0];
-}> = {
-  cool: {
-    label: "settings.terminalTheme.group.cool.label",
-    description: "settings.terminalTheme.group.cool.description",
-  },
-  warm: {
-    label: "settings.terminalTheme.group.warm.label",
-    description: "settings.terminalTheme.group.warm.description",
-  },
-  nature: {
-    label: "settings.terminalTheme.group.nature.label",
-    description: "settings.terminalTheme.group.nature.description",
-  },
-  "pink-purple": {
-    label: "settings.terminalTheme.group.pinkPurple.label",
-    description: "settings.terminalTheme.group.pinkPurple.description",
-  },
-  "high-contrast": {
-    label: "settings.terminalTheme.group.highContrast.label",
-    description: "settings.terminalTheme.group.highContrast.description",
-  },
-  "light-office": {
-    label: "settings.terminalTheme.group.lightOffice.label",
-    description: "settings.terminalTheme.group.lightOffice.description",
-  },
-};
 
 function clampFontSize(value: number) {
   if (!Number.isFinite(value)) return TERMINAL_FONT_SIZE_MIN;
@@ -428,6 +399,7 @@ export function ThemeSettingsPage() {
   const { language, t } = useI18n();
   const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
+  const terminalPreviewThemeName = useSettingsStore((s) => s.terminalPreviewThemeName);
   const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
@@ -462,6 +434,7 @@ export function ThemeSettingsPage() {
   const update = useSettingsStore((s) => s.update);
   const setTerminalThemeMode = useSettingsStore((s) => s.setTerminalThemeMode);
   const [query, setQuery] = useState("");
+  const [previewThemeQuery, setPreviewThemeQuery] = useState("");
   const [fontSizeDraft, setFontSizeDraft] = useState(fontSize);
   const [terminalScrollbackRowsDraft, setTerminalScrollbackRowsDraft] = useState(terminalScrollbackRows);
   const [paneMarkerPreviewColorKey, setPaneMarkerPreviewColorKey] =
@@ -618,6 +591,38 @@ export function ThemeSettingsPage() {
         ? selectedPreset.id
         : getFirstTerminalThemeIdByTone(value);
     if (nextThemeName) void selectIndependentTerminalTheme(nextThemeName);
+  };
+
+  const previewThemeMode: TerminalPreviewThemeMode =
+    terminalPreviewThemeName === FOLLOW_TERMINAL_PREVIEW_THEME ? "follow" : "independent";
+
+  const previewThemeModeOptions = useMemo(
+    () => [
+      { value: "follow" as const, label: text("跟随终端", "Follow terminal") },
+      { value: "independent" as const, label: text("独立主题", "Independent theme") },
+    ],
+    [language]
+  );
+
+  const previewThemeGroups = useMemo(() => {
+    const keyword = previewThemeQuery.trim().toLowerCase();
+    const scoped = keyword
+      ? TERMINAL_THEME_PRESETS.filter((preset) => preset.name.toLowerCase().includes(keyword))
+      : TERMINAL_THEME_PRESETS;
+    return TERMINAL_THEME_GROUPS.map((group) => ({
+      ...group,
+      presets: scoped.filter((preset) => preset.group === group.id),
+    })).filter((group) => group.presets.length > 0);
+  }, [previewThemeQuery]);
+
+  const handlePreviewThemeModeChange = (value: TerminalPreviewThemeMode) => {
+    if (value === "follow") {
+      void update("terminalPreviewThemeName", FOLLOW_TERMINAL_PREVIEW_THEME);
+      return;
+    }
+    // Seed the independent choice with what previews already show, so switching modes
+    // never makes the panels jump to an unrelated theme.
+    void update("terminalPreviewThemeName", selectedResolvedThemeId);
   };
 
   const fontFamilyOptions = useMemo(
@@ -1490,116 +1495,66 @@ export function ThemeSettingsPage() {
               {terminalPreview}
             </Box>
 
-            <Stack gap="md">
-            {groupedThemes.map((group) => (
-              <section key={group.id}>
-                <Group mb="xs" gap="xs" align="baseline">
-                  <Text size="xs" fw={600} c="var(--on-surface)">
-                    {t(TERMINAL_THEME_GROUP_LABEL_KEYS[group.id].label)}
-                  </Text>
-                  <Text size="xs" c="var(--text-muted)">
-                    {t(TERMINAL_THEME_GROUP_LABEL_KEYS[group.id].description)}
-                  </Text>
+            <TerminalThemePresetGrid
+              groups={groupedThemes}
+              isSelected={(preset) => (
+                terminalThemeMode === "system" || terminalThemeName === "auto"
+                  ? selectedResolvedThemeId === preset.id
+                  : terminalThemeName === preset.id
+              )}
+              onSelect={(preset) => {
+                void selectIndependentTerminalTheme(preset.id);
+              }}
+            />
+          </Stack>
+        </CollapsibleSettingsSection>
+
+        <CollapsibleSettingsSection
+          title={text("预览主题", "Preview Theme")}
+          description={text(
+            "作用于终端右侧的 Markdown 预览、子代理转录、会话回放与终端内 Git diff；默认跟随终端主题。",
+            "Applies to the Markdown preview, subagent transcript, session replay, and in-terminal Git diff. Follows the terminal theme by default.",
+          )}
+          open={terminalSettingsSectionsExpanded.previewTheme}
+          onToggle={() => toggleSection("previewTheme")}
+        >
+          <Stack gap="md">
+            <SegmentedControl<TerminalPreviewThemeMode>
+              value={previewThemeMode}
+              onChange={handlePreviewThemeModeChange}
+              data={previewThemeModeOptions}
+              color="cliPrimary"
+              fullWidth
+              aria-label={text("预览主题模式", "Preview theme mode")}
+            />
+            {previewThemeMode === "follow" ? (
+              <Text size="xs" c="var(--text-muted)">
+                {text(
+                  `预览面板当前跟随终端主题：${selectedTheme.label}`,
+                  `Preview panels currently follow the terminal theme: ${selectedTheme.label}`,
+                )}
+              </Text>
+            ) : (
+              <>
+                <Group align="flex-end" justify="space-between" gap="md">
+                  <TextInput
+                    value={previewThemeQuery}
+                    onChange={(event) => setPreviewThemeQuery(event.currentTarget.value)}
+                    placeholder={text("搜索主题...", "Search themes...")}
+                    size="xs"
+                    w={220}
+                    aria-label={text("预览主题搜索", "Preview theme search")}
+                  />
                 </Group>
-                <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="xs">
-                  {group.presets.map((preset) => {
-                    const active =
-                      terminalThemeMode === "system" || terminalThemeName === "auto"
-                        ? selectedResolvedThemeId === preset.id
-                        : terminalThemeName === preset.id;
-                    return (
-                      <UnstyledButton
-                        key={preset.id}
-                        onClick={() => {
-                          void selectIndependentTerminalTheme(preset.id);
-                        }}
-                        className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border p-4 text-left transition-[transform,box-shadow,border-color,background-color]"
-                        data-selected={active ? "true" : "false"}
-                        aria-pressed={active}
-                        w="100%"
-                        style={{
-                          display: "block",
-                          minHeight: 108,
-                          minWidth: 0,
-                          overflow: "hidden",
-                          whiteSpace: "normal",
-                          backgroundColor: active
-                            ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
-                            : "var(--surface-container-lowest)",
-                          borderColor: active
-                            ? "color-mix(in srgb, var(--primary) 56%, var(--border))"
-                            : "color-mix(in srgb, var(--border) 88%, transparent)",
-                          boxShadow: active
-                            ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent)"
-                            : "0 2px 8px color-mix(in srgb, var(--on-surface) 6%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent)",
-                        }}
-                      >
-                        {active && (
-                          <Badge
-                            className="absolute right-3 top-3"
-                            size="xs"
-                            variant="light"
-                            style={{
-                              backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
-                              border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
-                              color: "var(--primary)",
-                            }}
-                          >
-                            {text("当前", "Current")}
-                          </Badge>
-                        )}
-                        <Stack gap={8} pr={active ? 48 : 0} style={{ minWidth: 0, padding: "4px 8px 2px" }}>
-                          <Stack gap={2}>
-                            <Text
-                              size="sm"
-                              fw={600}
-                              c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}
-                              style={{ whiteSpace: "normal", overflowWrap: "anywhere", lineHeight: 1.25 }}
-                            >
-                              {preset.name}
-                            </Text>
-                            <Text
-                              size="xs"
-                              lh={1.55}
-                              c={active ? "var(--on-surface-variant)" : "var(--text-muted)"}
-                              style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
-                            >
-                              {preset.tone === "light" ? text("浅色", "Light") : text("深色", "Dark")}{preset.family ? ` · ${preset.family}` : ""}
-                            </Text>
-                          </Stack>
-                          <Group gap={6}>
-                            {SWATCH_KEYS.map((key) => (
-                              <Box
-                                key={key}
-                                component="span"
-                                w={16}
-                                h={16}
-                                className="h-4 w-4 rounded-[4px] border"
-                                style={{
-                                  backgroundColor:
-                                    (preset.theme as Record<string, string | undefined>)[key] ??
-                                    "var(--surface-container-lowest)",
-                                  borderColor: active ? "color-mix(in srgb, var(--primary) 48%, var(--border))" : "var(--border)",
-                                  boxShadow: "none",
-                                }}
-                              />
-                            ))}
-                          </Group>
-                        </Stack>
-                      </UnstyledButton>
-                    );
-                  })}
-                </SimpleGrid>
-              </section>
-            ))}
-            {filtered.length === 0 && (
-              <Card className="border border-dashed border-border bg-surface-container-lowest text-center" p="lg" radius="lg">
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {text("未找到匹配主题", "No matching themes")}
-                </Text>
-              </Card>
+                <TerminalThemePresetGrid
+                  groups={previewThemeGroups}
+                  isSelected={(preset) => preset.id === terminalPreviewThemeName}
+                  onSelect={(preset) => {
+                    void update("terminalPreviewThemeName", preset.id);
+                  }}
+                />
+              </>
             )}
-            </Stack>
           </Stack>
         </CollapsibleSettingsSection>
 

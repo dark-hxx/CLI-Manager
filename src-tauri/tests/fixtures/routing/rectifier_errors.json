@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "thinking-signature-invalid",
+      "routeEnabled": true,
+      "rule": "thinking_signature",
+      "providerKind": "anthropic",
+      "status": 400,
+      "error": "invalid thinking signature",
+      "request": {"messages": [{"role": "assistant", "content": [{"type": "thinking", "thinking": "fixture reasoning", "signature": "invalid-fixture-signature"}]}]},
+      "expected": {"retryOnce": true, "removeInvalidThinking": true, "replacementText": null}
+    },
+    {
+      "id": "thinking-budget-constraint",
+      "routeEnabled": true,
+      "rule": "thinking_budget",
+      "providerKind": "anthropic",
+      "status": 400,
+      "error": "budget_tokens must be less than max_tokens",
+      "request": {"thinking": {"type": "enabled", "budget_tokens": 65536}, "max_tokens": 1024},
+      "expected": {"retryOnce": true, "thinkingType": "enabled", "budgetTokens": 32000, "maxTokens": 64000}
+    },
+    {
+      "id": "thinking-budget-adaptive-is-not-mutated",
+      "routeEnabled": true,
+      "rule": "thinking_budget",
+      "providerKind": "anthropic",
+      "status": 400,
+      "error": "budget_tokens constraint",
+      "request": {"thinking": {"type": "adaptive"}, "max_tokens": 4096},
+      "expected": {"retryOnce": false, "thinkingType": "adaptive", "budgetTokens": null, "maxTokens": 4096}
+    },
+    {
+      "id": "media-unsupported-reactive",
+      "routeEnabled": true,
+      "rule": "media_fallback",
+      "providerKind": "text_only",
+      "status": 415,
+      "error": "image input is not supported",
+      "request": {"messages": [{"role": "user", "content": [{"type": "image", "source": {"type": "url", "url": "fixture-image-url"}}]}]},
+      "expected": {"retryOnce": true, "replacementText": "[Unsupported Image]", "logsOriginalMedia": false}
+    },
+    {
+      "id": "media-heuristic-disabled-still-keeps-explicit-fallback",
+      "routeEnabled": true,
+      "rule": "media_fallback",
+      "providerKind": "declared_text_only",
+      "heuristicEnabled": false,
+      "status": 400,
+      "error": "images are not supported by this model",
+      "request": {"input": [{"type": "input_image", "image_url": "fixture-image-url"}]},
+      "expected": {"retryOnce": true, "replacementText": "[Unsupported Image]", "heuristicPreflight": false}
+    },
+    {
+      "id": "media-fallback-covers-tool-and-mcp-nesting",
+      "routeEnabled": true,
+      "rule": "media_fallback",
+      "providerKind": "text_only",
+      "status": 422,
+      "error": "nested image content is not supported",
+      "request": {"messages": [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "fixture-tool", "content": [{"type": "mcp_image", "data": "fixture-image-bytes"}]}]}]},
+      "expected": {"retryOnce": true, "replacementText": "[Unsupported Image]", "logsOriginalMedia": false}
+    },
+    {
+      "id": "bedrock-thinking-optimizer",
+      "routeEnabled": true,
+      "rule": "bedrock_thinking",
+      "providerKind": "bedrock",
+      "effectiveEnv": {"CLAUDE_CODE_USE_BEDROCK": "1"},
+      "modelGeneration": "legacy",
+      "status": 200,
+      "error": null,
+      "request": {"model": "claude-sonnet-bedrock-fixture", "max_tokens": 4096},
+      "expected": {"retryOnce": false, "thinkingType": "enabled", "budgetTokens": 4095, "addsBeta": true}
+    },
+    {
+      "id": "bedrock-cache-injection-preserves-existing-breakpoints",
+      "routeEnabled": true,
+      "rule": "bedrock_cache",
+      "providerKind": "bedrock",
+      "effectiveEnv": {"CLAUDE_CODE_USE_BEDROCK": "1"},
+      "status": 200,
+      "error": null,
+      "request": {
+        "tools": [{"name": "fixture_lookup"}],
+        "system": [{"type": "text", "text": "fixture system", "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "fixture request"}]}]
+      },
+      "expected": {"retryOnce": false, "maxBreakpoints": 4, "preserveExisting": true, "ttl": "5m"}
+    },
+    {
+      "id": "bedrock-fields-do-not-leak-to-non-bedrock",
+      "routeEnabled": true,
+      "rule": "bedrock_thinking",
+      "providerKind": "anthropic",
+      "effectiveEnv": {"CLAUDE_CODE_USE_BEDROCK": "0"},
+      "status": 200,
+      "error": null,
+      "request": {"model": "claude-sonnet-fixture", "max_tokens": 4096},
+      "expected": {"retryOnce": false, "thinkingType": null, "budgetTokens": null, "addsBeta": false}
+    },
+    {
+      "id": "unrelated-client-error-is-not-rectified",
+      "routeEnabled": true,
+      "rule": "none",
+      "providerKind": "anthropic",
+      "status": 400,
+      "error": "invalid JSON body",
+      "request": {"model": "fixture"},
+      "expected": {"retryOnce": false}
+    },
+    {
+      "id": "signature-error-on-non-anthropic-provider-is-not-rectified",
+      "routeEnabled": true,
+      "rule": "thinking_signature",
+      "providerKind": "openai",
+      "status": 400,
+      "error": "invalid thinking signature",
+      "request": {"messages": []},
+      "expected": {"retryOnce": false}
+    },
+    {
+      "id": "route-disabled-is-never-rectified",
+      "routeEnabled": false,
+      "rule": "thinking_signature",
+      "providerKind": "anthropic",
+      "status": 400,
+      "error": "invalid thinking signature",
+      "request": {"messages": []},
+      "expected": {"retryOnce": false}
+    }
+  ]
+}

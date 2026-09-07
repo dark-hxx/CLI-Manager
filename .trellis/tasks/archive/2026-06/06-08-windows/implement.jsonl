@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"PowerShell/pwsh contract covers Windows PTY creation, runtime monitoring, and xterm boundary behavior; needed to understand which backend rules already exist for this terminal bug."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Terminal tab drag and xterm option constraints inform how to adjust XTermTerminal without rebuilding it or breaking related UI behavior."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Terminal store owns shell/runtime state and session lifecycle; needed to avoid scope regressions when changing shell-specific behavior."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Contains required patterns for buffered terminal output and manual verification expectations relevant to terminal UI changes."}

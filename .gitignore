@@ -47,6 +47,7 @@ apps/web/dist
 crates/web-protocol
 
 prototype/
+.pi
 .cursor
 .serena
 .gitnexus

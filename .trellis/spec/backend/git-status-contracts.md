@@ -33,6 +33,43 @@
 - `wsl::tests::converts_wsl_mnt_paths_to_windows_paths`
 - 手动对比：`git -C D:\... status --short` 为空，而 `wsl git -C /mnt/d/... status --short` 全量修改时，CLI-Manager Git 面板应按 Windows/native 结果展示。
 
+### WSL 自动刷新必须有终止边界
+
+**Context**：WSL UNC 不支持 Windows 文件监听器，文件浏览器会退化为 15 秒自动刷新。若目录不是 Git 仓库或 WSL 子进程失去响应，无边界轮询会持续制造失败请求，并在快速切换项目时形成积压。
+
+**Contract**：
+
+- `git_get_changes` 的 WSL `git` 与前置 `readlink` 子进程必须复用 `output_with_timeout`，单次最多运行 30 秒；禁止裸 `.output()`。
+- 明确识别为非 Git 仓库时返回稳定错误码 `not_git_repository`，其他权限、所有权和进程错误不得误归类。
+- 文件浏览器按规范化项目路径缓存 `not_git_repository`，文件监听回退轮询和窗口重新聚焦不得重复查询。
+- 用户手动刷新时清除当前路径的非 Git 缓存并重新探测，以支持运行期间初始化仓库。
+- 异步 Git 查询返回后必须校验当前项目文件位置；旧项目结果不得覆盖新项目状态。
+
+**Tests**：
+
+- Rust 单测覆盖英文和中文非 Git 错误识别，并拒绝把所有权错误误分类。
+- `node --test scripts/fileExplorerWslGitRefresh.test.mjs` 覆盖负缓存、手动重试、结果归属和超时执行器接入。
+
+### 非 Git 目录必须返回稳定错误码并渲染友好空态
+
+**Context**：用户经常把普通目录当项目打开。native/libgit2 链路曾把 libgit2 原始错误拼成 `不是 Git 仓库或无法访问: could not find repository at '...'; class=Repository (6); code=NotFound (-3)` 返回，前端只能把它当提示语铺进 Git 面板；同时文件浏览器的非 Git 负缓存依赖 `not_git_repository`，在 Windows 本地项目上完全命不中，每次刷新都重复查询。
+
+**Contract**：
+
+- `git_get_changes` 的三条链路（native/libgit2、WSL `wsl.exe git`、SSH Agent）识别「目录不是 Git 仓库」时都必须返回稳定错误码 `not_git_repository`（常量 `commands::git::NOT_GIT_REPOSITORY_CODE`）。
+- libgit2 侧只按 `git2::ErrorCode::NotFound` 判定（`format_open_repo_error`）。`Owner`、权限不足、仓库损坏等错误必须保留原始描述并以 `Git 仓库无法访问: <原文>` 上报，禁止归入该码，否则真实故障会被伪装成友好空态。
+- 错误分类统一走 `commands::git::is_not_git_repository_error`（稳定错误码 + shell-out Git 的中英文原生文案），新增链路不得各写一份字符串匹配。
+- 前端 `GitChangesPanel` 命中该场景渲染 `PanelEmptyState` 友好空态（`git.empty.notRepoTitle` / `git.empty.notRepoHint`），其余错误继续走 `formatGitNetError` + `EmptyHint`；`formatGitNetError` 对该场景返回 `git.error.notRepo`，不再把原始错误串塞进 `git.error.generic`。
+- SSH Agent 的映射需要远端 Agent 更新后才生效。旧 Agent 仍返回 `git_failed`，前端按通用错误提示降级；任何链路都不得把非仓库目录当成「成功返回空变更列表」，否则面板会伪装成干净仓库并允许后续写操作。
+
+**Tests**：
+
+- `commands::git::tests::maps_libgit2_not_found_to_stable_non_repository_code`（NotFound 命中、Owner 错误不误判）
+- `commands::git::tests::native_git_changes_reports_stable_code_for_plain_directory`
+- `commands::git::tests::native_git_changes_succeeds_inside_repository`
+- ssh-agent `git::tests::non_git_repository_stderr_maps_to_stable_code`（含 `no_remote` 不被抢走）
+- `npx tsc --noEmit`；手动在非 Git 目录打开 Git 面板，确认显示友好空态而不是原始错误。
+
 ### Common Mistake: 只改 `collect_git_changes_from_repo` 导致面板无效果
 
 **Symptom**：修复/过滤逻辑单测全绿，但 Git 面板 UI 行为不变。

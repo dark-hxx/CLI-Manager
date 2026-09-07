@@ -1,5 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify settings tab ids and terminal-specific component patterns remain stable"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify persisted settings behavior and schema are unchanged"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify static checks and manual UI verification checklist"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify no unnecessary duplicate UI abstractions"}

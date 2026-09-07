@@ -1,5 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Frontend component contracts: keep settings tab ids stable and protect terminal-specific component patterns"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Settings are persisted through Zustand and tauri-plugin-store; avoid schema changes and preserve migration patterns"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality requirements including manual runtime UI verification for desktop visuals"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing patterns and shared components before duplicating UI logic"}

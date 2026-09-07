@@ -1,5 +1,0 @@
-{"file":".trellis/tasks/06-01-fix-terminal-paste-newline-auto-send/prd.md","reason":"Confirmed requirement and accepted technical approach for paste newline behavior."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index for applicable guidance."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"xterm component-specific constraints, especially avoiding terminal recreation."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality constraints relevant to terminal buffering and hot UI paths."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index for modification triggers."}

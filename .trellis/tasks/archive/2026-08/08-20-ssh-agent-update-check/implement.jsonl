@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "新功能必须先做场景矩阵与发现清单"}
+{"file": ".trellis/spec/backend/ssh-agent-contracts.md", "reason": "Agent 发布身份、安装预览与 CLI 集成不得自动 SSH"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "设置对话框组件约定"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 fetch_verified_release 与 install_action"}

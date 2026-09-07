@@ -187,6 +187,38 @@ export class PtyHostSocket {
     return this.connectPromise;
   }
 
+  resetAfterDaemonRestart(): void {
+    this.attachedSessions.clear();
+    this.closedSessions.clear();
+    this.cancelReconnectWhenIdle();
+    this.pendingOutput.clear();
+    this.pendingOutputBytes.clear();
+    this.pendingOutputWarned.clear();
+    this.pendingStatus.clear();
+    this.latestReceivedSequence.clear();
+    this.latestCommittedSequence.clear();
+    this.legacyOutputUnlisten?.();
+    this.legacyStatusUnlisten?.();
+    this.legacyOutputUnlisten = null;
+    this.legacyStatusUnlisten = null;
+    const socket = this.socket;
+    if (socket) {
+      this.handleDisconnect(new Error("PtyHost daemon restarted"), socket, {
+        cause: "close",
+        authenticated: socket.readyState === WebSocket.OPEN,
+        code: 1000,
+        reason: "daemon-restarted",
+        wasClean: true,
+      });
+      socket.close();
+    } else {
+      this.stopHeartbeat();
+      this.connectedFeatures.clear();
+    }
+    this.transportMode = null;
+    logInfo("PtyHost transport reset after daemon restart", this.lifecycleSnapshot());
+  }
+
   async write(sessionId: string, data: string): Promise<void> {
     await this.request({ type: "write", session_id: sessionId, data });
   }

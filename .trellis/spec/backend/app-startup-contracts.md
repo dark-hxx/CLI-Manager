@@ -1,5 +1,68 @@
 # App Startup Contracts
 
+## Scenario: Data root is fixed before application services start
+
+### 1. Scope / Trigger
+
+- Trigger: changing `run()`, `main.rs` helper routing, database/log initialization, portable detection, pending data-root switching, or daemon startup.
+
+### 2. Signatures
+
+```rust
+app_paths::prepare_gui_startup() -> Result<(), String>
+app_paths::cli_manager_data_dir() -> Result<PathBuf, String>
+```
+
+- GUI entry: `main -> cli_manager_lib::run()`.
+- Early helper entries: `__hook`, `__statusline`, `__daemon`, and the standalone daemon binary.
+
+### 3. Contracts
+
+- `prepare_gui_startup()` must run before Linux graphics settings, logs, crash reporting, SQLite URL construction, Store registration, history cache, daemon connection, or WebView setup.
+- Only normal GUI startup applies `pendingSwitch`. Early helper entries resolve the current active root and must not copy data or activate a pending root.
+- Migration failure keeps the old active root and records `lastError`; an invalid/unwritable explicit active root blocks startup before any data service opens it.
+- The resolved root is fixed for the process. A settings command writes pending Bootstrap state and requires a full relaunch; no SQLite/Store/path cache is hot-switched.
+- Installed and portable artifacts retain the same Tauri identifier and release version, so the existing single-instance callback wakes the running window instead of opening a second data stack.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Pending migration succeeds | Persist the new active pointer, then initialize all services from the target root. |
+| Pending migration fails | Clear pending, keep old active pointer, start from old root, expose `lastError`. |
+| Active root cannot be created or written | Show the pre-WebView startup error and exit; do not use a fallback directory. |
+| Hook/statusline launches while a switch is pending | Use the current active root; leave pending untouched. |
+| Second installed/portable launch of the same release | Single-instance plugin wakes the existing `main` window; no second daemon or DB connection. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: relaunch after migration opens SQLite, Store, logs, cache, and daemon discovery only under the new root.
+- Base: no Bootstrap file means the historical installed path is used unchanged.
+- Bad: applying migration inside `__hook`, which can race the GUI relaunch.
+- Bad: changing a global path promise or SQLite URL while the current process is still alive.
+
+### 6. Tests Required
+
+- Rust `app_paths` tests plus `cargo check`.
+- Manual cold-start tests for installed default, portable default, custom root, migration failure, and unavailable custom drive.
+- Manual single-instance test with installed and portable artifacts from the same release.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let db_url = app_paths::db_url()?;
+app_paths::apply_pending_switch()?;
+```
+
+#### Correct
+
+```rust
+app_paths::prepare_gui_startup()?;
+let db_url = app_paths::db_url()?;
+```
+
 ## Scenario: Debug-mode F12 DevTools
 
 ### 1. Scope / Trigger
@@ -271,7 +334,7 @@ await getCurrentWindow().destroy();
 
 - `getDb()` must call `db_repair_known_migration_drift` before the first `Database.load(...)`.
 - The repair command must only use `app_paths::db_path()`; do not accept an arbitrary frontend path.
-- Repair is limited to known migration drift versions `13..=15`.
+- Checksum-drift row rewriting is limited to the explicitly recognized feature lineages (`13..=15` plus the existing SSH 20/21 compatibility). A separately documented large-data deferral may only insert the exact released migration row after verifying its prerequisite schema; it must not rewrite an applied checksum.
 - Repair rewrites only `_sqlx_migrations` rows for known complete schema states; it must not delete user data tables or rerun unsafe `ALTER TABLE` statements.
 - Current migration SQL strings shared with repair code must live in one source of truth, not duplicated with separate literals.
 
@@ -326,3 +389,23 @@ Migration {
     kind: MigrationKind::Up,
 }
 ```
+
+## Scenario: Large historical-data backfills during upgrade
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing a migration that updates existing `usage_records`, `request_logs`, history catalog rows, or other unbounded user-history tables.
+
+### 2. Contracts
+
+- Schema changes required for safe reads may run in SQLx startup migrations; an unbounded historical-data rewrite must not keep the main window inside a single startup transaction.
+- A released migration version, description, SQL and checksum remain immutable. Compatibility code that defers its data rewrite must register the exact original checksum and preserve equivalent eventual data semantics.
+- Deferred work starts only after `Database.load(...)` and connection pragmas complete, runs single-flight, commits bounded batches, skips already-complete rows, and is safe to interrupt and retry on the next launch.
+- Reads must retain a bounded compatibility path while deferred rows remain; background failure is logged but must not convert a successfully loaded schema into startup failure.
+- Empty databases and databases that already applied the migration keep the standard migration/no-op path.
+
+### 3. Tests Required
+
+- Verify exact migration checksum registration and idempotent no-op states.
+- Cover more than one batch, interruption-safe predicates, ambiguous mappings, existing-value protection and dependent-row propagation.
+- Run the focused Rust migration tests, `cargo check`, frontend type-check and an installed upgrade smoke test with a large copied database when available.

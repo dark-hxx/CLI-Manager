@@ -17,7 +17,7 @@ const CONPTY_DLL_PATH_ENV: &str = "CLI_MANAGER_CONPTY_DLL_PATH";
 #[cfg(target_os = "windows")]
 const WINDOWS_CONPTY_COMPATIBILITY_FIX_SETTING: &str = "windowsConptyCompatibilityFixEnabled";
 #[cfg(target_os = "windows")]
-const WINDOWS_25H2_BUILD: u32 = 26200;
+const WINDOWS_CONPTY_COMPATIBILITY_FIX_DEFAULT: bool = true;
 
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "windows")]
@@ -50,7 +50,7 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
 
 #[cfg(target_os = "windows")]
 fn windows_conpty_compatibility_fix_enabled() -> bool {
-    let default = default_enabled_for_windows_build(windows_build_number());
+    let default = WINDOWS_CONPTY_COMPATIBILITY_FIX_DEFAULT;
     let settings_path = match app_paths::cli_manager_data_dir() {
         Ok(dir) => dir.join("settings.json"),
         Err(err) => {
@@ -90,57 +90,6 @@ fn windows_conpty_compatibility_fix_enabled() -> bool {
         Err(err) => warn!("bundled ConPTY sideload setting write skipped: {err}"),
     }
     default
-}
-
-#[cfg(target_os = "windows")]
-fn default_enabled_for_windows_build(build: Option<u32>) -> bool {
-    build
-        .map(|value| value < WINDOWS_25H2_BUILD)
-        .unwrap_or(true)
-}
-
-#[cfg(target_os = "windows")]
-fn windows_build_number() -> Option<u32> {
-    #[repr(C)]
-    #[allow(non_snake_case)]
-    struct OsVersionInfoExW {
-        dwOSVersionInfoSize: u32,
-        dwMajorVersion: u32,
-        dwMinorVersion: u32,
-        dwBuildNumber: u32,
-        dwPlatformId: u32,
-        szCSDVersion: [u16; 128],
-        wServicePackMajor: u16,
-        wServicePackMinor: u16,
-        wSuiteMask: u16,
-        wProductType: u8,
-        wReserved: u8,
-    }
-
-    #[link(name = "ntdll")]
-    extern "system" {
-        fn RtlGetVersion(version: *mut OsVersionInfoExW) -> i32;
-    }
-
-    let mut version = OsVersionInfoExW {
-        dwOSVersionInfoSize: std::mem::size_of::<OsVersionInfoExW>() as u32,
-        dwMajorVersion: 0,
-        dwMinorVersion: 0,
-        dwBuildNumber: 0,
-        dwPlatformId: 0,
-        szCSDVersion: [0; 128],
-        wServicePackMajor: 0,
-        wServicePackMinor: 0,
-        wSuiteMask: 0,
-        wProductType: 0,
-        wReserved: 0,
-    };
-
-    let status = unsafe { RtlGetVersion(&mut version) };
-    if status < 0 {
-        return None;
-    }
-    Some(version.dwBuildNumber)
 }
 
 #[cfg(target_os = "windows")]
@@ -240,14 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn default_enabled_follows_windows_25h2_build_boundary() {
-        assert!(default_enabled_for_windows_build(None));
-        assert!(default_enabled_for_windows_build(Some(
-            WINDOWS_25H2_BUILD - 1
-        )));
-        assert!(!default_enabled_for_windows_build(Some(WINDOWS_25H2_BUILD)));
-        assert!(!default_enabled_for_windows_build(Some(
-            WINDOWS_25H2_BUILD + 1
-        )));
+    fn compatibility_fix_defaults_to_enabled() {
+        assert!(WINDOWS_CONPTY_COMPATIBILITY_FIX_DEFAULT);
     }
 }

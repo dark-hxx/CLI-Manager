@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "校验无残留硬编码 accent/颜色、无 hover:opacity-80 廉价反馈等 forbidden patterns"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "校验 ProviderRow/ProviderBadge 组件 props 与 composition 是否符合约定、两处确实复用同一组件"}

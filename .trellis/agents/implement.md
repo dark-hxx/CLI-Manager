@@ -39,16 +39,15 @@ The supervising main session owns commits. Report what changed; do not commit on
 
 1. Read relevant specs based on task type and the files in `implement.jsonl` if present
 2. Read the task's `prd.md`, `design.md` if present, and `implement.md` if present
-3. **Triage before coding** — run `.trellis/spec/guides/fix-triage-guide.md`. For a bug fix: decide minimal-fix vs root-cause; a root-cause fix must produce a root-cause statement + discovery list, never a patch at the symptom layer. For a new feature: enumerate scenarios against the guide's §5 scenario matrix (window focus, split panes, WSL, Worktree, hook installed…) before writing code.
-4. Implement features following specs and existing patterns
-5. Run the project's lint and typecheck commands on the changed scope
-6. Report files touched, key decisions, verification results, and (for root-cause fixes / features) the root-cause statement / scenario coverage back to the channel
+3. Implement features following specs and existing patterns
+4. Run the project's lint and typecheck commands on the changed scope
+5. Report files touched, key decisions, and verification results back to the channel
 
 ## Code Standards
 
 - Follow existing code patterns
 - Don't add unnecessary abstractions
-- Only do what the PRD asks for; no speculative scope expansion. But distinguish **scope creep (forbidden)** from **fixing the true root cause (required)**: patching only the symptom to keep the diff small is not "minimal", it's incomplete — see fix-triage-guide.md.
+- Only do what the PRD asks for; no speculative scope expansion
 - Surface uncertainty back to the channel rather than guessing
 
 ## Report Format

@@ -1,0 +1,32 @@
+{
+  "id": "ccs-routing-migration",
+  "name": "ccs-routing-migration",
+  "title": "迁移 CCS 路由板块",
+  "description": "规划 CCS v3.19.2 路由板块的原生迁移：按本地路由、自动故障转移、全局出站代理、整流器的优先级，记录每个开关的 CCS 行为、实现机制、CLI-Manager 方案、场景风险、验收与回滚。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-08-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feat/native-provider-management",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "docs/ccs/路由菜单主界面.png",
+    "docs/ccs/本地路由配置详情.png",
+    "docs/ccs/自动故障转移配置详情.png",
+    "docs/ccs/全局出站代理配置详情.png",
+    "docs/ccs/整流器配置详情.png"
+  ],
+  "notes": "A-01、A-02、A-03 均已批准。A-01 固定端口回退范围 15721-15799；A-02 采用 mirrored localhost 优先、NAT exact host-gateway、禁止 wildcard/firewall/portproxy；A-03 采用 route-only enabled key 轮询，401/403/429 先换同 provider key，key 耗尽后再换 provider，direct/scope 仍使用手动 active key。首版平台为 Windows 本地 CLI、Windows WSL CLI、macOS 本地 CLI，应用为 Claude/Codex/Grok Build 普通 API Key provider。Changelog Target 暂设为 [TEMP]；每个 Case 至少两轮独立 Review，发现后修复并重新计数，连续两轮零未解决发现后才允许独立提交并更新进度。",
+  "meta": {}
+}

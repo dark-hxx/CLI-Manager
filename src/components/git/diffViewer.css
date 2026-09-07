@@ -323,6 +323,12 @@
   color: var(--git-diff-text);
 }
 
+/* Refractor emits Markdown table tokens with `table`, which collides with
+ * Tailwind's display utility. Diff source tokens must always stay inline. */
+.diff-viewer-container .diff-code .token {
+  display: inline;
+}
+
 .diff-viewer-container .diff-code-insert {
   background-color: var(--git-diff-insert-bg);
 }

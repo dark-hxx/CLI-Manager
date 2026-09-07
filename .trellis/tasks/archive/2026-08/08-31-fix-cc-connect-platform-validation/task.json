@@ -1,0 +1,33 @@
+{
+  "id": "fix-cc-connect-platform-validation",
+  "name": "fix-cc-connect-platform-validation",
+  "title": "修复 cc-connect 多平台配置校验冲突",
+  "description": "修复首次配置飞书、企业微信等平台时，被隐藏且空白的默认 Telegram 配置阻断保存的问题；统一多平台启用状态、前端校验提示和后端平台化错误，并覆盖全部已支持平台组合。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-08-31",
+  "completedAt": "2026-08-31",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/components/settings/pages/CcConnectSettingsPage.tsx",
+    "src/lib/i18n.ts",
+    "src-tauri/src/commands/cc_connect.rs",
+    ".trellis/spec/backend/ccswitch-integration-contracts.md",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "GitNexus unavailable; codebase-memory detect_changes could not resolve its hard-coded main branch. Verified with refreshed moderate index, source/diff review, 62 cc-connect tests, TypeScript, cargo check, formatting and production frontend build.",
+  "meta": {}
+}

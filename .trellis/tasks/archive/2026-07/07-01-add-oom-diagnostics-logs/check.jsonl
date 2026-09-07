@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify diagnostics do not introduce unbounded memory work."}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Verify transcript command contracts remain stable."}
-{"file":".trellis/spec/backend/history-stats-contracts.md","reason":"Verify history command contracts remain stable."}
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Verify required checks and changelog update are complete."}

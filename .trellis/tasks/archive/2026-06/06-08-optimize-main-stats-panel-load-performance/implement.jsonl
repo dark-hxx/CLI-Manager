@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand store changes for stats query/cache state should follow project store conventions."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Stats query bounds and normalized payload changes require strict TypeScript boundary typing."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"StatsPanel UI controls should follow existing React component conventions without unnecessary redesign."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The change crosses frontend query state and Rust Tauri command parameters, so date/time contracts must be explicit."}

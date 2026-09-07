@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "抽取共享 ProviderRow / ProviderBadge 组件需遵循组件拆分、props、composition 约定"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "禁止硬编码颜色/魔法值等 forbidden patterns，本次正是用 var(--primary) 取代硬编码 accent"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "两处选中行重复实现，抽共享组件消除 duplication，需对照复用思考清单"}

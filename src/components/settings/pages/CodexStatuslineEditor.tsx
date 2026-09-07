@@ -6,7 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ActionIcon, Badge, Box, Button, Card, Group, SimpleGrid, Stack, Text } from "@mantine/core";
 import { ArrowDown, ArrowUp, Check, GripVertical, Plus, Save, X } from "lucide-react";
 import { toast } from "sonner";
-import { pickByLanguage, type AppLanguage, useI18n } from "@/lib/i18n";
+import { pickByLanguage, type AppLanguage, type TranslationKey, useI18n } from "@/lib/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { StatuslinePreview, type StatuslinePreviewState } from "./StatuslinePreview";
 import { StatuslineProfileBar } from "@/components/settings/StatuslineProfileBar";
@@ -18,10 +18,6 @@ interface CodexStatuslineConfig {
   items: string[];
 }
 
-interface CcSwitchHookProtectionStatus {
-  state: "notDetected" | "notSynced" | "synced" | "invalidDb" | "unavailable" | "syncFailed";
-}
-
 interface ItemDefinition {
   id: string;
   zh: string;
@@ -30,14 +26,16 @@ interface ItemDefinition {
 }
 
 const ITEMS: ItemDefinition[] = [
-  { id: "app-name", zh: "应用名称", en: "App name", preview: "codex" },
-  { id: "project-name", zh: "项目名称", en: "Project name", preview: "CLI-Manager" },
+  { id: "model", zh: "模型", en: "Model", preview: "gpt-5.6-sol" },
+  { id: "model-with-reasoning", zh: "模型与推理等级", en: "Model and reasoning", preview: "gpt-5.6-sol medium" },
+  { id: "reasoning", zh: "推理等级", en: "Reasoning level", preview: "medium" },
   { id: "current-dir", zh: "当前目录", en: "Current directory", preview: "D:\\work\\pythonProject\\CLI-Manager" },
-  { id: "status", zh: "运行状态", en: "Run status", preview: "Starting" },
-  { id: "thread-title", zh: "会话标题", en: "Thread title", preview: "statusline editor" },
+  { id: "project-name", zh: "项目名称", en: "Project name", preview: "CLI-Manager" },
+  { id: "hostname", zh: "主机名", en: "Hostname", preview: "dev-machine" },
   { id: "git-branch", zh: "Git 分支", en: "Git branch", preview: "feature/statusline" },
   { id: "pull-request-number", zh: "PR 编号", en: "Pull request", preview: "PR #123" },
   { id: "branch-changes", zh: "分支变更", en: "Branch changes", preview: "+12 -3" },
+  { id: "run-state", zh: "运行状态", en: "Run state", preview: "Starting" },
   { id: "permissions", zh: "权限模式", en: "Permissions", preview: "Workspace" },
   { id: "approval-mode", zh: "审批模式", en: "Approval mode", preview: "on-request" },
   { id: "context-remaining", zh: "剩余上下文", en: "Context remaining", preview: "Context 68% left" },
@@ -49,11 +47,13 @@ const ITEMS: ItemDefinition[] = [
   { id: "used-tokens", zh: "已用 Token", en: "Used tokens", preview: "38.2K used" },
   { id: "total-input-tokens", zh: "输入 Token", en: "Input tokens", preview: "31.4K in" },
   { id: "total-output-tokens", zh: "输出 Token", en: "Output tokens", preview: "6.8K out" },
-  { id: "session-id", zh: "会话 ID", en: "Session ID", preview: "019f55fc-927f-70c2-b63b-49ec0d9272d3" },
+  { id: "thread-credits", zh: "会话 Credits", en: "Thread credits", preview: "12.5 credits" },
+  { id: "estimated-thread-cost", zh: "会话预估费用", en: "Estimated thread cost", preview: "$0.42" },
+  { id: "thread-id", zh: "会话 ID", en: "Thread ID", preview: "019f55fc-927f-70c2-b63b-49ec0d9272d3" },
   { id: "fast-mode", zh: "快速模式", en: "Fast mode", preview: "Fast off" },
   { id: "raw-output", zh: "原始输出模式", en: "Raw output", preview: "raw output" },
-  { id: "model", zh: "模型", en: "Model", preview: "gpt-5.6-sol" },
-  { id: "model-with-reasoning", zh: "模型与推理等级", en: "Model and reasoning", preview: "gpt-5.6-sol medium" },
+  { id: "thread-title", zh: "会话标题", en: "Thread title", preview: "statusline editor" },
+  { id: "workspace-headline", zh: "工作区通知", en: "Workspace headline", preview: "Review requested" },
   { id: "task-progress", zh: "任务进度", en: "Task progress", preview: "Tasks 3/5" },
 ];
 
@@ -61,12 +61,26 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
+
+function formatCodexStatuslineError(error: unknown, translate: Translate) {
+  const message = errorMessage(error);
+  if (message.includes("codex_statusline_unknown_item")) {
+    return translate("settings.codexStatusline.error.unknownItem");
+  }
+  if (message.includes("codex_statusline_invalid_array")) {
+    return translate("settings.codexStatusline.error.invalidArray");
+  }
+  return message;
+}
+
 function codexAnsiCode(id: string) {
-  if (id === "app-name" || id === "project-name" || id === "current-dir") return 93;
-  if (id === "model" || id === "model-with-reasoning") return 92;
-  if (id === "session-id" || id === "codex-version") return 90;
+  if (id === "project-name" || id === "current-dir" || id === "hostname") return 93;
+  if (id === "model" || id === "model-with-reasoning" || id === "reasoning") return 92;
+  if (id === "thread-id" || id === "codex-version") return 90;
   if (id === "context-remaining" || id === "context-used" || id === "context-window-size"
-    || id === "used-tokens" || id === "total-input-tokens" || id === "total-output-tokens") return 95;
+    || id === "used-tokens" || id === "total-input-tokens" || id === "total-output-tokens"
+    || id === "thread-credits" || id === "estimated-thread-cost") return 95;
   if (id === "five-hour-limit" || id === "weekly-limit") return 96;
   if (id === "git-branch" || id === "pull-request-number" || id === "branch-changes") return 33;
   if (id === "permissions" || id === "approval-mode") return 36;
@@ -110,11 +124,11 @@ export function CodexStatuslineEditor({
 }) {
   const { language, t } = useI18n();
   const codexConfigDir = useSettingsStore((state) => state.codexHookConfigDir);
-  const ccSwitchDbPath = useSettingsStore((state) => state.ccSwitchDbPath);
   const [config, setConfig] = useState<CodexStatuslineConfig | null>(null);
   const [items, setItems] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [savedItems, setSavedItems] = useState<string[]>([]);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "failed">("loading");
   const profiles = useStatuslineProfiles<string[]>({ tool: "codex", configDir: codexConfigDir ?? undefined });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
@@ -126,16 +140,21 @@ export function CodexStatuslineEditor({
   }, []);
 
   const load = useCallback(async () => {
+    setLoadState("loading");
     const [nextConfig, nextProfiles] = await Promise.all([
       invoke<CodexStatuslineConfig>("codex_statusline_load", { configDir: codexConfigDir ?? undefined }),
       profiles.load(),
     ]);
     setConfig(nextConfig);
     applyProfileState(nextProfiles);
+    setLoadState("ready");
   }, [applyProfileState, codexConfigDir, profiles.load]);
 
   useEffect(() => {
-    load().catch((error) => toast.error(t("settings.codexStatusline.loadFailed"), { description: errorMessage(error) }));
+    load().catch((error) => {
+      setLoadState("failed");
+      toast.error(t("settings.codexStatusline.loadFailed"), { description: formatCodexStatuslineError(error, t) });
+    });
   }, [load, reloadToken, t]);
 
   const definitions = useMemo(() => new Map(ITEMS.map((item) => [item.id, item])), []);
@@ -170,33 +189,15 @@ export function CodexStatuslineEditor({
     });
   };
 
-  const syncCodexCommonConfig = async (nextItems: string[]) => {
-    try {
-      const status = await invoke<CcSwitchHookProtectionStatus>("codex_statusline_sync_ccswitch", {
-        configDir: codexConfigDir ?? undefined,
-        items: nextItems,
-        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-      });
-      if (["invalidDb", "unavailable", "syncFailed"].includes(status.state)) {
-        toast.warning(t("settings.statusline.ccSwitchSyncWarning"), {
-          description: t("settings.statusline.ccSwitchSyncWarningDescription"),
-        });
-      }
-    } catch (error) {
-      toast.warning(t("settings.statusline.ccSwitchSyncWarning"), { description: errorMessage(error) });
-    }
-  };
-
   const save = async () => {
     setSaving(true);
     try {
       if (!profiles.state) return;
       const next = await profiles.save(profiles.state.activeProfileId, items);
       applyProfileState(next);
-      await syncCodexCommonConfig(items);
       toast.success(t("settings.codexStatusline.saved"));
     } catch (error) {
-      toast.error(t("settings.codexStatusline.saveFailed"), { description: errorMessage(error) });
+      toast.error(t("settings.codexStatusline.saveFailed"), { description: formatCodexStatuslineError(error, t) });
     } finally {
       setSaving(false);
     }
@@ -212,25 +213,19 @@ export function CodexStatuslineEditor({
           onSave={save}
           onCreate={async (name) => {
             applyProfileState(await profiles.create(name, items));
-            await syncCodexCommonConfig(items);
           }}
           onSwitch={async (profileId) => {
             const next = await profiles.switchProfile(profileId);
             applyProfileState(next);
-            const active = next.profiles.find((profile) => profile.id === next.activeProfileId);
-            await syncCodexCommonConfig(active?.payload ?? items);
           }}
           onRename={async (profileId, name) => applyProfileState(await profiles.rename(profileId, name))}
           onDuplicate={async (profileId, name) => {
             applyProfileState(await profiles.duplicate(profileId, name));
-            await syncCodexCommonConfig(items);
           }}
           onDelete={async (profileId) => applyProfileState(await profiles.remove(profileId))}
           onCaptureExternal={async (name) => {
             const next = await profiles.captureExternal(name);
             applyProfileState(next);
-            const active = next.profiles.find((profile) => profile.id === next.activeProfileId);
-            await syncCodexCommonConfig(active?.payload ?? items);
           }}
         />
       </Card>
@@ -276,7 +271,13 @@ export function CodexStatuslineEditor({
                     </>}</SortableCodexItem>
                   );
                 })}
-                {items.length === 0 && <Text size="sm" c="var(--on-surface-variant)">{t("settings.codexStatusline.empty")}</Text>}
+                {items.length === 0 && <Text size="sm" c="var(--on-surface-variant)">
+                  {loadState === "loading"
+                    ? t("settings.codexStatusline.loading")
+                    : loadState === "failed"
+                      ? t("settings.codexStatusline.loadFailedInline")
+                      : t("settings.codexStatusline.empty")}
+                </Text>}
               </Stack>
             </SortableContext>
           </DndContext>

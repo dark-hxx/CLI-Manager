@@ -46,6 +46,33 @@ function tokenizeCliArgs(cliArgs: string): CliArgToken[] {
   return tokens;
 }
 
+export function replaceGrokModelArg(command: string, model: string): string {
+  const normalizedModel = model.trim();
+  if (!/^[A-Za-z0-9._:/@+-]+$/.test(normalizedModel)) {
+    throw new Error("provider_grok_model_invalid");
+  }
+  const tokens = tokenizeCliArgs(command);
+  if (tokens.length === 0) return command.trim();
+  const kept: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const name = optionName(token);
+    if (name === "-m" || name === "--model") {
+      if (!token.raw.includes("=") && tokens[index + 1]) index += 1;
+      continue;
+    }
+    kept.push(token.raw);
+  }
+
+  kept.splice(1, 0, "--model", quoteCliArg(normalizedModel));
+  return kept.join(" ");
+}
+
+function quoteCliArg(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
 function isOptionToken(token: CliArgToken | undefined): boolean {
   return Boolean(token?.raw.startsWith("-"));
 }
@@ -224,5 +251,58 @@ export function stripResumeCliArgs(cliArgs: string | null | undefined): string {
     kept.push(token.raw);
   }
 
+  return kept.join(" ").trim();
+}
+
+const KIMI_RESUME_OPTIONS = new Set([
+  "-c",
+  "-C",
+  "-r",
+  "-S",
+  "--continue",
+  "--resume",
+  "--session",
+]);
+
+const KIMI_RESUME_OPTIONS_WITH_VALUE = new Set([
+  "-r",
+  "-S",
+  "--resume",
+  "--session",
+]);
+
+export function isValidKimiSessionId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+export function isValidGrokSessionId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+function kimiOptionName(token: CliArgToken): string {
+  const equalsIndex = token.raw.indexOf("=");
+  const name = equalsIndex < 0 ? token.raw : token.raw.slice(0, equalsIndex);
+  return name.startsWith("--") ? name.toLowerCase() : name;
+}
+
+export function stripKimiResumeCliArgs(cliArgs: string | null | undefined): string {
+  const tokens = tokenizeCliArgs(cliArgs ?? "");
+  const kept: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const name = kimiOptionName(token);
+    if (!KIMI_RESUME_OPTIONS.has(name)) {
+      kept.push(token.raw);
+      continue;
+    }
+    if (
+      KIMI_RESUME_OPTIONS_WITH_VALUE.has(name)
+      && !token.raw.includes("=")
+      && tokens[index + 1]
+      && !tokens[index + 1].raw.startsWith("-")
+    ) {
+      index += 1;
+    }
+  }
   return kept.join(" ").trim();
 }

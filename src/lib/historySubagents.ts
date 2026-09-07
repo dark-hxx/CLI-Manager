@@ -1,10 +1,14 @@
 import type { HistorySessionView } from "./types";
 
 /**
- * 从会话文件路径推断 subagent 转录的父会话 ID；非 subagent 转录返回 null。
- * 判定需与后端 is_subagent_transcript_path 保持一致：subagents/ 目录下的 agent-*.jsonl。
+ * 优先使用后端从会话元数据解析出的父会话 ID；Claude 的路径约定作为兼容回退。
  */
 export function inferSubagentParentSessionId(session: HistorySessionView): string | null {
+  const explicitParentId = session.parent_session_id?.trim();
+  if (explicitParentId && explicitParentId !== session.session_id) {
+    return explicitParentId;
+  }
+
   const parts = (session.file_path ?? "").replace(/\\/g, "/").split("/").filter(Boolean);
   const subagentsIndex = parts.findIndex((part) => part.toLowerCase() === "subagents");
   if (subagentsIndex <= 0) return null;

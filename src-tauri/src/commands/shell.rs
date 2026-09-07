@@ -312,10 +312,42 @@ pub async fn open_windows_terminal(tabs: Vec<ExternalTab>) -> Result<(), String>
     open_platform_terminal(&tabs)
 }
 
+#[cfg(target_os = "windows")]
+fn is_windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_windows_explorer_path(path: &str) -> String {
+    let trimmed = path.trim();
+    let path = match trimmed.strip_prefix('/') {
+        Some(candidate) if is_windows_drive_path(candidate) => candidate,
+        _ => trimmed,
+    };
+
+    if is_windows_drive_path(path) {
+        return path.replace('/', "\\");
+    }
+
+    if crate::wsl::is_wsl_config_dir(path) {
+        return crate::wsl::normalize_wsl_unc_path(path);
+    }
+
+    path.to_string()
+}
+
 /// 在系统文件管理器中打开指定路径
 #[tauri::command]
 pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> Result<(), String> {
-    let path_buf = PathBuf::from(&path);
+    #[cfg(target_os = "windows")]
+    let system_path = normalize_windows_explorer_path(&path);
+    #[cfg(not(target_os = "windows"))]
+    let system_path = path.clone();
+    let path_buf = PathBuf::from(&system_path);
 
     // 检查路径是否存在
     if !path_buf.exists() {
@@ -326,13 +358,15 @@ pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> R
     #[cfg(target_os = "windows")]
     {
         let result = if path_buf.is_file() && open_file.unwrap_or(false) {
-            Command::new("explorer").arg(&path).spawn()
+            Command::new("explorer").arg(&system_path).spawn()
         } else if path_buf.is_file() {
             // 如果是文件，使用 /select 参数在文件管理器中选中该文件
-            Command::new("explorer").args(&["/select,", &path]).spawn()
+            Command::new("explorer")
+                .args(["/select,", system_path.as_str()])
+                .spawn()
         } else {
             // 如果是目录，直接打开
-            Command::new("explorer").arg(&path).spawn()
+            Command::new("explorer").arg(&system_path).spawn()
         };
 
         result.map_err(|e| {
@@ -340,7 +374,7 @@ pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> R
             format!("无法打开文件夹: {}", e)
         })?;
 
-        debug!("Opened folder in explorer: {}", path);
+        debug!("Opened folder in explorer: {}", system_path);
         Ok(())
     }
 
@@ -375,5 +409,42 @@ pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> R
 
         debug!("Opened path with xdg-open: {}", target.to_string_lossy());
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::normalize_windows_explorer_path;
+
+    #[test]
+    fn normalize_windows_explorer_path_normalizes_drive_paths() {
+        assert_eq!(
+            normalize_windows_explorer_path(
+                "/F:/github/smart-home/demo3/knx-workspace/initial-quote-v1/project.knxproj"
+            ),
+            r"F:\github\smart-home\demo3\knx-workspace\initial-quote-v1\project.knxproj"
+        );
+        assert_eq!(
+            normalize_windows_explorer_path("F:/github/smart-home/project.knxproj"),
+            r"F:\github\smart-home\project.knxproj"
+        );
+        assert_eq!(
+            normalize_windows_explorer_path(r"F:\github\smart-home\project.knxproj"),
+            r"F:\github\smart-home\project.knxproj"
+        );
+    }
+
+    #[test]
+    fn normalize_windows_explorer_path_preserves_unc_and_normalizes_wsl_unc() {
+        assert_eq!(
+            normalize_windows_explorer_path(r"\\server\share\project.knxproj"),
+            r"\\server\share\project.knxproj"
+        );
+        assert_eq!(
+            normalize_windows_explorer_path(
+                r"\\?\UNC\wsl.localhost\Ubuntu\home\me\project.knxproj"
+            ),
+            r"\\wsl.localhost\Ubuntu\home\me\project.knxproj"
+        );
     }
 }

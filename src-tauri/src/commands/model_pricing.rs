@@ -6,6 +6,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::provider::network_client;
+
 const LITELLM_PRICES_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
@@ -245,7 +247,7 @@ fn is_auto_match_kind(kind: MatchKind) -> bool {
 }
 
 async fn fetch_remote_prices() -> Result<Vec<RemoteModelPrice>, String> {
-    let client = reqwest::Client::builder()
+    let client = network_client::configure_builder(reqwest::Client::builder())?
         .user_agent("CLI-Manager model pricing sync")
         .timeout(REMOTE_FETCH_TIMEOUT)
         .build()

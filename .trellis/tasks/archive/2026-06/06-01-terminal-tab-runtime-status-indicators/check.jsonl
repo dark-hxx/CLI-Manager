@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality checklist for tab rendering, accessibility, and interaction behavior."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check new status/settings types and avoid loose string states."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Verify Zustand updates remain minimal and predictable."}
-{"file":".trellis/spec/backend/index.md","reason":"Check backend PTY/hook changes and command boundaries if Rust changes are made."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify frontend/backend event contract consistency."}
-{"file":".trellis/tasks/06-01-terminal-tab-runtime-status-indicators/research/shell-lifecycle-monitoring.md","reason":"Validate implementation against researched shell lifecycle constraints."}

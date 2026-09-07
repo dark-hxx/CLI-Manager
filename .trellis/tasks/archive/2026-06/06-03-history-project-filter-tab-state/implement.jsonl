@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec entry point for required pre-development checklist."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Uses Zustand history/project stores and must follow existing global state patterns."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"History UI scans and filters must avoid known hot-path quality issues."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"New props/actions should preserve strict TypeScript typing."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature crosses TerminalTabs, HistoryWorkspace, store, and backend invoke parameters."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing projectPathFilter/openHistory/loadSessions patterns instead of duplicate state."}

@@ -1,7 +1,0 @@
-{"file":".trellis/tasks/06-22-cli-manager-agent/prd.md","reason":"Review expected behavior, acceptance criteria, and out-of-scope boundaries."}
-{"file":".trellis/tasks/06-22-cli-manager-agent/research/cmux-agent-panes.md","reason":"Verify implementation aligns with researched CMUX-like behavior without over-scoping."}
-{"file":".trellis/tasks/06-22-cli-manager-agent/research/current-findings-summary.md","reason":"Use the saved summary to check that the selected route matches current conclusions."}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Check that hook/subagent transcript behavior remains compatible."}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Check runtime status integration and avoid breaking existing terminal status behavior."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Check pane tree/session state changes preserve existing split and move contracts."}
-{"file":".trellis/tasks/06-22-cli-manager-agent/acceptance.md","reason":"Use the agreed acceptance criteria for Phase 1 implementation and avoid over-scoping into native agent runner work."}

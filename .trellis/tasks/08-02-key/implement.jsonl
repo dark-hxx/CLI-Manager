@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/08-02-key/prd.md","reason":"Approved product scope and explicit exclusions for the complete CCS-compatible provider domain."}
+{"file":".trellis/tasks/08-02-key/design.md","reason":"Data model, writers, Home resolver, import/cutover and UI architecture decisions."}
+{"file":".trellis/tasks/08-02-key/implement.md","reason":"Mandatory phase sequence and implementation exit criteria."}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Backend invariants and cross-boundary rules."}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"Provider list/editor and interaction rules."}

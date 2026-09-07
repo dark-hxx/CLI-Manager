@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod kimi;
+
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedHookInput {
@@ -91,7 +93,8 @@ pub struct HookInstallationRecord {
     pub managed_entries: u32,
     pub adapter_version: u16,
     pub installed_at: u64,
-    pub history_source_candidate: HookHistorySourceCandidate,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_source_candidate: Option<HookHistorySourceCandidate>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -134,10 +137,23 @@ pub fn normalize_hook_input(event: &str, hook_input: &Value) -> Option<Normalize
     {
         return None;
     }
-    let message = first_string(hook_input, &["message", "prompt", "notification", "reason"])
-        .or_else(|| {
-            tool_input.and_then(|value| first_string(value, &["prompt", "description", "task"]))
-        });
+    let message = first_string(
+        hook_input,
+        &[
+            "message",
+            "prompt",
+            "notification",
+            "reason",
+            "error_message",
+            "response",
+            "feedback",
+            "error",
+            "display",
+        ],
+    )
+    .or_else(|| {
+        tool_input.and_then(|value| first_string(value, &["prompt", "description", "task"]))
+    });
     let agent_id = first_string(hook_input, &["agent_id"])
         .or_else(|| tool_input.and_then(|value| first_string(value, &["agent_id", "agentId"])))
         .or_else(|| tool_response.and_then(|value| first_string(value, &["agent_id", "agentId"])));
@@ -159,7 +175,7 @@ pub fn normalize_hook_input(event: &str, hook_input: &Value) -> Option<Normalize
     let skill_name = tool_input
         .and_then(|value| first_string(value, &["skill", "skill_name", "skillName"]))
         .or_else(|| first_string(hook_input, &["skill", "skill_name", "skillName"]));
-    let agent_type = first_string(hook_input, &["agent_type"])
+    let agent_type = first_string(hook_input, &["agent_type", "agent_name"])
         .or_else(|| {
             tool_input.and_then(|value| {
                 first_string(
@@ -305,6 +321,29 @@ mod tests {
             normalized.session_id.as_deref(),
             Some("019f8ea7-262f-75b3-acfd-74499dd0013c")
         );
+    }
+
+    #[test]
+    fn normalizes_kimi_subagent_display_and_failure_message() {
+        let subagent = normalize_hook_input(
+            "SubagentStop",
+            &json!({
+                "session_id": "session-kimi",
+                "agent_name": "researcher",
+                "response": "Completed the research"
+            }),
+        )
+        .unwrap();
+        assert_eq!(subagent.session_id.as_deref(), Some("session-kimi"));
+        assert_eq!(subagent.agent_type.as_deref(), Some("researcher"));
+        assert_eq!(subagent.message.as_deref(), Some("Completed the research"));
+
+        let failure = normalize_hook_input(
+            "StopFailure",
+            &json!({ "error_message": "model request failed" }),
+        )
+        .unwrap();
+        assert_eq!(failure.message.as_deref(), Some("model request failed"));
     }
 
     #[test]

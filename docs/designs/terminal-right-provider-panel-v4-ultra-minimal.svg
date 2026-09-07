@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <image href="terminal-right-provider-panel-v3-minimal.svg" x="0" y="0" width="1920" height="1080"/>
+  <style>
+    text{font-family:"Segoe UI","Microsoft YaHei UI",sans-serif}.t{fill:#f2f5f3;font-weight:700}.b{fill:#d4dad7}.m{fill:#89938e}.g{fill:#3dd68c}.xs{font-size:11px}.sm{font-size:12px}
+  </style>
+
+  <!-- replace panel body: no content title, no search, no section title -->
+  <rect x="1498" y="187" width="394" height="785" fill="#0f1210"/>
+
+  <!-- CLI selector is the first content element -->
+  <rect x="1518" y="207" width="354" height="38" rx="8" fill="#0b0e0c"/>
+  <rect x="1522" y="211" width="112" height="30" rx="6" fill="#214832"/>
+  <text x="1578" y="231" class="g sm" font-weight="700" text-anchor="middle">Claude Code</text>
+  <text x="1695" y="231" class="m sm" text-anchor="middle">Codex</text>
+  <text x="1814" y="231" class="m sm" text-anchor="middle">Grok Build</text>
+
+  <!-- current row -->
+  <rect x="1510" y="261" width="370" height="62" rx="8" fill="#1a2e23" stroke="#326749"/>
+  <circle cx="1538" cy="292" r="12" fill="#38251f"/>
+  <path d="M1538 283v18m-9-9h18m-15-6l12 12m0-12-12 12" stroke="#ee7446" stroke-width="1.2"/>
+  <text x="1562" y="288" class="t sm">Anyrouter</text>
+  <text x="1562" y="307" class="m xs">claude-opus-4-7</text>
+  <text x="1832" y="288" class="g xs" text-anchor="end">当前</text>
+  <circle cx="1852" cy="292" r="8" fill="#3dd68c"/>
+  <path d="M1848 292l3 3 5-6" fill="none" stroke="#092016" stroke-width="1.5"/>
+
+  <!-- flat rows -->
+  <rect x="1510" y="327" width="370" height="62" rx="8" fill="transparent"/>
+  <circle cx="1538" cy="358" r="12" fill="#202526"/>
+  <circle cx="1538" cy="358" r="5" fill="none" stroke="#c2cbc7"/>
+  <text x="1562" y="354" class="b sm">cpa-cc</text>
+  <text x="1562" y="373" class="m xs">claude-opus-4-8[1m] · 主密钥</text>
+  <path d="M1850 352l6 6-6 6" fill="none" stroke="#65706a" stroke-width="1.3"/>
+  <line x1="1562" y1="389" x2="1872" y2="389" stroke="#202622"/>
+
+  <rect x="1510" y="393" width="370" height="62" rx="8" fill="transparent"/>
+  <circle cx="1538" cy="424" r="12" fill="#252434"/>
+  <circle cx="1538" cy="424" r="5" fill="none" stroke="#9587f0"/>
+  <path d="M1538 414v4m0 12v4" stroke="#9587f0"/>
+  <text x="1562" y="420" class="b sm">elysiver</text>
+  <text x="1562" y="439" class="m xs">glm-5.1 · 备用密钥</text>
+  <path d="M1850 418l6 6-6 6" fill="none" stroke="#65706a" stroke-width="1.3"/>
+  <line x1="1562" y1="455" x2="1872" y2="455" stroke="#202622"/>
+
+  <rect x="1510" y="459" width="370" height="62" rx="8" fill="transparent" opacity="0.65"/>
+  <circle cx="1538" cy="490" r="12" fill="#242725"/>
+  <text x="1538" y="494" class="m xs" text-anchor="middle">W</text>
+  <text x="1562" y="486" class="m sm">wong</text>
+  <text x="1562" y="505" fill="#c99c48" class="xs">缺少可用密钥</text>
+  <path d="M1850 484l6 6-6 6" fill="none" stroke="#766c56" stroke-width="1.3"/>
+
+  <!-- quiet settings link -->
+  <line x1="1518" y1="973" x2="1872" y2="973" stroke="#292f2b"/>
+  <path d="M1521 995h13v13h-13zM1524 992h7v3" fill="none" stroke="#3dd68c" stroke-width="1.3"/>
+  <text x="1544" y="1007" class="g sm">在设置中管理供应商</text>
+  <path d="M1850 997l6 6-6 6" fill="none" stroke="#3dd68c" stroke-width="1.3"/>
+
+  <!-- updated annotation -->
+  <rect x="1588" y="102" width="182" height="24" rx="12" fill="#103526"/>
+  <text x="1679" y="118" class="g sm" font-weight="700" text-anchor="middle">零冗余 · 打开即选择</text>
+</svg>

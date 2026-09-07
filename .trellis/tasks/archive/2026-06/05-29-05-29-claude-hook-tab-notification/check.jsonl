@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"Check that notification state remains transient and scoped to terminal tabs."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check that the existing tab dot is reused without unrelated UI churn."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check event payload handling and state unions remain type-safe."}
-{"file":".trellis/spec/backend/index.md","reason":"Check Rust boundary validates local hook input and keeps command contracts stable."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check event contract is consistent from script to backend to frontend."}

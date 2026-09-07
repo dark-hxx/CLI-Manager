@@ -1,6 +1,7 @@
 use super::model::{
     HttpMethod, HttpRequestSpec, HttpResponseSnapshot, NotificationError, RequestBody,
 };
+use crate::provider::network_client;
 use reqwest::redirect::Policy;
 use reqwest::{Client, Url};
 use std::time::{Duration, Instant};
@@ -9,7 +10,8 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const CONTROLLED_HEADERS: &[&str] = &["host", "content-length", "transfer-encoding", "connection"];
 
 pub fn build_client() -> Result<Client, NotificationError> {
-    Client::builder()
+    network_client::configure_builder(Client::builder())
+        .map_err(|error| NotificationError::new("http_client_failed", error))?
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(5))
         .redirect(Policy::none())

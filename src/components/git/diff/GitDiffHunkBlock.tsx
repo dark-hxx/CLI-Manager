@@ -1,4 +1,4 @@
-import { useMemo, type KeyboardEvent, type MouseEvent } from "react";
+import { useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import {
   Diff,
   Hunk,
@@ -8,6 +8,7 @@ import {
   type HunkData,
 } from "react-diff-view";
 import { Undo2 } from "../../icons";
+import { ConfirmDialog } from "../../ConfirmDialog";
 import { debugConsoleWarn } from "../../../lib/debugConsole";
 import { useI18n } from "../../../lib/i18n";
 import type { GitDiffViewMode } from "../../../stores/settingsStore";
@@ -39,6 +40,7 @@ export function GitDiffHunkBlock({
   onGutterKeyDown,
 }: GitDiffHunkBlockProps) {
   const { t } = useI18n();
+  const [revertConfirmOpen, setRevertConfirmOpen] = useState(false);
   const tokens = useMemo(() => {
     if (!syntaxHighlight) return null;
     const language = detectLanguage(fileName);
@@ -68,7 +70,7 @@ export function GitDiffHunkBlock({
         {controller.canRevertHunks && (
           <button
             type="button"
-            onClick={() => void controller.revertHunk(hunkIndex)}
+            onClick={() => setRevertConfirmOpen(true)}
             disabled={controller.reverting}
             className="ui-focus-ring flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
             style={{ color: "var(--danger)" }}
@@ -100,6 +102,20 @@ export function GitDiffHunkBlock({
       >
         {() => <Hunk hunk={hunk} />}
       </Diff>
+      <ConfirmDialog
+        open={revertConfirmOpen}
+        title={t("git.confirm.revertHunkTitle")}
+        message={t("git.confirm.revertHunkMessage")}
+        confirmText={t("git.confirm.revertHunk")}
+        cancelText={t("common.cancel")}
+        danger
+        zIndex={220}
+        onConfirm={() => {
+          setRevertConfirmOpen(false);
+          void controller.revertHunk(hunkIndex);
+        }}
+        onClose={() => setRevertConfirmOpen(false)}
+      />
     </div>
   );
 }

@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"historyStore reads persistent hook directory settings and must pass them through without creating stale frontend cache state"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"feature spans settings store, frontend invoke boundary, Rust history commands, and rendered analytics/history UI"}
-{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"history commands accept persisted user-controlled paths and must keep Rust-side path boundary checks conservative"}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"new invoke arguments must stay explicit and avoid weak TypeScript typing"}

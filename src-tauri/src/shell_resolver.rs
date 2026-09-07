@@ -137,6 +137,114 @@ pub fn output_with_timeout(
     })
 }
 
+/// Output from a probe whose retained stdout is capped while the pipe is still fully drained.
+pub struct BoundedOutput {
+    pub status: std::process::ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stdout_truncated: bool,
+}
+
+fn drain_bounded<R: std::io::Read>(pipe: Option<R>, limit: usize) -> (Vec<u8>, bool) {
+    let mut retained = Vec::with_capacity(limit.min(8 * 1024));
+    let mut truncated = false;
+    let Some(mut pipe) = pipe else {
+        return (retained, truncated);
+    };
+    let mut chunk = [0_u8; 8 * 1024];
+    loop {
+        let count = match pipe.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => count,
+        };
+        let remaining = limit.saturating_sub(retained.len());
+        let copy_count = remaining.min(count);
+        retained.extend_from_slice(&chunk[..copy_count]);
+        truncated |= copy_count < count;
+    }
+    (retained, truncated)
+}
+
+/// Executes a probe with timeout and a hard cap on retained stdout bytes.
+///
+/// Bytes beyond `stdout_limit` are discarded while the pipe continues to be drained, so a noisy
+/// child cannot grow the application process without bound or deadlock on a full pipe.
+pub fn output_with_timeout_bounded(
+    mut command: Command,
+    timeout: std::time::Duration,
+    stdout_limit: usize,
+) -> std::io::Result<BoundedOutput> {
+    use std::process::Stdio;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    #[cfg(target_os = "windows")]
+    let job = match ChildJob::assign(&child, "bounded probe process") {
+        Ok(job) => job,
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other(err));
+        }
+    };
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || drain_bounded(stdout_pipe, stdout_limit));
+    let stderr_reader = std::thread::spawn(move || drain_bounded(stderr_pipe, 0));
+
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(err) => {
+                #[cfg(target_os = "windows")]
+                job.terminate();
+                #[cfg(unix)]
+                terminate_process_group(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            #[cfg(target_os = "windows")]
+            job.terminate();
+            #[cfg(unix)]
+            terminate_process_group(child.id());
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("进程超过 {}s 未结束，已终止", timeout.as_secs()),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    };
+
+    #[cfg(target_os = "windows")]
+    drop(job);
+    #[cfg(unix)]
+    terminate_process_group(child.id());
+
+    let (stdout, stdout_truncated) = stdout_reader.join().unwrap_or_default();
+    let _ = stderr_reader.join();
+    Ok(BoundedOutput {
+        status,
+        stdout,
+        stdout_truncated,
+    })
+}
+
 #[cfg(unix)]
 fn terminate_process_group(pid: u32) {
     use nix::sys::signal::{killpg, Signal};
@@ -159,6 +267,53 @@ mod process_tree_tests {
 
         assert!(output.status.success());
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+}
+
+#[cfg(test)]
+mod process_timeout_tests {
+    use super::*;
+
+    #[test]
+    fn long_running_process_is_terminated_at_timeout() {
+        let command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "ping 127.0.0.1 -n 6 > nul"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        };
+        let started = std::time::Instant::now();
+        let error = output_with_timeout(command, std::time::Duration::from_millis(100))
+            .expect_err("long-running process should time out");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    }
+
+    #[test]
+    fn bounded_output_discards_bytes_over_the_limit() {
+        let command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "for /L %i in (1,1,200) do @echo 1234567890"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "i=0; while [ $i -lt 200 ]; do echo 1234567890; i=$((i+1)); done",
+            ]);
+            command
+        };
+
+        let output =
+            output_with_timeout_bounded(command, std::time::Duration::from_secs(2), 32).unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 32);
+        assert!(output.stdout_truncated);
     }
 }
 

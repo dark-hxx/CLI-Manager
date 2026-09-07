@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Check frontend spec checklist was followed."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review component, accessibility, and terminal layout patterns."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Review state persistence/locality decisions."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review terminal UI manual verification requirements and static check scope."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check new code reuses existing patterns and avoids duplicated style logic."}

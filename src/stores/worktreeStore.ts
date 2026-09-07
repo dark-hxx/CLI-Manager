@@ -285,7 +285,6 @@ export const useWorktreeStore = create<WorktreeStore>((set, get) => ({
       ),
     }));
     await useProjectStore.getState().fetchAll("interactive");
-    await useProjectStore.getState().cleanupUnusedCodexProfiles();
   },
 
   checkDeps: async (worktree) => {

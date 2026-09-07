@@ -138,7 +138,7 @@ fn open_main_repo(project_path: &str) -> Result<Repository, String> {
     if !path.is_dir() {
         return Err("path_not_directory".to_string());
     }
-    let repo = Repository::open(&path).map_err(|_| "not_git_repository".to_string())?;
+    let repo = super::git::open_git_repo(&path).map_err(|_| "not_git_repository".to_string())?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| "bare_repository_unsupported".to_string())?;

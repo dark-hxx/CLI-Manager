@@ -1,0 +1,31 @@
+{
+  "id": "fix-usage-records-bootstrap",
+  "name": "fix-usage-records-bootstrap",
+  "title": "修复历史用量分析 usage_records 缺表",
+  "description": "确保历史统计与路由用量读取链路在数据库迁移尚未由前端 SQL 插件触发时也能完成统一用量 schema 初始化。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-08-15",
+  "completedAt": null,
+  "branch": "master",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src-tauri/src/usage.rs",
+    "src-tauri/src/commands/history.rs",
+    "src-tauri/src/commands/history/request_logs.rs",
+    "src-tauri/src/lib.rs"
+  ],
+  "notes": "task.py 无可用 Bash 环境，按同等规划/激活产物继续执行；不覆盖工作区已有改动。",
+  "meta": { "targetVersion": "V1.3.6" }
+}

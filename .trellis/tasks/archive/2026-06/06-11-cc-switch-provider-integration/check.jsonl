@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "提交前质量门：tsc / 命名 / 一致性"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "PR 前安全清单复核：路径校验、只读、脱敏、capabilities 不放宽"}

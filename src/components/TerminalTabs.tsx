@@ -22,10 +22,11 @@ import { SortableContext, arrayMove, horizontalListSortingStrategy, useSortable,
 import { CSS } from "@dnd-kit/utilities";
 import { useTerminalStore, type SplitTerminalOptions, type TabNotificationState } from "../stores/terminalStore";
 import { TERMINAL_PANEL_WIDTH_DEFAULTS, useSettingsStore } from "../stores/settingsStore";
+import { updateWorkspaceLayout } from "../lib/workspaceLayout";
 import { useWorktreeStore } from "../stores/worktreeStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useSshHostStore } from "../stores/sshHostStore";
-import { isProjectFileDirty, useFileExplorerStore } from "../stores/fileExplorerStore";
+import { useFileExplorerStore } from "../stores/fileExplorerStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { logError } from "../lib/logger";
 import {
@@ -51,23 +52,35 @@ import { BackgroundTasksPanel, type BackgroundTaskMeta } from "./BackgroundTasks
 import { CliCat } from "./desktop-pet/CliCat";
 import { SystemResourcesPanel } from "./terminal/SystemResourcesPanel";
 import {
-  ResizableTerminalPanelFrame,
   TerminalSidePanel,
   TERMINAL_SIDE_PANEL_TAB_ORDER,
   type TerminalSidePanelTab,
 } from "./terminal/TerminalSidePanel";
+import { ResizableTerminalPanelFrame } from "./terminal/ResizableTerminalPanelFrame";
+import { TerminalWorkspaceFrame } from "./terminal/TerminalWorkspaceFrame";
+import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "./terminal/terminalTabVisuals";
 import { RemoteHandoffOverlay } from "./terminal/RemoteHandoffOverlay";
+import { ProviderQuickSwitchPanel } from "./terminal/ProviderQuickSwitchPanel";
 import { WorktreeFinishDialog } from "./worktree/WorktreeFinishDialog";
 import { FileExplorerSidebar } from "./files/FileExplorerSidebar";
 import { openWindowsTerminal } from "../lib/externalTerminal";
+import { resolveProjectPath } from "../lib/groupPath";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
-import { projectSupportsCapability, resolveProjectCapabilities, type ProjectCapability } from "../lib/projectCapabilities";
-import { resolveCliToolHistorySourceId } from "../lib/cliTools";
+import {
+  isSshGrokHistoryUnsupported,
+  isSshHistorySourceUnsupported,
+  projectSupportsCapability,
+  resolveProjectCapabilities,
+  type ProjectCapability,
+} from "../lib/projectCapabilities";
+import { resolveCliToolHistorySourceId, resolveCliToolIconKey, type CliToolIconKey } from "../lib/cliTools";
 import { resolveHistoryProjectPath } from "../lib/historyProjectPaths";
-import { parseProjectEnvVars } from "../lib/providerSwitching";
-import { Activity, Terminal, TerminalSquare, Sparkles, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, FolderOpen, Hash, Check, Cpu, Cloud, Undo2 } from "./icons";
+import { resolveAgentRuntimeKind } from "../lib/agentCapabilities";
+import { parseProjectEnvVars, resolveProviderSwitchAppType } from "../lib/providerSwitching";
+import { Activity, ArrowLeftRight, Terminal, TerminalSquare, Sparkles, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, FolderOpen, Hash, Check, Cpu, Cloud, Undo2 } from "./icons";
 import { WorktreeIcon } from "./WorktreeIcon";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
+import { CliToolIcon } from "./CliToolIcon";
 import { EmptyState } from "./ui/EmptyState";
 import { useAppPrompt } from "./ui/useAppPrompt";
 import { useAppConfirm } from "./ui/useAppConfirm";
@@ -80,7 +93,8 @@ import {
   TERMINAL_TAB_CLOSE_REQUEST_EVENT,
   type TerminalTabCloseRequestDetail,
 } from "../lib/terminalCloseConfirm";
-import type { HistorySourceFilter, Project, TerminalScope, TerminalSession, TreeNode, WorktreeRecord } from "../lib/types";
+import type { Group, HistorySourceFilter, Project, TerminalScope, TerminalSession, TreeNode, WorktreeRecord } from "../lib/types";
+import type { NativeProviderAppType } from "./settings/providers/nativeProviderTypes";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -108,10 +122,18 @@ import {
   TERMINAL_FILE_NAVIGATION_REQUEST_EVENT,
   type TerminalFileNavigationRequest,
 } from "../lib/terminalFileNavigation";
+import { consumeTerminalFileDragPanelSyncSuppression } from "../lib/terminalFileDrag";
 import {
   resolveTerminalPaneMarker,
   type TerminalPaneMarkerSettings,
 } from "../lib/terminalPaneMarker";
+import {
+  WorkspanTabBar,
+  WORKSPAN_TABBAR_END_DROP_ID,
+  type WorkspanTabModel,
+  type WorkspanTabOverflowState,
+} from "./workspace/WorkspanTabBar";
+import { WorkspanTerminalLayout } from "./workspace/WorkspanTerminalLayout";
 
 const HistoryWorkspace = lazy(() =>
   import("./HistoryWorkspace").then((module) => ({ default: module.HistoryWorkspace }))
@@ -174,14 +196,6 @@ const tabMenuHexToRgba = (value: string | undefined, alpha: number, fallback: st
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
-  none: "#565f89",
-  running: "#8b5cf6",
-  attention: "#ff9e64",
-  done: "#8fbf7f",
-  failed: "#f7768e",
-};
-
 const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, TranslationKey> = {
   none: "terminal.status.none",
   running: "terminal.status.running",
@@ -190,11 +204,9 @@ const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, TranslationKey> = {
   failed: "terminal.status.failed",
 };
 
-const PULSING_TAB_STATES = new Set<TabNotificationState>(["running", "attention"]);
 const PANE_DROP_PREFIX = "pane-drop:";
 const PANE_CENTER_DROP_PREFIX = "pane-center:";
 const PANE_EDGE_DROP_PREFIX = "pane-edge:";
-const WORKSPAN_TABBAR_END_DROP_ID = "workspan-tabbar:end";
 const WORKSPAN_SPLIT_ACTIVATION_RATIO = 0.08;
 const PANE_DROP_EDGES: TerminalPaneDropEdge[] = ["left", "right", "top", "bottom"];
 const WORKSPAN_NOTIFICATION_PRIORITY: Record<TabNotificationState, number> = {
@@ -207,10 +219,6 @@ const WORKSPAN_NOTIFICATION_PRIORITY: Record<TabNotificationState, number> = {
 const SPLIT_PICKER_OUTSIDE_GUARD_MS = 250;
 type SplitPickerAnchor = DOMRect | { x: number; y: number };
 
-interface WorkspanTabOverflowState {
-  isOverflowing: boolean;
-  hiddenIds: string[];
-}
 type SplitPickerAlign = "start" | "end";
 
 type SplitPickerState = {
@@ -443,13 +451,22 @@ function inferSessionVendor(session: TerminalSession): VendorKey | null {
   return inferVendor(`${session.startupCmd ?? ""} ${session.title}`);
 }
 
-function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
+// 无厂商归属的 CLI 工具（OpenCode / Pi / Amp 等）回退到 CLI 工具图标
+function inferSessionCliToolIcon(session: TerminalSession, project?: Project): CliToolIconKey | null {
+  return (
+    resolveCliToolIconKey(project?.cli_tool)
+    ?? resolveCliToolIconKey(session.startupCmd)
+    ?? resolveCliToolIconKey(session.title)
+  );
+}
+
+function buildProjectSplitOptions(project: Project, groups: Group[]): SplitTerminalOptions {
   const cmd = resolveProjectStartupCommand(project);
   const shell = project.shell && project.shell !== "powershell" ? project.shell : undefined;
 
   return {
     projectId: project.id,
-    cwd: project.path,
+    cwd: resolveProjectPath(project, groups),
     title: project.name,
     startupCmd: cmd,
     envVars: parseProjectEnvVars(project),
@@ -466,6 +483,7 @@ interface SortableTabProps {
   isEditing: boolean;
   notification: TabNotificationState;
   vendor?: VendorKey | null;
+  cliToolIcon?: CliToolIconKey | null;
   worktree?: WorktreeRecord | null;
   worktreeMenuContent?: (closeMenu: () => void) => ReactNode;
   hoverInfo: TerminalTabHoverInfo;
@@ -564,6 +582,7 @@ function SortableTab({
   isEditing,
   notification,
   vendor,
+  cliToolIcon,
   worktree,
   worktreeMenuContent,
   hoverInfo,
@@ -581,7 +600,7 @@ function SortableTab({
     data: {
       type: "session",
       paneId,
-      overlay: { title, notification, vendor },
+      overlay: { title, notification, vendor, cliToolIcon },
     },
     transition: DND_SORTABLE_TRANSITION,
   });
@@ -653,6 +672,13 @@ function SortableTab({
             hideHoverCard();
             onActivate();
           }}
+          onAuxClick={(event) => {
+            if (event.button !== 1 || isEditing || isDragging) return;
+            event.preventDefault();
+            event.stopPropagation();
+            hideHoverCard();
+            onClose(event.currentTarget.getBoundingClientRect());
+          }}
           onPointerEnter={scheduleHoverCard}
           onPointerLeave={scheduleHideHoverCard}
           onContextMenu={(event) => {
@@ -670,11 +696,15 @@ function SortableTab({
             role="status"
             aria-label={statusLabel}
           />
-          {vendor && (
+          {vendor ? (
             <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
               <VendorIcon vendor={vendor} size={14} />
             </span>
-          )}
+          ) : cliToolIcon ? (
+            <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
+              <CliToolIcon icon={cliToolIcon} size={14} className="text-current" />
+            </span>
+          ) : null}
           {worktree && (
             <Popover open={worktreePopoverOpen} onOpenChange={setWorktreePopoverOpen}>
               <PopoverTrigger asChild>
@@ -891,6 +921,7 @@ function SortableWorkspanTab({
   title,
   notification,
   vendor,
+  cliToolIcon,
   hoverInfo,
   isActive,
   dragDisabled,
@@ -905,6 +936,7 @@ function SortableWorkspanTab({
   title: string;
   notification: TabNotificationState;
   vendor?: VendorKey | null;
+  cliToolIcon?: CliToolIconKey | null;
   hoverInfo?: TerminalTabHoverInfo;
   isActive: boolean;
   dragDisabled: boolean;
@@ -923,7 +955,7 @@ function SortableWorkspanTab({
     data: {
       type: "workspan",
       workspanId: workspan.id,
-      overlay: { title, notification, vendor },
+      overlay: { title, notification, vendor, cliToolIcon },
     },
     transition: DND_SORTABLE_TRANSITION,
   });
@@ -989,6 +1021,13 @@ function SortableWorkspanTab({
               hideHoverCard();
               onActivate();
             }}
+            onAuxClick={(event) => {
+              if (event.button !== 1 || editing || isDragging) return;
+              event.preventDefault();
+              event.stopPropagation();
+              hideHoverCard();
+              onClose(event.currentTarget.getBoundingClientRect());
+            }}
             onPointerEnter={scheduleHoverCard}
             onPointerLeave={scheduleHideHoverCard}
             onDoubleClick={(event) => {
@@ -1012,6 +1051,10 @@ function SortableWorkspanTab({
             {vendor ? (
               <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
                 <VendorIcon vendor={vendor} size={14} />
+              </span>
+            ) : cliToolIcon ? (
+              <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
+                <CliToolIcon icon={cliToolIcon} size={14} className="text-current" />
               </span>
             ) : (
               <Terminal size={14} strokeWidth={1.8} aria-hidden="true" />
@@ -1069,19 +1112,16 @@ function SortableWorkspanTab({
   );
 }
 
-function WorkspanTabbarEndDropTarget({ disabled }: { disabled: boolean }) {
-  const { setNodeRef } = useDroppable({ id: WORKSPAN_TABBAR_END_DROP_ID, disabled });
-  return <div ref={setNodeRef} className="h-full min-w-0 flex-1" aria-hidden="true" />;
-}
-
 function DragOverlayTab({
   title,
   notification,
   vendor,
+  cliToolIcon,
 }: {
   title: string;
   notification: TabNotificationState;
   vendor?: VendorKey | null;
+  cliToolIcon?: CliToolIconKey | null;
 }) {
   const tabMinWidthClass = "min-w-[92px]";
 
@@ -1096,11 +1136,15 @@ function DragOverlayTab({
         style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification], color: TAB_NOTIFICATION_COLORS[notification] }}
         aria-hidden="true"
       />
-      {vendor && (
+      {vendor ? (
         <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
           <VendorIcon vendor={vendor} size={14} />
         </span>
-      )}
+      ) : cliToolIcon ? (
+        <span className="ui-terminal-tab-vendor inline-flex shrink-0 items-center" aria-hidden="true">
+          <CliToolIcon icon={cliToolIcon} size={14} className="text-current" />
+        </span>
+      ) : null}
       <span className="ui-terminal-tab-title min-w-0 flex-1 truncate tracking-[0.01em]">{title}</span>
       <span
         className="ui-terminal-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-on-surface-variant"
@@ -1118,6 +1162,7 @@ interface TerminalDragOverlayData {
     title: string;
     notification: TabNotificationState;
     vendor?: VendorKey | null;
+    cliToolIcon?: CliToolIconKey | null;
   };
 }
 
@@ -1146,6 +1191,7 @@ function TerminalTabDragOverlay({
                 title={overlay.title}
                 notification={overlay.notification}
                 vendor={overlay.vendor}
+                cliToolIcon={overlay.cliToolIcon}
               />
             </div>
           </div>
@@ -1498,7 +1544,8 @@ function PaneTabBar({
               isActive={session.id === activeSessionId}
               isEditing={editingSessionId === session.id}
               notification={tabNotifications[session.id] ?? "none"}
-              vendor={inferSessionVendor(session)}
+              vendor={inferVendor(projectById.get(session.projectId!)?.cli_tool) ?? inferSessionVendor(session)}
+              cliToolIcon={inferSessionCliToolIcon(session, projectById.get(session.projectId!))}
               worktree={session.worktreeId ? worktreeById.get(session.worktreeId) ?? null : null}
               worktreeMenuContent={session.worktreeId && worktreeById.get(session.worktreeId) && session.projectId && projectById.get(session.projectId) ? (closeMenu) => {
                 const project = projectById.get(session.projectId!);
@@ -1901,7 +1948,7 @@ function PaneLeafView({
               <Suspense fallback={null}>
                 <FileEditorPane
                   session={session}
-                  isActive={session.id === activeSessionId}
+                  isActive={!historyActive && isLayoutVisible && session.id === activeSessionId}
                   terminalThemeBackground={terminalThemeBackground}
                   onClose={() => onCloseSessions([session.id])}
                 />
@@ -2298,6 +2345,7 @@ function TerminalCloseConfirmBubble({
       </PopoverAnchor>
       <PopoverContent
         align={confirm?.align ?? "end"}
+        collisionPadding={8}
         className="terminal-skin w-auto p-1.5"
         style={menuStyle}
         onOpenAutoFocus={(event) => event.preventDefault()}
@@ -2410,6 +2458,8 @@ interface TerminalTabsProps {
   onToggleFullscreen?: () => void;
   projectScopedTerminalViewEnabled?: boolean;
   terminalScope?: TerminalScope;
+  onOpenProviderSettings?: () => void;
+  onOpenHistorySettings?: () => void;
 }
 
 export function TerminalTabs({
@@ -2417,6 +2467,8 @@ export function TerminalTabs({
   onToggleFullscreen,
   projectScopedTerminalViewEnabled = false,
   terminalScope = ALL_TERMINALS_SCOPE,
+  onOpenProviderSettings,
+  onOpenHistorySettings,
 }: TerminalTabsProps = {}) {
   const { t } = useI18n();
   const { prompt, promptDialog } = useAppPrompt();
@@ -2493,6 +2545,10 @@ export function TerminalTabs({
     };
   }, []);
   const terminalBackgroundImagePath = useSettingsStore((s) => s.terminalBackground.imagePath);
+  const terminalSidePanelSide = useSettingsStore((s) => s.workspaceLayout.terminalSidePanelSide);
+  const terminalSidePanelVisible = useSettingsStore((s) => s.workspaceLayout.terminalSidePanelVisible);
+  const workspanTabBarPosition = useSettingsStore((s) => s.workspaceLayout.workspanTabBarPosition);
+  const workspanTabBarVisible = useSettingsStore((s) => s.workspaceLayout.workspanTabBarVisible);
   const workspanEnabled = useSettingsStore((s) => s.workspanEnabled);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
@@ -2502,8 +2558,16 @@ export function TerminalTabs({
   const terminalSidePanelSingleOpen = useSettingsStore((s) => s.terminalSidePanelSingleOpen);
   const terminalSidePanelSkin = useSettingsStore((s) => s.terminalSidePanelSkin);
   const updateSettings = useSettingsStore((s) => s.update);
+  const ensureTerminalSidePanelVisible = useCallback(() => {
+    const current = useSettingsStore.getState().workspaceLayout;
+    if (current.terminalSidePanelVisible) return false;
+    void updateSettings(
+      "workspaceLayout",
+      updateWorkspaceLayout(current, { terminalSidePanelVisible: true }),
+    );
+    return true;
+  }, [updateSettings]);
   const openFileProject = useFileExplorerStore((s) => s.openProject);
-  const fileProject = useFileExplorerStore((s) => s.project);
   const revealFilePath = useFileExplorerStore((s) => s.revealPath);
   const openFileEditorPane = useTerminalStore((s) => s.openFileEditorPane);
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
@@ -2537,6 +2601,7 @@ export function TerminalTabs({
   const [replayOpen, setReplayOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [systemResourcesOpen, setSystemResourcesOpen] = useState(false);
+  const [providersOpen, setProvidersOpen] = useState(false);
   const [finishTarget, setFinishTarget] = useState<{ project: Project; worktree: WorktreeRecord } | null>(null);
   const [discardTarget, setDiscardTarget] = useState<{ project: Project; worktree: WorktreeRecord } | null>(null);
   const [activeToolbarDragId, setActiveToolbarDragId] = useState<string | null>(null);
@@ -2557,8 +2622,16 @@ export function TerminalTabs({
   const worktreeById = useMemo(() => new Map(worktrees.map((worktree) => [worktree.id, worktree])), [worktrees]);
   const rejectUnsupportedCapability = useCallback((project: Project | null | undefined, capability: ProjectCapability) => {
     if (projectSupportsCapability(project, capability)) return false;
-    toast.info(t("remoteCapabilities.unsupportedTitle"), {
-      description: t("remoteCapabilities.unsupportedDescription"),
+    const sshHistoryUnsupported = capability === "history" && isSshHistorySourceUnsupported(project);
+    const title = sshHistoryUnsupported
+      ? isSshGrokHistoryUnsupported(project)
+        ? t("remoteCapabilities.grokHistoryUnsupportedTitle")
+        : t("remoteCapabilities.sshHistoryUnsupportedTitle")
+      : t("remoteCapabilities.unsupportedTitle");
+    toast.info(title, {
+      description: sshHistoryUnsupported
+        ? t("remoteCapabilities.sshHistoryUnsupportedDescription")
+        : t("remoteCapabilities.unsupportedDescription"),
     });
     return true;
   }, [t]);
@@ -2683,6 +2756,7 @@ export function TerminalTabs({
   }, [activeSession, sessions]);
   const panelSessionId = panelSession?.id ?? null;
   const panelProject = panelSession?.projectId ? projectById.get(panelSession.projectId) ?? null : null;
+  const panelProviderAppType: NativeProviderAppType = resolveProviderSwitchAppType(panelSession, panelProject) ?? "claude";
   const panelCapabilities = resolveProjectCapabilities(panelProject);
   const panelGitSupported = panelCapabilities.git || panelProject?.environment_type === "ssh";
   const activeWorktree = useMemo(
@@ -2696,7 +2770,7 @@ export function TerminalTabs({
   const sidePanelProjectPath = panelProject?.environment_type === "ssh"
     ? panelProject.remote_path.trim() || null
     : panelSession?.cwd?.trim() || filePanelProject?.path.trim() || null;
-  const workspanTabModels = useMemo(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
+  const workspanTabModels = useMemo<WorkspanTabModel[]>(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
     const memberSessions = sessionIds
       .map((sessionId) => sessions.find((session) => session.id === sessionId))
       .filter((session): session is TerminalSession => Boolean(session));
@@ -2708,16 +2782,15 @@ export function TerminalTabs({
       singleSession,
       title: workspan.customTitle ?? singleSession?.title ?? t("terminal.workspan.title", { count: memberSessions.length }),
       notification: getWorkspanNotification(sessionIds, tabNotifications),
-      vendor: singleSession ? inferSessionVendor(singleSession) : null,
+      vendor: singleSession ? (inferVendor(projectById.get(singleSession.projectId!)?.cli_tool) ?? inferSessionVendor(singleSession)) : null,
+      cliToolIcon: singleSession
+        ? inferSessionCliToolIcon(singleSession, projectById.get(singleSession.projectId!))
+        : null,
     };
-  }), [sessions, t, tabNotifications, visibleWorkspanLayouts]);
+  }), [projectById, sessions, t, tabNotifications, visibleWorkspanLayouts]);
   const workspanTabSignature = workspanTabModels
-    .map(({ workspan, title, vendor }) => `${workspan.id}:${title}:${vendor ?? "none"}`)
+    .map(({ workspan, title, vendor, cliToolIcon }) => `${workspan.id}:${title}:${vendor ?? "none"}:${cliToolIcon ?? "none"}`)
     .join("|");
-  const hiddenWorkspanTabModels = useMemo(() => {
-    const hiddenIds = new Set(workspanTabOverflow.hiddenIds);
-    return workspanTabModels.filter(({ workspan }) => hiddenIds.has(workspan.id));
-  }, [workspanTabModels, workspanTabOverflow.hiddenIds]);
   const activateWorkspanTab = useCallback((workspanId: string) => {
     setActiveWorkspaceTab("terminal");
     setActiveWorkspan(workspanId);
@@ -2817,13 +2890,17 @@ export function TerminalTabs({
       observer?.disconnect();
       if (frameId !== null) window.cancelAnimationFrame(frameId);
     };
-  }, [updateWorkspanTabOverflow, workspanEnabled, workspanTabSignature]);
+  }, [updateWorkspanTabOverflow, workspanEnabled, workspanTabBarVisible, workspanTabSignature]);
 
   useEffect(() => {
     if (!workspanTabOverflow.isOverflowing || workspanTabOverflow.hiddenIds.length === 0) {
       setWorkspanTabListOpen(false);
     }
   }, [workspanTabOverflow.hiddenIds.length, workspanTabOverflow.isOverflowing]);
+
+  useEffect(() => {
+    if (!workspanTabBarVisible) setWorkspanTabListOpen(false);
+  }, [workspanTabBarVisible]);
 
   useEffect(() => {
     if (!effectiveActiveWorkspanId) return;
@@ -2905,6 +2982,7 @@ export function TerminalTabs({
   const replayPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "replay" : replayOpen;
   const gitPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "git" : gitOpen;
   const filesPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "files" : filesOpen;
+  const providersPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "providers" : providersOpen;
   const systemResourcesPanelActive = sidePanelMerged
     ? sidePanelOpen && sidePanelTab === "systemResources"
     : systemResourcesOpen;
@@ -2928,6 +3006,7 @@ export function TerminalTabs({
     setReplayOpen(false);
     setFilesOpen(false);
     setSystemResourcesOpen(false);
+    setProvidersOpen(false);
   }, [historyOpen, terminalSidePanelSingleOpen]);
 
   useEffect(() => {
@@ -3005,7 +3084,7 @@ export function TerminalTabs({
     if (terminalScopeValue.kind === "worktree") {
       if (!scopedWorktree) return;
       if (rejectMissingWorktree(scopedWorktree)) return;
-      const options = buildProjectSplitOptions(projectWithWorktreeProviderOverrides(scopedProject, scopedWorktree));
+      const options = buildProjectSplitOptions(projectWithWorktreeProviderOverrides(scopedProject, scopedWorktree), groups);
       await createSession(
         options.projectId,
         scopedWorktree.path,
@@ -3022,11 +3101,11 @@ export function TerminalTabs({
     }
 
     if (terminalScopeValue.kind !== "project") return;
-    const options = buildProjectSplitOptions(scopedProject);
+    const options = buildProjectSplitOptions(scopedProject, groups);
     await createSession(options.projectId, options.cwd, options.title, options.startupCmd, options.envVars, options.shell);
     closeHistory();
     setActiveWorkspaceTab("terminal");
-  }, [closeHistory, createSession, rejectMissingWorktree, scopedProject, scopedWorktree, terminalScopeValue, useExternalTerminal]);
+  }, [closeHistory, createSession, groups, rejectMissingWorktree, scopedProject, scopedWorktree, terminalScopeValue, useExternalTerminal]);
 
   const handleInstallWorktreeDeps = useCallback((project: Project, worktree: WorktreeRecord) => {
     if (rejectMissingWorktree(worktree)) return;
@@ -3035,7 +3114,7 @@ export function TerminalTabs({
         toast.info(t("worktree.deps.notNeeded"));
         return;
       }
-      const options = buildProjectSplitOptions(project);
+      const options = buildProjectSplitOptions(project, groups);
       void dismissWorktreeDepsPrompt(worktree.id);
       void createSession(
         options.projectId,
@@ -3048,7 +3127,7 @@ export function TerminalTabs({
         worktree.id,
       );
     }).catch((err) => toast.error(t("worktree.deps.checkFailed"), { description: String(err) }));
-  }, [checkWorktreeDeps, createSession, dismissWorktreeDepsPrompt, rejectMissingWorktree, t]);
+  }, [checkWorktreeDeps, createSession, dismissWorktreeDepsPrompt, groups, rejectMissingWorktree, t]);
 
   const handleOpenWorktreeDirectory = useCallback((worktree: WorktreeRecord) => {
     if (rejectMissingWorktree(worktree)) return;
@@ -3063,13 +3142,14 @@ export function TerminalTabs({
     closeHistory();
     setActiveWorkspaceTab("terminal");
     setActive(sessionId);
+    ensureTerminalSidePanelVisible();
     if (sidePanelMerged) {
       setSidePanelTab("git");
       setSidePanelOpen(true);
       return;
     }
     setGitOpen(true);
-  }, [closeHistory, rejectMissingSessionWorktree, sessions, setActive, sidePanelMerged]);
+  }, [closeHistory, ensureTerminalSidePanelVisible, rejectMissingSessionWorktree, sessions, setActive, sidePanelMerged]);
 
   const handleOpenWorktreeHistory = useCallback((project: Project, worktree: WorktreeRecord) => {
     if (rejectMissingWorktree(worktree)) return;
@@ -3084,11 +3164,11 @@ export function TerminalTabs({
     setActiveWorkspaceTab("history");
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project.cli_tool),
-      projectPath: project.path,
+      projectPath: resolveProjectPath(project, groups),
       projectId: project.id,
       scopedProjectPath: worktree.path,
     });
-  }, [openHistory, rejectMissingWorktree, terminalSidePanelSingleOpen]);
+  }, [groups, openHistory, rejectMissingWorktree, terminalSidePanelSingleOpen]);
 
   const handleDuplicateSession = useCallback((session: TerminalSession) => {
     if (rejectMissingSessionWorktree(session)) return;
@@ -3175,6 +3255,39 @@ export function TerminalTabs({
     })();
   }, [closeSession]);
 
+  const closeSessionsWithDirtyGuard = useCallback(async (sessionIds: string[]) => {
+    const currentSessions = useTerminalStore.getState().sessions;
+    const fileStore = useFileExplorerStore.getState();
+    const fileProjects = currentSessions
+      .filter((session) => sessionIds.includes(session.id) && session.kind === "file-editor")
+      .map((session) => session.fileEditor?.project)
+      .filter((project): project is Project => Boolean(project))
+      .filter((project, index, projects) => (
+        projects.findIndex((candidate) => candidate.id === project.id) === index
+      ));
+    const dirtyFiles = fileProjects.flatMap((project) => (
+      fileStore.getProjectEditorWorkspaces(project.id).flatMap((workspace) => (
+        workspace.openFiles
+          .filter((file) => file.content !== file.savedContent)
+          .map((file) => ({ project: workspace.project, file }))
+      ))
+    ));
+
+    if (dirtyFiles.length > 0) {
+      const confirmed = await confirm({
+        title: t("files.editor.unsavedTitle"),
+        message: t("files.editor.unsavedCloseWithFiles", {
+          files: dirtyFiles.map(({ project, file }) => `${project.name}: ${file.path}`).join("\n"),
+        }),
+        confirmText: t("files.editor.discard"),
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
+
+    closeSessionIds(sessionIds);
+  }, [closeSessionIds, confirm, t]);
+
   const handleCloseSessions = useCallback((sessionIds: string[], anchor?: SplitPickerAnchor) => {
     const uniqueSessionIds = Array.from(new Set(sessionIds)).filter((sessionId) => sessions.some((session) => session.id === sessionId));
     if (uniqueSessionIds.length === 0) return;
@@ -3185,7 +3298,7 @@ export function TerminalTabs({
     }).length;
 
     if (!shouldConfirmTerminalTabClose(terminalSessionCount)) {
-      closeSessionIds(uniqueSessionIds);
+      void closeSessionsWithDirtyGuard(uniqueSessionIds);
       return;
     }
 
@@ -3195,14 +3308,14 @@ export function TerminalTabs({
       sessionIds: uniqueSessionIds,
       ...position,
     });
-  }, [armCloseConfirmOutsideGuard, closeSessionIds, findCloseConfirmAnchor, resolveCloseConfirmAnchor, sessions]);
+  }, [armCloseConfirmOutsideGuard, closeSessionsWithDirtyGuard, findCloseConfirmAnchor, resolveCloseConfirmAnchor, sessions]);
 
   const confirmCloseSessions = useCallback(() => {
     if (!closeConfirm) return;
     const sessionIds = closeConfirm.sessionIds;
     setCloseConfirm(null);
-    closeSessionIds(sessionIds);
-  }, [closeConfirm, closeSessionIds]);
+    void closeSessionsWithDirtyGuard(sessionIds);
+  }, [closeConfirm, closeSessionsWithDirtyGuard]);
 
   const cancelCloseSessions = useCallback(() => {
     setCloseConfirm(null);
@@ -3227,28 +3340,40 @@ export function TerminalTabs({
   const ensureStatsPanelAllowed = useCallback(async () => {
     try {
       const settings = useSettingsStore.getState();
-      const status = await invoke<{
+      const [hookStatus, openCodeStatus] = await Promise.all([
+        invoke<{
         claude: { status: string };
         codex: { status: string };
+        kimi: { status: string };
         pi: { status: string };
         grok: { status: string };
-      }>(
+        }>(
         "hook_settings_get_status",
         {
           selectedDir: settings.claudeHookConfigDir?.trim() || null,
           codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
+          kimiSelectedDir: settings.kimiHookConfigDir?.trim() || null,
           piSelectedDir: settings.piHookConfigDir?.trim() || null,
           grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
           ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
           autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
         }
-      );
+        ),
+        invoke<{ status: string }>("opencode_hook_status"),
+      ]);
       const hasEnabledInstalledHook =
-        (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
-        (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
-        (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
-        (settings.grokHookBridgeEnabled && status.grok.status === "installed");
+        openCodeStatus.status === "installed" ||
+        (settings.claudeHookBridgeEnabled && hookStatus.claude.status === "installed") ||
+        (settings.codexHookBridgeEnabled && hookStatus.codex.status === "installed") ||
+        (settings.kimiHookBridgeEnabled && hookStatus.kimi.status === "installed") ||
+        (settings.piHookBridgeEnabled && hookStatus.pi.status === "installed") ||
+        (settings.grokHookBridgeEnabled && hookStatus.grok.status === "installed");
       if (!hasEnabledInstalledHook) {
+        const currentProject = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
+        const currentAgent = resolveAgentRuntimeKind(
+          `${panelSession?.cliTool ?? ""} ${panelSession?.startupCmd ?? ""} ${panelSession?.title ?? ""} ${currentProject?.cli_tool ?? ""}`
+        );
+        if (currentAgent === "opencode") return true;
         toast.warning(t("notifications.stats.needHook"), {
           description: t("notifications.stats.needHookDescription"),
         });
@@ -3258,10 +3383,11 @@ export function TerminalTabs({
       logError("Failed to check hook status before opening terminal stats panel", err);
     }
     return true;
-  }, [t]);
+  }, [panelSession, projectById, t]);
 
   const handleToggleStatsPanel = useCallback(async () => {
     if (statsPanelActive) {
+      if (ensureTerminalSidePanelVisible()) return;
       if (sidePanelMerged) setSidePanelOpen(false);
       else setStatsOpen(false);
       return;
@@ -3270,6 +3396,7 @@ export function TerminalTabs({
     if (rejectUnsupportedCapability(project, "statistics")) return;
     const allowed = await ensureStatsPanelAllowed();
     if (!allowed) return;
+    ensureTerminalSidePanelVisible();
     if (terminalSidePanelSingleOpen) {
       closeHistory();
       setActiveWorkspaceTab("terminal");
@@ -3283,13 +3410,15 @@ export function TerminalTabs({
         setReplayOpen(false);
         setFilesOpen(false);
         setSystemResourcesOpen(false);
+        setProvidersOpen(false);
       }
       setStatsOpen(true);
     }
-  }, [closeHistory, ensureStatsPanelAllowed, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, statsPanelActive, terminalSidePanelSingleOpen]);
+  }, [closeHistory, ensureStatsPanelAllowed, ensureTerminalSidePanelVisible, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, statsPanelActive, terminalSidePanelSingleOpen]);
 
   const handleToggleSystemResourcesPanel = useCallback(() => {
     if (systemResourcesPanelActive) {
+      if (ensureTerminalSidePanelVisible()) return;
       if (sidePanelMerged) setSidePanelOpen(false);
       else setSystemResourcesOpen(false);
       return;
@@ -3298,6 +3427,7 @@ export function TerminalTabs({
       closeHistory();
       setActiveWorkspaceTab("terminal");
     }
+    ensureTerminalSidePanelVisible();
     if (sidePanelMerged) {
       setSidePanelTab("systemResources");
       setSidePanelOpen(true);
@@ -3307,19 +3437,50 @@ export function TerminalTabs({
         setGitOpen(false);
         setReplayOpen(false);
         setFilesOpen(false);
+        setProvidersOpen(false);
       }
       setSystemResourcesOpen(true);
     }
-  }, [closeHistory, sidePanelMerged, systemResourcesPanelActive, terminalSidePanelSingleOpen]);
+  }, [closeHistory, ensureTerminalSidePanelVisible, sidePanelMerged, systemResourcesPanelActive, terminalSidePanelSingleOpen]);
+
+  const handleToggleProviderPanel = useCallback(() => {
+    if (providersPanelActive) {
+      if (ensureTerminalSidePanelVisible()) return;
+      if (sidePanelMerged) setSidePanelOpen(false);
+      else setProvidersOpen(false);
+      return;
+    }
+    if (terminalSidePanelSingleOpen) {
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+    }
+    ensureTerminalSidePanelVisible();
+    if (sidePanelMerged) {
+      setSidePanelTab("providers");
+      setSidePanelOpen(true);
+    } else {
+      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
+        setStatsOpen(false);
+        setGitOpen(false);
+        setReplayOpen(false);
+        setFilesOpen(false);
+        setSystemResourcesOpen(false);
+        setProvidersOpen(false);
+      }
+      setProvidersOpen(true);
+    }
+  }, [closeHistory, ensureTerminalSidePanelVisible, providersPanelActive, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const handleToggleGitChangesPanel = useCallback(() => {
     if (gitPanelActive) {
+      if (ensureTerminalSidePanelVisible()) return;
       if (sidePanelMerged) setSidePanelOpen(false);
       else setGitOpen(false);
       return;
     }
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
     if (project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
+    ensureTerminalSidePanelVisible();
     if (sidePanelMerged) {
       if (terminalSidePanelSingleOpen) {
         closeHistory();
@@ -3337,19 +3498,22 @@ export function TerminalTabs({
         setReplayOpen(false);
         setFilesOpen(false);
         setSystemResourcesOpen(false);
+        setProvidersOpen(false);
       }
       setGitOpen(true);
     }
-  }, [closeHistory, gitPanelActive, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
+  }, [closeHistory, ensureTerminalSidePanelVisible, gitPanelActive, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const handleToggleReplayPanel = useCallback(() => {
     if (replayPanelActive) {
+      if (ensureTerminalSidePanelVisible()) return;
       if (sidePanelMerged) setSidePanelOpen(false);
       else setReplayOpen(false);
       return;
     }
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
     if (rejectUnsupportedCapability(project, "history")) return;
+    ensureTerminalSidePanelVisible();
     if (sidePanelMerged) {
       if (terminalSidePanelSingleOpen) {
         closeHistory();
@@ -3367,22 +3531,21 @@ export function TerminalTabs({
         setGitOpen(false);
         setFilesOpen(false);
         setSystemResourcesOpen(false);
+        setProvidersOpen(false);
       }
       setReplayOpen(true);
     }
-  }, [closeHistory, panelSession, projectById, rejectUnsupportedCapability, replayPanelActive, sidePanelMerged, terminalSidePanelSingleOpen]);
+  }, [closeHistory, ensureTerminalSidePanelVisible, panelSession, projectById, rejectUnsupportedCapability, replayPanelActive, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const syncFilePanelProject = useCallback(async (project: Project) => {
+    const preserveCurrentFilePanel = consumeTerminalFileDragPanelSyncSuppression();
     if (rejectUnsupportedCapability(project, "files")) return false;
+    if (preserveCurrentFilePanel) return true;
     try {
-      const sameFileContext = isSameProjectFileContext(fileProject, project);
-      if (!sameFileContext && isProjectFileDirty()) {
-        const confirmed = await confirm({
-          title: t("sidebar.toast.unsavedFileConfirm"),
-          danger: true,
-        });
-        if (!confirmed) return false;
-      }
+      const sameFileContext = isSameProjectFileContext(
+        useFileExplorerStore.getState().project,
+        project,
+      );
       if (sameFileContext) return true;
       await openFileProject(project);
       return true;
@@ -3391,7 +3554,7 @@ export function TerminalTabs({
       toast.error(t("sidebar.toast.openProjectFilesFailed"), { description: String(err) });
       return false;
     }
-  }, [confirm, fileProject, openFileProject, rejectUnsupportedCapability, t]);
+  }, [openFileProject, rejectUnsupportedCapability, t]);
 
   const closeFilesPanel = useCallback(() => {
     if (sidePanelMerged) {
@@ -3404,6 +3567,7 @@ export function TerminalTabs({
   const openFilesPanelForProject = useCallback(async (project: Project): Promise<boolean> => {
     const allowed = await syncFilePanelProject(project);
     if (!allowed) return false;
+    ensureTerminalSidePanelVisible();
     if (terminalSidePanelSingleOpen) {
       closeHistory();
       setActiveWorkspaceTab("terminal");
@@ -3418,19 +3582,21 @@ export function TerminalTabs({
       setGitOpen(false);
       setReplayOpen(false);
       setSystemResourcesOpen(false);
+      setProvidersOpen(false);
     }
     setFilesOpen(true);
     return true;
-  }, [closeHistory, sidePanelMerged, syncFilePanelProject, terminalSidePanelSingleOpen]);
+  }, [closeHistory, ensureTerminalSidePanelVisible, sidePanelMerged, syncFilePanelProject, terminalSidePanelSingleOpen]);
 
   const handleToggleFilesPanel = useCallback(async () => {
     if (filesPanelActive) {
+      if (ensureTerminalSidePanelVisible()) return;
       closeFilesPanel();
       return;
     }
     if (!filePanelProject) return;
     void openFilesPanelForProject(filePanelProject);
-  }, [closeFilesPanel, filePanelProject, filesPanelActive, openFilesPanelForProject]);
+  }, [closeFilesPanel, ensureTerminalSidePanelVisible, filePanelProject, filesPanelActive, openFilesPanelForProject]);
 
   useEffect(() => {
     const handleTerminalFileNavigation = (event: Event) => {
@@ -3484,36 +3650,47 @@ export function TerminalTabs({
     if (sidePanelMerged) return;
     const enforce = () => {
       if (!terminalSidePanelSingleOpen && window.innerWidth >= 1100) return;
-      const openPanels = [statsOpen, gitOpen, replayOpen, filesOpen, systemResourcesOpen].filter(Boolean).length;
+      const openPanels = [statsOpen, gitOpen, replayOpen, filesOpen, providersOpen, systemResourcesOpen].filter(Boolean).length;
       if (openPanels <= 1) return;
       if (statsOpen) {
         setGitOpen(false);
         setReplayOpen(false);
         setFilesOpen(false);
         setSystemResourcesOpen(false);
+        setProvidersOpen(false);
         return;
       }
       if (systemResourcesOpen) {
         setGitOpen(false);
         setReplayOpen(false);
         setFilesOpen(false);
+        setProvidersOpen(false);
+        return;
+      }
+      if (providersOpen) {
+        setGitOpen(false);
+        setReplayOpen(false);
+        setFilesOpen(false);
+        setSystemResourcesOpen(false);
         return;
       }
       if (gitOpen) {
         setReplayOpen(false);
         setFilesOpen(false);
         setSystemResourcesOpen(false);
+        setProvidersOpen(false);
         return;
       }
       if (replayOpen) {
         setFilesOpen(false);
         setSystemResourcesOpen(false);
+        setProvidersOpen(false);
       }
     };
     enforce();
     window.addEventListener("resize", enforce);
     return () => window.removeEventListener("resize", enforce);
-  }, [filesOpen, gitOpen, replayOpen, sidePanelMerged, statsOpen, systemResourcesOpen, terminalSidePanelSingleOpen]);
+  }, [filesOpen, gitOpen, providersOpen, replayOpen, sidePanelMerged, statsOpen, systemResourcesOpen, terminalSidePanelSingleOpen]);
 
   useEffect(() => {
     if (!filesPanelActive) return;
@@ -3585,11 +3762,11 @@ export function TerminalTabs({
 
   const handleSplitProject = useCallback((project: Project) => {
     if (!splitPicker) return;
-    void splitTerminal(splitPicker.sessionId, splitPicker.direction, buildProjectSplitOptions(project));
+    void splitTerminal(splitPicker.sessionId, splitPicker.direction, buildProjectSplitOptions(project, groups));
     handleCloseSplitPicker();
     closeHistory();
     setActiveWorkspaceTab("terminal");
-  }, [closeHistory, handleCloseSplitPicker, splitPicker, splitTerminal]);
+  }, [closeHistory, groups, handleCloseSplitPicker, splitPicker, splitTerminal]);
 
   const findPaneForSession = useCallback((sessionId: string) => {
     return allPanes.find((pane) => pane.sessionIds.includes(sessionId)) ?? null;
@@ -3852,6 +4029,7 @@ export function TerminalTabs({
             ? t("terminal.toolbar.closeFilesPanel")
             : t("terminal.toolbar.openFilesPanel"),
       stats: statsPanelActive ? t("terminal.toolbar.closeStatsPanel") : t("terminal.toolbar.openStatsPanel"),
+      providers: providersPanelActive ? t("terminal.toolbar.closeProvidersPanel") : t("terminal.toolbar.openProvidersPanel"),
       systemResources: systemResourcesPanelActive
         ? t("terminal.toolbar.closeSystemResourcesPanel")
         : t("terminal.toolbar.openSystemResourcesPanel"),
@@ -3869,7 +4047,7 @@ export function TerminalTabs({
       ),
       templates: (
         <CommandTemplatePanel
-          popoverSide="left"
+          popoverSide={terminalSidePanelSide === "left" ? "right" : "left"}
           toneClassName="ui-action-template"
           popoverStyle={terminalActionSidebarStyle}
         />
@@ -3950,6 +4128,17 @@ export function TerminalTabs({
           <BarChart3 size={13} strokeWidth={1.8} />
         </button>
       ),
+      providers: (
+        <button
+          onClick={handleToggleProviderPanel}
+          className="ui-focus-ring ui-icon-action ui-action-providers"
+          data-active={providersPanelActive ? "true" : "false"}
+          aria-label={providersPanelActive ? t("terminal.toolbar.closeProvidersPanel") : t("terminal.toolbar.openProvidersPanel")}
+          aria-pressed={providersPanelActive}
+        >
+          <ArrowLeftRight size={13} strokeWidth={1.8} />
+        </button>
+      ),
       systemResources: (
         <button
           onClick={handleToggleSystemResourcesPanel}
@@ -3966,6 +4155,7 @@ export function TerminalTabs({
           tasks={backgroundTasks}
           onRefresh={refreshBackgroundTasks}
           showText={terminalToolbarVisibility.showText}
+          popoverSide={terminalSidePanelSide === "left" ? "right" : "left"}
           popoverStyle={terminalPopoverStyle}
         />
       ),
@@ -3998,6 +4188,7 @@ export function TerminalTabs({
           className="ui-terminal-actions ui-terminal-action-sidebar flex shrink-0 flex-col items-center gap-2"
           aria-label={t("terminal.toolbar.actions")}
           data-show-text={terminalToolbarVisibility.showText ? "true" : undefined}
+          data-dock-side={terminalSidePanelSide}
           style={terminalActionSidebarStyle}
         >
           <SortableContext items={visibleButtons.map((b) => b.id)} strategy={verticalListSortingStrategy}>
@@ -4044,6 +4235,7 @@ export function TerminalTabs({
     handleToggleGlobalFullscreen,
     handleToggleReplayPanel,
     handleToggleStatsPanel,
+    handleToggleProviderPanel,
     handleToggleSystemResourcesPanel,
     handleToolbarDragCancel,
     handleToolbarDragEnd,
@@ -4055,6 +4247,7 @@ export function TerminalTabs({
     sessionHistoryShortcutHint,
     sidePanelMerged,
     statsPanelActive,
+    providersPanelActive,
     systemResourceMonitoringEnabled,
     systemResourcesPanelActive,
     t,
@@ -4062,6 +4255,7 @@ export function TerminalTabs({
     terminalToolbarVisibility,
     terminalActionSidebarStyle,
     terminalPopoverStyle,
+    terminalSidePanelSide,
     toolbarSensors,
   ]);
 
@@ -4252,6 +4446,7 @@ export function TerminalTabs({
     <div
       className="ui-terminal-tabs-shell flex h-full min-h-0 flex-col"
       data-fullscreen={fullscreen ? "true" : "false"}
+      data-workspace-view={historyActive ? "history" : "terminal"}
       style={terminalWellStyle}
     >
       {promptDialog}
@@ -4304,7 +4499,7 @@ export function TerminalTabs({
             style={{ display: historyActive ? "block" : "none" }}
           >
             <Suspense fallback={null}>
-              <HistoryWorkspace active={historyActive} />
+              <HistoryWorkspace active={historyActive} onOpenSettings={onOpenHistorySettings} />
             </Suspense>
           </div>
         )}
@@ -4312,8 +4507,111 @@ export function TerminalTabs({
           className="ui-terminal-well absolute inset-0 min-h-0 flex"
           data-terminal-mode="independent"
           data-terminal-theme-tone={terminalThemeTone}
+          data-terminal-side-panel-visible={terminalSidePanelVisible ? "true" : "false"}
           style={{ display: historyActive ? "none" : "flex" }}
         >
+          <TerminalWorkspaceFrame
+            dockSide={terminalSidePanelSide}
+            panels={[
+              sidePanelMerged ? (
+                <TerminalSidePanel
+                  key="merged"
+                  open={sidePanelOpen}
+                  dockSide={terminalSidePanelSide}
+                  activeTab={sidePanelTab}
+                  visibleTabs={visibleSidePanelTabs}
+                  activeSessionId={panelSessionId}
+                  projectPath={sidePanelProjectPath}
+                  projectId={panelSession?.projectId}
+                  filesTabDisabled={!filePanelProject}
+                  systemResourcesEnabled
+                  providerDefaultAppType={panelProviderAppType}
+                  filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
+                  onTabChange={handleSidePanelTabChange}
+                  onOpenProviderSettings={onOpenProviderSettings}
+                />
+              ) : null,
+              !sidePanelMerged && statsOpen && panelCapabilities.statistics ? (
+                <ResizableTerminalPanelFrame
+                  key="stats"
+                  widthKey="stats"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.stats}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeStatsLabel")}
+                  resizeTitle={t("terminal.panel.resizeStatsTitle")}
+                >
+                  <Suspense fallback={null}>
+                    <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
+                  </Suspense>
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && gitOpen && panelGitSupported ? (
+                <ResizableTerminalPanelFrame
+                  key="git"
+                  widthKey="git"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.git}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeGitLabel")}
+                  resizeTitle={t("terminal.panel.resizeGitTitle")}
+                >
+                  <Suspense fallback={null}>
+                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} projectId={panelSession?.projectId} embedded />
+                  </Suspense>
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && replayOpen && panelCapabilities.history ? (
+                <ResizableTerminalPanelFrame
+                  key="replay"
+                  widthKey="replay"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.replay}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeReplayLabel")}
+                  resizeTitle={t("terminal.panel.resizeReplayTitle")}
+                >
+                  <Suspense fallback={null}>
+                    <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} />
+                  </Suspense>
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && filesOpen && panelCapabilities.files ? (
+                <ResizableTerminalPanelFrame
+                  key="files"
+                  widthKey="files"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.files}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeFilesLabel")}
+                  resizeTitle={t("terminal.panel.resizeFilesTitle")}
+                >
+                  <FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && systemResourcesOpen ? (
+                <ResizableTerminalPanelFrame
+                  key="systemResources"
+                  widthKey="systemResources"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.systemResources}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeSystemResourcesLabel")}
+                  resizeTitle={t("terminal.panel.resizeSystemResourcesTitle")}
+                >
+                  <SystemResourcesPanel open={systemResourcesOpen} embedded />
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && providersOpen ? (
+                <ResizableTerminalPanelFrame
+                  key="providers"
+                  widthKey="providers"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.providers}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeProvidersLabel")}
+                  resizeTitle={t("terminal.panel.resizeProvidersTitle")}
+                >
+                  <ProviderQuickSwitchPanel open={providersOpen} defaultAppType={panelProviderAppType} onOpenSettings={onOpenProviderSettings} />
+                </ResizableTerminalPanelFrame>
+              ) : null,
+            ]}
+            actions={renderToolbarActions()}
+          >
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {visibleWorkspanLayouts.length > 0 ? (
               <DndContext
@@ -4324,213 +4622,131 @@ export function TerminalTabs({
                 onDragCancel={clearDragState}
                 onDragEnd={handleDragEnd}
               >
-                {workspanEnabled && (
-                  <div
-                    ref={workspanTabBarRef}
-                    className="ui-terminal-pane-chrome ui-workspan-tabbar relative flex h-9 shrink-0 items-center px-1"
-                  >
-                  <div
-                    className="ui-workspan-detach-insertion"
-                    data-visible={workspanDetachPreview.visible ? "true" : "false"}
-                    style={{ transform: `translate3d(${workspanDetachPreview.left}px, -50%, 0)` }}
-                    aria-hidden="true"
-                  />
-                  <div
-                    ref={workspanTabScrollRef}
-                    className="ui-workspan-tab-scroll flex h-full min-w-0 flex-1 items-center overflow-x-auto"
-                    role="tablist"
-                    aria-label={t("terminal.workspan.tabList")}
-                    onWheel={(event) => {
-                      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-                      event.currentTarget.scrollLeft += event.deltaY;
-                      event.preventDefault();
-                    }}
-                  >
-                    <SortableContext
-                      items={workspanTabModels.map(({ workspan }) => `${WORKSPAN_DRAG_PREFIX}${workspan.id}`)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      {workspanTabModels.map((model, index) => (
-                        <SortableWorkspanTab
-                          key={model.workspan.id}
-                          workspan={model.workspan}
-                          title={model.title}
-                          notification={model.notification}
-                          vendor={model.vendor}
-                          hoverInfo={model.singleSession ? buildTerminalTabHoverInfo(model.singleSession, model.singleSession.projectId ? projectById.get(model.singleSession.projectId) : undefined) : undefined}
-                          isActive={model.workspan.id === effectiveActiveWorkspanId}
-                          dragDisabled={hasScopedTerminalFilter}
-                          renameDisabled={!model.singleSession}
-                          onActivate={() => activateWorkspanTab(model.workspan.id)}
-                          onClose={(anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
-                          onRename={(title) => {
-                            if (model.singleSession) void handleSubmitTabEdit(model.singleSession.id, title);
-                          }}
-                          menuStyle={splitPickerMenuStyle}
-                          menuContent={(getAnchor) => (
-                            <>
-                              <ContextMenuItem onSelect={() => handleCloseSessions(model.closeSessionIds, getAnchor())}>
-                                {t("terminal.workspan.closeCurrent")}
-                              </ContextMenuItem>
-                              <ContextMenuItem onSelect={() => window.setTimeout(() => {
-                                void prompt({
-                                  title: t("terminal.workspan.renamePrompt"),
-                                  initialValue: model.workspan.customTitle ?? "",
-                                  placeholder: t("terminal.workspan.renamePlaceholder"),
-                                  allowEmpty: true,
-                                }).then((title) => {
-                                  if (title !== null) renameWorkspan(model.workspan.id, title);
-                                });
-                              }, 0)}>
-                                {t("terminal.workspan.rename")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                disabled={model.sessionIds.length <= 1 || Boolean(scopedSessionIds)}
-                                title={scopedSessionIds ? t("terminal.workspan.restoreSinglePaneScopedDisabled") : undefined}
-                                onSelect={() => handleRestoreWorkspanToSinglePane(model.workspan.id)}
-                              >
-                                {t("terminal.workspan.restoreSinglePane")}
-                              </ContextMenuItem>
-                              {/*
-                                Reachability: in the default single-pane layout the pane-level tab bar
-                                is hidden (hideTabBar when the workspan carries a single visible session),
-                                so the pane-tab context menu that hosts the primary "Save session to
-                                sidebar" item is unreachable. Mirror the item on the workspan-tab context
-                                menu whenever the workspan carries a single session, so the feature stays
-                                reachable from the visible tab in the default layout. Disabled with the
-                                same tooltip semantics as the pane-menu twin.
-                              */}
-                              {(() => {
-                                const singleSession = model.singleSession;
-                                if (!singleSession) return null;
-                                const saveProject = singleSession.projectId ? projectById.get(singleSession.projectId) ?? null : null;
-                                const canSave = canSaveSessionToSidebar(singleSession, saveProject);
-                                return (
-                                  <ContextMenuItem
-                                    disabled={!canSave}
-                                    onSelect={() => {
-                                      // Same setTimeout(0) deferral as the pane-menu twin at
-                                      // TerminalTabs.tsx ~line 1402 — avoids the Radix focus-restore
-                                      // race that would blur the useAppPrompt Modal's autofocused input.
-                                      window.setTimeout(() => handleSaveSessionToSidebar(singleSession), 0);
-                                    }}
-                                    title={!canSave ? t("saveSession.noSessionId") : undefined}
-                                  >
-                                    {t("terminal.tab.saveSession")}
-                                  </ContextMenuItem>
-                                );
-                              })()}
-                              <ContextMenuItem
-                                disabled={workspanTabModels.length <= 1}
-                                onSelect={() => handleCloseSessions(
-                                  workspanTabModels
-                                    .filter((item) => item.workspan.id !== model.workspan.id)
-                                    .flatMap((item) => item.closeSessionIds),
-                                  getAnchor()
-                                )}
-                              >
-                                {t("terminal.workspan.closeOthers")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                disabled={index === 0}
-                                onSelect={() => handleCloseSessions(
-                                  workspanTabModels.slice(0, index).flatMap((item) => item.closeSessionIds),
-                                  getAnchor()
-                                )}
-                              >
-                                {t("terminal.workspan.closeLeft")}
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                disabled={index === workspanTabModels.length - 1}
-                                onSelect={() => handleCloseSessions(
-                                  workspanTabModels.slice(index + 1).flatMap((item) => item.closeSessionIds),
-                                  getAnchor()
-                                )}
-                              >
-                                {t("terminal.workspan.closeRight")}
-                              </ContextMenuItem>
-                            </>
-                          )}
-                        />
-                      ))}
-                    </SortableContext>
-                    <WorkspanTabbarEndDropTarget disabled={hasScopedTerminalFilter} />
-                  </div>
-                  {workspanTabOverflow.isOverflowing && (
-                    <Popover open={workspanTabListOpen} onOpenChange={setWorkspanTabListOpen}>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className="ui-terminal-tab-list-button"
-                          aria-label={t("terminal.workspan.openList")}
-                          aria-expanded={workspanTabListOpen}
-                          title={t("terminal.workspan.list")}
-                        >
-                          <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="end"
-                        className="terminal-skin ui-terminal-tab-list-popover w-72 p-1.5"
-                        style={splitPickerMenuStyle}
-                        onOpenAutoFocus={(event) => event.preventDefault()}
-                        onCloseAutoFocus={(event) => event.preventDefault()}
-                      >
-                        <div className="ui-terminal-tab-list-title px-2 py-1 text-[11px] font-semibold">
-                          {t("terminal.workspan.tabs")}
-                        </div>
-                        <div className="max-h-72 overflow-y-auto">
-                          {hiddenWorkspanTabModels.map((model) => (
-                            <div
-                              key={model.workspan.id}
-                              className="ui-interactive ui-terminal-tab-list-item flex w-full items-center gap-1 rounded-lg px-1 py-1 text-xs text-on-surface-variant"
-                              data-selected={model.workspan.id === effectiveActiveWorkspanId ? "true" : "false"}
+                <WorkspanTerminalLayout
+                  position={workspanTabBarPosition}
+                  tabBarVisible={workspanTabBarVisible}
+                  tabBar={workspanEnabled ? (
+                    <WorkspanTabBar
+                    position={workspanTabBarPosition}
+                    models={workspanTabModels}
+                    overflow={workspanTabOverflow}
+                    listOpen={workspanTabListOpen}
+                    activeWorkspanId={effectiveActiveWorkspanId}
+                    hasScopedTerminalFilter={hasScopedTerminalFilter}
+                    menuStyle={splitPickerMenuStyle}
+                    tabBarRef={workspanTabBarRef}
+                    tabScrollRef={workspanTabScrollRef}
+                    detachPreview={workspanDetachPreview}
+                    onToggleList={setWorkspanTabListOpen}
+                    onActivate={activateWorkspanTab}
+                    onClose={(model, anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
+                    renderTab={(model, index) => (
+                      <SortableWorkspanTab
+                        key={model.workspan.id}
+                        workspan={model.workspan}
+                        title={model.title}
+                        notification={model.notification}
+                        vendor={model.vendor}
+                        cliToolIcon={model.cliToolIcon}
+                        hoverInfo={model.singleSession ? buildTerminalTabHoverInfo(model.singleSession, model.singleSession.projectId ? projectById.get(model.singleSession.projectId) : undefined) : undefined}
+                        isActive={model.workspan.id === effectiveActiveWorkspanId}
+                        dragDisabled={hasScopedTerminalFilter}
+                        renameDisabled={!model.singleSession}
+                        onActivate={() => activateWorkspanTab(model.workspan.id)}
+                        onClose={(anchor) => handleCloseSessions(model.closeSessionIds, anchor)}
+                        onRename={(title) => {
+                          if (model.singleSession) void handleSubmitTabEdit(model.singleSession.id, title);
+                        }}
+                        menuStyle={splitPickerMenuStyle}
+                        menuContent={(getAnchor) => (
+                          <>
+                            <ContextMenuItem onSelect={() => handleCloseSessions(model.closeSessionIds, getAnchor())}>
+                              {t("terminal.workspan.closeCurrent")}
+                            </ContextMenuItem>
+                            <ContextMenuItem onSelect={() => window.setTimeout(() => {
+                              void prompt({
+                                title: t("terminal.workspan.renamePrompt"),
+                                initialValue: model.workspan.customTitle ?? "",
+                                placeholder: t("terminal.workspan.renamePlaceholder"),
+                                allowEmpty: true,
+                              }).then((title) => {
+                                if (title !== null) renameWorkspan(model.workspan.id, title);
+                              });
+                            }, 0)}>
+                              {t("terminal.workspan.rename")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={model.sessionIds.length <= 1 || Boolean(scopedSessionIds)}
+                              title={scopedSessionIds ? t("terminal.workspan.restoreSinglePaneScopedDisabled") : undefined}
+                              onSelect={() => handleRestoreWorkspanToSinglePane(model.workspan.id)}
                             >
-                              <button
-                                type="button"
-                                className="ui-focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left"
-                                onClick={() => {
-                                  activateWorkspanTab(model.workspan.id);
-                                  setWorkspanTabListOpen(false);
-                                }}
-                                title={model.title}
-                              >
-                                <span
-                                  className="ui-tab-runtime-dot h-2 w-2 shrink-0 rounded-full"
-                                  data-pulsing={PULSING_TAB_STATES.has(model.notification) ? "true" : "false"}
-                                  style={{ backgroundColor: TAB_NOTIFICATION_COLORS[model.notification], color: TAB_NOTIFICATION_COLORS[model.notification] }}
-                                  aria-hidden="true"
-                                />
-                                {model.vendor ? (
-                                  <span className="inline-flex shrink-0 items-center" aria-hidden="true">
-                                    <VendorIcon vendor={model.vendor} size={14} />
-                                  </span>
-                                ) : (
-                                  <Terminal size={14} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
-                                )}
-                                <span className="min-w-0 flex-1 truncate">{model.title}</span>
-                              </button>
-                              <button
-                                type="button"
-                                className="ui-focus-ring ui-terminal-tab-close inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setWorkspanTabListOpen(false);
-                                  handleCloseSessions(model.closeSessionIds, event.currentTarget.getBoundingClientRect());
-                                }}
-                                aria-label={t("terminal.workspan.close", { title: model.title })}
-                                title={t("terminal.workspan.close", { title: model.title })}
-                              >
-                                <X size={13} strokeWidth={2} aria-hidden="true" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                  </div>
-                )}
+                              {t("terminal.workspan.restoreSinglePane")}
+                            </ContextMenuItem>
+                            {/*
+                              Reachability: in the default single-pane layout the pane-level tab bar
+                              is hidden (hideTabBar when the workspan carries a single visible session),
+                              so the pane-tab context menu that hosts the primary "Save session to
+                              sidebar" item is unreachable. Mirror the item on the workspan-tab context
+                              menu whenever the workspan carries a single session, so the feature stays
+                              reachable from the visible tab in the default layout. Disabled with the
+                              same tooltip semantics as the pane-menu twin.
+                            */}
+                            {(() => {
+                              const singleSession = model.singleSession;
+                              if (!singleSession) return null;
+                              const saveProject = singleSession.projectId ? projectById.get(singleSession.projectId) ?? null : null;
+                              const canSave = canSaveSessionToSidebar(singleSession, saveProject);
+                              return (
+                                <ContextMenuItem
+                                  disabled={!canSave}
+                                  onSelect={() => {
+                                    // Same setTimeout(0) deferral as the pane-menu twin at
+                                    // TerminalTabs.tsx ~line 1402 — avoids the Radix focus-restore
+                                    // race that would blur the useAppPrompt Modal's autofocused input.
+                                    window.setTimeout(() => handleSaveSessionToSidebar(singleSession), 0);
+                                  }}
+                                  title={!canSave ? t("saveSession.noSessionId") : undefined}
+                                >
+                                  {t("terminal.tab.saveSession")}
+                                </ContextMenuItem>
+                              );
+                            })()}
+                            <ContextMenuItem
+                              disabled={workspanTabModels.length <= 1}
+                              onSelect={() => handleCloseSessions(
+                                workspanTabModels
+                                  .filter((item) => item.workspan.id !== model.workspan.id)
+                                  .flatMap((item) => item.closeSessionIds),
+                                getAnchor()
+                              )}
+                            >
+                              {t("terminal.workspan.closeOthers")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={index === 0}
+                              onSelect={() => handleCloseSessions(
+                                workspanTabModels.slice(0, index).flatMap((item) => item.closeSessionIds),
+                                getAnchor()
+                              )}
+                            >
+                              {t("terminal.workspan.closeLeft")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={index === workspanTabModels.length - 1}
+                              onSelect={() => handleCloseSessions(
+                                workspanTabModels.slice(index + 1).flatMap((item) => item.closeSessionIds),
+                                getAnchor()
+                              )}
+                            >
+                              {t("terminal.workspan.closeRight")}
+                            </ContextMenuItem>
+                          </>
+                        )}
+                      />
+                    )}
+                    />
+                  ) : null}
+                >
                 <div className="relative min-h-0 flex-1 overflow-hidden">
                   {mountedWorkspanLayouts.map((layout) => {
                     const layoutVisible = Boolean(layout.visiblePaneTree)
@@ -4562,6 +4778,7 @@ export function TerminalTabs({
                     );
                   })}
                 </div>
+                </WorkspanTerminalLayout>
                 <TerminalTabDragOverlay style={terminalWellStyle} themeTone={terminalThemeTone} />
               </DndContext>
             ) : null}
@@ -4588,80 +4805,7 @@ export function TerminalTabs({
               </div>
             )}
           </div>
-          {sidePanelMerged ? (
-            <TerminalSidePanel
-              open={sidePanelOpen}
-              activeTab={sidePanelTab}
-              visibleTabs={visibleSidePanelTabs}
-              activeSessionId={panelSessionId}
-              projectPath={sidePanelProjectPath}
-              projectId={panelSession?.projectId}
-              filesTabDisabled={!filePanelProject}
-              systemResourcesEnabled
-              filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
-              onTabChange={handleSidePanelTabChange}
-            />
-          ) : (
-            <>
-              {statsOpen && panelCapabilities.statistics && (
-                <ResizableTerminalPanelFrame
-                  widthKey="stats"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.stats}
-                  resizeLabel={t("terminal.panel.resizeStatsLabel")}
-                  resizeTitle={t("terminal.panel.resizeStatsTitle")}
-                >
-                  <Suspense fallback={null}>
-                    <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
-                  </Suspense>
-                </ResizableTerminalPanelFrame>
-              )}
-              {gitOpen && panelGitSupported && (
-                <ResizableTerminalPanelFrame
-                  widthKey="git"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.git}
-                  resizeLabel={t("terminal.panel.resizeGitLabel")}
-                  resizeTitle={t("terminal.panel.resizeGitTitle")}
-                >
-                  <Suspense fallback={null}>
-                    <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} projectId={panelSession?.projectId} embedded />
-                  </Suspense>
-                </ResizableTerminalPanelFrame>
-              )}
-              {replayOpen && panelCapabilities.history && (
-                <ResizableTerminalPanelFrame
-                  widthKey="replay"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.replay}
-                  resizeLabel={t("terminal.panel.resizeReplayLabel")}
-                  resizeTitle={t("terminal.panel.resizeReplayTitle")}
-                >
-                  <Suspense fallback={null}>
-                    <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} />
-                  </Suspense>
-                </ResizableTerminalPanelFrame>
-              )}
-              {filesOpen && panelCapabilities.files && (
-                <ResizableTerminalPanelFrame
-                  widthKey="files"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.files}
-                  resizeLabel={t("terminal.panel.resizeFilesLabel")}
-                  resizeTitle={t("terminal.panel.resizeFilesTitle")}
-                >
-                  <FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />
-                </ResizableTerminalPanelFrame>
-              )}
-              {systemResourcesOpen && (
-                <ResizableTerminalPanelFrame
-                  widthKey="systemResources"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.systemResources}
-                  resizeLabel={t("terminal.panel.resizeSystemResourcesLabel")}
-                  resizeTitle={t("terminal.panel.resizeSystemResourcesTitle")}
-                >
-                  <SystemResourcesPanel open={systemResourcesOpen} embedded />
-                </ResizableTerminalPanelFrame>
-              )}
-            </>
-          )}
-          {renderToolbarActions()}
+          </TerminalWorkspaceFrame>
         </div>
       </div>
     </div>

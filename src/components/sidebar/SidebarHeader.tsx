@@ -1,5 +1,6 @@
 import { ChevronRight, Filter, FolderPlus, Plus } from "../icons";
 import { useI18n } from "../../lib/i18n";
+import type { WorkspaceDockSide } from "../../lib/workspaceLayout";
 
 export type ProjectListFilter = "all" | "open";
 
@@ -10,6 +11,7 @@ interface SidebarHeaderProps {
   showProjectFilter: boolean;
   totalProjectCount: number;
   openProjectCount: number;
+  dockSide: WorkspaceDockSide;
   onToggleCollapse: () => void;
   onProjectFilterChange: (filter: ProjectListFilter) => void;
   onCreateGroup: () => void;
@@ -23,6 +25,7 @@ export function SidebarHeader({
   showProjectFilter,
   totalProjectCount,
   openProjectCount,
+  dockSide,
   onToggleCollapse,
   onProjectFilterChange,
   onCreateGroup,
@@ -30,6 +33,8 @@ export function SidebarHeader({
 }: SidebarHeaderProps) {
   const { t } = useI18n();
   const compact = density === "compact";
+  const collapseIconClassName = dockSide === "right" ? "" : "rotate-180";
+  const expandIconClassName = dockSide === "right" ? "rotate-180" : "";
   if (collapsed) {
     return (
       <div className={`flex flex-col items-center ${compact ? "gap-1 px-1.5 pb-1.5 pt-2.5" : "gap-1.5 px-2 pb-2 pt-3"}`}>
@@ -39,7 +44,7 @@ export function SidebarHeader({
           title={t("sidebar.expand")}
           aria-label={t("sidebar.expand")}
         >
-          <ChevronRight size={14} strokeWidth={1.8} />
+          <ChevronRight size={14} strokeWidth={1.8} className={expandIconClassName} />
         </button>
         {showProjectFilter && (
           <button
@@ -85,7 +90,7 @@ export function SidebarHeader({
             title={t("sidebar.collapse")}
             aria-label={t("sidebar.collapse")}
           >
-            <ChevronRight size={14} strokeWidth={1.8} className="rotate-180" />
+            <ChevronRight size={14} strokeWidth={1.8} className={collapseIconClassName} />
           </button>
           <button
             onClick={onCreateGroup}

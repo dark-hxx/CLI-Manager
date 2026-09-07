@@ -9,7 +9,29 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-replay-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-globalThis.window = globalThis;
+let nextTimerId = 1;
+const timerCallbacks = new Map();
+const visibilityListeners = new Set();
+let documentVisibilityState = "visible";
+globalThis.window = {
+  setTimeout: (callback) => {
+    const id = nextTimerId++;
+    timerCallbacks.set(id, callback);
+    return id;
+  },
+  clearTimeout: (id) => timerCallbacks.delete(id),
+};
+globalThis.document = {
+  get visibilityState() {
+    return documentVisibilityState;
+  },
+  addEventListener: (type, callback) => {
+    if (type === "visibilitychange") visibilityListeners.add(callback);
+  },
+  removeEventListener: (type, callback) => {
+    if (type === "visibilitychange") visibilityListeners.delete(callback);
+  },
+};
 let nextRafId = 1;
 const rafCallbacks = new Map();
 globalThis.requestAnimationFrame = (callback) => {
@@ -31,6 +53,20 @@ function flushNextAnimationFrame() {
 
 function flushAnimationFrames() {
   while (rafCallbacks.size > 0) flushNextAnimationFrame();
+}
+
+function flushNextTimer() {
+  const next = timerCallbacks.entries().next().value;
+  if (!next) return false;
+  const [id, callback] = next;
+  timerCallbacks.delete(id);
+  callback();
+  return true;
+}
+
+function setDocumentVisibility(state) {
+  documentVisibilityState = state;
+  [...visibilityListeners].forEach((listener) => listener());
 }
 
 writeFileSync(join(tempDir, "react.mjs"), "export const useRef = (value) => ({ current: value });\n");
@@ -83,22 +119,22 @@ export const useTerminalStore = {
 };
 `);
 writeFileSync(join(tempDir, "manager.mjs"), `
-let outputListener = null;
+const outputListeners = new Map();
 export const resizeCalls = [];
 export const replayAcknowledgments = [];
 export const terminalProcessManager = {
-  async subscribeOutput(_sessionId, listener) {
-    outputListener = listener;
-    return () => { if (outputListener === listener) outputListener = null; };
+  async subscribeOutput(sessionId, listener) {
+    outputListeners.set(sessionId, listener);
+    return () => { if (outputListeners.get(sessionId) === listener) outputListeners.delete(sessionId); };
   },
   async resize(sessionId, cols, rows) { resizeCalls.push({ sessionId, cols, rows }); },
   acknowledgeOutput(sessionId, sequence, charCount) {
     replayAcknowledgments.push({ sessionId, sequence, charCount });
   },
 };
-export function emitOutput(delivery) { outputListener?.(delivery); }
+export function emitOutput(delivery, sessionId = "session-1") { outputListeners.get(sessionId)?.(delivery); }
 export function resetManager() {
-  outputListener = null;
+  outputListeners.clear();
   resizeCalls.length = 0;
   replayAcknowledgments.length = 0;
 }
@@ -201,6 +237,11 @@ class FakeTerminal {
     this.events.push(`scroll:${this.buffer.active.viewportY}`);
   }
 
+  scrollToBottom() {
+    this.buffer.active.viewportY = this.buffer.active.baseY;
+    this.events.push(`scroll-bottom:${this.buffer.active.viewportY}`);
+  }
+
   onResize(listener) {
     this.resizeListeners.add(listener);
     return { dispose: () => this.resizeListeners.delete(listener) };
@@ -209,7 +250,10 @@ class FakeTerminal {
   loadAddon() {}
 }
 
-function createDisplay(proposedDimensions = { cols: 120, rows: 30 }) {
+function createDisplay(
+  proposedDimensions = { cols: 120, rows: 30 },
+  { sessionId = "session-1", isVisible = true } = {},
+) {
   visibilityStub.resetVisibility();
   const events = [];
   const terminal = new FakeTerminal(events);
@@ -221,11 +265,11 @@ function createDisplay(proposedDimensions = { cols: 120, rows: 30 }) {
   };
   const terminalRef = { current: terminal };
   const display = useTerminalDisplay({
-    sessionId: "session-1",
+    sessionId,
     containerRef: { current: container },
     terminalRef,
     fitAddonRef: { current: { proposeDimensions: () => proposedDimensions } },
-    isVisibleRef: { current: true },
+    isVisibleRef: { current: isVisible },
     isComposingRef: { current: false },
     lowMemoryMode: false,
     disableHardwareAcceleration: true,
@@ -308,7 +352,7 @@ test("horizontal reflow preserves the visible normal-buffer line", () => {
   detachViewport();
 });
 
-test("horizontal reflow keeps live-bottom following without forcing a scroll", () => {
+test("horizontal reflow restores live-bottom intent after asynchronous viewport drift", () => {
   const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
   terminal.cols = 120;
   terminal.rows = 24;
@@ -317,14 +361,48 @@ test("horizontal reflow keeps live-bottom following without forcing a scroll", (
   terminal.buffer.active.viewportY = 277;
   terminal.viewportMaxScrollLine = 277;
   terminal.reflowBaseYDelta = 300;
-  terminal.reflowMarkerLineDelta = 177;
+
+  display.scheduleFit(true, false);
+  flushNextAnimationFrame();
+
+  assert.equal(terminal.buffer.active.viewportY, 577);
+  assert.deepEqual(events, ["resize:60x24", "scroll-bottom:577"]);
+
+  // Reproduce the delayed DOM viewport event that can leave xterm at the top.
+  terminal.buffer.active.viewportY = 0;
+  flushNextAnimationFrame();
+  assert.equal(terminal.buffer.active.viewportY, 0);
+
+  flushNextAnimationFrame();
+  assert.equal(terminal.buffer.active.viewportY, 577);
+  assert.deepEqual(events, ["resize:60x24", "scroll-bottom:577", "scroll-bottom:577"]);
+  detachViewport();
+});
+
+test("vertical resize does not force a live-bottom scroll", () => {
+  const { display, terminal, events, detachViewport } = createDisplay({ cols: 120, rows: 30 });
+  terminal.cols = 120;
+  terminal.rows = 24;
+  terminal.buffer.active.baseY = 277;
+  terminal.buffer.active.viewportY = 277;
 
   display.scheduleFit(true, false);
   flushAnimationFrames();
 
-  assert.equal(terminal.buffer.active.viewportY, 577);
+  assert.deepEqual(events, ["resize:120x30"]);
+  detachViewport();
+});
+
+test("alternate buffer resize does not force a live-bottom scroll", () => {
+  const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
+  terminal.cols = 120;
+  terminal.rows = 24;
+  terminal.buffer.active.type = "alternate";
+
+  display.scheduleFit(true, false);
+  flushAnimationFrames();
+
   assert.deepEqual(events, ["resize:60x24"]);
-  assert.equal(terminal.markers.size, 0);
   detachViewport();
 });
 
@@ -349,6 +427,26 @@ test("cancelling a scheduled fit disposes a pending viewport marker", () => {
 
   assert.deepEqual(events, ["resize:60x24"]);
   assert.equal(terminal.markers.size, 0);
+  detachViewport();
+});
+
+test("cancelling a scheduled fit cancels pending live-bottom restoration", () => {
+  const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
+  terminal.cols = 120;
+  terminal.rows = 24;
+  terminal.buffer.active.baseY = 277;
+  terminal.buffer.active.viewportY = 277;
+  terminal.reflowBaseYDelta = 300;
+
+  display.scheduleFit(true, false);
+  flushNextAnimationFrame();
+  terminal.buffer.active.viewportY = 0;
+
+  display.cancelScheduledFit();
+  flushAnimationFrames();
+
+  assert.equal(terminal.buffer.active.viewportY, 0);
+  assert.deepEqual(events, ["resize:60x24", "scroll-bottom:577"]);
   detachViewport();
 });
 
@@ -387,11 +485,23 @@ test("initial replay fits the current container before releasing buffered live o
 
   terminal.finishNextWrite();
   assert.equal(await replayPromise, true);
-  assert.deepEqual(events, ["resize:90x20", "write:replay", "resize:120x30"]);
+  assert.deepEqual(events, [
+    "resize:90x20",
+    "write:replay",
+    "resize:120x30",
+    "scroll-bottom:0",
+  ]);
   assert.deepEqual(managerStub.resizeCalls, [{ sessionId: "session-1", cols: 120, rows: 30 }]);
 
   flushAnimationFrames();
-  assert.deepEqual(events, ["resize:90x20", "write:replay", "resize:120x30", "write:live"]);
+  assert.deepEqual(events, [
+    "resize:90x20",
+    "write:replay",
+    "resize:120x30",
+    "scroll-bottom:0",
+    "write:live",
+    "scroll-bottom:0",
+  ]);
   terminal.finishNextWrite();
   assert.deepEqual(commits, [{ sequence: 3, charCount: 4 }]);
   output.dispose();
@@ -421,11 +531,12 @@ test("reconnect replay restores historical sizes serially and fits before live o
     "resize:100x25",
     "write:two",
     "resize:120x30",
+    "scroll-bottom:0",
   ]);
   assert.deepEqual(managerStub.resizeCalls, [{ sessionId: "session-1", cols: 120, rows: 30 }]);
 
   flushAnimationFrames();
-  assert.deepEqual(events.at(-1), "write:live");
+  assert.deepEqual(events.slice(-2), ["write:live", "scroll-bottom:0"]);
   terminal.finishNextWrite();
   assert.deepEqual(commits, [
     { sequence: 1, charCount: 3 },
@@ -447,7 +558,13 @@ test("resize-only reconnect replay is applied locally before current-size fit", 
   managerStub.emitOutput(delivery(frame(3, "live", 100, 25), commits));
   flushAnimationFrames();
 
-  assert.deepEqual(events, ["resize:100x25", "resize:120x30", "write:live"]);
+  assert.deepEqual(events, [
+    "resize:100x25",
+    "resize:120x30",
+    "scroll-bottom:0",
+    "write:live",
+    "scroll-bottom:0",
+  ]);
   assert.deepEqual(managerStub.resizeCalls, [{ sessionId: "session-1", cols: 120, rows: 30 }]);
   assert.deepEqual(commits, [{ sequence: 2, charCount: 0 }]);
   terminal.finishNextWrite();
@@ -457,4 +574,150 @@ test("resize-only reconnect replay is applied locally before current-size fit", 
   ]);
   output.dispose();
   detachViewport();
+});
+
+test("continuous live output yields between bounded xterm writes", async () => {
+  managerStub.resetManager();
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const commits = [];
+  const output = display.attachPtyOutput();
+  await output.ready;
+  const firstText = "a".repeat(40 * 1024);
+  const secondText = "b".repeat(40 * 1024);
+
+  managerStub.emitOutput(delivery(frame(3, firstText, 120, 30), commits));
+  managerStub.emitOutput(delivery(frame(4, secondText, 120, 30), commits));
+  flushNextAnimationFrame();
+
+  assert.deepEqual(events, [`write:${firstText}`]);
+  assert.deepEqual(commits, []);
+  terminal.finishNextWrite();
+  assert.deepEqual(commits, [
+    { sequence: 3, charCount: firstText.length },
+  ]);
+  flushNextAnimationFrame();
+  assert.deepEqual(events, [`write:${firstText}`, `write:${secondText}`]);
+  terminal.finishNextWrite();
+  assert.deepEqual(commits, [
+    { sequence: 3, charCount: firstText.length },
+    { sequence: 4, charCount: secondText.length },
+  ]);
+  output.dispose();
+  detachViewport();
+});
+
+test("hidden document drains pending PTY output with timer fallback", async () => {
+  managerStub.resetManager();
+  setDocumentVisibility("hidden");
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const commits = [];
+  const output = display.attachPtyOutput();
+  await output.ready;
+
+  managerStub.emitOutput(delivery(frame(3, "background", 120, 30), commits));
+
+  assert.equal(rafCallbacks.size, 0);
+  assert.equal(timerCallbacks.size, 1);
+  assert.deepEqual(events, []);
+  assert.deepEqual(commits, []);
+
+  assert.equal(flushNextTimer(), true);
+  assert.deepEqual(events, ["write:background"]);
+  assert.deepEqual(commits, []);
+  terminal.finishNextWrite();
+  assert.deepEqual(commits, [{ sequence: 3, charCount: 10 }]);
+
+  output.dispose();
+  detachViewport();
+  setDocumentVisibility("visible");
+  assert.equal(timerCallbacks.size, 0);
+});
+
+test("timer watchdog drains output if a visible rAF is stalled", async () => {
+  managerStub.resetManager();
+  setDocumentVisibility("visible");
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const commits = [];
+  const output = display.attachPtyOutput();
+  await output.ready;
+
+  managerStub.emitOutput(delivery(frame(3, "watchdog", 120, 30), commits));
+
+  assert.equal(rafCallbacks.size, 1);
+  assert.equal(timerCallbacks.size, 1);
+  rafCallbacks.clear();
+  assert.equal(flushNextTimer(), true);
+  assert.deepEqual(events, ["write:watchdog"]);
+  terminal.finishNextWrite();
+  assert.deepEqual(commits, [{ sequence: 3, charCount: 8 }]);
+
+  output.dispose();
+  detachViewport();
+  assert.equal(timerCallbacks.size, 0);
+});
+
+test("multiple terminals start only one xterm write per animation frame", async () => {
+  managerStub.resetManager();
+  const first = createDisplay(undefined, { sessionId: "session-1" });
+  const second = createDisplay(undefined, { sessionId: "session-2" });
+  const firstOutput = first.display.attachPtyOutput();
+  const secondOutput = second.display.attachPtyOutput();
+  await Promise.all([firstOutput.ready, secondOutput.ready]);
+
+  managerStub.emitOutput(delivery(frame(1, "first", 120, 30), []), "session-1");
+  managerStub.emitOutput(delivery(frame(1, "second", 120, 30), []), "session-2");
+  flushNextAnimationFrame();
+
+  const writeCount = [...first.events, ...second.events]
+    .filter((event) => event.startsWith("write:"))
+    .length;
+  assert.equal(writeCount, 1);
+  const pending = first.terminal.writeCallbacks.length > 0 ? first : second;
+  const waiting = pending === first ? second : first;
+  pending.terminal.finishNextWrite();
+  flushNextAnimationFrame();
+  assert.equal(waiting.terminal.writeCallbacks.length, 1);
+
+  waiting.terminal.finishNextWrite();
+  firstOutput.dispose();
+  secondOutput.dispose();
+  first.detachViewport();
+  second.detachViewport();
+});
+
+test("hidden terminal is not starved by continuous visible output", async () => {
+  managerStub.resetManager();
+  const visible = createDisplay(undefined, { sessionId: "visible", isVisible: true });
+  const hidden = createDisplay(undefined, { sessionId: "hidden", isVisible: false });
+  const visibleOutput = visible.display.attachPtyOutput();
+  const hiddenOutput = hidden.display.attachPtyOutput();
+  await Promise.all([visibleOutput.ready, hiddenOutput.ready]);
+  const visibleCommits = [];
+  const hiddenCommits = [];
+
+  for (let sequence = 1; sequence <= 4; sequence += 1) {
+    managerStub.emitOutput(
+      delivery(frame(sequence, String(sequence).repeat(40 * 1024), 120, 30), visibleCommits),
+      "visible",
+    );
+  }
+  managerStub.emitOutput(delivery(frame(1, "background", 120, 30), hiddenCommits), "hidden");
+
+  for (let index = 0; index < 3; index += 1) {
+    flushNextAnimationFrame();
+    assert.equal(hidden.events.length, 0);
+    visible.terminal.finishNextWrite();
+  }
+  flushNextAnimationFrame();
+  assert.deepEqual(
+    hidden.events.filter((event) => event.startsWith("write:")),
+    ["write:background"],
+  );
+  hidden.terminal.finishNextWrite();
+  assert.deepEqual(hiddenCommits, [{ sequence: 1, charCount: 10 }]);
+
+  visibleOutput.dispose();
+  hiddenOutput.dispose();
+  visible.detachViewport();
+  hidden.detachViewport();
 });

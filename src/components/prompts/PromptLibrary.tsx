@@ -201,6 +201,7 @@ export function PromptLibrary({
           {!loadingPrompts &&
             prompts.map((item, idx) => {
               const sessionKey = makeSessionKey(item.source, item.session_id, item.file_path);
+              const session = sessions.find((candidate) => candidate.sessionKey === sessionKey);
               return (
                 <div
                   key={`${sessionKey}-${item.message_index}-${idx}`}
@@ -210,7 +211,7 @@ export function PromptLibrary({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)" }}>
-                        {item.session_title}
+                        {session?.displayTitle ?? item.session_title}
                       </div>
                       <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
                         {item.source} · {item.project_key} · #{item.message_index + 1} · {zh("更新于")}{" "}

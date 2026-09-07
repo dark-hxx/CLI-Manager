@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { HistorySessionDetail } from "../../lib/types";
 import { calculateCost, inferDominantModel } from "../../lib/modelPricing";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
@@ -354,13 +354,17 @@ export function StatChip({
   dotColor,
   label,
   value,
+  valueSuffix,
   valueColor,
 }: {
   dotColor: string;
   label: string;
   value: string;
+  valueSuffix?: string;
   valueColor?: string;
 }) {
+  const displayValue = valueSuffix ? `${value}/${valueSuffix}` : value;
+
   return (
     <div
       className="flex min-w-0 flex-col gap-0.5 rounded-lg px-2 py-1.5"
@@ -370,8 +374,13 @@ export function StatChip({
         <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />
         <span className="truncate">{label}</span>
       </span>
-      <span className="truncate text-[12px] font-bold" style={{ color: valueColor ?? TERM.fg }} title={value}>
+      <span className="truncate text-[12px] font-bold" style={{ color: valueColor ?? TERM.fg }} title={displayValue}>
         {value}
+        {valueSuffix ? (
+          <span className="ml-0.5 text-[9px] font-medium" style={{ color: TERM.dim }}>
+            /{valueSuffix}
+          </span>
+        ) : null}
       </span>
     </div>
   );
@@ -730,6 +739,34 @@ export function EmptyHint({ text }: { text: string }) {
       <span className="animate-pulse" style={{ color: TERM_PANEL.fg }}>
         ▊
       </span>
+    </div>
+  );
+}
+
+// 终端侧边面板的友好空态：图标 + 标题 + 可选说明。
+// 用于「预期内的空场景」（如目录不是 Git 仓库），替代把后端原始错误串直接铺在面板里。
+export function PanelEmptyState({
+  icon,
+  title,
+  description,
+}: {
+  icon: ReactNode;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-6 text-center">
+      <span className="opacity-60" style={{ color: TERM_PANEL.dim }}>
+        {icon}
+      </span>
+      <p className="text-[12px] font-medium" style={{ color: TERM_PANEL.fg }}>
+        {title}
+      </p>
+      {description && (
+        <p className="max-w-[230px] text-[11px] leading-relaxed" style={{ color: TERM_PANEL.dim }}>
+          {description}
+        </p>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { getMaterialFileIcon } from "@baybreezy/file-extension-icon";
 import { Clock3, CornerDownRight } from "lucide-react";
 import { useMemo } from "react";
 import { useI18n } from "../../lib/i18n";
+import { sortHistoryItems, type HistoryDetailSortDirection } from "../../lib/historySort";
 import type { HistoryFileChangeOperation, HistoryFileChangeSummary } from "../../lib/types";
 import { formatTime } from "./historyViewUtils";
 import type { SessionProcessModel } from "./sessionEvents";
@@ -10,6 +11,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 interface SessionFileChangesViewProps {
   fileChanges?: HistoryFileChangeSummary[];
   model: SessionProcessModel;
+  direction: HistoryDetailSortDirection;
   onOpenDiff: (fileChanges?: HistoryFileChangeSummary[]) => void;
   onJumpToMessage: (messageIndex: number) => void;
 }
@@ -178,14 +180,18 @@ function fallbackOperationEntries(model: SessionProcessModel): ChangeOperationEn
 export function SessionFileChangesView({
   fileChanges = EMPTY_FILE_CHANGES,
   model,
+  direction,
   onOpenDiff,
   onJumpToMessage,
 }: SessionFileChangesViewProps) {
   const { t, language } = useI18n();
   const changeNodes = useMemo(() => {
     const structured = structuredOperationEntries(fileChanges);
-    return buildChangeNodes(structured.length > 0 ? structured : fallbackOperationEntries(model));
-  }, [fileChanges, model]);
+    return sortHistoryItems(
+      buildChangeNodes(structured.length > 0 ? structured : fallbackOperationEntries(model)),
+      direction,
+    );
+  }, [direction, fileChanges, model]);
   const allFileChanges = useMemo(() => changeNodes.flatMap((node) => node.files), [changeNodes]);
   const fileCount = useMemo(
     () => new Set(changeNodes.flatMap((node) => node.files.map((file) => file.file_path))).size,

@@ -1,0 +1,14 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"行为性跨边界 Provider 请求故障必须走根因修复并覆盖状态场景。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"追踪 HistoryWorkspace → Zustand → Tauri IPC → Provider runtime → HTTP → CAS 的数据流。"}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"执行前后检查脏工作区、用户可见文案和验证边界。"}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Provider 复合身份、active key、后端 secret 边界和 effective runtime 契约。"}
+{"file":".trellis/spec/backend/command-suggestion-contracts.md","reason":"现有 OpenAI 辅助请求的端点、请求体、响应体和安全日志契约。"}
+{"file":".trellis/spec/frontend/history-session-contracts.md","reason":"智能标题 fallback、错误反馈、来源/SSH/alias 行为契约。"}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"Provider 选择/ready UI 和凭据不出 WebView 契约。"}
+{"file":".trellis/tasks/08-14-history-two-stage-smart-title/research/current-code-touchpoints.md","reason":"父任务已确认的标题、Provider、网络和命令建议触点。"}
+{"file":"src-tauri/src/commands/command_suggestion.rs","reason":"提取并复用现有可工作的 OpenAI 请求构造，保持旧命令行为。"}
+{"file":"src-tauri/src/commands/history_title.rs","reason":"修复智能标题请求协议分叉并保留标题专用响应/CAS逻辑。"}
+{"file":"src-tauri/src/provider/runtime.rs","reason":"确认 Codex effective endpoint、wire API、model 和 active key 解析。"}
+{"file":"src-tauri/src/provider/network_client.rs","reason":"复用统一代理/网络客户端边界。"}
+{"file":"src/components/HistoryWorkspace.tsx","reason":"将稳定后端失败码映射到可诊断且安全的 toast。"}
+{"file":"src/lib/i18n.ts","reason":"补齐用户可见错误文案的 zh-CN/en-US。"}

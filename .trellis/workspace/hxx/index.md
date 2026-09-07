@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 73
-- **Last Active**: 2026-07-31
+- **Total Sessions**: 110
+- **Last Active**: 2026-09-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~503 | Active |
+| `journal-2.md` | ~1513 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,43 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 110 | 2026-09-07 | 修复 Markdown 文件链接与锚点导航 | `3680fa64` | `master` |
+| 109 | 2026-09-07 | 完成 Issue #248 VS Code 式工作区布局控制 | `1a780b2e` | `master` |
+| 108 | 2026-09-04 | 修复历史会话 Markdown 表格渲染 | `25defb59` | `master` |
+| 107 | 2026-09-04 | history-content-sort-codex-title | `dc3e2ddc` | `master` |
+| 106 | 2026-09-04 | 解除 AI 进展时间轴展开收起限制 | `eb1f2ee5` | `master` |
+| 105 | 2026-09-03 | Hook 系统通知自定义声音 | `dace561f` | `master` |
+| 104 | 2026-09-03 | Fix Codex CLI output recovery | `c51a0bcf` | `master` |
+| 103 | 2026-09-01 | SSH Agent SFTP 发布与远程目录选择器 | `4601e769` | `master` |
+| 102 | 2026-08-31 | 终端滚动快捷键 | `7ce0c105` | `master` |
+| 101 | 2026-08-31 | 终端滚动到底部快捷跳转按钮 | `37cc08a3` | `master` |
+| 100 | 2026-08-31 | 修复 Grok Build Alt+Enter 换行并合并 PR #240 | `f6b8ca66`, `66ba0fba` | `master` |
+| 99 | 2026-08-31 | 修复 Grok Build Alt+Enter 换行 | `f175f706` | `master` |
+| 98 | 2026-08-26 | 修复 macOS Fcitx5 终端中文重复输入 | `b669c1db` | `master` |
+| 97 | 2026-08-26 | History smart-title prompt and responsiveness | `65a6b5cf` | `master` |
+| 96 | 2026-08-24 | Fix file preview refresh and file tab menu | `9c6aa22d` | `master` |
+| 95 | 2026-08-21 | 修复 PR #224 Grok Hook 配置恢复 | `dde0f550`, `84326c38`, `e4c62bc2` | `agent/grok-ssh-hooks-history` |
+| 94 | 2026-08-21 | Fix provider dialog layering and terminal file navigation | `575f903e` | `master` |
+| 93 | 2026-08-20 | Review and harden PR 220 Kimi history | `c52a9b7f` | `pr220` |
+| 92 | 2026-08-19 | 修复 Kimi Hook 本地检测延迟 | `890f59d4` | `master` |
+| 91 | 2026-08-19 | Fix PR #219 Kimi cross-platform tests | `a9781941`, `2152a22d` | `agent/kimi-code-cli-hooks` |
+| 90 | 2026-08-18 | 历史会话对话消息操作栏 | `9f8602bb` | `master` |
+| 89 | 2026-08-18 | 修复 SSH Grok 会话历史打开提示 | `60372d68` | `master` |
+| 88 | 2026-08-17 | 修复供应商作用域与 Pi 终端诊断 | `3207bc68` | `master` |
+| 87 | 2026-08-13 | 修复 Diff 回退确认与折叠项目交互 | `47661dcc` | `master` |
+| 86 | 2026-08-07 | 修复 Grok 会话历史路径并提交任务 | `0fc7f495` | `feat/native-provider-management` |
+| 85 | 2026-08-06 | 修复 Grok Home 隔离并恢复旧会话 | `f38bd412`, `f4ae4c5e` | `feat/native-provider-management` |
+| 84 | 2026-08-06 | 修复 Grok 供应商真实 Home 启动 | `f38bd412` | `feat/native-provider-management` |
+| 83 | 2026-08-06 | 修复 Codex 供应商启动覆盖真实 Home | `b8a41dee` | `feat/native-provider-management` |
+| 82 | 2026-08-12 | 修复历史索引压缩迁移检测 | `ad1e2a26` | `master` |
+| 81 | 2026-08-12 | 优化历史会话索引数据库体积 | `d6e10b19` | `master` |
+| 80 | 2026-08-10 | 同步 master 并发布版本 1.3.5 | `eabf83fc` | `master` |
+| 79 | 2026-08-07 | 补齐 Tab CLI 工具图标并新增 Kimi | `d6036889` | `master` |
+| 78 | 2026-08-07 | 支持 Windows 便携版与自定义数据目录 | `eafe5da3` | `master` |
+| 77 | 2026-08-07 | 修复 Tab 图标在项目 CLI 工具变更后不刷新 | `9bf48abf` | `master` |
+| 76 | 2026-08-06 | 修复 Codex 光标隐藏未生效 | `4a605543` | `master` |
+| 75 | 2026-08-06 | 新增 Codex 运行时光标隐藏开关 | `66e71e22` | `master` |
+| 74 | 2026-08-06 | 修复远程连接设置页面响应式布局 | `89c84ce2` | `master` |
 | 73 | 2026-07-31 | 修复终端光标原生显隐 | `5f562763` | `master` |
 | 72 | 2026-07-31 | 增加资源持续上涨诊断日志 | `ce3c9360` | `master` |
 | 71 | 2026-07-31 | 容忍 Hook 配置目录失效 | `0321d7a8` | `master` |

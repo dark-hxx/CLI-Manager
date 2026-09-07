@@ -1,0 +1,21 @@
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"原生供应商详情 Tab、全局应用入口、主从等高布局和 Codex/Grok 同构维护契约"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"详情 Tab 的键盘、ARIA、响应式滚动和 i18n 质量要求"}
+{"file":"src/components/settings/pages/NativeProviderSettingsPage.tsx","reason":"供应商目录主从高度、详情四 Tab、全局应用入口和切换重置"}
+{"file":"src/components/settings/providers/NativeProviderEditor.tsx","reason":"基本信息与生效配置分层、长预览滚动和移除详情复制"}
+{"file":"src/components/settings/providers/NativeProviderCodeEditor.tsx","reason":"统一 Monaco 生命周期、JSON/TOML 语法样式和稳定模型路径"}
+{"file":"src/components/settings/providers/nativeProviderConfigView.ts","reason":"供应商配置 envelope 与 JSON/TOML 展示转换"}
+{"file":"src/components/settings/providers/NativeProviderCommonConfigSection.tsx","reason":"折叠编辑器 keepMounted 与统一代码编辑器"}
+{"file":"src/components/settings/providers/NativeProviderFormModal.tsx","reason":"新增/编辑供应商专属配置编辑"}
+{"file":"src/components/settings/providers/NativeProviderDocumentEditor.tsx","reason":"完整配置文档改用统一代码编辑器"}
+{"file":"src-tauri/src/provider/global.rs","reason":"从真实目标文件匹配全局当前供应商"}
+{"file":"src-tauri/src/provider/repository/catalog.rs","reason":"保存供应商配置时保留密钥管理区敏感字段"}
+{"file":"scripts/nativeProviderConfigView.test.mjs","reason":"Codex/Grok TOML 展示、envelope round-trip 和 Claude JSON 校验回归测试"}
+{"file":"src/components/settings/providers/nativeProviderGlobalView.ts","reason":"按 app type 选择 Claude/Codex/Grok 配置目录，避免确认框展示 Home 父目录"}
+{"file":"src/components/settings/providers/NativeProviderGlobalSection.tsx","reason":"应用按钮自动预检并使用 app-specific 配置目录确认路径"}
+{"file":"src/components/settings/providers/useNativeProviderHome.ts","reason":"无显式预览时在应用动作内部获取新指纹，保留后端安全应用契约"}
+{"file":"scripts/nativeProviderGlobalView.test.mjs","reason":"全局确认路径回归测试"}
+{"file":"src/components/settings/providers/nativeProviderAdvancedConfig.ts","reason":"Codex/Grok 高级字段 envelope、CLI-specific JSON/TOML 生成和校验"}
+{"file":"src/components/settings/providers/NativeProviderAdvancedConfigSection.tsx","reason":"Codex/Grok CCS 风格高级维护表单与 JSON override 编辑器"}
+{"file":"src/components/settings/providers/NativeProviderFormModal.tsx","reason":"空专属文档自动生成、手动文档保护、高级字段保存与校验"}
+{"file":"src/components/settings/providers/nativeProviderConfigView.ts","reason":"根据基础字段生成缺失的供应商 JSON/TOML 文档"}
+{"file":"scripts/nativeProviderConfigView.test.mjs","reason":"空文档生成和 advanced envelope round-trip 回归"}

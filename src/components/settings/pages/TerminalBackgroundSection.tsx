@@ -77,7 +77,7 @@ const POSITION_LABEL_EN: Record<TerminalBackgroundPosition, string> = {
 };
 
 export function TerminalBackgroundSection({ embedded = false }: { embedded?: boolean }) {
-  const { language } = useI18n();
+  const { language, t } = useI18n();
   const { confirm, confirmDialog } = useAppConfirm();
   const text = (zh: string, en: string) => pickByLanguage(language, zh, en);
   const terminalBackground = useSettingsStore((s) => s.terminalBackground);
@@ -88,7 +88,7 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [thumbFailed, setThumbFailed] = useState(false);
 
-  const { enabled, imagePath, imageSizeBytes, opacity, fit, position, blur, overlayDarken } =
+  const { enabled, fillWorkspace, imagePath, imageSizeBytes, opacity, fit, position, blur, overlayDarken } =
     terminalBackground;
 
   useEffect(() => {
@@ -188,6 +188,7 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
   };
 
   const detailsDisabled = !enabled;
+  const fillWorkspaceAvailable = enabled && Boolean(imagePath) && !terminalBackgroundMissing && !thumbFailed;
 
   return (
     <section className={embedded ? "" : "ui-surface-card rounded-2xl border border-border p-4"}>
@@ -240,6 +241,33 @@ export function TerminalBackgroundSection({ embedded = false }: { embedded?: boo
             </Text>
           </Card>
         )}
+
+        <Group justify="space-between" align="flex-start" gap="md" wrap="nowrap">
+          <Box>
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              {t("settings.terminalBackground.fillWorkspace")}
+            </Text>
+            <Text mt={4} size="xs" c="var(--on-surface-variant)">
+              {t("settings.terminalBackground.fillWorkspaceDescription")}
+            </Text>
+            {!fillWorkspaceAvailable && (
+              <Text mt={4} size="xs" c="var(--text-muted)">
+                {t("settings.terminalBackground.fillWorkspaceDisabled")}
+              </Text>
+            )}
+          </Box>
+          <Switch
+            color="cliPrimary"
+            checked={fillWorkspace}
+            disabled={!fillWorkspaceAvailable}
+            onChange={(event) => patch({ fillWorkspace: event.currentTarget.checked })}
+            aria-label={t(
+              fillWorkspace
+                ? "settings.terminalBackground.disableFillWorkspace"
+                : "settings.terminalBackground.enableFillWorkspace",
+            )}
+          />
+        </Group>
 
         <Stack gap="md" style={detailsDisabled ? { opacity: 0.55, pointerEvents: "none" } : undefined} aria-disabled={detailsDisabled}>
           <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">

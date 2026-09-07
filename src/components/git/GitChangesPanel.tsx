@@ -7,19 +7,21 @@ import { RefreshCw, GitBranch, Undo2, Files, FilePen, FilePlus, FileMinus, GitCo
 import { useGitStore } from "../../stores/gitStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useTerminalFilePointerDrag } from "../../hooks/useTerminalFilePointerDrag";
 import { GitChangesTree } from "./GitChangesTree";
 import { StageCheckbox, type StageState } from "./StageCheckbox";
 import { STATUS_CONFIG } from "./GitStatusIcon";
 import { GitDiffReviewDialog } from "./diff/GitDiffReviewDialog";
 import { useGitDiffOpenWorkflow } from "./diff/useGitDiffOpenWorkflow";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { TERM, EmptyHint, panelColorTint } from "../stats/termStatsUi";
+import { TERM, EmptyHint, PanelEmptyState, panelColorTint } from "../stats/termStatsUi";
 import { debugConsoleWarn } from "../../lib/debugConsole";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { findProjectByPath } from "../../lib/terminalProject";
 import type { GitTreeNode, GitPullStrategy, GitBranchInfo, Project } from "../../lib/types";
 import { useGitTransportLease } from "../../hooks/useGitTransportLease";
 import { GIT_BACKGROUND_REFRESH_INTERVAL_MS } from "../../lib/gitRefreshPolicy";
+import { TerminalPanelHeader } from "../terminal/TerminalPanelHeader";
 
 interface GitChangesPanelProps {
   open: boolean;
@@ -39,11 +41,24 @@ const TERMINAL_PANEL_SCROLLBAR_STYLE = {
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
+// 判定后端错误是否表示「目录不是 Git 仓库」。native/WSL/SSH 三条链路统一返回稳定错误码
+// not_git_repository，同时兼容 shell-out Git 的原生文案，避免面板把原始错误当提示语展示。
+function isNotGitRepositoryError(raw: string): boolean {
+  const normalized = raw.toLowerCase();
+  return (
+    normalized.includes("not_git_repository") ||
+    normalized.includes("not a git repository") ||
+    normalized.includes("不是一个 git 仓库") ||
+    normalized.includes("不是 git 仓库")
+  );
+}
+
 // 把后端 git 网络错误码（形如 "auth_failed: <原文>"）映射为当前语言的 toast。
 function formatGitNetError(prefix: string, raw: string, t: Translate): string {
   if (raw.includes("ssh_agent_not_installed")) {
     return t("settings.sshHosts.cliIntegration.agent.code.ssh_agent_not_installed");
   }
+  if (isNotGitRepositoryError(raw)) return t("git.error.notRepo", { prefix });
   if (raw.includes("auth_failed")) return t("git.error.authFailed", { prefix });
   if (raw.includes("not_fast_forward")) return t("git.error.notFastForward", { prefix });
   if (raw.includes("no_upstream")) return t("git.error.noUpstream", { prefix });
@@ -345,6 +360,22 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     if (project.environment_type === "ssh" || !projectPath) return project;
     return project.path === projectPath ? project : { ...project, path: projectPath };
   }, [project, projectPath]);
+  const gitTreeProject = useMemo<Project | null>(() => {
+    if (!panelProject || !activeRepoPath) return panelProject;
+    if (panelProject.environment_type === "ssh") {
+      return panelProject.remote_path === activeRepoPath ? panelProject : { ...panelProject, remote_path: activeRepoPath };
+    }
+    return panelProject.path === activeRepoPath ? panelProject : { ...panelProject, path: activeRepoPath };
+  }, [activeRepoPath, panelProject]);
+  const {
+    handlePointerDown: handleTerminalFilePointerDown,
+    handlePointerMove: handleGitFilePointerMove,
+    handlePointerUp: handleGitFilePointerUp,
+    handlePointerCancel: handleGitFilePointerCancel,
+    preview: terminalFileDragPreview,
+  } = useTerminalFilePointerDrag({
+    project: gitTreeProject,
+  });
   const setTransport = useGitStore((state) => state.setTransport);
   const transport = useGitStore((state) => state.transport);
   const {
@@ -575,6 +606,8 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
   const pendingOp = branchStatus?.pendingOp ?? null;
   const smartCheckoutConflict = hasConflicts && !!error && error.includes("smart_checkout_apply_conflict");
   const branchActionBusy = fetching || checkingOutBranch || creatingBranch;
+  // 打开的目录不是 Git 仓库：属于预期场景，渲染友好空态而不是后端原始错误串。
+  const notARepository = changes.length === 0 && !!error && isNotGitRepositoryError(error);
 
   const handleToggleSelectAll = () => {
     if (selectAllState === "checked") {
@@ -773,13 +806,13 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       className={panelClassName}
       style={{ backgroundColor: TERM.bg, ...TERMINAL_PANEL_SCROLLBAR_STYLE }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
-        <span className="flex items-center gap-2 text-[11px] font-bold" style={{ color: TERM.fg }}>
-          <GitBranch size={12} strokeWidth={2} />
-          {t("git.title")}
-        </span>
-        <span className="flex items-center gap-1.5">
+      {terminalFileDragPreview}
+      <TerminalPanelHeader
+        icon={<GitBranch size={13} strokeWidth={2} />}
+        accent={TERM.yellow}
+        title={t("git.title")}
+        actions={(
+          <>
           {/* Group By 切换下拉 */}
           <div className="relative">
             <button
@@ -888,8 +921,9 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
           >
             <RefreshCw size={11} />
           </button>
-        </span>
-      </div>
+          </>
+        )}
+      />
 
       {/* 仓库切换：项目下检测到多个 Git 仓库时展示下拉（单仓库零 UI 变化） */}
       {repositories.length > 1 && (
@@ -1030,6 +1064,14 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
           <EmptyHint text={t("git.empty.noProject")} />
         ) : (contextLoading || loading) && changes.length === 0 ? (
           <EmptyHint text={t("common.loading")} />
+        ) : notARepository ? (
+          <PanelEmptyState
+            icon={<FolderGit2 size={26} strokeWidth={1.5} />}
+            title={t("git.empty.notRepoTitle")}
+            description={t("git.empty.notRepoHint")}
+          />
+        ) : error && changes.length === 0 ? (
+          <EmptyHint text={formatGitNetError(t("git.title"), error, t)} />
         ) : changes.length === 0 ? (
           <EmptyHint text={t("git.empty.noChanges")} />
         ) : (
@@ -1040,7 +1082,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
                   {t("git.section.changed")}
                 </div>
                 <GitChangesTree
-                  project={project}
+                  project={gitTreeProject}
                   nodes={tree}
                   treeId="tracked"
                   onFileClick={handleFileClick}
@@ -1049,6 +1091,10 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
                   onRequestDeleteUntracked={handleRequestDeleteUntracked}
                   onToggleStage={handleToggleStage}
                   onToggleStagePaths={handleToggleStagePaths}
+                  onFilePointerDown={handleTerminalFilePointerDown}
+                  onFilePointerMove={handleGitFilePointerMove}
+                  onFilePointerUp={handleGitFilePointerUp}
+                  onFilePointerCancel={handleGitFilePointerCancel}
                 />
               </div>
             )}
@@ -1059,7 +1105,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
                   {t("git.section.untracked")}
                 </div>
                 <GitChangesTree
-                  project={project}
+                  project={gitTreeProject}
                   nodes={untrackedTree}
                   treeId="untracked"
                   onFileClick={handleFileClick}
@@ -1068,6 +1114,10 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
                   onRequestDeleteUntracked={handleRequestDeleteUntracked}
                   onToggleStage={handleToggleStage}
                   onToggleStagePaths={handleToggleStagePaths}
+                  onFilePointerDown={handleTerminalFilePointerDown}
+                  onFilePointerMove={handleGitFilePointerMove}
+                  onFilePointerUp={handleGitFilePointerUp}
+                  onFilePointerCancel={handleGitFilePointerCancel}
                 />
               </div>
             )}
@@ -1328,6 +1378,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
         confirmText={t("git.confirm.revert")}
         cancelText={t("common.cancel")}
         danger
+        zIndex={220}
         onConfirm={() => {
           if (discardTarget) void discardFile(discardTarget.path, discardTarget.status);
           setDiscardTarget(null);

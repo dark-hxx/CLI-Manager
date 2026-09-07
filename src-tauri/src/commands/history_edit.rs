@@ -4,7 +4,7 @@
 //! - 路径复用 `validate_session_file_ref`（canonicalize + history scope 校验）。
 //! - 双守卫：文件指纹（`expected_updated_at`）拦截外部并发改动；目标行 role + 规范文本
 //!   复核拦截行号漂移。守卫失败返回稳定错误码，前端据此重载会话。
-//! - 首次写入某文件前整文件备份到 `.cli-manager/backups/`，支持一键还原。
+//! - 首次写入某文件前整文件备份到当前 CLI-Manager 数据根目录的 `backups/`，支持一键还原。
 //! - 写回 tmp + rename 原子替换；除目标行外其余行原始字节不动。
 //!
 //! 格式语义：
@@ -827,10 +827,13 @@ fn validated_file_ref(
     file_path: &str,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: &str,
     project_key: &str,
 ) -> Result<SessionFileRef, String> {
-    let roots = history_roots(claude_config_dir, codex_config_dir);
+    let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
+        .with_kimi_config_dir(kimi_config_dir);
     let file_ref = validate_session_file_ref(file_path, source, project_key, &roots)?;
     ensure_source_mutation_unlocked(source)?;
     if is_subagent_transcript_path(&file_ref.path) {
@@ -844,6 +847,8 @@ pub async fn history_update_message(
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: String,
     project_key: String,
     line_index: usize,
@@ -857,6 +862,8 @@ pub async fn history_update_message(
             &file_path,
             claude_config_dir,
             codex_config_dir,
+            grok_session_root,
+            kimi_config_dir,
             &source,
             &project_key,
         )?;
@@ -880,6 +887,8 @@ pub async fn history_delete_message(
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: String,
     project_key: String,
     line_index: usize,
@@ -892,6 +901,8 @@ pub async fn history_delete_message(
             &file_path,
             claude_config_dir,
             codex_config_dir,
+            grok_session_root,
+            kimi_config_dir,
             &source,
             &project_key,
         )?;
@@ -914,6 +925,8 @@ pub async fn history_delete_messages(
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: String,
     project_key: String,
     targets: Vec<HistoryDeleteTarget>,
@@ -924,6 +937,8 @@ pub async fn history_delete_messages(
             &file_path,
             claude_config_dir,
             codex_config_dir,
+            grok_session_root,
+            kimi_config_dir,
             &source,
             &project_key,
         )?;
@@ -939,6 +954,8 @@ pub async fn history_insert_message(
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: String,
     project_key: String,
     after_line_index: usize,
@@ -951,6 +968,8 @@ pub async fn history_insert_message(
             &file_path,
             claude_config_dir,
             codex_config_dir,
+            grok_session_root,
+            kimi_config_dir,
             &source,
             &project_key,
         )?;
@@ -973,6 +992,8 @@ pub async fn history_reinsert_message(
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: String,
     project_key: String,
     line_index_hint: usize,
@@ -985,6 +1006,8 @@ pub async fn history_reinsert_message(
             &file_path,
             claude_config_dir,
             codex_config_dir,
+            grok_session_root,
+            kimi_config_dir,
             &source,
             &project_key,
         )?;
@@ -1007,6 +1030,8 @@ pub async fn history_restore_session_backup(
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: String,
     project_key: String,
 ) -> Result<HistoryEditOutcome, String> {
@@ -1015,6 +1040,8 @@ pub async fn history_restore_session_backup(
             &file_path,
             claude_config_dir,
             codex_config_dir,
+            grok_session_root,
+            kimi_config_dir,
             &source,
             &project_key,
         )?;
@@ -1030,11 +1057,14 @@ pub async fn history_get_backup_status(
     file_path: String,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
+    grok_session_root: Option<String>,
+    kimi_config_dir: Option<String>,
     source: String,
     project_key: String,
 ) -> Result<HistoryBackupStatus, String> {
     tokio::task::spawn_blocking(move || {
-        let roots = history_roots(claude_config_dir, codex_config_dir);
+        let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
+            .with_kimi_config_dir(kimi_config_dir);
         let file_ref = validate_session_file_ref(&file_path, &source, &project_key, &roots)?;
         let backups_dir = resolve_backups_dir()?;
         Ok(backup_status_for_file(&file_ref, &backups_dir))

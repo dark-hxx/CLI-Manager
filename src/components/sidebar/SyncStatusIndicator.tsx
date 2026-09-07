@@ -78,7 +78,7 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
   }
 
   return (
-    <div className="flex items-center justify-between gap-2">
+    <div className="flex min-w-0 items-center justify-between gap-2">
       <button
         onClick={openSyncSettings}
         className={`ui-sidebar-sync-link ${getStatusColor()}`}
@@ -86,7 +86,7 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
         aria-label={configured ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
       >
         <Cloud size={12} strokeWidth={1.5} />
-        <span className="text-xs">{getStatusText()}</span>
+        <span className="ui-sidebar-sync-link__label text-xs">{getStatusText()}</span>
       </button>
     </div>
   );

@@ -32,6 +32,7 @@ import {
   TERM_PANEL,
   panelColorTint,
 } from "../stats/termStatsUi";
+import { TerminalPanelHeader } from "./TerminalPanelHeader";
 
 interface SystemResourcesPanelProps {
   open: boolean;
@@ -889,8 +890,8 @@ export function SystemResourcesPanel({ open, visible = true, embedded = false }:
   if (!panelActive) return null;
 
   const containerClassName = embedded
-    ? "flex h-full min-h-0 flex-col gap-2.5 overflow-y-auto p-2 font-mono ui-thin-scroll"
-    : "relative z-[1] flex w-[280px] shrink-0 flex-col gap-2.5 overflow-y-auto border-l border-border p-2 font-mono ui-thin-scroll";
+    ? "flex h-full min-h-0 flex-col overflow-hidden font-mono"
+    : "relative z-[1] flex w-[280px] shrink-0 flex-col overflow-hidden border-l border-border font-mono";
 
   const Container = embedded ? "div" : "aside";
 
@@ -921,26 +922,24 @@ export function SystemResourcesPanel({ open, visible = true, embedded = false }:
       className={containerClassName}
       style={{
         backgroundColor: TERM_PANEL.bg,
-        backgroundImage: `linear-gradient(90deg, ${panelColorTint(TERM_PANEL.fg, 3)} 1px, transparent 1px), linear-gradient(${panelColorTint(TERM_PANEL.fg, 3)} 1px, transparent 1px)`,
-        backgroundSize: "22px 22px, 22px 22px",
         ...PANEL_SCROLLBAR_STYLE,
       }}
     >
-      <div className="flex items-center justify-between px-1 py-1">
-        <span className="flex min-w-0 items-center gap-2 text-[15px] font-bold tracking-wide" style={{ color: MODULE_TITLE_COLOR }}>
-          <span className="flex h-6 w-6 items-center justify-center rounded-md border" style={{ color: MODULE_TITLE_COLOR, borderColor: TERM_PANEL.border, backgroundColor: TERM_PANEL.cardInner }}>
-            <Server size={15} />
-          </span>
-          <span className="truncate">{t("systemResources.title")}</span>
+      <TerminalPanelHeader
+        icon={<Server size={15} />}
+        accent={MODULE_TITLE_COLOR}
+        title={t("systemResources.title")}
+        titleAccessory={(
           <span
             className="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold"
             style={{ color: PANEL_SOFT_FG, borderColor: TERM_PANEL.border, backgroundColor: TERM_PANEL.cardInner }}
           >
             {t("systemResources.localMachine")}
           </span>
-        </span>
-        <span className="flex items-center gap-1.5 text-[10px]" style={{ color: TERM_PANEL.dim }}>
-          {sampleTime && <span className="tabular-nums">{sampleTime}</span>}
+        )}
+        actions={(
+          <>
+          {sampleTime && <span className="text-[10px] tabular-nums" style={{ color: TERM_PANEL.dim }}>{sampleTime}</span>}
           <button
             type="button"
             onClick={() => void refresh(true)}
@@ -951,8 +950,17 @@ export function SystemResourcesPanel({ open, visible = true, embedded = false }:
           >
             <RefreshCw size={12} />
           </button>
-        </span>
-      </div>
+          </>
+        )}
+      />
+
+      <div
+        className="ui-thin-scroll flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-2"
+        style={{
+          backgroundImage: `linear-gradient(90deg, ${panelColorTint(TERM_PANEL.fg, 3)} 1px, transparent 1px), linear-gradient(${panelColorTint(TERM_PANEL.fg, 3)} 1px, transparent 1px)`,
+          backgroundSize: "22px 22px, 22px 22px",
+        }}
+      >
 
       {loading && !snapshot ? (
         <EmptyHint text={t("common.loading")} />
@@ -976,6 +984,7 @@ export function SystemResourcesPanel({ open, visible = true, embedded = false }:
           ) : null}
         </>
       ) : null}
+      </div>
     </Container>
   );
 }

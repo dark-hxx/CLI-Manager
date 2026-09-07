@@ -1,0 +1,29 @@
+{
+  "id": "optimize-history-usage-loading",
+  "name": "optimize-history-usage-loading",
+  "title": "重构历史用量与请求日志加载链路",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "frontend,backend,database,history-analytics",
+  "package": null,
+  "priority": "P2",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-08-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "changelogVersion": "TEMP",
+    "retentionRollup": "out-of-scope"
+  }
+}

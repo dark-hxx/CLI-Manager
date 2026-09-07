@@ -28,6 +28,7 @@ interface Props {
   tasks: BackgroundTaskMeta[];
   onRefresh: () => Promise<void>;
   showText: boolean;
+  popoverSide?: "left" | "right";
   popoverStyle?: CSSProperties;
 }
 
@@ -95,7 +96,7 @@ function resolveTaskStatus(task: BackgroundTaskMeta): BackgroundTaskDisplayStatu
   return task.alive ? "running" : "done";
 }
 
-export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverStyle }: Props) {
+export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverSide = "left", popoverStyle }: Props) {
   const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   const [discardIntent, setDiscardIntent] = useState<BackgroundTaskMeta | null>(null);
@@ -189,7 +190,7 @@ export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverStyle 
           {showText && <span>{t("terminal.backgroundTasks.shortTitle")}</span>}
         </button>
       </PopoverTrigger>
-      <PopoverContent id="background-tasks-panel" side="left" align="start" className="w-96 p-0" style={popoverStyle}>
+      <PopoverContent id="background-tasks-panel" side={popoverSide} align="start" className="w-96 p-0" style={popoverStyle}>
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
           <div className="text-xs font-semibold text-text-primary">{t("terminal.backgroundTasks.title")}</div>
           {hasFinishedOperation && (

@@ -1,12 +1,14 @@
 import { AlertCircle, Bot, Code2, FileCode2, Search, Terminal, User, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
+import { sortHistoryItems, type HistoryDetailSortDirection } from "../../lib/historySort";
 import type { SessionEvent, SessionEventKind, SessionProcessModel } from "./sessionEvents";
 
 type TimelineFilter = "all" | "error" | "file" | "tool";
 
 interface SessionTimelineViewProps {
   model: SessionProcessModel;
+  direction: HistoryDetailSortDirection;
   onJumpToMessage: (messageIndex: number) => void;
 }
 
@@ -34,12 +36,12 @@ function eventFilterMatch(event: SessionEvent, filter: TimelineFilter): boolean 
   return event.kind === filter;
 }
 
-export function SessionTimelineView({ model, onJumpToMessage }: SessionTimelineViewProps) {
+export function SessionTimelineView({ model, direction, onJumpToMessage }: SessionTimelineViewProps) {
   const { t } = useI18n();
   const [filter, setFilter] = useState<TimelineFilter>("all");
   const visibleEvents = useMemo(
-    () => model.events.filter((event) => eventFilterMatch(event, filter)),
-    [filter, model.events]
+    () => sortHistoryItems(model.events.filter((event) => eventFilterMatch(event, filter)), direction),
+    [direction, filter, model.events]
   );
 
   return (

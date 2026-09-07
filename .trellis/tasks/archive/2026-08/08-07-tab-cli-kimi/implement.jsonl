@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Tab component rendering patterns and props conventions"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Store patterns for resolving project/session relationships"}

@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "校验 CSS 改动符合组件样式约定"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查依赖与 tsc 基线"}

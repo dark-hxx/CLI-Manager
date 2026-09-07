@@ -141,6 +141,19 @@ test("authentication has a bounded timeout", { concurrency: false }, async () =>
   FakeWebSocket.mode = "normal";
 });
 
+test("daemon restart resets the stale transport before reconnecting", { concurrency: false }, async () => {
+  FakeWebSocket.mode = "normal";
+  const socket = new PtyHostSocket();
+  await socket.connect();
+  const connectionCount = FakeWebSocket.connectionCount;
+  socket.resetAfterDaemonRestart();
+  assert.equal(socket.diagnosticsSnapshot().socketReadyState, null);
+  assert.equal(socket.diagnosticsSnapshot().attachedSessions, 0);
+  await socket.connect();
+  assert.equal(FakeWebSocket.connectionCount, connectionCount + 1);
+  socket.socket?.close();
+});
+
 test("failed close tombstones the session and prevents reconnect attach", { concurrency: false }, async () => {
   FakeWebSocket.attachRequests = 0;
   const socket = new PtyHostSocket();

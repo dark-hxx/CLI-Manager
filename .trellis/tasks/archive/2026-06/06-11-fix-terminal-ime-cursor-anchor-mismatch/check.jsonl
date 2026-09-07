@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check terminal IME helper textarea behavior against documented xterm constraints."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify static checks and manual UI verification expectations for terminal visual changes."}

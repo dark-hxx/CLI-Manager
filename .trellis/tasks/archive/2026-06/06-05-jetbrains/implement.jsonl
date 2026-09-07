@@ -1,8 +1,0 @@
-{"file":".trellis/tasks/06-05-jetbrains/prd.md","reason":"Confirmed product requirements, MVP scope, UX decisions, and implementation approach for JetBrains-style terminal splits."}
-{"file":".trellis/tasks/06-05-jetbrains/research/cc-pane.md","reason":"Reference research for pane tree, per-pane tab bars, split normalization, drag ratios, and cross-pane tab drag patterns."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec entry point for task implementation context."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"React component structure and UI behavior guidance for splitting TerminalTabs into pane components."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand state-management guidance for pane tree/session layout operations."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript modeling guidance for discriminated pane tree unions and strict state helpers."}
-{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Hook guidance for keyboard shortcut compatibility and xterm layout effects."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing tab status visuals, DnD, menu, and splitter behavior instead of duplicating UI patterns."}

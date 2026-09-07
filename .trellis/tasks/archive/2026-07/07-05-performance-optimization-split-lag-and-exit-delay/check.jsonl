@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/cli-hook-contracts.md", "reason": "校验转录面板行为未回归：追加/reset/裁剪/结束延迟关闭/多子 Agent 并存"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量红线检查"}
-{"file": ".trellis/spec/backend/terminal-runtime-monitoring-contracts.md", "reason": "校验 PTY close 语义与状态清理未回归"}

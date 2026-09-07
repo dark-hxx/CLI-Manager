@@ -2,7 +2,12 @@ import type { Project, TerminalSession } from "../../lib/types";
 
 const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const GROK_EXECUTABLE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?$/i;
+const GROK_TOOL_VALUE_PATTERN = /^grok(?:\.(?:cmd|exe|ps1))?(?:\s+build)?$/i;
+const GROK_WSL_COMMAND_PATTERN = /^\s*(?:&\s*)?wsl(?:\.exe)?\s+(?:--\s+)?grok(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 const PI_COMMAND_PATTERN = /^\s*(?:&\s*)?pi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const OPENCODE_TOOL_VALUES = new Set(["opencode", "opencode.cmd", "opencode.exe", "opencode.ps1"]);
+const OPENCODE_COMMAND_PATTERN = /^opencode(?:\.(?:cmd|exe|ps1))?$/i;
 const CSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const PI_OUTPUT_SIGNATURE_PATTERN = /(?:Pi can explain its own features|\bpi\s+v\d+\.\d+\.\d+\b)/i;
 
@@ -13,6 +18,22 @@ export interface TerminalCliContext {
   titleTool: string;
   outputHint: string;
 }
+
+
+function commandExecutableToken(command: string): string {
+  const trimmed = command.trim().replace(/^&\s*/, "");
+  if (!trimmed) return "";
+  const match = trimmed.match(/^(?:"([^"]+)"|'([^']+)'|([^\s]+))/);
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").replace(/\\/g, "/").split("/").pop() ?? "";
+}
+
+export const isGrokLaunchCommand = (command: string): boolean => (
+  GROK_EXECUTABLE_PATTERN.test(commandExecutableToken(command))
+);
+
+const isOpenCodeToolValue = (value: string): boolean => (
+  OPENCODE_TOOL_VALUES.has(value.trim().toLowerCase())
+);
 
 const hasPiOutputSignature = (text: string): boolean => {
   CSI_PATTERN.lastIndex = 0;
@@ -42,11 +63,50 @@ export const isCodexTerminalContext = ({
   || CODEX_COMMAND_PATTERN.test(startupCmd)
 );
 
-export const isClaudeTerminalContext = ({
+const isGrokToolValue = (value: string): boolean => (
+  value.trim().toLowerCase() === "grokbuild"
+  || GROK_TOOL_VALUE_PATTERN.test(value.trim())
+);
+
+export const isGrokTerminalContext = ({
   projectTool,
+  sessionTool,
   startupCmd,
   titleTool,
 }: TerminalCliContext): boolean => (
+  isGrokToolValue(sessionTool)
+  || isGrokToolValue(projectTool)
+  || isGrokToolValue(titleTool)
+  || isGrokLaunchCommand(startupCmd)
+  || GROK_WSL_COMMAND_PATTERN.test(startupCmd)
+);
+
+export const isGrokRuntimeContext = (
+  context: TerminalCliContext,
+  {
+    manualLaunchDetected,
+    hasVisibleTuiPrompt,
+  }: {
+    manualLaunchDetected: boolean;
+    hasVisibleTuiPrompt: boolean;
+  },
+): boolean => (
+  isGrokTerminalContext(context)
+  || (manualLaunchDetected && hasVisibleTuiPrompt)
+);
+
+export const usesEscCrComposerNewline = (context: TerminalCliContext): boolean => (
+  isCodexTerminalContext(context) || isGrokTerminalContext(context)
+);
+
+export const isClaudeTerminalContext = ({
+  projectTool,
+  sessionTool,
+  startupCmd,
+  titleTool,
+}: TerminalCliContext): boolean => (
+  sessionTool.includes("claude")
+  ||
   projectTool.includes("claude")
   || titleTool.includes("claude")
   || CLAUDE_COMMAND_PATTERN.test(startupCmd)
@@ -71,3 +131,14 @@ export const isPiTerminalContext = ({
 );
 
 export const containsPiOutputSignature = hasPiOutputSignature;
+export const isOpenCodeTerminalContext = ({
+  projectTool,
+  sessionTool,
+  startupCmd,
+}: TerminalCliContext): boolean => {
+  // Persisted session classification is authoritative. Project classification
+  // is the next fallback; only unclassified sessions inspect the executable.
+  if (sessionTool) return isOpenCodeToolValue(sessionTool);
+  if (projectTool) return isOpenCodeToolValue(projectTool);
+  return OPENCODE_COMMAND_PATTERN.test(commandExecutableToken(startupCmd));
+};

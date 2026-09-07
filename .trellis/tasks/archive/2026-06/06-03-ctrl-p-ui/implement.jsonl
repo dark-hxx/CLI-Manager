@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"前端组件修改需遵循现有组件模式和相关注意事项"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端质量要求，避免引入禁用模式"}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript 类型安全约束"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"本次 UI 对齐需要优先复用现有组件和样式 token"}

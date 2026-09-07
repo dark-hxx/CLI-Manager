@@ -133,6 +133,8 @@ test("Process key synchronously restores the helper textarea before composition 
   const textareaListeners = new Map();
   const terminalListeners = new Map();
   let compositionAnchor = { x: 3, y: 1 };
+  let processKeyAt = null;
+  let compositionStarted = 0;
   const compositionView = {
     style: {},
     getBoundingClientRect: () => ({ width: 10 }),
@@ -203,6 +205,12 @@ test("Process key synchronously restores the helper textarea before composition 
       fontSize: 14,
       getTerminalRenderedCellSize: () => ({ width: 10, height: 20 }),
       forwardNativeInput() {},
+      onImeProcessKey: (at) => {
+        processKeyAt = at;
+      },
+      onCompositionStarted: () => {
+        compositionStarted += 1;
+      },
       clearSuggestion() {},
       updateSuggestionPosition() {},
       scheduleFit() {},
@@ -224,10 +232,12 @@ test("Process key synchronously restores the helper textarea before composition 
 
     assert.equal(textarea.style.left, "30px");
     assert.equal(textarea.style.top, "40px");
+    assert.equal(typeof processKeyAt, "number");
     assert.equal(textareaListeners.has("compositionstart"), true);
 
     compositionAnchor = { x: 99, y: 1 };
     textareaListeners.get("compositionstart")();
+    assert.equal(compositionStarted, 1);
     assert.equal(compositionView.style.left, "990px");
     assert.equal(compositionView.style.maxWidth, "10px");
 

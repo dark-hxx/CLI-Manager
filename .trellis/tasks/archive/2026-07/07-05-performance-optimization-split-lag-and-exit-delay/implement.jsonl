@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/cli-hook-contracts.md", "reason": "子 Agent 转录 subscribe/upgrade/finish 路由契约，渲染优化不得回归这些语义"}
-{"file": ".trellis/spec/backend/terminal-runtime-monitoring-contracts.md", "reason": "PTY 生命周期与状态映射契约，close_all 批量化需保持语义"}
-{"file": ".trellis/spec/backend/webdav-sync-contracts.md", "reason": "关闭期自动同步的边界与校验约束，加 8s 限时时参照"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store 约定，terminalStore 增加 resetSeq 字段时遵循"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件拆分与 memo 模式约定，SubagentTranscriptView/MarkdownContent 改造参照"}

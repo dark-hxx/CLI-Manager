@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../lib/db";
-import { validateSshToolConfigRoot } from "../lib/sshToolIntegration";
+import { parseStoredSshHookReport, validateSshToolConfigRoot } from "../lib/sshToolIntegration";
 import type {
   SshAgentInstallation,
   SshAgentOperationResult,
@@ -98,8 +98,10 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
     const normalizedRoots = {
       claude: roots.claude.trim(),
       codex: roots.codex.trim(),
+      kimi: roots.kimi.trim(),
+      grok: roots.grok.trim(),
     } satisfies Record<SshToolSource, string>;
-    for (const source of ["claude", "codex"] as const) {
+    for (const source of ["claude", "codex", "kimi", "grok"] as const) {
       const validationError = validateSshToolConfigRoot(normalizedRoots[source]);
       if (validationError) throw new Error(validationError);
     }
@@ -107,6 +109,8 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
       hostId: normalizedHostId,
       claudeRoot: normalizedRoots.claude,
       codexRoot: normalizedRoots.codex,
+      kimiRoot: normalizedRoots.kimi,
+      grokRoot: normalizedRoots.grok,
       updatedAt: Date.now().toString(),
     });
     await get().fetchAll();
@@ -252,20 +256,21 @@ export const useSshAgentIntegrationStore = create<SshAgentIntegrationStore>((set
     const normalizedUser = sshUser.trim();
     if (!normalizedHostId) throw new Error("ssh_host_not_found");
     if (!normalizedUser) throw new Error("ssh_user_required");
-    if (report.source !== "claude" && report.source !== "codex") throw new Error("hook_source_invalid");
+    const validatedReport = parseStoredSshHookReport(JSON.stringify(report));
+    if (!validatedReport) throw new Error("hook_report_invalid");
     await invoke("ssh_db_record_hook_report", {
       input: {
         hostId: normalizedHostId,
         sshUser: normalizedUser,
         configuredRoot: configuredRoot.trim(),
-        source: report.source,
-        installationId: report.installationId,
-        remoteMachineId: report.remoteMachineId,
-        canonicalConfigRoot: report.canonicalConfigRoot,
-        configRootHash: report.configRootHash,
-        action: report.action,
-        status: report.status,
-        report,
+        source: validatedReport.source,
+        installationId: validatedReport.installationId,
+        remoteMachineId: validatedReport.remoteMachineId,
+        canonicalConfigRoot: validatedReport.canonicalConfigRoot,
+        configRootHash: validatedReport.configRootHash,
+        action: validatedReport.action,
+        status: validatedReport.status,
+        report: validatedReport,
         integrationId: integrationId ?? null,
         scopeKind,
       },

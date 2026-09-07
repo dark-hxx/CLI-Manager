@@ -1,9 +1,9 @@
+use crate::provider::network_client;
 use log::{debug, error};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::{header, Client, Method, Response};
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebDavConfig {
@@ -28,22 +28,8 @@ impl std::error::Error for WebDavError {}
 
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 
-/// 进程级 HTTP client：连接池、DNS 缓存、HTTP/2 复用。
-/// 避免每个 upload/download/test_connection 重新构造一个 Client。
-static SHARED_CLIENT: OnceLock<Client> = OnceLock::new();
-
-fn shared_client() -> &'static Client {
-    SHARED_CLIENT.get_or_init(|| {
-        Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .danger_accept_invalid_certs(false)
-            .build()
-            .expect("Failed to create HTTP client")
-    })
-}
-
 pub struct WebDavClient {
-    client: &'static Client,
+    client: Client,
     config: WebDavConfig,
     auth_header: String,
 }
@@ -56,7 +42,7 @@ impl WebDavClient {
         );
         let auth_header = format!("Basic {encoded}");
         Self {
-            client: shared_client(),
+            client: network_client::current_client(),
             config,
             auth_header,
         }

@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend verification should align with project frontend checklist."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Check Zustand state changes and persistence boundaries."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check for avoidable UI hot-path allocations or unnecessary rerenders."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check new component props/actions remain type-safe."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify data flow from tab project to history filter and search stays consistent."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify implementation reuses existing filter mechanisms without over-abstraction."}

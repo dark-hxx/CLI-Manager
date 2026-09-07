@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端组件、状态管理、IPC 调用约定"}
+{"file": ".trellis/spec/backend/ccs-provider-domain-contracts.md", "reason": "全局 Apply 流程、provider key 激活与当前状态契约"}

@@ -660,8 +660,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             launch_context.login_shell,
             launch_context.cwd
         );
-        let mut launch_env = ssh_env;
-        launch_env.extend(env_vars.unwrap_or_default());
+        let launch_env = merge_ssh_launch_environment(ssh_env, env_vars.unwrap_or_default());
         let spawned = platform::spawn(PtyLaunchOptions {
             exe: exe.clone(),
             args: args.clone(),
@@ -1241,6 +1240,20 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
     }
 }
 
+fn merge_ssh_launch_environment(
+    ssh_env: HashMap<String, String>,
+    mut user_env: HashMap<String, String>,
+) -> HashMap<String, String> {
+    let protected_keys: Vec<_> = ssh_env.keys().map(String::as_str).collect();
+    user_env.retain(|key, _| {
+        !protected_keys
+            .iter()
+            .any(|protected| key.eq_ignore_ascii_case(protected))
+    });
+    user_env.extend(ssh_env);
+    user_env
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1426,6 +1439,41 @@ mod tests {
             vars.get("TERM").map(String::as_str),
             Some("screen-256color")
         );
+    }
+
+    #[test]
+    fn ssh_internal_environment_overrides_user_values_case_insensitively() {
+        let ssh_env = HashMap::from([
+            ("SSH_ASKPASS".to_string(), "trusted-helper".to_string()),
+            (
+                "CLI_MANAGER_SSH_ASKPASS_TOKEN".to_string(),
+                "trusted-token".to_string(),
+            ),
+        ]);
+        let user_env = HashMap::from([
+            ("ssh_askpass".to_string(), "user-helper".to_string()),
+            (
+                "cli_manager_ssh_askpass_token".to_string(),
+                "user-token".to_string(),
+            ),
+            ("APP_MODE".to_string(), "remote".to_string()),
+        ]);
+
+        let merged = merge_ssh_launch_environment(ssh_env, user_env);
+
+        assert_eq!(
+            merged.get("SSH_ASKPASS").map(String::as_str),
+            Some("trusted-helper")
+        );
+        assert_eq!(
+            merged
+                .get("CLI_MANAGER_SSH_ASKPASS_TOKEN")
+                .map(String::as_str),
+            Some("trusted-token")
+        );
+        assert_eq!(merged.get("APP_MODE").map(String::as_str), Some("remote"));
+        assert!(!merged.contains_key("ssh_askpass"));
+        assert!(!merged.contains_key("cli_manager_ssh_askpass_token"));
     }
 
     #[test]

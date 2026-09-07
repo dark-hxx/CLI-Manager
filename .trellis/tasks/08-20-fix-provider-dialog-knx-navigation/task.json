@@ -1,0 +1,29 @@
+{
+  "id": "fix-provider-dialog-knx-navigation",
+  "name": "fix-provider-dialog-knx-navigation",
+  "title": "修复供应商弹框层级与 KNX 路径跳转",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-08-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-20-fix-provider-delete-dialog-layering",
+    "08-20-fix-knx-project-file-navigation"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

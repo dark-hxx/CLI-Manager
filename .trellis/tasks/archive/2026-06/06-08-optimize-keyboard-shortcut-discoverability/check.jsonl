@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"Check persisted shortcut default merge and backwards compatibility for old settings."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check settings and command palette UI changes remain minimal and consistent."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check TypeScript shortcut action typing after adding sessionHistory."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check required static validation and manual UI verification reporting."}

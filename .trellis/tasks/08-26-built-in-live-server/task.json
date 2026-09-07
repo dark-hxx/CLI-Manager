@@ -1,0 +1,39 @@
+{
+  "id": "built-in-live-server",
+  "name": "built-in-live-server",
+  "title": "Add built-in Live Server",
+  "description": "Add a project-scoped static web server with automatic browser reload and file-tree context-menu integration.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "frontend+tauri-backend",
+  "package": null,
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-08-26",
+  "completedAt": "2026-08-26",
+  "branch": "feat/built-in-live-server",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/components/files/FileExplorerSidebar.tsx",
+    "src/components/files/LiveServerMenuItems.tsx",
+    "src/lib/liveServerClient.ts",
+    "src/lib/i18n.ts",
+    "src/stores/liveServerStore.ts",
+    "src-tauri/src/lib.rs",
+    "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/commands/live_server.rs",
+    "src-tauri/src/live_server/mod.rs",
+    "src-tauri/Cargo.toml"
+  ],
+  "notes": "Implementation and verification are complete; machine-specific deployment artifacts are excluded from the contribution.",
+  "meta": {
+    "changelogTarget": "V1.3.8"
+  }
+}

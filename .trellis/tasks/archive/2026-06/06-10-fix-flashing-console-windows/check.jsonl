@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "Verify the fix follows backend layer conventions"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify cargo check/test pass and manual verification notes are reported"}

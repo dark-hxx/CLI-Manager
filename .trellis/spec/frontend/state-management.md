@@ -72,6 +72,26 @@ useEffect(() => {
 
 **Tests**: Run `npx tsc --noEmit` and `npm run build`. Manually verify historical stats filter changes, manual refresh, empty/error states, and bucket session drilldown in the desktop app.
 
+### Convention: Realtime project aggregates use exact-scope stale-while-refresh caching
+
+**What**: The terminal realtime panel may keep a small in-memory cache for the local “today project usage” aggregate because switching tabs can start a slow history aggregation. The cache key must include the project identity, history source, parent project key, and the canonical parent/Worktree path set. A cached value is shown immediately for that exact scope while a fresh request runs in the background.
+
+**Why**: Clearing a valid aggregate on every project switch creates an avoidable blank state, but reusing one unscoped value displays another project's usage. Failed refreshes must retain the last successful value for the same scope.
+
+```tsx
+const scopeKey = JSON.stringify([projectId, source, projectKey, projectPaths]);
+const cached = todayProjectStatsCache.get(scopeKey);
+setTodayStatsState({ scopeKey, value: cached ?? null });
+```
+
+**Contracts**:
+
+- Never read a cached aggregate unless its key exactly matches the current project scope.
+- Store only successful results; a failed refresh may fall back to the previous successful result for that same key.
+- Keep realtime terminal stats on this existing component path; historical dashboard server state continues to use TanStack Query.
+
+**Tests**: Assert that the rendered scope key gates both state and cache reads, and that a failed refresh does not replace a same-scope cached result with an empty state.
+
 ---
 
 ## Patterns
@@ -472,9 +492,136 @@ const { sessions, activeSessionId } = useTerminalStore();
 - Type-check after selector changes.
 - Manual profiling for toolbar/sidebar components during high-frequency terminal or transcript updates; unrelated components should not rerender each tick.
 
+### Pattern: Workspace layout keeps dock positions separate from visibility
+
+**Problem**: The project sidebar and terminal auxiliary region are both side regions, but they have different state owners. Treating their visibility or position as one toggle makes it impossible to compose layouts such as `auxiliary panel | terminal | project sidebar`, and a Workspan visibility button can appear to succeed when no Workspan tab exists to render.
+
+**Solution**: Keep the layout dimensions in the persisted `workspaceLayout` object while retaining local ownership of sidebar width/collapse and terminal panel content state.
+
+```typescript
+interface WorkspaceLayoutSettings {
+  version: 3;
+  projectSidebarSide: "left" | "right";
+  terminalSidePanelSide: "left" | "right";
+  terminalSidePanelVisible: boolean;
+  workspanTabBarPosition: "top" | "bottom";
+  workspanTabBarVisible: boolean;
+}
+```
+
+**Contracts**:
+
+- `migrateWorkspaceLayout(value: unknown)` validates every field and migrates old/missing values to project-sidebar-left, auxiliary-panel-right, Workspan-top, with both visibility flags `true`.
+- `App` uses `projectSidebarSide` only to change the flex order of the project sidebar and terminal main area. It must not move or recreate a PTY, pane tree, terminal panel, or history workspace.
+- A right-docked project sidebar mirrors its separator, collapse affordance, and width-resize calculation to the edge facing the terminal; `sidebarWidth` and collapse state remain the existing `Sidebar` state.
+- `terminalSidePanelSide` independently controls the auxiliary panel frames. Its action rail follows the same side and sits on the outer edge, remaining the entry point for restoring a hidden auxiliary region; side-opening popovers must follow the action rail.
+- The Workspan quick control and menu action are disabled when Workspan is disabled or `terminalStore.workspans` is empty; a disabled action must not persist a visibility change that has no rendered effect.
+- Layout updates use `updateWorkspaceLayout(current, patch)` and the existing `settingsStore.update("workspaceLayout", ...)` path. No database, IPC, or PTY contract is added.
+
+**Good/Base/Bad Cases**:
+
+- Good: choose project sidebar right and auxiliary panel left; the visible order is action rail, auxiliary panel, terminal center, project sidebar, and both widths remain adjustable from their terminal-facing edges.
+- Base: default layout is project sidebar left and auxiliary panel right; existing terminal sessions and panel contents behave unchanged.
+- Bad: reverse only the DOM order while leaving the project sidebar resize math and right-edge handle unchanged, because dragging the right-docked sidebar would change the width in the wrong direction.
+- Bad: toggle `workspanTabBarVisible` while no Workspan exists, because the UI reports a successful state change without any visible result.
+
+**Tests Required**:
+
+- Static contract tests assert layout migration, App order wiring, right-docked resize direction, mirrored header controls, and independent menu actions.
+- Run `node --test scripts/projectSidebarDocking.test.mjs scripts/workspaceLayoutState.test.mjs scripts/workspaceLayoutControls.test.mjs`.
+- Run `npx tsc --noEmit` and `npm run build`; manually verify left/right combinations, collapsed/expanded width behavior, no-Workspan disabled feedback, settings/history opaque surfaces, and both background-fill modes.
+
 ---
 
 ## Common Mistakes
+
+### Pattern: File editor workspaces follow file locations, not the active terminal
+
+**Problem**: Each project can keep its own file-editor pseudo session, but `fileExplorerStore` exposes one active project mirror. Clearing `openFiles` whenever the active terminal changes makes inactive editor tabs lose previews and unsaved content.
+
+**Solution**: Keep in-memory editor workspaces keyed by file location. Local, WSL, and Worktree contexts use the normalized path; SSH contexts use the host id and normalized remote root. Before switching the active file project, snapshot `openFiles` and `activeFilePath`; restore the target workspace into the existing active mirror.
+
+**Contracts**:
+
+- Project switching never discards open files or unsaved content and therefore must not show a discard-on-switch prompt.
+- Closing a Files side panel snapshots the active editor state. One project file-editor Tab may visit multiple locations (for example, the main checkout and its Worktrees); closing that Tab clears every cached location owned by the project id.
+- Async open/save results update their originating workspace and must not mutate the newly active project.
+- Editor workspaces are process memory only. Do not persist drafts or reopen them after app restart.
+- Remote file consumers still release on project switch; only editor file data is retained.
+- An effect that calls `openProject` must read the current project with `useFileExplorerStore.getState()` inside the effect or callback. Do not make that synchronization callback depend on the same `project` field it writes, because mounted file panels can otherwise form a render/effect feedback loop during Tab switches.
+
+```typescript
+// Wrong: switching locations destroys editor state.
+set({ project, openFiles: [], activeFilePath: null, activeFile: null });
+
+// Correct: snapshot the current mirror and restore the target location.
+const workspaces = upsertEditorWorkspace(state.editorWorkspaces, current, state.openFiles, state.activeFilePath);
+const target = findEditorWorkspace(workspaces, project);
+set({ project, openFiles: target?.openFiles ?? [], activeFilePath: target?.activeFilePath ?? null });
+
+// Correct: project synchronization reads a current snapshot without subscribing
+// the effect callback to its own write target.
+const current = useFileExplorerStore.getState().project;
+if (!isSameProjectFileContext(current, project)) await openProject(project);
+```
+
+**Tests Required**:
+
+- Switch between two local/WSL/SSH/Worktree locations and restore file order, active file, and dirty content.
+- Close active and inactive editor Tabs, including bulk Workspan close, and verify dirty confirmation and workspace cleanup.
+- Complete a file open or save after switching projects and verify the result stays in the originating workspace.
+- Keep both the Files side panel and a file-editor Tab mounted, switch terminal Tabs, and verify project synchronization does not repeatedly call `openProject`.
+
+### Pattern: File-tab batch close keeps ordering in the view and draft safety in the pane
+
+**Problem**: A file-tab context menu needs the current visual order for “close others/left/right”, but `fileExplorerStore.closeFile` owns active-file fallback. Closing a clean prefix before discovering a dirty file silently changes the workspace before the user can cancel.
+
+**Solution**: `FileEditorTabs` derives ordered target paths from its rendered `files` array and passes them to `FileEditorPane`. The Pane filters the current visible workspace, snapshots target and dirty paths, and only invokes `closeFile` after no draft is involved or after the user chooses Save/Discard.
+
+```tsx
+const leftPaths = files.slice(0, index).map((file) => file.path);
+const dirtyPaths = targetFiles
+  .filter((file) => file.content !== file.savedContent)
+  .map((file) => file.path);
+
+if (dirtyPaths.length > 0) {
+  setPendingAction({ closePane: false, paths: targetPaths, dirtyPaths });
+  return;
+}
+targetPaths.forEach(closeFile);
+```
+
+**Contracts**:
+
+- File-tab menus operate only on ordinary `ActiveProjectFile` tabs in the active file location. They never include pinned Git Diff tabs, terminal sessions, Workspans, or another cached editor workspace.
+- “Others” excludes the clicked path; “left” and “right” follow the rendered file-tab order. Actions with an empty target are disabled.
+- A target set with one or more dirty files opens one confirmation before any target is closed. Save writes only the selected dirty paths; Discard closes only selected paths; Cancel leaves every selected path unchanged.
+- Keep `fileExplorerStore.closeFile` as the only close mutation so its existing active-file fallback and workspace behavior remain authoritative. Do not add a parallel bulk-close store implementation.
+- SSH remains read-only: the menu itself does not invoke remote mutation, and any existing save failure continues to leave the confirmation state intact.
+
+**Tests Required**:
+
+- Static regression coverage asserts all four file-specific i18n actions, target ordering, empty-target disabling, batch dirty handoff, and absence of terminal menu keys.
+- Manually verify clean and dirty batches in local/WSL/SSH/Worktree locations, a split file-editor Pane, and alongside pinned Git Diff tabs in `zh-CN`, `zh-TW`, and `en-US`.
+
+### Pattern: File refresh ownership follows the editor workspace lifecycle
+
+**Problem**: A file editor can remain mounted after its Files side panel or embedded file panel is hidden. Owning watcher setup, fallback polling, or focus refresh in the conditional panel silently stops clean-file refresh while the editor is still visible.
+
+**Solution**: Mount one nonvisual project-file refresh controller with `App`. It owns local watcher start/stop, WSL watcher-failure polling, changed-path debounce, and focus/visibility refresh. `fileExplorerStore.refreshVisibleState` remains the only single-flight queue and the authority for preserving dirty drafts.
+
+**Contracts**:
+
+- Local and WSL projects prefer `project-files-changed`; watcher failure falls back to the existing low-frequency interval. The controller passes changed paths through instead of forcing a full tree reload.
+- SSH has no watcher. Poll only when its validated remote file context exists and the active workspace has opened files; automatic list/read calls are silent, while explicit user list/open/search calls retain background-operation feedback.
+- SSH refresh must continue to fail closed when the remote context is absent. It never calls local `file_*` commands for an SSH project.
+- A dirty file (`content !== savedContent`) remains a local draft after every automatic trigger. A clean file reloads only when its `modifiedMs` or `sizeBytes` changed.
+- Sidebar-local state such as the `.gitignore` matcher may retain its own lightweight event listener, but must not own watcher or refresh lifecycle.
+
+**Tests Required**:
+
+- Hide the Files panel with an editor still open, then verify local/WSL clean-file refresh, dirty-draft preservation, and watcher cleanup on project change.
+- Verify SSH context gating, 15-second quiet polling, focus refresh, and no local-path fallback.
 
 ### Common Mistake: Reloading the file tree when only project metadata changes
 
@@ -518,3 +665,17 @@ set((state) => ({
 ```
 
 **Prevention**: For file-tree move/copy/rename/delete flows, check whether the refreshed path can be root or an ancestor of an expanded folder. If yes, avoid intermediate `set()` calls that temporarily drop descendant children.
+
+### Common Mistake: Treating an empty disclosure set as invalid
+
+**Symptom**: Clicking the last expanded item in a timeline immediately opens it again, or expanding one item closes another.
+
+**Cause**: The UI models an accordion with one nullable ID and treats `null` as a synchronization error whenever data exists. An empty set is a valid user choice, and independent disclosures cannot be represented by one ID.
+
+**Fix**: For AI Replay timeline turns, keep the expanded IDs in a `Set<string>`. Toggle only the clicked ID, preserve the set across live model updates, and intersect it with the current turn IDs to remove stale entries. Seed the first turn only during the initial data population; never use an empty set as a reason to auto-open a turn later.
+
+**Tests Required**:
+
+- Verify one expanded turn can be collapsed, all turns can remain collapsed, and any turn can be reopened.
+- Verify multiple turns stay expanded independently while replay data updates.
+- Verify session remounts and model replacement remove IDs for turns that no longer exist without forcing a replacement turn open.

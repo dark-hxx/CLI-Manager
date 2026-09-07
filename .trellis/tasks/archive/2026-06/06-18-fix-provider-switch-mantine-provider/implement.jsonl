@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component and Mantine usage conventions relevant to ProviderRow."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend verification requirements and manual UI verification constraints."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Confirm this fix does not require state management changes."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index and pre-modification rule."}

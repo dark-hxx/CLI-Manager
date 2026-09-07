@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"xterm IME/helper textarea constraints and terminal paste/rendering conventions."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend terminal visual changes require static checks plus manual runtime verification items."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared pre-modification rule and thinking trigger checklist."}

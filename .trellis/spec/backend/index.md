@@ -10,6 +10,8 @@
 |-------|-------------|--------|
 | [WebDAV Sync Contracts](./webdav-sync-contracts.md) | WebDAV sync request/response boundaries, size checks, and validation cases | Active |
 | [Terminal Runtime Monitoring Contracts](./terminal-runtime-monitoring-contracts.md) | PTY env keys, shell OSC markers, tab runtime status, and resource growth diagnostics | Active |
+| [PTY Daemon Contracts](./pty-daemon-contracts.md) | Detached PtyHost transport, routing control-plane capability, protocol safety, and lifecycle contracts | Active |
+| [Terminal Output Scheduling Contracts](./terminal-output-scheduling-contracts.md) | Daemon live-frame budget, cross-terminal xterm fairness, Replay/Reset and ACK ordering | Active |
 | [Terminal OSC Color Contracts](./terminal-osc-color-contracts.md) | OSC 10/11 ownership, daemon color frames, local/WSL replies, and SSH filtering | Active |
 | [Tauri Updater Contracts](./tauri-updater-contracts.md) | Signed updater config, capabilities, release artifacts, and install/relaunch UX contracts | Active |
 | [cc-switch Integration Contracts](./ccswitch-integration-contracts.md) | External SQLite read-only access (sqlx, no rusqlite), secret masking, and per-project settings.json env replacement | Active |
@@ -26,12 +28,14 @@
 | [Git Status Contracts](./git-status-contracts.md) | Git 状态收集三条链路（面板/Replay/WSL）的过滤合约与嵌套子仓库处理 | Active |
 | [Command Suggestion Contracts](./command-suggestion-contracts.md) | LLM 命令提示 Tauri command、OpenAI 兼容请求、快速检测、超时与安全回退合约 | Active |
 | [App Data Persistence Contracts](./app-data-persistence-contracts.md) | Stable `.cli-manager` data paths, non-destructive legacy store migration, and safe legacy DB recovery | Active |
+| [CCS-Compatible Provider Domain Contracts](./ccs-provider-domain-contracts.md) | Planned full provider-domain ownership: CCS-compatible schema, configuration, manual multi-key, Home apply, scope resolver, and import boundaries | Planned |
 | [Statusline Contracts](./statusline-contracts.md) | 内置 Claude 状态栏子命令、配置存储、预览、旧配置导入与安装边界 | Active |
 | [System Resource Contracts](./system-resource-contracts.md) | CPU 物理核心、逻辑线程与前端展示字段契约 | Active |
 | [Local Path Opening Contracts](./local-path-opening-contracts.md) | WebView 本地路径打开、Rust command 参数与 opener scope 边界 | Active |
 | [SSH Remote Terminal Contracts](./ssh-remote-terminal-contracts.md) | SSH 主机、远程项目、OpenSSH Launch Plan、PTY/daemon、能力路由与同步安全边界 | Active |
 | [Web Service Contracts](./web-service-contracts.md) | 独立 Web 服务、认证配对、双 WebSocket、事件回放、SQLite 与 operation 状态机 | Active |
 | [SSH Agent Contracts](./ssh-agent-contracts.md) | `cli-manager-ssh-agent`、共享 SSH transport、probe/安装、远端 Hook 配置、spool bridge 与身份边界 | Active |
+| [Agent Capability Diagnostics Contracts](./agent-capability-diagnostics-contracts.md) | 精确会话绑定的五 Agent MCP/Skill 发现、健康分层、OpenCode bridge、WSL/SSH 路由与脱敏边界 | Active |
 
 ---
 

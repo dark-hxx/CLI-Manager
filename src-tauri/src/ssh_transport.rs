@@ -156,7 +156,7 @@ impl SshTransportSpec {
         Ok(SshTransportLaunch {
             executable: "ssh".to_string(),
             args,
-            env: self.askpass_environment()?,
+            env: self.askpass_environment(true)?,
         })
     }
 
@@ -192,7 +192,7 @@ impl SshTransportSpec {
         Ok(SshTransportLaunch {
             executable: "ssh".to_string(),
             args,
-            env: self.askpass_environment()?,
+            env: self.askpass_environment(false)?,
         })
     }
 
@@ -288,13 +288,33 @@ impl SshTransportSpec {
         Ok(())
     }
 
-    fn askpass_environment(&self) -> Result<HashMap<String, String>, String> {
+    fn askpass_environment(
+        &self,
+        allow_terminal_fallback: bool,
+    ) -> Result<HashMap<String, String>, String> {
         if self.auth_mode == "credential_ref" {
-            crate::ssh_askpass::prepare(&self.credential_ref)
+            let mut env = crate::ssh_askpass::prepare(&self.credential_ref)?;
+            configure_askpass_terminal_fallback(&mut env, allow_terminal_fallback);
+            Ok(env)
         } else {
             Ok(HashMap::new())
         }
     }
+}
+
+fn configure_askpass_terminal_fallback(
+    env: &mut HashMap<String, String>,
+    allow_terminal_fallback: bool,
+) {
+    let value = if allow_terminal_fallback {
+        crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENABLED
+    } else {
+        crate::ssh_askpass::ASKPASS_TTY_FALLBACK_DISABLED
+    };
+    env.insert(
+        crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENV.to_string(),
+        value.to_string(),
+    );
 }
 
 fn validate_single_line(value: &str) -> Result<(), String> {
@@ -333,9 +353,10 @@ fn contains_url_credentials(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_remote_home_path, validate_remote_home_path, SshOneShotOptions,
-        SshRemoteHomePathError, SshTransportSpec,
+        configure_askpass_terminal_fallback, format_remote_home_path, validate_remote_home_path,
+        SshOneShotOptions, SshRemoteHomePathError, SshTransportSpec,
     };
+    use std::collections::HashMap;
 
     fn spec(auth_mode: &str) -> SshTransportSpec {
         SshTransportSpec {
@@ -407,6 +428,24 @@ mod tests {
             .any(|arg| arg == "KbdInteractiveAuthentication=yes"));
         assert!(args.iter().any(|arg| arg == "NumberOfPasswordPrompts=1"));
         assert_eq!(args.iter().filter(|arg| arg.as_str() == "-i").count(), 0);
+    }
+
+    #[test]
+    fn askpass_terminal_fallback_is_explicit_for_each_launch_mode() {
+        let key = crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENV;
+        let mut interactive = HashMap::new();
+        configure_askpass_terminal_fallback(&mut interactive, true);
+        assert_eq!(
+            interactive.get(key).map(String::as_str),
+            Some(crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENABLED)
+        );
+
+        let mut one_shot = interactive.clone();
+        configure_askpass_terminal_fallback(&mut one_shot, false);
+        assert_eq!(
+            one_shot.get(key).map(String::as_str),
+            Some(crate::ssh_askpass::ASKPASS_TTY_FALLBACK_DISABLED)
+        );
     }
 
     #[test]

@@ -42,6 +42,7 @@ import {
 import { resolveCcusageWslTarget, useCcusageStore } from "../../../stores/ccusageStore";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { FontFamilySelect } from "../FontFamilySelect";
+import { DataStorageSection } from "./DataStorageSection";
 
 const WSL_BUN_INSTALL_COMMAND = "curl -fsSL https://bun.net.cn/install | bash";
 const WSL_CCUSAGE_INSTALL_COMMAND = "~/.bun/bin/bun install -g ccusage";
@@ -898,6 +899,8 @@ export function GeneralSettingsPage() {
             </Card>
         </Stack>
       </section>
+
+      <DataStorageSection />
 
       <Dialog open={ccusageWslDialogOpen} onOpenChange={setCcusageWslDialogOpen}>
         <DialogContent className="max-w-[680px]">

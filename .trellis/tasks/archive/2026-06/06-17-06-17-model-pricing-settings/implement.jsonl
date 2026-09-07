@@ -1,7 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发规范入口（组件/状态/质量）"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store 模式：modelPrices 状态接入"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "设置子页组件/弹窗规范"}
-{"file": ".trellis/spec/backend/index.md", "reason": "后端契约入口（Tauri 命令规范）"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "前后端跨层一致性（价格缓存同步）"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 normalizeModelId/history 扫描逻辑"}

@@ -39,6 +39,7 @@ import {
 import { ConfirmDialog } from "../ConfirmDialog";
 import { DiffModal } from "../history/DiffModal";
 import { SessionTranscriptContent } from "../history/SessionTranscriptContent";
+import { useTerminalPreviewTheme } from "../../hooks/useTerminalPreviewTheme";
 import { EmptyHint, HeaderPill, TERM_PANEL, panelColorTint } from "../stats/termStatsUi";
 import {
   buildReplayProgressModel,
@@ -49,6 +50,7 @@ import {
   type ReplayProgressStepKind,
   type ReplayProgressTurn,
 } from "./replayProgressModel";
+import { TerminalPanelHeader } from "./TerminalPanelHeader";
 
 interface SessionReplayPanelProps {
   activeSessionId: string | null;
@@ -348,6 +350,7 @@ function SnapshotActions({
 
 function ConversationDetail({ turn }: { turn: ReplayProgressTurn }) {
   const { t } = useI18n();
+  const { tone: previewCodeTheme } = useTerminalPreviewTheme();
   const [open, setOpen] = useState(false);
   const finalResponse = turn.assistantMessages[turn.assistantMessages.length - 1]?.content ?? turn.response;
 
@@ -371,14 +374,24 @@ function ConversationDetail({ turn }: { turn: ReplayProgressTurn }) {
             <div className="mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]" style={{ color: TERM_PANEL.green }}>
               {t("aiReplay.progress.userPrompt")}
             </div>
-            <SessionTranscriptContent content={turn.prompt} />
+            <SessionTranscriptContent
+              content={turn.prompt}
+              variant="terminal"
+              terminalCodeTheme={previewCodeTheme}
+              linkBehavior="preview"
+            />
           </div>
           {finalResponse ? (
             <div>
               <div className="mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]" style={{ color: TERM_PANEL.cyan }}>
                 {t("aiReplay.progress.aiResponse")}
               </div>
-              <SessionTranscriptContent content={finalResponse} />
+              <SessionTranscriptContent
+                content={finalResponse}
+                variant="terminal"
+                terminalCodeTheme={previewCodeTheme}
+                linkBehavior="preview"
+              />
             </div>
           ) : (
             <div className="text-[10px]" style={{ color: TERM_PANEL.dim }}>
@@ -535,12 +548,22 @@ function ProgressView({
   onFork: (event: ReplayEvent, latestSnapshot: ReplayEvent) => void;
 }) {
   const { t } = useI18n();
-  const [expandedTurnId, setExpandedTurnId] = useState<string | null>(() => model.turns[0]?.id ?? null);
+  const [expandedTurnIds, setExpandedTurnIds] = useState<Set<string>>(
+    () => new Set<string>(model.turns[0] ? [model.turns[0].id] : [])
+  );
+  const hasInitializedExpansion = useRef(model.turns.length > 0);
 
   useEffect(() => {
-    if (!model.turns.length) setExpandedTurnId(null);
-    else if (!expandedTurnId || !model.turns.some((turn) => turn.id === expandedTurnId)) setExpandedTurnId(model.turns[0].id);
-  }, [expandedTurnId, model.turns]);
+    const turnIds = new Set(model.turns.map((turn) => turn.id));
+    const shouldInitializeExpansion = !hasInitializedExpansion.current && model.turns.length > 0;
+    if (shouldInitializeExpansion) hasInitializedExpansion.current = true;
+    setExpandedTurnIds((current) => {
+      const next = new Set([...current].filter((id) => turnIds.has(id)));
+      if (shouldInitializeExpansion) next.add(model.turns[0].id);
+      if (next.size === current.size && [...next].every((id) => current.has(id))) return current;
+      return next;
+    });
+  }, [model.turns]);
 
   if (model.turns.length === 0) return <EmptyHint text={t("aiReplay.empty.timeline")} />;
 
@@ -551,7 +574,7 @@ function ProgressView({
         <span>{historyLoading ? t("aiReplay.progress.syncing") : historyAvailable ? t("aiReplay.progress.synced") : t("aiReplay.progress.hookOnly")}</span>
       </div>
       {model.turns.map((turn, index) => {
-        const expanded = expandedTurnId === turn.id;
+        const expanded = expandedTurnIds.has(turn.id);
         const countParts = [
           turn.counts.tools ? t("aiReplay.progress.countTools", { count: turn.counts.tools }) : null,
           turn.counts.files ? t("aiReplay.progress.countFiles", { count: turn.counts.files }) : null,
@@ -564,7 +587,12 @@ function ProgressView({
             <button
               type="button"
               aria-expanded={expanded}
-              onClick={() => setExpandedTurnId(expanded ? null : turn.id)}
+              onClick={() => setExpandedTurnIds((current) => {
+                const next = new Set(current);
+                if (next.has(turn.id)) next.delete(turn.id);
+                else next.add(turn.id);
+                return next;
+              })}
               className="ui-focus-ring w-full rounded-xl px-3 py-2.5 text-left"
             >
               <div className="flex items-start justify-between gap-2">
@@ -698,6 +726,7 @@ function RawLogView({ events, language }: { events: ReplayEvent[]; language: str
 
 export function SessionReplayPanel({ activeSessionId, open, visible = true }: SessionReplayPanelProps) {
   const { t, language } = useI18n();
+  const { panelStyle } = useTerminalPreviewTheme();
   const sessions = useReplayStore((state) => state.sessions);
   const eventsBySession = useReplayStore((state) => state.eventsBySession);
   const selectedSessionKey = useReplayStore((state) => state.selectedSessionKey);
@@ -947,24 +976,22 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
 
   return (
     <div
-      className="ui-thin-scroll flex h-full min-h-0 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 font-mono"
+      className="flex h-full min-h-0 flex-col overflow-hidden font-mono"
       style={{
+        ...panelStyle,
         backgroundColor: TERM_PANEL.bg,
         "--ui-scrollbar-thumb": TERM_PANEL.border,
         "--ui-scrollbar-track": TERM_PANEL.bg,
       } as CSSProperties}
     >
-      <header className="flex shrink-0 items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl" style={{ color: TERM_PANEL.cyan, backgroundColor: panelColorTint(TERM_PANEL.cyan, 12) }}>
-            <Sparkles size={14} />
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-[12px] font-bold" style={{ color: TERM_PANEL.fg }}>{t("aiReplay.title")}</div>
-            <div className="truncate text-[9px]" style={{ color: TERM_PANEL.dim }} title={selectedSessionTitle}>{selectedSessionTitle}</div>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+      <TerminalPanelHeader
+        icon={<Sparkles size={14} />}
+        accent={TERM_PANEL.cyan}
+        title={t("aiReplay.title")}
+        subtitle={selectedSessionTitle}
+        subtitleTitle={selectedSessionTitle}
+        actions={(
+          <>
           {viewingHistory && activeSessionId && (
             <button type="button" onClick={() => void handleBackToCurrent()} className="ui-focus-ring rounded-lg border px-2 py-1.5 text-[9px] font-semibold" style={{ color: TERM_PANEL.cyan, borderColor: panelColorTint(TERM_PANEL.cyan, 34), backgroundColor: panelColorTint(TERM_PANEL.cyan, 8) }}>
               {t("aiReplay.action.backToCurrent")}
@@ -982,8 +1009,11 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
           >
             <History size={12} />
           </button>
-        </div>
-      </header>
+          </>
+        )}
+      />
+
+      <div className="ui-thin-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2">
 
       {historyOpen && (
         <section className="shrink-0 rounded-xl border p-2" style={{ backgroundColor: TERM_PANEL.card, borderColor: TERM_PANEL.border }}>
@@ -1108,6 +1138,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
         onClose={() => setPendingAction(null)}
         onConfirm={() => void handleConfirmPendingAction()}
       />
+      </div>
     </div>
   );
 }

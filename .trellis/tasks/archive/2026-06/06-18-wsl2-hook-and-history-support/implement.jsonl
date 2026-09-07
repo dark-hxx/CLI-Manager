@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/backend/terminal-runtime-monitoring-contracts.md", "reason": "WSLENV 转发与 PTY env/cwd 注入涉及终端 spawn 契约"}
-{"file": ".trellis/spec/backend/history-stats-contracts.md", "reason": "按项目匹配/session 标识与历史统计契约，双 key 匹配改动需对齐"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "安装写入 WSL 下的 .claude settings.json/hooks.json，须遵守用户文件安全约束"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动横跨 Rust(history/pty/hook) 与前端设置页，需保证跨层契约一致"}

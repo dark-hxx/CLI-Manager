@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"TerminalTabs UI and component conventions for terminal split controls"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand terminal pane state and split contracts"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend static verification and manual UI verification requirements"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature crosses UI, Zustand, PTY env/session contracts"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing splitTerminal and avoid duplicate pane logic"}
-{"file":".trellis/tasks/06-18-auto-tmux-sub-agent-pane/research/multiplexer-cross-platform.md","reason":"Prior research on tmux/cmux/Windows Terminal vs internal pane backend"}

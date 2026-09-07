@@ -1,5 +1,8 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
+import { useEffect, useRef, useState, type CSSProperties, type WheelEvent as ReactWheelEvent } from "react";
 import { useI18n } from "../../lib/i18n";
+import { normalizeFontFamilyStack } from "../../lib/systemFonts";
+import { collectMarkdownHeadings } from "../../lib/markdownNavigation";
 import type { Project } from "../../lib/types";
 import type { ActiveProjectFile } from "../../stores/fileExplorerStore";
 import type {
@@ -9,7 +12,12 @@ import type {
 } from "../../stores/gitDiffWorkspaceStore";
 import { GitDiffEditorHost } from "../git/diff/GitDiffEditorHost";
 import { FileCode, Image } from "../icons";
+import { FontSizeControl, useFontSizeControlVisibility } from "../ui/FontSizeControl";
 import { MarkdownContent } from "../ui/MarkdownContent";
+import { useSettingsStore } from "../../stores/settingsStore";
+
+const FILE_PREVIEW_FONT_SIZE_MIN = 8;
+const FILE_PREVIEW_FONT_SIZE_MAX = 32;
 
 interface FileEditorContentProps {
   file: ActiveProjectFile | null;
@@ -22,6 +30,9 @@ interface FileEditorContentProps {
   editorTheme: string;
   onEditorMount: OnMount;
   onContentChange: (content: string) => void;
+  onMarkdownLinkActivate: (href: string) => void;
+  markdownFragmentRequest?: { id: number; fragment: string } | null;
+  onMarkdownFragmentHandled: (id: number, found: boolean) => void;
 }
 
 export function FileEditorContent({
@@ -35,10 +46,55 @@ export function FileEditorContent({
   editorTheme,
   onEditorMount,
   onContentChange,
+  onMarkdownLinkActivate,
+  markdownFragmentRequest,
+  onMarkdownFragmentHandled,
 }: FileEditorContentProps) {
   const { t } = useI18n();
+  const uiFontFamily = useSettingsStore((state) => state.uiFontFamily);
+  const uiFontSize = useSettingsStore((state) => state.uiFontSize);
+  const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
+  const [fontSize, setFontSize] = useState(uiFontSize);
+  const markdownPreviewRef = useRef<HTMLDivElement | null>(null);
+  const { fontSizeControlVisible, showFontSizeControl } = useFontSizeControlVisibility();
+  const previewableText = file?.previewKind === "text" || file?.previewKind === "markdown";
+
+  useEffect(() => setFontSize(uiFontSize), [uiFontSize]);
+
+  useEffect(() => {
+    if (!markdownFragmentRequest || previewMode !== "preview" || file?.previewKind !== "markdown") return;
+    const root = markdownPreviewRef.current;
+    if (!root) return;
+    let target = Array.from(root.querySelectorAll<HTMLElement>("[id]"))
+      .find((candidate) => candidate.id === markdownFragmentRequest.fragment);
+    if (!target && markdownFragmentRequest.fragment) {
+      const headingIndex = collectMarkdownHeadings(file.content)
+        .findIndex((heading) => heading.id === markdownFragmentRequest.fragment);
+      if (headingIndex >= 0) {
+        target = root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")[headingIndex];
+      }
+    }
+    if (target) target.scrollIntoView({ block: "start" });
+    else if (!markdownFragmentRequest.fragment) root.scrollTo({ top: 0 });
+    onMarkdownFragmentHandled(markdownFragmentRequest.id, Boolean(target) || !markdownFragmentRequest.fragment);
+  }, [file?.path, file?.previewKind, markdownFragmentRequest, onMarkdownFragmentHandled, previewMode]);
+
+  const handlePreviewWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!previewableText || !event.ctrlKey || event.deltaY === 0) return;
+    event.preventDefault();
+    showFontSizeControl();
+    const direction = event.deltaY < 0 ? 1 : -1;
+    setFontSize((current) => Math.min(
+      FILE_PREVIEW_FONT_SIZE_MAX,
+      Math.max(FILE_PREVIEW_FONT_SIZE_MIN, current + direction),
+    ));
+  };
+
   return (
-    <div className="ui-file-editor-body min-h-0 flex-1 overflow-hidden bg-surface">
+    <div
+      className="ui-file-editor-body relative min-h-0 flex-1 overflow-hidden bg-surface"
+      onWheelCapture={handlePreviewWheel}
+    >
       {!file && !activeDiff && (
         <div className="flex h-full flex-col items-center justify-center gap-2 text-text-muted">
           <FileCode size={36} strokeWidth={1.2} />
@@ -71,8 +127,21 @@ export function FileEditorContent({
       )}
       {file && (file.previewKind === "text" || file.previewKind === "markdown") && (
         file.previewKind === "markdown" && previewMode === "preview" ? (
-          <div className="ui-file-editor-markdown-preview h-full overflow-auto p-4">
-            <MarkdownContent content={file.content} variant="terminal" linkBehavior="preview" />
+          <div
+            ref={markdownPreviewRef}
+            className="ui-file-editor-markdown-preview h-full overflow-auto p-4"
+            style={{
+              "--markdown-preview-font-size": `${fontSize}px`,
+              fontFamily: effectiveUiFontFamily,
+              fontSize,
+            } as CSSProperties & Record<"--markdown-preview-font-size", string>}
+          >
+            <MarkdownContent
+              content={file.content}
+              variant="terminal"
+              linkBehavior="open"
+              onLinkActivate={onMarkdownLinkActivate}
+            />
           </div>
         ) : (
           <Editor
@@ -84,7 +153,8 @@ export function FileEditorContent({
             onChange={(value) => onContentChange(value ?? "")}
             options={{
               automaticLayout: true,
-              fontSize: 13,
+              fontFamily: effectiveUiFontFamily,
+              fontSize,
               glyphMargin: true,
               minimap: { enabled: true },
               scrollBeyondLastLine: false,
@@ -92,6 +162,19 @@ export function FileEditorContent({
             }}
           />
         )
+      )}
+      {previewableText && fontSizeControlVisible && (
+        <FontSizeControl
+          fontSize={fontSize}
+          defaultFontSize={uiFontSize}
+          min={FILE_PREVIEW_FONT_SIZE_MIN}
+          max={FILE_PREVIEW_FONT_SIZE_MAX}
+          onChange={(next) => {
+            showFontSizeControl();
+            setFontSize(next);
+          }}
+          className="absolute bottom-3 right-3 z-20"
+        />
       )}
     </div>
   );

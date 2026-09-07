@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"WS-4 requires Rust history command/schema changes and backend tests."}
-{"file":".trellis/spec/frontend/index.md","reason":"WS-4 requires React history detail UI, TypeScript model, i18n, and CSS updates."}
-{"file":".trellis/spec/guides/index.md","reason":"Cross-layer backend/frontend design and reuse guidance for the structured subtask tree."}

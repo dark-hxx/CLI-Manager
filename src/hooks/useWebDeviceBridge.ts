@@ -319,15 +319,18 @@ async function publishWorkspace() {
         parentId: group.parent_id,
         sortOrder: group.sort_order,
       })),
-      projects: projects.map((project) => ({
-        id: project.id,
-        name: project.name,
-        groupId: project.group_id,
-        sortOrder: project.sort_order,
-        source: getProviderSwitchAppType(project),
-        cwd: (project.environment_type === "ssh" ? project.remote_path : project.path).trim() || null,
-        environmentType: project.environment_type,
-      })),
+      projects: projects.map((project) => {
+        const source = getProviderSwitchAppType(project);
+        return {
+          id: project.id,
+          name: project.name,
+          groupId: project.group_id,
+          sortOrder: project.sort_order,
+          source: source === "claude" || source === "codex" ? source : null,
+          cwd: (project.environment_type === "ssh" ? project.remote_path : project.path).trim() || null,
+          environmentType: project.environment_type,
+        };
+      }),
       worktrees: worktrees.map((worktree) => ({
         id: worktree.id,
         projectId: worktree.project_id,

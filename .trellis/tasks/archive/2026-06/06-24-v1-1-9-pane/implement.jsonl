@@ -1,5 +1,0 @@
-{"file": "CLAUDE.md", "reason": "项目架构、约定、IPC边界等核心文档"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store 模式和 settingsStore 迁移模式"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件规范和 Settings UI 模式"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量标准 - 人工验证事项"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "Tauri 文件安全边界检查（Issue #38 涉及启动终端）"}

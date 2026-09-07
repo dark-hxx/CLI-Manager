@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">CLI-Manager CCS-compatible provider domain prototype</title>
+  <desc id="desc">A light desktop master-detail provider list and Codex provider editor with global selection, multi key, model, type common config, full auth and TOML configuration.</desc>
+  <style>
+    .ui { font-family: "Microsoft YaHei UI","Segoe UI",sans-serif; fill:#1f2937 }
+    .title { font: 700 23px "Microsoft YaHei UI","Segoe UI",sans-serif; fill:#16243a }
+    .h { font: 700 17px "Microsoft YaHei UI","Segoe UI",sans-serif; fill:#16243a }
+    .b { font: 500 14px "Microsoft YaHei UI","Segoe UI",sans-serif; fill:#34435a }
+    .s { font: 500 12px "Microsoft YaHei UI","Segoe UI",sans-serif; fill:#718096 }
+    .xs { font: 500 10px "Cascadia Code","Consolas",monospace; fill:#53657b }
+    .code { font: 12px "Cascadia Code","Consolas",monospace; fill:#31425f }
+    .blue { fill:#1769e0 } .green { fill:#079669 } .muted { fill:#8a98aa }
+    .card { fill:#fff; stroke:#dbe3ec; stroke-width:1.2 } .soft { fill:#f7f9fc; stroke:#dbe3ec; stroke-width:1.2 }
+    .selected { fill:#eff7ff; stroke:#4b9cff; stroke-width:1.6 } .input { fill:#fff; stroke:#cfd9e6; stroke-width:1.2 }
+    .codebox { fill:#f7f9fc; stroke:#dbe3ec; stroke-width:1 }
+  </style>
+  <rect width="1600" height="1000" fill="#f5f7fa"/>
+  <rect x="0" y="0" width="1600" height="46" fill="#ffffff"/>
+  <rect y="45" width="1600" height="1" fill="#dfe5ec"/>
+  <circle cx="25" cy="23" r="11" fill="#0d9f7d"/><path d="M19 23h12M25 17v12" stroke="#fff" stroke-width="2.5"/>
+  <text x="47" y="29" class="h">CLI-Manager</text><text x="1470" y="28" class="s">—　□　×</text>
+
+  <!-- settings nav -->
+  <rect x="0" y="46" width="248" height="954" fill="#fbfcfd"/><path d="M248 46v954" stroke="#dfe5ec"/>
+  <text x="26" y="86" class="h">设置</text>
+  <g class="b">
+    <text x="58" y="135">通用</text><text x="58" y="181">终端</text><text x="58" y="227">快捷键</text><text x="58" y="273">命令模板</text>
+  </g>
+  <rect x="16" y="292" width="214" height="44" rx="10" fill="#d9f3eb" stroke="#63c8ab"/>
+  <circle cx="39" cy="314" r="9" fill="#079669"/><path d="M35 314h8M39 310v8" stroke="#fff" stroke-width="1.5"/>
+  <text x="58" y="319" class="b" font-weight="700">供应商</text>
+  <g class="b"><text x="58" y="371">模型价格</text><text x="58" y="417">远程连接</text><text x="58" y="463">SSH 主机</text><text x="58" y="509">同步</text><text x="58" y="555">历史会话</text><text x="58" y="601">Hook</text></g>
+  <text x="26" y="952" class="s">供应商域 · 规划原型</text>
+
+  <!-- header -->
+  <text x="278" y="86" class="title">供应商管理</text>
+  <text x="278" y="112" class="s">完整管理 Claude Code、Codex 与 Grok 的供应商、配置和多 Key</text>
+  <rect x="1180" y="63" width="156" height="36" rx="18" class="soft"/><text x="1200" y="86" class="b">⇩  从 CCS 导入</text>
+  <rect x="1348" y="63" width="150" height="36" rx="18" class="soft"/><text x="1368" y="86" class="b">⌕  环境检查</text>
+
+  <!-- type tabs / global strip -->
+  <rect x="278" y="133" width="1220" height="78" rx="12" class="card"/>
+  <rect x="294" y="147" width="134" height="42" rx="10" fill="#eef7f4" stroke="#58c3a5"/><text x="314" y="173" class="b">●  Claude Code</text>
+  <rect x="440" y="147" width="106" height="42" rx="10" fill="#e8f2ff" stroke="#4d9aff"/><text x="466" y="173" class="b" font-weight="700">●  Codex</text>
+  <rect x="558" y="147" width="105" height="42" rx="10" fill="#fff8e7" stroke="#f4c85c"/><text x="582" y="173" class="b">●  Grok</text>
+  <path d="M692 145v50" stroke="#dce4ed"/>
+  <text x="720" y="160" class="s">当前全局供应商 · 写入 D:UsersAdmini.codex</text>
+  <text x="720" y="185" class="b" font-weight="700">Magic  /  gpt-5.2-codex  /  Work account</text>
+  <rect x="1284" y="151" width="192" height="34" rx="8" fill="#079669"/><text x="1310" y="173" style="font:700 13px 'Microsoft YaHei UI';fill:#fff">预览并应用到全局</text>
+
+  <!-- catalog -->
+  <rect x="278" y="228" width="355" height="738" rx="14" class="card"/>
+  <text x="302" y="262" class="h">Codex 供应商</text><text x="302" y="284" class="s">4 个供应商 · 1 个全局当前</text>
+  <rect x="489" y="244" width="120" height="36" rx="8" fill="#079669"/><text x="511" y="267" style="font:700 13px 'Microsoft YaHei UI';fill:#fff">＋ 新建供应商</text>
+  <rect x="302" y="300" width="307" height="38" rx="8" class="input"/><text x="319" y="324" class="s">⌕  搜索名称、模型或 Base URL</text>
+  <!-- list cards -->
+  <g>
+    <rect x="302" y="356" width="307" height="94" rx="11" class="card"/>
+    <text x="318" y="398" class="muted">⠿</text><rect x="350" y="373" width="38" height="38" rx="9" fill="#eef2f7"/><text x="365" y="398" class="b">C</text>
+    <text x="402" y="384" class="b" font-weight="700">OpenAI Official</text><text x="402" y="406" class="s">https://api.openai.com/v1</text><text x="402" y="430" class="s">gpt-5.2-codex · 1 Key</text>
+    <rect x="532" y="368" width="55" height="20" rx="10" fill="#e7f8ef"/><text x="544" y="382" class="s" fill="#079669">全局</text>
+  </g>
+  <g>
+    <rect x="302" y="462" width="307" height="105" rx="11" class="selected"/>
+    <text x="318" y="507" class="muted">⠿</text><rect x="350" y="480" width="38" height="38" rx="9" fill="#e6f1ff"/><text x="364" y="505" class="blue">C</text>
+    <text x="402" y="492" class="b" font-weight="700">Magic</text><text x="402" y="514" class="s">https://api.mofas.one/v1</text><text x="402" y="540" class="s">gpt-5.2-codex · 3 Key · Work account</text>
+    <rect x="530" y="476" width="57" height="20" rx="10" fill="#e8f2ff"/><text x="540" y="490" class="s" fill="#1769e0">已选择</text>
+  </g>
+  <g>
+    <rect x="302" y="579" width="307" height="94" rx="11" class="card"/>
+    <text x="318" y="621" class="muted">⠿</text><rect x="350" y="596" width="38" height="38" rx="9" fill="#fff3e6"/><text x="364" y="621" class="b">C</text>
+    <text x="402" y="607" class="b" font-weight="700">Company Gateway</text><text x="402" y="629" class="s">https://gateway.example.com/v1</text><text x="402" y="653" class="s">gpt-5.1 · 草稿（待添加 Key）</text>
+  </g>
+  <rect x="302" y="705" width="307" height="48" rx="9" class="soft"/><text x="321" y="735" class="b">⚙ 编辑 Codex 类型通用配置</text>
+  <rect x="302" y="763" width="307" height="48" rx="9" class="soft"/><text x="321" y="793" class="b">↧ CCS 导入与迁移记录</text>
+
+  <!-- editor -->
+  <rect x="650" y="228" width="848" height="738" rx="14" class="card"/>
+  <text x="678" y="267" class="h">编辑供应商 · Magic</text>
+  <rect x="1294" y="244" width="80" height="34" rx="8" fill="#fff1f0"/><text x="1315" y="266" class="b" fill="#df3d35">删除</text>
+  <rect x="1385" y="244" width="88" height="34" rx="8" fill="#079669"/><text x="1407" y="266" style="font:700 13px 'Microsoft YaHei UI';fill:#fff">保存</text>
+  <path d="M678 291h794" stroke="#e1e7ee"/>
+
+  <!-- metadata -->
+  <text x="678" y="322" class="b">供应商名称</text><text x="1047" y="322" class="b">备注</text>
+  <rect x="678" y="332" width="344" height="36" rx="7" class="input"/><text x="691" y="355" class="b">Magic</text>
+  <rect x="1047" y="332" width="425" height="36" rx="7" class="input"/><text x="1061" y="355" class="s">例如：公司专用账号</text>
+  <text x="678" y="397" class="b">API Base URL *</text><text x="1047" y="397" class="b">模型 / 模型供应商 *</text>
+  <rect x="678" y="407" width="344" height="36" rx="7" class="input"/><text x="691" y="430" class="b">https://api.mofas.one/v1</text>
+  <rect x="1047" y="407" width="206" height="36" rx="7" class="input"/><text x="1061" y="430" class="b">gpt-5.2-codex</text>
+  <rect x="1265" y="407" width="207" height="36" rx="7" class="input"/><text x="1279" y="430" class="b">mofas</text>
+
+  <!-- keys -->
+  <rect x="678" y="462" width="794" height="126" rx="11" class="soft"/>
+  <text x="698" y="493" class="h">🔑 供应商 Key</text><text x="837" y="493" class="s">同一时间手动启用一个；不自动轮换或检测有效性</text>
+  <rect x="1370" y="474" width="82" height="28" rx="7" class="input"/><text x="1388" y="493" class="b">＋ 添加 Key</text>
+  <rect x="698" y="512" width="754" height="29" rx="7" fill="#e8f2ff" stroke="#73abef"/><text x="715" y="532" class="b">●  Work account　 sk-••••9a17　 已启用　　编辑　显示　删除</text>
+  <text x="716" y="567" class="s">Personal　sk-••••74c2　启用　　　Backup　sk-••••3bd8　启用</text>
+
+  <!-- inheritance and tabs -->
+  <rect x="678" y="605" width="794" height="46" rx="9" class="soft"/>
+  <rect x="697" y="618" width="18" height="18" rx="4" fill="#1769e0"/><text x="700" y="633" style="font:700 14px 'Segoe UI';fill:#fff">✓</text>
+  <text x="728" y="633" class="b" font-weight="700">继承 Codex 类型通用配置</text>
+  <text x="1080" y="633" class="s">通用配置 → 供应商覆盖 → 当前 Key</text>
+  <text x="698" y="684" class="b" font-weight="700">auth.json（JSON）</text><text x="857" y="684" class="b">config.toml（TOML）</text><text x="1027" y="684" class="b">有效配置</text><text x="1131" y="684" class="b">Live Diff</text><text x="1222" y="684" class="b">高级选项</text>
+  <path d="M698 694h135" stroke="#1769e0" stroke-width="3"/>
+  <rect x="678" y="710" width="794" height="194" rx="9" class="codebox"/>
+  <text x="699" y="738" class="xs">1</text><text x="729" y="738" class="code">{</text>
+  <text x="699" y="760" class="xs">2</text><text x="729" y="760" class="code">  "OPENAI_API_KEY": "sk-••••9a17"</text>
+  <text x="699" y="782" class="xs">3</text><text x="729" y="782" class="code">}</text>
+  <text x="699" y="821" class="xs">键与 auth.json 同步；完整 config.toml 可编辑 model、provider、MCP、hooks、projects 与未知字段。</text>
+  <rect x="698" y="845" width="141" height="33" rx="7" fill="#e8f2ff"/><text x="716" y="867" class="b" fill="#1769e0">◉ 测试模型配置</text>
+  <rect x="850" y="845" width="141" height="33" rx="7" class="input"/><text x="870" y="867" class="b">◌ 计费配置</text>
+  <text x="678" y="940" class="s">全局应用会写入选择的 Home；项目/Worktree 使用隔离配置，新启动进程才生效。</text>
+</svg>

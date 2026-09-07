@@ -1,0 +1,9 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"复核根因修复没有退化为前端 fallback，并检查协议/生命周期场景。"}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"复核 Provider composite identity、active key 和 secret 不泄露。"}
+{"file":".trellis/spec/backend/command-suggestion-contracts.md","reason":"复核共享 helper 未改变既有命令建议请求与诊断行为。"}
+{"file":".trellis/spec/frontend/history-session-contracts.md","reason":"复核失败仍保留来源标题/别名优先级和 SSH read-only 边界。"}
+{"file":"src-tauri/src/provider/auxiliary_text.rs","reason":"检查三协议请求体、endpoint、超时、响应体上限和错误码。"}
+{"file":"src-tauri/src/commands/command_suggestion.rs","reason":"运行现有 command_suggestion 测试并检查 public command 行为无回归。"}
+{"file":"src-tauri/src/commands/history_title.rs","reason":"检查 Responses 字符串 input、文本提取、tool/finish 校验和 CAS。"}
+{"file":"src/components/HistoryWorkspace.tsx","reason":"检查错误分类、toast 安全性和设置跳转。"}
+{"file":"src/lib/i18n.ts","reason":"检查 zh-CN/en-US parity 与 zh-TW fallback。"}

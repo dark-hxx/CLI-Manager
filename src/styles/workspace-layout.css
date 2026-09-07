@@ -1,0 +1,277 @@
+/* Workspace background scope. Keep this file limited to the shared root layer
+   and the transparent surface variants that let it show through. */
+
+.ui-workspace-layout-shell {
+  min-width: 0;
+}
+
+.ui-workspace-background-root {
+  width: 100%;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] {
+  background-color: transparent;
+}
+
+.ui-workspace-background-content {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 0%;
+  flex-direction: column;
+}
+
+.ui-workspace-main-layout[data-project-sidebar-side="right"] > .ui-sidebar-shell {
+  order: 2;
+  border-right: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 12%, transparent);
+}
+
+.ui-workspace-main-layout[data-project-sidebar-side="right"] > .ui-main-shell {
+  order: 1;
+}
+
+[data-theme="light"] .ui-workspace-main-layout[data-project-sidebar-side="right"] > .ui-sidebar-shell {
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 12%, transparent);
+}
+
+.ui-workspan-terminal-body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0%;
+  flex-direction: column;
+}
+
+/* Keep panel content mounted while letting the title-bar control reclaim the
+   terminal width immediately. This preserves panel-local state and effects. */
+.ui-terminal-well[data-terminal-side-panel-visible="false"] > .ui-terminal-side-panel-frame {
+  display: none;
+}
+
+/* Auxiliary panels keep the separator on the edge facing the terminal. */
+.ui-terminal-well > .ui-terminal-side-panel-frame[data-dock-side="left"] {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, #000 18%, transparent);
+}
+
+.ui-workspace-background-layer {
+  z-index: 0;
+  overflow: hidden;
+  background-color: transparent;
+  pointer-events: none;
+}
+
+.ui-workspace-background-layer::before,
+.ui-workspace-background-layer::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ui-workspace-background-layer::before {
+  content: "";
+  background-image: var(--workspace-bg-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  filter: blur(var(--workspace-bg-blur, 0));
+  opacity: var(--workspace-bg-opacity, 1);
+  transition: opacity 300ms ease, filter 300ms ease;
+}
+
+.ui-workspace-background-layer[data-workspace-bg-fit="contain"]::before {
+  background-size: contain;
+}
+
+.ui-workspace-background-layer[data-workspace-bg-fit="center"]::before {
+  background-size: auto;
+}
+
+.ui-workspace-background-layer[data-workspace-bg-fit="tile"]::before {
+  background-repeat: repeat;
+  background-size: auto;
+}
+
+.ui-workspace-background-layer[data-workspace-bg-position="top-left"]::before { background-position: left top; }
+.ui-workspace-background-layer[data-workspace-bg-position="top-center"]::before { background-position: center top; }
+.ui-workspace-background-layer[data-workspace-bg-position="top-right"]::before { background-position: right top; }
+.ui-workspace-background-layer[data-workspace-bg-position="center-left"]::before { background-position: left center; }
+.ui-workspace-background-layer[data-workspace-bg-position="center"]::before { background-position: center center; }
+.ui-workspace-background-layer[data-workspace-bg-position="center-right"]::before { background-position: right center; }
+.ui-workspace-background-layer[data-workspace-bg-position="bottom-left"]::before { background-position: left bottom; }
+.ui-workspace-background-layer[data-workspace-bg-position="bottom-center"]::before { background-position: center bottom; }
+.ui-workspace-background-layer[data-workspace-bg-position="bottom-right"]::before { background-position: right bottom; }
+
+.ui-workspace-background-layer::after {
+  content: "";
+  z-index: 1;
+  --workspace-bg-status-scrim-alpha: clamp(0, calc(0.46 - var(--workspace-bg-darken, 0)), 0.46);
+  background-color: rgba(
+    var(--workspace-bg-overlay-color, 0, 0, 0),
+    var(--workspace-bg-darken, 0)
+  );
+  background-image: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(var(--workspace-bg-overlay-color, 0, 0, 0), var(--workspace-bg-status-scrim-alpha))
+  );
+  background-position: bottom;
+  background-repeat: no-repeat;
+  background-size: 100% 6rem;
+  transition: background-color 300ms ease;
+}
+
+/* The shared image is the base surface in the normal workspace view. Keep the
+   shell, its chrome, title bar, and project rows transparent; page-specific
+   exceptions below restore opaque surfaces where the page is intentionally
+   isolated from the workspace image. */
+.ui-workspace-background-root[data-workspace-background="true"] .window-titlebar {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Settings keeps its existing page surface even when the workspace image is
+   enabled. The active marker scopes this exception to fill mode. */
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-workspace-settings-dialog,
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-content,
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-topbar {
+  background: var(--surface) !important;
+  background-image: none !important;
+}
+
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-nav {
+  background: var(--surface-container-low) !important;
+  background-image: none !important;
+}
+
+/* Statistics remains a workspace-level surface and may show the image. */
+.ui-stats-panel[data-workspace-background="true"] {
+  background: transparent !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-top,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-footer,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-global-chrome {
+  background: transparent !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-sidebar-search-shell,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-inline-input,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-group-shell,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-group,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-project,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-collapsed-item,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-synced-session {
+  background: transparent !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-project:hover,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-group:hover,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-group[data-open="true"],
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-collapsed-item:hover,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-synced-session:hover {
+  background-color: color-mix(in srgb, var(--primary) 7%, transparent) !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-project[data-selected="true"],
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-collapsed-item[data-selected="true"],
+.ui-workspace-background-root[data-workspace-background="true"] .ui-sidebar-shell .ui-tree-group[data-selected="true"] {
+  background: color-mix(in srgb, var(--primary) 14%, transparent) !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-main-shell,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-tabs-shell {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-well {
+  background-color: transparent !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-well > .flex-1 {
+  background-color: transparent !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-pane-chrome,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-panel-header {
+  background: transparent !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-side-panel-frame,
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-side-panel-frame > :not([role="separator"]),
+.ui-workspace-background-root[data-workspace-background="true"] [data-terminal-side-panel-content] > * {
+  background: transparent !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"] .ui-terminal-action-sidebar {
+  background: transparent !important;
+}
+
+[data-theme="light"] .ui-terminal-well > .ui-terminal-side-panel-frame[data-dock-side="left"] {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 10%, transparent);
+}
+
+/* History is an isolated, readable page. The view marker is emitted by
+   TerminalTabs so a mounted-but-hidden history tree does not affect the
+   title bar or terminal view. */
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-shell {
+  background: var(--surface) !important;
+  background-image: none !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-sidebar {
+  background: var(--surface-container-lowest) !important;
+  background-image: none !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-detail,
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-detail-top,
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-transcript-chat-surface {
+  background: var(--surface) !important;
+  background-image: none !important;
+}
+
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .ui-history-sidebar-top {
+  background: var(--surface-container-low) !important;
+  background-image: none !important;
+}
+
+/* The native title bar remains opaque while Settings or History is the page
+   being presented, so neither page shows the workspace image in its chrome. */
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-workspace-settings-overlay) .window-titlebar,
+.ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .window-titlebar {
+  background: var(--surface-container-low) !important;
+  background-color: var(--surface-container-low) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme="light"] .ui-workspace-background-root[data-workspace-background="true"]:has(.ui-workspace-settings-overlay) .window-titlebar,
+[data-theme="light"] .ui-workspace-background-root[data-workspace-background="true"]:has(.ui-terminal-tabs-shell[data-workspace-view="history"]) .window-titlebar {
+  background: var(--surface-container-lowest) !important;
+  background-color: var(--surface-container-lowest) !important;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 24%, transparent) !important;
+}
+
+/* In workspace mode XTerm keeps its transparency theme but does not create a
+   second image layer per Pane. Hidden sessions intentionally omit this attr
+   and retain their opaque terminal fallback. */
+.ui-terminal-bg-layer[data-workspace-bg-enabled="true"] {
+  background-color: transparent !important;
+}
+
+.ui-terminal-bg-layer[data-workspace-bg-enabled="true"] .xterm,
+.ui-terminal-bg-layer[data-workspace-bg-enabled="true"] .xterm-viewport,
+.ui-terminal-bg-layer[data-workspace-bg-enabled="true"] .xterm-screen {
+  background-color: transparent !important;
+  pointer-events: auto;
+}

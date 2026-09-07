@@ -1,0 +1,13 @@
+{"file":".trellis/tasks/08-08-ccs-routing-migration/prd.md","reason":"逐条核对产品要求、排除项与验收标准。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/design.md","reason":"核对实现是否遵守唯一 writer、daemon 生命周期、commit point 与安全设计。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/source-manifest.md","reason":"复核 CCS 固定版本、源码定位、端口行为、模型映射顺序与 WSL 官方网络依据。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/ccs-routing-control-matrix.md","reason":"检查每个 CCS 控件和默认值是否完整迁移。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/ccs-runtime-architecture.md","reason":"检查每个 provider attempt、协议转换、Body Override、failover 与 listener 生命周期。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/cli-manager-touchpoints.md","reason":"检查所有已发现代码与网络 client 触点是否处理或明确排除。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/scenario-and-risk-matrix.md","reason":"执行场景、风险、隐私、恢复和回滚检查。"}
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"确认 discovery list 与新功能场景矩阵未漏项。"}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"交付前核对 changelog、功能清单、测试、状态与用户文件。"}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"检查 provider DB、Home、scope、writer、active key 与 secret 合规。"}
+{"file":".trellis/spec/backend/pty-daemon-contracts.md","reason":"检查 daemon、protocol、loopback、退出与后台运行无回归。"}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"检查 provider/routing 设置页数据加载与布局边界。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查供应商页三段导航、Mantine、响应式、i18n、aria 与键盘交互。"}

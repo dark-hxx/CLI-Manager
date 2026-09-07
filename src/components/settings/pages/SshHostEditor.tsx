@@ -100,7 +100,7 @@ export function SshHostEditor(props: Props) {
       ? "auth"
       : props.errorCode.includes("jump") || props.errorCode.includes("proxy")
         ? "routing"
-        : props.errorCode.includes("timeout") || props.errorCode.includes("alive") || props.errorCode.includes("encoding")
+        : props.errorCode.includes("timeout") || props.errorCode.includes("alive") || props.errorCode.includes("encoding") || props.errorCode.includes("attachment")
           ? "connection"
           : "basic";
     scrollToSection(section);
@@ -135,8 +135,8 @@ export function SshHostEditor(props: Props) {
             {SECTIONS.map(({ id, icon: Icon, label }) => <button key={id} type="button" role="tab" aria-selected={activeSection === id} className={`ui-focus-ring flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${activeSection === id ? "bg-primary/15 text-primary ring-1 ring-primary/40" : "text-text-muted hover:bg-surface-container-high hover:text-text-primary"}`} onClick={() => scrollToSection(id)}><Icon className="h-3.5 w-3.5" />{t(label)}</button>)}
           </div>
         </div>
+        {props.error && <div className="shrink-0 whitespace-pre-wrap break-words border-b border-danger/40 bg-danger/10 px-5 py-2 text-xs text-danger" role="alert" aria-live="assertive">{props.error}</div>}
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4" onScroll={handleScroll}>
-          {props.error && <div className="mb-4 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{props.error}</div>}
           <FormSection section="basic" title={t("settings.sshHosts.section.basic")} description={t("settings.sshHosts.section.basicDescription")} sectionRefs={sectionRefs}>
             <BasicFields form={props.form} groups={props.groups} source={props.source} setSource={changeSource} setValue={props.setValue} />
           </FormSection>
@@ -257,7 +257,7 @@ function parseProxyUrl(value: string): { type: "http" | "socks5"; host: string; 
 
 function ConnectionFields({ form, setValue }: { form: CreateSshHostInput; setValue: SetValue }) {
   const { t } = useI18n();
-  return <div className="space-y-3"><FieldRow label={t("settings.sshHosts.timeout")} required><input type="number" min={1} max={300} value={form.connect_timeout_sec} onChange={(e) => setValue("connect_timeout_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveInterval")}><input type="number" min={0} value={form.server_alive_interval_sec} onChange={(e) => setValue("server_alive_interval_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveCount")}><input type="number" min={1} max={100} value={form.server_alive_count_max} onChange={(e) => setValue("server_alive_count_max", Number(e.target.value))} /></FieldRow></div>;
+  return <div className="space-y-3"><FieldRow label={t("settings.sshHosts.timeout")} required><input type="number" min={1} max={300} value={form.connect_timeout_sec} onChange={(e) => setValue("connect_timeout_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveInterval")}><input type="number" min={0} value={form.server_alive_interval_sec} onChange={(e) => setValue("server_alive_interval_sec", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.keepAliveCount")}><input type="number" min={1} max={100} value={form.server_alive_count_max} onChange={(e) => setValue("server_alive_count_max", Number(e.target.value))} /></FieldRow><FieldRow label={t("settings.sshHosts.attachmentRoot")} description={t("settings.sshHosts.attachmentRootDescription")}><input value={form.attachment_root ?? ""} onChange={(e) => setValue("attachment_root", e.target.value)} placeholder={t("settings.sshHosts.attachmentRootPlaceholder")} /></FieldRow></div>;
 }
 
 function StartupFields({ form, setValue }: { form: CreateSshHostInput; setValue: SetValue }) {

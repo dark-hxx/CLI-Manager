@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-01-fix-terminal-paste-newline-auto-send/prd.md","reason":"Acceptance criteria for verifying the paste newline fix."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check that xterm is not recreated for this behavior fix."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check frontend quality constraints and minimal scope."}
-{"file":".trellis/spec/guides/index.md","reason":"Check shared modification guidance and risk boundaries."}

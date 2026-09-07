@@ -1,7 +1,8 @@
 use super::*;
 use serde_json::{json, Map, Value};
 
-pub(super) const HANDOFF_SCHEMA_VERSION: u32 = 1;
+pub(super) const HANDOFF_SCHEMA_VERSION: u32 = 2;
+const LEGACY_HANDOFF_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -14,6 +15,7 @@ pub enum CcConnectHandoffTransport {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CcConnectHandoffStartRequest {
+    pub agent: CcConnectAgent,
     pub local_session_id: String,
     pub cli_session_id: String,
     pub platform: CcConnectPlatform,
@@ -37,6 +39,7 @@ pub struct CcConnectHandoffPlatformTarget {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CcConnectHandoffInfo {
+    pub agent: CcConnectAgent,
     pub local_session_id: String,
     pub cli_session_id: String,
     pub project_id: String,
@@ -66,6 +69,7 @@ pub struct CcConnectHandoffStatus {
 #[serde(rename_all = "camelCase")]
 pub(super) struct PersistedHandoffRecord {
     pub(super) schema_version: u32,
+    pub(super) agent: CcConnectAgent,
     pub(super) local_session_id: String,
     pub(super) cli_session_id: String,
     pub(super) project_id: String,
@@ -76,6 +80,8 @@ pub(super) struct PersistedHandoffRecord {
     pub(super) provider_id: Option<String>,
     pub(super) provider_name: String,
     pub(super) provider_is_global: bool,
+    #[serde(default)]
+    pub(super) provider_snapshot_id: Option<String>,
     pub(super) platform: CcConnectPlatform,
     pub(super) platform_session_key: String,
     pub(super) cc_session_id: String,
@@ -96,6 +102,7 @@ pub(super) struct PersistedHandoffRecord {
 impl From<&PersistedHandoffRecord> for CcConnectHandoffInfo {
     fn from(record: &PersistedHandoffRecord) -> Self {
         Self {
+            agent: record.agent,
             local_session_id: record.local_session_id.clone(),
             cli_session_id: record.cli_session_id.clone(),
             project_id: record.project_id.clone(),
@@ -125,15 +132,42 @@ pub(super) fn load_handoff_record() -> Result<Option<PersistedHandoffRecord>, St
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(format!("read cc-connect handoff record failed: {err}")),
     };
-    let record: PersistedHandoffRecord = serde_json::from_str(&raw)
+    parse_handoff_record(&raw).map(Some)
+}
+
+fn parse_handoff_record(raw: &str) -> Result<PersistedHandoffRecord, String> {
+    let mut value: Value = serde_json::from_str(raw)
         .map_err(|err| format!("parse cc-connect handoff record failed: {err}"))?;
-    if record.schema_version != HANDOFF_SCHEMA_VERSION {
+    let schema_version = value
+        .get("schemaVersion")
+        .and_then(Value::as_u64)
+        .and_then(|version| u32::try_from(version).ok())
+        .ok_or_else(|| {
+            "parse cc-connect handoff record failed: schemaVersion is invalid".to_string()
+        })?;
+    if !matches!(
+        schema_version,
+        LEGACY_HANDOFF_SCHEMA_VERSION | HANDOFF_SCHEMA_VERSION
+    ) {
         return Err(format!(
             "unsupported cc-connect handoff record version: {}",
-            record.schema_version
+            schema_version
         ));
     }
-    Ok(Some(record))
+    if schema_version == LEGACY_HANDOFF_SCHEMA_VERSION && value.get("agent").is_none() {
+        value
+            .as_object_mut()
+            .ok_or_else(|| {
+                "parse cc-connect handoff record failed: record must be an object".to_string()
+            })?
+            .insert("agent".to_string(), json!("codex"));
+    }
+    let record: PersistedHandoffRecord = serde_json::from_value(value)
+        .map_err(|err| format!("parse cc-connect handoff record failed: {err}"))?;
+    Ok(PersistedHandoffRecord {
+        schema_version: HANDOFF_SCHEMA_VERSION,
+        ..record
+    })
 }
 
 pub(super) fn persist_handoff_record(record: &PersistedHandoffRecord) -> Result<(), String> {
@@ -144,6 +178,12 @@ pub(super) fn persist_handoff_record(record: &PersistedHandoffRecord) -> Result<
 
 pub(super) fn remove_handoff_record() -> Result<(), String> {
     remove_file_if_exists(&handoff_path()?)
+}
+
+pub(crate) fn active_provider_snapshot_id() -> Result<Option<String>, String> {
+    Ok(load_handoff_record()?
+        .and_then(|record| record.provider_snapshot_id)
+        .filter(|snapshot_id| !snapshot_id.trim().is_empty()))
 }
 
 pub(super) fn cc_session_store_candidates(
@@ -247,6 +287,7 @@ fn object_field_mut<'a>(
 pub(super) fn inject_handoff_session(
     document: &mut Value,
     platform_session_key: &str,
+    agent: CcConnectAgent,
     cli_session_id: &str,
     session_title: Option<&str>,
 ) -> Result<(String, Option<String>), String> {
@@ -279,7 +320,7 @@ pub(super) fn inject_handoff_session(
             "id": cc_session_id,
             "name": name,
             "agent_session_id": cli_session_id,
-            "agent_type": "codex",
+            "agent_type": agent.session_type(),
             "history": [],
             "created_at": now,
             "updated_at": now
@@ -520,6 +561,7 @@ mod tests {
         let (session_id, previous) = inject_handoff_session(
             &mut document,
             "telegram:10:10",
+            CcConnectAgent::Codex,
             "thread-123",
             Some("Dinner task"),
         )
@@ -544,6 +586,125 @@ mod tests {
         assert_eq!(document["active_session"]["telegram:10:10"], "s2");
         assert_eq!(document["user_sessions"]["telegram:10:10"], json!(["s2"]));
         assert_eq!(document["custom_field"]["keep"], true);
+    }
+
+    #[test]
+    fn injected_handoff_session_uses_the_selected_agent_type() {
+        for (agent, expected) in [
+            (CcConnectAgent::Claude, "claudecode"),
+            (CcConnectAgent::Codex, "codex"),
+            (CcConnectAgent::Pi, "pi"),
+            (CcConnectAgent::Opencode, "opencode"),
+        ] {
+            let mut document = json!({});
+            let (session_id, _) = inject_handoff_session(
+                &mut document,
+                "telegram:10:10",
+                agent,
+                "agent-session",
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                document["sessions"][&session_id]["agent_type"].as_str(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_handoff_record_defaults_to_codex_without_a_snapshot() {
+        let record = parse_handoff_record(
+            &json!({
+                "schemaVersion": 1,
+                "localSessionId": "local-session",
+                "cliSessionId": "cli-session",
+                "projectId": "project-1",
+                "projectName": "Project",
+                "worktreeId": null,
+                "worktreeName": null,
+                "workDir": "F:/repo",
+                "providerId": null,
+                "providerName": "Global",
+                "providerIsGlobal": true,
+                "platform": "telegram",
+                "platformSessionKey": "telegram:1:1",
+                "ccSessionId": "s1",
+                "sessionFilePath": "F:/data/session.json",
+                "previousActiveSessionId": null,
+                "sourceProjectId": "source-1",
+                "sourceProjectName": "Source",
+                "sourceProjectPath": "F:/source",
+                "startedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(record.agent, CcConnectAgent::Codex);
+        assert_eq!(record.provider_snapshot_id, None);
+    }
+
+    #[test]
+    fn current_handoff_record_requires_an_explicit_agent() {
+        let error = parse_handoff_record(
+            &json!({
+                "schemaVersion": HANDOFF_SCHEMA_VERSION,
+                "localSessionId": "local-session",
+                "cliSessionId": "cli-session",
+                "projectId": "project-1",
+                "projectName": "Project",
+                "worktreeId": null,
+                "worktreeName": null,
+                "workDir": "F:/repo",
+                "providerId": null,
+                "providerName": "Global",
+                "providerIsGlobal": true,
+                "platform": "telegram",
+                "platformSessionKey": "telegram:1:1",
+                "ccSessionId": "s1",
+                "sessionFilePath": "F:/data/session.json",
+                "previousActiveSessionId": null,
+                "sourceProjectId": "source-1",
+                "sourceProjectName": "Source",
+                "sourceProjectPath": "F:/source",
+                "startedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap_err();
+        assert!(error.contains("missing field `agent`"));
+    }
+
+    #[test]
+    fn current_handoff_record_rejects_an_unknown_agent() {
+        let error = parse_handoff_record(
+            &json!({
+                "schemaVersion": HANDOFF_SCHEMA_VERSION,
+                "agent": "unknown",
+                "localSessionId": "local-session",
+                "cliSessionId": "cli-session",
+                "projectId": "project-1",
+                "projectName": "Project",
+                "worktreeId": null,
+                "worktreeName": null,
+                "workDir": "F:/repo",
+                "providerId": null,
+                "providerName": "Global",
+                "providerIsGlobal": true,
+                "platform": "telegram",
+                "platformSessionKey": "telegram:1:1",
+                "ccSessionId": "s1",
+                "sessionFilePath": "F:/data/session.json",
+                "previousActiveSessionId": null,
+                "sourceProjectId": "source-1",
+                "sourceProjectName": "Source",
+                "sourceProjectPath": "F:/source",
+                "startedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap_err();
+        assert!(error.contains("unknown variant"));
     }
 
     #[test]

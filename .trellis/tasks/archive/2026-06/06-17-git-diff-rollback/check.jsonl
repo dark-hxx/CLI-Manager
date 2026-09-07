@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量、一致性与类型检查基线"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "破坏性回滚操作的安全验收：路径越界、二次确认、未跟踪排除"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核对是否复用现有 TERM 配色/确认弹窗等，避免重复造轮子"}

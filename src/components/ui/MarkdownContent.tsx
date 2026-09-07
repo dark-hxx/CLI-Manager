@@ -1,6 +1,9 @@
-import { Component, memo, useMemo, type ReactNode } from "react";
+import { Component, memo, useMemo, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { PrismAsyncLight as SyntaxHighlighter } from "react-syntax-highlighter";
 import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
@@ -17,6 +20,7 @@ import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/pris
 import { cn } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { createMarkdownHeadingId } from "@/lib/markdownNavigation";
 
 SyntaxHighlighter.registerLanguage("bash", bash);
 SyntaxHighlighter.registerLanguage("sh", bash);
@@ -52,7 +56,8 @@ const supportsRegExpLookbehind = (() => {
     return false;
   }
 })();
-const remarkPlugins = supportsRegExpLookbehind ? [remarkGfm] : [];
+const remarkPlugins = supportsRegExpLookbehind ? [remarkGfm, remarkMath] : [];
+const rehypePlugins = [rehypeKatex];
 
 export type MarkdownVariant = "default" | "terminal";
 export type MarkdownLinkBehavior = "preview" | "open";
@@ -64,6 +69,7 @@ export interface MarkdownContentProps {
   variant?: MarkdownVariant;
   linkBehavior?: MarkdownLinkBehavior;
   terminalCodeTheme?: "light" | "dark";
+  onLinkActivate?: (href: string) => void;
   className?: string;
 }
 
@@ -172,10 +178,6 @@ function makeLink(
         href={href}
         title={title ?? href}
         aria-label={`打开链接：${extractPlainText(children) || href}`}
-        onClick={(e) => {
-          e.preventDefault();
-          openMarkdownUrl(href);
-        }}
       >
         {renderText(children, query)}
       </a>
@@ -197,18 +199,7 @@ const makeComponents = (
 ): Components => {
   const headingCounts = new Map<string, number>();
 
-  const makeHeadingId = (children: ReactNode) => {
-    const raw = extractPlainText(children).trim().toLowerCase();
-    const base =
-      raw
-        .replace(/[^\p{L}\p{N}\s-]/gu, "")
-        .replace(/\s+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "") || "heading";
-    const count = headingCounts.get(base) ?? 0;
-    headingCounts.set(base, count + 1);
-    return count === 0 ? base : `${base}-${count + 1}`;
-  };
+  const makeHeadingId = (children: ReactNode) => createMarkdownHeadingId(extractPlainText(children), headingCounts);
 
   return {
   h1({ children, className }) {
@@ -443,8 +434,10 @@ export const MarkdownContent = memo(function MarkdownContent({
   variant = "default",
   linkBehavior = variant === "terminal" ? "open" : "preview",
   terminalCodeTheme,
+  onLinkActivate,
   className,
 }: MarkdownContentProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const resolvedTheme = useSettingsStore((s) => s.resolvedTheme);
   const codeTheme = useMemo<MarkdownCodeTheme>(() => {
     if (variant === "terminal") {
@@ -453,17 +446,55 @@ export const MarkdownContent = memo(function MarkdownContent({
     return resolvedTheme === "dark" ? oneDark : oneLight;
   }, [resolvedTheme, terminalCodeTheme, variant]);
 
+  const activateAnchor = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const anchor = event.target instanceof Element ? event.target.closest("a") : null;
+    if (!anchor || !event.currentTarget.contains(anchor)) return;
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+    event.preventDefault();
+    if (href.startsWith("#")) {
+      const rawFragment = href.slice(1);
+      let fragment: string;
+      try {
+        fragment = decodeURIComponent(rawFragment);
+      } catch {
+        return;
+      }
+      const root = rootRef.current;
+      if (!root) return;
+      const target = Array.from(root.querySelectorAll<HTMLElement>("[id]"))
+        .find((candidate) => candidate.id === fragment);
+      if (target) target.scrollIntoView({ block: "start" });
+      else if (!fragment) root.scrollIntoView({ block: "start" });
+      else if (onLinkActivate) onLinkActivate(href);
+      return;
+    }
+    if (onLinkActivate) onLinkActivate(href);
+    else if (linkBehavior === "open") openMarkdownUrl(href);
+  };
+
   return (
     <div
+      ref={rootRef}
       className={cn(
         "ui-markdown text-xs text-text-primary",
         variant === "terminal" && "ui-markdown-terminal",
         compact && "ui-markdown-compact",
         className
       )}
+      onClick={activateAnchor}
+      onContextMenu={(event) => {
+        if (!event.ctrlKey) return;
+        activateAnchor(event);
+      }}
     >
       <MarkdownRenderBoundary content={content}>
-        <Markdown remarkPlugins={remarkPlugins} components={makeComponents(query, linkBehavior, codeTheme)} skipHtml>
+        <Markdown
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          components={makeComponents(query, linkBehavior, codeTheme)}
+          skipHtml
+        >
           {content}
         </Markdown>
       </MarkdownRenderBoundary>

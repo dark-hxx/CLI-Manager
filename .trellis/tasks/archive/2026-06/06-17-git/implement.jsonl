@@ -1,7 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index and applicable checklist for terminal UI changes."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"React component conventions and terminal drag/layout UI patterns."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Decide local vs global/persisted state for side panel width and tab selection with minimal collision."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Terminal UI verification expectations and forbidden performance patterns."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index and pre-modification rule."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing scrollbar, panel, and drag/collapse patterns instead of duplicating divergent styles."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Confirm this remains a frontend-only change and avoid backend/data contract edits."}

@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Confirm shortcut fix does not introduce manual terminal buffer scanning or hot UI scans."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Keep shortcut handling minimal and aligned with existing keyboard handling."}

@@ -1,0 +1,29 @@
+{
+  "id": "pi",
+  "name": "pi",
+  "title": "[未解决] 修复 Pi 有字与缩放后输入法右漂",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-07-30",
+  "completedAt": "2026-08-07",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "2026-07-30 Windows Pi 人工复测仍失败：首次 composition 正常，候选上屏后第二次输入仍漂到最右侧且只显示一个字符。保留本次实现与回归作为后续诊断基础，不得视为已修复或已验收。",
+  "meta": {
+    "resolution": "unresolved",
+    "blockedReason": "现有自动回归全部通过，但无法复现 Windows 原生 IME 与 xterm/Pi 的真实连续 composition 行为；用户人工验收仍失败。"
+  }
+}

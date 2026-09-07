@@ -1,0 +1,25 @@
+{
+  "id": "fix-osc52-host-clipboard",
+  "name": "fix-osc52-host-clipboard",
+  "title": "SSH / 全屏 TUI OSC 52 写入本机剪贴板",
+  "description": "拦截 OSC 52 与 tmux DCS，写入 Tauri 本机剪贴板；补查询回包、安全开关、Ctrl+Shift+C 与选区策略。",
+  "status": "in_progress",
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-08-17",
+  "completedAt": null,
+  "branch": "fix/osc52-host-clipboard",
+  "base_branch": "master",
+  "pr_url": null,
+  "relatedFiles": [
+    "src/lib/terminalOscParse.ts",
+    "src/hooks/useTerminalOsc.ts",
+    "src/hooks/useTerminalDisplay.ts",
+    "src/components/XTermTerminal.tsx",
+    "src/App.tsx",
+    "src/terminal/browser/TerminalMouseInteraction.ts",
+    "src/stores/settingsStore.ts"
+  ],
+  "notes": "Refs #211"
+}

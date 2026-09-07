@@ -123,6 +123,70 @@ function GitChangesPanel() {
 
 **Required check**: Verify the header, title, maximum summary line count, metadata row, gaps, and vertical padding fit without flex shrink at every supported canvas zoom level.
 
+### Preserve the workspace background at shell boundaries
+
+When `WorkspaceBackground` is active (`data-workspace-background="true"`), normal workspace-level shells must use `background: transparent !important` so the single shared image remains visible through utility classes, Mantine defaults, and component surface rules. Settings and History are intentional opaque-page exceptions; Statistics remains an image-capable page. Do not use a high-opacity `color-mix` as a shell fallback for a page intended to expose the image: in the light theme it is visually opaque and hides the background.
+
+Keep readability surfaces on cards, fields, menus, dialogs, and other interactive content. Any settings/statistics page must carry the active marker through `useWorkspaceBackground`; image or opaque selectors must be scoped to that marker so `fillWorkspace=false` retains terminal-only behavior. Add a static regression assertion for each new shell boundary.
+
+### Convention: File and Git path copy menus share one formatter
+
+**What**: File explorer and Git change tree context menus must expose absolute-path copy as the primary action and put AI-path and project-relative formats under the shared `PathCopyMenu` component. Absolute paths use the active local project root or SSH `remote_path`; nested Git repositories use the active repository root.
+
+**Why**: The same relative file path can be displayed by the file tree, search results, or Git tree. Duplicating path joining in each menu causes local/SSH and nested-repository paths to diverge.
+
+**Correct**:
+
+```tsx
+<PathCopyMenu project={project} relativePath={entry.path} kind={entry.kind} />
+```
+
+**Wrong**:
+
+```tsx
+<ContextMenuItem onSelect={() => navigator.clipboard.writeText(project.path + entry.path)}>
+  Copy path
+</ContextMenuItem>
+```
+
+**Contracts**:
+
+- Relative paths use `/` internally and the root is represented as `.`.
+- AI paths continue through `formatAiPathBlock`; directory trailing-slash behavior remains unchanged.
+- Absolute path copy uses `project.path` for local/WSL projects and `project.remote_path` for SSH projects.
+
+### Convention: Path format choices replace the parent menu in place
+
+**What**: Selecting `Copy path as` must switch the existing context-menu content to a two-item format menu. Do not use a Radix `ContextMenuSub` for this interaction, because the default submenu keeps the parent menu visible beside the child.
+
+**Why**: The file-panel requirement is a single replacement menu, not a persistent parent/child menu pair. A Portal can solve clipping but cannot change that interaction model.
+
+**Correct**:
+
+```tsx
+<ContextMenuItem
+  onSelect={(event) => {
+    event.preventDefault();
+    setShowFormats(true);
+  }}
+>
+  <Copy /> <span>Copy path as</span> <ChevronRight />
+</ContextMenuItem>
+```
+
+The replacement keeps `context-menu file-explorer-menu`, removes the old sibling items from layout, and focuses its first item after the branch swap. AI and relative choices use distinct existing semantic icons.
+
+**Wrong**:
+
+```tsx
+<ContextMenuSub>
+  <ContextMenuSubTrigger>复制路径为</ContextMenuSubTrigger>
+  <ContextMenuSubContent>...</ContextMenuSubContent>
+</ContextMenuSub>
+```
+- Clipboard success and failure messages must use i18n keys in both supported UI languages.
+- Radix submenus must render through `ContextMenuPrimitive.Portal`; custom sidebar menu containers may have `overflow-x-hidden` and must not clip nested menus.
+
 ---
 
 ## Testing Requirements

@@ -1,7 +1,7 @@
-import { useCallback, useMemo, type KeyboardEvent } from "react";
+import { useCallback, type KeyboardEvent } from "react";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import type { GitDiffOptions } from "../../../lib/gitDiffOptions";
-import { getTerminalTheme, isLightTerminalTheme } from "../../../lib/terminalThemes";
+import { useTerminalPreviewTheme } from "../../../hooks/useTerminalPreviewTheme";
 import type { GitDiffViewMode } from "../../../stores/settingsStore";
 import { GitDiffContent } from "./GitDiffContent";
 import { GitDiffHeader } from "./GitDiffHeader";
@@ -44,19 +44,8 @@ export function GitDiffViewer({
   review,
 }: GitDiffViewerProps) {
   const resolvedTheme = useSettingsStore((state) => state.resolvedTheme);
-  const terminalThemeName = useSettingsStore((state) => state.terminalThemeName);
-  const lightThemePalette = useSettingsStore((state) => state.lightThemePalette);
-  const darkThemePalette = useSettingsStore((state) => state.darkThemePalette);
-  const terminalThemeTone = useMemo(() => {
-    const theme = getTerminalTheme(
-      terminalThemeName,
-      resolvedTheme,
-      lightThemePalette,
-      darkThemePalette,
-    );
-    return isLightTerminalTheme(theme) ? "light" : "dark";
-  }, [darkThemePalette, lightThemePalette, resolvedTheme, terminalThemeName]);
-  const viewerThemeTone = useTerminalTheme ? terminalThemeTone : resolvedTheme;
+  const { tone: terminalPreviewTone, panelStyle: terminalPreviewPanelStyle } = useTerminalPreviewTheme();
+  const viewerThemeTone = useTerminalTheme ? terminalPreviewTone : resolvedTheme;
   const handleReverted = useCallback(() => {
     onReverted?.();
     if (closeOnRevert) onClose?.();
@@ -103,7 +92,9 @@ export function GitDiffViewer({
       data-git-diff-tone={viewerThemeTone}
       data-git-diff-wrap={wrapLines}
       data-theme-mode={viewerThemeTone}
-      style={useTerminalTheme ? TERMINAL_DIFF_ROOT_STYLE : DEFAULT_DIFF_ROOT_STYLE}
+      style={useTerminalTheme
+        ? { ...terminalPreviewPanelStyle, ...TERMINAL_DIFF_ROOT_STYLE }
+        : DEFAULT_DIFF_ROOT_STYLE}
       tabIndex={review ? 0 : undefined}
       onKeyDown={handleKeyDown}
     >

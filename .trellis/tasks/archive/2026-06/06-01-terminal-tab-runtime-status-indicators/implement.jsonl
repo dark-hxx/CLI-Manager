@@ -1,7 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend layer overview for tab UI, settings UI, and Zustand store changes."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Component structure and UI implementation guidance for TerminalTabs and settings page changes."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand state management conventions for runtime status and settings state."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript strict typing guidance for new status unions and settings fields."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend layer overview for PTY and Tauri command changes."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer coordination guidance because status events flow from Rust PTY/hooks to React UI."}
-{"file":".trellis/tasks/06-01-terminal-tab-runtime-status-indicators/research/shell-lifecycle-monitoring.md","reason":"Research findings for PowerShell/pwsh lifecycle monitoring injection and state mapping."}

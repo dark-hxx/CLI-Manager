@@ -1,2 +1,0 @@
-{"type":"spec","path":"src/stores/historyStore.ts","reason":"验证 fetchLatestProjectSessionDetail 新增 tabId 参数和映射逻辑"}
-{"type":"spec","path":"src/components/terminal/TerminalStatsPanel.tsx","reason":"验证传入 tabId、切换 Tab 时清空数据、映射维护逻辑"}

@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality and i18n checklist for Git UI changes"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify user-facing Git UI uses zh-CN/en-US i18n keys"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify frontend diagnostics/performance and static checks"}
-{"file": ".trellis/spec/backend/git-status-contracts.md", "reason": "Verify backend Git changes preserve existing status contracts"}
-{"file": ".trellis/spec/guides/task-delivery-checklist.md", "reason": "Verify changelog and feature inventory are updated for V1.2.6"}
-{"file": ".trellis/tasks/07-07-git-feature-enhancement-v1-2-6/research/jetbrains-git-comparison.md", "reason": "Verify implementation matches agreed Stage A scope and defers Stage B/C features"}

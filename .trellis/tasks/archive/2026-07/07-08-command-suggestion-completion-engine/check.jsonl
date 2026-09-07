@@ -1,5 +1,0 @@
-{"file":".trellis/spec/backend/command-suggestion-contracts.md","reason":"Updated to cover path suggestion command contracts and validation/error behavior."}
-{"file":"npx tsc --noEmit","reason":"Passed frontend type check."}
-{"file":"cd src-tauri && cargo test command_suggestion","reason":"Passed targeted Rust command suggestion tests, including path listing and directory resolution."}
-{"file":"cd src-tauri && cargo check","reason":"Passed Rust compile check."}
-{"file":"git diff --check -- <task files>","reason":"Passed whitespace/conflict-marker check for task files."}

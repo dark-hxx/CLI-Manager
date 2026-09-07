@@ -405,7 +405,23 @@ export function getNextSessionIdForShortcut(tree: TerminalPaneNode | null, activ
 
   if (activePane && activePane.sessionIds.length > 1) {
     const index = Math.max(0, activePane.sessionIds.indexOf(activeSessionId ?? activePane.activeSessionId ?? activePane.sessionIds[0]));
-    return activePane.sessionIds[(index + delta + activePane.sessionIds.length) % activePane.sessionIds.length];
+    const nextIndex = index + delta;
+
+    // 当前 pane 内仍有相邻 tab：正常切换（最常见路径）
+    if (nextIndex >= 0 && nextIndex < activePane.sessionIds.length) {
+      return activePane.sessionIds[nextIndex];
+    }
+
+    // 仅一个 pane（未分屏）：保持原有"循环 tab"行为不变，避免回归
+    if (leaves.length === 1) {
+      return activePane.sessionIds[(nextIndex + activePane.sessionIds.length) % activePane.sessionIds.length];
+    }
+
+    // 多 pane（分屏布局）：到达当前 pane 边界后溢出到相邻 pane，
+    // 而不是绕回当前 pane 开头 —— 否则 alt+左右永远切不出当前分屏窗口。
+    const paneIndex = leaves.findIndex((pane) => pane.id === activePane.id);
+    const nextPane = leaves[(paneIndex + delta + leaves.length) % leaves.length];
+    return nextPane.activeSessionId ?? nextPane.sessionIds[0] ?? null;
   }
 
   const paneIndex = Math.max(0, activePane ? leaves.findIndex((pane) => pane.id === activePane.id) : 0);

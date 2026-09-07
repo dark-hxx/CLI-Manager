@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Command, Fish, GitBranch, Shell as ShellGlyph, Terminal } from "lucide-react";
+import cmdIcon from "../assets/shell/cmd.svg";
+import gitBashIcon from "../assets/shell/git-bash.svg";
+import powershell7Icon from "../assets/shell/powershell-7.svg";
+import powershellIcon from "../assets/shell/powershell.svg";
+import wslIcon from "../assets/shell/wsl.svg";
 import { normalizeShellKey, type ShellKey } from "../lib/shell";
 import { cn } from "../lib/utils";
 
@@ -8,6 +13,13 @@ type ShellIconKey = ShellKey | "nushell";
 
 const shellIconCache = new Map<string, string | null>();
 const shellIconRequests = new Map<string, Promise<string | null>>();
+const bundledShellIcons: Partial<Record<ShellIconKey, string>> = {
+  powershell: powershellIcon,
+  pwsh: powershell7Icon,
+  cmd: cmdIcon,
+  gitbash: gitBashIcon,
+  wsl: wslIcon,
+};
 
 interface ShellIconProps {
   shell?: string | null;
@@ -87,14 +99,15 @@ function useShellIcon(command: string): string | undefined {
 
 export function ShellIcon({ shell, size = 16, className }: ShellIconProps) {
   const command = shell?.trim() ?? "";
-  const loadedIcon = useShellIcon(command);
   const iconKey = inferShellIconKey(shell);
+  const bundledIcon = iconKey ? bundledShellIcons[iconKey] : undefined;
+  const loadedIcon = useShellIcon(bundledIcon ? "" : command);
   const iconClassName = cn("shrink-0", className);
 
-  if (loadedIcon) {
+  if (bundledIcon || loadedIcon) {
     return (
       <img
-        src={loadedIcon}
+        src={bundledIcon ?? loadedIcon}
         alt=""
         aria-hidden="true"
         className={cn("shrink-0 object-contain", className)}

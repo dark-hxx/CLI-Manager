@@ -158,6 +158,17 @@ fn validate_payload(tool: StatuslineProfileTool, payload: &Value) -> Result<(), 
     Ok(())
 }
 
+fn validate_stored_payload(tool: StatuslineProfileTool, payload: &Value) -> Result<(), String> {
+    match tool {
+        StatuslineProfileTool::Claude => validate_payload(tool, payload),
+        // Keep unknown external Codex ids in the profile snapshot so the editor can remove them;
+        // applying or saving still uses validate_payload for strict validation.
+        StatuslineProfileTool::Codex => serde_json::from_value::<Vec<String>>(payload.clone())
+            .map(|_| ())
+            .map_err(|_| "statusline_profile_invalid_codex".to_string()),
+    }
+}
+
 fn actual_payload(
     tool: StatuslineProfileTool,
     config_dir: Option<String>,
@@ -205,7 +216,7 @@ fn initial_profile(
     config_dir: Option<String>,
 ) -> Result<ToolProfiles, String> {
     let payload = actual_payload(tool, config_dir)?;
-    validate_payload(tool, &payload)?;
+    validate_stored_payload(tool, &payload)?;
     let now = now_millis();
     let id = new_id();
     Ok(ToolProfiles {
@@ -220,6 +231,16 @@ fn initial_profile(
     })
 }
 
+fn canonicalize_codex_profiles(library: &mut ProfileLibrary) -> Result<(), String> {
+    for profile in &mut library.codex.profiles {
+        let items = serde_json::from_value::<Vec<String>>(profile.payload.clone())
+            .map_err(|_| "statusline_profile_invalid_codex".to_string())?;
+        profile.payload = serde_json::to_value(codex_statusline::canonicalize_items(items))
+            .map_err(|err| format!("statusline_profiles_serialize_failed: {err}"))?;
+    }
+    Ok(())
+}
+
 fn load_library(config_dir: Option<String>) -> Result<ProfileLibrary, String> {
     let path = library_path()?;
     if !path.exists() {
@@ -232,7 +253,7 @@ fn load_library(config_dir: Option<String>) -> Result<ProfileLibrary, String> {
         save_library(&library)?;
         return Ok(library);
     }
-    let library: ProfileLibrary = serde_json::from_str(
+    let mut library: ProfileLibrary = serde_json::from_str(
         &fs::read_to_string(path)
             .map_err(|err| format!("statusline_profiles_read_failed: {err}"))?,
     )
@@ -240,6 +261,7 @@ fn load_library(config_dir: Option<String>) -> Result<ProfileLibrary, String> {
     if library.version != LIBRARY_VERSION {
         return Err("statusline_profiles_unsupported_version".to_string());
     }
+    canonicalize_codex_profiles(&mut library)?;
     validate_library(&library)?;
     Ok(library)
 }
@@ -259,7 +281,7 @@ fn validate_library(library: &ProfileLibrary) -> Result<(), String> {
         }
         for profile in &section.profiles {
             validate_name(&profile.name)?;
-            validate_payload(tool, &profile.payload)?;
+            validate_stored_payload(tool, &profile.payload)?;
         }
     }
     Ok(())
@@ -720,6 +742,16 @@ mod tests {
                 &serde_json::json!(["unknown-item"])
             )
             .unwrap_err(),
+            "codex_statusline_unknown_item"
+        );
+    }
+
+    #[test]
+    fn keeps_unknown_codex_items_in_stored_profiles_for_removal() {
+        let payload = serde_json::json!(["thread-name"]);
+        assert!(validate_stored_payload(StatuslineProfileTool::Codex, &payload).is_ok());
+        assert_eq!(
+            validate_payload(StatuslineProfileTool::Codex, &payload).unwrap_err(),
             "codex_statusline_unknown_item"
         );
     }

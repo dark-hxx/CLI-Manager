@@ -22,10 +22,16 @@ import {
   hasDataTransferType,
 } from "../lib/terminalClipboardImage";
 import {
+  appendTerminalFileDragSeparator,
   endTerminalFileDrag,
   getTerminalFileDropZoneIdAtPoint,
+  getTerminalFileDragPayload,
   getTerminalFileDragText,
+  parseTerminalFileDragPayload,
+  markTerminalFileDragPanelSyncSuppression,
   registerTerminalDropZone,
+  TERMINAL_FILE_DRAG_MIME,
+  type TerminalFileDragPayload,
   updateTerminalFileDragPointFromEvent,
 } from "../lib/terminalFileDrag";
 import {
@@ -48,6 +54,10 @@ import {
   type TerminalImeTextareaAnchorResolver,
 } from "../lib/terminalIme";
 import {
+  createTerminalImeInputDeduper,
+  type TerminalInputSource,
+} from "../lib/terminalImeInputDedup";
+import {
   clampTextCursorIndex,
   getTextCursorLength,
   insertTextAtCursor,
@@ -60,7 +70,8 @@ import { TUI_BORDER_CHAR_PATTERN, TUI_COMPOSER_PROMPT_PATTERN } from "../lib/ter
 import { logError } from "../lib/logger";
 import { translateCurrent } from "../lib/i18n";
 import { defaultShellForOs } from "../lib/shell";
-import { sshRemoteAttachFiles } from "../lib/sshRemoteFiles";
+import { sshRemoteAttachFilesForSession } from "../lib/sshRemoteFiles";
+import { resolveCliToolImagePasteMode, type ImagePasteMode } from "../lib/cliTools";
 import type { OsPlatform } from "../lib/shell";
 import { formatShellPathList, normalizeShellForKnownOs } from "../lib/terminalShellPath";
 import type { CommandHistoryEntry, CommandTemplate, TerminalSession } from "../lib/types";
@@ -70,11 +81,11 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 import { useTemplateStore } from "../stores/templateStore";
 import { useTerminalStore } from "../stores/terminalStore";
+import { findProjectByPath, isSameProjectFileLocation, projectWithWorktreePath } from "../lib/terminalProject";
 
 const SUGGESTION_CONTEXT_CACHE_TTL_MS = 2_000;
 const SUGGESTION_LOCAL_DEBOUNCE_MS = 80;
 const SUGGESTION_AI_DEBOUNCE_MS = 400;
-const IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS = 80;
 
 const remoteAttachmentErrorDescription = (error: unknown) => {
   const code = String(error);
@@ -90,8 +101,23 @@ const remoteAttachmentErrorDescription = (error: unknown) => {
   if (code.includes("attachment_too_large")) {
     return translateCurrent("terminal.attachment.tooLarge");
   }
-  if (code.includes("ssh_project_configuration_invalid")) {
-    return translateCurrent("terminal.attachment.sshProjectRequired");
+  if (code.includes("attachment_local_file_unavailable")) {
+    return translateCurrent("terminal.attachment.localFileUnavailable");
+  }
+  if (code.includes("clipboard_image_unsupported")) {
+    return translateCurrent("terminal.attachment.imageUnsupported");
+  }
+  if (code.includes("clipboard_image_tool_unsupported")) {
+    return translateCurrent("terminal.attachment.imageToolUnsupported");
+  }
+  if (code.includes("clipboard_image_too_large") || code.includes("image_dimensions_too_large")) {
+    return translateCurrent("terminal.attachment.imageTooLarge");
+  }
+  if (code.includes("ssh_attachment_root_") || code.includes("attachment_root_invalid")) {
+    return translateCurrent("terminal.attachment.sshAttachmentRootInvalid");
+  }
+  if (code.includes("ssh_terminal_context_invalid") || code.includes("ssh_project_configuration_invalid")) {
+    return translateCurrent("terminal.attachment.sshSessionContextRequired");
   }
   return translateCurrent("terminal.attachment.failedDescription", { error: code });
 };
@@ -140,8 +166,6 @@ interface TerminalInputSelectionOptions {
   reportPtyWriteError: (stage: string, err: unknown) => void;
 }
 
-export type TerminalInputSource = "onData" | "nativeTextInput";
-
 interface TerminalInputForwardingOptions {
   selection: TerminalInputSelectionController;
   osPlatformRef: RefObject<OsPlatform>;
@@ -149,11 +173,14 @@ interface TerminalInputForwardingOptions {
   reportPtyWriteError: (stage: string, err: unknown) => void;
   updateSessionCwdIfChanged: (cwd: string | null) => void;
   onInputForwarded: (data: string) => void;
+  onCommandSubmitted?: (command: string) => void;
 }
 
 export interface TerminalInputForwardingController {
   dispose: () => void;
   forwardTerminalInput: (data: string, source: TerminalInputSource) => void;
+  noteImeProcessKey: (at: number) => void;
+  resetImeInputDedup: () => void;
 }
 
 interface TerminalInputImeOptions {
@@ -194,6 +221,7 @@ export interface UseTerminalInputResult {
   attachPasteAndDrop: (terminal: Terminal) => () => void;
   pasteText: (terminal: Terminal, text: string) => void;
   readClipboardPasteText: () => Promise<string>;
+  readClipboardImagePasteText: () => Promise<string>;
   attachSelection: (
     terminal: Terminal,
     options: TerminalInputSelectionOptions,
@@ -750,27 +778,18 @@ export function useTerminalInput({
       reportPtyWriteError,
       updateSessionCwdIfChanged,
       onInputForwarded,
+      onCommandSubmitted,
     }: TerminalInputForwardingOptions,
   ): TerminalInputForwardingController => {
-    let lastForwardedTerminalInput: { data: string; source: TerminalInputSource; at: number } | null = null;
-    const isImeDuplicateCandidate = (data: string) => {
-      if (!data || data === "\r" || data === "\x7f" || data === "\b" || data.startsWith("\x1b")) return false;
-      const normalized = data.replace(/\r\n?/g, "\n");
-      return Boolean(normalized.trim()) && /[^\x00-\x7f]/.test(normalized);
-    };
-    const shouldDropCrossSourceImeDuplicate = (data: string, source: TerminalInputSource, now: number) => {
-      if (!isImeDuplicateCandidate(data) || !lastForwardedTerminalInput) return false;
-      const deltaMs = now - lastForwardedTerminalInput.at;
-      return (
-        lastForwardedTerminalInput.source !== source
-        && lastForwardedTerminalInput.data === data
-        && deltaMs >= 0
-        && deltaMs <= IME_CROSS_SOURCE_DUPLICATE_WINDOW_MS
-      );
-    };
+    const inputDeduper = createTerminalImeInputDeduper({
+      shouldEnableSameSourceProcessKeyDedup: () => (
+        osPlatformRef.current === "macos"
+        || (osPlatformRef.current === "unknown" && navigator.platform.toLowerCase().includes("mac"))
+      ),
+    });
     const forwardTerminalInput = (data: string, source: TerminalInputSource) => {
       const now = performance.now();
-      if (shouldDropCrossSourceImeDuplicate(data, source, now)) return;
+      if (!inputDeduper.shouldForward(data, source, now)) return;
 
       markAttentionInputHandled();
       const replacingSelectedInput = selection.consumeSelectedInputForReplacement(data);
@@ -785,7 +804,9 @@ export function useTerminalInput({
         os: osPlatformRef.current,
       });
       const ptyData = manualDirectCodexOverride ?? data;
-      lastForwardedTerminalInput = { data, source, at: now };
+      if (data === "\r") {
+        onCommandSubmitted?.(inputBufferBefore);
+      }
       terminalProcessManager.write(
         sessionId,
         replacingSelectedInput ? replacingSelectedInput + ptyData : ptyData,
@@ -813,6 +834,8 @@ export function useTerminalInput({
         onBinaryDisposable.dispose();
       },
       forwardTerminalInput,
+      noteImeProcessKey: inputDeduper.noteImeProcessKey,
+      resetImeInputDedup: inputDeduper.resetForComposition,
     };
   };
 
@@ -839,6 +862,8 @@ export function useTerminalInput({
       fontSize,
       getTerminalRenderedCellSize,
       forwardNativeInput: (data) => forwarding.forwardTerminalInput(data, "nativeTextInput"),
+      onImeProcessKey: forwarding.noteImeProcessKey,
+      onCompositionStarted: forwarding.resetImeInputDedup,
       clearSuggestion: () => clearSuggestionRef.current(),
       updateSuggestionPosition: () => updateSuggestionGhostPositionRef.current(),
       scheduleFit,
@@ -1147,6 +1172,28 @@ export function useTerminalInput({
     return { session, project };
   };
 
+  const getCurrentTerminalProject = () => {
+    const terminalState = useTerminalStore.getState();
+    const session = terminalState.sessions.find((item) => item.id === sessionId) ?? null;
+    const projectState = useProjectStore.getState();
+    const project = session?.projectId
+      ? projectState.projects.find((item) => item.id === session.projectId) ?? null
+      : findProjectByPath(projectState.projects, session?.cwd);
+    if (!project) return null;
+
+    const worktree = session?.worktreeId
+      ? projectState.worktrees.find((item) => item.id === session.worktreeId && item.project_id === project.id)
+      : null;
+    return worktree ? projectWithWorktreePath(project, worktree) : project;
+  };
+
+  const resolveTerminalFileDragText = (payload: TerminalFileDragPayload) => {
+    const targetProject = getCurrentTerminalProject();
+    return targetProject && isSameProjectFileLocation(payload.source, targetProject)
+      ? payload.text
+      : payload.absolutePath || payload.text;
+  };
+
   const isSshPasteContext = (context: ReturnType<typeof getCurrentPasteContext>) => (
     context.session?.environmentType === "ssh" || context.project?.environment_type === "ssh"
   );
@@ -1156,12 +1203,11 @@ export function useTerminalInput({
     context: ReturnType<typeof getCurrentPasteContext>,
   ): Promise<string[]> => {
     if (!isSshPasteContext(context)) return paths;
-    if (!context.session || !context.project || context.project.environment_type !== "ssh") {
-      throw new Error("ssh_project_configuration_invalid");
+    if (!context.session) {
+      throw new Error("ssh_terminal_context_invalid");
     }
-    return sshRemoteAttachFiles(
-      context.project,
-      context.session.id,
+    return sshRemoteAttachFilesForSession(
+      context.session,
       paths.map((path) => ({ kind: "localPath" as const, path })),
     );
   };
@@ -1174,20 +1220,40 @@ export function useTerminalInput({
     isSshPasteContext(context) ? "bash" : await getShellForPathQuoting(),
   );
 
+  const getImagePasteMode = (context: ReturnType<typeof getCurrentPasteContext>): ImagePasteMode => {
+    const tool = context.session?.cliTool || context.project?.cli_tool;
+    return resolveCliToolImagePasteMode(tool);
+  };
+
+  const formatImagePastedPaths = async (
+    paths: string[],
+    context: ReturnType<typeof getCurrentPasteContext>,
+  ): Promise<string> => {
+    const mode = getImagePasteMode(context);
+    if (mode === "unsupported") throw new Error("clipboard_image_tool_unsupported");
+    const quoted = await formatPastedPaths(paths, context);
+    if (mode === "at") {
+      const shell = await getShellForPathQuoting();
+      return paths.map((path) => `@${formatShellPathList([path], shell)}`).join(" ");
+    }
+    if (mode === "aider") return `/add ${quoted}`;
+    return quoted;
+  };
+
   const savePastedImageForTerminal = async (
     file: File,
     context: ReturnType<typeof getCurrentPasteContext>,
   ): Promise<string | null> => {
-    const { session, project } = context;
+    const { session } = context;
 
     try {
       const fileName = createClipboardImageFileName(file);
       const dataBase64 = arrayBufferToBase64(await file.arrayBuffer());
       if (isSshPasteContext(context)) {
-        if (!session || !project || project.environment_type !== "ssh") {
-          throw new Error("ssh_project_configuration_invalid");
+        if (!session) {
+          throw new Error("ssh_terminal_context_invalid");
         }
-        const [path] = await sshRemoteAttachFiles(project, session.id, [{
+        const [path] = await sshRemoteAttachFilesForSession(session, [{
           kind: "data",
           fileName,
           dataBase64,
@@ -1217,12 +1283,17 @@ export function useTerminalInput({
       return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     };
     const hasTerminalFileDragData = (dataTransfer: DataTransfer | null) => (
-      Boolean(getTerminalFileDragText()) || hasDataTransferType(dataTransfer, TERMINAL_FILE_PATH_MIME)
+      Boolean(getTerminalFileDragPayload())
+      || hasDataTransferType(dataTransfer, TERMINAL_FILE_DRAG_MIME)
+      || hasDataTransferType(dataTransfer, TERMINAL_FILE_PATH_MIME)
     );
     const unregisterTerminalDropZone = registerTerminalDropZone({
       id: sessionId,
       getRect: () => (isVisibleRef.current ? pasteTarget.getBoundingClientRect() : null),
-      paste: pasteIntoTerminal,
+      paste: (payload) => {
+        markTerminalFileDragPanelSyncSuppression();
+        pasteIntoTerminal(appendTerminalFileDragSeparator(resolveTerminalFileDragText(payload)));
+      },
       focus: () => terminal.focus(),
     });
     const onPaste = (event: ClipboardEvent) => {
@@ -1233,8 +1304,11 @@ export function useTerminalInput({
         event.stopPropagation();
         void savePastedImageForTerminal(imageFile, context).then(async (path) => {
           if (!path) return;
-          pasteIntoTerminal(await formatPastedPaths([path], context));
+          pasteIntoTerminal(await formatImagePastedPaths([path], context));
           terminal.focus();
+        }).catch((err) => {
+          logError("Failed to format pasted terminal image", { sessionId, err });
+          showAttachmentPasteError(err);
         });
         return;
       }
@@ -1243,7 +1317,7 @@ export function useTerminalInput({
       const text = clipboardData?.getData("text/plain");
 
       // 资源管理器复制文件放入的是 CF_HDROP，WebView 拿不到路径文本。检测到文件提示时
-      // 走原生命令读绝对路径，成功则优先粘路径（读不到再回退文本）。
+      // 走原生命令读绝对路径；SSH 会话无法取得本地路径时不能把本机路径文本发送到远端。
       const hasFileHint = (clipboardData?.files?.length ?? 0) > 0
         || hasDataTransferType(clipboardData ?? null, "Files");
       if (hasFileHint) {
@@ -1256,6 +1330,10 @@ export function useTerminalInput({
               const attachedPaths = await uploadPastedLocalPaths(filePaths, context);
               pasteIntoTerminal(await formatPastedPaths(attachedPaths, context));
               terminal.focus();
+              return;
+            }
+            if (isSshPasteContext(context)) {
+              showAttachmentPasteError(new Error("attachment_local_file_unavailable"));
               return;
             }
             if (text) pasteIntoTerminal(text);
@@ -1288,14 +1366,18 @@ export function useTerminalInput({
     };
     const onDrop = (event: DragEvent) => {
       if (!isPointInsidePasteTarget(event.clientX, event.clientY) || !hasTerminalFileDragData(event.dataTransfer)) return;
-      const text = getTerminalFileDragText()
-        || event.dataTransfer?.getData(TERMINAL_FILE_PATH_MIME)
-        || event.dataTransfer?.getData("text/plain")
-        || "";
+      const payload = getTerminalFileDragPayload()
+        || parseTerminalFileDragPayload(event.dataTransfer?.getData(TERMINAL_FILE_DRAG_MIME));
+      const text = payload
+        ? resolveTerminalFileDragText(payload)
+        : event.dataTransfer?.getData(TERMINAL_FILE_PATH_MIME)
+          || event.dataTransfer?.getData("text/plain")
+          || "";
       event.preventDefault();
       event.stopPropagation();
       if (!text) return;
-      pasteIntoTerminal(text);
+      if (payload) markTerminalFileDragPanelSyncSuppression();
+      pasteIntoTerminal(payload ? appendTerminalFileDragSeparator(text) : text);
       endTerminalFileDrag();
       terminal.focus();
     };
@@ -1413,6 +1495,34 @@ export function useTerminalInput({
     }
   };
 
+  const readClipboardImagePasteText = async (): Promise<string> => {
+    const context = getCurrentPasteContext();
+    try {
+      const imageAttachments = await invoke<{
+        paths: string[];
+        hadFiles: boolean;
+        rejectedCount: number;
+        rejectionCode?: string | null;
+      }>("clipboard_attach_image_files");
+      if (imageAttachments.paths.length > 0) {
+        const attachedPaths = await uploadPastedLocalPaths(imageAttachments.paths, context);
+        return await formatImagePastedPaths(attachedPaths, context);
+      }
+      if (imageAttachments.hadFiles) {
+        throw new Error(imageAttachments.rejectionCode || "clipboard_image_unsupported");
+      }
+
+      const imageFile = await readClipboardImageFile();
+      if (!imageFile) throw new Error("clipboard_image_unsupported");
+      const path = await savePastedImageForTerminal(imageFile, context);
+      return path ? await formatImagePastedPaths([path], context) : "";
+    } catch (err) {
+      logError("Failed to paste clipboard image", { sessionId, err });
+      showAttachmentPasteError(err);
+      return "";
+    }
+  };
+
   return {
     isComposingRef,
     attachInputForwarding,
@@ -1429,6 +1539,7 @@ export function useTerminalInput({
     attachPasteAndDrop,
     pasteText,
     readClipboardPasteText,
+    readClipboardImagePasteText,
     attachSelection,
   };
 }

@@ -134,6 +134,9 @@ export function SyncSettingsPage() {
             onChange={() => setSelectedDomains((current) => current.includes(domain) ? current.filter((item) => item !== domain) : [...current, domain])} />
         ))}
       </Group>
+      {selectedDomains.includes("workspace") && (
+        <Text size="xs" c="var(--on-surface-variant)">{t("settings.sync.backup.appearanceOverwriteNote")}</Text>
+      )}
     </Stack>
   );
   const previewSummary = (preview: BackupSnapshotV3) => t("settings.sync.backup.previewSummary", {
@@ -141,7 +144,17 @@ export function SyncSettingsPage() {
     worktrees: preview.data.workspace.worktrees.length, templates: preview.data.workspace.commandTemplates.length,
     settings: Object.keys(preview.data.preferences).length, prices: preview.data.modelPrices.length,
     targets: preview.data.notifications.targets.length,
+    nativeProviders: preview.data.nativeProviders?.length ?? 0,
+    nativeKeys: preview.data.nativeProviders?.filter((provider) => provider.keyReentryRequired).length ?? 0,
   });
+  const providerReentryNote = (preview: BackupSnapshotV3) => {
+    const providers = preview.data.nativeProviders ?? [];
+    if (providers.length === 0) return null;
+    return t("settings.sync.backup.nativeProviderReentry", {
+      providers: providers.length,
+      keys: providers.filter((provider) => provider.keyReentryRequired).length,
+    });
+  };
 
   return (
     <Stack gap="md">
@@ -233,12 +246,12 @@ export function SyncSettingsPage() {
 
       <Modal opened={Boolean(selectedSnapshot)} onClose={() => { setSelectedSnapshot(null); setSelectedPreview(null); }} title={t("settings.sync.backup.confirmRestore")} centered>
         <Stack gap="md">
-          {selectedPreview && <Card className="bg-surface-container-low" p="sm" radius="lg"><Text size="sm">{previewSummary(selectedPreview)}</Text></Card>}
+          {selectedPreview && <Card className="bg-surface-container-low" p="sm" radius="lg"><Text size="sm">{previewSummary(selectedPreview)}</Text>{providerReentryNote(selectedPreview) && <Text size="xs" c="dimmed" mt={4}>{providerReentryNote(selectedPreview)}</Text>}</Card>}
           {domainSelector}<Text size="sm" c="var(--on-surface-variant)">{t("settings.sync.backup.restoreSafetyNote")}</Text><Group justify="flex-end"><Button variant="default" onClick={() => { setSelectedSnapshot(null); setSelectedPreview(null); }}>{t("common.cancel")}</Button><Button color="red" disabled={selectedDomains.length === 0} onClick={() => void restoreCloud()}>{t("settings.sync.backup.confirm")}</Button></Group>
         </Stack>
       </Modal>
       <Modal opened={Boolean(localImportPath)} onClose={() => { setLocalImportPath(null); setLocalPreview(null); }} title={t("settings.sync.backup.confirmImport")} centered>
-        <Stack gap="md">{localPreview && <Card className="bg-surface-container-low" p="sm" radius="lg"><Text size="sm">{previewSummary(localPreview)}</Text></Card>}{domainSelector}<Text size="sm" c="var(--on-surface-variant)">{localImportPath}</Text><Text size="sm" c="var(--on-surface-variant)">{t("settings.sync.backup.restoreSafetyNote")}</Text><Group justify="flex-end"><Button variant="default" onClick={() => { setLocalImportPath(null); setLocalPreview(null); }}>{t("common.cancel")}</Button><Button color="red" disabled={selectedDomains.length === 0} onClick={() => void restoreLocal()}>{t("settings.sync.backup.confirm")}</Button></Group></Stack>
+        <Stack gap="md">{localPreview && <Card className="bg-surface-container-low" p="sm" radius="lg"><Text size="sm">{previewSummary(localPreview)}</Text>{providerReentryNote(localPreview) && <Text size="xs" c="dimmed" mt={4}>{providerReentryNote(localPreview)}</Text>}</Card>}{domainSelector}<Text size="sm" c="var(--on-surface-variant)">{localImportPath}</Text><Text size="sm" c="var(--on-surface-variant)">{t("settings.sync.backup.restoreSafetyNote")}</Text><Group justify="flex-end"><Button variant="default" onClick={() => { setLocalImportPath(null); setLocalPreview(null); }}>{t("common.cancel")}</Button><Button color="red" disabled={selectedDomains.length === 0} onClick={() => void restoreLocal()}>{t("settings.sync.backup.confirm")}</Button></Group></Stack>
       </Modal>
       <Modal opened={Boolean(deleteSnapshot)} onClose={() => setDeleteSnapshot(null)} title={t("settings.sync.backup.confirmDelete")} centered>
         <Stack gap="md">

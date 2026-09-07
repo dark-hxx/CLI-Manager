@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/ccswitch-integration-contracts.md", "reason": "验证供应商覆盖参数追加与 cli_args 的兼容性（不重复追加、顺序正确）"}
-{"file": ".trellis/spec/backend/webdav-sync-contracts.md", "reason": "验证同步字段清单已包含 cli_args 且兼容旧数据"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端改动需通过质量规范检查（tsc --noEmit 等）"}

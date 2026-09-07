@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"静态校验与桌面 UI 人工验收要求"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"配置修改前搜索既有值和相似配置"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Tauri 配置影响 WebView 前端拖拽事件边界"}

@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Defines hook settings and terminal runtime boundary contracts."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"terminalStore is a Zustand store; follow project state-management patterns."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend/terminal changes require static checks and manual runtime verification notes."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Hook env flow crosses React store, Tauri command, Rust hook bridge, and external CLI hooks."}

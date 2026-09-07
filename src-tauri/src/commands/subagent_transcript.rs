@@ -291,7 +291,10 @@ fn is_linux_absolute_path(path: &str) -> bool {
     path.trim().starts_with('/')
 }
 
-fn normalize_explicit_transcript_path(path: String, wsl_distro_name: Option<&str>) -> String {
+pub(crate) fn normalize_explicit_transcript_path(
+    path: String,
+    wsl_distro_name: Option<&str>,
+) -> String {
     let path = path.trim().to_string();
     if is_linux_absolute_path(&path) {
         if let Some(distro) = wsl_distro_name.map(str::trim).filter(|v| !v.is_empty()) {
@@ -349,7 +352,7 @@ fn is_linux_transcript_scope(linux_path: &str) -> bool {
         || components_contain_sequence(&components, &[".codex", "sessions"])
 }
 
-fn validate_explicit_transcript_path(path: &str) -> Result<(), String> {
+pub(crate) fn validate_explicit_transcript_path(path: &str) -> Result<(), String> {
     let normalized_wsl = crate::wsl::normalize_wsl_unc_path(path);
     if let Some((_distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&normalized_wsl) {
         if is_linux_transcript_scope(&linux_path) {
@@ -1277,6 +1280,7 @@ mod tests {
         assert_eq!(err, "parent_transcript_session_mismatch");
     }
 
+    #[cfg(windows)]
     #[test]
     fn resolve_converts_linux_parent_transcript_to_wsl_child_path() {
         let got = resolve_transcript_path(

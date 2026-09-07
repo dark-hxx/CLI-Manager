@@ -1,0 +1,28 @@
+{
+  "id": "fix-weixin-auth-profile-validation",
+  "name": "fix-weixin-auth-profile-validation",
+  "title": "Fix Weixin authorization profile validation",
+  "description": "Prevent incomplete configuration on unrelated messaging platforms from blocking isolated Weixin QR authorization while preserving strict validation for normal cc-connect startup.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend,cc-connect,weixin-authorization",
+  "package": null,
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-08-24",
+  "completedAt": "2026-08-24",
+  "branch": "fix/weixin-auth-profile-validation",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "changelogVersion": "TEMP"
+  }
+}

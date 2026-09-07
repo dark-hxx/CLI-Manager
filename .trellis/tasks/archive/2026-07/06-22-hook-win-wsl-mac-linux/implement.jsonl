@@ -1,6 +1,0 @@
-{"file": ".trellis/tasks/06-22-hook-win-wsl-mac-linux/prd.md", "reason": "完整需求文档：系统通知功能的目标、决策、实现路径"}
-{"file": ".trellis/tasks/06-22-hook-win-wsl-mac-linux/research/tauri-notification-plugin.md", "reason": "Tauri notification 插件调研：API 用法、权限配置、前端发送 vs 后端发送的权衡"}
-{"file": ".trellis/spec/backend/cli-hook-contracts.md", "reason": "CLI Hook 后端契约：hook 事件类型、payload 结构、TCP server 机制"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端状态管理规范：settingsStore 扩展模式、持久化约定"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "React 组件规范：HookSettingsPage UI 扩展的代码风格"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层思考指南：前端发送通知 vs Rust command 的边界决策"}

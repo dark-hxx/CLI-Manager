@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildGitDiffReviewTargets,
+  findInitialReviewTargetIndex,
   reconcileReviewTargetIndex,
   stepReviewNavigation,
 } from "../src/components/git/diff/reviewNavigation.ts";
@@ -72,6 +73,19 @@ test("target reconciliation preserves identity and otherwise selects the adjacen
   assert.equal(reconcileReviewTargetIndex(targets, "/repo\u0000b.ts", 1), 1);
   assert.equal(reconcileReviewTargetIndex(targets, "/repo\u0000z.ts", 8), 1);
   assert.equal(reconcileReviewTargetIndex([], targets[0].id, 0), -1);
+});
+
+test("initial review target resolves the requested file before falling back to the first file", () => {
+  const targets = buildGitDiffReviewTargets({
+    tree: [file("first.ts", "M"), file("selected.ts", "M")],
+    untrackedTree: [],
+    statusFilter: "all",
+    repositoryPath: "/repo",
+  });
+
+  assert.equal(findInitialReviewTargetIndex(targets, "selected.ts"), 1);
+  assert.equal(findInitialReviewTargetIndex(targets, "missing.ts"), 0);
+  assert.equal(findInitialReviewTargetIndex([], "selected.ts"), -1);
 });
 
 test("navigation crosses hunk and file boundaries without wrapping", () => {

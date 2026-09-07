@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec index for settings UI migration work."}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Settings tab id/search conventions and component-level frontend rules."}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Static/build checks and manual UI verification constraints."}

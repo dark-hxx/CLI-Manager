@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "本任务属于跨边界行为回归，记录根因修复与验收约束。"}
+{"file": ".trellis/spec/backend/ssh-agent-contracts.md", "reason": "确认 Agent 能力协商、bridge 生命周期和稳定错误码契约。"}
+{"file": ".trellis/spec/backend/ssh-remote-terminal-contracts.md", "reason": "确认 SSH 远程文件请求、Host-only 与项目 bridge lane 边界。"}

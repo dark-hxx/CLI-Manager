@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"Terminal tab hook notification state belongs in transient Zustand state and must not be persisted."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"TerminalTabs UI change should follow existing component/styling patterns and avoid unnecessary component churn."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"New hook event payload and tab notification state require explicit TypeScript types."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend changes add local Tauri-side hook receiver and PTY environment injection, so Rust boundary guidance applies."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature spans PowerShell hook script, Rust receiver, Tauri event, Zustand state, and React tab UI."}

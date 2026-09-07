@@ -733,6 +733,7 @@ pub async fn history_backup_list_restore_candidates(
                     | "copilot"
                     | "antigravity"
                     | "grok"
+                    | "kimi"
                     | "pi"
                     | "opencode"
                     | "kiro"

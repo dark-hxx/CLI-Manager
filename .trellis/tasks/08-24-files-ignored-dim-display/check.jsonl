@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "验收时需逐条核对 §5 场景矩阵,尤其 Worktree(.git 为文件)与搜索模式两条最易漏"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查是否有 autoCollapse 残留引用、未使用导入、依赖数组遗漏"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "确认改动确实锁在渲染层,未意外触及 store / IPC / 设置持久化边界"}

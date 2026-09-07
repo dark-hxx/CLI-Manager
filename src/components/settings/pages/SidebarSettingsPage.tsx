@@ -93,6 +93,7 @@ const STATS_CARD_OPTIONS: { key: TerminalStatsCardKey; labelKey: TranslationKey 
   { key: "tokenTrend", labelKey: "termStats.tokenTrend" },
   { key: "modelContext", labelKey: "termStats.modelContext" },
   { key: "tools", labelKey: "termStats.tools" },
+  { key: "agentCapabilities", labelKey: "termStats.agentCapabilities.title" },
   { key: "latestChanges", labelKey: "termStats.latestChanges" },
   { key: "todayUsage", labelKey: "termStats.todayUsage" },
 ];
@@ -122,6 +123,7 @@ const TERMINAL_TOOLBAR_OPTIONS: { key: TerminalToolbarOptionKey; labelKey: Trans
   { key: "replay", labelKey: "settings.general.toolbar.replay" },
   { key: "files", labelKey: "settings.general.toolbar.files" },
   { key: "stats", labelKey: "settings.general.toolbar.stats" },
+  { key: "providers", labelKey: "settings.general.toolbar.providers" },
   { key: "gitChanges", labelKey: "settings.general.toolbar.gitChanges" },
   { key: "systemResources", labelKey: "settings.general.toolbar.systemResources" },
   { key: "backgroundTasks", labelKey: "settings.general.toolbar.backgroundTasks" },
@@ -599,6 +601,7 @@ export function SidebarSettingsPage() {
                 tokenTrend: true,
                 modelContext: true,
                 tools: true,
+                agentCapabilities: true,
                 latestChanges: true,
                 todayUsage: true,
               })}

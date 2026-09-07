@@ -1,7 +1,0 @@
-{"file":".trellis/tasks/06-26-codex-project-provider-switching/research/codex-config-provider-switching.md","reason":"Codex provider/profile constraints and chosen profile-based implementation approach."}
-{"file":".trellis/spec/backend/ccswitch-integration-contracts.md","reason":"Existing cc-switch provider integration contracts and project-level switching behavior to preserve/extend."}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Codex config/profile changes must not regress hook integration expectations."}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Terminal launch/env injection must coexist with runtime monitoring and hook env behavior."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Project override state and launch plumbing should follow existing frontend store conventions."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Provider switch modal changes should follow frontend component conventions."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"New TypeScript adapter and launch helper code must preserve strict type-safety patterns."}

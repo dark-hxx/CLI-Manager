@@ -2,12 +2,6 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::AppHandle;
-
-use crate::commands::hook_settings::{
-    sync_ccswitch_codex_statusline, CcSwitchHookProtectionStatus,
-};
-
 const CONFIG_FILE: &str = "config.toml";
 const TUI_TABLE: &str = "tui";
 const STATUS_LINE_KEY: &str = "status_line";
@@ -34,7 +28,9 @@ fn resolve_config_dir(config_dir: Option<String>) -> Result<PathBuf, String> {
         .filter(|value| !value.is_empty())
     {
         Some(value) => Ok(PathBuf::from(value)),
-        None => Ok(home_dir()?.join(".codex")),
+        None => crate::provider::home::default_config_root("codex")
+            .or_else(|| home_dir().ok().map(|home| home.join(".codex")))
+            .ok_or_else(|| "home_dir_unavailable".to_string()),
     }
 }
 
@@ -177,7 +173,35 @@ fn finish_lines(lines: Vec<String>, original: &str) -> String {
     next
 }
 
+fn is_wsl_path(path: &Path) -> bool {
+    crate::wsl::is_wsl_config_dir(&path.to_string_lossy())
+}
+
+fn read_config(path: &Path) -> Result<String, String> {
+    if is_wsl_path(path) {
+        let bytes = crate::provider::global::read_live(&path.to_string_lossy())
+            .map_err(|error| format!("codex_config_read_failed: {error}"))?;
+        return bytes
+            .map(|bytes| {
+                String::from_utf8(bytes)
+                    .map_err(|error| format!("codex_config_read_failed: {error}"))
+            })
+            .transpose()
+            .map(|content| content.unwrap_or_default());
+    }
+
+    if path.exists() {
+        fs::read_to_string(path).map_err(|err| format!("codex_config_read_failed: {err}"))
+    } else {
+        Ok(String::new())
+    }
+}
+
 fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+    if is_wsl_path(path) {
+        return atomic_write_wsl(path, content);
+    }
+
     let parent = path
         .parent()
         .ok_or_else(|| "codex_config_path_invalid".to_string())?;
@@ -209,19 +233,59 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn atomic_write_wsl(path: &Path, content: &str) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "codex_config_path_invalid".to_string())?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp = parent.join(format!(
+        ".{CONFIG_FILE}.{}.{}.tmp",
+        std::process::id(),
+        stamp
+    ));
+    let temp_string = temp.to_string_lossy();
+    if let Err(error) = crate::provider::global::write_live(&temp_string, content.as_bytes()) {
+        return Err(format!("codex_config_write_failed: {error}"));
+    }
+
+    let path_string = path.to_string_lossy();
+    let existing = match crate::provider::global::read_live(&path_string) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = crate::provider::global::remove_live(&temp_string);
+            return Err(format!("codex_config_read_failed: {error}"));
+        }
+    };
+    if let Some(existing) = existing {
+        let backup = parent.join(format!("{CONFIG_FILE}.cli-manager-statusline.bak"));
+        let backup_string = backup.to_string_lossy();
+        if let Err(error) = crate::provider::global::write_live(&backup_string, &existing) {
+            let _ = crate::provider::global::remove_live(&temp_string);
+            return Err(format!("codex_config_backup_failed: {error}"));
+        }
+    }
+
+    if let Err(error) = crate::provider::global::replace_live_from_stage(&path_string, &temp_string)
+    {
+        let _ = crate::provider::global::remove_live(&temp_string);
+        return Err(format!("codex_config_replace_failed: {error}"));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn codex_statusline_load(config_dir: Option<String>) -> Result<CodexStatuslineConfig, String> {
     let dir = resolve_config_dir(config_dir)?;
     let path = dir.join(CONFIG_FILE);
-    let content = if path.exists() {
-        fs::read_to_string(&path).map_err(|err| format!("codex_config_read_failed: {err}"))?
-    } else {
-        String::new()
-    };
+    let content = read_config(&path)?;
+    let items = canonicalize_items(parse_status_line(&content)?);
     Ok(CodexStatuslineConfig {
         config_dir: dir.to_string_lossy().to_string(),
         config_path: path.to_string_lossy().to_string(),
-        items: parse_status_line(&content)?,
+        items,
     })
 }
 
@@ -231,32 +295,16 @@ pub fn codex_statusline_save(
     items: Vec<String>,
 ) -> Result<CodexStatuslineConfig, String> {
     validate_items(&items)?;
+    let items = canonicalize_items(items);
     let dir = resolve_config_dir(config_dir)?;
     let path = dir.join(CONFIG_FILE);
-    let content = if path.exists() {
-        fs::read_to_string(&path).map_err(|err| format!("codex_config_read_failed: {err}"))?
-    } else {
-        String::new()
-    };
+    let content = read_config(&path)?;
     atomic_write(&path, &set_status_line(&content, &items))?;
     codex_statusline_load(Some(dir.to_string_lossy().to_string()))
 }
 
-#[tauri::command]
-pub async fn codex_statusline_sync_ccswitch(
-    app: AppHandle,
-    config_dir: Option<String>,
-    items: Vec<String>,
-    cc_switch_db_path: Option<String>,
-) -> Result<CcSwitchHookProtectionStatus, String> {
-    validate_items(&items)?;
-    let dir = resolve_config_dir(config_dir)?;
-    Ok(sync_ccswitch_codex_statusline(&app, cc_switch_db_path, &dir, &items).await)
-}
-
 pub(crate) fn validate_items(items: &[String]) -> Result<(), String> {
-    let allowed = statusline_item_ids();
-    if items.iter().any(|item| !allowed.contains(&item.as_str())) {
+    if items.iter().any(|item| canonical_item_id(item).is_none()) {
         return Err("codex_statusline_unknown_item".to_string());
     }
     Ok(())
@@ -264,14 +312,16 @@ pub(crate) fn validate_items(items: &[String]) -> Result<(), String> {
 
 fn statusline_item_ids() -> &'static [&'static str] {
     &[
-        "app-name",
-        "project-name",
+        "model",
+        "model-with-reasoning",
+        "reasoning",
         "current-dir",
-        "status",
-        "thread-title",
+        "project-name",
+        "hostname",
         "git-branch",
         "pull-request-number",
         "branch-changes",
+        "run-state",
         "permissions",
         "approval-mode",
         "context-remaining",
@@ -283,13 +333,40 @@ fn statusline_item_ids() -> &'static [&'static str] {
         "used-tokens",
         "total-input-tokens",
         "total-output-tokens",
-        "session-id",
+        "thread-credits",
+        "estimated-thread-cost",
+        "thread-id",
         "fast-mode",
         "raw-output",
-        "model",
-        "model-with-reasoning",
+        "thread-title",
+        "workspace-headline",
         "task-progress",
     ]
+}
+
+fn canonical_item_id(item: &str) -> Option<&'static str> {
+    if let Some(&id) = statusline_item_ids().iter().find(|id| **id == item) {
+        return Some(id);
+    }
+    match item {
+        "model-name" => Some("model"),
+        "project" | "project-root" => Some("project-name"),
+        "status" => Some("run-state"),
+        "approval" => Some("approval-mode"),
+        "context-usage" => Some("context-used"),
+        "session-id" => Some("thread-id"),
+        _ => None,
+    }
+}
+
+pub(crate) fn canonicalize_items(items: Vec<String>) -> Vec<String> {
+    items
+        .into_iter()
+        .map(|item| match canonical_item_id(&item) {
+            Some(canonical) => canonical.to_string(),
+            None => item,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -317,6 +394,47 @@ mod tests {
         assert_eq!(
             next,
             "model = \"gpt\"\n\n[tui]\nstatus_line = [\"model\"]\n"
+        );
+    }
+
+    #[test]
+    fn accepts_all_current_codex_statusline_item_ids() {
+        let items = statusline_item_ids()
+            .iter()
+            .map(|item| (*item).to_string())
+            .collect::<Vec<_>>();
+        assert!(validate_items(&items).is_ok());
+    }
+
+    #[test]
+    fn accepts_official_legacy_aliases_and_canonicalizes_them() {
+        let aliases = vec![
+            "model-name".to_string(),
+            "project-root".to_string(),
+            "status".to_string(),
+            "approval".to_string(),
+            "context-usage".to_string(),
+            "session-id".to_string(),
+        ];
+        assert!(validate_items(&aliases).is_ok());
+        assert_eq!(
+            canonicalize_items(aliases),
+            vec![
+                "model",
+                "project-name",
+                "run-state",
+                "approval-mode",
+                "context-used",
+                "thread-id",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_non_official_thread_name_item() {
+        assert_eq!(
+            validate_items(&["thread-name".to_string()]).unwrap_err(),
+            "codex_statusline_unknown_item"
         );
     }
 }

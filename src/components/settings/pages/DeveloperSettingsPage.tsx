@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Box, Card, Group, Select, Stack, Switch, Text } from "@mantine/core";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { Bug, Copy, Cpu, GitBranch, HardDrive, History, Link2, MonitorCog } from "lucide-react";
+import { Bug, Copy, Cpu, EyeOff, GitBranch, HardDrive, History, Link2, MonitorCog } from "lucide-react";
 import { toast } from "sonner";
 import {
   LINUX_GRAPHICS_MODES,
@@ -63,6 +63,7 @@ function SettingSwitchCard({
 export function DeveloperSettingsPage() {
   const { t } = useI18n();
   const windowsConptyCompatibilityFixEnabled = useSettingsStore((s) => s.windowsConptyCompatibilityFixEnabled);
+  const hideCodexRuntimeCursor = useSettingsStore((s) => s.hideCodexRuntimeCursor);
   const terminalSessionRestoreEnabled = useSettingsStore((s) => s.terminalSessionRestoreEnabled);
   const projectWorktreeConfigEnabled = useSettingsStore((s) => s.projectWorktreeConfigEnabled);
   const symlinkCompatibilityEnabled = useSettingsStore((s) => s.symlinkCompatibilityEnabled);
@@ -103,7 +104,8 @@ export function DeveloperSettingsPage() {
       | "projectWorktreeConfigEnabled"
       | "lowMemoryMode"
       | "disableHardwareAcceleration"
-      | "debugMode",
+      | "debugMode"
+      | "hideCodexRuntimeCursor",
     value: boolean
   ) => {
     void update(key, value);
@@ -228,18 +230,32 @@ export function DeveloperSettingsPage() {
           </Box>
 
           {osPlatform === "windows" && (
-            <SettingSwitchCard
-              icon={<MonitorCog size={16} />}
-              title={t("settings.developer.windowsConptyCompatibilityFix")}
-              description={t("settings.developer.windowsConptyCompatibilityFixDescription")}
-              checked={windowsConptyCompatibilityFixEnabled}
-              onChange={toggleWindowsConptyCompatibilityFix}
-              ariaLabel={
-                windowsConptyCompatibilityFixEnabled
-                  ? t("settings.developer.disableWindowsConptyCompatibilityFix")
-                  : t("settings.developer.enableWindowsConptyCompatibilityFix")
-              }
-            />
+            <>
+              <SettingSwitchCard
+                icon={<MonitorCog size={16} />}
+                title={t("settings.developer.windowsConptyCompatibilityFix")}
+                description={t("settings.developer.windowsConptyCompatibilityFixDescription")}
+                checked={windowsConptyCompatibilityFixEnabled}
+                onChange={toggleWindowsConptyCompatibilityFix}
+                ariaLabel={
+                  windowsConptyCompatibilityFixEnabled
+                    ? t("settings.developer.disableWindowsConptyCompatibilityFix")
+                    : t("settings.developer.enableWindowsConptyCompatibilityFix")
+                }
+              />
+              <SettingSwitchCard
+                icon={<EyeOff size={16} />}
+                title={t("settings.developer.hideCodexRuntimeCursor")}
+                description={t("settings.developer.hideCodexRuntimeCursorDescription")}
+                checked={hideCodexRuntimeCursor}
+                onChange={(checked) => updateBooleanSetting("hideCodexRuntimeCursor", checked)}
+                ariaLabel={
+                  hideCodexRuntimeCursor
+                    ? t("settings.developer.disableHideCodexRuntimeCursor")
+                    : t("settings.developer.enableHideCodexRuntimeCursor")
+                }
+              />
+            </>
           )}
 
           {osPlatform === "linux" && (

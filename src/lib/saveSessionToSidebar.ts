@@ -1,6 +1,6 @@
 import type { CreateProjectInput, Project, TerminalSession } from "./types";
 import { detectCliResumeKind } from "../stores/terminalStore";
-import { stripResumeCliArgs } from "./resumeCliArgs";
+import { isValidGrokSessionId, isValidKimiSessionId, stripKimiResumeCliArgs, stripResumeCliArgs } from "./resumeCliArgs";
 
 /**
  * Validate a CLI session id per resolveResumeCommand contract in
@@ -33,7 +33,7 @@ const WSL_WRAPPER_PATTERN = /(?:^|\s)wsl(?:\.exe)?\s/i;
  * on every resume.
  */
 function buildResumeStartupCmd(
-  kind: "claude" | "codex" | "grok",
+  kind: "claude" | "codex" | "grok" | "kimi",
   id: string,
   sourceStartupCmd: string,
 ): string {
@@ -42,7 +42,9 @@ function buildResumeStartupCmd(
       ? `codex resume --no-alt-screen ${id}`
       : kind === "grok"
         ? `grok --resume ${id}`
-        : `claude --resume ${id}`;
+        : kind === "kimi"
+          ? `kimi --session ${id}`
+          : `claude --resume ${id}`;
   return WSL_WRAPPER_PATTERN.test(sourceStartupCmd) ? `wsl ${resumeCore}` : resumeCore;
 }
 
@@ -53,27 +55,34 @@ function buildResumeStartupCmd(
  * - `claude` → `<sourceCliArgs trimmed> --resume <id>`
  * - `codex`  → `<sourceCliArgs trimmed> resume --no-alt-screen <id>`
  * - `grok`   → `<sourceCliArgs trimmed> --resume <id>`
+ * - `kimi`   → `<sourceCliArgs trimmed> --session <id>`
  *
  * Pre-existing resume fragments in `sourceCliArgs` are stripped first so
  * re-saving a saved session does not double-append. Invalid session ids
  * (empty, whitespace-containing, CR/LF-containing) return null.
  */
 export function buildResumeCliArgs(
-  kind: "claude" | "codex" | "grok",
+  kind: "claude" | "codex" | "grok" | "kimi",
   sourceCliArgs: string,
   sessionId: string,
 ): string | null {
   const id = normalizeSessionId(sessionId);
   if (!id) return null;
-  const base = stripResumeCliArgs(sourceCliArgs);
+  if (kind === "kimi" && !isValidKimiSessionId(id)) return null;
+  if (kind === "grok" && !isValidGrokSessionId(id)) return null;
+  const base = kind === "kimi" ? stripKimiResumeCliArgs(sourceCliArgs) : stripResumeCliArgs(sourceCliArgs);
   const suffix =
-    kind === "codex" ? ` resume --no-alt-screen ${id}` : ` --resume ${id}`;
+    kind === "codex"
+      ? ` resume --no-alt-screen ${id}`
+      : kind === "kimi"
+        ? ` --session ${id}`
+        : ` --resume ${id}`;
   return `${base}${suffix}`;
 }
 
 /**
  * True iff `session` carries a valid cliSessionId AND we can resolve a
- * CLI resume kind (`claude` | `codex` | `grok`) from the session's startup
+ * CLI resume kind (`claude` | `codex` | `grok` | `kimi`) from the session's startup
  * command / owning project. When false, the "save to sidebar" affordance must
  * be disabled — createProject would either fail validation or produce a
  * useless entry.
@@ -87,7 +96,9 @@ export function canSaveSessionToSidebar(
     project?.startup_cmd ?? session.startupCmd,
     project ?? undefined,
   );
-  return kind !== null;
+  return kind !== null
+    && (kind !== "kimi" || isValidKimiSessionId(session.cliSessionId?.trim() ?? ""))
+    && (kind !== "grok" || isValidGrokSessionId(session.cliSessionId?.trim() ?? ""));
 }
 
 /**

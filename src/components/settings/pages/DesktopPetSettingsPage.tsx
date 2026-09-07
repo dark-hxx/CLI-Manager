@@ -33,11 +33,13 @@ import { PetArtwork } from "../../desktop-pet/PetArtwork";
 import { useAppConfirm } from "../../ui/useAppConfirm";
 import {
   localizedPetText,
+  joinPetAssetPath,
   type InstalledPet,
   type PetCatalogEntry,
   type PetCatalogResponse,
 } from "../../../lib/desktopPet";
 import { formatFileSize } from "../../../lib/utils";
+import { getCliManagerDataPaths } from "../../../lib/appPaths";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
 import {
   BUILTIN_DESKTOP_PET_ID,
@@ -383,6 +385,8 @@ export function DesktopPetSettingsPage() {
   const [workingBounceDistanceDraft, setWorkingBounceDistanceDraft] = useState(
     desktopPet.workingBounceDistancePx
   );
+  const [managedPetsPath, setManagedPetsPath] = useState<string | null>(null);
+  const [managedPetsPathUnavailable, setManagedPetsPathUnavailable] = useState(false);
 
   const patch = useCallback(async (delta: Partial<DesktopPetSettings>) => {
     const current = useSettingsStore.getState().desktopPet;
@@ -437,6 +441,20 @@ export function DesktopPetSettingsPage() {
   useEffect(() => {
     void loadPets(false);
   }, [loadPets]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getCliManagerDataPaths()
+      .then((paths) => {
+        if (!cancelled) setManagedPetsPath(joinPetAssetPath(paths.dataDir, "pets"));
+      })
+      .catch(() => {
+        if (!cancelled) setManagedPetsPathUnavailable(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const scanInstalledPets = useCallback(async () => {
     if (scanning) return;
@@ -851,7 +869,10 @@ export function DesktopPetSettingsPage() {
           <Alert color="blue" variant="light" icon={<Archive size={16} />}>
             <Text size="xs">
               {t("desktopPet.settings.storageDescription", {
-                managedPath: "~/.cli-manager/pets",
+                managedPath: managedPetsPath
+                  ?? t(managedPetsPathUnavailable
+                    ? "desktopPet.settings.storagePathUnavailable"
+                    : "desktopPet.settings.storagePathLoading"),
                 codexPath: "~/.codex/pets",
                 downloadUrl1: "https://codex-pets.net/",
                 downloadUrl2: "https://petdex.dev/",

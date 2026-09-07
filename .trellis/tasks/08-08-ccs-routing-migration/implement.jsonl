@@ -1,0 +1,16 @@
+{"file":".trellis/tasks/08-08-ccs-routing-migration/prd.md","reason":"审批后的产品范围、优先级、明确排除与验收标准。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/design.md","reason":"Provider writer、daemon、协议、故障转移、代理、整流器与恢复设计。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/implement.md","reason":"强制分阶段顺序、触点、验证与回滚计划。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/source-manifest.md","reason":"固定 CCS 版本、commit、安装包指纹、截图和源码证据。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/ccs-routing-control-matrix.md","reason":"每个路由控件在 CCS 中的行为、实现与 CLI-Manager 对应方案。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/ccs-runtime-architecture.md","reason":"CCS 路由、协议转换、failover、proxy 与 rectifier 运行机制。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/cli-manager-touchpoints.md","reason":"当前 provider、daemon、UI、退出流程与 HTTP client 触点清单。"}
+{"file":".trellis/tasks/08-08-ccs-routing-migration/research/scenario-and-risk-matrix.md","reason":"新功能必须覆盖的状态组合、风险等级与回滚点。"}
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"新功能场景枚举与 discovery list 前置闸机。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 UI、IPC、daemon、DB、Live 文件和网络跨层数据流。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"优先复用 provider writer、daemon、credential store 与 reqwest，避免重复实现。"}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Provider DB、Home、active key、global writer、scope 与 secret 边界。"}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"供应商设置页、状态订阅、布局与交互约束。"}
+{"file":".trellis/spec/backend/pty-daemon-contracts.md","reason":"Daemon protocol、loopback、idle/shutdown、GUI 退出与后台生命周期契约。"}
+{"file":".trellis/spec/backend/app-startup-contracts.md","reason":"Daemon/DB 初始化顺序、单实例与升级启动边界。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"供应商页三段导航、Mantine、响应式、i18n、键盘和 Sidebar 组件约定。"}

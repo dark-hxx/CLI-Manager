@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "校验前端质量：tsc 通过、无冗余状态、loading/disabled 防重复点击、toast 错误映射"}
-{"file": ".trellis/spec/backend/index.md", "reason": "校验后端：命令边界校验、签名稳定、cargo check 通过、错误语义清晰"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "校验 shell out 安全：project_path 校验、无命令注入、不默认 force push"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "校验前后端契约一致：BranchStatus 字段与错误码在两侧对齐，push/pull 后状态刷新闭环"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "校验新增类型与错误码联合类型无 any/越界断言"}

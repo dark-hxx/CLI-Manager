@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "P1 验收前端质量条：类型安全、tsc、组件改动规范"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "校验 Rust 统计字段→前端展示端到端一致，无类型/语义漂移"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "校验文件读取/diff 不越界、错误不被 silently ignore"}

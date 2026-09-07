@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "ordinary-sse-first-parseable",
+      "protocol": "anthropic",
+      "events": [
+        {"kind": "comment", "event": null, "payload": null, "semantic": false},
+        {"kind": "blank", "event": null, "payload": null, "semantic": false},
+        {"kind": "data", "event": "message_start", "payload": {"type": "message_start"}, "semantic": true},
+        {"kind": "data", "event": "content_block_delta", "payload": {"type": "text_delta", "text": "fixture"}, "semantic": true}
+      ],
+      "commitIndex": 2,
+      "failoverAfterCommit": false
+    },
+    {
+      "id": "responses-sse-keepalive-before-output",
+      "protocol": "responses",
+      "events": [
+        {"kind": "comment", "event": null, "payload": null, "semantic": false},
+        {"kind": "data", "event": "response.created", "payload": {"type": "response.created"}, "semantic": false},
+        {"kind": "blank", "event": null, "payload": null, "semantic": false},
+        {"kind": "data", "event": "response.output_text.delta", "payload": {"type": "response.output_text.delta", "delta": "fixture"}, "semantic": true},
+        {"kind": "data", "event": "response.completed", "payload": {"type": "response.completed"}, "semantic": true}
+      ],
+      "commitIndex": 3,
+      "failoverAfterCommit": false
+    },
+    {
+      "id": "ordinary-sse-error-after-data",
+      "protocol": "anthropic",
+      "events": [
+        {"kind": "data", "event": "message_start", "payload": {"type": "message_start"}, "semantic": true},
+        {"kind": "data", "event": "error", "payload": {"type": "error", "code": "fixture_stream_error"}, "semantic": false}
+      ],
+      "commitIndex": 0,
+      "failoverAfterCommit": false
+    },
+    {
+      "id": "responses-sse-error-before-output",
+      "protocol": "responses",
+      "events": [
+        {"kind": "comment", "event": null, "payload": null, "semantic": false},
+        {"kind": "data", "event": "response.error", "payload": {"type": "response.error", "code": "fixture_upstream_error"}, "semantic": true}
+      ],
+      "commitIndex": 1,
+      "failoverAfterCommit": false
+    },
+    {
+      "id": "responses-sse-error-after-output",
+      "protocol": "responses",
+      "events": [
+        {"kind": "data", "event": "response.output_text.delta", "payload": {"type": "response.output_text.delta", "delta": "fixture"}, "semantic": true},
+        {"kind": "data", "event": "response.error", "payload": {"type": "response.error", "code": "fixture_stream_error"}, "semantic": false}
+      ],
+      "commitIndex": 0,
+      "failoverAfterCommit": false
+    }
+  ]
+}

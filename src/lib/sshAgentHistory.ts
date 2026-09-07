@@ -1,7 +1,7 @@
-import type { Project, SshToolSource } from "./types";
+import type { Project, SshHistorySource, SshHost, SshToolSource } from "./types";
 import { buildSshConnectionSpec, type SshConnectionSpecPayload } from "./ssh";
 import { getSshClientInstanceId } from "./sshClientIdentity";
-import { resolveSshToolSource } from "./sshToolIntegration";
+import { resolveSshHistorySource } from "./sshToolIntegration";
 import { useSshAgentIntegrationStore } from "../stores/sshAgentIntegrationStore";
 import { useSshHostStore } from "../stores/sshHostStore";
 
@@ -19,15 +19,16 @@ export interface SshAgentProjectLaunch extends SshConnectionSpecPayload {
   environmentOverrides: Record<string, string>;
   initializationCommand: null;
   startupCommand: null;
+  attachmentRoot: string;
 }
 
 export interface SshAgentHistoryLaunch extends SshAgentProjectLaunch {
-  toolSource: SshToolSource;
+  toolSource: SshHistorySource;
 }
 
 export interface SshAgentHistoryContext {
   hostId: string;
-  source: SshToolSource;
+  source: SshHistorySource;
   configuredConfigRoot: string;
   sourceInstanceId: string;
   cursor: string;
@@ -41,7 +42,7 @@ export interface SshAgentHistoryContext {
 
 export function buildSshAgentProjectLaunch(
   project: Project,
-  toolSource: SshToolSource,
+  toolSource: SshHistorySource,
 ): Promise<SshAgentHistoryLaunch>;
 export function buildSshAgentProjectLaunch(
   project: Project,
@@ -55,12 +56,47 @@ export async function buildSshAgentProjectLaunch(
     throw new Error("ssh_project_configuration_invalid");
   }
 
+  const { host, hosts } = await resolveSshHost(project.ssh_host_id.trim());
+  return buildSshAgentLaunchForHost(
+    host,
+    hosts,
+    project.remote_path.trim(),
+    project.id,
+    project.name,
+    toolSource,
+  );
+}
+
+export async function buildSshAgentHostLaunch(
+  hostId: string,
+  remotePath: string,
+): Promise<SshAgentProjectLaunch> {
+  const normalizedHostId = hostId.trim();
+  const normalizedRemotePath = remotePath.trim();
+  if (!normalizedHostId || !normalizedRemotePath) {
+    throw new Error("ssh_terminal_context_invalid");
+  }
+  const { host, hosts } = await resolveSshHost(normalizedHostId);
+  return buildSshAgentLaunchForHost(host, hosts, normalizedRemotePath, "", "", "");
+}
+
+async function resolveSshHost(hostId: string): Promise<{ host: SshHost; hosts: SshHost[] }> {
   const hostStore = useSshHostStore.getState();
   if (!hostStore.loaded) await hostStore.fetchHosts();
   const hosts = useSshHostStore.getState().hosts;
-  const host = hosts.find((candidate) => candidate.id === project.ssh_host_id);
+  const host = hosts.find((candidate) => candidate.id === hostId);
   if (!host) throw new Error("ssh_host_not_found");
+  return { host, hosts };
+}
 
+async function buildSshAgentLaunchForHost(
+  host: SshHost,
+  hosts: SshHost[],
+  remotePath: string,
+  projectId: string,
+  projectName: string,
+  toolSource: SshToolSource | "",
+): Promise<SshAgentProjectLaunch> {
   const integrationStore = useSshAgentIntegrationStore.getState();
   if (!integrationStore.loaded) await integrationStore.fetchAll();
   const state = useSshAgentIntegrationStore.getState();
@@ -74,10 +110,10 @@ export async function buildSshAgentProjectLaunch(
   return {
     ...buildSshConnectionSpec(host, hosts),
     hostId: host.id,
-    remotePath: project.remote_path.trim(),
+    remotePath,
     clientInstanceId,
-    projectId: project.id,
-    projectName: project.name,
+    projectId,
+    projectName,
     bridgeEpoch: crypto.randomUUID(),
     agentPath: installation.install_path,
     agentInstallationId: installation.installation_id,
@@ -86,6 +122,7 @@ export async function buildSshAgentProjectLaunch(
     environmentOverrides: {},
     initializationCommand: null,
     startupCommand: null,
+    attachmentRoot: host.attachment_root?.trim() ?? "",
   };
 }
 
@@ -93,7 +130,7 @@ export async function buildSshAgentHistoryContext(project: Project): Promise<Ssh
   if (project.environment_type !== "ssh" || !project.ssh_host_id?.trim() || !project.remote_path.trim()) {
     throw new Error("ssh_project_configuration_invalid");
   }
-  const source = resolveSshToolSource(project.cli_tool);
+  const source = resolveSshHistorySource(project.cli_tool);
   if (!source) throw new Error("history_remote_source_required");
 
   const launch = await buildSshAgentProjectLaunch(project, source);

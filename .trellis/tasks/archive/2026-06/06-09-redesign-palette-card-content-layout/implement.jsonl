@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Confirm settings UI changes preserve settings contracts and component patterns"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Confirm static checks and manual desktop UI verification expectations"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Keep the UI redesign local without unnecessary abstraction"}

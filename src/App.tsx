@@ -7,6 +7,8 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
+import { WorkspaceLayoutShell } from "./components/workspace/WorkspaceLayoutShell";
+import { ProjectFileRefreshController } from "./components/files/ProjectFileRefreshController";
 import { CommandPalette } from "./components/CommandPalette";
 import type { LucideIcon } from "lucide-react";
 import type { SettingsTab } from "./components/SettingsModal";
@@ -35,7 +37,7 @@ import { useProjectStore } from "./stores/projectStore";
 import { useSessionStore } from "./stores/sessionStore";
 import { flushTerminalSnapshotsNow } from "./lib/sessionSnapshotPersistence";
 import { useSyncStore } from "./stores/syncStore";
-import { useHistoryStore } from "./stores/historyStore";
+import { syncHistoryRequestLogs, useHistoryStore } from "./stores/historyStore";
 import { useExternalSessionSyncStore } from "./stores/externalSessionSyncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useDesktopPetCoordinator } from "./hooks/useDesktopPetCoordinator";
@@ -113,15 +115,15 @@ const TERMINAL_PANEL_SEMANTIC_COLORS = {
 const CLOSE_SYNC_TIMEOUT_MS = 8000;
 // 退出遮罩上 conflict/error 提示的停留时长，之后继续退出流程。
 const EXIT_NOTICE_DISPLAY_MS = 1200;
-const STARTUP_STAGE_TIMEOUT_MS = 15_000;
+const STARTUP_STAGE_SLOW_MS = 15_000;
 const REQUEST_LOG_SYNC_INTERVAL_MS = 60_000;
 const IN_TAURI = isTauri();
 const CLAUDE_HOOK_TOAST_PREFIX = "claude-hook-notification";
 const SYSTEM_NOTIFICATION_ACTION_EVENT = "system-notification-action";
 const MAX_SYSTEM_NOTIFICATION_DETAIL_LENGTH = 72;
 let claudeHookToastSequence = 0;
-type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
-type StartupStage = "settings" | "stores" | "projects";
+type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
+type StartupStage = "settings" | "sessions" | "database" | "projects";
 
 function isLikelyMacOs() {
   return typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
@@ -139,6 +141,7 @@ function preloadSettingsModal(): void {
 interface HookSettingsStatusPayload {
   claude: { status: HookInstallStatus };
   codex: { status: HookInstallStatus };
+  kimi: { status: HookInstallStatus };
   pi: { status: HookInstallStatus };
   grok: { status: HookInstallStatus };
   claudeAutoRepaired?: boolean;
@@ -156,26 +159,36 @@ interface SystemNotificationActionPayload {
 
 async function hasInstalledCliHook(): Promise<boolean> {
   const settings = useSettingsStore.getState();
-  const status = await invoke<HookSettingsStatusPayload>("hook_settings_get_status", {
-    selectedDir: settings.claudeHookConfigDir?.trim() || null,
-    codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
-    piSelectedDir: settings.piHookConfigDir?.trim() || null,
-    grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
-    ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
-    autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
-  });
-  if (status.claudeAutoRepaired && !settings.claudeHookAutoRepairNoticeShown) {
+  const [hookResult, openCodeResult] = await Promise.allSettled([
+    invoke<HookSettingsStatusPayload>("hook_settings_get_status", {
+      selectedDir: settings.claudeHookConfigDir?.trim() || null,
+      codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
+      kimiSelectedDir: settings.kimiHookConfigDir?.trim() || null,
+      piSelectedDir: settings.piHookConfigDir?.trim() || null,
+      grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
+      ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
+      autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
+    }),
+    invoke<{ status: string }>("opencode_hook_status"),
+  ]);
+  const status = hookResult.status === "fulfilled" ? hookResult.value : null;
+  if (status?.claudeAutoRepaired && !settings.claudeHookAutoRepairNoticeShown) {
     toast.info(translateCurrent("notifications.hook.autoRepaired.title"), {
       description: translateCurrent("notifications.hook.autoRepaired.description"),
     });
     void settings.update("claudeHookAutoRepairNoticeShown", true);
   }
-  return (
-    (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
-    (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
-    (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
-    (settings.grokHookBridgeEnabled && status.grok.status === "installed")
-  );
+  const installed =
+    openCodeResult.status === "fulfilled" && openCodeResult.value.status === "installed" ||
+    Boolean(status && (
+      (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
+      (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
+      (settings.kimiHookBridgeEnabled && status.kimi.status === "installed") ||
+      (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
+      (settings.grokHookBridgeEnabled && status.grok.status === "installed")
+    ));
+  if (!installed && hookResult.status === "rejected") throw hookResult.reason;
+  return installed;
 }
 
 type ClaudeHookToastVariant = "attention" | "approval" | "finished" | "failed";
@@ -236,8 +249,10 @@ function getClaudeHookToastStyle(payload: CliHookPayload): ClaudeHookToastStyle 
 
 function getCliHookSourceName(payload: CliHookPayload): string {
   if (payload.source === "codex") return "Codex CLI";
+  if (payload.source === "kimi") return "Kimi Code";
   if (payload.source === "pi") return "Pi Agent";
   if (payload.source === "grok") return "Grok Build";
+  if (payload.source === "opencode") return "OpenCode";
   return "Claude Code";
 }
 
@@ -395,7 +410,13 @@ async function sendSystemNotification(payload: CliHookPayload, tabId: string | n
     }
 
     try {
-      await invoke("send_interactive_system_notification", { title, body, tabId, actionLabel });
+      await invoke("send_interactive_system_notification", {
+        title,
+        body,
+        tabId,
+        actionLabel,
+        customSoundPath: settings.systemNotificationSoundPath,
+      });
       return;
     } catch (notificationErr) {
       const isWsl = await invoke<boolean>("is_wsl").catch(() => false);
@@ -524,6 +545,7 @@ function App() {
   const uiFontSize = useSettingsStore((s) => s.uiFontSize);
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
   const viewMode = useSettingsStore((s) => s.viewMode);
+  const projectSidebarSide = useSettingsStore((s) => s.workspaceLayout.projectSidebarSide);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const exitWithRunningTasksBehavior = useSettingsStore((s) => s.exitWithRunningTasksBehavior);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
@@ -550,6 +572,7 @@ function App() {
   const [isMacOs, setIsMacOs] = useState(isLikelyMacOs);
   const [initError, setInitError] = useState<string | null>(null);
   const [startupStage, setStartupStage] = useState<StartupStage>("settings");
+  const [startupStageSlow, setStartupStageSlow] = useState(false);
   const [startupReady, setStartupReady] = useState(false);
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
   // 启动时若检测到上次遗留的可恢复工作区标签，弹窗询问是否恢复（Issue #123）。
@@ -600,11 +623,7 @@ function App() {
       try {
         await getDb();
         if (disposed) return;
-        await invoke("history_sync_request_logs", {
-          claudeConfigDir: claudeHookConfigDir?.trim() || null,
-          codexConfigDir: codexHookConfigDir?.trim() || null,
-          force: false,
-        });
+        await syncHistoryRequestLogs(false);
       } catch (err) {
         logWarn("Failed to sync local request logs", err);
       } finally {
@@ -646,8 +665,19 @@ function App() {
       if (!debugMode) return;
       void invoke("app_open_devtools").catch((err) => logWarn("Failed to open devtools", err));
     };
+    const blockChromiumInspect = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "c" || !event.shiftKey || event.altKey) return;
+      if (!event.ctrlKey && !event.metaKey) return;
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(".xterm")) return;
+      event.preventDefault();
+    };
     window.addEventListener("keydown", handleF12, true);
-    return () => window.removeEventListener("keydown", handleF12, true);
+    window.addEventListener("keydown", blockChromiumInspect, true);
+    return () => {
+      window.removeEventListener("keydown", handleF12, true);
+      window.removeEventListener("keydown", blockChromiumInspect, true);
+    };
   }, [debugMode]);
 
   useEffect(() => {
@@ -817,7 +847,7 @@ function App() {
         event.payload.source === "claude" &&
         (event.payload.event === "ToolStart" || event.payload.event === "ToolStop") &&
         Boolean(event.payload.agentId?.trim());
-      const supportsLocalSubagentTranscript = event.payload.environmentType !== "ssh";
+      const supportsLocalSubagentTranscript = event.payload.environmentType !== "ssh" && event.payload.source !== "kimi";
 
       // SubagentStart / AgentToolStart：开/更新子 Agent 转录分屏，独立于 Tab 状态机与 toast。
       if (supportsLocalSubagentTranscript && (event.payload.event === "SubagentStart" || event.payload.event === "AgentToolStart" || isClaudeToolSubagentEvent)) {
@@ -854,6 +884,8 @@ function App() {
         tabId &&
         event.payload.event !== "UserPromptSubmit" &&
         event.payload.event !== "SessionStart" &&
+        event.payload.event !== "PermissionResult" &&
+        event.payload.event !== "Interrupt" &&
         event.payload.event !== "ToolStart" &&
         event.payload.event !== "ToolStop"
       ) {
@@ -931,34 +963,41 @@ function App() {
     const init = async () => {
       setInitError(null);
       setStartupReady(false);
+      setStartupStageSlow(false);
       startupBaseReady = false;
 
       const runStartupStage = async (stage: StartupStage, action: () => Promise<void>) => {
-        if (!cancelled) setStartupStage(stage);
+        if (!cancelled) {
+          setStartupStage(stage);
+          setStartupStageSlow(false);
+        }
         const startedAt = performance.now();
-        let timedOut = false;
-        const timeoutId = window.setTimeout(() => {
-          timedOut = true;
-          logWarn("Application startup stage timed out", { stage, timeoutMs: STARTUP_STAGE_TIMEOUT_MS });
-          if (!cancelled) setInitError(`startup_timeout:${stage}`);
-        }, STARTUP_STAGE_TIMEOUT_MS);
+        let slow = false;
+        const slowTimerId = window.setTimeout(() => {
+          slow = true;
+          logWarn("Application startup stage is still running", { stage, slowAfterMs: STARTUP_STAGE_SLOW_MS });
+          if (!cancelled) setStartupStageSlow(true);
+        }, STARTUP_STAGE_SLOW_MS);
         try {
           await action();
         } finally {
-          window.clearTimeout(timeoutId);
+          window.clearTimeout(slowTimerId);
           const durationMs = Math.round((performance.now() - startedAt) * 10) / 10;
-          logInfo("Application startup stage completed", { stage, durationMs, timedOut });
-          if (timedOut && !cancelled) setInitError(null);
+          logInfo("Application startup stage completed", { stage, durationMs, slow });
+          if (!cancelled) setStartupStageSlow(false);
         }
       };
 
-      // 1. Tauri Store 初始化串行执行，避免插件在启动期发生并发读写竞态。
+      // 1. Store 与主数据库初始化串行执行，避免插件在启动期发生并发读写竞态。
       await runStartupStage("settings", loadSettings);
 
-      await runStartupStage("stores", async () => {
+      await runStartupStage("sessions", async () => {
         await useSessionStore.getState().load().catch((err) => {
           logWarn("Failed to load persisted sessions during startup", err);
         });
+      });
+
+      await runStartupStage("database", async () => {
         await useSyncStore.getState().load().catch((err) => {
           logWarn("Failed to load sync store during startup", err);
         });
@@ -1686,16 +1725,25 @@ function App() {
   if (!settingsLoaded || !startupReady) {
     const stageLabel = startupStage === "settings"
       ? t("app.init.loadingSettings")
-      : startupStage === "stores"
-        ? t("app.init.loadingStores")
+      : startupStage === "sessions"
+        ? t("app.init.loadingSessions")
+        : startupStage === "database"
+          ? t("app.init.loadingDatabase")
         : t("app.init.loadingProjects");
     return (
       <div className="ui-workspace-shell flex h-screen items-center justify-center px-6" role="status" aria-live="polite">
-        <div className="flex max-w-sm items-center gap-3 text-on-surface-variant">
+        <div className="flex max-w-md items-start gap-3 text-on-surface-variant">
           <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-border border-t-primary" aria-hidden="true" />
           <div>
             <div className="text-sm font-medium text-on-surface">{t("app.init.loading")}</div>
             <div className="mt-1 text-xs text-text-muted">{stageLabel}</div>
+            {startupStageSlow && (
+              <div className="mt-2 text-xs leading-relaxed text-text-muted">
+                {startupStage === "database"
+                  ? t("app.init.loadingDatabaseSlow")
+                  : t("app.init.loadingSlow")}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1704,44 +1752,51 @@ function App() {
 
   return (
     <div className="ui-workspace-shell flex h-screen flex-col">
+      <ProjectFileRefreshController />
       <a href="#main-content" className="skip-link">
         {t("app.skipToMain")}
       </a>
-      {(!terminalFullscreen || viewMode === "compact") && <WindowTitleBar />}
-      {viewMode === "compact" ? (
-        <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
-          <Sidebar
-            onOpenSettings={handleOpenSettings}
-            onOpenStats={handleOpenStats}
-            compactMode
-            projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
-            terminalScope={terminalScope}
-            onTerminalScopeChange={setTerminalScope}
-          />
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          {!terminalFullscreen && (
+      <WorkspaceLayoutShell>
+        {(!terminalFullscreen || viewMode === "compact") && <WindowTitleBar />}
+        {viewMode === "compact" ? (
+          <div id="main-content" className="flex min-h-0 flex-1" tabIndex={-1}>
             <Sidebar
               onOpenSettings={handleOpenSettings}
               onOpenStats={handleOpenStats}
+              compactMode
+              dockSide={projectSidebarSide}
               projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
               terminalScope={terminalScope}
               onTerminalScopeChange={setTerminalScope}
             />
-          )}
-          <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
-            <TerminalTabs
-              fullscreen={terminalFullscreen}
-              onToggleFullscreen={handleToggleTerminalFullscreen}
-              projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
-              terminalScope={terminalScope}
-            />
-          </main>
-        </div>
-      )}
-      <CommandPalette />
-      <ExternalSessionSyncDialog />
+          </div>
+        ) : (
+          <div
+            className="ui-workspace-main-layout flex min-h-0 h-full"
+            data-project-sidebar-side={projectSidebarSide}
+          >
+            {!terminalFullscreen && (
+              <Sidebar
+                onOpenSettings={handleOpenSettings}
+                onOpenStats={handleOpenStats}
+                dockSide={projectSidebarSide}
+                projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
+                terminalScope={terminalScope}
+                onTerminalScopeChange={setTerminalScope}
+              />
+            )}
+            <main id="main-content" className="ui-main-shell flex min-w-0 flex-1 flex-col" tabIndex={-1}>
+              <TerminalTabs
+                fullscreen={terminalFullscreen}
+                onToggleFullscreen={handleToggleTerminalFullscreen}
+                projectScopedTerminalViewEnabled={projectScopedTerminalViewEnabled}
+                terminalScope={terminalScope}
+                onOpenProviderSettings={() => handleOpenSettings("native-providers")}
+                onOpenHistorySettings={() => handleOpenSettings("history-sources")}
+              />
+            </main>
+          </div>
+        )}
       <Suspense fallback={null}>
         {settingsEverOpened && (
             <SettingsModal
@@ -1765,6 +1820,9 @@ function App() {
             />
           ))}
       </Suspense>
+      </WorkspaceLayoutShell>
+      <CommandPalette />
+      <ExternalSessionSyncDialog />
       <CloseConfirmDialog
         open={closeDialogOpen}
         onMinimize={handleCloseDialogMinimize}
@@ -1786,6 +1844,7 @@ function App() {
         confirmText="恢复"
         cancelText="不恢复"
         confirmAutoFocus
+        explicitCloseOnly
         contentClassName="w-[calc(100vw-2rem)] max-w-[460px]"
         onConfirm={handleConfirmRestoreSessions}
         onClose={handleRejectRestoreSessions}

@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "本任务改动 ui-selection-card CSS 公共样式，需要遵循前端组件样式约定"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "无新依赖、tsc 必须通过等质量基线"}

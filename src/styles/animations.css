@@ -56,3 +56,14 @@
     transform: translate3d(8%, 4%, 0);
   }
 }
+
+@keyframes token-station-glow {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    filter: drop-shadow(0 0 0 color-mix(in srgb, var(--primary) 0%, transparent));
+  }
+  50% {
+    transform: translateY(-1px) scale(1.08);
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--primary) 48%, transparent));
+  }
+}

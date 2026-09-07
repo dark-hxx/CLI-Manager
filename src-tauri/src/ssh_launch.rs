@@ -117,7 +117,10 @@ impl SshLaunchPlan {
                 return Err("ssh_agent_identity_required".to_string());
             }
         }
-        if !matches!(self.tool_source.as_str(), "" | "claude" | "codex") {
+        if !matches!(
+            self.tool_source.as_str(),
+            "" | "claude" | "codex" | "kimi" | "grok"
+        ) {
             return Err("ssh_tool_source_invalid".to_string());
         }
         if self
@@ -127,7 +130,12 @@ impl SshLaunchPlan {
         {
             return Err("ssh_environment_key_invalid".to_string());
         }
-        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
+        for key in [
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+            "KIMI_CODE_HOME",
+            "GROK_HOME",
+        ] {
             if let Some(value) = self.environment_overrides.get(key) {
                 validate_tool_config_root(value)?;
             }
@@ -182,7 +190,10 @@ impl SshLaunchPlan {
         let mut environment: Vec<_> = self.environment_overrides.iter().collect();
         environment.sort_by(|left, right| left.0.cmp(right.0));
         setup.extend(environment.into_iter().map(|(key, value)| {
-            let formatted_value = if matches!(key.as_str(), "CLAUDE_CONFIG_DIR" | "CODEX_HOME") {
+            let formatted_value = if matches!(
+                key.as_str(),
+                "CLAUDE_CONFIG_DIR" | "CODEX_HOME" | "KIMI_CODE_HOME" | "GROK_HOME"
+            ) {
                 format_tool_config_root(value)
             } else {
                 posix_quote(value)
@@ -368,11 +379,15 @@ mod tests {
                 "~/claude state".to_string(),
             ),
             ("CODEX_HOME".to_string(), "/srv/codex state".to_string()),
+            ("KIMI_CODE_HOME".to_string(), "~/kimi state".to_string()),
+            ("GROK_HOME".to_string(), "~/grok state".to_string()),
         ]
         .into();
         let command = value.build_process_launch().unwrap().args.pop().unwrap();
         assert!(command.contains("export CLAUDE_CONFIG_DIR=\"${HOME}\"/'claude state'"));
         assert!(command.contains("export CODEX_HOME='/srv/codex state'"));
+        assert!(command.contains("export KIMI_CODE_HOME=\"${HOME}\"/'kimi state'"));
+        assert!(command.contains("export GROK_HOME=\"${HOME}\"/'grok state'"));
     }
 
     #[test]
@@ -381,6 +396,26 @@ mod tests {
         value.environment_overrides = [("CODEX_HOME".to_string(), "~".to_string())].into();
         let command = value.build_process_launch().unwrap().args.pop().unwrap();
         assert!(command.contains("export CODEX_HOME=\"${HOME}\""));
+    }
+
+    #[test]
+    fn kimi_source_and_config_home_are_admitted_together() {
+        let mut value = plan();
+        value.tool_source = "kimi".to_string();
+        value.environment_overrides =
+            [("KIMI_CODE_HOME".to_string(), "/srv/kimi code".to_string())].into();
+        let command = value.build_process_launch().unwrap().args.pop().unwrap();
+        assert!(command.contains("export KIMI_CODE_HOME='/srv/kimi code'"));
+    }
+
+    #[test]
+    fn grok_source_and_config_home_are_admitted_together() {
+        let mut value = plan();
+        value.tool_source = "grok".to_string();
+        value.environment_overrides =
+            [("GROK_HOME".to_string(), "/srv/grok home".to_string())].into();
+        let command = value.build_process_launch().unwrap().args.pop().unwrap();
+        assert!(command.contains("export GROK_HOME='/srv/grok home'"));
     }
 
     #[test]

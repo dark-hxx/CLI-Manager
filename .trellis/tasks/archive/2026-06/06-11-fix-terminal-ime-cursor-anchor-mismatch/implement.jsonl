@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Terminal IME helper textarea behavior and xterm composition pitfalls are documented here."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend visual/runtime changes must use static checks and leave manual UI verification items."}

@@ -10,6 +10,7 @@ import { DEFAULT_SSH_TOOL_CONFIG_ROOT, resolveSshToolSource, validateSshToolConf
 import { getOsPlatform, normalizeShellKey } from "../lib/shell";
 import { getConfigModalShellPrefill } from "../lib/configModalShellPrefill";
 import { CLI_TOOL_DESCRIPTORS } from "../lib/cliTools";
+import { copyTextToClipboard } from "../lib/systemClipboard";
 import type { OsPlatform } from "../lib/shell";
 import { getEnabledTerminalShellOptions } from "../lib/terminalShellProfiles";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -20,6 +21,7 @@ import { ShellSelect } from "./ShellSelect";
 import { VendorIcon, inferVendor } from "./VendorIcon";
 import { CliToolIcon } from "./CliToolIcon";
 import { Textarea } from "./ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +39,8 @@ import {
   type CliArgsHistoryEntry,
 } from "../lib/cliArgsHistory";
 import { useSshDirectoryBrowser } from "../hooks/useSshDirectoryBrowser";
+import { resolveGroupBoundPath } from "../lib/groupPath";
+import { pathExists } from "../lib/pathValidation";
 
 interface Props {
   project?: Project;
@@ -61,6 +65,10 @@ const WORKTREE_STRATEGY_LABEL_KEYS: Record<WorktreeIsolationStrategy, Translatio
   always: "worktree.strategy.always",
 };
 const DEFAULT_WSL_PICKER_PATH = "\\\\wsl.localhost\\Ubuntu-22.04\\data";
+const ENVIRONMENT_VARIABLES_JSON_EXAMPLE = `{
+  "HTTP_PROXY": "http://127.0.0.1:7897",
+  "HTTPS_PROXY": "http://127.0.0.1:7897"
+}`;
 
 function normalizeWslUncInput(value: string): string {
   return value.trim().replace(/\//g, "\\").replace(/\\+$/, "");
@@ -118,6 +126,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const cliToolFieldId = useId();
   const cliToolLabelId = useId();
   const shellFieldId = useId();
+  const envVarsFieldId = useId();
+  const envVarsHelpId = useId();
   const worktreeDepsPromptFieldId = useId();
   const sshHostFieldId = useId();
   const remotePathFieldId = useId();
@@ -129,6 +139,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
     cloneFrom ? t("configModal.cloneName", { name: cloneFrom.name }) : (project?.name ?? "")
   );
   const [path, setPath] = useState(cloneFrom?.path ?? project?.path ?? "");
+  const [pathMode, setPathMode] = useState<"inherit" | "custom">(project?.path_mode ?? (cloneFrom ? "custom" : "inherit"));
+  const pathModeUserSelectedRef = useRef(false);
   const sourceProject = cloneFrom ?? project;
   const [projectType, setProjectType] = useState<"local" | "ssh">(
     sourceProject?.environment_type === "ssh" ? "ssh" : "local"
@@ -147,6 +159,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [startupCmd, setStartupCmd] = useState(cloneFrom?.startup_cmd ?? project?.startup_cmd ?? "");
   const [shell, setShell] = useState(cloneFrom?.shell ?? project?.shell ?? "");
   const [envVarsText, setEnvVarsText] = useState(cloneFrom?.env_vars ?? project?.env_vars ?? "{}");
+  const [envVarsHelpOpen, setEnvVarsHelpOpen] = useState(false);
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeIsolationStrategy>(
     cloneFrom?.worktree_strategy ?? project?.worktree_strategy ?? "disabled"
   );
@@ -163,6 +176,37 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [wslPickerEntries, setWslPickerEntries] = useState<ProjectFileEntry[]>([]);
   const [wslPickerLoading, setWslPickerLoading] = useState(false);
   const [wslPickerError, setWslPickerError] = useState("");
+  const parentBoundPath = useMemo(
+    () => resolveGroupBoundPath(groups, groupId ?? defaultGroupId),
+    [defaultGroupId, groupId, groups]
+  );
+
+  useEffect(() => {
+    if (!groupId) {
+      setPathMode("custom");
+      return;
+    }
+    if (!parentBoundPath) {
+      if (pathMode === "inherit") setPathMode("custom");
+      return;
+    }
+    if (pathMode === "inherit") {
+      setPath(parentBoundPath);
+      return;
+    }
+    if (project?.path_mode === "inherit" && !pathModeUserSelectedRef.current) {
+      setPath(parentBoundPath);
+      setPathMode("inherit");
+      return;
+    }
+    if (isClone) return;
+    if (parentBoundPath && !project && !pathModeUserSelectedRef.current) {
+      setPath(parentBoundPath);
+      setPathMode("inherit");
+    } else if (!project) {
+      setPathMode("custom");
+    }
+  }, [defaultGroupId, groupId, isClone, parentBoundPath, pathMode, project]);
   const cliArgsHistorySuggestions = useMemo(
     () => getCliArgsHistorySuggestions(cliArgsHistory, cliTool, undefined, cliArgs),
     [cliArgsHistory, cliTool, cliArgs]
@@ -367,14 +411,16 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   };
 
   const validatePath = useCallback(async (rawPath: string) => {
-    try {
-      const results = await invoke<boolean[]>("check_paths_exist", { paths: [rawPath] });
-      return Boolean(results[0]);
-    } catch (err) {
-      logError("Path validation failed in ConfigModal", { rawPath, err });
-      return false;
-    }
+    const valid = await pathExists(rawPath);
+    if (!valid) logError("Path validation failed in ConfigModal", { rawPath });
+    return valid;
   }, []);
+
+  const handleDisabledPathModeClick = useCallback((value: string) => {
+    if (value === "inherit" && !parentBoundPath) {
+      toast.info(t("configModal.pathMode.parentUnavailable"));
+    }
+  }, [parentBoundPath, t]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -433,6 +479,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
         await updateProject(project.id, {
           name: name.trim(),
           path: projectType === "ssh" ? "" : path.trim(),
+          path_mode: projectType === "ssh" ? "custom" : pathMode,
           group_id: groupId,
           cli_tool: trimmedCliTool,
           cli_args: trimmedCliArgs,
@@ -452,6 +499,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
         await createProject({
           name: name.trim(),
           path: projectType === "ssh" ? "" : path.trim(),
+          path_mode: projectType === "ssh" ? "custom" : pathMode,
           group_id: groupId,
           cli_tool: trimmedCliTool || undefined,
           cli_args: trimmedCliArgs || undefined,
@@ -507,6 +555,15 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
       ...enabledOptions,
     ];
   }, [language, osPlatform, shellSelectValue, terminalShellProfiles]);
+
+  const handleCopyEnvVarsExample = async () => {
+    try {
+      await copyTextToClipboard(ENVIRONMENT_VARIABLES_JSON_EXAMPLE);
+      toast.success(t("configModal.envVarsHelp.copySuccess"));
+    } catch (copyError) {
+      toast.error(t("configModal.envVarsHelp.copyFailed"), { description: String(copyError) });
+    }
+  };
 
   return (
     <>
@@ -586,25 +643,32 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                 <label htmlFor={pathFieldId} className="ui-config-form-label">
                   {t("configModal.path")} <span className="text-danger">*</span>
                 </label>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                {groupId && (
+                  <Select value={pathMode} onChange={(event) => {
+                    const next = event.target.value as "inherit" | "custom";
+                    pathModeUserSelectedRef.current = true;
+                    setPathMode(next);
+                    if (next === "inherit" && parentBoundPath) setPath(parentBoundPath);
+                  }} onDisabledOptionClick={handleDisabledPathModeClick} className="w-32 shrink-0 text-sm">
+                    <option value="inherit" disabled={!parentBoundPath}>{t("configModal.pathMode.inherit")}</option>
+                    <option value="custom">{t("configModal.pathMode.custom")}</option>
+                  </Select>
+                )}
+                <div className="relative min-w-0 flex-1">
                   <Input
                     id={pathFieldId}
                     type="text"
                     value={path}
+                    disabled={pathMode === "inherit" && Boolean(parentBoundPath)}
                     onChange={(e) => setPath(e.target.value)}
                     placeholder={t("configModal.pathPlaceholder")}
-                    className="min-w-0 flex-1 text-sm"
+                    className="min-w-0 pr-10 text-sm"
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleBrowse}
-                    className="h-9 shrink-0 px-3"
-                  >
-                    {t("common.browse")}
-                  </Button>
-                  {symlinkCompatibilityEnabled && (
+                  {pathMode === "custom" && <button type="button" className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-text-muted hover:text-primary" onClick={() => void handleBrowse()} aria-label={t("common.browse")} title={t("common.browse")}>
+                    <FolderOpen className="h-4 w-4" />
+                  </button>}
+                  {symlinkCompatibilityEnabled && pathMode === "custom" && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -612,11 +676,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                       onClick={handleBrowseSymlink}
                       aria-label={t("configModal.chooseSymlinkPath")}
                       title={t("configModal.chooseSymlinkPath")}
-                      className="h-9 shrink-0 px-2 text-[11px]"
+                      className="absolute inset-y-0 right-10 h-9 shrink-0 px-2 text-[11px]"
                     >
                       WSL
                     </Button>
                   )}
+                </div>
                 </div>
               </div> : (
                 <>
@@ -777,11 +842,53 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                 <Field label={t("configModal.startupCommand")} value={startupCmd} onChange={setStartupCmd} placeholder="npm run dev" />
               )}
               <div>
-                <label className="ui-config-form-label">{t("configModal.envVars")}</label>
+                <div className="mb-1.5 flex items-center gap-1">
+                  <label htmlFor={envVarsFieldId} className="ui-config-form-label mb-0">
+                    {t("configModal.envVars")}
+                  </label>
+                  <Popover open={envVarsHelpOpen} onOpenChange={setEnvVarsHelpOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="ui-focus-ring inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border/70 text-[10px] font-bold leading-none text-text-muted transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary"
+                        aria-label={t("configModal.a11y.envVarsHelp")}
+                        aria-describedby={envVarsHelpOpen ? envVarsHelpId : undefined}
+                        onPointerEnter={() => setEnvVarsHelpOpen(true)}
+                        onPointerLeave={() => setEnvVarsHelpOpen(false)}
+                        onFocus={() => setEnvVarsHelpOpen(true)}
+                        onBlur={() => setEnvVarsHelpOpen(false)}
+                      >
+                        ?
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      id={envVarsHelpId}
+                      role="tooltip"
+                      side="bottom"
+                      align="start"
+                      className="z-[60] w-[min(22rem,calc(100vw-3rem))] p-3 text-xs text-text-secondary"
+                      onPointerEnter={() => setEnvVarsHelpOpen(true)}
+                      onPointerLeave={() => setEnvVarsHelpOpen(false)}
+                    >
+                      <p className="leading-relaxed">{t("configModal.envVarsHelp")}</p>
+                      <div className="mt-2 overflow-hidden rounded-lg border border-border/60 bg-surface-container-high">
+                        <div className="flex items-center justify-end border-b border-border/50 px-2 py-1">
+                          <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => void handleCopyEnvVarsExample()}>
+                            {t("common.copy")}
+                          </Button>
+                        </div>
+                        <pre className="overflow-x-auto px-3 py-2 font-mono text-[11px] leading-5 text-text-primary">{ENVIRONMENT_VARIABLES_JSON_EXAMPLE}</pre>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
                 <Textarea
+                  id={envVarsFieldId}
                   value={envVarsText}
                   onChange={(e) => setEnvVarsText(e.target.value)}
-                  className="h-16 resize-none text-sm"
+                  rows={3}
+                  spellCheck={false}
+                  className="min-h-20 resize-y font-mono text-xs leading-5"
                 />
               </div>
 
@@ -1320,17 +1427,28 @@ function GroupSelector({
             {t("configModal.group.none")}
           </button>
 
-          {flatList.map(({ group: g, depth }) => (
-            <button
-              key={g.id}
-              type="button"
-              onClick={() => { onChange(g.id); setOpen(false); }}
-              className={`mx-1 w-[calc(100%-0.5rem)] rounded-lg py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${value === g.id ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
-              style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
-            >
-              {g.name}
-            </button>
-          ))}
+          {flatList.map(({ group: g, depth }) => {
+            const bindingPath = resolveGroupBoundPath(groups, g.id);
+            return (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => { onChange(g.id); setOpen(false); }}
+                className={`mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${value === g.id ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
+                style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
+              >
+                <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                {bindingPath && (
+                  <span
+                    className="max-w-[55%] shrink-0 truncate text-xs text-text-muted opacity-75"
+                    title={bindingPath}
+                  >
+                    {bindingPath}
+                  </span>
+                )}
+              </button>
+            );
+          })}
 
           {flatList.length === 0 && (
             <div className="px-3 py-2 text-xs text-text-muted">{t("configModal.group.empty")}</div>

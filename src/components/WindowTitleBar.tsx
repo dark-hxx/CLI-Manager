@@ -6,6 +6,7 @@ import { logWarn } from "../lib/logger";
 import { getOsPlatform } from "../lib/shell";
 import appIcon32 from "../assets/app-icon-32.png";
 import { useI18n } from "../lib/i18n";
+import { WorkspaceLayoutControls } from "./layout/WorkspaceLayoutControls";
 
 const IN_TAURI = isTauri();
 
@@ -79,8 +80,9 @@ export function WindowTitleBar() {
         />
         <span className="truncate text-[13px] font-semibold tracking-[0.005em] text-on-surface">CLI-Manager</span>
       </div>
+      <WorkspaceLayoutControls />
       {!isMacOs && IN_TAURI && (
-        <div className="flex items-center">
+        <div className="flex shrink-0 items-center">
           <button
             type="button"
             className="titlebar-btn"

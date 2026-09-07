@@ -2,6 +2,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowRightLeft,
+  ArrowDownWideNarrow,
+  ArrowUpWideNarrow,
   BookCopy,
   Check,
   CheckSquare,
@@ -13,20 +15,39 @@ import {
   GitCompare,
   History,
   ListChecks,
+  LoaderCircle,
   Pencil,
+  Sparkles,
   Square,
   Star,
   Terminal,
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { toast } from "sonner";
 import aiAvatarUrl from "../../assets/history-ai-avatar.svg";
 import userAvatarUrl from "../../assets/history-user-avatar.svg";
-import type { HistoryFileChangeSummary, HistoryMessage, HistorySessionDetail, HistorySessionView } from "../../lib/types";
+import type {
+  HistoryFileChangeSummary,
+  HistoryMessage,
+  HistorySessionDetail,
+  HistorySessionView,
+} from "../../lib/types";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
+import {
+  isHistorySortableDetailView,
+  type HistoryDetailSortDirection,
+  type HistoryMessageEntry,
+  type HistorySortableDetailView,
+} from "../../lib/historySort";
+import {
+  effectiveHistoryMessageParts,
+  isConversationVisibleMessage,
+  isInjectedPromptContent,
+  normalizeHistoryMessageRole,
+} from "../../lib/historyConversation";
 import { CliToolIcon } from "../CliToolIcon";
 import { EmptyState } from "../ui/EmptyState";
 import { SessionTranscriptContent } from "./SessionTranscriptContent";
@@ -40,12 +61,15 @@ import { SessionToolDiagnosticsView } from "./SessionToolDiagnosticsView";
 import { SessionSubtaskTreeView } from "./SessionSubtaskTreeView";
 import type { SessionProcessModel } from "./sessionEvents";
 
-export type HistoryDetailView = "transcript" | "timeline" | "canvas" | "context" | "changes" | "tools" | "subtasks";
+export { isConversationVisibleMessage } from "../../lib/historyConversation";
+
+export type HistoryDetailView = HistorySortableDetailView | "canvas" | "context";
 
 interface SessionDetailPaneProps {
   activeView: HistorySessionView | null;
   activeSession: HistorySessionDetail | null;
   loadingSessionDetail: boolean;
+  smartTitlePending: boolean;
   aliasDraft: string;
   tagsDraft: string;
   tagSuggestions: string[];
@@ -54,16 +78,18 @@ interface SessionDetailPaneProps {
   matchCursor: number;
   focusedMessageIndex: number | null;
   focusedMessageSeq: number;
-  visibleMessages: HistoryMessage[];
+  visibleMessageEntries: HistoryMessageEntry[];
   visibleMessageCount: number;
   hasMoreMessages: boolean;
   totalMessageCount: number;
   processModel: SessionProcessModel;
   detailView: HistoryDetailView;
+  sortDirection: HistoryDetailSortDirection;
   messageListRef: RefObject<HTMLDivElement | null>;
   sessionSearchRef: RefObject<HTMLInputElement | null>;
   messageRefs: RefObject<Record<number, HTMLDivElement | null>>;
   onDetailViewChange: (view: HistoryDetailView) => void;
+  onToggleSortDirection: () => void;
   onMessageListScroll: () => void;
   onAliasDraftChange: (value: string) => void;
   onTagsDraftChange: (value: string) => void;
@@ -74,6 +100,8 @@ interface SessionDetailPaneProps {
   onOpenPrompt: () => void;
   onOpenDiff: (fileChanges?: HistoryFileChangeSummary[]) => void;
   onResumeSession: () => void;
+  onGenerateSmartTitle: () => void;
+  onClearSmartTitle: () => void;
   canConvertSession: boolean;
   onConvertSession: () => void;
   onJumpToMessage: (messageIndex: number) => void;
@@ -94,6 +122,7 @@ interface SessionDetailPaneProps {
 }
 
 const DETAIL_VIEWS: Array<{ id: HistoryDetailView; labelKey: TranslationKey }> = [
+  { id: "conversation", labelKey: "history.detail.view.conversation" },
   { id: "transcript", labelKey: "history.detail.view.transcript" },
   { id: "timeline", labelKey: "history.detail.view.timeline" },
   { id: "canvas", labelKey: "history.detail.view.canvas" },
@@ -108,25 +137,188 @@ const LONG_MESSAGE_LINE_THRESHOLD = 8;
 const LONG_MESSAGE_CHAR_THRESHOLD = 900;
 const TOKEN_FORMATTER = new Intl.NumberFormat("en-US");
 
-function isInjectedPromptContent(content: string): boolean {
-  const trimmed = content.trimStart();
-  const lowerTrimmed = trimmed.toLowerCase();
-  const firstLine = lowerTrimmed.split(/\r?\n/, 1)[0]?.replace(/^#+\s*/, "").trim() ?? "";
+type ConversationMessageRow = {
+  type: "message";
+  key: string;
+  messageIndex: number;
+  message: HistoryMessage;
+  content: string;
+};
+
+type ConversationRow = ConversationMessageRow;
+
+export function buildConversationRows(entries: HistoryMessageEntry[]): ConversationRow[] {
+  const rows: ConversationRow[] = [];
+
+  entries.forEach(({ message, messageIndex }) => {
+    if (!isConversationVisibleMessage(message)) return;
+    const parts = effectiveHistoryMessageParts(message);
+    const textParts = parts.filter((part) => part.kind === "text");
+    if (textParts.length === 0) return;
+    rows.push({
+      type: "message",
+      key: `message:${messageIndex}`,
+      messageIndex,
+      message,
+      content: textParts.map((part) => part.content).join("\n\n"),
+    });
+  });
+  return rows;
+}
+
+function conversationRowMessageIndices(row: ConversationRow): number[] {
+  return [row.messageIndex];
+}
+
+function findConversationRowIndex(rows: ConversationRow[], messageIndex: number): number {
+  return rows.findIndex((row) => conversationRowMessageIndices(row).includes(messageIndex));
+}
+
+function isHistoryMessageEditable(message: HistoryMessage, canEdit: boolean): boolean {
+  return canEdit && message.editable === true && message.line_index !== null && message.line_index !== undefined;
+}
+
+function HistoryMessageActions({
+  messageEditable,
+  onCopyMessage,
+  onStartEdit,
+  onStartInsert,
+  onDeleteMessage,
+}: {
+  messageEditable: boolean;
+  onCopyMessage: () => void;
+  onStartEdit: () => void;
+  onStartInsert: () => void;
+  onDeleteMessage: () => void;
+}) {
+  const { t } = useI18n();
+
   return (
-    firstLine.startsWith("agents.md instructions for ") ||
-    firstLine.startsWith("system prompt") ||
-    firstLine.startsWith("developer instructions") ||
-    lowerTrimmed.startsWith("<system-reminder") ||
-    lowerTrimmed.startsWith("<codex_internal_context") ||
-    lowerTrimmed.startsWith("<session-context")
+    <div className="ui-history-message-actions">
+      <button
+        type="button"
+        className="ui-history-message-action"
+        onClick={onCopyMessage}
+        title={t("history.edit.copyMessage")}
+        aria-label={t("history.edit.copyMessage")}
+      >
+        <Copy size={12} />
+      </button>
+      {messageEditable && (
+        <>
+          <button
+            type="button"
+            className="ui-history-message-action"
+            onClick={onStartEdit}
+            title={t("history.edit.editMessage")}
+            aria-label={t("history.edit.editMessage")}
+          >
+            <Pencil size={12} />
+          </button>
+          <button
+            type="button"
+            className="ui-history-message-action"
+            onClick={onStartInsert}
+            title={t("history.edit.insertAfter")}
+            aria-label={t("history.edit.insertAfter")}
+          >
+            <CornerDownRight size={12} />
+          </button>
+          <button
+            type="button"
+            className="ui-history-message-action"
+            data-danger="true"
+            onClick={onDeleteMessage}
+            title={t("history.edit.deleteMessage")}
+            aria-label={t("history.edit.deleteMessage")}
+          >
+            <Trash2 size={12} />
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
-function normalizeMessageRole(role: string): "user" | "assistant" | "other" {
-  const normalized = role.toLowerCase();
-  if (normalized === "user" || normalized.includes("human")) return "user";
-  if (normalized === "assistant" || normalized.includes("model") || normalized.includes("llm")) return "assistant";
-  return "other";
+function ConversationRowCard({
+  row,
+  virtualIndex,
+  isMatched,
+  isFocused,
+  query,
+  messageRefs,
+  measureElement,
+  canEdit,
+  selectionMode,
+  onCopyMessage,
+  onStartEdit,
+  onStartInsert,
+  onDeleteMessage,
+}: {
+  row: ConversationRow;
+  virtualIndex: number;
+  isMatched: boolean;
+  isFocused: boolean;
+  query: string;
+  messageRefs: RefObject<Record<number, HTMLDivElement | null>>;
+  measureElement: (element: Element) => void;
+  canEdit: boolean;
+  selectionMode: boolean;
+  onCopyMessage: () => void;
+  onStartEdit: () => void;
+  onStartInsert: () => void;
+  onDeleteMessage: () => void;
+}) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const message = row.type === "message" ? row.message : null;
+  const roleKind = message ? normalizeHistoryMessageRole(message.role) : "other";
+  const avatarUrl = roleKind === "user" ? userAvatarUrl : aiAvatarUrl;
+  const messageMeta = message ? formatMessageMeta(message) : null;
+  const messageEditable = message !== null && isHistoryMessageEditable(message, canEdit);
+
+  const setCardRef = (element: HTMLDivElement | null) => {
+    cardRef.current = element;
+    for (const messageIndex of conversationRowMessageIndices(row)) {
+      messageRefs.current[messageIndex] = element;
+    }
+    if (element) measureElement(element);
+  };
+
+  return (
+    <div
+      ref={setCardRef}
+      data-index={virtualIndex}
+      className="ui-history-message-card ui-history-conversation-message absolute left-0 top-0 w-full px-2.5 py-2"
+      data-role={roleKind}
+      style={{
+        borderColor: isFocused ? "var(--warning)" : isMatched ? "var(--accent)" : "transparent",
+      }}
+    >
+      {roleKind !== "user" && (
+        <span className="ui-history-message-avatar" aria-hidden="true"><img src={avatarUrl} alt="" /></span>
+      )}
+      <div className="ui-history-message-stack">
+        <div className="ui-history-message-header">
+          {messageMeta && <div className="ui-history-message-meta" title={messageMeta}>{messageMeta}</div>}
+          {!selectionMode && (
+            <HistoryMessageActions
+              messageEditable={messageEditable}
+              onCopyMessage={onCopyMessage}
+              onStartEdit={onStartEdit}
+              onStartInsert={onStartInsert}
+              onDeleteMessage={onDeleteMessage}
+            />
+          )}
+        </div>
+        <div className="ui-history-message-bubble">
+          <SessionTranscriptContent content={row.content} query={query} />
+        </div>
+      </div>
+      {roleKind === "user" && (
+        <span className="ui-history-message-avatar" aria-hidden="true"><img src={avatarUrl} alt="" /></span>
+      )}
+    </div>
+  );
 }
 
 function shouldCollapseMessage(message: HistoryMessage): boolean {
@@ -228,6 +420,7 @@ type InsertRole = "user" | "assistant";
 interface HistoryMessageCardProps {
   message: HistoryMessage;
   index: number;
+  virtualIndex: number;
   isMatched: boolean;
   isFocused: boolean;
   query: string;
@@ -260,6 +453,7 @@ interface HistoryMessageCardProps {
 function HistoryMessageCard({
   message,
   index,
+  virtualIndex,
   isMatched,
   isFocused,
   query,
@@ -289,15 +483,16 @@ function HistoryMessageCard({
   onToggleSelect,
 }: HistoryMessageCardProps) {
   const { t } = useI18n();
-  const roleKind = normalizeMessageRole(message.role);
+  const roleKind = normalizeHistoryMessageRole(message.role);
   const avatarUrl = roleKind === "user" ? userAvatarUrl : aiAvatarUrl;
   const forceOpen = isMatched || isFocused;
   const collapsible = shouldCollapseMessage(message);
   const messageMeta = formatMessageMeta(message);
   const [open, setOpen] = useState(forceOpen);
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const messageEditable =
-    canEdit && message.editable === true && message.line_index !== null && message.line_index !== undefined;
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const insertTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageEditable = isHistoryMessageEditable(message, canEdit);
   const selectable = selectionMode && messageEditable;
 
   useEffect(() => {
@@ -307,6 +502,14 @@ function HistoryMessageCard({
   useEffect(() => {
     if (cardRef.current) measureElement(cardRef.current);
   }, [measureElement, open, isEditing, isInserting]);
+
+  useLayoutEffect(() => {
+    const textarea = isEditing ? editTextareaRef.current : isInserting ? insertTextareaRef.current : null;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+    if (cardRef.current) measureElement(cardRef.current);
+  }, [editDraft, insertDraft, isEditing, isInserting, measureElement]);
 
   const setCardRef = (element: HTMLDivElement | null) => {
     cardRef.current = element;
@@ -343,7 +546,7 @@ function HistoryMessageCard({
 
   return (
     <div
-      data-index={index}
+      data-index={virtualIndex}
       data-role={roleKind}
       data-editing={isEditing ? "true" : undefined}
       data-inserting={isInserting ? "true" : undefined}
@@ -390,55 +593,20 @@ function HistoryMessageCard({
             </div>
           )}
           {!isEditing && !selectionMode && (
-            <div className="ui-history-message-actions">
-              <button
-                type="button"
-                className="ui-history-message-action"
-                onClick={onCopyMessage}
-                title={t("history.edit.copyMessage")}
-                aria-label={t("history.edit.copyMessage")}
-              >
-                <Copy size={12} />
-              </button>
-              {messageEditable && (
-                <>
-                  <button
-                    type="button"
-                    className="ui-history-message-action"
-                    onClick={onStartEdit}
-                    title={t("history.edit.editMessage")}
-                    aria-label={t("history.edit.editMessage")}
-                  >
-                    <Pencil size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    className="ui-history-message-action"
-                    onClick={onStartInsert}
-                    title={t("history.edit.insertAfter")}
-                    aria-label={t("history.edit.insertAfter")}
-                  >
-                    <CornerDownRight size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    className="ui-history-message-action"
-                    data-danger="true"
-                    onClick={onDeleteMessage}
-                    title={t("history.edit.deleteMessage")}
-                    aria-label={t("history.edit.deleteMessage")}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </>
-              )}
-            </div>
+            <HistoryMessageActions
+              messageEditable={messageEditable}
+              onCopyMessage={onCopyMessage}
+              onStartEdit={onStartEdit}
+              onStartInsert={onStartInsert}
+              onDeleteMessage={onDeleteMessage}
+            />
           )}
         </div>
         <div className="ui-history-message-bubble">
           {isEditing ? (
             <div className="ui-history-message-edit">
               <textarea
+                ref={editTextareaRef}
                 autoFocus
                 value={editDraft}
                 onChange={(event) => onEditDraftChange(event.target.value)}
@@ -515,6 +683,7 @@ function HistoryMessageCard({
               </span>
             </div>
             <textarea
+              ref={insertTextareaRef}
               autoFocus
               placeholder={t("history.edit.insertPlaceholder")}
               value={insertDraft}
@@ -563,6 +732,7 @@ export function SessionDetailPane({
   activeView,
   activeSession,
   loadingSessionDetail,
+  smartTitlePending,
   aliasDraft,
   tagsDraft,
   tagSuggestions,
@@ -571,16 +741,18 @@ export function SessionDetailPane({
   matchCursor,
   focusedMessageIndex,
   focusedMessageSeq,
-  visibleMessages,
+  visibleMessageEntries,
   visibleMessageCount,
   hasMoreMessages,
   totalMessageCount,
   processModel,
   detailView,
+  sortDirection,
   messageListRef,
   sessionSearchRef,
   messageRefs,
   onDetailViewChange,
+  onToggleSortDirection,
   onMessageListScroll,
   onAliasDraftChange,
   onTagsDraftChange,
@@ -591,6 +763,8 @@ export function SessionDetailPane({
   onOpenPrompt,
   onOpenDiff,
   onResumeSession,
+  onGenerateSmartTitle,
+  onClearSmartTitle,
   canConvertSession,
   onConvertSession,
   onJumpToMessage,
@@ -633,25 +807,42 @@ export function SessionDetailPane({
   // 当匹配数 N 和可见消息数 M 都达到几百时累计 O(N·M)。改 Set 后是 O(1) lookup。
   const matchSet = useMemo(() => new Set(matchIndices), [matchIndices]);
   const activeMatchIndex = matchIndices[Math.min(matchCursor, Math.max(0, matchIndices.length - 1))];
+  const conversationRows = useMemo(() => buildConversationRows(visibleMessageEntries), [visibleMessageEntries]);
+  const isConversationView = detailView === "conversation";
+  const virtualRowCount = isConversationView ? conversationRows.length : visibleMessageEntries.length;
   const messageVirtualizer = useVirtualizer({
-    count: visibleMessages.length,
+    count: virtualRowCount,
     getScrollElement: () => messageListRef.current,
     estimateSize: () => 220,
     overscan: 6,
-    getItemKey: (index) => `${visibleMessages[index]?.role ?? "message"}:${index}`,
+    getItemKey: (index) => isConversationView
+      ? conversationRows[index]?.key ?? `conversation:${index}`
+      : `${visibleMessageEntries[index]?.message.role ?? "message"}:${visibleMessageEntries[index]?.messageIndex ?? index}`,
   });
 
   useEffect(() => {
     if (activeMatchIndex === undefined) return;
-    if (detailView === "transcript" && activeMatchIndex < visibleMessages.length) {
-      messageVirtualizer.scrollToIndex(activeMatchIndex, { align: "center" });
+    const visibleRowIndex = visibleMessageEntries.findIndex((entry) => entry.messageIndex === activeMatchIndex);
+    if (visibleRowIndex < 0) return;
+    const rowIndex = isConversationView
+      ? findConversationRowIndex(conversationRows, activeMatchIndex)
+      : visibleRowIndex;
+    if ((isConversationView || detailView === "transcript") && rowIndex >= 0) {
+      messageVirtualizer.scrollToIndex(rowIndex, { align: "center" });
     }
-  }, [activeMatchIndex, detailView, messageVirtualizer, visibleMessages.length]);
+  }, [activeMatchIndex, conversationRows, detailView, isConversationView, messageVirtualizer, visibleMessageEntries]);
 
   useEffect(() => {
-    if (focusedMessageIndex === null || focusedMessageIndex >= visibleMessages.length) return;
-    if (detailView === "transcript") messageVirtualizer.scrollToIndex(focusedMessageIndex, { align: "center" });
-  }, [detailView, focusedMessageIndex, focusedMessageSeq, messageVirtualizer, visibleMessages.length]);
+    if (focusedMessageIndex === null) return;
+    const visibleRowIndex = visibleMessageEntries.findIndex((entry) => entry.messageIndex === focusedMessageIndex);
+    if (visibleRowIndex < 0) return;
+    const rowIndex = isConversationView
+      ? findConversationRowIndex(conversationRows, focusedMessageIndex)
+      : visibleRowIndex;
+    if ((isConversationView || detailView === "transcript") && rowIndex >= 0) {
+      messageVirtualizer.scrollToIndex(rowIndex, { align: "center" });
+    }
+  }, [conversationRows, detailView, focusedMessageIndex, focusedMessageSeq, isConversationView, messageVirtualizer, visibleMessageEntries]);
 
   if (!activeView) {
     return (
@@ -666,6 +857,7 @@ export function SessionDetailPane({
   }
 
   const sourceIcon = resolveHistorySourceIconKey(activeView.source);
+  const smartTitleGenerationPending = smartTitlePending || activeView.generatedTitle?.state === "pending";
 
   const copyText = (text: string, label: string) => {
     void navigator.clipboard
@@ -688,10 +880,11 @@ export function SessionDetailPane({
   };
 
   const startEditMessage = async (index: number, message: HistoryMessage) => {
-    if (!(await onRequestMessageEdit())) return;
+    if (!(await onRequestMessageEdit())) return false;
     setInsertIndex(null);
     setEditingIndex(index);
     setEditDraft(message.editable_text ?? message.content);
+    return true;
   };
 
   const submitEditMessage = async (message: HistoryMessage) => {
@@ -708,11 +901,12 @@ export function SessionDetailPane({
   };
 
   const startInsertMessage = async (index: number) => {
-    if (!(await onRequestMessageEdit())) return;
+    if (!(await onRequestMessageEdit())) return false;
     setEditingIndex(null);
     setInsertIndex(index);
     setInsertRole("user");
     setInsertDraft("");
+    return true;
   };
 
   const submitInsertMessage = async (message: HistoryMessage) => {
@@ -760,7 +954,7 @@ export function SessionDetailPane({
     if (batchDeleting) return;
     const messages = Array.from(selectedMessageIndices)
       .sort((a, b) => a - b)
-      .map((index) => visibleMessages[index])
+      .map((index) => activeSession?.messages[index])
       .filter((message): message is HistoryMessage => Boolean(message?.editable));
     if (messages.length === 0) return;
     setBatchDeleting(true);
@@ -827,6 +1021,52 @@ export function SessionDetailPane({
               <Terminal size={12} />
               {t("history.detail.resume")}
             </button>
+            <>
+              <button
+                onClick={onGenerateSmartTitle}
+                disabled={loadingSessionDetail || !activeSession || smartTitleGenerationPending}
+                aria-label={t(
+                  smartTitleGenerationPending
+                    ? "history.smartTitle.pending"
+                    : activeView.generatedTitle
+                    ? "history.smartTitle.regenerate"
+                    : "history.smartTitle.generate",
+                )}
+                aria-busy={smartTitleGenerationPending || undefined}
+                className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+                style={{ color: "var(--accent)" }}
+                title={t(
+                  smartTitleGenerationPending
+                    ? "history.smartTitle.pending"
+                    : activeView.generatedTitle
+                      ? "history.smartTitle.regenerate"
+                      : "history.smartTitle.generate",
+                )}
+              >
+                {smartTitleGenerationPending ? (
+                  <LoaderCircle size={12} className="animate-spin" />
+                ) : (
+                  <Sparkles size={12} />
+                )}
+                {smartTitleGenerationPending
+                  ? t("history.smartTitle.pending")
+                  : activeView.generatedTitle
+                    ? t("history.smartTitle.regenerate")
+                    : t("history.smartTitle.generate")}
+              </button>
+              {activeView.generatedTitle?.title ? (
+                <button
+                  onClick={onClearSmartTitle}
+                  disabled={loadingSessionDetail || smartTitleGenerationPending}
+                  aria-label={t("history.smartTitle.clear")}
+                  className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact"
+                  title={t("history.smartTitle.clear")}
+                >
+                  <X size={12} />
+                  {t("history.smartTitle.clear")}
+                </button>
+              ) : null}
+            </>
             {canConvertSession ? (
               <button
                 onClick={onConvertSession}
@@ -916,19 +1156,42 @@ export function SessionDetailPane({
           onJumpNext={onJumpNext}
         />
 
-        <div className="ui-history-detail-tabs" role="tablist" aria-label={t("history.detail.viewsAria")}>
-          {DETAIL_VIEWS.map((item) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="ui-history-detail-tabs min-w-0 flex-1" role="tablist" aria-label={t("history.detail.viewsAria")}>
+            {DETAIL_VIEWS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={detailView === item.id}
+                data-active={detailView === item.id}
+                onClick={() => onDetailViewChange(item.id)}
+              >
+                {t(item.labelKey)}
+              </button>
+            ))}
+          </div>
+          {isHistorySortableDetailView(detailView) && (
             <button
-              key={item.id}
               type="button"
-              role="tab"
-              aria-selected={detailView === item.id}
-              data-active={detailView === item.id}
-              onClick={() => onDetailViewChange(item.id)}
+              className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact shrink-0"
+              aria-pressed={sortDirection === "descending"}
+              aria-label={t(
+                sortDirection === "ascending"
+                  ? "history.detail.sortAscendingTitle"
+                  : "history.detail.sortDescendingTitle",
+              )}
+              title={t(
+                sortDirection === "ascending"
+                  ? "history.detail.sortAscendingTitle"
+                  : "history.detail.sortDescendingTitle",
+              )}
+              onClick={onToggleSortDirection}
             >
-              {t(item.labelKey)}
+              {sortDirection === "ascending" ? <ArrowDownWideNarrow size={12} /> : <ArrowUpWideNarrow size={12} />}
+              {t(sortDirection === "ascending" ? "history.detail.sortAscending" : "history.detail.sortDescending")}
             </button>
-          ))}
+          )}
         </div>
 
         {messageSelectionMode && (
@@ -965,7 +1228,7 @@ export function SessionDetailPane({
         ref={messageListRef}
         onScroll={onMessageListScroll}
         className={`[grid-row:2] min-h-0 h-full overflow-x-hidden overflow-y-auto p-3 ${
-          detailView === "transcript" ? "ui-history-transcript-chat-surface" : ""
+          detailView === "transcript" || detailView === "conversation" ? "ui-history-transcript-chat-surface" : ""
         }`}
       >
         {loadingSessionDetail && <div className="text-xs text-text-muted">{t("history.detail.loading")}</div>}
@@ -974,43 +1237,45 @@ export function SessionDetailPane({
           <div className="text-xs text-text-muted">{t("history.detail.noMessages")}</div>
         )}
 
-        {!loadingSessionDetail && detailView === "transcript" && visibleMessages.length > 0 && (
+        {!loadingSessionDetail && detailView === "transcript" && visibleMessageEntries.length > 0 && (
           <div className="relative w-full" style={{ height: messageVirtualizer.getTotalSize() }}>
             {messageVirtualizer.getVirtualItems().map((virtualRow) => {
-              const msg = visibleMessages[virtualRow.index];
-              if (!msg) return null;
-              const isMatched = matchSet.has(virtualRow.index);
-              const isFocused = focusedMessageIndex === virtualRow.index;
+              const entry = visibleMessageEntries[virtualRow.index];
+              if (!entry) return null;
+              const { message: msg, messageIndex } = entry;
+              const isMatched = matchSet.has(messageIndex);
+              const isFocused = focusedMessageIndex === messageIndex;
               return (
                 <div key={virtualRow.key} className="absolute left-0 top-0 w-full" style={{ transform: `translateY(${virtualRow.start}px)` }}>
                   <HistoryMessageCard
                     message={msg}
-                    index={virtualRow.index}
+                    index={messageIndex}
+                    virtualIndex={virtualRow.index}
                     isMatched={isMatched}
                     isFocused={isFocused}
                     query={sessionQuery}
                     messageRefs={messageRefs}
                     measureElement={messageVirtualizer.measureElement}
                     canEdit={canEditMessages}
-                    isEditing={editingIndex === virtualRow.index}
+                    isEditing={editingIndex === messageIndex}
                     editDraft={editDraft}
                     editSaving={editSaving}
                     onEditDraftChange={setEditDraft}
                     onStartEdit={() => {
-                      void startEditMessage(virtualRow.index, msg);
+                      void startEditMessage(messageIndex, msg);
                     }}
                     onCancelEdit={() => setEditingIndex(null)}
                     onSubmitEdit={() => {
                       void submitEditMessage(msg);
                     }}
-                    isInserting={insertIndex === virtualRow.index}
+                    isInserting={insertIndex === messageIndex}
                     insertRole={insertRole}
                     insertDraft={insertDraft}
                     insertSaving={insertSaving}
                     onInsertRoleChange={setInsertRole}
                     onInsertDraftChange={setInsertDraft}
                     onStartInsert={() => {
-                      void startInsertMessage(virtualRow.index);
+                      void startInsertMessage(messageIndex);
                     }}
                     onCancelInsert={() => setInsertIndex(null)}
                     onSubmitInsert={() => {
@@ -1019,8 +1284,47 @@ export function SessionDetailPane({
                     onCopyMessage={() => copyMessageContent(msg)}
                     onDeleteMessage={() => onDeleteMessage(msg)}
                     selectionMode={messageSelectionMode}
-                    isSelected={selectedMessageIndices.has(virtualRow.index)}
-                    onToggleSelect={() => toggleMessageSelected(virtualRow.index)}
+                    isSelected={selectedMessageIndices.has(messageIndex)}
+                    onToggleSelect={() => toggleMessageSelected(messageIndex)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {!loadingSessionDetail && detailView === "conversation" && conversationRows.length > 0 && (
+          <div className="relative w-full" style={{ height: messageVirtualizer.getTotalSize() }}>
+            {messageVirtualizer.getVirtualItems().map((virtualRow) => {
+              const row = conversationRows[virtualRow.index];
+              if (!row) return null;
+              const indices = conversationRowMessageIndices(row);
+              const isMatched = indices.some((index) => matchSet.has(index));
+              const isFocused = focusedMessageIndex !== null && indices.includes(focusedMessageIndex);
+              return (
+                <div key={virtualRow.key} className="absolute left-0 top-0 w-full" style={{ transform: `translateY(${virtualRow.start}px)` }}>
+                  <ConversationRowCard
+                    row={row}
+                    virtualIndex={virtualRow.index}
+                    isMatched={isMatched}
+                    isFocused={isFocused}
+                    query={sessionQuery}
+                    messageRefs={messageRefs}
+                    measureElement={messageVirtualizer.measureElement}
+                    canEdit={canEditMessages}
+                    selectionMode={messageSelectionMode}
+                    onCopyMessage={() => copyMessageContent(row.message)}
+                    onStartEdit={() => {
+                      void startEditMessage(row.messageIndex, row.message).then((started) => {
+                        if (started) onDetailViewChange("transcript");
+                      });
+                    }}
+                    onStartInsert={() => {
+                      void startInsertMessage(row.messageIndex).then((started) => {
+                        if (started) onDetailViewChange("transcript");
+                      });
+                    }}
+                    onDeleteMessage={() => onDeleteMessage(row.message)}
                   />
                 </div>
               );
@@ -1029,7 +1333,7 @@ export function SessionDetailPane({
         )}
 
         {!loadingSessionDetail && detailView === "timeline" && (
-          <SessionTimelineView model={processModel} onJumpToMessage={onJumpToMessage} />
+          <SessionTimelineView model={processModel} direction={sortDirection} onJumpToMessage={onJumpToMessage} />
         )}
 
         {!loadingSessionDetail && detailView === "canvas" && (
@@ -1047,6 +1351,7 @@ export function SessionDetailPane({
           <SessionFileChangesView
             fileChanges={activeSession?.file_changes}
             model={processModel}
+            direction={sortDirection}
             onOpenDiff={onOpenDiff}
             onJumpToMessage={onJumpToMessage}
           />
@@ -1059,15 +1364,16 @@ export function SessionDetailPane({
             mcpCalls={activeSession?.usage?.mcp_calls ?? []}
             skillCalls={activeSession?.usage?.skill_calls ?? []}
             toolEvents={activeSession?.tool_events ?? []}
+            direction={sortDirection}
             onJumpToMessage={onJumpToMessage}
           />
         )}
 
         {!loadingSessionDetail && detailView === "subtasks" && (
-          <SessionSubtaskTreeView model={processModel} onJumpToMessage={onJumpToMessage} />
+          <SessionSubtaskTreeView model={processModel} direction={sortDirection} onJumpToMessage={onJumpToMessage} />
         )}
 
-        {!loadingSessionDetail && detailView === "transcript" && hasMoreMessages && (
+        {!loadingSessionDetail && (detailView === "transcript" || detailView === "conversation") && hasMoreMessages && (
           <button onClick={onLoadMoreMessages} className="ui-btn mt-2.5 w-full" aria-label={t("history.detail.loadMoreMessages")}>
             {t("history.detail.loadMoreMessagesCount", { visible: visibleMessageCount, total: totalMessageCount })}
           </button>

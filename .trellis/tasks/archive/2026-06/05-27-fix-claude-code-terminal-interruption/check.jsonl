@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Verify Rust/Tauri backend checklist and cargo check requirement"}
-{"file":".trellis/spec/frontend/index.md","reason":"Verify frontend guideline coverage"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify TypeScript quality and typecheck expectations"}

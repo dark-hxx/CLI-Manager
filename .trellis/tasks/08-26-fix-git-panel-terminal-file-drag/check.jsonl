@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"根因修复分诊、发现清单与状态矩阵要求。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"共享文件浏览器与 Git 面板的复杂指针拖拽逻辑，避免复制。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"拖拽源、内存/DataTransfer payload 与终端 drop zone 的前端边界契约。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"终端输入与文件路径拖拽、拖拽阈值/rAF 预览的项目约定。"}

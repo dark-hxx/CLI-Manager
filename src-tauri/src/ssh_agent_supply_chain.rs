@@ -1,3 +1,4 @@
+use crate::provider::network_client;
 use base64::Engine;
 use minisign_verify::{PublicKey, Signature};
 use reqwest::{redirect, Client, Response, Url};
@@ -165,7 +166,7 @@ fn validate_redirect_target(url: &Url, allow_http: bool) -> Result<(), String> {
 }
 
 fn release_client(allow_http: bool) -> Result<Client, String> {
-    Client::builder()
+    network_client::configure_builder(Client::builder())?
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(120))
         .redirect(redirect::Policy::custom(move |attempt| {

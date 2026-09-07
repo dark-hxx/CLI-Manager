@@ -6,7 +6,7 @@ import { create } from "zustand";
 const RELEASES_URL = "https://github.com/dark-hxx/CLI-Manager/releases";
 const AUR_PACKAGE_URL = "https://aur.archlinux.org/packages/cli-manager-bin";
 const MAX_RELEASE_NOTES_LENGTH = 1200;
-export type AppDistribution = "standalone" | "aur";
+export type AppDistribution = "standalone" | "portable" | "aur";
 
 export interface UpdateInfo {
   version: string;
@@ -117,7 +117,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   fetchVersion: async () => {
     try {
       const result = await invoke<{ version: string; name: string; distribution?: string }>("get_app_version");
-      const distribution: AppDistribution = result.distribution === "aur" ? "aur" : "standalone";
+      const distribution: AppDistribution = result.distribution === "aur"
+        ? "aur"
+        : result.distribution === "portable"
+          ? "portable"
+          : "standalone";
       set({
         currentVersion: result.version,
         distribution,
@@ -195,7 +199,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   downloadUpdate: async () => {
-    if (get().distribution === "aur") return false;
+    if (get().distribution === "aur" || get().distribution === "portable") return false;
     let update = get().pendingUpdate;
     if (!update) {
       await get().checkUpdate();
@@ -255,7 +259,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   installAndRelaunch: async () => {
-    if (get().distribution === "aur") return;
+    if (get().distribution === "aur" || get().distribution === "portable") return;
     const update = get().pendingUpdate;
     if (!update || !get().readyToInstall) {
       set({ error: "请先下载更新" });

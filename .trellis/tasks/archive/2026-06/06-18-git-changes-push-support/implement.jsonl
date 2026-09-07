@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "Tauri 命令规范：边界校验外部输入、保持命令签名稳定、cargo check；新增 git_branch_status/git_push/git_pull_ff_only 需遵循"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "push/pull shell out 系统 git 前需校验 project_path、避免命令注入与越界路径"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "新增 IPC 命令的前后端契约一致性（BranchStatus 字段、稳定错误码 no_upstream/not_fast_forward/auth_failed）"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "gitStore (zustand) 新增 branchStatus 状态与 push/pull/fetchBranchStatus actions 的写法约定"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "GitChangesPanel 提交栏分支状态行与推送/拉取按钮的组件与样式约定"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新增 BranchStatus 类型、错误码联合类型的类型安全约定"}

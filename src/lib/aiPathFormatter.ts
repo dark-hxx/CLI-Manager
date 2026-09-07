@@ -52,6 +52,31 @@ export function formatAiPathBlock(
   return kind === "directory" && normalizedPath ? `${path}/` : path;
 }
 
+export function formatRelativeProjectFilePath(
+  relativePath: string,
+  kind: ProjectFileEntry["kind"] = "file"
+): string {
+  const normalizedPath = normalizeRelativePath(relativePath);
+  return kind === "directory" && normalizedPath ? `${normalizedPath}/` : normalizedPath;
+}
+
+export function formatAbsoluteProjectFilePath(
+  project: Pick<Project, "path" | "remote_path" | "environment_type">,
+  relativePath: string,
+  kind: ProjectFileEntry["kind"] = "file"
+): string {
+  const rootPath = (project.environment_type === "ssh" ? project.remote_path : project.path).trim();
+  const normalizedPath = normalizeRelativePath(relativePath);
+  if (!rootPath) return normalizedPath;
+
+  const separator = rootPath.includes("\\") && !rootPath.includes("/") ? "\\" : "/";
+  const trimmedRoot = rootPath.replace(/[\\/]+$/u, "");
+  const absolutePath = trimmedRoot
+    ? `${trimmedRoot}${separator}${normalizedPath.replace(/\//g, separator)}`
+    : `${separator}${normalizedPath.replace(/\//g, separator)}`;
+  return kind === "directory" && normalizedPath ? `${absolutePath}${separator}` : absolutePath;
+}
+
 export function formatTerminalDragPath(
   project: Pick<Project, "name" | "cli_tool">,
   relativePath: string,

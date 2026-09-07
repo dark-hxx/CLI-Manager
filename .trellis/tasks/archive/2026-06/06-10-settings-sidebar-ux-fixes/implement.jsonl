@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Confirm settings/sidebar UI changes follow component patterns and settings contracts"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Confirm typecheck and manual desktop UI verification expectations"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Keep three small fixes local without unnecessary abstraction"}
-{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "Adding opener:allow-open-path capability for opening user-maintained project paths"}

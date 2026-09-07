@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "generic": [
+    {
+      "id": "route-off-does-not-map",
+      "routeEnabled": false,
+      "requestedModel": "a",
+      "mapping": {"source": "a", "target": "b"},
+      "bodyOverrideModel": "override-model",
+      "expectedDirectModel": "a",
+      "expectedRouteModel": "a"
+    },
+    {
+      "id": "exact-source-maps-to-target",
+      "routeEnabled": true,
+      "requestedModel": "a",
+      "mapping": {"source": "a", "target": "b"},
+      "bodyOverrideModel": "override-model",
+      "expectedDirectModel": "a",
+      "expectedRouteModel": "b"
+    },
+    {
+      "id": "source-is-case-sensitive",
+      "routeEnabled": true,
+      "requestedModel": "A",
+      "mapping": {"source": "a", "target": "b"},
+      "bodyOverrideModel": null,
+      "expectedDirectModel": "A",
+      "expectedRouteModel": "A"
+    },
+    {
+      "id": "no-match-keeps-request-model",
+      "routeEnabled": true,
+      "requestedModel": "unmapped",
+      "mapping": {"source": "a", "target": "b"},
+      "bodyOverrideModel": null,
+      "expectedDirectModel": "unmapped",
+      "expectedRouteModel": "unmapped"
+    },
+    {
+      "id": "mapping-values-are-trimmed",
+      "routeEnabled": true,
+      "requestedModel": "a",
+      "mapping": {"source": " a ", "target": " b "},
+      "bodyOverrideModel": null,
+      "expectedDirectModel": "a",
+      "expectedRouteModel": "b"
+    },
+    {
+      "id": "failover-recomputes-from-original",
+      "routeEnabled": true,
+      "requestedModel": "a",
+      "bodyOverrideModel": "override-model",
+      "providers": [
+        {"id": "provider-a", "mapping": {"source": "a", "target": "targetA"}, "expectedRouteModel": "targetA"},
+        {"id": "provider-b", "mapping": {"source": "a", "target": "targetB"}, "expectedRouteModel": "targetB"}
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "id": "duplicate-source-rejected",
+      "mappings": [{"source": "a", "target": "one"}, {"source": "a", "target": "two"}],
+      "valid": false,
+      "errorCode": "routing_model_mapping_duplicate_source"
+    },
+    {
+      "id": "duplicate-source-after-trim-rejected",
+      "mappings": [{"source": "a", "target": "one"}, {"source": " a ", "target": "two"}],
+      "valid": false,
+      "errorCode": "routing_model_mapping_duplicate_source"
+    },
+    {
+      "id": "case-distinct-sources-allowed",
+      "mappings": [{"source": "a", "target": "lower"}, {"source": "A", "target": "upper"}],
+      "valid": true,
+      "errorCode": null
+    },
+    {
+      "id": "empty-source-rejected",
+      "mappings": [{"source": " ", "target": "target"}],
+      "valid": false,
+      "errorCode": "routing_model_mapping_invalid"
+    },
+    {
+      "id": "empty-target-rejected",
+      "mappings": [{"source": "source", "target": "\t"}],
+      "valid": false,
+      "errorCode": "routing_model_mapping_invalid"
+    }
+  ],
+  "claudeRoles": [
+    {"id": "sonnet", "requestedRole": "sonnet", "configuredModel": "claude-sonnet-fixture", "defaultModel": "claude-default-fixture", "expectedModel": "claude-sonnet-fixture"},
+    {"id": "opus", "requestedRole": "opus", "configuredModel": "claude-opus-fixture", "defaultModel": "claude-default-fixture", "expectedModel": "claude-opus-fixture"},
+    {"id": "fable-falls-back-to-opus", "requestedRole": "fable", "configuredModel": null, "opusModel": "claude-opus-fixture", "defaultModel": "claude-default-fixture", "expectedModel": "claude-opus-fixture"},
+    {"id": "haiku", "requestedRole": "haiku", "configuredModel": "claude-haiku-fixture", "defaultModel": "claude-default-fixture", "expectedModel": "claude-haiku-fixture"},
+    {"id": "subagent-exact-model", "requestedRole": "subagent-fixture", "configuredModel": "subagent-fixture", "defaultModel": "claude-default-fixture", "expectedModel": "subagent-fixture"},
+    {"id": "default-fallback", "requestedRole": "unrecognized", "configuredModel": null, "defaultModel": "claude-default-fixture", "expectedModel": "claude-default-fixture"}
+  ],
+  "catalogFallback": {
+    "displayName": "Friendly catalog fixture",
+    "requestedCatalogModel": "catalog-upstream-fixture",
+    "catalog": [{"displayName": "Friendly catalog fixture", "model": "catalog-upstream-fixture"}],
+    "providerUpstreamModel": "provider-upstream-fixture",
+    "expectedCatalogModel": "catalog-upstream-fixture",
+    "requestedDisplayName": "Friendly catalog fixture",
+    "expectedDisplayNameModel": "provider-upstream-fixture",
+    "unknownRequestedModel": "unknown-fixture",
+    "expectedUnknownModel": "provider-upstream-fixture"
+  }
+}

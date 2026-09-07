@@ -4,6 +4,12 @@ use serde::Serialize;
 use std::{env, fs, process::Stdio};
 use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(target_os = "windows")]
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+};
+
 const MAX_NOTIFICATION_TITLE_CHARS: usize = 200;
 const MAX_NOTIFICATION_BODY_CHARS: usize = 1000;
 const MAX_NOTIFICATION_ACTION_LABEL_CHARS: usize = 80;
@@ -11,6 +17,13 @@ const MAX_NOTIFICATION_TAB_ID_CHARS: usize = 200;
 const SYSTEM_NOTIFICATION_ACTION_EVENT: &str = "system-notification-action";
 const MIN_TASKBAR_FLASH_COUNT: u32 = 1;
 const MAX_TASKBAR_FLASH_COUNT: u32 = 20;
+
+#[cfg(target_os = "windows")]
+const MAX_NOTIFICATION_SOUND_PATH_CHARS: usize = 32_767;
+#[cfg(target_os = "windows")]
+const MAX_NOTIFICATION_SOUND_FILE_BYTES: u64 = 20 * 1024 * 1024;
+#[cfg(target_os = "windows")]
+const WINDOWS_SILENT_SOUND_NAME: &str = "__cli_manager_silent__";
 
 #[cfg(target_os = "windows")]
 #[derive(Debug, PartialEq, Eq)]
@@ -93,6 +106,37 @@ pub async fn send_notification_via_windows(title: String, body: String) -> Resul
     spawn_powershell_notification(&script)
 }
 
+/// 校验 Windows 本地 Hook 系统通知声音文件，不会播放声音。
+#[tauri::command]
+pub fn validate_system_notification_sound(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        resolve_notification_sound_path(&path).map(|_| ())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Err("notification_sound_windows_only".into())
+    }
+}
+
+/// 试听 Windows 本地 Hook 系统通知声音。
+#[tauri::command]
+pub fn play_system_notification_sound(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let path = resolve_notification_sound_path(&path)?;
+        play_windows_wav(&path)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Err("notification_sound_windows_only".into())
+    }
+}
+
 #[tauri::command]
 pub async fn send_interactive_system_notification(
     app: AppHandle,
@@ -100,6 +144,7 @@ pub async fn send_interactive_system_notification(
     body: String,
     tab_id: String,
     action_label: String,
+    custom_sound_path: Option<String>,
 ) -> Result<(), String> {
     validate_notification_title(&title)?;
     validate_notification_body(&body)?;
@@ -120,6 +165,33 @@ pub async fn send_interactive_system_notification(
         return Err("notification_action_label_empty".into());
     }
 
+    #[cfg(target_os = "windows")]
+    let custom_sound_path =
+        custom_sound_path
+            .as_deref()
+            .and_then(|path| match resolve_notification_sound_path(path) {
+                Ok(path) => Some(path),
+                Err(err) => {
+                    warn!("custom system notification sound unavailable: {}", err);
+                    None
+                }
+            });
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = custom_sound_path;
+
+    #[cfg(target_os = "windows")]
+    let custom_sound_played =
+        custom_sound_path
+            .as_ref()
+            .is_some_and(|path| match play_windows_wav(path) {
+                Ok(()) => true,
+                Err(err) => {
+                    warn!("custom system notification sound playback failed: {}", err);
+                    false
+                }
+            });
+
     let app_id = app.config().identifier.clone();
     let mut notification = notify_rust::Notification::new();
     notification
@@ -128,6 +200,14 @@ pub async fn send_interactive_system_notification(
         .appname("CLI-Manager")
         .auto_icon()
         .action("default", &action_label);
+
+    #[cfg(target_os = "windows")]
+    if custom_sound_played {
+        // notify-rust exposes Windows sound names, not arbitrary local WAV paths.
+        // An unknown name is converted to an explicit silent Toast audio element;
+        // the validated file has already been queued through PlaySoundW above.
+        notification.sound_name(WINDOWS_SILENT_SOUND_NAME);
+    }
 
     #[cfg(target_os = "windows")]
     if should_use_registered_windows_app_id() {
@@ -146,6 +226,7 @@ pub async fn send_interactive_system_notification(
     let handle = notification
         .show()
         .map_err(|err| format!("notification_show_failed: {}", err))?;
+
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         if let Err(err) = handle.wait_for_response(|response: &NotificationResponse| {
@@ -165,6 +246,82 @@ pub async fn send_interactive_system_notification(
         }
     });
 
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_notification_sound_path(path: &str) -> Result<PathBuf, String> {
+    if path.trim().is_empty() {
+        return Err("notification_sound_path_empty".into());
+    }
+    if path.contains('\0') {
+        return Err("notification_sound_path_contains_nul".into());
+    }
+    if path.encode_utf16().count() > MAX_NOTIFICATION_SOUND_PATH_CHARS {
+        return Err("notification_sound_path_too_long".into());
+    }
+
+    let path = Path::new(path);
+    let is_wav = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("wav"))
+        .unwrap_or(false);
+    if !is_wav {
+        return Err("notification_sound_format_unsupported".into());
+    }
+
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|_| "notification_sound_unavailable".to_string())?;
+    let metadata =
+        fs::metadata(&canonical_path).map_err(|_| "notification_sound_unavailable".to_string())?;
+    if !metadata.is_file() {
+        return Err("notification_sound_not_file".into());
+    }
+    if metadata.len() > MAX_NOTIFICATION_SOUND_FILE_BYTES {
+        return Err("notification_sound_too_large".into());
+    }
+
+    let mut file = fs::File::open(&canonical_path)
+        .map_err(|_| "notification_sound_unavailable".to_string())?;
+    let mut header = [0_u8; 12];
+    file.read_exact(&mut header)
+        .map_err(|_| "notification_sound_invalid_wave".to_string())?;
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return Err("notification_sound_invalid_wave".into());
+    }
+
+    Ok(canonical_path)
+}
+
+#[cfg(target_os = "windows")]
+fn custom_sound_play_flags() -> u32 {
+    use windows_sys::Win32::Media::Audio::{SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
+
+    SND_ASYNC | SND_FILENAME | SND_NODEFAULT
+}
+
+#[cfg(target_os = "windows")]
+fn play_windows_wav(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Media::Audio::PlaySoundW;
+
+    let wide_path = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        PlaySoundW(
+            wide_path.as_ptr(),
+            std::ptr::null_mut(),
+            custom_sound_play_flags(),
+        )
+    };
+    if result == 0 {
+        return Err("notification_sound_play_failed".into());
+    }
     Ok(())
 }
 
@@ -335,6 +492,8 @@ fn xml_escape(s: &str) -> String {
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::Write;
     use windows_sys::Win32::UI::WindowsAndMessaging::{FLASHW_STOP, FLASHW_TIMERNOFG, FLASHW_TRAY};
 
     #[test]
@@ -377,6 +536,101 @@ mod tests {
                 flags: FLASHW_STOP,
                 count: 0,
             }
+        );
+    }
+
+    #[test]
+    fn custom_sound_flags_play_async_filename_without_default_fallback() {
+        use windows_sys::Win32::Media::Audio::{SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
+
+        assert_eq!(
+            custom_sound_play_flags(),
+            SND_ASYNC | SND_FILENAME | SND_NODEFAULT
+        );
+    }
+
+    #[test]
+    fn custom_sound_path_rejects_empty_input() {
+        assert_eq!(
+            resolve_notification_sound_path("   ").unwrap_err(),
+            "notification_sound_path_empty"
+        );
+    }
+
+    #[test]
+    fn valid_wav_path_accepts_uppercase_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("hook-alert.WAV");
+        let mut file = File::create(&path).unwrap();
+        file.write_all(b"RIFF\x04\x00\x00\x00WAVE").unwrap();
+
+        assert_eq!(
+            resolve_notification_sound_path(path.to_str().unwrap()).unwrap(),
+            path.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn custom_sound_path_rejects_non_wav_and_malformed_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let mp3_path = directory.path().join("hook-alert.mp3");
+        File::create(&mp3_path).unwrap();
+        assert_eq!(
+            resolve_notification_sound_path(mp3_path.to_str().unwrap()).unwrap_err(),
+            "notification_sound_format_unsupported"
+        );
+
+        let malformed_path = directory.path().join("hook-alert.wav");
+        File::create(&malformed_path).unwrap();
+        assert_eq!(
+            resolve_notification_sound_path(malformed_path.to_str().unwrap()).unwrap_err(),
+            "notification_sound_invalid_wave"
+        );
+    }
+
+    #[test]
+    fn custom_sound_path_rejects_missing_file_and_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing_path = directory.path().join("missing.wav");
+        assert_eq!(
+            resolve_notification_sound_path(missing_path.to_str().unwrap()).unwrap_err(),
+            "notification_sound_unavailable"
+        );
+
+        let directory_path = directory.path().join("sounds.wav");
+        std::fs::create_dir(&directory_path).unwrap();
+        assert_eq!(
+            resolve_notification_sound_path(directory_path.to_str().unwrap()).unwrap_err(),
+            "notification_sound_not_file"
+        );
+    }
+
+    #[test]
+    fn custom_sound_path_rejects_oversized_file_before_header_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oversized.wav");
+        let file = File::create(&path).unwrap();
+        file.set_len(MAX_NOTIFICATION_SOUND_FILE_BYTES + 1).unwrap();
+
+        assert_eq!(
+            resolve_notification_sound_path(path.to_str().unwrap()).unwrap_err(),
+            "notification_sound_too_large"
+        );
+    }
+
+    #[test]
+    fn custom_sound_path_rejects_nul_and_oversized_input() {
+        assert_eq!(
+            resolve_notification_sound_path("C:\\sounds\\alert\0.wav").unwrap_err(),
+            "notification_sound_path_contains_nul"
+        );
+        assert_eq!(
+            resolve_notification_sound_path(&format!(
+                "{}.wav",
+                "a".repeat(MAX_NOTIFICATION_SOUND_PATH_CHARS)
+            ))
+            .unwrap_err(),
+            "notification_sound_path_too_long"
         );
     }
 }

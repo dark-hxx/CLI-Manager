@@ -1,6 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend shell option UI changes must follow project frontend quality rules."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Shell keys and option constants require precise TypeScript literal typing."}
-{"file":".trellis/spec/backend/index.md","reason":"Rust/Tauri backend shell mapping changes must keep command signatures stable and pass cargo check."}
-{"file":".trellis/spec/backend/terminal-runtime-monitoring-contracts.md","reason":"Terminal shell changes must not break runtime monitoring behavior for PowerShell/pwsh tabs."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The feature spans UI option constants, frontend normalization, persisted shell keys, and Rust launch mapping."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"SHELL_OPTIONS and shell normalization are shared constants/utilities; avoid duplicating shell option logic."}

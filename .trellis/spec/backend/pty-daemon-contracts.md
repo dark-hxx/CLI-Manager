@@ -2,6 +2,89 @@
 
 > Issue #123 Phase 2。把 PTY 宿主从主进程抽为独立守护进程 `cli-manager-daemon`：UI 是客户端，应用真退出后任务继续跑，重启 attach 回放。前置 Phase 1（`background-task-continuation-contracts.md`）已上线。**本契约经用户确认后方可实施。**
 
+## Scenario: Reserve the Local Routing Control Plane
+
+### 1. Scope / Trigger
+
+- Trigger: 修改 daemon routing capability、控制帧、routing event、transport 门禁或相关 Tauri relay。
+- 本协议只负责主进程与 daemon 的控制面；provider 配置、queue、takeover intent 和 secret 由 Tauri command 与 provider DB 管理，不通过 frame 传输。
+
+### 2. Signatures
+
+```text
+FEATURE_LOCAL_ROUTING_V1 = "local_routing_v1"
+
+RoutingReload { id }
+RoutingStatus { id }
+RoutingStart { id }
+RoutingStop { id }
+RoutingResetCircuit { id, app_type, provider_id }
+
+RoutingEvent { event: { requestId?, kind, error? } }
+RoutingError { code, params, hint }
+```
+
+稳定错误码：
+
+- `routing_feature_not_supported`
+- `routing_protocol_unsupported`
+- `routing_service_unavailable`
+
+### 3. Contracts
+
+- `CONTROL_PROTOCOL_VERSION` 保持 `3`；旧 daemon 通过缺少 `local_routing_v1` 被识别，调用方不得向其发送 routing frame。
+- Routing control 仅允许 Tauri 主进程持有的 NDJSON `DaemonClient` 发送。WebView WebSocket `/pty` 与 `pty_legacy_request` 必须返回 `routing_protocol_unsupported`。
+- Frame 只携带 request id 和最小 app/provider identity；禁止携带 API key、proxy password、credential URL、完整 provider document、request body 或 header。
+- `RoutingError.params` 只允许白名单脱敏值；未知 transport 固定归一化为 `unknown`。
+- 未知 frame type 仍按前向兼容错误处理，但 server/client 的返回值与日志不得回显原始 type；malformed reason 同样不得进入生产日志。
+- 单帧继续使用 8 MiB 上限，超限在反序列化前拒绝。
+- 在 routing runtime 尚未接入时，已识别的 NDJSON routing control 返回 `routing_service_unavailable`；这不表示 listener、forwarder 或用户可见路由功能已可用。
+- 带 `requestId` 的 `RoutingEvent` 回到对应 pending request；无 `requestId` 的 daemon 主动事件通过 Tauri `routing-event` 发给前端。
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| daemon features 缺少 `local_routing_v1` | `routing_feature_not_supported`；不发送控制帧 |
+| WebSocket 或 legacy relay 收到 routing control | `routing_protocol_unsupported`；不进入 daemon routing dispatch |
+| daemon 理解 frame 但 runtime 未初始化 | `routing_service_unavailable`；不回显 app/provider 输入 |
+| routing frame 含未知 secret 字段 | serde 忽略；重编码和错误响应不含该字段 |
+| 未知 type | 固定 `unknown frame type`；保持连接 |
+| malformed/超长 frame | 脱敏 warning 后断连 |
+
+### 5. Good / Base / Bad Cases
+
+- Good: 新 daemon 握手返回 capability；主进程发送 `routing_status` 并按 request id 收到 `routing_event`。
+- Base: runtime 尚未实现时返回稳定 unavailable event，且未注册 route listener 或用户可达 routing command。
+- Base: 旧 daemon 继续承载已有 PTY，GUI 识别 capability 缺失并提示重启，不强杀活动 daemon。
+- Bad: 把 API key 或 proxy password 放入 routing frame。
+- Bad: 允许 WebView 通过 `/pty` 或 `pty_legacy_request` 直接 start/stop route。
+- Bad: 把攻击者提供的未知 type、provider id 或 malformed JSON 原文写入日志/错误。
+
+### 6. Tests Required
+
+- Protocol：routing frame round-trip、未知 secret 字段丢弃、错误 DTO 稳定、capability missing、未知 daemon type、8 MiB 上限。
+- Server：NDJSON routing unavailable、NDJSON/WebSocket unknown type 脱敏、WebSocket routing rejection。
+- Terminal relay：`pty_legacy_request` 在转发前拒绝 routing control。
+- Discovery/client：握手 capability 持久化；correlated/unsolicited routing event 分发随 runtime 接线验证。
+- 回归：daemon protocol/server/client/discovery/terminal focused tests、`cargo check`、provider tests。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+WebView -> /pty -> routing_start { provider: fullDocument, apiKey, proxyPassword }
+```
+
+#### Correct
+
+```text
+WebView -> Tauri routing command -> validate + persist provider DB
+  -> main-process NDJSON DaemonClient -> routing_start { id }
+  -> routing_event { requestId, error?: { code, sanitized params, hint } }
+```
+
 ## Scenario: VS Code-style PtyHost Direct Transport (Current Contract)
 
 > 本节覆盖并取代下文旧的“进程内 PTY fallback / Tauri output re-emit / raw ring buffer”条款；旧段落仅保留历史背景。
@@ -23,8 +106,11 @@
 
 - WebSocket 仅绑定 `127.0.0.1`，路径固定 `/pty`；Origin 仅允许 Tauri localhost 与本地 dev origin；首帧 token 鉴权。
 - Output/replay 必须使用 binary frame；Tauri command 仅用于 endpoint bootstrap 和 provider/hook 环境准备，真正的 create/write/resize/close 由同一 WebSocket 客户端执行。
-- daemon 输出最多合并 5ms；客户端未确认字符达到 `100000` 后暂停 PTY reader，直到降到 `5000` 以下；ACK 只能前进，重复/倒序 ACK 不得重复扣减。
+- daemon 输出最多合并 5ms；客户端未确认字符达到 `100000` 后只暂停该客户端该会话的实时投递，PTY reader/输出 worker 继续把帧写入 SessionBuffer/spool；降到 `5000` 以下后按 sequence 补发保留的实际输出帧；ACK 只能前进，重复/倒序 ACK 不得重复扣减。
 - daemon 每个客户端使用独立 writer queue；`clients` 全局锁内只更新订阅/ACK 状态和入队，禁止执行 TCP/WebSocket IO，慢客户端只能通过自身未确认字符触发该会话背压。
+- 慢客户端补发不得等待缺失 sequence：只发送 `last_sent_sequence` 之后仍保留在 SessionBuffer/spool 的实际输出，resize 空帧不单独制造 ACK，客户端队列与会话缓存上限仍然有效。xterm checkpoint 是完整快照，只能通过 attach replay/reset 消费，绝不能作为 live `Output` 追加；补发前要用包含空 resize sequence 的原始 live 事件检查连续性，若首个保留事件已经越过客户端游标，则关闭该连接，由既有重连 attach 触发 `replay_reset`，禁止把不完整 ANSI 后缀接到当前终端。
+- ACK 恢复读取 SessionBuffer/spool 时不得持有全局 `clients` 锁：可在 session entry 锁内取得有界 live-frame 快照，再短暂取得 `clients` 锁校验暂停状态并入队；磁盘回读不能拖住其他会话的输出投递。
+- 输出生产与 ACK 补发统一按 `session entry lock -> clients lock -> ClientWriter queue lock` 串行化，避免恢复 ACK 时新 live frame 越过旧缓冲帧；锁内不得等待 ACK、PTY 或 socket 实际写出。
 - Replay entry 为 `{ cols, rows, sequence, data }`；output 与 resize 共用严格递增的事件 sequence，连续空 resize 合并。Attach 在同一锁序内取得 replay 并注册订阅，订阅注册后到 attached control 入队前产生的 live 帧进入 attach barrier，发送顺序严格为 replay binary → attached control → live binary。
 - WebSocket writer 必须把 Attach Replay 展开为可独立调度的 wire frame；普通 `ok/err/pong` 控制响应可以在 Replay entry 之间抢占，避免大 Replay 饿死 15 秒控制请求。抢占不得改变同一 Attach 内 `replay reset → replay entries → attached barrier → buffered live output` 的相对顺序。
 - 活跃会话的完整 Replay 不得在 2 MiB 后静默裁剪：内存保留最近 2 MiB 安全帧，更早的整帧写入 daemon 专属磁盘 spool；关闭会话时删除对应 spool，daemon 新实例启动时清理同环境旧 spool。磁盘写入失败时保留内存数据并告警，不得丢帧。
@@ -47,6 +133,7 @@
 - 非 loopback / Origin 非白名单 / token 错误 → 握手或 auth 拒绝。
 - binary header 长度、kind、version 或 payload 长度非法 → 客户端断开并触发重连。
 - ACK sequence 重复、倒序或大于 last sent → 忽略，不改变未确认字符数。
+- 客户端达到高水位 → 只暂停该客户端该 session 的实时投递；PTY 生产继续入有界 SessionBuffer/spool，ACK 降至低水位后按 sequence 补发，不得在输出 worker 中等待 ACK。
 - WebSocket 中断 → daemon 保留会话和 Replay；前端心跳重连、attach、sequence 去重。
 - XTerm/Pane 卸载或移动 → `TerminalProcessManager` 保留已接收但尚未由 xterm write callback 提交的帧；新 Display 接管并重写，旧 Display 的迟到 callback 无权 ACK。
 - Replay 中的历史 resize → 仅恢复 xterm 回放尺寸，不向 live PTY 转发；回放结束后强制按当前容器重新 fit。

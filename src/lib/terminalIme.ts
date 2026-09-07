@@ -19,6 +19,14 @@ const IME_PROCESS_KEY_RECOVERY_WINDOW_MS = 400;
 const IME_COMPOSITION_END_SUPPRESS_WINDOW_MS = 80;
 const NATIVE_TEXT_INPUT_DEDUP_WINDOW_MS = 16;
 const CJK_NATIVE_PUNCTUATION_PATTERN = /^[\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]+$/u;
+// macOS \u4e0a\u7ecf IME \u8f93\u5165\u4e0a\u4e0b\u6587\u63d0\u4ea4\u7684 ASCII \u7b26\u53f7\u5b57\u7b26\uff08\u9700\u8981 Shift \u6216\u672c\u8eab\u5c31\u662f\u7b26\u53f7\u7684\u952e\uff09\u3002
+// \u8fd9\u7c7b\u5b57\u7b26\u5728 WebKit \u4e2d\u53ef\u80fd\u4ee5\u300cinsertText \u5148\u4e8e keydown(229)\u300d\u7684\u987a\u5e8f\u5230\u8fbe\uff0c
+// \u5bfc\u81f4\u65e2\u6709\u6062\u590d\u903b\u8f91\uff08\u4f9d\u8d56 keydown(229)\uff09\u65e0\u6cd5\u89e6\u53d1\u3002
+const ASCII_SYMBOL_PATTERN = /^[!-/:-@[-^`{-~"']$/u;
+// \u4e2d\u6587\u8f93\u5165\u6cd5\u4e0b\u7ecf IME \u63d0\u4ea4\u7684\u5168\u89d2\u6807\u70b9/\u7b26\u53f7\uff08U+2014-U+2027 \u7834\u6298\u53f7/\u7701\u7565\u53f7\uff0c
+// U+2018-U+201F \u5404\u7c7b\u5f15\u53f7\uff0c\u5982 \u201c \u201d \u2018 \u2019 \u2014\u2014\u2026\uff09\u3002\u5b83\u4eec\u4e0d\u5c5e\u4e8e ASCII\uff0c
+// \u4f46\u540c\u6837\u4ee5\u300cinsertText \u5148\u4e8e keydown(229)\u300d\u5230\u8fbe\uff0c\u9700\u8981\u4e0e ASCII \u7b26\u53f7\u4e00\u81f4\u5730\u89e6\u53d1\u6062\u590d\u3002
+const FULLWIDTH_SYMBOL_PATTERN = /^[\u2014-\u2027\u2018-\u201f]+$/u;
 
 interface TerminalCellSize {
   width: number;
@@ -38,6 +46,8 @@ export interface TerminalImeControllerOptions {
     fallbackFontSize: number,
   ) => TerminalCellSize;
   forwardNativeInput: (data: string) => void;
+  onImeProcessKey?: (at: number) => void;
+  onCompositionStarted?: () => void;
   clearSuggestion: () => void;
   updateSuggestionPosition: () => void;
   scheduleFit: (force?: boolean) => void;
@@ -56,6 +66,8 @@ export const attachTerminalIme = ({
   fontSize,
   getTerminalRenderedCellSize,
   forwardNativeInput,
+  onImeProcessKey,
+  onCompositionStarted,
   clearSuggestion,
   updateSuggestionPosition,
   scheduleFit,
@@ -234,6 +246,13 @@ export const attachTerminalIme = ({
     const isMac = osPlatformRef.current === "macos"
       || (osPlatformRef.current === "unknown" && navigator.platform.toLowerCase().includes("mac"));
     if (isMac && CJK_NATIVE_PUNCTUATION_PATTERN.test(event.data)) return true;
+    // macOS 上经 IME 输入上下文提交的 ASCII 符号（如 Shift+1 的 !、Shift+' 的 "）：
+    // WebKit 可能以「insertText 先于 keydown(229)」的顺序到达，此刻 lastImeProcessKeyAt
+    // 尚未设置，既有的 keydown(229) 依赖无法触发；直接对这些符号触发恢复，
+    // 避免 xterm 因 _keyDownSeen 抑制而丢失该字符（否则单击打不出符号）。
+    if (isMac && ASCII_SYMBOL_PATTERN.test(event.data)) return true;
+    // 中文全角标点（“ ” ‘ ’ —— …）同样经 IME 提交，与 ASCII 符号一致触发恢复。
+    if (isMac && FULLWIDTH_SYMBOL_PATTERN.test(event.data)) return true;
     return lastImeProcessKeyAt >= 0 && now - lastImeProcessKeyAt <= IME_PROCESS_KEY_RECOVERY_WINDOW_MS;
   };
   const scheduleNativeTextInputRecovery = (data: string) => {
@@ -260,13 +279,16 @@ export const attachTerminalIme = ({
   const onImeProcessKeyDown = (event: KeyboardEvent) => {
     if (!isHelperTextareaEvent(event) || event.keyCode !== IME_PROCESS_KEY_CODE || event.ctrlKey || event.altKey || event.metaKey) return;
     pinHelperTextareaAnchor();
-    lastImeProcessKeyAt = nowForImeInput();
+    const now = nowForImeInput();
+    lastImeProcessKeyAt = now;
+    onImeProcessKey?.(now);
   };
   const onCompositionStart = () => {
     if (compositionEndCleanupTimerId !== null) {
       window.clearTimeout(compositionEndCleanupTimerId);
       compositionEndCleanupTimerId = null;
     }
+    onCompositionStarted?.();
     isComposingRef.current = true;
     clearSuggestion();
     lastImeProcessKeyAt = -1;

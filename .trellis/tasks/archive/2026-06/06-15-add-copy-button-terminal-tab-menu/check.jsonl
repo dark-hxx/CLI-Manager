@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check menu placement and terminal tab behavior against component conventions."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Check copied session behavior against terminal store state contracts."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check validation scope and manual terminal UI verification requirements."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check the change avoids unnecessary duplicate logic or abstractions."}

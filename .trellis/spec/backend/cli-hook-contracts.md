@@ -1,6 +1,6 @@
 # CLI Hook Contracts
 
-Concrete contracts for Claude/Codex/Pi/Grok hook integration.
+Concrete contracts for Claude/Codex/Kimi/Pi/Grok/OpenCode hook integration.
 
 ## Scenario: Local Hook Source Admission
 
@@ -12,20 +12,22 @@ Concrete contracts for Claude/Codex/Pi/Grok hook integration.
 ### 2. Signatures
 
 ```text
-<cli-manager-exe> __hook --source <claude|codex|pi|grok> --event <event>
+<cli-manager-exe> __hook --source <claude|codex|kimi|pi|grok|opencode> --event <event> [--owner <owner-id>]
 normalize_source(source: Option<&str>) -> &str
 is_valid_payload(payload: &ClaudeHookRequest) -> bool
 ```
 
 ### 3. Contracts
 
-- A source is supported only when the installer, `__hook` client, HTTP receiver, frontend `CliHookSource`, and history binding all recognize the same source value.
+- A Hook source is supported only when the installer, `__hook` client, HTTP receiver, frontend `CliHookSource`, and realtime binding all recognize the same source value. Hook support and history support are independent capabilities. Local Kimi history (list/delete/resume/realtime stats) is supported for `$KIMI_CODE_HOME` / `~/.kimi-code`; SSH Kimi history remains unsupported and must stay excluded from remote history types and RPCs. Legacy `~/.kimi` is never treated as a history source. Local Grok history (list/delete/resume/realtime stats) is supported for `$GROK_HOME` / `~/.grok/sessions`; SSH Grok is a CLI/Hook source only and remains excluded from remote history types and RPCs.
 - `normalize_source` preserves `grok`; unknown explicit values normalize to an empty value and are rejected.
 - Grok installer maps approval attention to `PreToolUse` with matcher `Bash|Edit|Write|MultiEdit`, then reports it as `PermissionRequest`; Grok 0.2.111 does not expose a native `PermissionRequest` hook and `Notification` is not an approval event.
 - Grok accepts `SessionStart`, `UserPromptSubmit`, legacy `Notification`, `PermissionRequest`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `AgentToolStart`, `AgentToolStop`, `ToolStart`, and `ToolStop`. Uninstalling the attention module must remove only its `PreToolUse -> PermissionRequest` command and preserve `ToolStart`/sub-agent hooks sharing the same native event.
 - Grok `permissionMode=bypassPermissions` suppresses the synthetic approval notification; `auto` does not, because dangerous tools may still require approval.
 - Grok hook stdin may use camelCase `sessionId` and `transcriptPath`; shared hook normalization must preserve them.
 - Invalid source/event pairs return HTTP 400 and never reach frontend or third-party notification sinks. The hidden Hook process still exits successfully so a bridge failure cannot interrupt the CLI.
+- OpenCode uses a marker-owned global plugin instead of the hidden `__hook` command. It posts only `SessionStart`, `UserPromptSubmit`, `Stop`, and `StopFailure` with the native OpenCode session ID; missing callback environment is a no-op and an unowned same-name plugin is never overwritten.
+- During a local cc-connect handoff, the managed process tree receives only the daemon port/token and handed-off Tab ID owned by CLI-Manager. Notification admission additionally requires the Hook source to equal the persisted Agent (`claude`, `codex`, `pi`, or `opencode`) and the optional CLI Session ID to match. A different Agent, Tab, or Session cannot update or notify the active handoff.
 
 ### 4. Validation & Error Matrix
 
@@ -36,6 +38,8 @@ is_valid_payload(payload: &ClaudeHookRequest) -> bool
 | Unknown explicit source | Normalize to empty, HTTP 400. |
 | Missing source | Preserve the legacy Claude default. |
 | Grok camelCase session id | Bind the normalized session id when present. |
+| OpenCode marker-owned plugin event | Accept only the four session lifecycle events and bind its exact native session ID. |
+| OpenCode same-name unowned plugin | Return `opencode_hook_conflict` and preserve existing bytes. |
 
 ### 5. Good/Base/Bad Cases
 
@@ -46,6 +50,7 @@ is_valid_payload(payload: &ClaudeHookRequest) -> bool
 ### 6. Tests Required
 
 - Rust unit test that every installed Grok event passes `is_valid_payload` and an unknown event fails.
+- Rust unit test that OpenCode lifecycle events pass source admission and that generated plugin source contains no embedded credentials.
 - Hook-schema unit test that Grok camelCase `sessionId` is normalized.
 - Run `cargo check` after changing source admission or payload fields.
 - Manual desktop check: start an internal Grok terminal, confirm SessionStart binds the session, then confirm Stop and an approved dangerous-tool `PermissionRequest` reach CLI-Manager.
@@ -132,6 +137,55 @@ return candidates[0];
 return candidates.length === 1 ? candidates[0] : null;
 ```
 
+## Scenario: Current Kimi Code TOML Hook Adapter
+
+### 1. Scope / Trigger
+
+- Trigger: managing Kimi Code Hooks locally, in WSL, or through the SSH Agent.
+- Applies only to the current Kimi Code product using `$KIMI_CODE_HOME/config.toml` (default `~/.kimi-code/config.toml`). Legacy `kimi-cli` and `~/.kimi` are unsupported and never migrated.
+
+### 2. Event and module contract
+
+| UI module | Native event | Bridge event | State/notification |
+|---|---|---|---|
+| sessionStart | `SessionStart` | `SessionStart` | bind only |
+| running | `TurnStarted` | `UserPromptSubmit` | running |
+| attention | `PermissionRequest` | `PermissionRequest` | attention + configured notification |
+| attention | `PermissionResult` | `PermissionResult` | running; no toast/taskbar/system notification |
+| stop | `Stop` | `Stop` | done + configured notification |
+| stop | `Interrupt` | `Interrupt` | clear to none; no success/failure notification |
+| failure | `StopFailure` | `StopFailure` | failed + configured notification |
+| subagent | `SubagentStart` | `SubagentStart` | generic binding/notification/Replay only |
+| subagent | `SubagentStop` | `SubagentStop` | generic binding/notification/Replay only |
+
+- Attention installs/removes both permission definitions atomically; Stop installs/removes both completion/interruption definitions atomically; Subagent installs/removes both definitions atomically.
+- Kimi Subagent payloads have no stable transcript identity. `agent_name` is display metadata only; Kimi events must not enter `openSubagentTranscript` or create/merge transcript split panes.
+- `SessionEnd`, heartbeat, task, tool, and compact events are not installed or admitted for Kimi in this stage.
+
+### 3. Config ownership and writes
+
+- Parse and mutate `[[hooks]]` with `toml_edit`; preserve comments, ordering, unknown fields, user Hooks, and third-party Hooks.
+- Kimi's schema permits only `event`, `matcher`, `command`, and `timeout`; do not add an ownership field to the table.
+- Managed commands carry an exact `--owner cli-manager-local` or `--owner cli-manager-ssh-agent:<installation-id>` argument. Ownership requires exact parsed executable/`__hook`/source/event/owner tokens with no unknown suffix; substring matches never establish ownership.
+- An exact owner family/source/event/native matcher with an old executable or installation identity is outdated and may converge on explicit install. An exact owner token with inconsistent source/event/matcher is a conflict. Similar user commands are untouched.
+- Local status/install treat `config.toml` as the Hook state authority and must not discover or execute the Kimi CLI, `kimi doctor --help`, or `kimi doctor config`; this keeps status refresh and installation independent from CLI availability and external-process latency. Install writes a same-directory candidate, revalidates the live input, and atomically replaces it. Any parse, ownership-conflict, revalidation, or replace failure preserves the original file. The SSH Agent remains a separate remote boundary and continues to require current-product doctor capability plus candidate validation.
+- A local custom config root controls Hook management only. CLI-Manager does not inject `KIMI_CODE_HOME` into local terminal launches. New Kimi sessions reload config automatically; an active TUI requires `/reload`.
+- Hidden Hook delivery remains fail-open for the target CLI: bridge failures write only redacted diagnostics and the hidden process exits `0`; this does not claim that delivery succeeded.
+
+### 4. History boundary
+
+- Kimi is a Hook source but not a `SshHistorySource`. It must not start history sync/preflight/resume, write `history_source_instance_id`, or select a Claude/Codex parser.
+- A Kimi SSH Hook installation record has no `historySourceCandidate`; Claude/Codex records still require one with the same source/root/hash.
+
+### 5. Tests Required
+
+- Assert all nine installed Kimi definitions pass source/event admission; unknown Kimi events fail HTTP admission.
+- Assert `PermissionRequest -> PermissionResult` and running/attention `-> Interrupt` close the frontend state without completion/failure notifications.
+- Assert local status and first install work without a Kimi executable or doctor subprocess, while atomic-failure preservation, invalid TOML, exact ownership, similar-command isolation, duplicate convergence, and module uninstall remain covered. SSH Agent tests continue to assert current-product doctor capability and candidate validation.
+- Assert Kimi Subagent events bind and enter Replay without opening a transcript split pane.
+- Assert SSH Kimi remains rejected by every remote history entry point. Local/WSL Kimi history list/delete/resume/realtime stats are covered by history-index and history-session contracts.
+- Source-inspecting frontend lifecycle tests must normalize CRLF to LF before applying LF-structured regular expressions. The SSH Agent Kimi TOML planner test uses real canonical paths and must run under Unix path semantics; non-Linux hosts still compile the Agent test target for Linux rather than weakening canonical-root validation.
+
 ## Scenario: Per-Tool Hook Bridge Enablement
 
 ### 1. Scope / Trigger
@@ -145,10 +199,11 @@ return candidates.length === 1 ? candidates[0] : null;
 interface Settings {
   claudeHookBridgeEnabled: boolean;
   codexHookBridgeEnabled: boolean;
+  kimiHookBridgeEnabled: boolean;
 }
 ```
 
-- Both settings default to `true` for backward compatibility.
+- Per-tool bridge settings, including Kimi, default to `true`; their config roots remain local-only settings.
 - Backend `hook_settings_get_status` keeps its existing signature; frontend callers gate `autoRepair` and interpret the returned per-tool status through the enable settings.
 
 ### 3. Contracts
@@ -168,7 +223,7 @@ interface Settings {
 | Stored enable value is missing/invalid | Use default `true` |
 | Claude disabled, Codex installed/enabled | Health is green; no Claude auto-repair |
 | Codex disabled, Claude installed/enabled | Health is green; Claude auto-repair may run when previously installed |
-| Both disabled | Neutral light; no reinstall; no Hook env injection |
+| All bridges disabled | Neutral light; no reinstall; no Hook env injection |
 | Enabled tool status request fails | Preserve existing caller error handling; do not assume installed |
 | A saved config directory is missing during status inspection or another tool's action | Report that tool as missing; do not fail the shared status request or block the target tool's action |
 
@@ -229,7 +284,7 @@ taskbarAttentionFlashCount: integer 1..20 = 5
 - `finite` flashes only the taskbar button for the requested count. `untilFocused` continues until the main window is focused. A focused-window event sends the stop mode even after a finite request, so early focus always clears attention.
 - The command validates mode and finite count at the Rust boundary. Non-Windows targets safely validate and perform no platform action.
 - Taskbar failures are diagnostic-only and cannot block application Toast, system Toast, Tab state, replay, or third-party delivery.
-- Hook status inspection remains unconditional for Claude, Codex, Pi, and Grok. A disabled bridge still shows its status pill and participates in explicit refresh, but remains excluded from health aggregation, reinstall, environment injection, stats availability, and Claude auto-repair.
+- Hook status inspection remains unconditional for Claude, Codex, Kimi, Pi, and Grok. A disabled bridge still shows its status pill and participates in explicit refresh, but remains excluded from health aggregation, reinstall, environment injection, stats availability, and Claude auto-repair.
 - Disabling a bridge hides module cards, paths, and install/uninstall actions. Refresh never enables a bridge or installs a Hook.
 
 ### 4. Validation & Error Matrix
@@ -306,6 +361,7 @@ The taskbar sink is independent and consumes only its own master switch plus the
 - Claude Agent tool fallback events are normalized as `AgentToolStart` from `PreToolUse` and `AgentToolStop` from `PostToolUse`; hook installer must use a matcher limited to `Agent`/`Task`.
 - Claude sub-agent fields: `agentId`, `toolUseId`, `agentType`, `agentTranscriptPath`.
 - Codex sub-agent fields: `agentId`, `agentType`, `transcriptPath`.
+- Kimi `SubagentStart`/`SubagentStop` are explicitly outside this transcript contract: `agent_name` is not a stable identity, so these events continue through generic binding/notification/Replay and never call transcript open/finish actions.
 - Frontend transcript source resolution:
   - Use `agentTranscriptPath` only when it is present and differs from `transcriptPath`; this is `child-jsonl` mode.
   - Do not silently render the full parent `transcriptPath` as child output when `agentTranscriptPath` is missing or equals `transcriptPath`; degrade to `parent-jsonl` filtered mode or `lifecycle-only` mode.
@@ -543,18 +599,19 @@ Claude PreToolUse matcher=AskUserQuestion -> Notification
 ### 1. Scope / Trigger
 
 - Trigger: a `claude-hook-notification` payload should also surface as an OS-level notification while preserving the existing in-app toast and tab status behavior.
-- Applies to: frontend hook event listener, persisted hook notification settings, Tauri notification permission, and WSL-to-Windows notification bridge commands.
+- Applies to: frontend hook event listener, persisted hook notification settings, Windows-local WAV validation/playback, Tauri notification permission, and WSL-to-Windows notification bridge commands.
 
 ### 2. Signatures
 
 - Frontend event: `listen<CliHookPayload>("claude-hook-notification", handler)`.
-- Frontend setting fields: `systemNotificationsEnabled: boolean`, `suppressSystemNotificationsWhenFocused: boolean`, and `systemNotificationEvents: Record<HookEventType, boolean>`.
+- Frontend setting fields: `systemNotificationsEnabled: boolean`, `systemNotificationSoundPath: string | null`, `suppressSystemNotificationsWhenFocused: boolean`, and `systemNotificationEvents: Record<HookEventType, boolean>`.
 - Hook event union for system notifications: `SessionStart | UserPromptSubmit | Notification | Stop | StopFailure | PermissionRequest`.
 - Backend command: `is_wsl() -> bool`.
 - Backend command: `send_notification_via_windows(title: String, body: String) -> Result<(), String>`.
-- Backend command: `send_interactive_system_notification(title: String, body: String, tabId: String, actionLabel: String) -> Result<(), String>`.
+- Backend command: `send_interactive_system_notification(title: String, body: String, tabId: String, actionLabel: String, customSoundPath?: String | null) -> Result<(), String>`.
+- Windows-local settings commands: `validate_system_notification_sound(path: String) -> Result<(), String>` and `play_system_notification_sound(path: String) -> Result<(), String>`.
 - Backend-to-frontend activation event: `system-notification-action` with `{ tabId }`.
-- Non-WSL frontend notifier: `send_interactive_system_notification({ title, body, tabId, actionLabel })`.
+- Non-WSL frontend notifier: `send_interactive_system_notification({ title, body, tabId, actionLabel, customSoundPath })`.
 
 ### 3. Contracts
 
@@ -569,6 +626,10 @@ Claude PreToolUse matcher=AskUserQuestion -> Notification
 - Backend guard: `send_notification_via_windows` must reject non-WSL calls so Windows native app instances cannot accidentally show a `Windows PowerShell` source/icon.
 - Non-WSL path: frontend checks/requests notification permission before `send_interactive_system_notification`; Windows native app instances must not route through PowerShell because that makes the toast appear as `Windows PowerShell`.
 - Click behavior: native interactive notifications emit `system-notification-action`; the frontend shows/focuses the app and activates the owning terminal `tabId`. If the tab no longer exists, the app is focused and the user sees a target-closed toast.
+- `systemNotificationSoundPath` defaults to `null`, is persisted locally, and is excluded from WebDAV/local snapshot sync because it is a machine-specific absolute path.
+- On Windows, a valid persisted `.wav` path is canonicalized and checked as a regular RIFF/WAVE file before playback; the action-capable Toast's audio is silenced and the validated file is played asynchronously with WinMM. A missing, stale, malformed, oversized, or otherwise unplayable path logs a warning and preserves the existing default notification behavior.
+- The settings UI validates a selected file before persistence, revalidates stale paths on load, and offers localized choose, preview, and clear actions. The custom sound card is hidden on non-Windows platforms.
+- WSL fallback never receives or interprets `systemNotificationSoundPath`; WSL and non-Windows notification behavior remains unchanged.
 
 ### 4. Validation & Error Matrix
 
@@ -581,13 +642,17 @@ Claude PreToolUse matcher=AskUserQuestion -> Notification
 - `is_wsl` command failure or notification API failure -> catch and log warning; app toast/tab state must continue.
 - WSL bridge title/body too long or containing NUL -> command returns `Err(String)`; frontend catches and logs warning.
 - `powershell.exe` unavailable in WSL -> command returns `Err(String)`; frontend catches and logs warning.
+- Windows custom sound path is missing, non-WAV, malformed, too large, or no longer readable -> settings validation reports a stable error; notification send logs a warning, keeps the default Toast audio, and does not block Hook UI/state/action delivery.
+- Windows custom sound path is valid -> the OS notification is sent once with custom playback; no second default Toast sound is requested.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `Stop` for a tab titled `CLI-Manager` sends title `CLI-Manager` with body like `✅ Claude Code 在 CLI-Manager 的任务已完成` and still updates the tab status.
 - Good: WSL fallback `PermissionRequest` sends through `send_notification_via_windows` without asking Tauri notification permission, and the Toast XML includes `来自 CLI-Manager` attribution.
 - Good: native Windows/macOS/Linux `PermissionRequest` emits `system-notification-action` after notification click and activates the matching terminal tab.
+- Good: Windows `Stop` with a valid selected `.wav` plays the custom file while the interactive notification still activates its owning terminal when clicked.
 - Base: `SessionStart` updates session binding but sends no system notification under default settings.
+- Base: no selected sound uses the existing notification backend default; WSL fallback does not attempt to play a Windows-local path.
 - Base: main window focused and foreground suppression enabled -> no OS notification, but the Hook toast still appears inside CLI-Manager.
 - Base: main window focused and foreground suppression disabled -> OS notification is allowed if global and per-event settings allow it.
 - Bad: system notification failure prevents `showClaudeHookToast` or `handleCliHookEvent` from running; notification errors must stay isolated.
@@ -606,6 +671,8 @@ Claude PreToolUse matcher=AskUserQuestion -> Notification
 - Settings UI test point: toggling one event preserves the other `systemNotificationEvents` values.
 - Settings UI test point: toggling focused-window suppression changes only OS-level notification behavior, not app toast or tab status behavior.
 - Regression test point: app toast and tab indicators still work when system notifications are disabled or fail.
+- Windows file test point: choose valid/uppercase-extension, malformed, missing, directory, oversized, NUL-containing, and non-WAV paths; verify preview/clear and restart persistence without syncing the absolute path.
+- Windows delivery test point: valid custom playback does not duplicate the default sound, stale-path delivery falls back safely, and native notification click activation remains intact.
 
 ### 7. Wrong vs Correct
 
@@ -720,6 +787,7 @@ interface HookSettingsStatus {
 - Installing Codex Hook writes normal Codex `hooks.json` commands and `config.toml` feature flags first, then best-effort merges the TOML `[features].hooks = true` flag plus any current CLI-Manager-owned Codex `[hooks.state.*]` trust blocks into `settings.common_config_codex`. Codex hook commands remain in `hooks.json`; `common_config_codex` is not JSON.
 - Hook settings UI shows the cc-switch protection card once, above system notification settings. Do not duplicate it in both Claude and Codex sections.
 - Claude common-config merge may remove/replace only CLI-Manager-owned hook commands (`__hook` marker or known legacy scripts); it must preserve non-hook fields and non-CLI-Manager hook entries. Codex common-config merge may only add or replace the TOML `features.hooks` flag and marker-owned `[hooks.state.*]` trust blocks for the current user-level Codex `hooks.json`; it must preserve other TOML fields and unrelated hook state.
+- Full uninstall strips all CLI-Manager-owned common-config entries. Module uninstall must instead rebuild the owned portion from the post-operation local `settings.json` / `hooks.json` and preserve still-installed CLI-Manager modules; a partial local status must never be treated as permission to delete every owned common-config entry.
 - `settings.value` is nullable in cc-switch DBs. A `NULL` value for `common_config_<tool>` is treated as missing config, not as `db_query_failed`.
 - When `common_config_codex` has no `[features]` table, insert the `[features]` block before the first existing TOML table header; append only when the snippet has top-level keys and no tables. This avoids leaking later text-concatenated provider keys into `[features]` while preserving tables such as `[projects.'\\?\F:\...']`, `[windows]`, and `[tui]`.
 - Common-config writes use `sqlx` and an explicit transaction. Do not add `rusqlite`.
@@ -774,6 +842,7 @@ interface HookSettingsStatus {
 - Rust regression tests for copying only current user-level CLI-Manager Codex `hooks.state` blocks into `common_config_codex`, replacing stale marker-owned hashes, and excluding project-local `.codex/hooks.json` state.
 - Rust regression tests for trust repair covering missing, disabled, and stale hashes; assert unrelated state is preserved and missing required events remain `partialInstalled` without repair.
 - Rust unit tests for strip/uninstall preserving non-CLI-Manager hooks.
+- Rust SQLite regression tests must cover full uninstall and module uninstall separately: the former removes all owned entries, while the latter keeps the remaining local CLI-Manager Hook entries and preserves user-owned content.
 - Rust regression test that Claude common-config status requires every installed event, including Claude `Notification`; Codex common-config status requires `[features].hooks = true`.
 - Rust unit test that invalid Claude common-config JSON returns `common_config_parse_failed`.
 - TypeScript type-check after adding payload fields or new frontend status states.
@@ -896,6 +965,8 @@ Pi extension path: ~/.pi/agent/extensions/cli-manager-hook.ts
 Pi source: pi
 Pi events: SessionStart | UserPromptSubmit | Stop
 Stable conflict error: pi_extension_conflict
+Generated lifecycle reporter: postHookEvent(event, sessionId) -> Promise<void>
+Generated reporter deadline: HOOK_TIMEOUT_MS = 1_000
 ```
 
 ### 3. Contracts
@@ -907,6 +978,8 @@ Stable conflict error: pi_extension_conflict
 - Full Pi installation reports `installed`; any non-empty strict subset reports `partialInstalled`; no modules reports `notInstalled`.
 - `session_start` maps to one `SessionStart`, `agent_start` maps to one `UserPromptSubmit`, and `agent_settled` maps to one `Stop`. Do not also map `before_agent_start` to `UserPromptSubmit`, because one Pi run emits both lifecycle events.
 - The extension reads `CLI_MANAGER_TAB_ID`, `CLI_MANAGER_NOTIFY_PORT`, and `CLI_MANAGER_NOTIFY_TOKEN` from its PTY environment and silently skips reporting if any are missing.
+- Pi lifecycle handlers must detach bridge delivery with `void postHookEvent(...)`; they must never `await` a loopback HTTP request, because Pi awaits extension handlers before continuing the agent lifecycle.
+- `postHookEvent` is best-effort and owns a bounded `AbortController` timeout of `HOOK_TIMEOUT_MS`. Timeout, connection failure, or abort is swallowed after cleanup and cannot delay terminal input, agent start, or settle.
 - New user-visible Pi errors must pass through the frontend language selector in every install consumer, including Hook settings and sidebar repair; `zh-TW` uses the existing OpenCC conversion path.
 
 ### 4. Validation & Error Matrix
@@ -919,15 +992,23 @@ Stable conflict error: pi_extension_conflict
 | Selected Pi directory is missing during install | Create it. |
 | Selected Pi directory is missing during status/uninstall | Return the existing directory-missing behavior; do not invent installed state. |
 | Hook callback environment is incomplete | Extension returns without throwing or interrupting Pi. |
+| Loopback bridge is slow, unreachable, or times out | Return from the Pi event handler immediately; abort the detached request within `HOOK_TIMEOUT_MS` and swallow its failure. |
 | Full three-module install | Return `installed`, allowing PTY callback environment injection. |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a Pi-only user installs all modules, the shared Hook environment is injected, `SessionStart` binds the Pi session id, and realtime stats load.
+- Good: the local bridge is unavailable while a Pi prompt is submitted; Pi starts the run immediately and the detached report expires within one second.
 - Good: a user already has an unrelated `cli-manager-hook.ts`; install fails with a localized conflict message and preserves the file byte-for-byte.
 - Base: only session-start is enabled; status is `partialInstalled` and the module UI reflects that subset.
 - Bad: reuse Claude/Codex required-module assumptions for Pi and require an attention hook that Pi does not provide.
 - Bad: listen to both `before_agent_start` and `agent_start` for the same running event; this duplicates replay and notification traffic.
+- Bad: await `postHookEvent` from a Pi lifecycle handler; a slow loopback bridge then adds network latency to every prompt.
+
+> **Warning**: Pi status must derive `hooks_feature_installed` and `hooks_trusted`
+> from marker ownership. Leaving either flag true after the managed extension is
+> removed makes `status_from_checks` report an installed or partial Hook after
+> uninstall.
 
 ### 6. Tests Required
 
@@ -935,6 +1016,7 @@ Stable conflict error: pi_extension_conflict
 - Rust: one selected module reports `HookInstallStatus::PartialInstalled`.
 - Rust: install against an unowned same-name extension returns `pi_extension_conflict` and preserves exact content.
 - Rust: install then uninstall removes the marker-owned extension.
+- Rust: generated Pi extension source uses `void postHookEvent` for every lifecycle mapping, contains `AbortController` and `HOOK_TIMEOUT_MS = 1_000`, and contains no `await postHookEvent`.
 - TypeScript: type-check after frontend status or localized error handling changes.
 - Manual: verify Hook settings in `zh-CN`, `zh-TW`, and `en-US`, then start one Pi run and confirm exactly one running transition.
 
@@ -952,6 +1034,12 @@ pi.on("before_agent_start", reportRunning);
 pi.on("agent_start", reportRunning);
 ```
 
+```typescript
+pi.on("agent_start", async (_event, ctx) => {
+  await postHookEvent("UserPromptSubmit", readSessionId(ctx));
+});
+```
+
 #### Correct
 
 ```rust
@@ -962,4 +1050,86 @@ if checks.attention_hook_required {
 
 ```typescript
 pi.on("agent_start", reportRunning);
+```
+
+```typescript
+pi.on("agent_start", (_event, ctx) => {
+  void postHookEvent("UserPromptSubmit", readSessionId(ctx));
+});
+```
+
+## Scenario: Remote Handoff Approval Arbitration Boundaries
+
+### 1. Scope / Trigger
+
+- Trigger: a remote-handoff-managed child emits `PermissionRequest` and the shared local Hook sink must decide whether to defer it for a matching Codex transcript decision.
+- Applies to: `ApprovalArbiterState`, `approval_aware_hook_sink`, remote spool replay, transcript-path normalization, and local/WSL/SSH runtime boundaries.
+
+### 2. Signatures
+
+```text
+ApprovalArbiterState::accept(payload) -> Option<ApprovalRoute>
+approval_aware_hook_sink(payload) -> Hook delivery
+normalize_explicit_transcript_path(path, wslDistroName) -> PathBuf | error
+validate_explicit_transcript_path(path) -> PathBuf | error
+```
+
+### 3. Contracts
+
+- One global sink remains the sole classifier before app, daemon, third-party, and remote-handoff fan-out; no downstream sink may independently defer or duplicate an approval.
+- Only a message-less Codex child event from `local` or `wsl` is a provisional candidate. SSH spool/replay events always deliver immediately.
+- A provisional approval may resolve only against the same source, environment, tab, parent session, and child-agent scope. `Some(session)` and `None` are never equivalent.
+- Local/WSL Codex installs internal `PreToolUse -> ToolStart` and `PostToolUse -> ToolStop` reporters. These events are admitted only to shared arbitration and never reach app, pet, toast, taskbar, system, third-party, or remote-handoff delivery sinks.
+- Tool progress and approval delivery may arrive in either order. A short-lived, bounded, single-consumption progress tombstone uses the exact scoped tool ID when both sides provide one, otherwise the exact tool name; it never crosses source, environment, tab, parent session, or child-agent boundaries.
+- Progress resolves pending approvals before deadline polling, so a matching event received at the grace boundary cannot first fan out a stale approval. Real unresolved approvals retain bounded fallback delivery exactly once.
+- Transcript metadata is read only after explicit path normalization and transcript-root validation. Native metadata polling of `\\wsl$` / `\\wsl.localhost` paths is forbidden.
+- Trusted child and parent transcript candidates are evaluated independently. The Hook-provided byte baseline applies only to the exact path it measured; when absent, the backend captures a native baseline after validation, while WSL UNC candidates never trigger native metadata access.
+- Missing, untrusted, unreadable, or non-local transcript metadata leaves the approval unresolved; the bounded fallback delivery remains authoritative and must never suppress it permanently.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| SSH `PermissionRequest` from spool replay | Forward immediately; do not enter provisional state. |
+| Local/WSL message-less Codex child request | Hold only for the bounded arbitration window. |
+| Matching Codex ToolStart/ToolStop before or after a provisional request | Resolve it silently; no downstream fan-out. |
+| Progress event lacks tool ID | Match only an exact tool name inside the exact child scope. |
+| Source/environment/tab/session/agent mismatch | Do not resolve or cancel the other approval. |
+| Explicit path outside a trusted transcript root | Do not read metadata; use normal fallback delivery. |
+| WSL UNC transcript path | Do not call native `fs::metadata`; rely on Hook event/timing flow. |
+| No decisive transcript event before deadline | Deliver exactly once through the original sink chain. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a local Codex child emits an empty approval followed by a matching transcript decision; only that scoped approval is resolved.
+- Good: an SSH Agent replays a Codex `PermissionRequest`; it reaches normal notification delivery without a 15-second delay.
+- Base: ordinary local approvals keep existing immediate delivery unless they meet every provisional-candidate predicate.
+- Bad: treating a missing session as a wildcard, accepting a spool event as a candidate, or reading an arbitrary UNC path from the payload.
+
+### 6. Tests Required
+
+- Rust tests cover SSH immediate delivery, local/WSL candidate admission, source/environment/session isolation, and timeout fallback delivery.
+- Rust tests cover ToolStart/ToolStop before and after PermissionRequest, exact-name fallback, tool-ID mismatch, multi-child isolation, deadline ordering, tombstone expiry, and zero downstream delivery for internal progress.
+- Rust tests cover rejected untrusted paths and WSL UNC paths without native metadata polling.
+- Hook settings tests cover Codex lifecycle install/status/trust/uninstall; an older installation without `PostToolUse -> ToolStop` must report partial until explicitly reinstalled.
+- Run `cargo fmt --check`, targeted approval/remote Hook tests, `cargo check --lib`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// A missing session becomes a wildcard and can resolve another child request.
+scope.session_id.as_deref() == payload.session_id.as_deref()
+```
+
+#### Correct
+
+```rust
+// All correlation dimensions, including Option presence, must match exactly.
+scope.source == payload.source
+    && scope.environment == approval_environment(payload)
+    && scope.tab_id == payload.tab_id
+    && scope.session_id == payload.session_id
+    && scope.agent_id == payload.agent_id
 ```

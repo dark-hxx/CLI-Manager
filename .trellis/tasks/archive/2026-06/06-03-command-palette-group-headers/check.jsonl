@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查组件样式修改是否保持现有模式"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端质量要求"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否避免不必要抽象和重复样式"}

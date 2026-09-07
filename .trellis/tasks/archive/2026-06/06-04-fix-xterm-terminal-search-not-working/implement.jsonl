@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check frontend terminal performance and UI constraints before fixing search behavior."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Keep fix minimal and avoid unnecessary abstraction."}

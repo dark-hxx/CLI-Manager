@@ -1,0 +1,14 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"Verify the implementation covers the enumerated focus, multi-session, WSL, Worktree, Hook and lifecycle scenarios."}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"Verify V1.3.6 CHANGELOG, Refs #184, feature inventory and clean commit scope."}
+{"file":".trellis/spec/frontend/history-session-contracts.md","reason":"Check title extraction does not diverge from Conversation parts/injection semantics or snapshot behavior."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check one persisted setting source and application-lifetime queue without React lifecycle duplication."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check TypeScript, i18n, accessibility and forbidden frontend patterns."}
+{"file":".trellis/spec/backend/history-index-contracts.md","reason":"Check generated metadata survives catalog rebuild and automatic trigger does not rescan all transcripts."}
+{"file":".trellis/spec/backend/ccs-provider-domain-contracts.md","reason":"Check provider IDs are composite, secrets remain backend-only and provider deletion preserves generated titles."}
+{"file":".trellis/spec/frontend/ccs-provider-domain-contracts.md","reason":"Check UI never reveals/persists credentials and invalid provider selections remain repairable."}
+{"file":".trellis/spec/backend/app-data-persistence-contracts.md","reason":"Check additive migration, recovery and device-local metadata durability."}
+{"file":".trellis/spec/backend/command-suggestion-contracts.md","reason":"Check helper extraction does not regress existing command suggestion requests/tests."}
+{"file":".trellis/spec/backend/wsl-path-contracts.md","reason":"Check WSL source detail uses established discovery/path boundaries."}
+{"file":".trellis/spec/backend/ssh-agent-contracts.md","reason":"Check SSH summary-only/offline sessions are skipped and no remote mutation/protocol assumption was added."}
+{"file":".trellis/tasks/08-14-history-two-stage-smart-title/research/reference-title-implementations.md","reason":"Check the implementation preserves fallback, one-shot, pin/CAS and safe-title lessons without unsupported Codex claims."}
+{"file":".trellis/tasks/08-14-history-two-stage-smart-title/research/current-code-touchpoints.md","reason":"Check all identified display, delete, snapshot, settings and provider boundaries were handled."}

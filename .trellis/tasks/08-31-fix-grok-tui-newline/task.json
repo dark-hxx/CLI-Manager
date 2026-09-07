@@ -1,0 +1,32 @@
+{
+  "id": "fix-grok-tui-newline",
+  "name": "fix-grok-tui-newline",
+  "title": "修复 Grok Build 本地/WSL 换行",
+  "description": "Grok/Codex 换行写 \\x1b\\r；Grok/Codex 未匹配 Alt+Enter 放行。Refs #236",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "grok",
+  "assignee": "grok",
+  "createdAt": "2026-08-31",
+  "completedAt": null,
+  "branch": "fix/grok-tui-newline",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/terminal/browser/TerminalCliContext.ts",
+    "src/terminal/browser/TerminalNewlineShortcut.ts",
+    "src/lib/terminalTuiDisplay.ts",
+    "src/components/XTermTerminal.tsx",
+    "scripts/terminalComposerNewline.test.mjs"
+  ],
+  "notes": "Refs #236",
+  "meta": {}
+}

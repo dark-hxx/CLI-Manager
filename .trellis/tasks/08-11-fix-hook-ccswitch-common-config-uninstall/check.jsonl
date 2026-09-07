@@ -1,0 +1,6 @@
+{"check":"npx tsc --noEmit","result":"passed"}
+{"check":"cargo fmt -- --check","result":"passed"}
+{"check":"cargo check","result":"passed"}
+{"check":"commands::hook_settings::tests (34 tests)","result":"passed via existing test harness binary; cargo rerun was blocked by a running cli-manager.exe locking target\\debug\\cli-manager.exe"}
+{"check":"git diff --check","result":"passed"}
+{"check":"gitnexus_detect_changes(scope=unstaged)","result":"completed; aggregate risk critical because the worktree also contains unrelated provider/home changes, hook-specific changed flows are expected"}

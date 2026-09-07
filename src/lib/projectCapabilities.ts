@@ -1,3 +1,5 @@
+import { resolveCliToolHistorySourceId } from "./cliTools";
+import { resolveSshHistorySource } from "./sshToolIntegration";
 import type { Project } from "./types";
 
 export type ProjectCapability =
@@ -60,6 +62,15 @@ export function isSshProject(project: Project | null | undefined): boolean {
   return project?.environment_type === "ssh";
 }
 
+export function isSshHistorySourceUnsupported(project: Project | null | undefined): boolean {
+  return isSshProject(project) && !resolveSshHistorySource(project?.cli_tool);
+}
+
+export function isSshGrokHistoryUnsupported(project: Project | null | undefined): boolean {
+  return isSshHistorySourceUnsupported(project)
+    && resolveCliToolHistorySourceId(project?.cli_tool) === "grok";
+}
+
 export function resolveProjectCapabilities(project: Project | null | undefined): ProjectCapabilities {
   const environment = project?.environment_type ?? "local";
   return {
@@ -72,5 +83,6 @@ export function projectSupportsCapability(
   project: Project | null | undefined,
   capability: ProjectCapability
 ): boolean {
+  if (capability === "history" && isSshHistorySourceUnsupported(project)) return false;
   return resolveProjectCapabilities(project)[capability];
 }

@@ -5,6 +5,12 @@ export interface Group {
   name: string;
   parent_id: string | null;
   sort_order: number;
+  /** 外观标记：单个 emoji 字符或内置图标 key；空串表示回退默认文件夹图标。 */
+  icon: string;
+  /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
+  color: string;
+  /** 绑定路径：新建子项目/终端时可继承；空串表示未绑定。 */
+  bound_path: string;
   created_at: string;
 }
 
@@ -25,7 +31,8 @@ export type SshAuthMode =
 export type SshJumpMode = "none" | "host" | "proxy_jump";
 
 export type SshProxyType = "none" | "http" | "socks5" | "proxy_command";
-export type SshToolSource = "claude" | "codex";
+export type SshToolSource = "claude" | "codex" | "kimi" | "grok";
+export type SshHistorySource = Extract<SshToolSource, "claude" | "codex">;
 export type SshToolIntegrationScopeKind = "hostPrimary" | "projectOverride" | "retainedRoot";
 export type SshToolIntegrationValidationState =
   | "unvalidated"
@@ -66,6 +73,8 @@ export interface SshHost {
   server_alive_interval_sec: number;
   server_alive_count_max: number;
   terminal_encoding: string;
+  /** Optional remote parent directory for Host-scoped Agent attachments. */
+  attachment_root: string;
   startup_script: string;
   notes: string;
   sort_order: number;
@@ -95,6 +104,7 @@ export interface CreateSshHostInput {
   server_alive_interval_sec?: number;
   server_alive_count_max?: number;
   terminal_encoding?: string;
+  attachment_root?: string;
   startup_script?: string;
   notes?: string;
 }
@@ -131,6 +141,18 @@ export interface SshAgentInstallPreview {
   artifactSha256: string;
   installRoot: string;
   installPath: string;
+  currentVersion: string;
+  distributionSource: "bundled" | "remote";
+}
+
+export interface SshAgentAvailableRelease {
+  action: "install" | "upgrade" | "reinstall" | "downgrade";
+  manifestUrl: string;
+  channel: string;
+  version: string;
+  protocolMin: number;
+  protocolMax: number;
+  publishedAt: string;
   currentVersion: string;
   distributionSource: "bundled" | "remote";
 }
@@ -200,11 +222,11 @@ export interface SshRemoteHookInstallationRecord {
   managedEntries: number;
   adapterVersion: number;
   installedAt: number;
-  historySourceCandidate: {
-    source: SshToolSource;
+  historySourceCandidate?: {
+    source: SshHistorySource;
     canonicalConfigRoot: string;
     configRootHash: string;
-  };
+  } | null;
 }
 
 export interface SshRemoteHookConfigReport {
@@ -288,6 +310,8 @@ export interface Project {
   id: string;
   name: string;
   path: string;
+  /** 路径来源：inherit 时按当前分组绑定路径动态解析。 */
+  path_mode: "custom" | "inherit";
   group_name: string;
   group_id: string | null;
   sort_order: number;
@@ -305,6 +329,10 @@ export interface Project {
   ssh_host_id: string | null;
   remote_path: string;
   cli_config_root: string;
+  /** 外观标记：单个 emoji 字符或内置图标 key；空串表示按节点类型回退默认图标。 */
+  icon: string;
+  /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
+  color: string;
   created_at: string;
   updated_at: string;
 }
@@ -312,6 +340,7 @@ export interface Project {
 export interface CreateProjectInput {
   name: string;
   path: string;
+  path_mode?: "custom" | "inherit";
   group_id?: string | null;
   group_name?: string;
   cli_tool?: string;
@@ -327,11 +356,14 @@ export interface CreateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  icon?: string;
+  color?: string;
 }
 
 export interface UpdateProjectInput {
   name?: string;
   path?: string;
+  path_mode?: "custom" | "inherit";
   group_id?: string | null;
   group_name?: string;
   sort_order?: number;
@@ -348,6 +380,8 @@ export interface UpdateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  icon?: string;
+  color?: string;
 }
 
 export type TerminalScope =
@@ -359,6 +393,18 @@ export type TerminalScope =
 export interface CreateGroupInput {
   name: string;
   parent_id?: string | null;
+  icon?: string;
+  color?: string;
+  bound_path?: string;
+}
+
+export interface UpdateGroupInput {
+  name?: string;
+  parent_id?: string | null;
+  sort_order?: number;
+  icon?: string;
+  color?: string;
+  bound_path?: string;
 }
 
 export type TreeNode =
@@ -367,6 +413,19 @@ export type TreeNode =
   | { type: "worktree"; project: Project; worktree: WorktreeRecord };
 
 export type TerminalSessionKind = "pty" | "subagent-transcript" | "file-editor" | "synced-history";
+
+export interface NativeProviderLaunchSnapshot {
+  appType: "claude" | "codex" | "grokbuild";
+  providerId: string;
+  providerName: string;
+  source: string;
+  snapshotId: string;
+  claudeSettingsPath: string | null;
+  generatedHome: string | null;
+  grokModel: string | null;
+  codexProfileName: string | null;
+  configOverrides: string[];
+}
 
 export type SubagentTranscriptSourceKind = "pending" | "child-jsonl" | "parent-jsonl" | "lifecycle-only";
 
@@ -394,6 +453,7 @@ export type RemoteHandoffPhase = "pending" | "active" | "cancelling" | "recovery
 
 export interface RemoteHandoffSessionState {
   phase: RemoteHandoffPhase;
+  agent?: import("./remoteHandoff").RemoteHandoffAgent;
   cliSessionId: string;
   projectName: string;
   workDir: string;
@@ -432,6 +492,8 @@ export interface TerminalSession {
   /** true 时启动命令由 XTermTerminal 在 initialTerminalOutput 写完后再发送。 */
   deferStartupUntilInitialOutput?: boolean;
   cliSessionId?: string;
+  /** 本次会话使用的原生 Provider 快照；恢复时复用，避免后续切换污染旧会话。 */
+  providerSnapshot?: NativeProviderLaunchSnapshot;
   remoteTranscriptRef?: string;
   remoteHistoryConsumerId?: string;
   remoteHistorySourceInstanceId?: string;
@@ -572,6 +634,7 @@ export interface HistorySessionSummary {
   project_key: string;
   title: string;
   file_path: string;
+  parent_session_id?: string | null;
   cwd?: string | null;
   created_at: number;
   updated_at: number;
@@ -586,9 +649,27 @@ export interface HistorySessionSummary {
   usage?: HistorySessionUsage;
 }
 
+export type HistoryMessagePartKind =
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "reasoning"
+  | "system"
+  | "metadata"
+  | "unknown";
+
+export interface HistoryMessagePart {
+  kind: HistoryMessagePartKind;
+  content: string;
+  tool_name?: string;
+  call_id?: string;
+}
+
 export interface HistoryMessage {
   role: string;
   content: string;
+  /** 可选结构化内容；旧快照缺失时由前端按 role 保守回退。 */
+  parts?: HistoryMessagePart[];
   timestamp?: string | null;
   model?: string;
   input_tokens?: number;
@@ -717,7 +798,7 @@ export interface HistorySearchHit {
 
 export interface SshRemoteHistorySyncResult {
   sourceInstanceId: string;
-  source: SshToolSource;
+  source: SshHistorySource;
   installationId: string;
   remoteMachineId: string;
   sshUser: string;
@@ -739,7 +820,7 @@ export interface SshRemoteHistorySyncResult {
 }
 
 export interface SshRemoteResumePreflight {
-  source: SshToolSource;
+  source: SshHistorySource;
   sourceSessionId: string;
   sourceInstanceId: string;
   installationId: string;
@@ -809,12 +890,65 @@ export interface SessionFavoriteSnapshot {
   snapshot_at: string;
 }
 
+export type HistoryGeneratedTitleState = "idle" | "pending" | "succeeded" | "failed";
+export type HistoryGeneratedTitleTrigger = "automatic" | "manual";
+
+export interface HistoryGeneratedTitleMeta {
+  sessionKey: string;
+  sourceId: HistorySource;
+  sourceInstanceId: string;
+  sourceSessionId: string;
+  transportKind: string;
+  title: string | null;
+  state: HistoryGeneratedTitleState;
+  revision: number;
+  triggerKind: HistoryGeneratedTitleTrigger | null;
+  sourceMessageIdentity: string | null;
+  sourceContentSha256: string | null;
+  providerAppType: string | null;
+  providerId: string | null;
+  modelId: string | null;
+  failureCode: string | null;
+  autoSuppressed: boolean;
+  suppressedFingerprint: string | null;
+  requestedAt: number | null;
+  completedAt: number | null;
+  updatedAt: number;
+}
+
+export interface HistoryTitleCandidate {
+  text: string;
+  identity: string;
+  contentSha256: string;
+  inputContentSha256: string;
+}
+
+export interface HistorySmartTitleSettings {
+  enabled: boolean;
+  providerAppType: "claude" | "codex" | "grokbuild" | null;
+  providerId: string | null;
+  modelId: string | null;
+  enabledAt: number | null;
+  customPrompt: string;
+}
+
+export interface HistoryTitleProviderOption {
+  appType: "claude" | "codex" | "grokbuild";
+  providerId: string;
+  providerName: string;
+  modelId: string | null;
+  apiFormat: string | null;
+  ready: boolean;
+  reasonCode: string | null;
+}
+
 export interface HistorySessionView extends HistorySessionSummary {
   sessionKey: string;
   alias: string;
   starred: boolean;
   tags: string[];
   displayTitle: string;
+  generatedTitle?: HistoryGeneratedTitleMeta;
   favoriteSnapshot?: boolean;
 }
 
@@ -919,11 +1053,21 @@ export interface HistoryStatsPayload {
   source_distribution: HistoryStatsSourceItem[];
   project_efficiency: HistoryStatsProjectEfficiencyItem[];
   hourly_activity: HistoryStatsHourlyActivityItem[];
+  data_quality: {
+    route_records: number;
+    session_fallback_records: number;
+    unattributed_records: number;
+    missing_usage_records: number;
+  };
 }
 
+export type RequestLogSource = "claude" | "codex" | "gemini" | "opencode" | "grok";
+
 export interface RequestLogFilters {
-  source?: "claude" | "codex" | null;
+  source?: RequestLogSource | null;
   project_key?: string | null;
+  project_path?: string | null;
+  project_paths?: string[] | null;
   model?: string | null;
   session_query?: string | null;
   start_at?: number | null;
@@ -941,7 +1085,7 @@ export interface RequestLogSyncResult {
 
 export interface RequestLogItem {
   request_id: string;
-  source: "claude" | "codex";
+  source: RequestLogSource;
   project_key: string;
   session_id: string;
   file_path: string;
@@ -957,11 +1101,30 @@ export interface RequestLogItem {
   unpriced_tokens: number;
   status: "recorded";
   session_available: boolean;
+  data_source?: "route" | "session_log";
+  provider_id?: string | null;
+  provider_name?: string | null;
+  requested_model?: string | null;
+  outbound_model?: string | null;
+  response_model?: string | null;
+  usage_status?: "complete" | "partial" | "missing" | "invalid" | "not_applicable";
+  status_code?: number | null;
+  outcome?: string;
+  error_code?: string | null;
+  error_detail?: string | null;
+  duration_ms?: number;
+  attempt_count?: number;
+  degraded?: boolean;
 }
 
 export interface RequestLogSummary {
   total: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_creation_tokens: number;
   total_tokens: number;
+  cache_hit_rate: number;
   total_cost_usd: number;
   unpriced_tokens: number;
 }
@@ -972,6 +1135,62 @@ export interface RequestLogPage {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface RequestLogStatsTrendItem {
+  bucket_start_ms: number;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  unpriced_tokens: number;
+}
+
+export interface RequestLogStatsSourceItem {
+  source: RequestLogSource;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  ratio: number;
+  total_cost_usd: number;
+  unpriced_tokens: number;
+}
+
+export interface RequestLogStatsModelItem {
+  model: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  ratio: number;
+  total_cost_usd: number;
+  unpriced_tokens: number;
+}
+
+export interface RequestLogStatsPayload {
+  range_start_at: number;
+  range_end_at: number;
+  granularity: "hour" | "day";
+  total_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_creation_tokens: number;
+  total_tokens: number;
+  cache_hit_rate: number;
+  total_cost_usd: number;
+  total_unpriced_tokens: number;
+  trend: RequestLogStatsTrendItem[];
+  source_distribution: RequestLogStatsSourceItem[];
+  model_distribution: RequestLogStatsModelItem[];
 }
 
 export const SHELL_OPTIONS_WINDOWS = [

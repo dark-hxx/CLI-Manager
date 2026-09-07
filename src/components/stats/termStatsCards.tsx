@@ -47,6 +47,10 @@ export function TokenUsageCard({ stats }: { stats: TokenStats }) {
   const { t } = useI18n();
   const animatedTotal = useCountUp(stats.totalTokens);
   const animatedCost = useCountUp(stats.estimatedCost);
+  const cacheContextTokens = stats.inputTokens + stats.cacheReadTokens + stats.cacheCreationTokens;
+  const cacheHitRate = cacheContextTokens > 0
+    ? Math.round((stats.cacheReadTokens / cacheContextTokens) * 100)
+    : 0;
 
   return (
     <StatCard
@@ -71,7 +75,12 @@ export function TokenUsageCard({ stats }: { stats: TokenStats }) {
         <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
           <StatChip dotColor={TERM_PANEL.green} label={t("termStats.input")} value={formatCompactCount(stats.inputTokens)} />
           <StatChip dotColor={TERM_PANEL.yellow} label={t("termStats.output")} value={formatCompactCount(stats.outputTokens)} />
-          <StatChip dotColor={TERM_PANEL.blue} label={t("termStats.cacheHit")} value={formatCompactCount(stats.cacheReadTokens)} />
+          <StatChip
+            dotColor={TERM_PANEL.blue}
+            label={t("termStats.cacheHit")}
+            value={formatCompactCount(stats.cacheReadTokens)}
+            valueSuffix={`${cacheHitRate}%`}
+          />
           <StatChip dotColor={TERM_PANEL.magenta} label={t("termStats.cacheWrite")} value={formatCompactCount(stats.cacheCreationTokens)} />
         </div>
       </div>

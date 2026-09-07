@@ -24,6 +24,7 @@ import {
   sshRemoteReadFile,
   sshRemoteSearch,
   type SshRemoteFileContext,
+  type SshRemoteFileOperationOptions,
 } from "../lib/sshRemoteFiles";
 
 type ClipboardMode = "copy" | "move";
@@ -88,6 +89,16 @@ interface FileSearchNavigationTarget {
   source: "search" | "terminal";
 }
 
+interface ProjectFileEditorWorkspace {
+  project: Project;
+  openFiles: ActiveProjectFile[];
+  activeFilePath: string | null;
+}
+
+interface FileExplorerRefreshOptions {
+  silent?: boolean;
+}
+
 interface FileExplorerStore {
   project: Project | null;
   remoteFileContext: SshRemoteFileContext | null;
@@ -103,14 +114,17 @@ interface FileExplorerStore {
   openFiles: ActiveProjectFile[];
   activeFilePath: string | null;
   activeFile: ActiveProjectFile | null;
+  editorWorkspaces: ProjectFileEditorWorkspace[];
   searchNavigationTarget: FileSearchNavigationTarget | null;
   gitChanges: GitFileChange[];
   clipboard: FileClipboard | null;
   openProject: (project: Project) => Promise<void>;
   closeProject: () => void;
+  getProjectEditorWorkspaces: (projectId: string) => ProjectFileEditorWorkspace[];
+  clearProjectEditorWorkspaces: (projectId: string) => void;
   refresh: () => Promise<void>;
-  refreshVisibleState: (changedPaths?: string[]) => Promise<void>;
-  refreshVisibleStateOnce: (changedPaths?: string[]) => Promise<void>;
+  refreshVisibleState: (changedPaths?: string[], options?: FileExplorerRefreshOptions) => Promise<void>;
+  refreshVisibleStateOnce: (changedPaths?: string[], options?: FileExplorerRefreshOptions) => Promise<void>;
   refreshGitChanges: () => Promise<void>;
   loadDir: (path: string) => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
@@ -305,8 +319,10 @@ let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let searchRequestSeq = 0;
 let openProjectRequestSeq = 0;
 const inFlightGitChangeRequests = new Map<string, Promise<GitFileChange[]>>();
+const nonGitProjectPaths = new Set<string>();
 let refreshVisibleStateInFlight: Promise<void> | null = null;
 let pendingRefreshChangedPaths: Set<string> | null | undefined;
+let pendingRefreshOptions: FileExplorerRefreshOptions | undefined;
 const remoteFileContextReleases = new Map<string, Promise<void>>();
 
 export function isDefaultCollapsedDirectoryName(name: string): boolean {
@@ -420,7 +436,7 @@ function isImage(path: string): boolean {
 const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
 const IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
 const VIDEO_EXTENSIONS = new Set([
-  "3g2", "3gp", "avi", "flv", "m2ts", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ogv", "ts", "webm", "wmv",
+  "3g2", "3gp", "avi", "flv", "m2ts", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ogv", "webm", "wmv",
 ]);
 
 function previewGuardError(path: string, sizeBytes: number): string | null {
@@ -443,12 +459,13 @@ async function loadProjectFile(
   project: Project,
   entry: Pick<ProjectFileEntry, "path" | "name" | "sizeBytes" | "modifiedMs">,
   remoteContext?: SshRemoteFileContext | null,
+  options?: SshRemoteFileOperationOptions,
 ): Promise<{ file: ActiveProjectFile; errorMessage?: string }> {
   try {
     const guardError = previewGuardError(entry.path, entry.sizeBytes);
     if (guardError) throw new Error(guardError);
     if (remoteContext) {
-      const remote = await sshRemoteReadFile(remoteContext, entry.path);
+      const remote = await sshRemoteReadFile(remoteContext, entry.path, options);
       if (remote.previewKind === "image") {
         const match = remote.content.match(/^data:([^;]+);base64,(.*)$/s);
         if (!match) throw new Error("remote_file_image_invalid");
@@ -521,18 +538,34 @@ function collectEntriesByPath(entries: ProjectFileEntry[], map: Map<string, Proj
   }
 }
 
+function normalizeGitProjectPath(projectPath: string): string {
+  return projectPath.replace(/\\/g, "/").replace(/\/+$/u, "");
+}
+
 async function fetchGitChanges(projectPath: string): Promise<GitFileChange[]> {
-  const existing = inFlightGitChangeRequests.get(projectPath);
+  const projectKey = normalizeGitProjectPath(projectPath);
+  if (nonGitProjectPaths.has(projectKey)) return [];
+
+  const existing = inFlightGitChangeRequests.get(projectKey);
   if (existing) return existing;
 
   const request = invoke<GitFileChange[]>("git_get_changes", { projectPath })
-    .catch(() => [])
+    .then((changes) => {
+      nonGitProjectPaths.delete(projectKey);
+      return changes;
+    })
+    .catch((error) => {
+      if (errorHasCode(error, "not_git_repository")) {
+        nonGitProjectPaths.add(projectKey);
+      }
+      return [];
+    })
     .finally(() => {
-      if (inFlightGitChangeRequests.get(projectPath) === request) {
-        inFlightGitChangeRequests.delete(projectPath);
+      if (inFlightGitChangeRequests.get(projectKey) === request) {
+        inFlightGitChangeRequests.delete(projectKey);
       }
     });
-  inFlightGitChangeRequests.set(projectPath, request);
+  inFlightGitChangeRequests.set(projectKey, request);
   return request;
 }
 
@@ -545,6 +578,35 @@ function selectFallbackFile(files: ActiveProjectFile[], closedPath: string): Act
   const closedIndex = files.findIndex((file) => file.path === closedPath);
   if (closedIndex <= 0) return files[0];
   return files[Math.min(closedIndex - 1, files.length - 1)];
+}
+
+function findEditorWorkspace(
+  workspaces: ProjectFileEditorWorkspace[],
+  project: Project
+): ProjectFileEditorWorkspace | null {
+  return workspaces.find((workspace) => isSameProjectFileLocation(workspace.project, project)) ?? null;
+}
+
+function upsertEditorWorkspace(
+  workspaces: ProjectFileEditorWorkspace[],
+  project: Project,
+  openFiles: ActiveProjectFile[],
+  activeFilePath: string | null
+): ProjectFileEditorWorkspace[] {
+  const normalizedActivePath = openFiles.some((file) => file.path === activeFilePath)
+    ? activeFilePath
+    : openFiles[0]?.path ?? null;
+  const workspace = { project, openFiles, activeFilePath: normalizedActivePath };
+  const index = workspaces.findIndex((item) => isSameProjectFileLocation(item.project, project));
+  if (index < 0) return [...workspaces, workspace];
+  return workspaces.map((item, itemIndex) => itemIndex === index ? workspace : item);
+}
+
+function removeProjectEditorWorkspaces(
+  workspaces: ProjectFileEditorWorkspace[],
+  projectId: string
+): ProjectFileEditorWorkspace[] {
+  return workspaces.filter((workspace) => workspace.project.id !== projectId);
 }
 
 function changedPathAffectsFile(changedPath: string, filePath: string): boolean {
@@ -605,6 +667,14 @@ function mergePendingRefreshPaths(changedPaths?: string[]): void {
   for (const path of changedPaths) pendingRefreshChangedPaths.add(path);
 }
 
+function mergePendingRefreshOptions(options?: FileExplorerRefreshOptions): void {
+  if (!options?.silent) {
+    pendingRefreshOptions = {};
+    return;
+  }
+  pendingRefreshOptions ??= { silent: true };
+}
+
 function remoteFileContextReleaseKey(context: SshRemoteFileContext): string {
   return `${context.launch.hostId}\0${context.consumerId}`;
 }
@@ -645,6 +715,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   openFiles: [],
   activeFilePath: null,
   activeFile: null,
+  editorWorkspaces: [],
   searchNavigationTarget: null,
   gitChanges: [],
   clipboard: null,
@@ -655,12 +726,32 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     }
     const current = get().project;
     if (isSameProjectFileLocation(current, project)) {
-      if (current !== project) set({ project });
+      if (current !== project) {
+        set((state) => ({
+          project,
+          editorWorkspaces: state.editorWorkspaces.map((workspace) => (
+            isSameProjectFileLocation(workspace.project, project) ? { ...workspace, project } : workspace
+          )),
+        }));
+      }
       return;
     }
 
     const requestSeq = ++openProjectRequestSeq;
-    const previousRemoteFileContext = get().remoteFileContext;
+    const previousState = get();
+    const previousRemoteFileContext = previousState.remoteFileContext;
+    const editorWorkspaces = current
+      ? upsertEditorWorkspace(
+          previousState.editorWorkspaces,
+          current,
+          previousState.openFiles,
+          previousState.activeFilePath
+        )
+      : previousState.editorWorkspaces;
+    const editorWorkspace = findEditorWorkspace(editorWorkspaces, project);
+    const openFiles = editorWorkspace?.openFiles ?? [];
+    const activeFilePath = editorWorkspace?.activeFilePath ?? null;
+    const activeFile = openFiles.find((file) => file.path === activeFilePath) ?? openFiles[0] ?? null;
     set({
       project,
       remoteFileContext: null,
@@ -673,9 +764,10 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       searchLoading: false,
       expandedPaths: new Set([""]),
       selectedTreePath: null,
-      openFiles: [],
-      activeFilePath: null,
-      activeFile: null,
+      openFiles,
+      activeFilePath: activeFile?.path ?? null,
+      activeFile,
+      editorWorkspaces,
       searchNavigationTarget: null,
       gitChanges: [],
       clipboard: null,
@@ -713,7 +805,16 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   closeProject: () => {
     openProjectRequestSeq += 1;
-    const remoteFileContext = get().remoteFileContext;
+    const currentState = get();
+    const remoteFileContext = currentState.remoteFileContext;
+    const editorWorkspaces = currentState.project
+      ? upsertEditorWorkspace(
+          currentState.editorWorkspaces,
+          currentState.project,
+          currentState.openFiles,
+          currentState.activeFilePath
+        )
+      : currentState.editorWorkspaces;
     set({
       project: null,
       remoteFileContext: null,
@@ -728,6 +829,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       openFiles: [],
       activeFilePath: null,
       activeFile: null,
+      editorWorkspaces,
       searchNavigationTarget: null,
       gitChanges: [],
       clipboard: null,
@@ -735,31 +837,62 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     void releaseRemoteFileContext(remoteFileContext);
   },
 
+  getProjectEditorWorkspaces: (projectId) => {
+    const state = get();
+    const editorWorkspaces = state.project?.id === projectId
+      ? upsertEditorWorkspace(
+          state.editorWorkspaces,
+          state.project,
+          state.openFiles,
+          state.activeFilePath
+        )
+      : state.editorWorkspaces;
+    return editorWorkspaces.filter((workspace) => workspace.project.id === projectId);
+  },
+
+  clearProjectEditorWorkspaces: (projectId) => {
+    set((state) => ({
+      editorWorkspaces: removeProjectEditorWorkspaces(state.editorWorkspaces, projectId),
+      ...(state.project?.id === projectId ? {
+        openFiles: [],
+        activeFilePath: null,
+        activeFile: null,
+        searchNavigationTarget: null,
+      } : {}),
+    }));
+  },
+
   refresh: async () => {
     const project = get().project;
     if (!project) return;
+    nonGitProjectPaths.delete(normalizeGitProjectPath(project.path));
     await get().refreshVisibleState();
   },
 
-  refreshVisibleState: async (changedPaths) => {
+  refreshVisibleState: async (changedPaths, options) => {
     const normalizedChangedPaths = changedPaths
       ?.map(normalizeRelativeFilePath)
       .filter((path, index, paths) => paths.indexOf(path) === index);
 
     if (refreshVisibleStateInFlight) {
       mergePendingRefreshPaths(normalizedChangedPaths);
+      mergePendingRefreshOptions(options);
       await refreshVisibleStateInFlight;
       return;
     }
 
     refreshVisibleStateInFlight = (async () => {
       let nextChangedPaths = normalizedChangedPaths;
+      let nextOptions = options;
       while (true) {
-        await get().refreshVisibleStateOnce(nextChangedPaths);
+        await get().refreshVisibleStateOnce(nextChangedPaths, nextOptions);
         if (pendingRefreshChangedPaths === undefined) break;
         const pending = pendingRefreshChangedPaths;
+        const pendingOptions = pendingRefreshOptions;
         pendingRefreshChangedPaths = undefined;
+        pendingRefreshOptions = undefined;
         nextChangedPaths = pending === null ? undefined : Array.from(pending);
+        nextOptions = pendingOptions;
       }
     })().finally(() => {
       refreshVisibleStateInFlight = null;
@@ -768,7 +901,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     await refreshVisibleStateInFlight;
   },
 
-  refreshVisibleStateOnce: async (changedPaths) => {
+  refreshVisibleStateOnce: async (changedPaths, options) => {
     const state = get();
     const project = state.project;
     if (!project) return;
@@ -788,7 +921,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
           return {
             path,
             children: remoteFileContext
-              ? await sshRemoteListDir(remoteFileContext, path)
+              ? await sshRemoteListDir(remoteFileContext, path, options)
               : await listDir(project.path, path),
           };
         } catch (err) {
@@ -841,7 +974,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
           continue;
         }
 
-        const { file: refreshedFile } = await loadProjectFile(project, latestEntry, remoteFileContext);
+        const { file: refreshedFile } = await loadProjectFile(project, latestEntry, remoteFileContext, options);
         nextOpenFiles.push(refreshedFile);
       }
 
@@ -878,6 +1011,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       return;
     }
     const gitChanges = await fetchGitChanges(project.path);
+    if (!isSameProjectFileLocation(get().project, project)) return;
     set({ gitChanges });
   },
 
@@ -1049,31 +1183,45 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       return;
     }
 
+    const remoteFileContext = get().remoteFileContext;
     set({ loading: true });
     try {
-      const { file, errorMessage } = await loadProjectFile(project, entry, get().remoteFileContext);
-      set({
-        loading: false,
-        openFiles: [...get().openFiles, file],
-        activeFilePath: file.path,
-        activeFile: file,
+      const { file, errorMessage } = await loadProjectFile(project, entry, remoteFileContext);
+      set((state) => {
+        if (isSameProjectFileLocation(state.project, project)) {
+          const openFiles = state.openFiles.some((item) => item.path === file.path)
+            ? state.openFiles
+            : [...state.openFiles, file];
+          const activeFile = openFiles.find((item) => item.path === file.path) ?? file;
+          return { loading: false, openFiles, activeFilePath: activeFile.path, activeFile };
+        }
+        const workspace = findEditorWorkspace(state.editorWorkspaces, project);
+        if (!workspace) return state;
+        const openFiles = workspace.openFiles.some((item) => item.path === file.path)
+          ? workspace.openFiles
+          : [...workspace.openFiles, file];
+        return {
+          editorWorkspaces: upsertEditorWorkspace(state.editorWorkspaces, project, openFiles, file.path),
+        };
       });
       if (errorMessage) {
         toast.warning(translateCurrent("files.toast.previewFailed"), { description: errorMessage });
       }
     } catch (err) {
-      set({ loading: false });
+      if (isSameProjectFileLocation(get().project, project)) set({ loading: false });
       throw err;
     }
   },
 
   openFileAtSearchMatch: async (match) => {
+    const project = get().project;
     await get().openFile({
       name: match.name,
       path: match.path,
       kind: "file",
       sizeBytes: 0,
     });
+    if (!isSameProjectFileLocation(get().project, project)) return;
     set({
       searchNavigationTarget: {
         path: match.path,
@@ -1128,6 +1276,8 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       await resolveChildren(target.path);
     }
 
+    if (!isSameProjectFileLocation(get().project, project)) return false;
+
     set((state) => ({
       tree: loadedDirs.reduce(
         (tree, dir) => replaceChildrenKeepingLoadedSubtrees(tree, dir.path, dir.children),
@@ -1146,7 +1296,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
     if (target.kind === "directory") return true;
     await get().openFile(target);
-    if (options?.lineNumber) {
+    if (options?.lineNumber && isSameProjectFileLocation(get().project, project)) {
       set({
         searchNavigationTarget: {
           path: target.path,
@@ -1210,15 +1360,32 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       });
       throw err;
     }
-    const saved = { ...file, savedContent: file.content };
-    set({
-      openFiles: get().openFiles.map((file) => file.path === saved.path ? saved : file),
-      activeFile: get().activeFilePath === saved.path ? saved : get().activeFile,
+    const markSaved = (files: ActiveProjectFile[]) => files.map((candidate) => (
+      candidate.path === file.path ? { ...candidate, savedContent: file.content } : candidate
+    ));
+    set((state) => {
+      if (isSameProjectFileLocation(state.project, project)) {
+        const openFiles = markSaved(state.openFiles);
+        const activeFile = openFiles.find((candidate) => candidate.path === state.activeFilePath) ?? null;
+        return { openFiles, activeFile };
+      }
+      const workspace = findEditorWorkspace(state.editorWorkspaces, project);
+      if (!workspace) return state;
+      return {
+        editorWorkspaces: upsertEditorWorkspace(
+          state.editorWorkspaces,
+          project,
+          markSaved(workspace.openFiles),
+          workspace.activeFilePath
+        ),
+      };
     });
-    try {
-      await get().refreshGitChanges();
-    } catch (err) {
-      logError("Failed to refresh Git changes after saving project file", err);
+    if (isSameProjectFileLocation(get().project, project)) {
+      try {
+        await get().refreshGitChanges();
+      } catch (err) {
+        logError("Failed to refresh Git changes after saving project file", err);
+      }
     }
     toast.success(translateCurrent("files.toast.saved"));
   },

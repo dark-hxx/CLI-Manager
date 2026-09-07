@@ -18,6 +18,7 @@ const MAX_INDEX_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_DETAIL_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_SCAN_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FILE_READ_BYTES: usize = 8 * 1024 * 1024;
+const CODEX_THREAD_NAME_INDEX_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_HISTORY_FILES: usize = 100_000;
 const MAX_WALK_DEPTH: usize = 32;
 const LOCK_STALE_MS: i64 = 60_000;
@@ -101,7 +102,15 @@ struct HistoryIndex {
     partial: bool,
     #[serde(default)]
     project_paths: BTreeSet<String>,
+    #[serde(default)]
+    codex_thread_name_fingerprint: String,
     entries: BTreeMap<String, HistoryIndexEntry>,
+}
+
+#[derive(Default)]
+struct CodexThreadNameIndex {
+    names: BTreeMap<String, String>,
+    fingerprint: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -170,6 +179,7 @@ fn can_reuse_published_index(
     force_refresh: bool,
     project_paths: &[String],
     index: &HistoryIndex,
+    codex_thread_names: &CodexThreadNameIndex,
 ) -> bool {
     !force_refresh
         && index.updated_at > 0
@@ -177,6 +187,8 @@ fn can_reuse_published_index(
         && project_paths
             .iter()
             .all(|path| index.project_paths.contains(path))
+        && (index.source != "codex"
+            || index.codex_thread_name_fingerprint == codex_thread_names.fingerprint)
 }
 
 fn sync_result(
@@ -231,10 +243,16 @@ fn sync_result(
 
 pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, String> {
     let scope = resolve_scope(&request)?;
+    let published_codex_thread_names = load_codex_thread_name_index(&scope);
     fs::create_dir_all(&scope.index_dir).map_err(|_| "history_index_dir_failed".to_string())?;
     set_dir_permissions(&scope.index_dir)?;
     let published = load_index(&scope)?;
-    if can_reuse_published_index(request.force_refresh, &scope.project_paths, &published) {
+    if can_reuse_published_index(
+        request.force_refresh,
+        &scope.project_paths,
+        &published,
+        &published_codex_thread_names,
+    ) {
         return Ok(sync_result(
             &request,
             &scope,
@@ -247,6 +265,7 @@ pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, Str
 
     let _lock = acquire_lock(&scope.index_dir)?;
     let mut index = load_index(&scope)?;
+    let codex_thread_names = load_codex_thread_name_index(&scope);
     let previous_project_count = index.project_paths.len();
     // ponytail: scopes accumulate because the protocol has no authoritative cross-client unbind set;
     // replace this union with per-client leases when remote index cleanup needs to be immediate.
@@ -261,7 +280,10 @@ pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, Str
         .filter_map(|file| relative_string(&scope.canonical_root, &file.path))
         .collect();
     let mut remaining_bytes = MAX_SCAN_BYTES;
-    let mut changed = index.project_paths.len() != previous_project_count;
+    let codex_thread_name_changed = scope.source == "codex"
+        && index.codex_thread_name_fingerprint != codex_thread_names.fingerprint;
+    let mut changed =
+        index.project_paths.len() != previous_project_count || codex_thread_name_changed;
     let mut fully_indexed = true;
     for file in &discovery.files {
         if remaining_bytes == 0 {
@@ -290,7 +312,10 @@ pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, Str
     let state_changed = index.discovery_complete != discovery_complete || index.partial != partial;
     if changed {
         index.generation = index.generation.saturating_add(1);
-        refresh_summaries(&scope, &mut index);
+        refresh_summaries(&scope, &mut index, &codex_thread_names);
+    }
+    if scope.source == "codex" {
+        index.codex_thread_name_fingerprint = codex_thread_names.fingerprint.clone();
     }
     index.discovery_complete = discovery_complete;
     index.partial = partial;
@@ -327,6 +352,7 @@ pub fn search(request: HistorySearchRequest) -> Result<Vec<RemoteHistorySearchHi
     }
     let scope = resolve_scope(&request.scope)?;
     let index = load_index(&scope)?;
+    let codex_thread_names = load_codex_thread_name_index(&scope);
     let limit = request.scope.limit.clamp(1, 200);
     let mut hits = Vec::new();
     for entry in index
@@ -337,11 +363,18 @@ pub fn search(request: HistorySearchRequest) -> Result<Vec<RemoteHistorySearchHi
         let Some(summary) = entry.summary.as_ref() else {
             continue;
         };
+        let mut title = summary.title.clone();
+        apply_codex_thread_name(
+            &scope,
+            &codex_thread_names,
+            &summary.session_ref.source_session_id,
+            &mut title,
+        );
         let haystack = format!(
             "{}\n{}\n{}\n{}\n{}",
             summary.session_ref.source_session_id,
             summary.project_key,
-            summary.title,
+            title,
             summary.cwd.as_deref().unwrap_or_default(),
             entry.parser_state.search_text,
         )
@@ -355,7 +388,7 @@ pub fn search(request: HistorySearchRequest) -> Result<Vec<RemoteHistorySearchHi
         hits.push(RemoteHistorySearchHit {
             session_ref: summary.session_ref.clone(),
             project_key: summary.project_key.clone(),
-            title: summary.title.clone(),
+            title,
             role: "remoteIndex".to_string(),
             snippet,
             timestamp: None,
@@ -401,7 +434,7 @@ pub fn get(request: HistoryGetRequest) -> Result<RemoteHistorySessionDetail, Str
         .lines()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    Ok(parse_detail(
+    let mut detail = parse_detail(
         &scope.source,
         &scope.source_instance_id,
         &entry.artifact_id,
@@ -411,7 +444,15 @@ pub fn get(request: HistoryGetRequest) -> Result<RemoteHistorySessionDetail, Str
         file_modified_ms(&metadata),
         index.generation,
         lines,
-    ))
+    );
+    let codex_thread_names = load_codex_thread_name_index(&scope);
+    apply_codex_thread_name(
+        &scope,
+        &codex_thread_names,
+        &detail.summary.session_ref.source_session_id,
+        &mut detail.summary.title,
+    );
+    Ok(detail)
 }
 
 fn detail_from_path(
@@ -430,7 +471,7 @@ fn detail_from_path(
         .ok_or_else(|| "history_artifact_outside_root".to_string())?;
     let bytes = fs::read(path).map_err(|_| "history_artifact_read_failed".to_string())?;
     let complete = complete_jsonl_bytes(&bytes);
-    let detail = parse_detail(
+    let mut detail = parse_detail(
         &scope.source,
         &scope.source_instance_id,
         &hash_text(&relative),
@@ -445,6 +486,13 @@ fn detail_from_path(
         String::from_utf8_lossy(complete)
             .lines()
             .map(str::to_string),
+    );
+    let codex_thread_names = load_codex_thread_name_index(scope);
+    apply_codex_thread_name(
+        scope,
+        &codex_thread_names,
+        &detail.summary.session_ref.source_session_id,
+        &mut detail.summary.title,
     );
     if detail.summary.session_ref.source_session_id != source_session_id
         || !path_matches_scope(
@@ -862,13 +910,17 @@ fn remove_missing_entries(
         .collect()
 }
 
-fn refresh_summaries(scope: &ResolvedScope, index: &mut HistoryIndex) {
+fn refresh_summaries(
+    scope: &ResolvedScope,
+    index: &mut HistoryIndex,
+    codex_thread_names: &CodexThreadNameIndex,
+) {
     for entry in index.entries.values_mut().filter(|entry| entry.in_scope) {
         let fallback = Path::new(&entry.relative_path)
             .file_stem()
             .and_then(|value| value.to_str())
             .unwrap_or(&entry.artifact_id);
-        entry.summary = Some(build_summary(
+        let mut summary = build_summary(
             &entry.parser_state,
             &scope.source,
             &scope.source_instance_id,
@@ -878,7 +930,100 @@ fn refresh_summaries(scope: &ResolvedScope, index: &mut HistoryIndex) {
             file_created_ms_from_path(&scope.canonical_root, &entry.relative_path),
             file_modified_ms_from_path(&scope.canonical_root, &entry.relative_path),
             index.generation,
-        ));
+        );
+        apply_codex_thread_name(
+            scope,
+            codex_thread_names,
+            &summary.session_ref.source_session_id,
+            &mut summary.title,
+        );
+        entry.summary = Some(summary);
+    }
+}
+
+fn load_codex_thread_name_index(scope: &ResolvedScope) -> CodexThreadNameIndex {
+    if scope.source != "codex" {
+        return CodexThreadNameIndex {
+            names: BTreeMap::new(),
+            fingerprint: "not-codex".to_string(),
+        };
+    }
+    let path = scope.canonical_root.join("session_index.jsonl");
+    let metadata = fs::metadata(&path).ok();
+    let fingerprint = metadata
+        .as_ref()
+        .map(|metadata| {
+            format!(
+                "{}:{}:{}",
+                file_modified_ns(metadata),
+                metadata.len(),
+                file_created_ms(metadata),
+            )
+        })
+        .unwrap_or_else(|| "missing".to_string());
+    let Some(metadata) = metadata else {
+        return CodexThreadNameIndex {
+            names: BTreeMap::new(),
+            fingerprint,
+        };
+    };
+    if metadata.len() > CODEX_THREAD_NAME_INDEX_MAX_BYTES {
+        return CodexThreadNameIndex {
+            names: BTreeMap::new(),
+            fingerprint: format!("{fingerprint}:oversized"),
+        };
+    }
+    let names = fs::read(&path)
+        .ok()
+        .filter(|bytes| bytes.len() as u64 <= CODEX_THREAD_NAME_INDEX_MAX_BYTES)
+        .map(|bytes| parse_codex_thread_name_index(&String::from_utf8_lossy(&bytes)))
+        .unwrap_or_default();
+    CodexThreadNameIndex { names, fingerprint }
+}
+
+fn parse_codex_thread_name_index(text: &str) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        let Some(session_id) = value
+            .get("id")
+            .or_else(|| value.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(thread_name) = value
+            .get("thread_name")
+            .or_else(|| value.get("threadName"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let title: String = thread_name.chars().take(240).collect();
+        if !title.is_empty() {
+            names.insert(session_id.to_string(), title);
+        }
+    }
+    names
+}
+
+fn apply_codex_thread_name(
+    scope: &ResolvedScope,
+    codex_thread_names: &CodexThreadNameIndex,
+    session_id: &str,
+    title: &mut String,
+) {
+    if scope.source != "codex" {
+        return;
+    }
+    if let Some(thread_name) = codex_thread_names.names.get(session_id) {
+        *title = thread_name.clone();
     }
 }
 
@@ -1022,6 +1167,7 @@ fn empty_index(scope: &ResolvedScope) -> HistoryIndex {
         discovery_complete: false,
         partial: true,
         project_paths: BTreeSet::new(),
+        codex_thread_name_fingerprint: String::new(),
         entries: BTreeMap::new(),
     }
 }
@@ -1311,8 +1457,8 @@ mod tests {
         complete_jsonl_bytes, detail_from_path, discover_files, empty_index, file_id,
         initialize_lock_dir, load_index, refresh_summaries, relative_string,
         remote_source_instance_id, remove_missing_entries, safe_transcript_ref, sync_cursor_offset,
-        update_entry, validate_project_path, validate_resume_cwd, HistoryScopeRequest,
-        ResolvedScope, MAX_FILE_READ_BYTES, MAX_SCAN_BYTES,
+        update_entry, validate_project_path, validate_resume_cwd, CodexThreadNameIndex,
+        HistoryScopeRequest, ResolvedScope, MAX_FILE_READ_BYTES, MAX_SCAN_BYTES,
     };
     use std::collections::BTreeSet;
     use std::fs::{self, OpenOptions};
@@ -1421,6 +1567,19 @@ mod tests {
     }
 
     #[test]
+    fn codex_thread_name_index_uses_last_valid_name() {
+        let names = super::parse_codex_thread_name_index(concat!(
+            r#"{"id":"session-1","thread_name":"Old name"}"#,
+            "\n",
+            r#"{"id":"session-1","thread_name":" New name "}"#,
+            "\n",
+            "broken\n",
+        ));
+
+        assert_eq!(names.get("session-1").map(String::as_str), Some("New name"));
+    }
+
+    #[test]
     fn project_paths_are_absolute_and_confined() {
         assert_eq!(validate_project_path("/srv/app/").unwrap(), "/srv/app");
         assert!(validate_project_path("../srv/app").is_err());
@@ -1448,7 +1607,8 @@ mod tests {
         assert!(can_reuse_published_index(
             request.force_refresh,
             &request.project_paths,
-            &index
+            &index,
+            &CodexThreadNameIndex::default(),
         ));
 
         let mut forced = request;
@@ -1456,7 +1616,8 @@ mod tests {
         assert!(!can_reuse_published_index(
             forced.force_refresh,
             &forced.project_paths,
-            &index
+            &index,
+            &CodexThreadNameIndex::default(),
         ));
 
         forced.force_refresh = false;
@@ -1464,7 +1625,8 @@ mod tests {
         assert!(!can_reuse_published_index(
             forced.force_refresh,
             &forced.project_paths,
-            &index
+            &index,
+            &CodexThreadNameIndex::default(),
         ));
 
         forced.project_paths = vec!["/srv/app".to_string()];
@@ -1472,7 +1634,8 @@ mod tests {
         assert!(!can_reuse_published_index(
             forced.force_refresh,
             &forced.project_paths,
-            &index
+            &index,
+            &CodexThreadNameIndex::default(),
         ));
     }
 
@@ -1718,7 +1881,7 @@ mod tests {
             &scope.project_paths,
         )
         .unwrap();
-        refresh_summaries(&scope, &mut index);
+        refresh_summaries(&scope, &mut index, &CodexThreadNameIndex::default());
         assert_eq!(
             index.entries[&relative].summary.as_ref().unwrap().title,
             "bbb"
@@ -1757,7 +1920,7 @@ mod tests {
             &expanded,
         )
         .unwrap();
-        refresh_summaries(&scope, &mut index);
+        refresh_summaries(&scope, &mut index, &CodexThreadNameIndex::default());
         assert!(index.entries[&relative].in_scope);
         assert_eq!(
             index.entries[&relative].summary.as_ref().unwrap().title,
@@ -1785,7 +1948,7 @@ mod tests {
             &scope.project_paths,
         )
         .unwrap();
-        refresh_summaries(&scope, &mut index);
+        refresh_summaries(&scope, &mut index, &CodexThreadNameIndex::default());
         assert!(remove_missing_entries(&mut index, &BTreeSet::new(), false).is_empty());
         assert!(index.entries.contains_key(&relative));
         assert_eq!(

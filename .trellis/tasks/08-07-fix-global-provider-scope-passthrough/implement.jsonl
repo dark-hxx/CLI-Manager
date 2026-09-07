@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/ccs-provider-domain-contracts.md", "reason": "Scope 解析、快照生成、Home 身份契约；Codex/Grok 场景的全局直通行为作为参考"}
+{"file": ".trellis/spec/backend/ccswitch-integration-contracts.md", "reason": "项目级供应商覆盖、--settings/--profile 追加、scope 解析优先级"}
+{"file": ".trellis/tasks/archive/2026-08/08-06-codex/prd.md", "reason": "Codex 全局直通的根因陈述、修复要求、验收标准作为本次泛化的基线"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动横跨前端启动解析 / Tauri IPC / scope 物化 / PTY 环境，需按跨层清单核对"}

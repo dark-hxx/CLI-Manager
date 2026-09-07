@@ -1,0 +1,64 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const tabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+const tabBarSource = readFileSync(
+  new URL("../src/components/workspace/WorkspanTabBar.tsx", import.meta.url),
+  "utf8",
+);
+const layoutComponentSource = readFileSync(
+  new URL("../src/components/workspace/WorkspanTerminalLayout.tsx", import.meta.url),
+  "utf8",
+);
+const controlsSource = readFileSync(
+  new URL("../src/components/layout/WorkspaceLayoutControls.tsx", import.meta.url),
+  "utf8",
+);
+const menuSource = readFileSync(
+  new URL("../src/components/layout/WorkspaceLayoutMenu.tsx", import.meta.url),
+  "utf8",
+);
+const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8");
+const i18nSource = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/lib/workspaceLayout.ts", import.meta.url), "utf8");
+
+test("top-level Workspan tabs use one direction-aware document-flow slot", () => {
+  assert.equal((tabsSource.match(/<WorkspanTabBar/g) ?? []).length, 1);
+  assert.match(tabsSource, /<WorkspanTerminalLayout/);
+  assert.match(layoutComponentSource, /key="workspan-tabbar"/);
+  assert.match(layoutComponentSource, /key="terminal-body"/);
+  assert.match(layoutComponentSource, /tabBarVisible: boolean/);
+  assert.match(layoutComponentSource, /ui-workspan-tabbar-slot/);
+  assert.match(layoutComponentSource, /position === "top" \? topToBottom : bottomToTop/);
+  assert.match(tabBarSource, /<SortableContext/);
+  assert.match(tabBarSource, /data-workspan-tabbar-position=\{position\}/);
+  assert.match(stylesSource, /.ui-workspan-terminal-body/);
+  assert.match(stylesSource, /flex-direction: column/);
+});
+
+test("bottom overflow list opens toward the terminal content", () => {
+  assert.match(tabBarSource, /side=\{position === "bottom" \? "top" : "bottom"\}/);
+  assert.match(tabBarSource, /collisionPadding=\{8\}/);
+  assert.match(tabsSource, /<PopoverContent[\s\S]*collisionPadding=\{8\}/);
+  assert.match(tabBarSource, /onWheel=\{\(event\) =>/);
+  assert.match(tabBarSource, /WORKSPAN_TABBAR_END_DROP_ID/);
+});
+
+test("the persisted layout contract keeps top as the default and validates bottom", () => {
+  assert.match(layoutSource, /workspanTabBarPosition: WorkspanTabBarPosition/);
+  assert.match(layoutSource, /workspanTabBarVisible: boolean/);
+  assert.match(layoutSource, /workspanTabBarPosition: "top"/);
+  assert.match(layoutSource, /raw\.workspanTabBarPosition === "bottom"/);
+  assert.match(controlsSource, /workspanTabBarPosition/);
+  assert.match(menuSource, /workspaceLayout\.controls\.reset/);
+  assert.match(i18nSource, /"workspaceLayout\.controls\.tabsTop": "Tab 栏置于顶部"/);
+  assert.match(i18nSource, /"workspaceLayout\.controls\.tabsBottom": "Place tabs at the bottom"/);
+});
+
+test("pane-level terminal tab ownership remains outside the top-level docking slot", () => {
+  const paneTabBarSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+  assert.match(paneTabBarSource, /function SortableTab\(/);
+  assert.match(paneTabBarSource, /function PaneTabBar\(/);
+  assert.doesNotMatch(tabBarSource, /SplitTerminalView|PaneTabBar/);
+});

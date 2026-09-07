@@ -1,0 +1,29 @@
+{
+  "id": "fix-large-database-startup-migration",
+  "name": "fix-large-database-startup-migration",
+  "title": "Optimize large database startup migration",
+  "description": "Optimize migration 32 for million-row usage databases so upgrades complete promptly without long database locks; preserve startup feedback and migration compatibility.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend,database,startup",
+  "package": null,
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-08-21",
+  "completedAt": null,
+  "branch": "fix/large-database-startup-migration",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "changelogVersion": "TEMP",
+    "userSmokeTest": "passed"
+  }
+}

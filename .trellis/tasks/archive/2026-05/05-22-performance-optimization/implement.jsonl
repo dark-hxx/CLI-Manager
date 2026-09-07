@@ -1,6 +1,0 @@
-{"file":".trellis/tasks/05-22-performance-optimization/prd.md","reason":"Confirmed MVP scope, requirements, hotspots, acceptance criteria, and out-of-scope boundaries for implementation"}
-{"file":".trellis/workflow.md","reason":"Trellis development workflow and phase requirements"}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend package conventions and linked guideline index for React/Zustand/xterm changes"}
-{"file":".trellis/spec/backend/webdav-sync-contracts.md","reason":"WebDAV sync payload contract, response size boundary, and serialization rules"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer data-flow and boundary checks for Rust/Tauri sync changes"}
-{"file":"CLAUDE.md","reason":"Project architecture, tech stack, key commands, and GitNexus safety requirements"}

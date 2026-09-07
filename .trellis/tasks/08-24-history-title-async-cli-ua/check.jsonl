@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/history-index-contracts.md", "reason": "校验后端契约与验证矩阵是否仍然成立"}
+{"file": ".trellis/spec/frontend/history-session-contracts.md", "reason": "校验前端事件/状态契约"}
+{"file": ".trellis/tasks/08-24-history-title-async-cli-ua/research/cli-identity-capture.md", "reason": "核对最终请求头与抓包结论一致"}

@@ -1,0 +1,19 @@
+{"file":"src/components/settings/pages/NativeProviderSettingsPage.tsx","reason":"供应商目录主从高度、详情四 Tab、全局应用入口和切换重置"}
+{"file":"src/components/settings/providers/NativeProviderEditor.tsx","reason":"基本信息与生效配置分层、长预览滚动"}
+{"file":"src/components/settings/providers/nativeProviderDetailView.ts","reason":"详情视图顺序、默认值和非法值回退"}
+{"file":"src/lib/i18n.ts","reason":"详情 Tab zh-CN/en-US 文案"}
+{"file":"scripts/nativeProviderDetailView.test.mjs","reason":"详情默认 Tab、合法切换和非法回退回归测试"}
+{"file":"src/components/settings/providers/NativeProviderCodeEditor.tsx","reason":"统一详情、完整文档、通用配置和新增/编辑表单的代码编辑器"}
+{"file":"src/components/settings/providers/nativeProviderConfigView.ts","reason":"统一供应商配置格式和 envelope 转换"}
+{"file":"src/components/settings/providers/NativeProviderFormModal.tsx","reason":"供应商专属配置维护"}
+{"file":"src-tauri/src/provider/global.rs","reason":"真实 Home 目标反查当前供应商"}
+{"file":"src-tauri/src/provider/repository/catalog.rs","reason":"更新配置时保护密钥管理区字段"}
+{"file":"src/components/settings/providers/nativeProviderGlobalView.ts","reason":"全局确认路径按 CLI 类型选择实际配置目录"}
+{"file":"src/components/settings/providers/NativeProviderGlobalSection.tsx","reason":"应用动作取消手动预览前置要求"}
+{"file":"src/components/settings/providers/useNativeProviderHome.ts","reason":"应用时自动获取最新全局预览指纹"}
+{"file":"scripts/nativeProviderGlobalView.test.mjs","reason":"全局配置目录路径回归测试"}
+{"file":"src/components/settings/providers/nativeProviderAdvancedConfig.ts","reason":"高级 provider 配置模型、envelope 持久化和 JSON/TOML 生成"}
+{"file":"src/components/settings/providers/NativeProviderAdvancedConfigSection.tsx","reason":"Codex/Grok 高级选项 UI"}
+{"file":"src/components/settings/providers/NativeProviderFormModal.tsx","reason":"高级选项接入新增/编辑表单并保护手动 raw 文档"}
+{"file":"src/components/settings/providers/nativeProviderConfigView.ts","reason":"缺失专属配置的 CLI-specific 文档生成"}
+{"file":"scripts/nativeProviderConfigView.test.mjs","reason":"配置生成和 envelope round-trip 测试"}

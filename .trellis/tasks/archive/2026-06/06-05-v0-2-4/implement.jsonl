@@ -1,3 +1,0 @@
-{"file":".trellis/tasks/06-05-v0-2-4/prd.md","reason":"Confirmed requirements and acceptance criteria for v0.2.4 terminal compact release."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality rules relevant to terminal UI changes."}
-{"file":".trellis/spec/guides/version-update-checklist.md","reason":"Required checklist for keeping npm, Tauri, and Rust versions aligned."}

@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"新增持久化布尔设置必须遵循 Settings、DEFAULTS 与 load 显式类型校验契约"}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"终端 scrollback 必须热更新且不得重建 xterm/PTY"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"隐藏终端输出缓冲必须继续保持有界"}
-{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"新功能需要覆盖分屏、隐藏 Tab、WSL 与多会话场景"}
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"用户可见功能需要同步 Changelog 与功能清单"}

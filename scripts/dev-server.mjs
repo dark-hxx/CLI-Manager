@@ -4,10 +4,11 @@ import { createServer } from "vite";
 const DEV_PORT = 1420;
 const DEV_HOST = "127.0.0.1";
 const DEV_URL = `http://${DEV_HOST}:${DEV_PORT}`;
+const SERVER_PROBE_TIMEOUT_MS = 15_000;
 
 const requestIndex = () =>
   new Promise((resolve) => {
-    const request = http.get(DEV_URL, { timeout: 1200 }, (response) => {
+    const request = http.get(DEV_URL, { timeout: SERVER_PROBE_TIMEOUT_MS }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk) => {

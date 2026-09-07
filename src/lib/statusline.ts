@@ -54,12 +54,6 @@ export interface StatuslineStatus {
   currentCommand: string | null;
   legacySettingsPath: string;
   legacySettingsAvailable: boolean;
-  ccSwitch: {
-    state: "notDetected" | "notSynced" | "synced" | "invalidDb" | "unavailable" | "syncFailed";
-    dbPath: string | null;
-    message: string | null;
-    wslMismatch: boolean;
-  } | null;
 }
 
 export interface StatuslineCatalogEntry {

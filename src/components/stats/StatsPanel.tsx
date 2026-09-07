@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, BarChart3, ChevronDown, ChevronRight, Coins, Database, Folder, Layers, LineChart, RefreshCw, ScrollText, Search, Terminal, X } from "lucide-react";
+import { Activity, BarChart3, ChevronDown, ChevronRight, Coins, Database, Folder, Layers, LineChart, RefreshCw, ScrollText, Search, X } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -34,9 +34,13 @@ import type {
   HistoryStatsSourceItem,
   Group,
   Project,
+  RequestLogSource,
+  RequestLogStatsPayload,
 } from "../../lib/types";
-import { fetchHistoryStatsPayload, fetchRemoteHistoryStatsPayload } from "../../stores/historyStore";
+import { fetchHistoryRequestLogStats, fetchHistoryStatsPayload, fetchRemoteHistoryStatsPayload, syncHistoryRequestLogs } from "../../stores/historyStore";
 import { useProjectStore } from "../../stores/projectStore";
+import { resolveNodeAppearance } from "../../lib/nodeAppearance";
+import { NodeAppearanceIcon } from "../NodeAppearanceIcon";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../lib/historySources";
 import { TimelineHeatmap } from "./TimelineHeatmap";
 import { StatsHourlyActivityChart } from "./StatsHourlyActivityChart";
@@ -56,12 +60,13 @@ import {
   RECHARTS_TOOLTIP_WRAPPER_STYLE,
 } from "./statsPalette";
 import { useI18n, type AppLanguage, type TranslationKey } from "../../lib/i18n";
-import { VendorIcon, inferVendor } from "../VendorIcon";
 import { CliToolIcon } from "../CliToolIcon";
 import { resolveHistorySourceIconKey } from "../../lib/cliTools";
 import { RequestLogsView } from "./RequestLogsView";
 import { projectSupportsCapability } from "../../lib/projectCapabilities";
 import { resolveHistoryProjectPath } from "../../lib/historyProjectPaths";
+import { logWarn } from "../../lib/logger";
+import { useWorkspaceBackground } from "../workspace/WorkspaceBackground";
 
 interface StatsPanelProps {
   open: boolean;
@@ -75,6 +80,7 @@ const DATE_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MONTH_INPUT_PATTERN = /^(\d{4})-(\d{2})$/;
 const YEAR_INPUT_PATTERN = /^(\d{4})$/;
 const HOUR_MS = 60 * 60 * 1000;
+const REQUEST_LOG_SOURCE_IDS = new Set(["claude", "codex", "gemini", "opencode", "grok"]);
 
 type StatsProjectTreeNode =
   | { type: "group"; group: Group; children: StatsProjectTreeNode[] }
@@ -191,8 +197,18 @@ function filterStatsProjectTree(nodes: StatsProjectTreeNode[], query: string): S
 }
 
 function StatsProjectFilterIcon({ project, size = 13 }: { project: Project; size?: number }) {
-  const vendor = project.cli_tool ? inferVendor(project.cli_tool) : null;
-  return vendor ? <VendorIcon vendor={vendor} size={size} /> : <Terminal size={size} strokeWidth={1.5} />;
+  // 与侧边栏、History 项目树共用同一套图标解析：单字符标记 → 内置 key → CLI 工具图标 → 终端兜底。
+  // 此前这里走 inferVendor + VendorIcon，是三处项目树里唯一的第三种图标口径。
+  const appearance = resolveNodeAppearance({ icon: project.icon, color: project.color });
+  return (
+    <NodeAppearanceIcon
+      mark={appearance.emoji}
+      iconKey={appearance.iconKey}
+      cliTool={project.cli_tool}
+      fallback="terminal"
+      size={size}
+    />
+  );
 }
 
 function formatCount(value: number, language: AppLanguage = "zh-CN"): string {
@@ -608,6 +624,100 @@ function KpiStrip({ stats }: { stats: HistoryStatsPayload }) {
         );
       })}
     </div>
+  );
+}
+
+function RequestUsageOverview({ stats }: { stats: RequestLogStatsPayload }) {
+  const { language, t } = useI18n();
+  const trendData = stats.trend.map((item) => ({
+    ...item,
+    bucketLabel: axisBucketLabel(item.bucket_start_ms, stats.granularity),
+    bucketTitle: formatBucketLabel(item.bucket_start_ms, stats.granularity, language),
+    totalTokens: item.total_tokens,
+    costValue: Number(item.total_cost_usd.toFixed(4)),
+  }));
+  const pricedTokens = Math.max(0, stats.total_tokens - stats.total_unpriced_tokens);
+  const coverage = stats.total_tokens > 0 ? (pricedTokens / stats.total_tokens) * 100 : 0;
+  const kpis = [
+    { icon: Layers, label: t("stats.requestUsage.totalTokens"), value: formatCompactCount(stats.total_tokens, language), hint: formatCount(stats.total_tokens, language) },
+    { icon: ScrollText, label: t("stats.requestUsage.requests"), value: formatCompactCount(stats.total_requests, language), hint: formatCount(stats.total_requests, language) },
+    { icon: Database, label: t("stats.requestUsage.cacheHitRate"), value: formatPercent(stats.cache_hit_rate * 100), hint: t("stats.requestUsage.cacheHitHint") },
+    { icon: Coins, label: t("stats.requestUsage.cost"), value: formatCost(stats.total_cost_usd), hint: stats.total_unpriced_tokens > 0 ? t("stats.kpi.unpriced", { value: formatCompactCount(stats.total_unpriced_tokens, language) }) : t("stats.kpi.localEstimate") },
+    { icon: Activity, label: t("stats.requestUsage.coverage"), value: formatPercent(coverage), hint: t("stats.kpi.coverageHint") },
+  ];
+
+  return (
+    <section className="space-y-3 rounded-2xl border border-accent/25 bg-accent/5 p-3 lg:p-4">
+      <SectionHeading icon={Activity} title={t("stats.requestUsage.title")} hint={t("stats.requestUsage.subtitle")} />
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
+        {kpis.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.label} className="min-w-0 rounded-xl border border-border/60 bg-bg-secondary px-3 py-2.5">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted"><Icon size={12} className="text-accent" />{item.label}</div>
+              <div className="mt-1.5 truncate text-[21px] font-semibold tabular-nums text-text-primary">{item.value}</div>
+              <div className="mt-1 truncate text-[10px] text-text-secondary" title={item.hint}>{item.hint}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]">
+        <div className="rounded-xl border border-border/60 bg-bg-secondary p-3">
+          <div className="mb-2 text-[12px] font-semibold text-text-primary">{t("stats.requestUsage.trend")}</div>
+          {trendData.length > 0 ? (
+            <div className="h-[250px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={trendData} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
+                  <CartesianGrid stroke="var(--border)" strokeOpacity={0.42} vertical={false} />
+                  <XAxis dataKey="bucketLabel" tick={RECHARTS_AXIS_STYLE} tickLine={false} axisLine={{ stroke: "var(--border)" }} minTickGap={18} />
+                  <YAxis tick={RECHARTS_AXIS_STYLE} tickLine={false} axisLine={false} tickFormatter={(value) => formatCompactCount(Number(value), language)} allowDecimals={false} />
+                  <Tooltip
+                    cursor={RECHARTS_AXIS_CURSOR}
+                    wrapperStyle={RECHARTS_TOOLTIP_WRAPPER_STYLE}
+                    content={(props) => <DailyUsageTrendTooltip {...props} language={language} costLabel={t("stats.trend.cost")} />}
+                  />
+                  <Line type="monotone" dataKey="totalTokens" name={t("stats.trend.totalToken")} stroke={HISTORY_TREND_COLORS.total} strokeWidth={2.5} dot={{ r: 2 }} />
+                  <Line type="monotone" dataKey="input_tokens" name={t("termStats.input")} stroke={HISTORY_TREND_COLORS.input} strokeWidth={1.5} dot={false} />
+                  <Line type="monotone" dataKey="output_tokens" name={t("termStats.output")} stroke={HISTORY_TREND_COLORS.output} strokeWidth={1.5} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <EmptyBlock text={t("stats.requestUsage.empty")} />}
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <div className="rounded-xl border border-border/60 bg-bg-secondary p-3">
+            <div className="mb-2 text-[12px] font-semibold text-text-primary">{t("stats.requestUsage.sources")}</div>
+            <div className="space-y-2">
+              {stats.source_distribution.length === 0 && <div className="text-[11px] text-text-muted">{t("stats.requestUsage.empty")}</div>}
+              {stats.source_distribution.map((item) => (
+                <div key={item.source} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="truncate font-medium text-text-primary">{t(HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(item.source)?.labelKey ?? "common.allSources")}</span>
+                    <span className="shrink-0 tabular-nums text-text-secondary">{formatPercent(item.ratio * 100)}</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-bg-tertiary"><div className="h-full rounded-full bg-accent" style={{ width: `${Math.max(2, item.ratio * 100)}%` }} /></div>
+                  <div className="text-[10px] text-text-muted">{formatCompactCount(item.total_tokens, language)} Token · {formatCount(item.requests, language)} {t("stats.requestUsage.requestUnit")}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-border/60 bg-bg-secondary p-3">
+            <div className="mb-2 text-[12px] font-semibold text-text-primary">{t("stats.requestUsage.models")}</div>
+            <div className="space-y-1.5">
+              {stats.model_distribution.length === 0 && <div className="text-[11px] text-text-muted">{t("stats.requestUsage.empty")}</div>}
+              {stats.model_distribution.slice(0, 6).map((item) => (
+                <div key={item.model} className="flex items-center justify-between gap-2 rounded-lg bg-bg-primary px-2 py-1.5 text-[11px]">
+                  <span className="min-w-0 truncate font-medium text-text-primary">{item.model === "unknown" ? t("requestLogs.unknownModel") : item.model}</span>
+                  <span className="shrink-0 tabular-nums text-text-secondary">{formatPercent(item.ratio * 100)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1187,17 +1297,31 @@ function StatsProjectFilterDropdown({
     const paddingLeft = 8 + depth * 14;
     if (node.type === "group") {
       const isOpen = Boolean(normalizedQuery) || !collapsedGroups.has(node.group.id);
+      const groupAppearance = resolveNodeAppearance({
+        icon: node.group.icon,
+        color: node.group.color,
+      });
       return (
         <div key={`group:${node.group.id}`}>
           <button
             type="button"
             onClick={() => toggleGroup(node.group.id)}
             className="ui-tree-node ui-tree-group ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[11px] font-semibold"
-            style={{ paddingLeft }}
+            style={{
+              paddingLeft,
+              ...(groupAppearance.hasColor ? { "--node-accent": groupAppearance.colorVar } : {}),
+            } as CSSProperties}
             aria-expanded={isOpen}
           >
             <ChevronRight size={12} className="shrink-0 transition-transform" style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }} />
-            <Folder size={13} className="shrink-0" />
+            <span className="ui-tree-leading-icon shrink-0">
+              <NodeAppearanceIcon
+                mark={groupAppearance.emoji}
+                iconKey={groupAppearance.iconKey}
+                fallback="folder"
+                size={13}
+              />
+            </span>
             <span className="min-w-0 flex-1 truncate">{node.group.name}</span>
             <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{countStatsProjects(node)}</span>
           </button>
@@ -1212,6 +1336,10 @@ function StatsProjectFilterDropdown({
 
     const selected = selectedProjectId === node.project.id;
     const projectPath = resolveHistoryProjectPath(node.project);
+    const projectAppearance = resolveNodeAppearance({
+      icon: node.project.icon,
+      color: node.project.color,
+    });
     return (
       <button
         key={`project:${node.project.id}`}
@@ -1219,7 +1347,11 @@ function StatsProjectFilterDropdown({
         onClick={() => handleSelectProject(node.project.id)}
         className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
         data-selected={selected ? "true" : "false"}
-        style={{ paddingLeft }}
+        data-accent={projectAppearance.hasColor ? "true" : undefined}
+        style={{
+          paddingLeft,
+          ...(projectAppearance.hasColor ? { "--node-accent": projectAppearance.colorVar } : {}),
+        } as CSSProperties}
         title={projectPath}
       >
         <span className="ui-tree-leading-icon">
@@ -1305,6 +1437,7 @@ function StatsProjectFilterDropdown({
 
 export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const { language, t } = useI18n();
+  const { active: workspaceBackgroundActive } = useWorkspaceBackground();
   const projects = useProjectStore((s) => s.projects);
   const statisticsProjects = useMemo(
     () => projects.filter((project) => projectSupportsCapability(project, "statistics")),
@@ -1317,9 +1450,12 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const [projectKey, setProjectKey] = useState("");
   const [projectId, setProjectId] = useState("");
   const [sourceFilter, setSourceFilter] = useState<HistorySourceFilter>("all");
+  const [modelFilter, setModelFilter] = useState("");
   const [activeTab, setActiveTab] = useState<StatsPanelTab>("overview");
   const [timeWindow, setTimeWindow] = useState<StatsTimeWindowState>(() => getDefaultStatsTimeWindow());
   const [manualRefresh, setManualRefresh] = useState<{ key: string; nonce: number } | null>(null);
+  const [syncingLocalStats, setSyncingLocalStats] = useState(false);
+  const [localStatsSyncError, setLocalStatsSyncError] = useState<string | null>(null);
   const [selectedDayStart, setSelectedDayStart] = useState<number | null>(null);
   const [dayVisibleCount, setDayVisibleCount] = useState(DAY_SESSION_PAGE_SIZE);
   const resolvedTimeWindow = useMemo(() => resolveStatsTimeWindow(timeWindow), [timeWindow]);
@@ -1341,8 +1477,8 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
   const dateRangeLabel = dateBounds.error ? t("stats.rangeInactive") : statsTimeWindowLabel(resolvedTimeWindow, dateRange, t);
   const statsBaseQueryKey = useMemo(
-    () => `${sourceFilter}|project_id=${projectId || ALL_PROJECTS_VALUE}|path=${projectPath || ALL_PROJECTS_VALUE}|key=${projectKey || ALL_PROJECTS_VALUE}|${dateBounds.startAt ?? "invalid"}|${dateBounds.endAt ?? "invalid"}`,
-    [dateBounds.endAt, dateBounds.startAt, projectId, projectKey, projectPath, sourceFilter]
+    () => `${sourceFilter}|project_id=${projectId || ALL_PROJECTS_VALUE}|path=${projectPath || ALL_PROJECTS_VALUE}|key=${projectKey || ALL_PROJECTS_VALUE}|model=${modelFilter || "all"}|${dateBounds.startAt ?? "invalid"}|${dateBounds.endAt ?? "invalid"}`,
+    [dateBounds.endAt, dateBounds.startAt, modelFilter, projectId, projectKey, projectPath, sourceFilter]
   );
   const effectiveRefreshNonce = manualRefresh?.key === statsBaseQueryKey ? manualRefresh.nonce : 0;
   const statsQuery = useQuery({
@@ -1358,7 +1494,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
         rangeDays: null,
         startAt: dateBounds.startAt,
         endAt: dateBounds.endAt,
-        force: effectiveRefreshNonce > 0,
+        force: selectedProject?.environment_type === "ssh" && effectiveRefreshNonce > 0,
       };
       return selectedProject?.environment_type === "ssh"
         ? fetchRemoteHistoryStatsPayload(selectedProject, options)
@@ -1367,14 +1503,45 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
     enabled: open && activeTab === "overview" && dateBounds.error === null && dateBounds.startAt !== null && dateBounds.endAt !== null,
   });
   const stats = statsQuery.data ?? null;
-  const loadingStats = statsQuery.isFetching;
+  const loadingStats = statsQuery.isFetching || syncingLocalStats;
   const statsError = statsQuery.error ? String(statsQuery.error) : null;
   const statsUpdatedAt = statsQuery.dataUpdatedAt || null;
+  const requestStatsSupported = sourceFilter === "all" || REQUEST_LOG_SOURCE_IDS.has(sourceFilter);
+  const requestLogSourceFilter: RequestLogSource | null = requestStatsSupported && sourceFilter !== "all"
+    ? sourceFilter as RequestLogSource
+    : null;
+  const requestStatsQuery = useQuery({
+    queryKey: ["historyRequestLogStats", sourceFilter, projectId || null, projectPath || null, projectKey || null, modelFilter || null, dateBounds.startAt, dateBounds.endAt, effectiveRefreshNonce],
+    queryFn: async () => {
+      if (dateBounds.startAt === null || dateBounds.endAt === null) {
+        throw new Error(dateBounds.error ?? "Invalid stats range");
+      }
+      return fetchHistoryRequestLogStats({
+        sourceFilter,
+        projectKey: projectPath ? null : projectKey || null,
+        projectPath: projectPath || null,
+        model: modelFilter || null,
+        startAt: dateBounds.startAt,
+        endAt: dateBounds.endAt,
+        force: false,
+      });
+    },
+    enabled: open
+      && activeTab === "overview"
+      && selectedProject?.environment_type !== "ssh"
+      && requestStatsSupported
+      && dateBounds.error === null
+      && dateBounds.startAt !== null
+      && dateBounds.endAt !== null,
+    refetchInterval: 60_000,
+  });
+  const requestStats = requestStatsQuery.data ?? null;
   useEffect(() => {
     if (!open) return;
     setProjectKey("");
     setProjectId("");
     setSourceFilter("all");
+    setModelFilter("");
     setActiveTab("overview");
     setTimeWindow(getDefaultStatsTimeWindow());
   }, [open]);
@@ -1402,7 +1569,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
     if (!open) return;
     setSelectedDayStart(null);
     setDayVisibleCount(DAY_SESSION_PAGE_SIZE);
-  }, [open, sourceFilter, projectId, projectKey, dateRange.startDate, dateRange.endDate]);
+  }, [dateRange.endDate, dateRange.startDate, modelFilter, open, projectId, projectKey, sourceFilter]);
 
   useEffect(() => {
     setDayVisibleCount(DAY_SESSION_PAGE_SIZE);
@@ -1458,7 +1625,27 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
   const refreshStats = () => {
     if (dateBounds.error || dateBounds.startAt === null || dateBounds.endAt === null) return;
-    setManualRefresh({ key: statsBaseQueryKey, nonce: Date.now() });
+    setLocalStatsSyncError(null);
+    if (selectedProject?.environment_type === "ssh") {
+      setManualRefresh({ key: statsBaseQueryKey, nonce: Date.now() });
+      return;
+    }
+    if (syncingLocalStats) return;
+    setSyncingLocalStats(true);
+    void (async () => {
+      try {
+        await syncHistoryRequestLogs(true);
+        await Promise.allSettled([
+          statsQuery.refetch(),
+          requestStatsSupported ? requestStatsQuery.refetch() : Promise.resolve(),
+        ]);
+      } catch (error) {
+        logWarn("history.stats.manualSyncFailed", { error: String(error) });
+        setLocalStatsSyncError(String(error));
+      } finally {
+        setSyncingLocalStats(false);
+      }
+    })();
   };
   const controlClass = "h-8 rounded-md border border-border bg-bg-secondary px-2 text-xs text-text-primary";
   const timeInputClass = `${controlClass} min-w-[132px]`;
@@ -1467,7 +1654,11 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
 
   return (
     <Portal>
-      <Card className="ui-stats-panel fixed inset-0 flex flex-col overflow-hidden rounded-none border-0 bg-bg-primary" style={{ zIndex: 57 }}>
+      <Card
+        className="ui-stats-panel fixed inset-0 flex flex-col overflow-hidden rounded-none border-0 bg-bg-primary"
+        data-workspace-background={workspaceBackgroundActive ? "true" : undefined}
+        style={{ zIndex: 57 }}
+      >
         <div className="ui-stats-panel-header flex items-center justify-between border-b border-border px-5 py-3">
           <div>
             <div className="inline-flex items-center gap-1.5 text-[16px] font-semibold text-text-primary">
@@ -1519,6 +1710,13 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
               onSelectProjectId={(id) => { setProjectId(id); setProjectKey(""); }}
               onClear={() => { setProjectId(""); setProjectKey(""); }}
             />
+            <input
+              value={modelFilter}
+              onChange={(event) => setModelFilter(event.target.value)}
+              className={`${controlClass} min-w-[150px] max-w-[240px]`}
+              placeholder={t("stats.requestUsage.modelFilter")}
+              aria-label={t("stats.requestUsage.modelFilter")}
+            />
             <Select
               value={timeWindow.mode}
               onChange={(e) => setTimeWindow((prev) => nextStatsTimeWindowForMode(e.target.value as StatsTimeWindowMode, prev))}
@@ -1538,18 +1736,33 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                 <StatsDatePicker mode="date" value={resolvedTimeWindow.customEnd} onChange={(value) => setTimeWindow((prev) => ({ ...prev, customEnd: value }))} className={timeInputClass} ariaLabel={t("stats.customEnd")} />
               </>
             )}
-            <Button onClick={refreshStats} disabled={dateBounds.error !== null || waitingForStatsQuery} aria-label={t("common.refresh")} size="sm">
+            <Button onClick={refreshStats} disabled={dateBounds.error !== null || waitingForStatsQuery || syncingLocalStats} aria-label={t("common.refresh")} size="sm">
               <RefreshCw size={12} className={loadingStats ? "animate-spin" : ""} />{t("common.refresh")}
             </Button>
             <div className="ml-auto text-[12px] font-medium text-text-secondary">{t("stats.lastRefresh", { value: waitingForStatsQuery ? "-" : formatDateTime(statsUpdatedAt, language) })}</div>
             <div className="w-full text-[12px] font-medium text-text-secondary">{t("stats.currentRange", { value: dateRangeLabel })}</div>
             {dateBounds.error && <div className="w-full text-[12px] font-medium text-danger">{dateBounds.error}</div>}
+            {localStatsSyncError && (
+              <div className="w-full text-[12px] font-medium text-danger">
+                {t("stats.refreshSyncFailed", { error: localStatsSyncError })}
+              </div>
+            )}
           </div>
         )}
 
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden xl:p-5">
           {activeTab === "requests" ? (
-            <RequestLogsView onOpenSession={async (key) => { await onOpenSession(key); onClose(); }} />
+            <RequestLogsView
+              globalFilters={selectedProject?.environment_type === "ssh" ? undefined : {
+                source: requestLogSourceFilter,
+                project_key: projectPath ? null : projectKey || null,
+                project_path: projectPath || null,
+                model: modelFilter.trim() || null,
+                start_at: dateBounds.startAt,
+                end_at: dateBounds.endAt,
+              }}
+              onOpenSession={async (key) => { await onOpenSession(key); onClose(); }}
+            />
           ) : (
             <div className="w-full space-y-3">
               {(waitingForStatsQuery || (loadingStats && !stats)) && <StatsSkeleton />}
@@ -1564,6 +1777,13 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                   {loadingStats && <div className="text-[12px] font-medium text-text-muted">{t("stats.updating")}</div>}
                   <KpiStrip stats={stats} />
                   <ContextNote sourceLabel={sourceLabel} projectLabel={projectLabel} dateRangeLabel={dateRangeLabel} stats={stats} />
+                  {requestStatsQuery.isFetching && !requestStats && requestStatsSupported && <div className="text-[12px] font-medium text-text-muted">{t("stats.requestUsage.loading")}</div>}
+                  {requestStatsQuery.error && requestStatsSupported && (
+                    <section className="rounded-xl border border-warning/30 bg-warning/5 p-3 text-[12px] text-warning">
+                      {t("stats.requestUsage.loadFailed", { error: String(requestStatsQuery.error) })}
+                    </section>
+                  )}
+                  {requestStats && <RequestUsageOverview stats={requestStats} />}
                   <DailyUsageTrendChart items={trendItems} granularity={statsGranularity} />
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-12 [&>*]:h-full [&>*]:min-w-0 [&>*>*]:h-full">

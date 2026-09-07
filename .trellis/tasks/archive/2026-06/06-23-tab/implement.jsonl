@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend pre-development checklist and linked React/TypeScript quality rules for terminal UI changes."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Component rendering identity and React component structure guidelines relevant to split layout refactor."}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand/state constraints to ensure pane tree and terminal session behavior remain unchanged."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript strictness expectations for new layout calculation types."}

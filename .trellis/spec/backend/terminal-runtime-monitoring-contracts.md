@@ -393,8 +393,8 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>)
 | Resource root | `src-tauri/resources/conpty/{x64,x86,arm64}` |
 | Required files | Each architecture directory must contain `conpty.dll` and `OpenConsole.exe` from the same Windows Terminal ConPTY package. |
 | Tauri config | `bundle.resources` must include `resources/conpty/**/*`. |
-| Runtime setting | `settings.json.windowsConptyCompatibilityFixEnabled` controls whether bundled ConPTY sideload runs. Missing setting is initialized at startup from the Windows build number. |
-| Default boundary | Windows build `< 26200` defaults enabled; build `>= 26200` defaults disabled; build detection failure defaults enabled. |
+| Runtime setting | `settings.json.windowsConptyCompatibilityFixEnabled` controls whether bundled ConPTY sideload runs. Missing setting is initialized to enabled at startup. |
+| Default behavior | A missing setting defaults enabled on every Windows build; an explicitly persisted boolean remains authoritative. |
 | Runtime init | On Windows, if the setting is enabled, resolve the matching resource directory through `BaseDirectory::Resource`, prepend it to process `PATH`, and set `CLI_MANAGER_CONPTY_DLL_PATH` to the absolute bundled DLL path. |
 | Load order | Init must run before the first direct ConPTY spawn; `pty/platform/windows.rs` loads only the absolute configured DLL path and otherwise calls the `kernel32.dll` ConPTY exports. |
 | Non-Windows | No-op; do not mutate `PATH`. |
@@ -405,7 +405,7 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>)
 |---|---|
 | Unsupported target architecture | Log skip and keep system ConPTY behavior. |
 | Compatibility setting disabled | Log skip and keep system ConPTY behavior. |
-| Compatibility setting missing | Write the OS-version-derived default before deciding whether to sideload. |
+| Compatibility setting missing | Write the enabled default before deciding whether to sideload. |
 | Resource directory cannot be resolved | Log warning and keep system ConPTY behavior. |
 | `conpty.dll` or `OpenConsole.exe` missing | Log warning and keep system ConPTY behavior. |
 | Directory already present in `PATH` | Do not duplicate it. |
@@ -413,8 +413,8 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>)
 
 ### 5. Good/Base/Bad Cases
 
-- Good: x64 Windows build below 25H2 initializes the setting to enabled and prepends `$RESOURCE/resources/conpty/x64`, so Codex sessions use bundled ConPTY/OpenConsole on old Windows builds.
-- Good: Windows 25H2 or newer initializes the setting to disabled; users can still enable it manually from Developer settings and restart.
+- Good: a missing setting on any supported Windows build initializes to enabled and prepends `$RESOURCE/resources/conpty/x64`, so Codex sessions use bundled ConPTY/OpenConsole by default.
+- Good: users can disable the compatibility fix manually from Developer settings and restart; the explicit persisted choice remains authoritative on later launches.
 - Base: development checkout missing resources logs a warning and still opens terminals through system ConPTY.
 - Base: changing the setting in the WebView requires app relaunch because ConPTY DLL selection is process-startup state.
 - Bad: setting `CLI_MANAGER_CONPTY_DLL_PATH` after the direct adapter has already selected its API for a PTY is too late and must not be treated as effective.
@@ -426,7 +426,7 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>)
   - architecture maps to one of `x64`, `x86`, or `arm64` on Windows;
   - resource validation requires both `conpty.dll` and `OpenConsole.exe`;
   - PATH comparison is case-insensitive and ignores trailing separators;
-  - Windows build default enables below `26200`, disables at/above `26200`, and enables on detection failure.
+  - a missing setting defaults to enabled on every Windows build, while an explicit persisted boolean remains authoritative.
 - Project checks:
   - `cd src-tauri && cargo check`;
   - `cd src-tauri && cargo test`;

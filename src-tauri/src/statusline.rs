@@ -3,9 +3,6 @@
 //! 配置格式基于 ccstatusline-zh v2.2.23（MIT），保留 v3 字段语义。
 
 use crate::app_paths;
-use crate::commands::hook_settings::{
-    sync_ccswitch_claude_statusline, CcSwitchHookProtectionStatus,
-};
 use crate::shell_resolver::{output_with_timeout, silent_command};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -14,7 +11,6 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::AppHandle;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
@@ -172,7 +168,6 @@ pub struct StatuslineStatus {
     pub current_command: Option<String>,
     pub legacy_settings_path: String,
     pub legacy_settings_available: bool,
-    pub cc_switch: Option<CcSwitchHookProtectionStatus>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -493,7 +488,10 @@ fn claude_settings_path() -> Result<PathBuf, String> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(dir).join(SETTINGS_FILE));
     }
-    Ok(home_dir()?.join(".claude").join(SETTINGS_FILE))
+    crate::provider::home::default_config_root("claude")
+        .or_else(|| home_dir().ok().map(|home| home.join(".claude")))
+        .ok_or_else(|| "home_dir_unavailable".to_string())
+        .map(|dir| dir.join(SETTINGS_FILE))
 }
 
 pub(crate) fn validate_settings(settings: &StatuslineSettings) -> Result<(), String> {
@@ -723,7 +721,6 @@ pub fn get_status() -> Result<StatuslineStatus, String> {
         current_command: command,
         legacy_settings_path: legacy.to_string_lossy().to_string(),
         legacy_settings_available: legacy.exists(),
-        cc_switch: None,
     })
 }
 
@@ -2116,61 +2113,12 @@ pub fn statusline_render_preview(
     render_preview(&settings, &payload, language.as_deref().unwrap_or("en-US"))
 }
 #[tauri::command]
-pub async fn statusline_install(
-    app: AppHandle,
-    refresh_interval: Option<u8>,
-    cc_switch_db_path: Option<String>,
-    sync_cc_switch_common_config: Option<bool>,
-) -> Result<StatuslineStatus, String> {
-    let status_line = managed_status_line(refresh_interval)?;
-    let mut status = install(refresh_interval)?;
-    if sync_cc_switch_common_config.unwrap_or(true) {
-        let claude_dir = Path::new(&status.claude_settings_path)
-            .parent()
-            .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
-        status.cc_switch = Some(
-            sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, Some(status_line))
-                .await,
-        );
-    }
-    Ok(status)
+pub fn statusline_install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String> {
+    install(refresh_interval)
 }
 #[tauri::command]
-pub async fn statusline_uninstall(
-    app: AppHandle,
-    cc_switch_db_path: Option<String>,
-    sync_cc_switch_common_config: Option<bool>,
-) -> Result<StatuslineStatus, String> {
-    let mut status = uninstall()?;
-    if sync_cc_switch_common_config.unwrap_or(true) {
-        let claude_dir = Path::new(&status.claude_settings_path)
-            .parent()
-            .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
-        status.cc_switch =
-            Some(sync_ccswitch_claude_statusline(&app, cc_switch_db_path, claude_dir, None).await);
-    }
-    Ok(status)
-}
-#[tauri::command]
-pub async fn statusline_sync_ccswitch(
-    app: AppHandle,
-    cc_switch_db_path: Option<String>,
-    refresh_interval: Option<u8>,
-) -> Result<StatuslineStatus, String> {
-    let mut status = get_status()?;
-    let claude_dir = Path::new(&status.claude_settings_path)
-        .parent()
-        .ok_or_else(|| "claude_settings_parent_unavailable".to_string())?;
-    status.cc_switch = Some(
-        sync_ccswitch_claude_statusline(
-            &app,
-            cc_switch_db_path,
-            claude_dir,
-            Some(managed_status_line(refresh_interval)?),
-        )
-        .await,
-    );
-    Ok(status)
+pub fn statusline_uninstall() -> Result<StatuslineStatus, String> {
+    uninstall()
 }
 #[tauri::command]
 pub fn statusline_get_catalog() -> Vec<WidgetCatalogEntry> {

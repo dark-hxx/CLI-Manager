@@ -92,6 +92,63 @@ fn single_line(bytes: &[u8]) -> String {
         .to_string()
 }
 
+fn parse_effective_ssh_user(bytes: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(bytes).lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let key = fields.next()?;
+        if !key.eq_ignore_ascii_case("user") {
+            return None;
+        }
+        fields
+            .next()
+            .map(str::trim)
+            .filter(|value| {
+                !value.is_empty() && !value.contains(['\0', '\r', '\n']) && fields.next().is_none()
+            })
+            .map(str::to_string)
+    })
+}
+
+fn effective_ssh_user_command(spec: &SshConnectionSpec) -> Result<Command, String> {
+    validate_spec(spec)?;
+    let mut command = silent_command("ssh");
+    command.arg("-G");
+    if !spec.config_file.trim().is_empty() {
+        command.args(["-F", spec.config_file.trim()]);
+    } else if spec.config_alias.trim().is_empty()
+        && spec.jump_target.trim().is_empty()
+        && matches!(
+            spec.auth_mode.as_str(),
+            "identity_file" | "password_prompt" | "credential_ref" | "interactive"
+        )
+    {
+        command.args(["-F", "none"]);
+    }
+    if spec.config_alias.trim().is_empty() {
+        command.args(["-p", &spec.port.to_string()]);
+    }
+    command.arg(spec.target());
+    Ok(command)
+}
+
+fn resolve_effective_ssh_user(spec: &SshConnectionSpec) -> Result<String, String> {
+    if !spec.username.trim().is_empty() {
+        return Ok(spec.username.trim().to_string());
+    }
+    let command = effective_ssh_user_command(spec)?;
+    let output = output_with_timeout(command, Duration::from_secs(5))
+        .map_err(|error| format!("ssh_user_resolve_failed:{error}"))?;
+    if !output.status.success() {
+        let detail = single_line(&output.stderr);
+        return Err(if detail.is_empty() {
+            "ssh_user_resolve_failed".to_string()
+        } else {
+            format!("ssh_user_resolve_failed:{detail}")
+        });
+    }
+    parse_effective_ssh_user(&output.stdout).ok_or_else(|| "ssh_user_required".to_string())
+}
+
 fn host_key_fingerprint(stderr: &str) -> Option<String> {
     stderr.lines().find_map(|line| {
         line.split_once("Server host key:")
@@ -872,6 +929,48 @@ fn validated_install_root(
     Ok(root.to_string())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshAgentAvailableRelease {
+    action: String,
+    manifest_url: String,
+    channel: String,
+    version: String,
+    protocol_min: u16,
+    protocol_max: u16,
+    published_at: String,
+    current_version: String,
+    distribution_source: String,
+}
+
+fn available_release_preview(
+    manifest_url: String,
+    channel: String,
+    version: String,
+    protocol_min: u16,
+    protocol_max: u16,
+    published_at: String,
+    distribution_source: String,
+    current_version: Option<&str>,
+) -> SshAgentAvailableRelease {
+    let current = current_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_string();
+    SshAgentAvailableRelease {
+        action: install_action(current_version, &version),
+        manifest_url,
+        channel,
+        version,
+        protocol_min,
+        protocol_max,
+        published_at,
+        current_version: current,
+        distribution_source,
+    }
+}
+
 fn install_action(current_version: Option<&str>, incoming_version: &str) -> String {
     let Some(current) = current_version
         .map(str::trim)
@@ -944,6 +1043,8 @@ fn validate_hook_source(source: &str) -> Result<&str, String> {
     match source.trim() {
         "claude" => Ok("claude"),
         "codex" => Ok("codex"),
+        "kimi" => Ok("kimi"),
+        "grok" => Ok("grok"),
         _ => Err("hook_source_invalid".to_string()),
     }
 }
@@ -1068,10 +1169,12 @@ fn validate_agent_hook_report(
     if required == 0 || required > MAX_AGENT_HOOK_ENTRIES || report.managed_entries > required {
         return Err("ssh_agent_hook_count_invalid".to_string());
     }
-    let expected_roles: HashSet<&str> = if expected_source == "claude" {
-        HashSet::from(["claudeSettings"])
-    } else {
-        HashSet::from(["codexHooks", "codexFeature"])
+    let expected_roles: HashSet<&str> = match expected_source {
+        "claude" => HashSet::from(["claudeSettings"]),
+        "codex" => HashSet::from(["codexHooks", "codexFeature"]),
+        "kimi" => HashSet::from(["kimiConfig"]),
+        "grok" => HashSet::from(["grokHooks", "grokCompat"]),
+        _ => return Err("ssh_agent_hook_source_invalid".to_string()),
     };
     let mut files = HashSet::new();
     for file in &report.config_files {
@@ -1083,7 +1186,12 @@ fn validate_agent_hook_report(
             return Err("ssh_agent_hook_file_invalid".to_string());
         }
     }
-    if report.config_files.len() != if expected_source == "claude" { 1 } else { 2 } {
+    let expected_file_count = if matches!(expected_source, "codex" | "grok") {
+        2
+    } else {
+        1
+    };
+    if report.config_files.len() != expected_file_count {
         return Err("ssh_agent_hook_file_invalid".to_string());
     }
     for change in &report.changes {
@@ -1117,15 +1225,25 @@ fn validate_agent_hook_report(
         return Err("ssh_agent_hook_change_invalid".to_string());
     }
     if let Some(record) = &report.installation {
+        let history_candidate_valid = match (
+            report.source.as_str(),
+            record.history_source_candidate.as_ref(),
+        ) {
+            ("kimi" | "grok", None) => true,
+            ("claude" | "codex", Some(candidate)) => {
+                candidate.source == report.source
+                    && candidate.canonical_config_root == report.canonical_config_root
+                    && candidate.config_root_hash == report.config_root_hash
+            }
+            _ => false,
+        };
         if expected_action != "installed"
             || record.source != report.source
             || record.installation_id != report.installation_id
             || record.owner_id != format!("cli-manager-ssh-agent:{}", report.installation_id)
             || record.configured_config_root != report.configured_config_root
             || record.canonical_config_root != report.canonical_config_root
-            || record.history_source_candidate.source != report.source
-            || record.history_source_candidate.canonical_config_root != report.canonical_config_root
-            || record.history_source_candidate.config_root_hash != report.config_root_hash
+            || !history_candidate_valid
             || record.adapter_version == 0
             || record.managed_entries != required
             || record.config_files.len() != report.config_files.len()
@@ -1389,6 +1507,13 @@ pub async fn ssh_client_status() -> SshClientStatus {
 }
 
 #[tauri::command]
+pub async fn ssh_resolve_user(spec: SshConnectionSpec) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || resolve_effective_ssh_user(&spec))
+        .await
+        .map_err(|error| format!("ssh_user_resolve_failed:{error}"))?
+}
+
+#[tauri::command]
 pub async fn ssh_test_connection(
     spec: SshConnectionSpec,
     accept_new_host_key: Option<bool>,
@@ -1576,6 +1701,33 @@ pub async fn ssh_agent_probe(
 }
 
 #[tauri::command]
+pub async fn ssh_agent_available_release(
+    app: AppHandle,
+    manifest_url: Option<String>,
+    current_version: Option<String>,
+    allow_http: bool,
+) -> Result<SshAgentAvailableRelease, String> {
+    let bundled_root = bundled_agent_release_dir(&app)?;
+    let release = fetch_verified_release(
+        manifest_url.as_deref(),
+        allow_http,
+        Some(bundled_root.as_path()),
+    )
+    .await?;
+    let distribution_source = release.distribution_source().to_string();
+    Ok(available_release_preview(
+        release.manifest_url,
+        release.manifest.channel,
+        release.manifest.version,
+        release.manifest.protocol_min,
+        release.manifest.protocol_max,
+        release.manifest.published_at,
+        distribution_source,
+        current_version.as_deref(),
+    ))
+}
+
+#[tauri::command]
 pub async fn ssh_agent_install_preview(
     app: AppHandle,
     host_id: String,
@@ -1701,10 +1853,12 @@ fn hook_request(
             Ok(value.to_string())
         })
         .transpose()?;
-    let allowed_roles: HashSet<&str> = if source == "claude" {
-        HashSet::from(["claudeSettings"])
-    } else {
-        HashSet::from(["codexHooks", "codexFeature"])
+    let allowed_roles: HashSet<&str> = match source.as_str() {
+        "claude" => HashSet::from(["claudeSettings"]),
+        "codex" => HashSet::from(["codexHooks", "codexFeature"]),
+        "kimi" => HashSet::from(["kimiConfig"]),
+        "grok" => HashSet::from(["grokHooks", "grokCompat"]),
+        _ => return Err("hook_source_invalid".to_string()),
     };
     let mut seen = HashSet::new();
     for file in &expected_files {
@@ -1923,10 +2077,11 @@ pub async fn ssh_list_directories(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_agent_install_script, build_agent_management_script, build_agent_probe_script,
-        hook_request, host_key_fingerprint, install_action, is_authenticated_log,
-        parse_agent_environment, parse_agent_operation, parse_agent_probe_stdout, posix_quote,
-        read_bounded, result_from_agent_report, ssh_password_account, ssh_probe_command,
+        available_release_preview, build_agent_install_script, build_agent_management_script,
+        build_agent_probe_script, effective_ssh_user_command, hook_request, host_key_fingerprint,
+        install_action, is_authenticated_log, parse_agent_environment, parse_agent_operation,
+        parse_agent_probe_stdout, parse_effective_ssh_user, posix_quote, read_bounded,
+        result_from_agent_report, ssh_password_account, ssh_probe_command,
         validate_agent_hook_report, validate_remote_path, validate_spec, AgentDoctorProbe,
         AgentVersionProbe, ParsedAgentProbe, RemoteAgentEnvironment, SshConnectionSpec,
         MAX_AGENT_HOOK_ENTRIES,
@@ -1971,6 +2126,34 @@ mod tests {
         assert!(args.windows(2).any(|pair| pair == ["-J", "bastion"]));
         assert!(args.iter().any(|arg| arg == "BatchMode=yes"));
         assert_eq!(args.last().map(String::as_str), Some("true"));
+    }
+
+    #[test]
+    fn parses_effective_user_from_openssh_config_output() {
+        assert_eq!(
+            parse_effective_ssh_user(b"host example.com\nuser remote-dev\nport 22\n"),
+            Some("remote-dev".to_string())
+        );
+        assert_eq!(parse_effective_ssh_user(b"hostname example.com\n"), None);
+        assert_eq!(parse_effective_ssh_user(b"user\n"), None);
+        assert_eq!(parse_effective_ssh_user(b"user root extra\n"), None);
+    }
+
+    #[test]
+    fn config_alias_user_resolution_uses_openssh_effective_config() {
+        let mut value = spec();
+        value.host.clear();
+        value.username.clear();
+        value.config_alias = "production".to_string();
+        value.auth_mode = "ssh_config".to_string();
+        value.identity_file.clear();
+        value.jump_target.clear();
+        let command = effective_ssh_user_command(&value).unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["-G", "production"]);
     }
 
     #[test]
@@ -2071,6 +2254,45 @@ mod tests {
         assert_eq!(install_action(Some("1.0.0"), "1.0.1"), "upgrade");
         assert_eq!(install_action(Some("1.0.0"), "1.0.0"), "reinstall");
         assert_eq!(install_action(Some("2.0.0"), "1.0.0"), "downgrade");
+    }
+
+    fn available_release_sample(
+        version: &str,
+        current_version: Option<&str>,
+    ) -> super::SshAgentAvailableRelease {
+        available_release_preview(
+            "https://example.com/ssh-agent-release-manifest.json".into(),
+            "stable".into(),
+            version.into(),
+            1,
+            11,
+            "2026-08-19T00:00:00Z".into(),
+            "bundled".into(),
+            current_version,
+        )
+    }
+
+    #[test]
+    fn available_release_marks_upgrade_without_remote_target() {
+        let preview = available_release_sample("0.1.9", Some("0.1.7"));
+        assert_eq!(preview.action, "upgrade");
+        assert_eq!(preview.version, "0.1.9");
+        assert_eq!(preview.current_version, "0.1.7");
+        assert_eq!(preview.distribution_source, "bundled");
+    }
+
+    #[test]
+    fn available_release_treats_missing_current_as_install() {
+        let preview = available_release_sample("0.1.9", None);
+        assert_eq!(preview.action, "install");
+        assert_eq!(preview.current_version, "");
+    }
+
+    #[test]
+    fn available_release_does_not_prompt_downgrade_as_upgrade() {
+        let preview = available_release_sample("0.1.8", Some("0.1.9"));
+        assert_eq!(preview.action, "downgrade");
+        assert_ne!(preview.action, "upgrade");
     }
 
     #[test]
@@ -2303,6 +2525,203 @@ mod tests {
     }
 
     #[test]
+    fn kimi_hook_report_accepts_optional_history_candidate_as_absent() {
+        let installation_id = "00000000-0000-4000-8000-000000000001";
+        let config_path = "/home/dev/.kimi-code/config.toml";
+        let fingerprint = "a".repeat(64);
+        let report = HookConfigReport {
+            action: "installed".to_string(),
+            status: "installed".to_string(),
+            source: "kimi".to_string(),
+            installation_id: installation_id.to_string(),
+            remote_machine_id: "machine".to_string(),
+            configured_config_root: "~/.kimi-code".to_string(),
+            canonical_config_root: "/home/dev/.kimi-code".to_string(),
+            config_root_hash: "b".repeat(64),
+            config_root_exists: true,
+            will_create_config_root: false,
+            config_files: vec![HookConfigFile {
+                role: "kimiConfig".to_string(),
+                canonical_path: config_path.to_string(),
+                fingerprint: fingerprint.clone(),
+                exists: true,
+            }],
+            managed_entries: 9,
+            required_entries: 9,
+            changes: vec![HookConfigChange {
+                role: "kimiConfig".to_string(),
+                canonical_path: config_path.to_string(),
+                before_fingerprint: "missing".to_string(),
+                after_fingerprint: fingerprint.clone(),
+                action: "create".to_string(),
+            }],
+            installation: Some(HookInstallationRecord {
+                source: "kimi".to_string(),
+                installation_id: installation_id.to_string(),
+                owner_id: format!("cli-manager-ssh-agent:{installation_id}"),
+                configured_config_root: "~/.kimi-code".to_string(),
+                canonical_config_root: "/home/dev/.kimi-code".to_string(),
+                config_files: vec![HookInstallationFile {
+                    role: "kimiConfig".to_string(),
+                    canonical_path: config_path.to_string(),
+                    before_fingerprint: "missing".to_string(),
+                    after_fingerprint: fingerprint,
+                }],
+                managed_entries: 9,
+                adapter_version: 1,
+                installed_at: 1,
+                history_source_candidate: None,
+            }),
+        };
+        assert!(validate_agent_hook_report(
+            &report,
+            "installed",
+            "kimi",
+            installation_id,
+            "machine",
+            "~/.kimi-code",
+            Some("/home/dev/.kimi-code"),
+        )
+        .is_ok());
+
+        let mut invalid = report;
+        invalid
+            .installation
+            .as_mut()
+            .unwrap()
+            .history_source_candidate = Some(HookHistorySourceCandidate {
+            source: "kimi".to_string(),
+            canonical_config_root: "/home/dev/.kimi-code".to_string(),
+            config_root_hash: "b".repeat(64),
+        });
+        assert_eq!(
+            validate_agent_hook_report(
+                &invalid,
+                "installed",
+                "kimi",
+                installation_id,
+                "machine",
+                "~/.kimi-code",
+                None,
+            )
+            .unwrap_err(),
+            "ssh_agent_hook_record_invalid"
+        );
+    }
+
+    #[test]
+    fn grok_hook_report_accepts_optional_history_candidate_as_absent() {
+        let installation_id = "00000000-0000-4000-8000-000000000001";
+        let hooks_path = "/home/dev/.grok/hooks/cli-manager.json";
+        let config_path = "/home/dev/.grok/config.toml";
+        let hooks_fingerprint = "a".repeat(64);
+        let config_fingerprint = "c".repeat(64);
+        let report = HookConfigReport {
+            action: "installed".to_string(),
+            status: "installed".to_string(),
+            source: "grok".to_string(),
+            installation_id: installation_id.to_string(),
+            remote_machine_id: "machine".to_string(),
+            configured_config_root: "~/.grok".to_string(),
+            canonical_config_root: "/home/dev/.grok".to_string(),
+            config_root_hash: "b".repeat(64),
+            config_root_exists: true,
+            will_create_config_root: false,
+            config_files: vec![
+                HookConfigFile {
+                    role: "grokHooks".to_string(),
+                    canonical_path: hooks_path.to_string(),
+                    fingerprint: hooks_fingerprint.clone(),
+                    exists: true,
+                },
+                HookConfigFile {
+                    role: "grokCompat".to_string(),
+                    canonical_path: config_path.to_string(),
+                    fingerprint: config_fingerprint.clone(),
+                    exists: true,
+                },
+            ],
+            managed_entries: 11,
+            required_entries: 11,
+            changes: vec![
+                HookConfigChange {
+                    role: "grokHooks".to_string(),
+                    canonical_path: hooks_path.to_string(),
+                    before_fingerprint: "missing".to_string(),
+                    after_fingerprint: hooks_fingerprint.clone(),
+                    action: "create".to_string(),
+                },
+                HookConfigChange {
+                    role: "grokCompat".to_string(),
+                    canonical_path: config_path.to_string(),
+                    before_fingerprint: "missing".to_string(),
+                    after_fingerprint: config_fingerprint.clone(),
+                    action: "create".to_string(),
+                },
+            ],
+            installation: Some(HookInstallationRecord {
+                source: "grok".to_string(),
+                installation_id: installation_id.to_string(),
+                owner_id: format!("cli-manager-ssh-agent:{installation_id}"),
+                configured_config_root: "~/.grok".to_string(),
+                canonical_config_root: "/home/dev/.grok".to_string(),
+                config_files: vec![
+                    HookInstallationFile {
+                        role: "grokHooks".to_string(),
+                        canonical_path: hooks_path.to_string(),
+                        before_fingerprint: "missing".to_string(),
+                        after_fingerprint: hooks_fingerprint,
+                    },
+                    HookInstallationFile {
+                        role: "grokCompat".to_string(),
+                        canonical_path: config_path.to_string(),
+                        before_fingerprint: "missing".to_string(),
+                        after_fingerprint: config_fingerprint,
+                    },
+                ],
+                managed_entries: 11,
+                adapter_version: 1,
+                installed_at: 1,
+                history_source_candidate: None,
+            }),
+        };
+        validate_agent_hook_report(
+            &report,
+            "installed",
+            "grok",
+            installation_id,
+            "machine",
+            "~/.grok",
+            Some("/home/dev/.grok"),
+        )
+        .unwrap();
+
+        let mut invalid = report.clone();
+        invalid
+            .installation
+            .as_mut()
+            .unwrap()
+            .history_source_candidate = Some(HookHistorySourceCandidate {
+            source: "grok".to_string(),
+            canonical_config_root: "/home/dev/.grok".to_string(),
+            config_root_hash: "b".repeat(64),
+        });
+        assert_eq!(
+            validate_agent_hook_report(
+                &invalid,
+                "installed",
+                "grok",
+                installation_id,
+                "machine",
+                "~/.grok",
+                None,
+            )
+            .unwrap_err(),
+            "ssh_agent_hook_record_invalid"
+        );
+    }
+
+    #[test]
     fn hook_installation_record_requires_each_config_file_once() {
         let hooks_path = "/home/dev/.codex/hooks.json";
         let feature_path = "/home/dev/.codex/config.toml";
@@ -2367,11 +2786,11 @@ mod tests {
                 managed_entries: 7,
                 adapter_version: 1,
                 installed_at: 1,
-                history_source_candidate: HookHistorySourceCandidate {
+                history_source_candidate: Some(HookHistorySourceCandidate {
                     source: "codex".to_string(),
                     canonical_config_root: "/home/dev/.codex".to_string(),
                     config_root_hash: "c".repeat(64),
-                },
+                }),
             }),
         };
         assert_eq!(

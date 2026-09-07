@@ -1,4 +1,0 @@
-{"file":".trellis/tasks/06-22-git/prd.md","reason":"Task requirements and chosen UX for JetBrains-style directory chain compression."}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Frontend component conventions for the Git tree render-layer UI change."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript constraints for React component changes."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality and validation expectations for the implementation."}

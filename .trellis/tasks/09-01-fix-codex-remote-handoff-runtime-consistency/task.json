@@ -1,0 +1,31 @@
+{
+  "id": "fix-codex-remote-handoff-runtime-consistency",
+  "name": "fix-codex-remote-handoff-runtime-consistency",
+  "title": "Fix Codex remote handoff runtime consistency",
+  "description": "Make local Codex remote handoff resume the registered session with the same resolved runtime configuration, enforce process ownership handoff, and add stage diagnostics for resume/turn hangs without modifying cc-connect source.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-09-01",
+  "completedAt": "2026-09-01",
+  "branch": "fix/windows-codex-launcher-space-path",
+  "base_branch": "fix/windows-codex-launcher-space-path",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src-tauri/src/codex_app_server_proxy.rs",
+    "src-tauri/src/commands/cc_connect.rs",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "",
+  "meta": {}
+}
