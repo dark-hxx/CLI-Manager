@@ -12,7 +12,7 @@ const menuSource = readFileSync(
   "utf8",
 );
 const sidebarSource = readFileSync(new URL("../src/features/projects/hooks/useSidebarController.tsx", import.meta.url), "utf8");
-const terminalTabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+const terminalTabsSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalTabsController.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(
   new URL("../src/components/settings/pages/SidebarSettingsPage.tsx", import.meta.url),
   "utf8",

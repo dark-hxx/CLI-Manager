@@ -10,14 +10,18 @@ const formatter = read("../src/lib/aiPathFormatter.ts");
 const drag = read("../src/lib/terminalFileDrag.ts");
 const terminalInput = read("../src/hooks/useTerminalInput.ts");
 const pointerDrag = read("../src/hooks/useTerminalFilePointerDrag.tsx");
-const terminalTabs = read("../src/components/TerminalTabs.tsx");
+const terminalTabs = read("../src/features/terminal/hooks/useTerminalTabsController.tsx");
+const tabIconSources = [
+  read("../src/features/terminal/components/SortableTerminalTabs.tsx"),
+  read("../src/features/terminal/components/TerminalTabDragOverlay.tsx"),
+].join("\n");
 const gitPanel = read("../src/components/git/GitChangesPanel.tsx");
 const gitTree = read("../src/components/git/GitChangesTree.tsx");
 const gitNode = read("../src/components/git/GitTreeNode.tsx");
 const attachmentDialog = read("../src/components/settings/pages/SshHostAttachmentDialog.tsx");
 
 test("terminal tab CLI icons inherit the terminal tab foreground color", () => {
-  assert.equal((terminalTabs.match(/<CliToolIcon icon=\{cliToolIcon\} size=\{14\} className="text-current" \/>/g) ?? []).length, 3);
+  assert.equal((tabIconSources.match(/<CliToolIcon icon=\{cliToolIcon\} size=\{14\} className="text-current" \/>/g) ?? []).length, 3);
 });
 
 test("file menus expose relative and absolute path copy actions", () => {

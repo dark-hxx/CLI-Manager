@@ -64,10 +64,10 @@ test("Pane marker settings participate in preference sync", () => {
 });
 
 test("Pane marker overlay is anchored inside terminal content instead of the Tab bar", () => {
-  const terminalTabs = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+  const terminalTabs = readFileSync(new URL("../src/features/terminal/components/PaneLeafView.tsx", import.meta.url), "utf8");
   assert.match(
     terminalTabs,
-    /className="ui-terminal-pane-content[\s\S]*?<PaneContentDropZones[\s\S]*?className="ui-terminal-pane-marker"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*\);/,
+    /className="ui-terminal-pane-content[\s\S]*?<PaneContentDropZones[\s\S]*?\{paneMarker && \([\s\S]*?className="ui-terminal-pane-marker"[\s\S]*?<\/div>\s*\)\}\s*<\/div>\s*<\/div>\s*\);/,
   );
   assert.doesNotMatch(terminalTabs, /ui-terminal-pane-marker__tab-bottom/);
 });

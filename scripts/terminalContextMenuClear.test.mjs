@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(
-  new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+  new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
   "utf8",
 ).replaceAll("\r\n", "\n");
 

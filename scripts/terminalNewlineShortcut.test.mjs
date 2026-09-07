@@ -458,7 +458,7 @@ function eraseDarkBlocks(fixture, overrides = {}) {
 }
 
 test("shared CLI context includes immutable session metadata for XTermTerminal", () => {
-  const componentSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
+  const componentSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
   const contextSource = readFileSync(new URL("../src/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
   const inputSource = readFileSync(new URL("../src/hooks/useTerminalInput.ts", import.meta.url), "utf8");
   assert.match(componentSource, /createTerminalCliContext\(session, project\)/u);

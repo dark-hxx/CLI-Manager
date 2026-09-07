@@ -273,7 +273,7 @@ test("Pi facade transforms active sessions and leaves non-Pi sessions byte-for-b
 
 test("live, replay, reset, and serialized snapshot use the shared transform", () => {
   const displaySource = readFileSync(new URL("../src/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
-  const componentSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
+  const componentSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
   assert.match(displaySource, /const transformed = transformOutputRef\.current\(combined\);/);
   assert.match(displaySource, /const transformed = transformOutputRef\.current\(text\);/);
   assert.match(displaySource, /if \(first\.reset\) \{\s*outputDiagnosticsRef\?\.current\?\.reset\(\);/);

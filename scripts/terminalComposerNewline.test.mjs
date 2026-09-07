@@ -153,7 +153,7 @@ test("Alt+Shift+Enter is not a managed newline combo", () => {
 
 test("XTermTerminal uses the shared newline decision helper", () => {
   const componentSource = readFileSync(
-    new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+    new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
     "utf8",
   );
   assert.match(componentSource, /resolveTerminalNewlineKeyEvent/);

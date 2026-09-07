@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "./helpers/readComposedSource.mjs";
 
-const tabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+const tabsSource = readFileSync(new URL("../src/features/terminal/components/TerminalTabsView.tsx", import.meta.url), "utf8");
+const toolbarSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalToolbarRenderer.tsx", import.meta.url), "utf8");
 const frameSource = readFileSync(
   new URL("../src/components/terminal/ResizableTerminalPanelFrame.tsx", import.meta.url),
   "utf8",
@@ -54,9 +55,9 @@ test("docking keeps panels next to the terminal and moves the action rail to the
   assert.match(workspaceFrameSource, /dockSide === "right" && <Fragment key="workspace-actions">\{actions\}<\/Fragment>/);
   assert.match(workspaceFrameSource, /dockSide === "left" && panelSlot/);
   assert.match(workspaceFrameSource, /dockSide === "right" && panelSlot/);
-  assert.match(tabsSource, /data-dock-side=\{terminalSidePanelSide\}/);
-  assert.match(tabsSource, /popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
-  assert.match(tabsSource, /BackgroundTasksPanel[\s\S]*?popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
+  assert.match(toolbarSource, /data-dock-side=\{terminalSidePanelSide\}/);
+  assert.match(toolbarSource, /popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
+  assert.match(toolbarSource, /BackgroundTasksPanel[\s\S]*?popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
 });
 
 test("merged and independent panels share the direction-aware resizable frame", () => {

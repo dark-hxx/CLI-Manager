@@ -125,7 +125,7 @@ test("decodeOsc52Payload accepts wrapped UTF-8 base64 and rejects junk", () => {
 
 test("live PTY output enables OSC 52 copies and replay disables them", () => {
   const displaySource = readFileSync(new URL("../src/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
-  const terminalSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
+  const terminalSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
   const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   const settingsSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
   assert.match(displaySource, /applyOsc52:\s*payload\.kind !== "replay" && payload\.kind !== "reset"/);

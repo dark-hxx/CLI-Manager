@@ -6,11 +6,15 @@ Split terminal feature
 
 ## Requirements
 
-- TBD
+- Split XTermTerminal, TerminalTabs and terminalStore below 2000 physical lines by responsibility.
+- Preserve process ownership, attach/replay/ACK ordering, snapshots, timers, hook order and store identity.
+- Keep local/WSL/SSH, worktree, split pane, Workspan, file/history/Git panels and bilingual UI behavior unchanged.
 
 ## Acceptance Criteria
 
-- [ ] TBD
+- [ ] All extracted modules meet physical and long-line limits without numbered chunks.
+- [ ] TypeScript, declaration/body equivalence, affected terminal tests and production build pass.
+- [ ] TEMP records, feature inventory, dependency boundaries and shrinking baseline updated.
 
 ## Notes
 

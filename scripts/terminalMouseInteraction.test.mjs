@@ -35,7 +35,7 @@ test("mouse-aware TUIs receive unmodified click and drag reports", () => {
 
 test("XTermTerminal delegates mouse policy to the browser module", () => {
   const terminalComponentSource = readFileSync(
-    new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+    new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
     "utf8",
   );
 

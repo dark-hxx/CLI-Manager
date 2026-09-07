@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const terminalSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
+const terminalSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
 const inputSource = readFileSync(new URL("../src/hooks/useTerminalInput.ts", import.meta.url), "utf8");
 const toolsSource = readFileSync(new URL("../src/lib/cliTools.ts", import.meta.url), "utf8");
 const pathSource = readFileSync(new URL("../src/lib/terminalShellPath.ts", import.meta.url), "utf8");

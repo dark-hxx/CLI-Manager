@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../src/stores/gitStore.ts", import.meta.url), "utf8");
-const terminalTabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+const terminalTabsSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalTabsController.tsx", import.meta.url), "utf8");
 const gitPanelSource = readFileSync(new URL("../src/components/git/GitChangesPanel.tsx", import.meta.url), "utf8");
 const fileStoreSource = readFileSync(new URL("../src/stores/fileExplorerStore.ts", import.meta.url), "utf8");
 const filePanelSource = readFileSync(new URL("../src/components/files/FileExplorerSidebar.tsx", import.meta.url), "utf8");

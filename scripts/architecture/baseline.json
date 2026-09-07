@@ -11,12 +11,6 @@
         "207202a5bf49e846": 1
       }
     },
-    "src/components/TerminalTabs.tsx": {
-      "lines": 4919
-    },
-    "src/components/XTermTerminal.tsx": {
-      "lines": 2429
-    },
     "src/components/git/workspace/GitPowerToolsDialog.tsx": {
       "longLines": {
         "bee103d9ceed169a": 1,

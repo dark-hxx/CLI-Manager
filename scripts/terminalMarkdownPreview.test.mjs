@@ -15,11 +15,15 @@ const historyStoreSource = readFileSync(
   "utf8",
 );
 const terminalSource = readFileSync(
-  new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/XTermView.tsx", import.meta.url),
+  "utf8",
+);
+const terminalController = readFileSync(
+  new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
   "utf8",
 );
 const terminalTabsSource = readFileSync(
-  new URL("../src/components/TerminalTabs.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/SortableTerminalTabs.tsx", import.meta.url),
   "utf8",
 );
 const i18nSource = readFileSync(
@@ -69,15 +73,15 @@ test("markdown preview supports themed answer scrolling, wheel zoom, and restore
   assert.match(previewSource, /MARKDOWN_PREVIEW_FONT_SIZE_MIN/);
   assert.match(previewSource, /onWheel=\{handlePreviewWheel\}/);
   assert.match(previewSource, /<FontSizeControl/);
-  assert.match(terminalSource, /const markdownPreviewCanOpen = markdownPreviewSupported\s*&&\s*Boolean\(terminalSession\?\.cliSessionId\?\.trim\(\)\);/);
-  assert.doesNotMatch(terminalSource, /markdownPreviewHookStatus/);
+  assert.match(terminalController, /const markdownPreviewCanOpen = markdownPreviewSupported\s*&&\s*Boolean\(terminalSession\?\.cliSessionId\?\.trim\(\)\);/);
+  assert.doesNotMatch(terminalController, /markdownPreviewHookStatus/);
 });
 
 test("configured CLI terminals keep a preview control and recognize every history source", () => {
   assert.doesNotMatch(previewSource, /PREVIEW_SOURCES/);
   assert.match(previewSource, /value\): value is HistorySource => value !== null/);
-  assert.match(terminalSource, /const markdownPreviewButtonVisible = Boolean\(/);
-  assert.match(terminalSource, /terminalSession\?\.isAgentSession/);
+  assert.match(terminalController, /const markdownPreviewButtonVisible = Boolean\(/);
+  assert.match(terminalController, /terminalSession\?\.isAgentSession/);
   assert.match(terminalSource, /\{markdownPreviewButtonVisible && \(/);
 });
 

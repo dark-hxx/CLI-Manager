@@ -2,8 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+const viewSource = readFileSync(
+  new URL("../src/features/terminal/components/XTermView.tsx", import.meta.url),
+  "utf8",
+);
+
 const source = readFileSync(
-  new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+  new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
   "utf8",
 ).replaceAll("\r\n", "\n");
 const settingsSource = readFileSync(
@@ -19,7 +24,7 @@ test("bottom shortcut only appears above the live bottom of a normal buffer", ()
   assert.ok(updater, "the scroll state updater was not found");
   assert.match(updater, /buffer\.type === "normal"/);
   assert.match(updater, /buffer\.viewportY < buffer\.baseY/);
-  assert.match(source, /\{isScrolledAwayFromBottom && \([\s\S]*?terminal-scroll-to-bottom/);
+  assert.match(viewSource, /\{isScrolledAwayFromBottom && \([\s\S]*?terminal-scroll-to-bottom/);
 });
 
 test("scroll position changes update the shortcut and click uses xterm's public API", () => {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const componentSource = readFileSync(
-  new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/XTermView.tsx", import.meta.url),
   "utf8",
 );
 const stylesSource = readFileSync(

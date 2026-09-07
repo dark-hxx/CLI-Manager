@@ -6,7 +6,7 @@ const tauriConfig = JSON.parse(
   readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
 );
 const terminalSource = readFileSync(
-  new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+  new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
   "utf8",
 );
 const supportSource = readFileSync(
