@@ -18,11 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../../lib/i18n";
-import type {
-  CreateSshHostInput,
-  SshHost,
-  SshHostGroup,
-} from "../../../lib/types";
+import type { CreateSshHostInput, SshHost, SshHostGroup } from "../../../lib/types";
 import { buildSshConnectionSpec } from "../../../lib/ssh";
 import { isValidSshAttachmentRoot } from "../../../lib/sshAttachment";
 import { useSshHostStore } from "../../../stores/sshHostStore";
@@ -36,15 +32,42 @@ import { SshCliIntegrationDialog } from "./SshCliIntegrationDialog";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
 import { SshHostAttachmentDialog } from "./SshHostAttachmentDialog";
 
-interface Props { searchValue: string; onTerminalOpened?: () => void }
-interface SshClientStatus { available: boolean; version: string | null; error: string | null }
-interface SshConnectionTestResult { success: boolean; stages: Array<{ key: string; status: string; detail: string }> }
+interface Props {
+  searchValue: string;
+  onTerminalOpened?: () => void;
+}
+interface SshClientStatus {
+  available: boolean;
+  version: string | null;
+  error: string | null;
+}
+interface SshConnectionTestResult {
+  success: boolean;
+  stages: Array<{ key: string; status: string; detail: string }>;
+}
 const EMPTY_FORM: CreateSshHostInput = {
-  name: "", group_name: "", host: "", port: 22, username: "", config_alias: "", config_file: "",
-  auth_mode: "credential_ref", identity_file: "", jump_mode: "none", jump_host_id: null,
-  proxy_type: "none", proxy_host: "", proxy_port: 0, proxy_command: "",
-  connect_timeout_sec: 15, server_alive_interval_sec: 30, server_alive_count_max: 3,
-  terminal_encoding: "UTF-8", attachment_root: "", startup_script: "", notes: "",
+  name: "",
+  group_name: "",
+  host: "",
+  port: 22,
+  username: "",
+  config_alias: "",
+  config_file: "",
+  auth_mode: "credential_ref",
+  identity_file: "",
+  jump_mode: "none",
+  jump_host_id: null,
+  proxy_type: "none",
+  proxy_host: "",
+  proxy_port: 0,
+  proxy_command: "",
+  connect_timeout_sec: 15,
+  server_alive_interval_sec: 30,
+  server_alive_count_max: 3,
+  terminal_encoding: "UTF-8",
+  attachment_root: "",
+  startup_script: "",
+  notes: "",
 };
 
 const ERROR_LABELS: Record<string, TranslationKey> = {
@@ -81,18 +104,40 @@ const AGENT_INSTALL_PHASE_KEYS: Record<string, TranslationKey> = {
   completed: "settings.sshHosts.cliIntegration.agent.progress.completed",
 };
 
-function formFromHost(host: SshHost): CreateSshHostInput { return { ...host }; }
+function formFromHost(host: SshHost): CreateSshHostInput {
+  return { ...host };
+}
 
 function hostFromForm(form: CreateSshHostInput, id: string): SshHost {
   return {
-    id, name: form.name, group_name: form.group_name ?? "", group_id: form.group_id ?? null, host: form.host ?? "", port: form.port ?? 22,
-    username: form.username ?? "", config_alias: form.config_alias ?? "", config_file: form.config_file ?? "", auth_mode: form.auth_mode ?? "ssh_config",
-    identity_file: form.identity_file ?? "", credential_ref: form.credential_ref ?? "", jump_mode: form.jump_mode ?? "none",
-    jump_host_id: form.jump_host_id ?? null, proxy_type: form.proxy_type ?? "none", proxy_host: form.proxy_host ?? "",
-    proxy_port: form.proxy_port ?? 0, proxy_command: form.proxy_command ?? "", connect_timeout_sec: form.connect_timeout_sec ?? 15,
-    server_alive_interval_sec: form.server_alive_interval_sec ?? 30, server_alive_count_max: form.server_alive_count_max ?? 3,
-    terminal_encoding: form.terminal_encoding ?? "UTF-8", attachment_root: form.attachment_root ?? "", startup_script: form.startup_script ?? "", notes: form.notes ?? "",
-    sort_order: 0, created_at: "", updated_at: "",
+    id,
+    name: form.name,
+    group_name: form.group_name ?? "",
+    group_id: form.group_id ?? null,
+    host: form.host ?? "",
+    port: form.port ?? 22,
+    username: form.username ?? "",
+    config_alias: form.config_alias ?? "",
+    config_file: form.config_file ?? "",
+    auth_mode: form.auth_mode ?? "ssh_config",
+    identity_file: form.identity_file ?? "",
+    credential_ref: form.credential_ref ?? "",
+    jump_mode: form.jump_mode ?? "none",
+    jump_host_id: form.jump_host_id ?? null,
+    proxy_type: form.proxy_type ?? "none",
+    proxy_host: form.proxy_host ?? "",
+    proxy_port: form.proxy_port ?? 0,
+    proxy_command: form.proxy_command ?? "",
+    connect_timeout_sec: form.connect_timeout_sec ?? 15,
+    server_alive_interval_sec: form.server_alive_interval_sec ?? 30,
+    server_alive_count_max: form.server_alive_count_max ?? 3,
+    terminal_encoding: form.terminal_encoding ?? "UTF-8",
+    attachment_root: form.attachment_root ?? "",
+    startup_script: form.startup_script ?? "",
+    notes: form.notes ?? "",
+    sort_order: 0,
+    created_at: "",
+    updated_at: "",
   };
 }
 
@@ -136,16 +181,21 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
 
   useEffect(() => {
     void fetchHosts();
-    void invoke<SshClientStatus>("ssh_client_status").then(setClient).catch(() => {
-      setClient({ available: false, version: null, error: "ssh_client_unavailable" });
-    });
+    void invoke<SshClientStatus>("ssh_client_status")
+      .then(setClient)
+      .catch(() => {
+        setClient({ available: false, version: null, error: "ssh_client_unavailable" });
+      });
   }, [fetchHosts]);
 
   const filteredHosts = useMemo(() => {
     const query = searchValue.trim().toLocaleLowerCase();
     if (!query) return hosts;
-    return hosts.filter((host) => [host.name, host.group_name, host.host, host.config_alias, host.username, host.notes]
-      .some((value) => value.toLocaleLowerCase().includes(query)));
+    return hosts.filter((host) =>
+      [host.name, host.group_name, host.host, host.config_alias, host.username, host.notes].some(
+        (value) => value.toLocaleLowerCase().includes(query),
+      ),
+    );
   }, [hosts, searchValue]);
 
   const setValue = <K extends keyof CreateSshHostInput>(key: K, value: CreateSshHostInput[K]) => {
@@ -158,7 +208,8 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
 
   const changeSource = (next: "address" | "config") => {
     if (next === source) return;
-    if (source === "address") setAddressDraft({ ...form }); else setConfigDraft({ ...form });
+    if (source === "address") setAddressDraft({ ...form });
+    else setConfigDraft({ ...form });
     const target = next === "address" ? addressDraft : configDraft;
     setForm((current) => ({
       ...target,
@@ -171,7 +222,12 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
       terminal_encoding: current.terminal_encoding,
       startup_script: current.startup_script,
       notes: current.notes,
-      auth_mode: next === "config" ? "ssh_config" : (target.auth_mode === "ssh_config" ? "credential_ref" : target.auth_mode),
+      auth_mode:
+        next === "config"
+          ? "ssh_config"
+          : target.auth_mode === "ssh_config"
+            ? "credential_ref"
+            : target.auth_mode,
     }));
     setSource(next);
   };
@@ -182,14 +238,36 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
       group_id: group?.id ?? null,
       group_name: group?.name ?? "",
     };
-    setEditingId(null); setForm(initialForm); setAddressDraft(initialForm); setConfigDraft(initialForm); setSource("address"); setPassword(""); setCredentialStored(false); setError(null); setTestError(null); setDiagnostic(null); setEditorOpen(true);
+    setEditingId(null);
+    setForm(initialForm);
+    setAddressDraft(initialForm);
+    setConfigDraft(initialForm);
+    setSource("address");
+    setPassword("");
+    setCredentialStored(false);
+    setError(null);
+    setTestError(null);
+    setDiagnostic(null);
+    setEditorOpen(true);
   };
   const openEdit = (host: SshHost) => {
     const configManaged = Boolean(host.config_alias.trim());
     setEditingId(host.id);
     const base = formFromHost(host);
-    const addressForm = { ...base, auth_mode: host.auth_mode === "ssh_config" ? "credential_ref" as const : host.auth_mode };
-    const configForm = { ...base, host: "", auth_mode: "ssh_config" as const, identity_file: "", jump_mode: "none" as const, jump_host_id: null, proxy_type: "none" as const, proxy_command: "" };
+    const addressForm = {
+      ...base,
+      auth_mode: host.auth_mode === "ssh_config" ? ("credential_ref" as const) : host.auth_mode,
+    };
+    const configForm = {
+      ...base,
+      host: "",
+      auth_mode: "ssh_config" as const,
+      identity_file: "",
+      jump_mode: "none" as const,
+      jump_host_id: null,
+      proxy_type: "none" as const,
+      proxy_command: "",
+    };
     setForm(configManaged ? configForm : addressForm);
     setAddressDraft(addressForm);
     setConfigDraft(configForm);
@@ -201,23 +279,48 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
         .then(setCredentialStored)
         .catch(() => setCredentialStored(false));
     }
-    setError(null); setTestError(null); setDiagnostic(null); setEditorOpen(true);
+    setError(null);
+    setTestError(null);
+    setDiagnostic(null);
+    setEditorOpen(true);
   };
 
   const validate = (): string | null => {
     if (!form.name?.trim()) return "ssh_host_name_required";
     if (source === "address" && !form.host?.trim()) return "ssh_host_address_required";
     if (source === "config" && !form.config_alias?.trim()) return "ssh_host_address_required";
-    if (source === "address" && (!Number.isInteger(form.port) || (form.port ?? 0) < 1 || (form.port ?? 0) > 65535)) return "ssh_host_port_invalid";
-    if (form.auth_mode === "identity_file" && !form.identity_file?.trim()) return "ssh_identity_file_required";
-    if (form.auth_mode === "credential_ref" && !credentialStored && !password) return "ssh_password_required";
+    if (
+      source === "address" &&
+      (!Number.isInteger(form.port) || (form.port ?? 0) < 1 || (form.port ?? 0) > 65535)
+    )
+      return "ssh_host_port_invalid";
+    if (form.auth_mode === "identity_file" && !form.identity_file?.trim())
+      return "ssh_identity_file_required";
+    if (form.auth_mode === "credential_ref" && !credentialStored && !password)
+      return "ssh_password_required";
     if (!isValidSshAttachmentRoot(form.attachment_root)) return "ssh_attachment_root_invalid";
     if (form.jump_mode !== "none" && !form.jump_host_id) return "ssh_jump_host_required";
-    if (form.proxy_type === "proxy_command" && !form.proxy_command?.trim()) return "ssh_proxy_command_required";
-    if ((form.proxy_type === "http" || form.proxy_type === "socks5") && form.proxy_host?.includes("@")) return "ssh_proxy_credentials_forbidden";
-    if ((form.proxy_type === "http" || form.proxy_type === "socks5")
-      && (!form.proxy_host?.trim() || !Number.isInteger(form.proxy_port) || (form.proxy_port ?? 0) < 1 || (form.proxy_port ?? 0) > 65535)) return "ssh_proxy_address_invalid";
-    if (!Number.isInteger(form.connect_timeout_sec) || (form.connect_timeout_sec ?? 0) < 1 || (form.connect_timeout_sec ?? 0) > 300) return "ssh_connect_timeout_invalid";
+    if (form.proxy_type === "proxy_command" && !form.proxy_command?.trim())
+      return "ssh_proxy_command_required";
+    if (
+      (form.proxy_type === "http" || form.proxy_type === "socks5") &&
+      form.proxy_host?.includes("@")
+    )
+      return "ssh_proxy_credentials_forbidden";
+    if (
+      (form.proxy_type === "http" || form.proxy_type === "socks5") &&
+      (!form.proxy_host?.trim() ||
+        !Number.isInteger(form.proxy_port) ||
+        (form.proxy_port ?? 0) < 1 ||
+        (form.proxy_port ?? 0) > 65535)
+    )
+      return "ssh_proxy_address_invalid";
+    if (
+      !Number.isInteger(form.connect_timeout_sec) ||
+      (form.connect_timeout_sec ?? 0) < 1 ||
+      (form.connect_timeout_sec ?? 0) > 300
+    )
+      return "ssh_connect_timeout_invalid";
     return null;
   };
 
@@ -228,16 +331,26 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
 
   const save = async () => {
     const validationError = validate();
-    if (validationError) { setError(validationError); return; }
-    setSaving(true); setError(null);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setSaving(true);
+    setError(null);
     try {
       if (editingId) {
         const previous = hosts.find((host) => host.id === editingId);
         let credentialRef = form.credential_ref ?? previous?.credential_ref ?? "";
         if (form.auth_mode === "credential_ref" && password) {
-          credentialRef = await invoke<string>("ssh_save_password", { hostId: editingId, password });
+          credentialRef = await invoke<string>("ssh_save_password", {
+            hostId: editingId,
+            password,
+          });
         }
-        await updateHost(editingId, { ...form, credential_ref: form.auth_mode === "credential_ref" ? credentialRef : "" });
+        await updateHost(editingId, {
+          ...form,
+          credential_ref: form.auth_mode === "credential_ref" ? credentialRef : "",
+        });
         if (previous?.credential_ref && form.auth_mode !== "credential_ref") {
           await invoke("ssh_delete_password", { hostId: editingId });
         }
@@ -245,8 +358,14 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
         const created = await createHost({ ...form, credential_ref: "" });
         try {
           if (form.auth_mode === "credential_ref") {
-            const credentialRef = await invoke<string>("ssh_save_password", { hostId: created.id, password });
-            await updateHost(created.id, { auth_mode: "credential_ref", credential_ref: credentialRef });
+            const credentialRef = await invoke<string>("ssh_save_password", {
+              hostId: created.id,
+              password,
+            });
+            await updateHost(created.id, {
+              auth_mode: "credential_ref",
+              credential_ref: credentialRef,
+            });
           }
         } catch (credentialError) {
           await deleteHost(created.id).catch(() => undefined);
@@ -256,33 +375,49 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
       }
       setPassword("");
       setEditorOpen(false);
-    } catch (nextError) { setError(nextError instanceof Error ? nextError.message : String(nextError)); }
-    finally { setSaving(false); }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const testConnection = async (acceptNewHostKey = false) => {
     const validationError = validate();
-    if (validationError) { setTestError(formatError(validationError)); return; }
-    setTesting(true); setError(null); setTestError(null); setDiagnostic(null);
+    if (validationError) {
+      setTestError(formatError(validationError));
+      return;
+    }
+    setTesting(true);
+    setError(null);
+    setTestError(null);
+    setDiagnostic(null);
     let temporaryCredentialHostId: string | null = null;
     try {
       let testForm = form;
       if (form.auth_mode === "credential_ref" && password) {
         temporaryCredentialHostId = crypto.randomUUID();
-        const credentialRef = await invoke<string>("ssh_save_password", { hostId: temporaryCredentialHostId, password });
+        const credentialRef = await invoke<string>("ssh_save_password", {
+          hostId: temporaryCredentialHostId,
+          password,
+        });
         testForm = { ...form, credential_ref: credentialRef };
       }
       const result = await invoke<SshConnectionTestResult>("ssh_test_connection", {
-        spec: buildSshConnectionSpec(hostFromForm(testForm, editingId ?? temporaryCredentialHostId ?? "draft"), hosts),
+        spec: buildSshConnectionSpec(
+          hostFromForm(testForm, editingId ?? temporaryCredentialHostId ?? "draft"),
+          hosts,
+        ),
         acceptNewHostKey,
       });
       setDiagnostic(result);
     } catch (nextError) {
       setTestError(formatError(nextError instanceof Error ? nextError.message : String(nextError)));
-    }
-    finally {
+    } finally {
       if (temporaryCredentialHostId) {
-        await invoke("ssh_delete_password", { hostId: temporaryCredentialHostId }).catch(() => undefined);
+        await invoke("ssh_delete_password", { hostId: temporaryCredentialHostId }).catch(
+          () => undefined,
+        );
       }
       setTesting(false);
     }
@@ -296,34 +431,73 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
       setError(formatError("ssh_host_active"));
       return;
     }
-    if (!await confirm({ title: t("settings.sshHosts.deleteTitle"), message: t("settings.sshHosts.deleteDescription", { name: host.name }), danger: true })) return;
+    if (
+      !(await confirm({
+        title: t("settings.sshHosts.deleteTitle"),
+        message: t("settings.sshHosts.deleteDescription", { name: host.name }),
+        danger: true,
+      }))
+    )
+      return;
     try {
       await deleteHost(host.id);
       if (host.credential_ref) await invoke("ssh_delete_password", { hostId: host.id });
-    } catch (nextError) { setError(nextError instanceof Error ? nextError.message : String(nextError)); }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
   };
 
   const addGroup = async (parent: SshHostGroup | null) => {
-    const name = await prompt({ title: parent ? t("settings.sshHosts.groupAddChildTitle", { name: parent.name }) : t("settings.sshHosts.groupAddTitle"), placeholder: t("settings.sshHosts.groupNamePlaceholder") });
+    const name = await prompt({
+      title: parent
+        ? t("settings.sshHosts.groupAddChildTitle", { name: parent.name })
+        : t("settings.sshHosts.groupAddTitle"),
+      placeholder: t("settings.sshHosts.groupNamePlaceholder"),
+    });
     if (!name) return;
     try {
       await createGroup(name, parent?.id ?? null);
-      if (parent) setCollapsedGroups((current) => { const next = new Set(current); next.delete(parent.id); return next; });
+      if (parent)
+        setCollapsedGroups((current) => {
+          const next = new Set(current);
+          next.delete(parent.id);
+          return next;
+        });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     }
   };
 
   const removeGroup = async (group: SshHostGroup) => {
-    if (!await confirm({ title: t("settings.sshHosts.groupDeleteTitle"), message: t("settings.sshHosts.groupDeleteDescription", { name: group.name }), danger: true })) return;
-    try { await deleteGroup(group.id); }
-    catch (nextError) { setError(nextError instanceof Error ? nextError.message : String(nextError)); }
+    if (
+      !(await confirm({
+        title: t("settings.sshHosts.groupDeleteTitle"),
+        message: t("settings.sshHosts.groupDeleteDescription", { name: group.name }),
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      await deleteGroup(group.id);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
   };
 
   const openTerminal = async (host: SshHost) => {
     setError(null);
     try {
-      await createSession(undefined, undefined, host.name, undefined, undefined, undefined, undefined, undefined, host.id);
+      await createSession(
+        undefined,
+        undefined,
+        host.name,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        host.id,
+      );
       onTerminalOpened?.();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -331,54 +505,196 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
   };
 
   const visibleError = error ? formatError(error) : null;
-  const visibleLoadError = loadError ? t("settings.sshHosts.loadFailed", { error: formatError(loadError) }) : null;
-  const visibleAgentInstallJobs = Object.values(agentInstallJobs)
-    .sort((left, right) => right.updatedAt - left.updatedAt);
+  const visibleLoadError = loadError
+    ? t("settings.sshHosts.loadFailed", { error: formatError(loadError) })
+    : null;
+  const visibleAgentInstallJobs = Object.values(agentInstallJobs).sort(
+    (left, right) => right.updatedAt - left.updatedAt,
+  );
 
   return (
     <div className="space-y-4">
       <div className="ui-surface-low flex items-center justify-between rounded-2xl border border-border px-4 py-3">
         <div className="flex items-center gap-3">
-          {client?.available ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <CircleAlert className="h-5 w-5 text-warning" />}
-          <div><div className="text-sm font-bold text-text-primary">{t("settings.sshHosts.openSsh")}</div><div className="text-xs text-text-muted">{client?.available ? client.version : t("settings.sshHosts.openSshMissing")}</div></div>
+          {client?.available ? (
+            <CheckCircle2 className="h-5 w-5 text-primary" />
+          ) : (
+            <CircleAlert className="h-5 w-5 text-warning" />
+          )}
+          <div>
+            <div className="text-sm font-bold text-text-primary">
+              {t("settings.sshHosts.openSsh")}
+            </div>
+            <div className="text-xs text-text-muted">
+              {client?.available ? client.version : t("settings.sshHosts.openSshMissing")}
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-2"><button className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold" onClick={() => void addGroup(null)}><FolderPlus className="h-4 w-4" />{t("settings.sshHosts.groupAdd")}</button><button className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold" onClick={() => setImportOpen(true)}><ImportIcon className="h-4 w-4" />{t("settings.sshHosts.import.action")}</button><button className="ui-button-primary flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold" onClick={() => openCreate(null)}><Plus className="h-4 w-4" />{t("settings.sshHosts.add")}</button></div>
+        <div className="flex items-center gap-2">
+          <button
+            className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold"
+            onClick={() => void addGroup(null)}
+          >
+            <FolderPlus className="h-4 w-4" />
+            {t("settings.sshHosts.groupAdd")}
+          </button>
+          <button
+            className="ui-button-secondary flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold"
+            onClick={() => setImportOpen(true)}
+          >
+            <ImportIcon className="h-4 w-4" />
+            {t("settings.sshHosts.import.action")}
+          </button>
+          <button
+            className="ui-button-primary flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold"
+            onClick={() => openCreate(null)}
+          >
+            <Plus className="h-4 w-4" />
+            {t("settings.sshHosts.add")}
+          </button>
+        </div>
       </div>
       {visibleAgentInstallJobs.length > 0 && (
-        <section className="space-y-2 rounded-xl border border-border bg-surface-lowest p-3" aria-label={t("settings.sshHosts.cliIntegration.agent.queueTitle")}>
-          <div className="text-sm font-bold text-text-primary">{t("settings.sshHosts.cliIntegration.agent.queueTitle")}</div>
+        <section
+          className="space-y-2 rounded-xl border border-border bg-surface-lowest p-3"
+          aria-label={t("settings.sshHosts.cliIntegration.agent.queueTitle")}
+        >
+          <div className="text-sm font-bold text-text-primary">
+            {t("settings.sshHosts.cliIntegration.agent.queueTitle")}
+          </div>
           {visibleAgentInstallJobs.map((job) => {
             const host = hosts.find((candidate) => candidate.id === job.hostId);
-            const phase = t(AGENT_INSTALL_PHASE_KEYS[job.phase] ?? AGENT_INSTALL_PHASE_KEYS.resolvingRelease);
+            const phase = t(
+              AGENT_INSTALL_PHASE_KEYS[job.phase] ?? AGENT_INSTALL_PHASE_KEYS.resolvingRelease,
+            );
             return (
-              <div key={job.hostId} className="space-y-2 border-t border-border pt-2 first:border-t-0 first:pt-0">
+              <div
+                key={job.hostId}
+                className="space-y-2 border-t border-border pt-2 first:border-t-0 first:pt-0"
+              >
                 <div className="flex items-center justify-between gap-3">
-                  <button type="button" className="min-w-0 text-left" onClick={() => host && setIntegrationHost(host)}>
-                    <div className="truncate text-sm font-medium text-text-primary">{host?.name ?? job.hostId}</div>
-                    <div className={job.status === "failed" ? "text-xs text-danger" : "text-xs text-text-muted"}>{job.status === "failed" ? t("settings.sshHosts.cliIntegration.agent.installFailed") : phase}</div>
+                  <button
+                    type="button"
+                    className="min-w-0 text-left"
+                    onClick={() => host && setIntegrationHost(host)}
+                  >
+                    <div className="truncate text-sm font-medium text-text-primary">
+                      {host?.name ?? job.hostId}
+                    </div>
+                    <div
+                      className={
+                        job.status === "failed" ? "text-xs text-danger" : "text-xs text-text-muted"
+                      }
+                    >
+                      {job.status === "failed"
+                        ? t("settings.sshHosts.cliIntegration.agent.installFailed")
+                        : phase}
+                    </div>
                   </button>
                   <div className="flex items-center gap-1">
-                    {job.error && <Button type="button" size="icon" variant="ghost" title={t("common.copy")} aria-label={t("common.copy")} onClick={() => void navigator.clipboard.writeText(job.error)}><Copy className="h-4 w-4" /></Button>}
-                    {job.status !== "running" && <Button type="button" size="icon" variant="ghost" title={t("common.close")} aria-label={t("common.close")} onClick={() => clearAgentInstallJob(job.hostId)}><X className="h-4 w-4" /></Button>}
+                    {job.error && (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        title={t("common.copy")}
+                        aria-label={t("common.copy")}
+                        onClick={() => void navigator.clipboard.writeText(job.error)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {job.status !== "running" && (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        title={t("common.close")}
+                        aria-label={t("common.close")}
+                        onClick={() => clearAgentInstallJob(job.hostId)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-surface-high" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={job.progress}>
-                  <div className={job.status === "failed" ? "h-full rounded-full bg-danger" : "h-full rounded-full bg-primary transition-[width] duration-200"} style={{ width: job.progress + "%" }} />
+                <div
+                  className="h-1.5 overflow-hidden rounded-full bg-surface-high"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={job.progress}
+                >
+                  <div
+                    className={
+                      job.status === "failed"
+                        ? "h-full rounded-full bg-danger"
+                        : "h-full rounded-full bg-primary transition-[width] duration-200"
+                    }
+                    style={{ width: job.progress + "%" }}
+                  />
                 </div>
-                {job.error && <div className="max-h-20 overflow-auto break-all rounded-md bg-danger/10 px-2 py-1 font-mono text-[11px] text-danger">{job.error}</div>}
+                {job.error && (
+                  <div className="max-h-20 overflow-auto break-all rounded-md bg-danger/10 px-2 py-1 font-mono text-[11px] text-danger">
+                    {job.error}
+                  </div>
+                )}
               </div>
             );
           })}
         </section>
       )}
       <div className="overflow-hidden rounded-2xl border border-border bg-surface-lowest">
-        {!loaded ? <div className="p-8 text-center text-sm text-text-muted">{t("common.loading")}</div> : filteredHosts.length === 0 && groups.length === 0 ? (
-          <div className="p-10 text-center"><Server className="mx-auto mb-3 h-8 w-8 text-text-muted" /><div className="font-bold text-text-primary">{t("settings.sshHosts.empty")}</div><div className="mt-1 text-xs text-text-muted">{t("settings.sshHosts.emptyDescription")}</div></div>
-        ) : <SshHostTree groups={groups} hosts={filteredHosts} collapsed={collapsedGroups} onToggle={(id) => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onAddHost={openCreate} onAddGroup={(group) => void addGroup(group)} onDeleteGroup={(group) => void removeGroup(group)} onOpenTerminal={(host) => void openTerminal(host)} onOpenAttachment={setAttachmentHost} onOpenIntegration={setIntegrationHost} onEditHost={openEdit} onDeleteHost={(host) => void remove(host)} />}
+        {!loaded ? (
+          <div className="p-8 text-center text-sm text-text-muted">{t("common.loading")}</div>
+        ) : filteredHosts.length === 0 && groups.length === 0 ? (
+          <div className="p-10 text-center">
+            <Server className="mx-auto mb-3 h-8 w-8 text-text-muted" />
+            <div className="font-bold text-text-primary">{t("settings.sshHosts.empty")}</div>
+            <div className="mt-1 text-xs text-text-muted">
+              {t("settings.sshHosts.emptyDescription")}
+            </div>
+          </div>
+        ) : (
+          <SshHostTree
+            groups={groups}
+            hosts={filteredHosts}
+            collapsed={collapsedGroups}
+            onToggle={(id) =>
+              setCollapsedGroups((current) => {
+                const next = new Set(current);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              })
+            }
+            onAddHost={openCreate}
+            onAddGroup={(group) => void addGroup(group)}
+            onDeleteGroup={(group) => void removeGroup(group)}
+            onOpenTerminal={(host) => void openTerminal(host)}
+            onOpenAttachment={setAttachmentHost}
+            onOpenIntegration={setIntegrationHost}
+            onEditHost={openEdit}
+            onDeleteHost={(host) => void remove(host)}
+          />
+        )}
       </div>
-      {visibleLoadError && <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">{visibleLoadError}</div>}
-      {visibleError && !editorOpen && <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{visibleError}</div>}
-      <SshConfigImportDialog open={importOpen} hosts={hosts} groups={groups} onOpenChange={setImportOpen} />
+      {visibleLoadError && (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+          {visibleLoadError}
+        </div>
+      )}
+      {visibleError && !editorOpen && (
+        <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {visibleError}
+        </div>
+      )}
+      <SshConfigImportDialog
+        open={importOpen}
+        hosts={hosts}
+        groups={groups}
+        onOpenChange={setImportOpen}
+      />
       <SshHostEditor
         open={editorOpen}
         editingId={editingId}
@@ -406,19 +722,37 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
         open={integrationHost !== null}
         host={integrationHost}
         hosts={hosts}
-        onOpenChange={(nextOpen) => { if (!nextOpen) setIntegrationHost(null); }}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setIntegrationHost(null);
+        }}
       />
       <SshHostAttachmentDialog
         open={attachmentHost !== null}
         host={attachmentHost}
-        onOpenChange={(nextOpen) => { if (!nextOpen) setAttachmentHost(null); }}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setAttachmentHost(null);
+        }}
       />
-      {confirmDialog}{promptDialog}
+      {confirmDialog}
+      {promptDialog}
     </div>
   );
 }
 
-function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup, onDeleteGroup, onOpenTerminal, onOpenAttachment, onOpenIntegration, onEditHost, onDeleteHost }: {
+function SshHostTree({
+  groups,
+  hosts,
+  collapsed,
+  onToggle,
+  onAddHost,
+  onAddGroup,
+  onDeleteGroup,
+  onOpenTerminal,
+  onOpenAttachment,
+  onOpenIntegration,
+  onEditHost,
+  onDeleteHost,
+}: {
   groups: SshHostGroup[];
   hosts: SshHost[];
   collapsed: Set<string>;
@@ -435,7 +769,8 @@ function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup
   const { t } = useI18n();
   const groupIds = new Set(groups.map((group) => group.id));
   const childGroups = new Map<string | null, SshHostGroup[]>();
-  for (const group of groups) childGroups.set(group.parent_id, [...(childGroups.get(group.parent_id) ?? []), group]);
+  for (const group of groups)
+    childGroups.set(group.parent_id, [...(childGroups.get(group.parent_id) ?? []), group]);
   const hostsByGroup = new Map<string | null, SshHost[]>();
   for (const host of hosts) {
     const groupId = host.group_id && groupIds.has(host.group_id) ? host.group_id : null;
@@ -444,17 +779,195 @@ function SshHostTree({ groups, hosts, collapsed, onToggle, onAddHost, onAddGroup
   const renderGroup = (group: SshHostGroup, depth: number, ancestors: Set<string>): ReactNode => {
     if (ancestors.has(group.id)) return null;
     const childSet = new Set([...ancestors, group.id]);
-    const children = (childGroups.get(group.id) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-    const groupHosts = (hostsByGroup.get(group.id) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
+    const children = (childGroups.get(group.id) ?? []).sort(
+      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
+    );
+    const groupHosts = (hostsByGroup.get(group.id) ?? []).sort(
+      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
+    );
     const isCollapsed = collapsed.has(group.id);
-    return <div key={group.id} className="border-b border-border last:border-b-0"><div className="flex h-11 items-center gap-2 bg-surface-low px-3" style={{ paddingLeft: 12 + depth * 18 }}><button type="button" className="ui-icon-button h-7 w-7" aria-label={isCollapsed ? t("settings.sshHosts.groupExpand") : t("settings.sshHosts.groupCollapse")} onClick={() => onToggle(group.id)}><ChevronRight className={`h-4 w-4 transition-transform ${isCollapsed ? "" : "rotate-90"}`} /></button><Folder className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">{group.name}</span><span className="text-xs text-text-muted">{groupHosts.length}</span><button type="button" className="ui-icon-button text-primary" title={t("settings.sshHosts.groupAddHost")} aria-label={t("settings.sshHosts.groupAddHost")} onClick={() => onAddHost(group)}><Plus className="h-4 w-4" /></button><button type="button" className="ui-icon-button" title={t("settings.sshHosts.groupAddChild")} aria-label={t("settings.sshHosts.groupAddChild")} onClick={() => onAddGroup(group)}><FolderPlus className="h-4 w-4" /></button><button type="button" className="ui-icon-button text-danger" title={t("settings.sshHosts.groupDelete")} aria-label={t("settings.sshHosts.groupDelete")} onClick={() => onDeleteGroup(group)}><Trash2 className="h-4 w-4" /></button></div>{!isCollapsed && <>{children.map((child) => renderGroup(child, depth + 1, childSet))}{groupHosts.map((host) => <SshHostRow key={host.id} host={host} depth={depth + 1} onOpenTerminal={onOpenTerminal} onOpenAttachment={onOpenAttachment} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</>}</div>;
+    return (
+      <div key={group.id} className="border-b border-border last:border-b-0">
+        <div
+          className="flex h-11 items-center gap-2 bg-surface-low px-3"
+          style={{ paddingLeft: 12 + depth * 18 }}
+        >
+          <button
+            type="button"
+            className="ui-icon-button h-7 w-7"
+            aria-label={
+              isCollapsed
+                ? t("settings.sshHosts.groupExpand")
+                : t("settings.sshHosts.groupCollapse")
+            }
+            onClick={() => onToggle(group.id)}
+          >
+            <ChevronRight
+              className={`h-4 w-4 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
+            />
+          </button>
+          <Folder className="h-4 w-4 shrink-0 text-primary" />
+          <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">
+            {group.name}
+          </span>
+          <span className="text-xs text-text-muted">{groupHosts.length}</span>
+          <button
+            type="button"
+            className="ui-icon-button text-primary"
+            title={t("settings.sshHosts.groupAddHost")}
+            aria-label={t("settings.sshHosts.groupAddHost")}
+            onClick={() => onAddHost(group)}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="ui-icon-button"
+            title={t("settings.sshHosts.groupAddChild")}
+            aria-label={t("settings.sshHosts.groupAddChild")}
+            onClick={() => onAddGroup(group)}
+          >
+            <FolderPlus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="ui-icon-button text-danger"
+            title={t("settings.sshHosts.groupDelete")}
+            aria-label={t("settings.sshHosts.groupDelete")}
+            onClick={() => onDeleteGroup(group)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+        {!isCollapsed && (
+          <>
+            {children.map((child) => renderGroup(child, depth + 1, childSet))}
+            {groupHosts.map((host) => (
+              <SshHostRow
+                key={host.id}
+                host={host}
+                depth={depth + 1}
+                onOpenTerminal={onOpenTerminal}
+                onOpenAttachment={onOpenAttachment}
+                onOpenIntegration={onOpenIntegration}
+                onEdit={onEditHost}
+                onDelete={onDeleteHost}
+              />
+            ))}
+          </>
+        )}
+      </div>
+    );
   };
-  const roots = (childGroups.get(null) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-  const ungrouped = (hostsByGroup.get(null) ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-  return <>{roots.map((group) => renderGroup(group, 0, new Set()))}{ungrouped.length > 0 && <div><div className="flex h-10 items-center gap-2 border-b border-border bg-surface-low px-4"><Folder className="h-4 w-4 text-text-muted" /><span className="text-xs font-bold text-text-muted">{t("settings.sshHosts.groupNone")}</span></div>{ungrouped.map((host) => <SshHostRow key={host.id} host={host} depth={1} onOpenTerminal={onOpenTerminal} onOpenAttachment={onOpenAttachment} onOpenIntegration={onOpenIntegration} onEdit={onEditHost} onDelete={onDeleteHost} />)}</div>}</>;
+  const roots = (childGroups.get(null) ?? []).sort(
+    (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
+  );
+  const ungrouped = (hostsByGroup.get(null) ?? []).sort(
+    (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
+  );
+  return (
+    <>
+      {roots.map((group) => renderGroup(group, 0, new Set()))}
+      {ungrouped.length > 0 && (
+        <div>
+          <div className="flex h-10 items-center gap-2 border-b border-border bg-surface-low px-4">
+            <Folder className="h-4 w-4 text-text-muted" />
+            <span className="text-xs font-bold text-text-muted">
+              {t("settings.sshHosts.groupNone")}
+            </span>
+          </div>
+          {ungrouped.map((host) => (
+            <SshHostRow
+              key={host.id}
+              host={host}
+              depth={1}
+              onOpenTerminal={onOpenTerminal}
+              onOpenAttachment={onOpenAttachment}
+              onOpenIntegration={onOpenIntegration}
+              onEdit={onEditHost}
+              onDelete={onDeleteHost}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
-function SshHostRow({ host, depth, onOpenTerminal, onOpenAttachment, onOpenIntegration, onEdit, onDelete }: { host: SshHost; depth: number; onOpenTerminal: (host: SshHost) => void; onOpenAttachment: (host: SshHost) => void; onOpenIntegration: (host: SshHost) => void; onEdit: (host: SshHost) => void; onDelete: (host: SshHost) => void }) {
+function SshHostRow({
+  host,
+  depth,
+  onOpenTerminal,
+  onOpenAttachment,
+  onOpenIntegration,
+  onEdit,
+  onDelete,
+}: {
+  host: SshHost;
+  depth: number;
+  onOpenTerminal: (host: SshHost) => void;
+  onOpenAttachment: (host: SshHost) => void;
+  onOpenIntegration: (host: SshHost) => void;
+  onEdit: (host: SshHost) => void;
+  onDelete: (host: SshHost) => void;
+}) {
   const { t } = useI18n();
-  return <div className="flex items-center gap-3 border-t border-border px-4 py-2.5" style={{ paddingLeft: 16 + depth * 18 }}><Server className="h-4 w-4 shrink-0 text-primary" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-text-primary">{host.name}</div><div className="truncate text-xs text-text-muted">{host.config_alias || `${host.username ? `${host.username}@` : ""}${host.host}:${host.port}`}</div></div><button type="button" className="ui-icon-button" aria-label={t("settings.sshHosts.attachmentDialog.open")} title={t("settings.sshHosts.attachmentDialog.open")} onClick={() => onOpenAttachment(host)}><Upload className="h-4 w-4" /></button><button type="button" className="ui-icon-button" aria-label={t("settings.sshHosts.openTerminal")} title={t("settings.sshHosts.openTerminal")} onClick={() => onOpenTerminal(host)}><Terminal className="h-4 w-4" /></button><button type="button" className="ui-icon-button" aria-label={t("settings.sshHosts.cliIntegration.open")} title={t("settings.sshHosts.cliIntegration.open")} onClick={() => onOpenIntegration(host)}><Plug className="h-4 w-4" /></button><button type="button" className="ui-icon-button" aria-label={t("common.edit")} onClick={() => onEdit(host)}><Pencil className="h-4 w-4" /></button><button type="button" className="ui-icon-button text-danger" aria-label={t("common.delete")} onClick={() => onDelete(host)}><Trash2 className="h-4 w-4" /></button></div>;
+  return (
+    <div
+      className="flex items-center gap-3 border-t border-border px-4 py-2.5"
+      style={{ paddingLeft: 16 + depth * 18 }}
+    >
+      <Server className="h-4 w-4 shrink-0 text-primary" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-bold text-text-primary">{host.name}</div>
+        <div className="truncate text-xs text-text-muted">
+          {host.config_alias ||
+            `${host.username ? `${host.username}@` : ""}${host.host}:${host.port}`}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="ui-icon-button"
+        aria-label={t("settings.sshHosts.attachmentDialog.open")}
+        title={t("settings.sshHosts.attachmentDialog.open")}
+        onClick={() => onOpenAttachment(host)}
+      >
+        <Upload className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        className="ui-icon-button"
+        aria-label={t("settings.sshHosts.openTerminal")}
+        title={t("settings.sshHosts.openTerminal")}
+        onClick={() => onOpenTerminal(host)}
+      >
+        <Terminal className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        className="ui-icon-button"
+        aria-label={t("settings.sshHosts.cliIntegration.open")}
+        title={t("settings.sshHosts.cliIntegration.open")}
+        onClick={() => onOpenIntegration(host)}
+      >
+        <Plug className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        className="ui-icon-button"
+        aria-label={t("common.edit")}
+        onClick={() => onEdit(host)}
+      >
+        <Pencil className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        className="ui-icon-button text-danger"
+        aria-label={t("common.delete")}
+        onClick={() => onDelete(host)}
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }

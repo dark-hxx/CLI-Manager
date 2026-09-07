@@ -17,7 +17,8 @@ interface MarkdownContentProps {
 ```
 
 - `MarkdownContent` owns scoped same-document preview scrolling. It reads `anchor.getAttribute("href")`; resolved DOM `anchor.href` is forbidden because it prepends the Tauri origin.
-- `FileEditorPane` owns destination classification, system opener calls, project file navigation, source line reveal, request identity and localized failures.
+- `features/files/hooks/useFileEditorController.ts` owns editor refs/state and scoped Monaco gestures. Its `useFileEditorMarkdownNavigation` hook owns destination classification, system opener calls, project file navigation, source line reveal and localized failures using the controller's existing request refs/setters. Keep this hook at its original callback/effect position; never create a second request identity or file store.
+- `features/files/components/FileEditorPaneView.tsx` renders the complete editor view; the old `FileEditorPane` module is a compatibility entry. The controller, navigation hook and view each remain within the pinned-editor 300-line responsibility limit.
 - `fileExplorerStore.revealPath` remains the authority for local/WSL/SSH/Worktree traversal and open-file reuse. Markdown navigation must not introduce direct filesystem calls or reinterpret remote paths as local paths.
 - `FileEditorContent` only delivers preview activation and applies a matching pending preview fragment after the target file renders.
 
@@ -65,5 +66,6 @@ Split the raw fragment before decoding the path so `%23` can remain part of a fi
 - Unit-test destination classification, encoding, traversal rejection, heading IDs/duplicates and source link range detection.
 - Assert the renderer uses raw `getAttribute("href")`, root-scoped ID lookup and Ctrl-context activation.
 - Assert the file editor registers scoped Monaco mouse handling and delegates file paths to `revealPath`.
+- Run `scripts/fileEditorMarkdownNavigation.test.mjs` for external/project boundary routing, source/preview fragments, stale failure protection, missing files and mode-before-reveal ordering. These in-memory tests do not replace desktop gesture verification.
 - Run shared Markdown, history, terminal preview and file workspace regressions plus `npx tsc --noEmit` and `npm run build`.
 - Human desktop verification is required for actual Monaco context-menu suppression, system browser launching, cross-file scrolling, multi-pane scoping and language switching.

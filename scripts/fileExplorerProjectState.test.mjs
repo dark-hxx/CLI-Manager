@@ -9,7 +9,7 @@ const terminalStore = read("../src/features/terminal/store/terminalStore.ts");
 const terminalTabs = read("../src/features/terminal/hooks/useTerminalTabsController.tsx");
 const paneLeafSource = read("../src/features/terminal/components/PaneLeafView.tsx");
 const sidebar = read("../src/features/projects/hooks/useSidebarController.tsx");
-const fileEditorPane = read("../src/components/files/FileEditorPane.tsx");
+const fileEditorPane = read("../src/features/files/hooks/useFileEditorController.ts");
 
 function sliceBetween(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);

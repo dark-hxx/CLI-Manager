@@ -783,7 +783,15 @@ mod tests {
                 ],
             },
             BackupDatabaseStatement {
-                sql: "INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,attachment_root,startup_script,notes,sort_order,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)".to_string(),
+                sql: concat!(
+                    "INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,",
+                    "config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,",
+                    "jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,",
+                    "server_alive_interval_sec,server_alive_count_max,terminal_encoding,attachment_root,",
+                    "startup_script,notes,sort_order,created_at,updated_at) VALUES (",
+                    "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,",
+                    "$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)"
+                ).to_string(),
                 values: vec![
                     Value::String("ssh-host".to_string()),
                     Value::String("Server".to_string()),

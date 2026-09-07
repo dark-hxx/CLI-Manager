@@ -338,7 +338,18 @@ fn inject_reload_script(mut html: Vec<u8>, version: u64) -> Vec<u8> {
 
 fn reload_script(version: u64) -> Vec<u8> {
     format!(
-        r#"<script data-cli-manager-live-server>(()=>{{const endpoint="{RELOAD_ENDPOINT}";let version="{version}";let reported=false;async function poll(){{try{{const response=await fetch(endpoint,{{cache:"no-store"}});if(!response.ok)throw new Error(`HTTP ${{response.status}}`);const next=await response.text();reported=false;if(next!==version)location.reload();}}catch(error){{if(!reported)console.error("CLI-Manager Live Server polling failed",error);reported=true;}}}}setInterval(()=>void poll(),{POLL_INTERVAL_MS});}})();</script>"#
+        concat!(
+            r#"<script data-cli-manager-live-server>(()=>{{const endpoint="{endpoint}";"#,
+            r#"let version="{version}";let reported=false;async function poll(){{try{{"#,
+            r#"const response=await fetch(endpoint,{{cache:"no-store"}});"#,
+            r#"if(!response.ok)throw new Error(`HTTP ${{response.status}}`);"#,
+            "const next=await response.text();reported=false;if(next!==version)location.reload();",
+            r#"}}catch(error){{if(!reported)console.error("CLI-Manager Live Server polling failed",error);"#,
+            "reported=true;}}}}setInterval(()=>void poll(),{interval});}})();</script>"
+        ),
+        endpoint = RELOAD_ENDPOINT,
+        version = version,
+        interval = POLL_INTERVAL_MS,
     )
     .into_bytes()
 }

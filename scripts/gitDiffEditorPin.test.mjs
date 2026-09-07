@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const fileEditor = read("../src/components/files/FileEditorPane.tsx");
+const fileEditor = read("../src/features/files/hooks/useFileEditorController.ts");
+const fileEditorView = read("../src/features/files/components/FileEditorPaneView.tsx");
 const fileEditorContent = read("../src/components/files/FileEditorContent.tsx");
 const editorHost = read("../src/components/git/diff/GitDiffEditorHost.tsx");
 const workspaceStore = read("../src/stores/gitDiffWorkspaceStore.ts");
@@ -16,7 +17,7 @@ const reviewDialog = read("../src/components/git/diff/GitDiffReviewDialog.tsx");
 const sshGit = read("../src/lib/sshRemoteGit.ts");
 
 test("file editor composes pinned Diff without owning Git transport or mutations", () => {
-  assert.match(fileEditor, /<FileEditorContent/);
+  assert.match(fileEditorView, /<FileEditorContent/);
   assert.match(fileEditorContent, /<GitDiffEditorHost/);
   assert.doesNotMatch(fileEditor, /@tauri-apps\/api\/core/);
   assert.doesNotMatch(fileEditor, /git_get_file_diff|git_revert_hunk|git_revert_lines|git_discard_file/);
@@ -72,6 +73,12 @@ test("new pinned editor modules stay split by responsibility", () => {
     "../src/components/files/useFileEditorSearchNavigation.ts",
     "../src/components/files/useFileEditorShortcuts.ts",
     "../src/components/files/FileEditorPane.tsx",
+    "../src/features/files/components/FileEditorPane.tsx",
+    "../src/features/files/components/FileEditorPaneView.tsx",
+    "../src/features/files/hooks/useFileEditorController.ts",
+    "../src/features/files/hooks/useFileEditorMarkdownNavigation.ts",
+    "../src/features/files/types/fileEditorModel.ts",
+    "../src/features/files/lib/fileEditorTheme.ts",
   ];
   for (const modulePath of modules) {
     assert.ok(read(modulePath).split(/\r?\n/).length <= 300, modulePath);

@@ -13,7 +13,7 @@ const markdownRendererSource = readFileSync(
   "utf8",
 );
 const fileEditorSource = readFileSync(
-  new URL("../src/components/files/FileEditorPane.tsx", import.meta.url),
+  new URL("../src/features/files/hooks/useFileEditorController.ts", import.meta.url),
   "utf8",
 );
 const fileEditorContentSource = readFileSync(
@@ -118,8 +118,10 @@ test("renderer scopes anchor navigation and file editor owns source activation",
   assert.match(fileEditorSource, /editor\.onMouseDown/);
   assert.match(fileEditorSource, /event\.event\.ctrlKey/);
   assert.match(fileEditorSource, /event\.event\.rightButton/);
-  assert.match(fileEditorSource, /resolveMarkdownHref\(href, visibleFile\.path\)/);
-  assert.match(fileEditorSource, /pendingMarkdownNavigation\.path === visibleFile\?\.path/);
+  const navigation = readFileSync(new URL("../src/features/files/hooks/useFileEditorMarkdownNavigation.ts", import.meta.url), "utf8");
+  const view = readFileSync(new URL("../src/features/files/components/FileEditorPaneView.tsx", import.meta.url), "utf8");
+  assert.match(navigation, /resolveMarkdownHref\(href, visibleFile\.path\)/);
+  assert.match(view, /pendingMarkdownNavigation\.path === visibleFile\?\.path/);
   assert.match(fileEditorContentSource, /collectMarkdownHeadings\(file\.content\)/);
   assert.match(fileEditorContentSource, /querySelectorAll<HTMLElement>\("h1, h2, h3, h4, h5, h6"\)/);
 });

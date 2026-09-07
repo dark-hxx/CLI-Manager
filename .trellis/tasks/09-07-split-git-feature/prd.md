@@ -6,11 +6,15 @@ Split Git feature
 
 ## Requirements
 
-- TBD
+- Restore the existing 300-line pinned-editor responsibility boundary through cohesive Markdown navigation, controller and view extraction.
+- Preserve hook order, request identity guards, system opener behavior, project ownership, pinned Diff leases, dirty-file confirmation and complete rendered JSX.
+- Keep old component entry compatible; place actual owners in the files feature. Full Git ownership relocation is coordinated with architecture convergence.
 
 ## Acceptance Criteria
 
-- [ ] TBD
+- [ ] Each editor responsibility owner is at most 300 physical lines; no facade-only evasion.
+- [ ] Original statements and full JSX compare exactly, with TypeScript and focused file/Git/Markdown regressions passing.
+- [ ] TEMP records and navigation ownership contract reflect the real modules.
 
 ## Notes
 

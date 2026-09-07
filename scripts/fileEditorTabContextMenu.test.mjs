@@ -5,7 +5,9 @@ import { readFileSync } from "./helpers/readComposedSource.mjs";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 const tabs = read("../src/components/files/FileEditorTabs.tsx");
-const pane = read("../src/components/files/FileEditorPane.tsx");
+const pane = read("../src/features/files/hooks/useFileEditorController.ts");
+const view = read("../src/features/files/components/FileEditorPaneView.tsx");
+const model = read("../src/features/files/types/fileEditorModel.ts");
 const diffTabs = read("../src/components/git/diff/GitDiffEditorTabs.tsx");
 const i18n = read("../src/lib/i18n.ts");
 const styles = read("../src/styles/components.css");
@@ -37,12 +39,12 @@ test("file tab menu reuses the terminal tab skin through root theme variables", 
 });
 
 test("batch file closes wait for selected dirty files before mutating tabs", () => {
-  assert.match(pane, /type PendingAction = \{ closePane: boolean; paths: string\[\]; dirtyPaths: string\[\] \} \| null/);
+  assert.match(model, /type PendingAction = \{ closePane: boolean; paths: string\[\]; dirtyPaths: string\[\] \} \| null/);
   assert.match(pane, /const requestCloseFiles = \(paths: string\[\]\) => \{[\s\S]*?const targetFiles = visibleFiles\.filter/);
   assert.match(pane, /const dirtyPaths = targetFiles\.filter\(\(file\) => file\.content !== file\.savedContent\)/);
   assert.match(pane, /setPendingAction\(\{ closePane: false, paths: targetPaths, dirtyPaths \}\)/);
   assert.match(pane, /for \(const path of dirtyPaths\) await saveFile\(path\);[\s\S]*?closeFiles\(paths\);/);
-  assert.match(pane, /onCloseFiles=\{requestCloseFiles\}/);
+  assert.match(view, /onCloseFiles=\{requestCloseFiles\}/);
 });
 
 test("file tab menu labels have Chinese and English translations", () => {
