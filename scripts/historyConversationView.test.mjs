@@ -15,7 +15,11 @@ const listSource = readFileSync(
   "utf8",
 );
 const storeSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/store/historyStore.ts", import.meta.url),
+  "utf8",
+);
+const normalizationSource = readFileSync(
+  new URL("../src/features/history/lib/historyNormalization.ts", import.meta.url),
   "utf8",
 );
 const conversationSource = readFileSync(
@@ -41,7 +45,7 @@ test("conversation keeps only visible user and assistant text", () => {
   assert.match(detailSource, /if \(textParts\.length === 0\) return;/);
   assert.match(detailSource, /isConversationVisibleMessage/);
   assert.match(conversationSource, /firstLine\.startsWith\("base directory for this skill:"\)/);
-  assert.match(storeSource, /parts: parts\.length > 0 \? parts : undefined/);
+  assert.match(normalizationSource, /parts: parts\.length > 0 \? parts : undefined/);
 });
 
 test("search and cross-view jumps keep the conversation view targetable", () => {

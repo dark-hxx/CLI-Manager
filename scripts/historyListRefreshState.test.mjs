@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const storeSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/store/historyStore.ts", import.meta.url),
   "utf8"
 );
 const workspaceSource = readFileSync(
@@ -28,7 +28,7 @@ function sourceBlock(source, startMarker, endMarker) {
 }
 
 test("automatic and manual history refreshes keep the rendered list mounted", () => {
-  const listener = sourceBlock(storeSource, "function ensureHistoryIndexListener", "const remoteHistorySyncRequests");
+  const listener = sourceBlock(storeSource, "function ensureHistoryIndexListener", "const automaticTitleQueueKeys");
   const refresh = sourceBlock(storeSource, "refreshIndex: async", "addConvertedSession: ");
 
   assert.match(listener, /loadSessions\(\{ background: true \}\)/);

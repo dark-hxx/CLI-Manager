@@ -66,7 +66,7 @@ test("Grok 限制仅作用于 SSH 历史", () => {
 
 test("历史入口与双语提示复用 SSH 历史能力判断", () => {
   const terminalTabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
-  const sidebarSource = readFileSync(new URL("../src/components/sidebar/index.tsx", import.meta.url), "utf8");
+  const sidebarSource = readFileSync(new URL("../src/features/projects/hooks/useSidebarController.tsx", import.meta.url), "utf8");
   const i18nSource = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
 
   for (const componentSource of [terminalTabsSource, sidebarSource]) {

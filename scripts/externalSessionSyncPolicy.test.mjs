@@ -7,7 +7,7 @@ const storeSource = readFileSync(
   "utf8"
 );
 const sidebarSource = readFileSync(
-  new URL("../src/components/sidebar/index.tsx", import.meta.url),
+  new URL("../src/features/projects/hooks/useSidebarController.tsx", import.meta.url),
   "utf8"
 );
 const terminalStoreSource = readFileSync(

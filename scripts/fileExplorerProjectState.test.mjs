@@ -7,7 +7,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const fileStore = read("../src/stores/fileExplorerStore.ts");
 const terminalStore = read("../src/stores/terminalStore.ts");
 const terminalTabs = read("../src/components/TerminalTabs.tsx");
-const sidebar = read("../src/components/sidebar/index.tsx");
+const sidebar = read("../src/features/projects/hooks/useSidebarController.tsx");
 const fileEditorPane = read("../src/components/files/FileEditorPane.tsx");
 
 function sliceBetween(source, startMarker, endMarker) {

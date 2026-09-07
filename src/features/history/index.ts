@@ -1,7 +1,10 @@
+export { useHistoryStore } from "./store/historyStore";
 export {
   type TodayProjectStats,
   type FetchHistoryStatsOptions,
   type FetchHistoryRequestLogStatsOptions,
+} from "./types/historyStoreTypes";
+export {
   syncHistoryRequestLogs,
   fetchHistoryRequestLogStats,
   fetchHistoryStatsProjectOptions,
@@ -14,5 +17,4 @@ export {
   fetchRemoteTodayProjectStats,
   fetchRemoteLatestProjectSessionDetail,
   fetchRemoteProjectSessionSummaries,
-  useHistoryStore,
-} from "@/features/history";
+} from "./lib/historyRequests";

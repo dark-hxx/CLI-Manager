@@ -11,7 +11,7 @@ const markdownSource = readFileSync(
   "utf8",
 );
 const historyStoreSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/lib/historyRequests.ts", import.meta.url),
   "utf8",
 );
 const terminalSource = readFileSync(

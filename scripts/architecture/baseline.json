@@ -38,9 +38,6 @@
         "61c641d1cf8c8f16": 1
       }
     },
-    "src/components/settings/pages/HookSettingsPage.tsx": {
-      "lines": 2348
-    },
     "src/components/settings/pages/SshHostEditor.tsx": {
       "longLines": {
         "58a022bac9d83df2": 1,
@@ -81,12 +78,6 @@
         "99512cea22891ade": 1,
         "645c5a4446697b57": 1
       }
-    },
-    "src/components/sidebar/index.tsx": {
-      "lines": 3054
-    },
-    "src/stores/historyStore.ts": {
-      "lines": 3731
     },
     "src/stores/terminalStore.ts": {
       "lines": 4135

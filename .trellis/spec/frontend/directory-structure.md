@@ -9,6 +9,9 @@ Migration is incremental; do not assume legacy directories have already moved.
 src/
   App.tsx, main.tsx             # Current app composition/entry
   components/, hooks/, stores/  # Existing domain implementations; migration pending
+  features/settings/           # Hook settings page, controls and model
+  features/history/            # History store, normalization, requests, cache and metadata
+  features/projects/           # Sidebar controller, view, helpers and delete confirmation
   lib/i18n.ts                   # Stable translation runtime, no dictionary monolith
   shared/i18n/catalogs.ts       # Explicit dictionary composition
   shared/i18n/messages/         # <domain>.zh-CN.ts and <domain>.en-US.ts
