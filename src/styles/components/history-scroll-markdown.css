@@ -1,0 +1,1054 @@
+.ui-history-tree-toggle,
+.ui-history-row-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.64;
+  transition:
+    background-color var(--animate-duration-fast),
+    border-color var(--animate-duration-fast),
+    color var(--animate-duration-fast),
+    opacity var(--animate-duration-fast);
+}
+
+.ui-history-tree-toggle:hover,
+.ui-history-tree-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--border) 46%, transparent);
+  background-color: color-mix(in srgb, var(--surface-container-high) 58%, transparent);
+  color: var(--on-surface);
+  opacity: 1;
+  outline: none;
+}
+
+.ui-history-row-delete {
+  opacity: 0.24;
+}
+
+.group\/session-row:hover .ui-history-row-delete,
+.ui-history-row-delete:focus-visible {
+  opacity: 0.72;
+}
+
+.ui-history-row-delete:hover,
+.ui-history-row-delete:focus-visible {
+  border-color: color-mix(in srgb, var(--danger) 22%, transparent);
+  background-color: color-mix(in srgb, var(--danger) 7%, transparent);
+  color: color-mix(in srgb, var(--danger) 88%, var(--text-primary) 12%);
+  outline: none;
+}
+
+.ui-history-subagent-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--surface-container-high) 44%, transparent);
+  color: color-mix(in srgb, var(--text-muted) 82%, var(--primary) 18%);
+}
+
+.switch {
+  position: relative;
+  width: 40px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  background-color: var(--surface-container-high);
+  transition:
+    background-color var(--animate-duration-fast),
+    border-color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    opacity var(--animate-duration-fast);
+}
+
+.switch:hover {
+  background-color: var(--interactive-hover-bg);
+}
+
+.switch:active {
+  background-color: var(--interactive-active-bg);
+}
+
+.switch:disabled {
+  opacity: var(--interactive-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.switch[data-on="true"],
+.switch[data-state="checked"] {
+  background-color: var(--interactive-selected-bg);
+  border: 1px solid var(--interactive-selected-border);
+}
+
+.switch[data-on="true"]:hover,
+.switch[data-state="checked"]:hover {
+  background-color: color-mix(in srgb, var(--interactive-selected-bg) 86%, var(--primary) 14%);
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background-color: #fff;
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 24%, transparent);
+  transition: transform var(--animate-duration-fast), background-color var(--animate-duration-fast);
+}
+
+.switch[data-on="true"] .switch-thumb,
+.switch[data-state="checked"] .switch-thumb {
+  transform: translateX(20px);
+}
+
+:root {
+  --ui-scrollbar-size: 10px;
+  --ui-scrollbar-thumb: var(--border);
+  --ui-scrollbar-track: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-scrollbar-thumb) var(--ui-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: var(--ui-scrollbar-size);
+  height: var(--ui-scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--ui-scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--ui-scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.diff-code-scroll,
+.ui-thin-scroll,
+.ui-terminal-bg-layer .xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-scrollbar-thumb) var(--ui-scrollbar-track);
+}
+
+.diff-code-scroll::-webkit-scrollbar,
+.ui-thin-scroll::-webkit-scrollbar,
+.ui-terminal-bg-layer .xterm .xterm-viewport::-webkit-scrollbar {
+  width: var(--ui-scrollbar-size);
+  height: var(--ui-scrollbar-size);
+}
+
+.diff-code-scroll::-webkit-scrollbar-track,
+.ui-thin-scroll::-webkit-scrollbar-track,
+.ui-terminal-bg-layer .xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: var(--ui-scrollbar-track);
+}
+
+.diff-code-scroll::-webkit-scrollbar-thumb,
+.ui-thin-scroll::-webkit-scrollbar-thumb,
+.ui-terminal-bg-layer .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: var(--ui-scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.ui-terminal-bg-layer .xterm .xterm-viewport {
+  scrollbar-gutter: stable;
+}
+
+.ui-terminal-bg-layer .xterm .xterm-scrollable-element
+  > .xterm-scrollbar.xterm-vertical
+  > .xterm-slider {
+  left: calc(50% - 2px) !important;
+  width: 4px !important;
+  border-radius: 999px;
+}
+
+.ui-terminal-bg-layer .xterm .xterm-scrollable-element
+  > .xterm-scrollbar.xterm-vertical:hover
+  > .xterm-slider,
+.ui-terminal-bg-layer .xterm .xterm-scrollable-element
+  > .xterm-scrollbar.xterm-vertical
+  > .xterm-slider.xterm-active {
+  left: 0 !important;
+  width: 100% !important;
+}
+
+.ui-terminal-native-scroll {
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+.ui-terminal-native-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.ui-subagent-scrollbar {
+  position: absolute;
+  top: 6px;
+  right: 3px;
+  bottom: 6px;
+  width: 10px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--animate-duration-fast) var(--ease-standard);
+}
+
+.ui-subagent-scrollbar[data-visible="true"],
+.ui-subagent-scrollbar[data-dragging="true"] {
+  opacity: 1;
+}
+
+.ui-subagent-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 4px;
+  min-height: 24px;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 20%, transparent);
+  cursor: grab;
+  pointer-events: auto;
+  transition: left var(--animate-duration-fast) var(--ease-standard), width var(--animate-duration-fast) var(--ease-standard), background-color var(--animate-duration-fast) var(--ease-standard);
+}
+
+.ui-subagent-scrollbar:hover .ui-subagent-scrollbar-thumb,
+.ui-subagent-scrollbar-thumb:hover,
+.ui-subagent-scrollbar[data-dragging="true"] .ui-subagent-scrollbar-thumb {
+  left: 0;
+  width: 10px;
+  cursor: grabbing;
+}
+
+.ui-subagent-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 40%, transparent);
+}
+
+.ui-subagent-scrollbar[data-dragging="true"] .ui-subagent-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 50%, transparent);
+}
+
+.diff-code-inner {
+  width: max-content;
+  min-width: 100%;
+}
+
+.ui-markdown {
+  --md-text: var(--text-primary);
+  --md-muted: var(--text-secondary);
+  --md-subtle: var(--text-muted);
+  --md-border: color-mix(in srgb, var(--border) 72%, transparent);
+  --md-border-muted: color-mix(in srgb, var(--border) 42%, transparent);
+  --md-canvas-subtle: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
+  --md-canvas-muted: color-mix(in srgb, var(--bg-tertiary) 44%, transparent);
+  color: var(--md-text);
+  overflow-wrap: anywhere;
+  line-height: 1.58;
+}
+
+.ui-markdown .katex {
+  color: var(--md-text);
+}
+
+.ui-markdown .katex-display {
+  margin: 0.8rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.15rem 0 0.35rem;
+}
+
+/* Replay lives inside the terminal side-panel theme, while history Markdown normally
+   reads the app-shell palette. Remap those tokens only for this caller. */
+.ai-replay-transcript {
+  --text-primary: var(--term-panel-fg, #ececec);
+  --text-secondary: color-mix(in srgb, var(--term-panel-fg, #ececec) 82%, var(--term-panel-dim, #9ca0a6) 18%);
+  --text-muted: var(--term-panel-dim, #9ca0a6);
+  --border: var(--term-panel-border, #2e2e2e);
+  --bg-secondary: var(--term-panel-card-inner, #181818);
+  --bg-tertiary: var(--term-panel-card, #121212);
+  --surface-container-low: var(--term-panel-card-inner, #181818);
+  --surface-container-high: var(--term-panel-card, #121212);
+  --primary: var(--term-panel-cyan, #5ac8e0);
+  --accent: var(--term-panel-cyan, #5ac8e0);
+  --success: var(--term-panel-green, #3dd68c);
+  --warning: var(--term-panel-yellow, #e5c453);
+  --interactive-hover-bg: color-mix(in srgb, var(--term-panel-cyan, #5ac8e0) 10%, transparent);
+  color: var(--term-panel-fg, #ececec);
+}
+
+.ui-markdown-p {
+  margin: 0 0 0.72rem;
+  color: var(--md-text);
+}
+
+.ui-markdown-p:first-child,
+.ui-markdown-h:first-child,
+.ui-markdown-table-wrap:first-child,
+.ui-markdown-code-block:first-child,
+.ui-markdown-quote:first-child {
+  margin-top: 0;
+}
+
+.ui-markdown-p:last-child,
+.ui-markdown-table-wrap:last-child,
+.ui-markdown-code-block:last-child,
+.ui-markdown-quote:last-child {
+  margin-bottom: 0;
+}
+
+.ui-markdown ul,
+.ui-markdown ol {
+  margin: 0 0 0.72rem;
+  padding-left: 1.55rem;
+}
+
+.ui-markdown li {
+  margin: 0.18rem 0;
+  padding-left: 0.12rem;
+}
+
+.ui-markdown li + li {
+  margin-top: 0.25rem;
+}
+
+.ui-markdown li > p {
+  margin: 0.32rem 0;
+}
+
+.ui-markdown li > ul,
+.ui-markdown li > ol {
+  margin: 0.32rem 0;
+}
+
+.ui-markdown li::marker {
+  color: var(--md-subtle);
+}
+
+.ui-markdown ul ul {
+  list-style-type: circle;
+}
+
+.ui-markdown ul ul ul {
+  list-style-type: square;
+}
+
+.ui-markdown ol ol {
+  list-style-type: lower-alpha;
+}
+
+.ui-markdown ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.ui-markdown .contains-task-list {
+  padding-left: 0.25rem;
+  list-style: none;
+}
+
+.ui-markdown .task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+.ui-markdown .task-list-item > span:first-child {
+  display: inline-flex;
+  flex: none;
+  min-height: 1.25em;
+}
+
+.ui-markdown-checkbox {
+  width: 0.85rem;
+  height: 0.85rem;
+  margin: 0.2rem 0 0;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.ui-markdown-h {
+  position: relative;
+  margin: 1.1rem 0 0.56rem;
+  line-height: 1.25;
+  color: var(--md-text);
+  scroll-margin-top: 4rem;
+}
+
+.ui-markdown-heading-anchor {
+  position: absolute;
+  left: -0.9rem;
+  width: 0.8rem;
+  color: var(--md-subtle);
+  opacity: 0;
+  text-decoration: none;
+  transition: opacity 120ms ease;
+}
+
+.ui-markdown-h:hover .ui-markdown-heading-anchor,
+.ui-markdown-heading-anchor:focus {
+  opacity: 1;
+}
+
+.ui-markdown-h1 {
+  padding-bottom: 0.42rem;
+  border-bottom: 1px solid var(--md-border);
+  font-size: 1.72em;
+  font-weight: 760;
+  color: var(--text-primary);
+}
+
+.ui-markdown-h2 {
+  padding-bottom: 0.34rem;
+  border-bottom: 1px solid var(--md-border-muted);
+  font-size: 1.42em;
+  font-weight: 720;
+  color: color-mix(in srgb, var(--text-primary) 94%, var(--accent) 6%);
+}
+
+.ui-markdown-h3 {
+  font-size: 1.22em;
+  font-weight: 680;
+  color: color-mix(in srgb, var(--text-primary) 88%, var(--accent) 12%);
+}
+
+.ui-markdown-h4 {
+  font-size: 1.08em;
+  font-weight: 660;
+  color: var(--md-text);
+}
+
+.ui-markdown-h5 {
+  font-size: 1em;
+  font-weight: 640;
+  color: var(--md-muted);
+}
+
+.ui-markdown-h6 {
+  font-size: 0.92em;
+  font-weight: 640;
+  color: var(--md-subtle);
+  text-transform: uppercase;
+}
+
+.ui-markdown-h + .ui-markdown-p,
+.ui-markdown-h + ul,
+.ui-markdown-h + ol,
+.ui-markdown-h + .ui-markdown-table-wrap {
+  margin-top: 0;
+}
+
+.ui-markdown-quote {
+  margin: 0 0 0.72rem;
+  padding: 0 0.85rem;
+  border-left: 0.25rem solid var(--md-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--md-muted);
+}
+
+.ui-markdown-quote > .ui-markdown-p:last-child {
+  margin-bottom: 0;
+}
+
+.ui-markdown-hr {
+  height: 0.25rem;
+  margin: 1.15rem 0;
+  border: 0;
+  border-radius: 999px;
+  background-color: var(--md-border-muted);
+}
+
+.ui-markdown-table-wrap {
+  margin: 0 0 0.88rem;
+  overflow: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  scrollbar-gutter: stable;
+}
+
+.ui-markdown-table-wrap::-webkit-scrollbar,
+.ui-markdown-code-block::-webkit-scrollbar,
+.ui-markdown-compact::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ui-markdown-table-wrap::-webkit-scrollbar-thumb,
+.ui-markdown-code-block::-webkit-scrollbar-thumb,
+.ui-markdown-compact::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background-color: var(--ui-scrollbar-thumb);
+}
+
+.ui-markdown-table {
+  width: max-content;
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: separate;
+  font-size: 0.76rem;
+  background-color: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+}
+
+.ui-markdown-table th,
+.ui-markdown-table td {
+  border-right: 1px solid var(--md-border);
+  border-bottom: 1px solid var(--md-border);
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ui-markdown-table th:last-child,
+.ui-markdown-table td:last-child {
+  border-right: 0;
+}
+
+.ui-markdown-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.ui-markdown-table th {
+  background-color: var(--md-canvas-subtle);
+  color: var(--text-primary);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ui-markdown-table tbody tr:nth-child(even) {
+  background-color: color-mix(in srgb, var(--bg-tertiary) 24%, transparent);
+}
+
+.ui-markdown-table tbody tr:hover {
+  background-color: color-mix(in srgb, var(--accent) 6%, var(--bg-tertiary) 18%);
+}
+
+.ui-markdown-strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.ui-markdown-em {
+  color: var(--text-secondary);
+}
+
+.ui-markdown-del {
+  color: var(--text-muted);
+}
+
+.ui-markdown-sup {
+  margin-left: 0.1rem;
+  font-size: 0.72em;
+  line-height: 0;
+}
+
+.ui-markdown-section.footnotes,
+.ui-markdown-section[data-footnotes] {
+  margin-top: 1rem;
+  padding-top: 0.72rem;
+  border-top: 1px solid var(--md-border);
+  color: var(--md-muted);
+  font-size: 0.92em;
+}
+
+.ui-markdown-section[data-footnotes] ol {
+  margin-bottom: 0;
+}
+
+.ui-markdown .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ui-markdown-compact {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.ui-markdown-inline-code {
+  border-radius: 6px;
+  padding: 0.12rem 0.3rem;
+  background-color: var(--md-canvas-muted);
+  color: var(--md-text);
+  font-family: var(--font-ui-mono);
+  font-size: 0.88em;
+}
+
+.ui-markdown-code-block {
+  margin: 0 0 0.88rem;
+  overflow: auto;
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  background-color: var(--md-canvas-subtle);
+}
+
+.ui-markdown-code-block pre {
+  min-width: max-content;
+}
+
+.ui-markdown-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--md-border);
+  padding: 0.35rem 0.75rem;
+  background-color: var(--md-canvas-muted);
+  color: var(--md-subtle);
+  font-family: var(--font-ui-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ui-markdown-code-tag {
+  font-family: var(--font-ui-mono) !important;
+}
+
+.ui-markdown-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ui-markdown-link:hover {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+}
+
+.ui-markdown-search-mark {
+  border-radius: 3px;
+  padding: 0 0.15rem;
+  background-color: var(--warning);
+  color: var(--bg-primary);
+}
+
+.ui-markdown-image {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 6px;
+  padding: 0.18rem 0.38rem;
+  background-color: color-mix(in srgb, var(--bg-tertiary) 44%, transparent);
+  color: var(--text-secondary);
+  vertical-align: baseline;
+}
+
+.ui-markdown-image-label {
+  flex: none;
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+  padding: 0 0.24rem;
+  color: var(--accent);
+  font-size: 0.72em;
+  font-weight: 700;
+}
+
+.ui-markdown-image-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-markdown-preview summary {
+  list-style: none;
+}
+
+.ui-markdown-preview summary::-webkit-details-marker {
+  display: none;
+}
+
+.ui-markdown-preview summary::after {
+  content: "展开";
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.ui-markdown-preview[open] summary::after {
+  content: "收起";
+}
+
+.subagent-transcript-shell {
+  background:
+    radial-gradient(
+      circle at 0 0,
+      color-mix(in srgb, var(--term-panel-green, #3dd68c) 15%, transparent),
+      transparent 34%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--term-panel-bg, #0a0a0a) 92%, var(--term-panel-fg, #ececec) 8%),
+      color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--terminal-theme-background, #0c0e10) 10%)
+    );
+}
+
+.subagent-transcript-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.subagent-transcript-message {
+  border: 1px solid var(--term-panel-border, #2e2e2e);
+  border-radius: 10px;
+  padding: 0.75rem;
+  background-color: var(--term-panel-card, #121212);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 22%, transparent);
+}
+
+.subagent-transcript-message[data-role="assistant"] {
+  border-color: color-mix(in srgb, var(--term-panel-blue, #5b8def) 42%, var(--term-panel-border, #2e2e2e) 58%);
+  background-color: color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--term-panel-blue, #5b8def) 10%);
+}
+
+.subagent-transcript-message[data-role="user"] {
+  border-color: color-mix(in srgb, var(--term-panel-green, #3dd68c) 42%, var(--term-panel-border, #2e2e2e) 58%);
+  background-color: color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--term-panel-green, #3dd68c) 10%);
+}
+
+.subagent-transcript-message[data-role="tool"] {
+  border-color: color-mix(in srgb, var(--term-panel-yellow, #e5c453) 42%, var(--term-panel-border, #2e2e2e) 58%);
+  background-color: color-mix(in srgb, var(--term-panel-card, #121212) 90%, var(--term-panel-yellow, #e5c453) 10%);
+}
+
+.subagent-transcript-role {
+  margin-bottom: 0.45rem;
+  font-family: var(--font-ui-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.subagent-transcript-message .ui-markdown {
+  font-size: 0.78rem;
+}
+
+.ui-markdown-terminal {
+  --md-text: #ececec;
+  --md-muted: #cfd3d8;
+  --md-subtle: #9ca0a6;
+  --md-border: #2e2e2e;
+  --md-border-muted: rgba(46, 46, 46, 0.85);
+  --md-canvas-subtle: #181818;
+  --md-canvas-muted: rgba(61, 214, 140, 0.09);
+  color: #ececec;
+  line-height: 1.68;
+}
+
+.ui-markdown-terminal .ui-markdown-h {
+  color: #ececec;
+  letter-spacing: 0;
+}
+
+.ui-markdown-terminal .ui-markdown-h2,
+.ui-markdown-terminal .ui-markdown-h3 {
+  border-bottom-color: rgba(46, 46, 46, 0.85);
+}
+
+.ui-markdown-terminal .ui-markdown-p {
+  color: #d9d9d9;
+}
+
+.ui-markdown-terminal .ui-markdown-ul,
+.ui-markdown-terminal .ui-markdown-ol,
+.ui-markdown-terminal ul,
+.ui-markdown-terminal ol {
+  margin: 0.45rem 0;
+  padding-left: 1.25rem;
+}
+
+.ui-markdown-terminal li::marker {
+  color: #3dd68c;
+}
+
+.ui-markdown-terminal input[type="checkbox"] {
+  accent-color: #3dd68c;
+  margin-right: 0.4rem;
+}
+
+.ui-markdown-terminal .ui-markdown-quote {
+  border-left-color: #3dd68c;
+  background: rgba(61, 214, 140, 0.07);
+  color: #cfd3d8;
+}
+
+.ui-markdown-terminal .ui-markdown-table-wrap {
+  border-color: #2e2e2e;
+  background: #0f0f0f;
+}
+
+.ui-markdown-terminal .ui-markdown-table th,
+.ui-markdown-terminal .ui-markdown-table td {
+  border-bottom-color: #2e2e2e;
+}
+
+.ui-markdown-terminal .ui-markdown-table th {
+  background: #181818;
+  color: #3dd68c;
+}
+
+.ui-markdown-terminal .ui-markdown-table td {
+  color: #ececec;
+}
+
+.ui-markdown-terminal .ui-markdown-inline-code {
+  border-color: rgba(61, 214, 140, 0.28);
+  background: rgba(61, 214, 140, 0.09);
+  color: #3dd68c;
+}
+
+.ui-markdown-terminal .ui-markdown-code-block {
+  border-color: #2e2e2e;
+  background-color: #0a0a0a;
+}
+
+.ui-markdown-terminal .ui-markdown-code-header {
+  border-bottom-color: #2e2e2e;
+  background-color: #181818;
+  color: #9ca0a6;
+}
+
+.ui-markdown-terminal .ui-markdown-hr {
+  border-top-color: #2e2e2e;
+}
+
+.ui-markdown-terminal .ui-markdown-link {
+  color: #5ac8e0;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(90, 200, 224, 0.45);
+  cursor: pointer;
+}
+
+.ui-markdown-terminal .ui-markdown-link:hover {
+  color: #3dd68c;
+  border-bottom-color: rgba(61, 214, 140, 0.65);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal {
+  --md-text: var(--term-panel-fg, #ececec);
+  --md-muted: color-mix(in srgb, var(--term-panel-fg, #ececec) 82%, var(--term-panel-dim, #9ca0a6) 18%);
+  --md-subtle: var(--term-panel-dim, #9ca0a6);
+  --md-border: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 88%, transparent);
+  --md-border-muted: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 72%, transparent);
+  --md-canvas-subtle: color-mix(in srgb, var(--term-panel-card-inner, #181818) 86%, transparent);
+  --md-canvas-muted: color-mix(in srgb, var(--term-panel-green, #3dd68c) 10%, transparent);
+  color: var(--term-panel-fg, #ececec);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-h,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-strong,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table td {
+  color: var(--term-panel-fg, #ececec);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table th,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table td {
+  border-bottom-color: var(--md-border);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-h2,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-h3 {
+  border-bottom-color: var(--md-border-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-p,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-em,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-del {
+  color: var(--md-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal li::marker,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-inline-code,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table th {
+  color: var(--term-panel-green, #3dd68c);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal input[type="checkbox"] {
+  accent-color: var(--term-panel-green, #3dd68c);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-quote {
+  border-left-color: var(--term-panel-green, #3dd68c);
+  background: color-mix(in srgb, var(--term-panel-green, #3dd68c) 8%, transparent);
+  color: var(--md-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-inline-code {
+  background: color-mix(in srgb, var(--term-panel-green, #3dd68c) 10%, transparent);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table-wrap,
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-code-block {
+  border-color: var(--md-border);
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-bg, #0a0a0a) 82%,
+    var(--term-panel-fg, #ececec) 6%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table {
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-bg, #0a0a0a) 90%,
+    var(--term-panel-fg, #ececec) 5%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table th {
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-card-inner, #181818) 82%,
+    var(--term-panel-green, #3dd68c) 18%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table tbody tr:nth-child(even) {
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-card-inner, #181818) 88%,
+    var(--term-panel-fg, #ececec) 6%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-table tbody tr:hover {
+  background-color: color-mix(
+    in srgb,
+    var(--terminal-theme-selection, var(--term-panel-blue, #5b8def)) 18%,
+    var(--term-panel-card-inner, #181818) 82%
+  );
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-code-header {
+  border-bottom-color: var(--md-border);
+  background-color: color-mix(
+    in srgb,
+    var(--term-panel-card-inner, #181818) 86%,
+    var(--term-panel-fg, #ececec) 6%
+  );
+  color: var(--term-panel-dim, #9ca0a6);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-hr {
+  background-color: var(--md-border-muted);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-link {
+  color: var(--term-panel-cyan, #5ac8e0);
+  border-bottom: 1px solid color-mix(in srgb, var(--term-panel-cyan, #5ac8e0) 45%, transparent);
+}
+
+.subagent-transcript-shell .subagent-transcript-markdown.ui-markdown-terminal .ui-markdown-link:hover {
+  color: var(--term-panel-green, #3dd68c);
+  border-bottom-color: color-mix(in srgb, var(--term-panel-green, #3dd68c) 60%, transparent);
+}
+
+/* The terminal Markdown split pane owns the same semantic palette as the
+   terminal that hosts it. Keep the history transcript renderer local to that
+   palette instead of inheriting the app-shell surface colors. */
+.terminal-markdown-preview {
+  --surface: var(--term-panel-bg, var(--terminal-theme-background, #0c0e10));
+  --surface-container-low: var(--term-panel-bg, var(--terminal-theme-background, #0c0e10));
+  --surface-container-lowest: var(--term-panel-bg, var(--terminal-theme-background, #0c0e10));
+  --surface-container-high: var(--term-panel-card, #121212);
+  --surface-container-highest: var(--term-panel-card-inner, #181818);
+  --text-primary: var(--term-panel-fg, var(--terminal-theme-foreground, #ececec));
+  --text-secondary: color-mix(in srgb, var(--term-panel-fg, #ececec) 82%, var(--term-panel-dim, #9ca0a6) 18%);
+  --text-muted: var(--term-panel-dim, #9ca0a6);
+  --border: var(--term-panel-border, #2e2e2e);
+  --bg-primary: var(--term-panel-bg, #0c0e10);
+  --bg-secondary: var(--term-panel-card-inner, #181818);
+  --bg-tertiary: var(--term-panel-card, #121212);
+  --primary: var(--term-panel-cyan, var(--terminal-theme-accent, #5ac8e0));
+  --accent: var(--term-panel-cyan, var(--terminal-theme-accent, #5ac8e0));
+  --success: var(--term-panel-green, #3dd68c);
+  --warning: var(--term-panel-yellow, #e5c453);
+  --danger: var(--term-panel-red, #f07178);
+  --interactive-hover-bg: color-mix(in srgb, var(--term-panel-fg, #ececec) 9%, transparent);
+  background: var(--term-panel-bg, var(--terminal-theme-background, #0c0e10));
+  color: var(--term-panel-fg, var(--terminal-theme-foreground, #ececec));
+}
+
+.terminal-markdown-preview-message-select {
+  border: 1px solid var(--term-panel-border, #2e2e2e);
+  background-color: var(--term-panel-card-inner, #181818);
+  color: var(--term-panel-fg, #ececec);
+}
+
+.terminal-markdown-preview-answer-popover {
+  border-color: var(--term-panel-border, #2e2e2e);
+  background-color: var(--term-panel-card-inner, #181818);
+  color: var(--term-panel-fg, #ececec);
+  box-shadow: 0 10px 24px color-mix(in srgb, #000 32%, transparent);
+}
+
+.terminal-markdown-preview-answer-option {
+  margin: 2px 4px;
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--term-panel-fg, #ececec) 84%, var(--term-panel-dim, #9ca0a6) 16%);
+  transition: background-color var(--animate-duration-fast), color var(--animate-duration-fast);
+}
+
+.terminal-markdown-preview-answer-option[data-highlighted="true"] {
+  background-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 10%, transparent);
+  color: var(--term-panel-fg, #ececec);
+}
+
+.terminal-markdown-preview-answer-option[data-state="checked"] {
+  color: var(--term-panel-cyan, #5ac8e0);
+}
+
+.terminal-markdown-preview-answer-option[data-state="checked"][data-highlighted="true"] {
+  background-color: color-mix(in srgb, var(--term-panel-cyan, #5ac8e0) 14%, transparent);
+}
+
+.terminal-markdown-preview .subagent-transcript-markdown.ui-markdown-terminal {
+  font-size: var(--markdown-preview-font-size, var(--font-size-ui));
+}
+
+/* Let the terminal's single background-image layer show through the split
+   pane. The parent overlay still supplies the configured darkening and the
+   opaque fallback remains active when no background image is available. */
+.ui-terminal-bg-layer[data-bg-enabled="true"] .terminal-markdown-preview {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--term-panel-bg, #0c0e10) 68%, transparent),
+      color-mix(in srgb, var(--term-panel-card, #121212) 58%, transparent)
+    );
+}
+
+.terminal-markdown-preview .ui-markdown-terminal {
+  --md-text: var(--term-panel-fg, #ececec);
+  --md-muted: color-mix(in srgb, var(--term-panel-fg, #ececec) 82%, var(--term-panel-dim, #9ca0a6) 18%);
+  --md-subtle: var(--term-panel-dim, #9ca0a6);
+  --md-border: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 88%, transparent);
+  --md-border-muted: color-mix(in srgb, var(--term-panel-border, #2e2e2e) 72%, transparent);
+  --md-canvas-subtle: color-mix(in srgb, var(--term-panel-card-inner, #181818) 86%, transparent);
+  --md-canvas-muted: color-mix(in srgb, var(--term-panel-green, #3dd68c) 10%, transparent);
+  color: var(--term-panel-fg, #ececec);
+}

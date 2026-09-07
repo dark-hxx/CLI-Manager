@@ -4,6 +4,16 @@ This file provides guidance to coding agents when working with code in this repo
 
 DO NOT send optional commentary
 
+## AI 开发结构约束（强制）
+
+- 手写代码文件不得超过 **2000 个物理行**；常规模块优先 400–1200 行，按职责拆分，禁止压缩长行、数字分片、循环转发或宽泛 `export *` 绕过限制。
+- 前端目标为 `src/app` → `src/features/<domain>` → `src/shared`；Rust 为薄 `commands` + `features` / `infrastructure` / `shared`。迁移期间旧路径可保留明确的兼容入口，不复制实现。
+- 新任务先读相关领域入口与契约，再按符号定位；不默认全文读取大文件、全库输出或启动全量检查。改动批次运行定向测试，交付前运行必要的跨层检查。
+- 独立运行 `npm run check:architecture`；`npm run report:architecture` 提供长度、字节与粗略 Token 报告。检查不绑定开发启动或生产构建。
+- 迁移基线只允许缩减；最终用 `npm run check:architecture -- --strict` 验收零超限。生成代码等排除项必须有明确来源，不能排除业务目录来通过检查。
+- 详细可执行规则见 [.trellis/spec/frontend/ai-architecture-contracts.md](.trellis/spec/frontend/ai-architecture-contracts.md)。
+- 翻译键值按领域维护于 `src/shared/i18n/messages/`，`src/lib/i18n.ts` 保留调用入口；组件样式从 `src/styles/components.css` 的有序导入定位。不要为了改一项文案或样式读取全部字典/样式。
+
 ## 项目概述
 
 CLI-Manager 是一款 Windows 桌面应用，用于集中管理基于 PowerShell 的多个开发项目的 CLI 工具（如 claude、codex）。

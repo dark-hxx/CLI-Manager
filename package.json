@@ -5,6 +5,8 @@
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
+    "check:architecture": "node ./scripts/architecture.mjs",
+    "report:architecture": "node ./scripts/architecture.mjs --report",
     "dev": "node ./scripts/dev-server.mjs",
     "build": "tsc && vite build",
     "test:codex-proxy:e2e": "node ./scripts/codexAppServerProxy.e2e.test.mjs",

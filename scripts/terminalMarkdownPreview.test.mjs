@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const previewSource = readFileSync(
   new URL("../src/components/terminal/TerminalMarkdownPreview.tsx", import.meta.url),

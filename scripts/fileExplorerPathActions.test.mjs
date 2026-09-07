@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const sidebar = read("../src/components/files/FileExplorerSidebar.tsx");
