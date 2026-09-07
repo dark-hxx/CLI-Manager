@@ -1,6 +1,35 @@
 use quote::ToTokens;
 use serde_json::json;
 use syn::{spanned::Spanned, Item};
+use syn::visit_mut::{self, VisitMut};
+
+struct FormattingOnly;
+
+fn remove_trailing<T>(items: &mut syn::punctuated::Punctuated<T, syn::Token![,]>) {
+    if items.trailing_punct() {
+        let last = items.pop().unwrap().into_value();
+        items.push_value(last);
+    }
+}
+
+impl VisitMut for FormattingOnly {
+    fn visit_expr_call_mut(&mut self, expr: &mut syn::ExprCall) {
+        visit_mut::visit_expr_call_mut(self, expr);
+        remove_trailing(&mut expr.args);
+    }
+    fn visit_expr_method_call_mut(&mut self, expr: &mut syn::ExprMethodCall) {
+        visit_mut::visit_expr_method_call_mut(self, expr);
+        remove_trailing(&mut expr.args);
+    }
+    fn visit_expr_struct_mut(&mut self, expr: &mut syn::ExprStruct) {
+        visit_mut::visit_expr_struct_mut(self, expr);
+        remove_trailing(&mut expr.fields);
+    }
+    fn visit_expr_array_mut(&mut self, expr: &mut syn::ExprArray) {
+        visit_mut::visit_expr_array_mut(self, expr);
+        remove_trailing(&mut expr.elems);
+    }
+}
 
 fn identifiers(tokens: proc_macro2::TokenStream, names: &mut std::collections::BTreeSet<String>) {
     for token in tokens {
@@ -62,7 +91,11 @@ fn main() {
             let fields: Vec<_> = if let Item::Struct(value) = item {
                 value.fields.iter().map(|field| json!({"name": field.ident.as_ref().map(|name| name.to_string()), "visibility": field.vis.to_token_stream().to_string(), "line": field.ident.as_ref().map(|name| name.span().start().line).unwrap_or(field.span().start().line)})).collect()
             } else { Vec::new() };
-            let body = if let Item::Fn(value) = item { Some(value.block.to_token_stream().to_string()) } else { None };
+            let body = if let Item::Fn(value) = item {
+                let mut block = *value.block.clone();
+                FormattingOnly.visit_block_mut(&mut block);
+                Some(block.to_token_stream().to_string())
+            } else { None };
             json!({"kind": kind, "name": name, "visibility": visibility, "refs": refs, "bindings": bindings, "members": members, "fields": fields, "body": body,
                 "start": item.span().start().line, "end": item.span().end().line})
         }).collect();

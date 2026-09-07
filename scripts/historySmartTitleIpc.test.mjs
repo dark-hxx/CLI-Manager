@@ -9,7 +9,7 @@ const storeSource = readFileSync(
 const commandSource = readFileSync(
   new URL("../src-tauri/src/commands/history_title.rs", import.meta.url),
   "utf8",
-);
+).replaceAll("\r\n", "\n");
 const settingsSource = readFileSync(
   new URL("../src/stores/settingsStore.ts", import.meta.url),
   "utf8",

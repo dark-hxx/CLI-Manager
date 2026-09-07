@@ -40,7 +40,7 @@ for (const plan of plans) {
     }
     const outsideRefs = new Set(items.filter((item) => !selected.includes(item)).flatMap((item) => item.refs));
     const dependencies = parentDefinitions.filter((item) => refs.has(item.name) && !selectedNames.has(item.name)).map((item) => item.name);
-    const uses = useItems.filter((item) => item.bindings.some((name) => refs.has(name) || traits.has(name)) || lines.slice(item.start - 1, item.end).join("\n").includes("::*"))
+    const uses = useItems.filter((item) => item.bindings.some((name) => refs.has(name) || traits.has(name)) || item.bindings.includes("self") || lines.slice(item.start - 1, item.end).join("\n").includes("::*"))
       .map((item) => lines.slice(item.start - 1, item.end).join("\n").replaceAll("super::", "super::super::"));
     const bodyLines = lines.slice(first.start - 1, last.end);
     for (const item of [...selected].reverse()) {
@@ -74,11 +74,18 @@ for (const plan of plans) {
     assert.ok(!existsSync(target), target);
     const prelude = dependencies.length ? `use super::{${[...new Set(dependencies)].join(", ")}};\n` : "";
     outputs.set(target, `${uses.join("\n")}\n${prelude}\n${body}\n`);
-    const exported = selected.filter((item) => item.kind !== "impl" && (item.visibility || outsideRefs.has(item.name)));
+    const exported = selected.filter((item) => item.kind !== "impl" && (plan.preserveAll || item.visibility || outsideRefs.has(item.name)));
     registrations.push(`mod ${group.name};`);
-    for (const visibility of [...new Set(exported.map((item) => item.visibility))]) {
-      const names = exported.filter((item) => item.visibility === visibility).map((item) => item.name);
-      registrations.push(`${visibility ? visibility + " " : ""}use ${group.name}::{${names.join(", ")}};`);
+    const exportGroups = new Map();
+    for (const item of exported) {
+      const cfg = lines.slice(item.start - 1, item.end).filter(line => /^#\[cfg\(/.test(line)).join("\n");
+      const key = JSON.stringify([item.visibility, cfg]);
+      if (!exportGroups.has(key)) exportGroups.set(key, []);
+      exportGroups.get(key).push(item.name);
+    }
+    for (const [key, names] of exportGroups) {
+      const [visibility, cfg] = JSON.parse(key);
+      registrations.push(`${cfg ? cfg + "\n" : ""}${visibility ? visibility + " " : ""}use ${group.name}::{${names.join(", ")}};`);
     }
     replacements.push({ start: first.start - 1, count: last.end - first.start + 1, lines: [] });
   }
@@ -86,6 +93,7 @@ for (const plan of plans) {
   assert.ok(tests && tests.end === lines.filter((_, i) => i < lines.length - (lines.at(-1) === "" ? 1 : 0)).length);
   const testLines = lines.slice(tests.start - 1, tests.end);
   assert.equal(testLines[0], "#[cfg(test)]");
+  if (testLines[1] !== "mod tests;") {
   assert.equal(testLines[1], "mod tests {");
   const body = testLines.slice(2, -1).map((line) => line.startsWith("    ") ? line.slice(4) : line).join("\n") + "\n";
   assert.ok(body.split("\n").length <= 2000);
@@ -93,8 +101,9 @@ for (const plan of plans) {
   assert.ok(!existsSync(`${directory}/tests.rs`));
   outputs.set(`${directory}/tests.rs`, body);
   replacements.push({ start: tests.start - 1, count: tests.end - tests.start + 1, lines: ["#[cfg(test)]", "mod tests;"] });
+  }
   for (const change of replacements.sort((a, b) => b.start - a.start)) lines.splice(change.start, change.count, ...change.lines);
-  const insertion = lines.findIndex((line) => /^use /.test(line));
+  const insertion = useItems[0].start - 1;
   assert.ok(insertion >= 0);
   lines.splice(insertion, 0, ...registrations, "");
   outputs.set(plan.file, lines.join("\n"));

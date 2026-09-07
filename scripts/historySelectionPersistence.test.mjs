@@ -7,6 +7,7 @@ const listSource = read("../src/components/history/HistoryListPane.tsx");
 const detailSource = read("../src/components/history/SessionDetailPane.tsx");
 const historySource = read("../src-tauri/src/commands/history.rs");
 const catalogSource = read("../src-tauri/src/commands/history/catalog.rs");
+const catalogDetailSource = read("../src-tauri/src/commands/history/catalog/session_detail.rs");
 
 test("history exposes both session and message multi-select controls", () => {
   assert.match(listSource, /onClick=\{onEnterSelectionMode\}/);
@@ -20,7 +21,7 @@ test("catalog reads refresh dirty data and rejects stale V2 snapshots", () => {
   assert.match(historySource, /catalog::is_dirty\(\)/);
   assert.match(historySource, /catalog::ensure_refresh\(app\.clone\(\), roots\.clone\(\), false, true\)/);
   assert.match(catalogSource, /pub\(super\) fn is_dirty\(\)/);
-  assert.match(catalogSource, /hs\.fingerprint_value/);
-  assert.match(catalogSource, /source_path\.exists\(\)/);
-  assert.match(catalogSource, /v2_fingerprint_value\(session_file_fingerprint\(source_path\)\)/);
+  assert.match(catalogDetailSource, /hs\.fingerprint_value/);
+  assert.match(catalogDetailSource, /source_path\.exists\(\)/);
+  assert.match(catalogDetailSource, /v2_fingerprint_value\(session_file_fingerprint\(source_path\)\)/);
 });

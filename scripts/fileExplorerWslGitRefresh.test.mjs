@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 const fileStore = read("../src/stores/fileExplorerStore.ts");
-const gitCommands = read("../src-tauri/src/commands/git.rs");
+const gitCommands = read("../src-tauri/src/commands/git/wsl.rs");
 
 function sliceBetween(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -45,7 +45,7 @@ test("late Git results cannot overwrite a different project", () => {
 });
 
 test("WSL Git and realpath subprocesses use the bounded runner", () => {
-  const runWslGit = sliceBetween(gitCommands, "pub(super) fn run_wsl_git", "pub(super) fn resolve_wsl_mnt");
+  const runWslGit = sliceBetween(gitCommands, "fn run_wsl_git", "fn resolve_wsl_mnt");
   const resolveRealpath = sliceBetween(
     gitCommands,
     "fn resolve_wsl_linux_realpath",

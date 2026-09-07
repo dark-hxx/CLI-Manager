@@ -17,9 +17,9 @@ mod remote_sync;
 use remote_sync::apply_remote_sync_with_conn;
 pub(super) use remote_sync::{apply_remote_sync, list_remote_cached, mark_remote_stale};
 mod materialization;
+use materialization::shadow_build_v2;
 #[cfg(test)]
 use materialization::{active_v2_source_instances, record_v2_index_failure};
-use materialization::shadow_build_v2;
 
 use super::*;
 #[cfg(test)]

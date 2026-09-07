@@ -11,7 +11,10 @@ const timelineSource = read("../src/components/history/SessionTimelineView.tsx")
 const changesSource = read("../src/components/history/SessionFileChangesView.tsx");
 const toolsSource = read("../src/components/history/SessionToolDiagnosticsView.tsx");
 const subtasksSource = read("../src/components/history/SessionSubtaskTreeView.tsx");
-const historySource = read("../src-tauri/src/commands/history.rs");
+const historySource = [
+  read("../src-tauri/src/commands/history/scan_state.rs"),
+  read("../src-tauri/src/commands/history/roots.rs"),
+].join("\n");
 const catalogSource = read("../src-tauri/src/commands/history/catalog.rs");
 const sshHistorySource = read("../src-tauri/ssh-agent/src/history.rs");
 const titleSource = read("../src/lib/historyTitle.ts");

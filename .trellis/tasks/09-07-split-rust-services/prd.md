@@ -6,11 +6,15 @@ Split Rust history and services
 
 ## Requirements
 
-- TBD
+- Split history parsing/discovery/statistics and cc-connect service responsibilities into named modules below 2000 physical lines.
+- Keep original Tauri command registration, wire signatures, serde fields, persistence keys, process ownership and storage behavior.
+- Split tests by domain, retain all assertions and shared fixtures; no arbitrary numbered chunks.
 
 ## Acceptance Criteria
 
-- [ ] TBD
+- [ ] Every handwritten Rust source remains below the hard limit after formatting.
+- [ ] Desktop and SSH Agent tests pass without reduced coverage; normal/test compilation has no new warnings.
+- [ ] Architecture baseline only shrinks, and TEMP change records describe the actual scope.
 
 ## Notes
 

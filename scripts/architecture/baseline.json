@@ -1,15 +1,6 @@
 {
   "version": 1,
   "files": {
-    "src-tauri/src/commands/cc_connect.rs": {
-      "lines": 8433,
-      "longLines": {
-        "e8c0c2d8b2ef2fe9": 1
-      }
-    },
-    "src-tauri/src/commands/history.rs": {
-      "lines": 18391
-    },
     "src-tauri/src/commands/sync.rs": {
       "longLines": {
         "a0fc7d7da27af66f": 1

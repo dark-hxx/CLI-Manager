@@ -1,8 +1,6 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(test)]
-use sqlx::Connection;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -1713,3 +1711,4 @@ mod tests {
         ));
     }
 }
+use sqlx::Connection;
