@@ -12,10 +12,10 @@ const changesSource = read("../src/features/history/components/SessionFileChange
 const toolsSource = read("../src/features/history/components/SessionToolDiagnosticsView.tsx");
 const subtasksSource = read("../src/features/history/components/SessionSubtaskTreeView.tsx");
 const historySource = [
-  read("../src-tauri/src/commands/history/scan_state.rs"),
-  read("../src-tauri/src/commands/history/roots.rs"),
+  read("../src-tauri/src/features/history/scan_state.rs"),
+  read("../src-tauri/src/features/history/roots.rs"),
 ].join("\n");
-const catalogSource = read("../src-tauri/src/commands/history/catalog.rs");
+const catalogSource = read("../src-tauri/src/features/history/catalog.rs");
 const sshHistorySource = read("../src-tauri/ssh-agent/src/history.rs");
 const titleSource = read("../src/features/history/lib/historyTitle.ts");
 

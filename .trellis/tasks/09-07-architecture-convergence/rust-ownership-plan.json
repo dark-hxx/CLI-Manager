@@ -1,0 +1,561 @@
+{
+  "map": {
+    "src-tauri/src/app/migrations.rs": "src-tauri/src/app/migrations.rs",
+    "src-tauri/src/app/mod.rs": "src-tauri/src/app/mod.rs",
+    "src-tauri/src/app_paths.rs": "src-tauri/src/infrastructure/storage/app_paths.rs",
+    "src-tauri/src/bin/cli-manager-codex-proxy.rs": "src-tauri/src/bin/cli-manager-codex-proxy.rs",
+    "src-tauri/src/bin/cli-manager-daemon.rs": "src-tauri/src/bin/cli-manager-daemon.rs",
+    "src-tauri/src/ccswitch_db.rs": "src-tauri/src/features/providers/ccswitch_db.rs",
+    "src-tauri/src/claude_hook.rs": "src-tauri/src/features/hooks/claude.rs",
+    "src-tauri/src/codex_app_server_proxy.rs": "src-tauri/src/features/codex-proxy/mod.rs",
+    "src-tauri/src/codex_app_server_proxy/tests.rs": "src-tauri/src/features/codex-proxy/tests.rs",
+    "src-tauri/src/codex_statusline.rs": "src-tauri/src/features/statusline/codex.rs",
+    "src-tauri/src/commands/agent_capabilities.rs": "src-tauri/src/features/agents/commands.rs",
+    "src-tauri/src/commands/app_data.rs": "src-tauri/src/features/app-data/commands.rs",
+    "src-tauri/src/commands/background.rs": "src-tauri/src/features/terminal/background.rs",
+    "src-tauri/src/commands/cc_connect.rs": "src-tauri/src/features/remote/cc_connect/mod.rs",
+    "src-tauri/src/commands/cc_connect/codex_launch.rs": "src-tauri/src/features/remote/cc_connect/codex_launch.rs",
+    "src-tauri/src/commands/cc_connect/config_types.rs": "src-tauri/src/features/remote/cc_connect/config_types.rs",
+    "src-tauri/src/commands/cc_connect/credentials.rs": "src-tauri/src/features/remote/cc_connect/credentials.rs",
+    "src-tauri/src/commands/cc_connect/executable.rs": "src-tauri/src/features/remote/cc_connect/executable.rs",
+    "src-tauri/src/commands/cc_connect/file_io.rs": "src-tauri/src/features/remote/cc_connect/file_io.rs",
+    "src-tauri/src/commands/cc_connect/handoff.rs": "src-tauri/src/features/remote/cc_connect/handoff.rs",
+    "src-tauri/src/commands/cc_connect/handoff_notification.rs": "src-tauri/src/features/remote/cc_connect/handoff_notification.rs",
+    "src-tauri/src/commands/cc_connect/handoff_session.rs": "src-tauri/src/features/remote/cc_connect/handoff_session.rs",
+    "src-tauri/src/commands/cc_connect/launcher.rs": "src-tauri/src/features/remote/cc_connect/launcher.rs",
+    "src-tauri/src/commands/cc_connect/logging.rs": "src-tauri/src/features/remote/cc_connect/logging.rs",
+    "src-tauri/src/commands/cc_connect/model.rs": "src-tauri/src/features/remote/cc_connect/model.rs",
+    "src-tauri/src/commands/cc_connect/paths.rs": "src-tauri/src/features/remote/cc_connect/paths.rs",
+    "src-tauri/src/commands/cc_connect/platform_config.rs": "src-tauri/src/features/remote/cc_connect/platform_config.rs",
+    "src-tauri/src/commands/cc_connect/process_environment.rs": "src-tauri/src/features/remote/cc_connect/process_environment.rs",
+    "src-tauri/src/commands/cc_connect/profile.rs": "src-tauri/src/features/remote/cc_connect/profile.rs",
+    "src-tauri/src/commands/cc_connect/project_catalog.rs": "src-tauri/src/features/remote/cc_connect/project_catalog.rs",
+    "src-tauri/src/commands/cc_connect/project_commands.rs": "src-tauri/src/features/remote/cc_connect/project_commands.rs",
+    "src-tauri/src/commands/cc_connect/rollback.rs": "src-tauri/src/features/remote/cc_connect/rollback.rs",
+    "src-tauri/src/commands/cc_connect/ssh_launch.rs": "src-tauri/src/features/remote/cc_connect/ssh_launch.rs",
+    "src-tauri/src/commands/cc_connect/tests.rs": "src-tauri/src/features/remote/cc_connect/tests.rs",
+    "src-tauri/src/commands/cc_connect/tests/codex_launch.rs": "src-tauri/src/features/remote/cc_connect/tests/codex_launch.rs",
+    "src-tauri/src/commands/cc_connect/tests/fixtures.rs": "src-tauri/src/features/remote/cc_connect/tests/fixtures.rs",
+    "src-tauri/src/commands/cc_connect/tests/managed_config.rs": "src-tauri/src/features/remote/cc_connect/tests/managed_config.rs",
+    "src-tauri/src/commands/cc_connect/tests/platforms.rs": "src-tauri/src/features/remote/cc_connect/tests/platforms.rs",
+    "src-tauri/src/commands/cc_connect/tests/profile.rs": "src-tauri/src/features/remote/cc_connect/tests/profile.rs",
+    "src-tauri/src/commands/cc_connect/tests/project_switch.rs": "src-tauri/src/features/remote/cc_connect/tests/project_switch.rs",
+    "src-tauri/src/commands/cc_connect/tests/transport.rs": "src-tauri/src/features/remote/cc_connect/tests/transport.rs",
+    "src-tauri/src/commands/cc_connect/update.rs": "src-tauri/src/features/remote/cc_connect/update.rs",
+    "src-tauri/src/commands/ccusage.rs": "src-tauri/src/features/stats/ccusage.rs",
+    "src-tauri/src/commands/command_suggestion.rs": "src-tauri/src/features/terminal/suggestions.rs",
+    "src-tauri/src/commands/db_repair.rs": "src-tauri/src/features/app-data/repair/mod.rs",
+    "src-tauri/src/commands/db_repair/tests.rs": "src-tauri/src/features/app-data/repair/tests.rs",
+    "src-tauri/src/commands/desktop_pet.rs": "src-tauri/src/features/desktop-pet/commands.rs",
+    "src-tauri/src/commands/fonts.rs": "src-tauri/src/features/system/fonts.rs",
+    "src-tauri/src/commands/fs.rs": "src-tauri/src/features/files/commands.rs",
+    "src-tauri/src/commands/git.rs": "src-tauri/src/features/git/mod.rs",
+    "src-tauri/src/commands/git/cli.rs": "src-tauri/src/features/git/cli.rs",
+    "src-tauri/src/commands/git/diff_format.rs": "src-tauri/src/features/git/diff_format.rs",
+    "src-tauri/src/commands/git/partial_patch.rs": "src-tauri/src/features/git/partial_patch.rs",
+    "src-tauri/src/commands/git/patches.rs": "src-tauri/src/features/git/patches.rs",
+    "src-tauri/src/commands/git/snapshot.rs": "src-tauri/src/features/git/snapshot.rs",
+    "src-tauri/src/commands/git/status.rs": "src-tauri/src/features/git/status.rs",
+    "src-tauri/src/commands/git/tests.rs": "src-tauri/src/features/git/tests.rs",
+    "src-tauri/src/commands/git/wsl.rs": "src-tauri/src/features/git/wsl.rs",
+    "src-tauri/src/commands/git_diff.rs": "src-tauri/src/features/git/diff.rs",
+    "src-tauri/src/commands/git_diff_display.rs": "src-tauri/src/features/git/diff_display.rs",
+    "src-tauri/src/commands/git_diff_tests.rs": "src-tauri/src/features/git/diff_tests.rs",
+    "src-tauri/src/commands/git_history.rs": "src-tauri/src/features/git/history.rs",
+    "src-tauri/src/commands/git_tools.rs": "src-tauri/src/features/git/tools.rs",
+    "src-tauri/src/commands/git_worktree.rs": "src-tauri/src/features/projects/worktree.rs",
+    "src-tauri/src/commands/history.rs": "src-tauri/src/features/history/mod.rs",
+    "src-tauri/src/commands/history/catalog.rs": "src-tauri/src/features/history/catalog.rs",
+    "src-tauri/src/commands/history/catalog/materialization.rs": "src-tauri/src/features/history/catalog/materialization.rs",
+    "src-tauri/src/commands/history/catalog/queries.rs": "src-tauri/src/features/history/catalog/queries.rs",
+    "src-tauri/src/commands/history/catalog/remote_sync.rs": "src-tauri/src/features/history/catalog/remote_sync.rs",
+    "src-tauri/src/commands/history/catalog/schema.rs": "src-tauri/src/features/history/catalog/schema.rs",
+    "src-tauri/src/commands/history/catalog/session_detail.rs": "src-tauri/src/features/history/catalog/session_detail.rs",
+    "src-tauri/src/commands/history/catalog/tests.rs": "src-tauri/src/features/history/catalog/tests.rs",
+    "src-tauri/src/commands/history/codex_config.rs": "src-tauri/src/features/history/codex_config.rs",
+    "src-tauri/src/commands/history/conversion.rs": "src-tauri/src/features/history/conversion.rs",
+    "src-tauri/src/commands/history/copilot_parser.rs": "src-tauri/src/features/history/copilot_parser.rs",
+    "src-tauri/src/commands/history/diagnostics.rs": "src-tauri/src/features/history/diagnostics.rs",
+    "src-tauri/src/commands/history/discovery.rs": "src-tauri/src/features/history/discovery.rs",
+    "src-tauri/src/commands/history/file_changes.rs": "src-tauri/src/features/history/file_changes.rs",
+    "src-tauri/src/commands/history/grok_parser.rs": "src-tauri/src/features/history/grok_parser.rs",
+    "src-tauri/src/commands/history/index_cache.rs": "src-tauri/src/features/history/index_cache.rs",
+    "src-tauri/src/commands/history/json_parsers.rs": "src-tauri/src/features/history/json_parsers.rs",
+    "src-tauri/src/commands/history/kimi.rs": "src-tauri/src/features/history/kimi.rs",
+    "src-tauri/src/commands/history/legacy_listing.rs": "src-tauri/src/features/history/legacy_listing.rs",
+    "src-tauri/src/commands/history/message_content.rs": "src-tauri/src/features/history/message_content.rs",
+    "src-tauri/src/commands/history/message_stream.rs": "src-tauri/src/features/history/message_stream.rs",
+    "src-tauri/src/commands/history/opencode.rs": "src-tauri/src/features/history/opencode.rs",
+    "src-tauri/src/commands/history/opencode_detail.rs": "src-tauri/src/features/history/opencode_detail.rs",
+    "src-tauri/src/commands/history/pi_parser.rs": "src-tauri/src/features/history/pi_parser.rs",
+    "src-tauri/src/commands/history/project_paths.rs": "src-tauri/src/features/history/project_paths.rs",
+    "src-tauri/src/commands/history/remote_detail.rs": "src-tauri/src/features/history/remote_detail.rs",
+    "src-tauri/src/commands/history/remote_requests.rs": "src-tauri/src/features/history/remote_requests.rs",
+    "src-tauri/src/commands/history/request_logs.rs": "src-tauri/src/features/history/request_logs.rs",
+    "src-tauri/src/commands/history/roots.rs": "src-tauri/src/features/history/roots.rs",
+    "src-tauri/src/commands/history/route_usage.rs": "src-tauri/src/features/history/route_usage.rs",
+    "src-tauri/src/commands/history/scan_state.rs": "src-tauri/src/features/history/scan_state.rs",
+    "src-tauri/src/commands/history/scanner.rs": "src-tauri/src/features/history/scanner.rs",
+    "src-tauri/src/commands/history/scope.rs": "src-tauri/src/features/history/scope.rs",
+    "src-tauri/src/commands/history/session_detail.rs": "src-tauri/src/features/history/session_detail.rs",
+    "src-tauri/src/commands/history/source_files.rs": "src-tauri/src/features/history/source_files.rs",
+    "src-tauri/src/commands/history/source_metadata.rs": "src-tauri/src/features/history/source_metadata.rs",
+    "src-tauri/src/commands/history/stats.rs": "src-tauri/src/features/history/stats.rs",
+    "src-tauri/src/commands/history/tests.rs": "src-tauri/src/features/history/tests.rs",
+    "src-tauri/src/commands/history/tests/conversion.rs": "src-tauri/src/features/history/tests/conversion.rs",
+    "src-tauri/src/commands/history/tests/fixtures.rs": "src-tauri/src/features/history/tests/fixtures.rs",
+    "src-tauri/src/commands/history/tests/grok.rs": "src-tauri/src/features/history/tests/grok.rs",
+    "src-tauri/src/commands/history/tests/kimi_source.rs": "src-tauri/src/features/history/tests/kimi_source.rs",
+    "src-tauri/src/commands/history/tests/opencode.rs": "src-tauri/src/features/history/tests/opencode.rs",
+    "src-tauri/src/commands/history/tests/other_sources.rs": "src-tauri/src/features/history/tests/other_sources.rs",
+    "src-tauri/src/commands/history/tests/remote.rs": "src-tauri/src/features/history/tests/remote.rs",
+    "src-tauri/src/commands/history/tests/scope_paths.rs": "src-tauri/src/features/history/tests/scope_paths.rs",
+    "src-tauri/src/commands/history/tests/session_pipeline.rs": "src-tauri/src/features/history/tests/session_pipeline.rs",
+    "src-tauri/src/commands/history/tests/usage_stats.rs": "src-tauri/src/features/history/tests/usage_stats.rs",
+    "src-tauri/src/commands/history/time.rs": "src-tauri/src/features/history/time.rs",
+    "src-tauri/src/commands/history/tool_events.rs": "src-tauri/src/features/history/tool_events.rs",
+    "src-tauri/src/commands/history/transcript_parsers.rs": "src-tauri/src/features/history/transcript_parsers.rs",
+    "src-tauri/src/commands/history/types.rs": "src-tauri/src/features/history/types.rs",
+    "src-tauri/src/commands/history/usage.rs": "src-tauri/src/features/history/usage.rs",
+    "src-tauri/src/commands/history/wsl_discovery.rs": "src-tauri/src/features/history/wsl_discovery.rs",
+    "src-tauri/src/commands/history_backup.rs": "src-tauri/src/features/history/backup.rs",
+    "src-tauri/src/commands/history_edit.rs": "src-tauri/src/features/history/edit.rs",
+    "src-tauri/src/commands/history_sources.rs": "src-tauri/src/features/history/sources.rs",
+    "src-tauri/src/commands/history_title.rs": "src-tauri/src/features/history/title.rs",
+    "src-tauri/src/commands/hook_settings.rs": "src-tauri/src/features/hooks/settings/mod.rs",
+    "src-tauri/src/commands/hook_settings/codex.rs": "src-tauri/src/features/hooks/settings/codex.rs",
+    "src-tauri/src/commands/hook_settings/grok.rs": "src-tauri/src/features/hooks/settings/grok.rs",
+    "src-tauri/src/commands/hook_settings/json_hooks.rs": "src-tauri/src/features/hooks/settings/json_hooks.rs",
+    "src-tauri/src/commands/hook_settings/kimi_adapter.rs": "src-tauri/src/features/hooks/settings/kimi_adapter.rs",
+    "src-tauri/src/commands/hook_settings/pi.rs": "src-tauri/src/features/hooks/settings/pi.rs",
+    "src-tauri/src/commands/hook_settings/tests.rs": "src-tauri/src/features/hooks/settings/tests.rs",
+    "src-tauri/src/commands/live_server.rs": "src-tauri/src/features/files/live_server_commands.rs",
+    "src-tauri/src/commands/logging.rs": "src-tauri/src/features/system/logging.rs",
+    "src-tauri/src/commands/mod.rs": "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/commands/model_pricing.rs": "src-tauri/src/features/stats/model_pricing.rs",
+    "src-tauri/src/commands/opencode_hook.rs": "src-tauri/src/features/hooks/opencode.rs",
+    "src-tauri/src/commands/project_groups.rs": "src-tauri/src/features/projects/groups.rs",
+    "src-tauri/src/commands/provider.rs": "src-tauri/src/features/providers/commands.rs",
+    "src-tauri/src/commands/routing.rs": "src-tauri/src/features/providers/routing_commands.rs",
+    "src-tauri/src/commands/shell.rs": "src-tauri/src/features/terminal/shell_commands.rs",
+    "src-tauri/src/commands/ssh.rs": "src-tauri/src/features/remote/ssh/mod.rs",
+    "src-tauri/src/commands/ssh/process_io.rs": "src-tauri/src/features/remote/ssh/process_io.rs",
+    "src-tauri/src/commands/ssh/tests.rs": "src-tauri/src/features/remote/ssh/tests.rs",
+    "src-tauri/src/commands/ssh_config.rs": "src-tauri/src/features/remote/config.rs",
+    "src-tauri/src/commands/ssh_db.rs": "src-tauri/src/features/remote/database.rs",
+    "src-tauri/src/commands/ssh_files.rs": "src-tauri/src/features/files/ssh.rs",
+    "src-tauri/src/commands/ssh_git.rs": "src-tauri/src/features/git/ssh.rs",
+    "src-tauri/src/commands/ssh_integration.rs": "src-tauri/src/features/remote/integration.rs",
+    "src-tauri/src/commands/subagent_transcript.rs": "src-tauri/src/features/terminal/subagent_transcript.rs",
+    "src-tauri/src/commands/sync.rs": "src-tauri/src/features/sync/commands.rs",
+    "src-tauri/src/commands/system_notification.rs": "src-tauri/src/features/notifications/system.rs",
+    "src-tauri/src/commands/system_resources.rs": "src-tauri/src/features/system/resources.rs",
+    "src-tauri/src/commands/terminal.rs": "src-tauri/src/features/terminal/commands.rs",
+    "src-tauri/src/commands/terminal_shell.rs": "src-tauri/src/features/terminal/shell.rs",
+    "src-tauri/src/commands/third_party_notification.rs": "src-tauri/src/features/notifications/commands.rs",
+    "src-tauri/src/commands/version.rs": "src-tauri/src/features/system/version.rs",
+    "src-tauri/src/conpty_sideload.rs": "src-tauri/src/infrastructure/process/conpty_sideload.rs",
+    "src-tauri/src/crash_reporter.rs": "src-tauri/src/infrastructure/diagnostics/crash_reporter.rs",
+    "src-tauri/src/credential_store.rs": "src-tauri/src/infrastructure/storage/credential_store.rs",
+    "src-tauri/src/daemon/circuit.rs": "src-tauri/src/infrastructure/daemon/circuit.rs",
+    "src-tauri/src/daemon/client.rs": "src-tauri/src/infrastructure/daemon/client.rs",
+    "src-tauri/src/daemon/discovery.rs": "src-tauri/src/infrastructure/daemon/discovery.rs",
+    "src-tauri/src/daemon/mod.rs": "src-tauri/src/infrastructure/daemon/mod.rs",
+    "src-tauri/src/daemon/protocol.rs": "src-tauri/src/infrastructure/daemon/protocol.rs",
+    "src-tauri/src/daemon/route_http.rs": "src-tauri/src/infrastructure/daemon/route_http.rs",
+    "src-tauri/src/daemon/route_http/forwarding.rs": "src-tauri/src/infrastructure/daemon/route_http/forwarding.rs",
+    "src-tauri/src/daemon/route_http/tests.rs": "src-tauri/src/infrastructure/daemon/route_http/tests.rs",
+    "src-tauri/src/daemon/routing.rs": "src-tauri/src/infrastructure/daemon/routing.rs",
+    "src-tauri/src/daemon/server.rs": "src-tauri/src/infrastructure/daemon/server.rs",
+    "src-tauri/src/daemon/server/client_transport.rs": "src-tauri/src/infrastructure/daemon/server/client_transport.rs",
+    "src-tauri/src/daemon/server/pty_events.rs": "src-tauri/src/infrastructure/daemon/server/pty_events.rs",
+    "src-tauri/src/daemon/server/replay.rs": "src-tauri/src/infrastructure/daemon/server/replay.rs",
+    "src-tauri/src/daemon/server/tests.rs": "src-tauri/src/infrastructure/daemon/server/tests.rs",
+    "src-tauri/src/daemon/ssh_agent_bridge.rs": "src-tauri/src/infrastructure/daemon/ssh_agent_bridge.rs",
+    "src-tauri/src/daemon/ssh_agent_bridge/tests.rs": "src-tauri/src/infrastructure/daemon/ssh_agent_bridge/tests.rs",
+    "src-tauri/src/file_watcher.rs": "src-tauri/src/infrastructure/files/file_watcher.rs",
+    "src-tauri/src/git_watcher.rs": "src-tauri/src/features/git/watcher.rs",
+    "src-tauri/src/hook_client.rs": "src-tauri/src/features/hooks/client.rs",
+    "src-tauri/src/lib.rs": "src-tauri/src/lib.rs",
+    "src-tauri/src/linux_graphics.rs": "src-tauri/src/infrastructure/system/linux_graphics.rs",
+    "src-tauri/src/live_server/http.rs": "src-tauri/src/features/files/live_server/http.rs",
+    "src-tauri/src/live_server/http/tests.rs": "src-tauri/src/features/files/live_server/http/tests.rs",
+    "src-tauri/src/live_server/mod.rs": "src-tauri/src/features/files/live_server/mod.rs",
+    "src-tauri/src/live_server/paths.rs": "src-tauri/src/features/files/live_server/paths.rs",
+    "src-tauri/src/live_server/paths/tests.rs": "src-tauri/src/features/files/live_server/paths/tests.rs",
+    "src-tauri/src/live_server/tests.rs": "src-tauri/src/features/files/live_server/tests.rs",
+    "src-tauri/src/live_server/watcher.rs": "src-tauri/src/features/files/live_server/watcher.rs",
+    "src-tauri/src/log_rotation.rs": "src-tauri/src/infrastructure/diagnostics/log_rotation.rs",
+    "src-tauri/src/main.rs": "src-tauri/src/main.rs",
+    "src-tauri/src/process_job.rs": "src-tauri/src/infrastructure/process/process_job.rs",
+    "src-tauri/src/provider/auxiliary_text.rs": "src-tauri/src/features/providers/service/auxiliary_text.rs",
+    "src-tauri/src/provider/database.rs": "src-tauri/src/features/providers/service/database.rs",
+    "src-tauri/src/provider/environment.rs": "src-tauri/src/features/providers/service/environment.rs",
+    "src-tauri/src/provider/global.rs": "src-tauri/src/features/providers/service/global.rs",
+    "src-tauri/src/provider/global/live_files.rs": "src-tauri/src/features/providers/service/global/live_files.rs",
+    "src-tauri/src/provider/global/materialize.rs": "src-tauri/src/features/providers/service/global/materialize.rs",
+    "src-tauri/src/provider/global/tests.rs": "src-tauri/src/features/providers/service/global/tests.rs",
+    "src-tauri/src/provider/grok.rs": "src-tauri/src/features/providers/service/grok.rs",
+    "src-tauri/src/provider/home.rs": "src-tauri/src/features/providers/service/home.rs",
+    "src-tauri/src/provider/import.rs": "src-tauri/src/features/providers/service/import.rs",
+    "src-tauri/src/provider/import/tests.rs": "src-tauri/src/features/providers/service/import/tests.rs",
+    "src-tauri/src/provider/migration.rs": "src-tauri/src/features/providers/service/migration.rs",
+    "src-tauri/src/provider/mod.rs": "src-tauri/src/features/providers/service/mod.rs",
+    "src-tauri/src/provider/models.rs": "src-tauri/src/features/providers/service/models.rs",
+    "src-tauri/src/provider/network_client.rs": "src-tauri/src/features/providers/service/network_client.rs",
+    "src-tauri/src/provider/repository.rs": "src-tauri/src/features/providers/service/repository.rs",
+    "src-tauri/src/provider/repository/catalog.rs": "src-tauri/src/features/providers/service/repository/catalog.rs",
+    "src-tauri/src/provider/repository/common.rs": "src-tauri/src/features/providers/service/repository/common.rs",
+    "src-tauri/src/provider/repository/documents.rs": "src-tauri/src/features/providers/service/repository/documents.rs",
+    "src-tauri/src/provider/repository/dto.rs": "src-tauri/src/features/providers/service/repository/dto.rs",
+    "src-tauri/src/provider/repository/failover.rs": "src-tauri/src/features/providers/service/repository/failover.rs",
+    "src-tauri/src/provider/repository/keys.rs": "src-tauri/src/features/providers/service/repository/keys.rs",
+    "src-tauri/src/provider/repository/support.rs": "src-tauri/src/features/providers/service/repository/support.rs",
+    "src-tauri/src/provider/repository/tests.rs": "src-tauri/src/features/providers/service/repository/tests.rs",
+    "src-tauri/src/provider/routing.rs": "src-tauri/src/features/providers/service/routing.rs",
+    "src-tauri/src/provider/runtime.rs": "src-tauri/src/features/providers/service/runtime.rs",
+    "src-tauri/src/provider/scope.rs": "src-tauri/src/features/providers/service/scope.rs",
+    "src-tauri/src/pty/boundary.rs": "src-tauri/src/infrastructure/pty/boundary.rs",
+    "src-tauri/src/pty/manager.rs": "src-tauri/src/infrastructure/pty/manager.rs",
+    "src-tauri/src/pty/mod.rs": "src-tauri/src/infrastructure/pty/mod.rs",
+    "src-tauri/src/pty/osc_color.rs": "src-tauri/src/infrastructure/pty/osc_color.rs",
+    "src-tauri/src/pty/platform/mod.rs": "src-tauri/src/infrastructure/pty/platform/mod.rs",
+    "src-tauri/src/pty/platform/unix.rs": "src-tauri/src/infrastructure/pty/platform/unix.rs",
+    "src-tauri/src/pty/platform/windows.rs": "src-tauri/src/infrastructure/pty/platform/windows.rs",
+    "src-tauri/src/runtime_diagnostics.rs": "src-tauri/src/infrastructure/diagnostics/runtime.rs",
+    "src-tauri/src/shell_resolver.rs": "src-tauri/src/infrastructure/process/shell_resolver.rs",
+    "src-tauri/src/ssh_agent_supply_chain.rs": "src-tauri/src/infrastructure/ssh/agent_supply_chain.rs",
+    "src-tauri/src/ssh_askpass.rs": "src-tauri/src/infrastructure/ssh/askpass.rs",
+    "src-tauri/src/ssh_launch.rs": "src-tauri/src/infrastructure/ssh/launch.rs",
+    "src-tauri/src/ssh_proxy.rs": "src-tauri/src/infrastructure/ssh/proxy.rs",
+    "src-tauri/src/ssh_transport.rs": "src-tauri/src/infrastructure/ssh/transport.rs",
+    "src-tauri/src/statusline.rs": "src-tauri/src/features/statusline/mod.rs",
+    "src-tauri/src/statusline/themes.rs": "src-tauri/src/features/statusline/themes.rs",
+    "src-tauri/src/statusline_profiles.rs": "src-tauri/src/features/statusline/profiles.rs",
+    "src-tauri/src/sync/mod.rs": "src-tauri/src/features/sync/service/mod.rs",
+    "src-tauri/src/text_encoding.rs": "src-tauri/src/shared/text_encoding.rs",
+    "src-tauri/src/third_party_notification/adapters.rs": "src-tauri/src/features/notifications/service/adapters.rs",
+    "src-tauri/src/third_party_notification/dispatcher.rs": "src-tauri/src/features/notifications/service/dispatcher.rs",
+    "src-tauri/src/third_party_notification/http.rs": "src-tauri/src/features/notifications/service/http.rs",
+    "src-tauri/src/third_party_notification/mod.rs": "src-tauri/src/features/notifications/service/mod.rs",
+    "src-tauri/src/third_party_notification/model.rs": "src-tauri/src/features/notifications/service/model.rs",
+    "src-tauri/src/usage.rs": "src-tauri/src/features/stats/usage.rs",
+    "src-tauri/src/usage_schema.rs": "src-tauri/src/features/stats/usage_schema.rs",
+    "src-tauri/src/webdav/mod.rs": "src-tauri/src/infrastructure/webdav/mod.rs",
+    "src-tauri/src/wsl.rs": "src-tauri/src/infrastructure/process/wsl.rs"
+  },
+  "routes": {
+    "src-tauri/src/lib.rs:app_paths": {
+      "source": "src-tauri/src/app_paths.rs",
+      "target": "src-tauri/src/infrastructure/storage/app_paths.rs"
+    },
+    "src-tauri/src/lib.rs:ccswitch_db": {
+      "source": "src-tauri/src/ccswitch_db.rs",
+      "target": "src-tauri/src/features/providers/ccswitch_db.rs"
+    },
+    "src-tauri/src/lib.rs:claude_hook": {
+      "source": "src-tauri/src/claude_hook.rs",
+      "target": "src-tauri/src/features/hooks/claude.rs"
+    },
+    "src-tauri/src/lib.rs:codex_app_server_proxy": {
+      "source": "src-tauri/src/codex_app_server_proxy.rs",
+      "target": "src-tauri/src/features/codex-proxy/mod.rs"
+    },
+    "src-tauri/src/lib.rs:codex_statusline": {
+      "source": "src-tauri/src/codex_statusline.rs",
+      "target": "src-tauri/src/features/statusline/codex.rs"
+    },
+    "src-tauri/src/lib.rs:conpty_sideload": {
+      "source": "src-tauri/src/conpty_sideload.rs",
+      "target": "src-tauri/src/infrastructure/process/conpty_sideload.rs"
+    },
+    "src-tauri/src/lib.rs:crash_reporter": {
+      "source": "src-tauri/src/crash_reporter.rs",
+      "target": "src-tauri/src/infrastructure/diagnostics/crash_reporter.rs"
+    },
+    "src-tauri/src/lib.rs:credential_store": {
+      "source": "src-tauri/src/credential_store.rs",
+      "target": "src-tauri/src/infrastructure/storage/credential_store.rs"
+    },
+    "src-tauri/src/lib.rs:daemon": {
+      "source": "src-tauri/src/daemon/mod.rs",
+      "target": "src-tauri/src/infrastructure/daemon/mod.rs"
+    },
+    "src-tauri/src/lib.rs:file_watcher": {
+      "source": "src-tauri/src/file_watcher.rs",
+      "target": "src-tauri/src/infrastructure/files/file_watcher.rs"
+    },
+    "src-tauri/src/lib.rs:git_watcher": {
+      "source": "src-tauri/src/git_watcher.rs",
+      "target": "src-tauri/src/features/git/watcher.rs"
+    },
+    "src-tauri/src/lib.rs:hook_client": {
+      "source": "src-tauri/src/hook_client.rs",
+      "target": "src-tauri/src/features/hooks/client.rs"
+    },
+    "src-tauri/src/lib.rs:linux_graphics": {
+      "source": "src-tauri/src/linux_graphics.rs",
+      "target": "src-tauri/src/infrastructure/system/linux_graphics.rs"
+    },
+    "src-tauri/src/lib.rs:live_server": {
+      "source": "src-tauri/src/live_server/mod.rs",
+      "target": "src-tauri/src/features/files/live_server/mod.rs"
+    },
+    "src-tauri/src/lib.rs:log_rotation": {
+      "source": "src-tauri/src/log_rotation.rs",
+      "target": "src-tauri/src/infrastructure/diagnostics/log_rotation.rs"
+    },
+    "src-tauri/src/lib.rs:process_job": {
+      "source": "src-tauri/src/process_job.rs",
+      "target": "src-tauri/src/infrastructure/process/process_job.rs"
+    },
+    "src-tauri/src/lib.rs:provider": {
+      "source": "src-tauri/src/provider/mod.rs",
+      "target": "src-tauri/src/features/providers/service/mod.rs"
+    },
+    "src-tauri/src/lib.rs:pty": {
+      "source": "src-tauri/src/pty/mod.rs",
+      "target": "src-tauri/src/infrastructure/pty/mod.rs"
+    },
+    "src-tauri/src/lib.rs:runtime_diagnostics": {
+      "source": "src-tauri/src/runtime_diagnostics.rs",
+      "target": "src-tauri/src/infrastructure/diagnostics/runtime.rs"
+    },
+    "src-tauri/src/lib.rs:shell_resolver": {
+      "source": "src-tauri/src/shell_resolver.rs",
+      "target": "src-tauri/src/infrastructure/process/shell_resolver.rs"
+    },
+    "src-tauri/src/lib.rs:ssh_agent_supply_chain": {
+      "source": "src-tauri/src/ssh_agent_supply_chain.rs",
+      "target": "src-tauri/src/infrastructure/ssh/agent_supply_chain.rs"
+    },
+    "src-tauri/src/lib.rs:ssh_askpass": {
+      "source": "src-tauri/src/ssh_askpass.rs",
+      "target": "src-tauri/src/infrastructure/ssh/askpass.rs"
+    },
+    "src-tauri/src/lib.rs:ssh_launch": {
+      "source": "src-tauri/src/ssh_launch.rs",
+      "target": "src-tauri/src/infrastructure/ssh/launch.rs"
+    },
+    "src-tauri/src/lib.rs:ssh_proxy": {
+      "source": "src-tauri/src/ssh_proxy.rs",
+      "target": "src-tauri/src/infrastructure/ssh/proxy.rs"
+    },
+    "src-tauri/src/lib.rs:ssh_transport": {
+      "source": "src-tauri/src/ssh_transport.rs",
+      "target": "src-tauri/src/infrastructure/ssh/transport.rs"
+    },
+    "src-tauri/src/lib.rs:statusline": {
+      "source": "src-tauri/src/statusline.rs",
+      "target": "src-tauri/src/features/statusline/mod.rs"
+    },
+    "src-tauri/src/lib.rs:statusline_profiles": {
+      "source": "src-tauri/src/statusline_profiles.rs",
+      "target": "src-tauri/src/features/statusline/profiles.rs"
+    },
+    "src-tauri/src/lib.rs:sync": {
+      "source": "src-tauri/src/sync/mod.rs",
+      "target": "src-tauri/src/features/sync/service/mod.rs"
+    },
+    "src-tauri/src/lib.rs:text_encoding": {
+      "source": "src-tauri/src/text_encoding.rs",
+      "target": "src-tauri/src/shared/text_encoding.rs"
+    },
+    "src-tauri/src/lib.rs:third_party_notification": {
+      "source": "src-tauri/src/third_party_notification/mod.rs",
+      "target": "src-tauri/src/features/notifications/service/mod.rs"
+    },
+    "src-tauri/src/lib.rs:usage": {
+      "source": "src-tauri/src/usage.rs",
+      "target": "src-tauri/src/features/stats/usage.rs"
+    },
+    "src-tauri/src/lib.rs:usage_schema": {
+      "source": "src-tauri/src/usage_schema.rs",
+      "target": "src-tauri/src/features/stats/usage_schema.rs"
+    },
+    "src-tauri/src/lib.rs:webdav": {
+      "source": "src-tauri/src/webdav/mod.rs",
+      "target": "src-tauri/src/infrastructure/webdav/mod.rs"
+    },
+    "src-tauri/src/lib.rs:wsl": {
+      "source": "src-tauri/src/wsl.rs",
+      "target": "src-tauri/src/infrastructure/process/wsl.rs"
+    },
+    "src-tauri/src/commands/mod.rs:agent_capabilities": {
+      "source": "src-tauri/src/commands/agent_capabilities.rs",
+      "target": "src-tauri/src/features/agents/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:app_data": {
+      "source": "src-tauri/src/commands/app_data.rs",
+      "target": "src-tauri/src/features/app-data/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:background": {
+      "source": "src-tauri/src/commands/background.rs",
+      "target": "src-tauri/src/features/terminal/background.rs"
+    },
+    "src-tauri/src/commands/mod.rs:cc_connect": {
+      "source": "src-tauri/src/commands/cc_connect.rs",
+      "target": "src-tauri/src/features/remote/cc_connect/mod.rs"
+    },
+    "src-tauri/src/commands/mod.rs:ccusage": {
+      "source": "src-tauri/src/commands/ccusage.rs",
+      "target": "src-tauri/src/features/stats/ccusage.rs"
+    },
+    "src-tauri/src/commands/mod.rs:command_suggestion": {
+      "source": "src-tauri/src/commands/command_suggestion.rs",
+      "target": "src-tauri/src/features/terminal/suggestions.rs"
+    },
+    "src-tauri/src/commands/mod.rs:db_repair": {
+      "source": "src-tauri/src/commands/db_repair.rs",
+      "target": "src-tauri/src/features/app-data/repair/mod.rs"
+    },
+    "src-tauri/src/commands/mod.rs:desktop_pet": {
+      "source": "src-tauri/src/commands/desktop_pet.rs",
+      "target": "src-tauri/src/features/desktop-pet/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:fonts": {
+      "source": "src-tauri/src/commands/fonts.rs",
+      "target": "src-tauri/src/features/system/fonts.rs"
+    },
+    "src-tauri/src/commands/mod.rs:fs": {
+      "source": "src-tauri/src/commands/fs.rs",
+      "target": "src-tauri/src/features/files/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:git": {
+      "source": "src-tauri/src/commands/git.rs",
+      "target": "src-tauri/src/features/git/mod.rs"
+    },
+    "src-tauri/src/commands/mod.rs:git_diff": {
+      "source": "src-tauri/src/commands/git_diff.rs",
+      "target": "src-tauri/src/features/git/diff.rs"
+    },
+    "src-tauri/src/commands/mod.rs:git_diff_display": {
+      "source": "src-tauri/src/commands/git_diff_display.rs",
+      "target": "src-tauri/src/features/git/diff_display.rs"
+    },
+    "src-tauri/src/commands/mod.rs:git_history": {
+      "source": "src-tauri/src/commands/git_history.rs",
+      "target": "src-tauri/src/features/git/history.rs"
+    },
+    "src-tauri/src/commands/mod.rs:git_tools": {
+      "source": "src-tauri/src/commands/git_tools.rs",
+      "target": "src-tauri/src/features/git/tools.rs"
+    },
+    "src-tauri/src/commands/mod.rs:git_worktree": {
+      "source": "src-tauri/src/commands/git_worktree.rs",
+      "target": "src-tauri/src/features/projects/worktree.rs"
+    },
+    "src-tauri/src/commands/mod.rs:history": {
+      "source": "src-tauri/src/commands/history.rs",
+      "target": "src-tauri/src/features/history/mod.rs"
+    },
+    "src-tauri/src/commands/mod.rs:history_backup": {
+      "source": "src-tauri/src/commands/history_backup.rs",
+      "target": "src-tauri/src/features/history/backup.rs"
+    },
+    "src-tauri/src/commands/mod.rs:history_edit": {
+      "source": "src-tauri/src/commands/history_edit.rs",
+      "target": "src-tauri/src/features/history/edit.rs"
+    },
+    "src-tauri/src/commands/mod.rs:history_sources": {
+      "source": "src-tauri/src/commands/history_sources.rs",
+      "target": "src-tauri/src/features/history/sources.rs"
+    },
+    "src-tauri/src/commands/mod.rs:history_title": {
+      "source": "src-tauri/src/commands/history_title.rs",
+      "target": "src-tauri/src/features/history/title.rs"
+    },
+    "src-tauri/src/commands/mod.rs:hook_settings": {
+      "source": "src-tauri/src/commands/hook_settings.rs",
+      "target": "src-tauri/src/features/hooks/settings/mod.rs"
+    },
+    "src-tauri/src/commands/mod.rs:live_server": {
+      "source": "src-tauri/src/commands/live_server.rs",
+      "target": "src-tauri/src/features/files/live_server_commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:logging": {
+      "source": "src-tauri/src/commands/logging.rs",
+      "target": "src-tauri/src/features/system/logging.rs"
+    },
+    "src-tauri/src/commands/mod.rs:model_pricing": {
+      "source": "src-tauri/src/commands/model_pricing.rs",
+      "target": "src-tauri/src/features/stats/model_pricing.rs"
+    },
+    "src-tauri/src/commands/mod.rs:opencode_hook": {
+      "source": "src-tauri/src/commands/opencode_hook.rs",
+      "target": "src-tauri/src/features/hooks/opencode.rs"
+    },
+    "src-tauri/src/commands/mod.rs:project_groups": {
+      "source": "src-tauri/src/commands/project_groups.rs",
+      "target": "src-tauri/src/features/projects/groups.rs"
+    },
+    "src-tauri/src/commands/mod.rs:provider": {
+      "source": "src-tauri/src/commands/provider.rs",
+      "target": "src-tauri/src/features/providers/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:routing": {
+      "source": "src-tauri/src/commands/routing.rs",
+      "target": "src-tauri/src/features/providers/routing_commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:shell": {
+      "source": "src-tauri/src/commands/shell.rs",
+      "target": "src-tauri/src/features/terminal/shell_commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:ssh": {
+      "source": "src-tauri/src/commands/ssh.rs",
+      "target": "src-tauri/src/features/remote/ssh/mod.rs"
+    },
+    "src-tauri/src/commands/mod.rs:ssh_config": {
+      "source": "src-tauri/src/commands/ssh_config.rs",
+      "target": "src-tauri/src/features/remote/config.rs"
+    },
+    "src-tauri/src/commands/mod.rs:ssh_db": {
+      "source": "src-tauri/src/commands/ssh_db.rs",
+      "target": "src-tauri/src/features/remote/database.rs"
+    },
+    "src-tauri/src/commands/mod.rs:ssh_files": {
+      "source": "src-tauri/src/commands/ssh_files.rs",
+      "target": "src-tauri/src/features/files/ssh.rs"
+    },
+    "src-tauri/src/commands/mod.rs:ssh_git": {
+      "source": "src-tauri/src/commands/ssh_git.rs",
+      "target": "src-tauri/src/features/git/ssh.rs"
+    },
+    "src-tauri/src/commands/mod.rs:ssh_integration": {
+      "source": "src-tauri/src/commands/ssh_integration.rs",
+      "target": "src-tauri/src/features/remote/integration.rs"
+    },
+    "src-tauri/src/commands/mod.rs:subagent_transcript": {
+      "source": "src-tauri/src/commands/subagent_transcript.rs",
+      "target": "src-tauri/src/features/terminal/subagent_transcript.rs"
+    },
+    "src-tauri/src/commands/mod.rs:sync": {
+      "source": "src-tauri/src/commands/sync.rs",
+      "target": "src-tauri/src/features/sync/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:system_notification": {
+      "source": "src-tauri/src/commands/system_notification.rs",
+      "target": "src-tauri/src/features/notifications/system.rs"
+    },
+    "src-tauri/src/commands/mod.rs:system_resources": {
+      "source": "src-tauri/src/commands/system_resources.rs",
+      "target": "src-tauri/src/features/system/resources.rs"
+    },
+    "src-tauri/src/commands/mod.rs:terminal": {
+      "source": "src-tauri/src/commands/terminal.rs",
+      "target": "src-tauri/src/features/terminal/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:terminal_shell": {
+      "source": "src-tauri/src/commands/terminal_shell.rs",
+      "target": "src-tauri/src/features/terminal/shell.rs"
+    },
+    "src-tauri/src/commands/mod.rs:third_party_notification": {
+      "source": "src-tauri/src/commands/third_party_notification.rs",
+      "target": "src-tauri/src/features/notifications/commands.rs"
+    },
+    "src-tauri/src/commands/mod.rs:version": {
+      "source": "src-tauri/src/commands/version.rs",
+      "target": "src-tauri/src/features/system/version.rs"
+    }
+  }
+}

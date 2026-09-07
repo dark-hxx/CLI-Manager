@@ -1,0 +1,1484 @@
+{
+  "analyzed": 3882,
+  "unindexed": [
+    "git_compare_refs",
+    "git_execute_operation",
+    "pending_git_operation",
+    "validate_pending_operation",
+    "pending_operation_args",
+    "git_operation_continue",
+    "git_operation_abort",
+    "run_git_conflict_aware_with_code",
+    "validate_operation_ref",
+    "validate_commit_ref",
+    "validate_history_filters",
+    "validate_oid_text",
+    "validate_oid",
+    "normalize_search",
+    "validate_history_reference",
+    "matches_search",
+    "commit_touches_path",
+    "matches_filters",
+    "reference_map",
+    "commit_summary",
+    "list_native",
+    "parse_shell_commits",
+    "list_wsl",
+    "delta_status",
+    "commit_diff",
+    "detail_native",
+    "shell_diff_base_args",
+    "wsl_commit",
+    "parse_name_status",
+    "detail_wsl",
+    "git_list_commits",
+    "git_get_commit_detail",
+    "git_get_commit_file_diff",
+    "commit_file_diff_native",
+    "list_tags",
+    "git_list_tags",
+    "git_get_commit_patch",
+    "patch_output_path",
+    "git_save_generated_patch",
+    "validate_plain_value",
+    "git_list_stashes",
+    "git_stash_create",
+    "git_stash_action",
+    "git_list_remotes",
+    "validate_remote_url",
+    "git_remote_action",
+    "git_push_tag",
+    "git_delete_remote_branch",
+    "git_force_push_with_lease",
+    "git_list_reflog",
+    "git_restore_reflog",
+    "git_file_history",
+    "parse_blame",
+    "git_blame_file",
+    "git_bisect_status",
+    "git_bisect_action",
+    "submodule_urls",
+    "git_list_submodules",
+    "git_submodule_action",
+    "rewrite_commits",
+    "git_rewrite_commits",
+    "history_list_sessions",
+    "history_get_session",
+    "history_convert_session",
+    "history_delete_session",
+    "history_search",
+    "history_get_index_status",
+    "history_get_index_v2_status",
+    "history_index_v2_preview_adapter_sessions",
+    "history_index_v2_upsert_source_instance",
+    "history_index_v2_deactivate_source_instance",
+    "history_remote_sync",
+    "history_remote_list_cached",
+    "history_remote_search",
+    "history_remote_get_session",
+    "history_remote_resume_preflight",
+    "history_remote_close",
+    "history_get_conversion_matrix",
+    "history_refresh_index",
+    "history_list_prompts",
+    "history_list_stats_projects",
+    "history_get_stats",
+    "codex_config_string",
+    "parse_top_level_toml_string",
+    "parse_toml_string_value",
+    "expand_codex_config_path",
+    "convert_history_session",
+    "delete_session_tree_with_backup_root",
+    "delete_session_tree",
+    "converted_session_cwd",
+    "conversion_timestamp",
+    "now_rfc3339",
+    "converted_message_role",
+    "converted_message_content",
+    "build_claude_conversion_lines",
+    "claude_message_content_value",
+    "build_codex_conversion_lines",
+    "codex_ui_event_message",
+    "converted_claude_session_path",
+    "converted_codex_session_path",
+    "append_codex_history_index",
+    "codex_history_index_text",
+    "codex_history_index_timestamp",
+    "append_codex_session_index",
+    "append_jsonl_line",
+    "build_codex_thread_registration",
+    "rfc3339_millis",
+    "register_codex_thread",
+    "open_sqlite_readwrite",
+    "unique_jsonl_path",
+    "write_jsonl_lines",
+    "scan_copilot_jsonl_session",
+    "count_copilot_tool_call",
+    "copilot_message_from_event",
+    "copilot_assistant_content",
+    "copilot_tool_result_text",
+    "copilot_tool_id",
+    "copilot_tool_name",
+    "estimate_history_detail_content_bytes",
+    "history_detail_operation_count",
+    "log_history_detail_oom_diagnostic",
+    "estimate_history_stats_response_bytes",
+    "stats_session_ref_count",
+    "log_history_stats_oom_diagnostic",
+    "collect_session_files",
+    "collect_session_files_with_force",
+    "scan_session_files",
+    "scan_session_combined",
+    "scan_session_detail",
+    "scan_tool_events",
+    "scan_grok_tool_events",
+    "scan_cline_tool_events",
+    "update_cline_tool_results",
+    "scan_file_changes",
+    "scan_cline_file_changes",
+    "collect_file_changes_from_value",
+    "extract_file_changes_from_arguments",
+    "extract_file_changes_from_input_value",
+    "build_text_file_change_operation",
+    "build_patch_file_change_operations",
+    "summarize_file_change_operations",
+    "is_newer_file_change",
+    "derive_file_change_status",
+    "extract_file_path_from_value",
+    "extract_string_field",
+    "count_patch_changes",
+    "count_text_changes",
+    "count_text_lines",
+    "split_patch_blocks",
+    "decode_embedded_apply_patch",
+    "split_apply_patch_blocks",
+    "split_unified_diff_blocks",
+    "extract_patch_file_path",
+    "scan_grok_jsonl_session",
+    "apply_grok_signals_stats",
+    "grok_update_value",
+    "grok_event_timestamp",
+    "grok_is_bash_command",
+    "grok_content_text",
+    "grok_append_pending_message_chunk",
+    "grok_flush_pending_message",
+    "grok_tool_call_id",
+    "grok_tool_name",
+    "grok_tool_input",
+    "grok_tool_output",
+    "grok_nested_content_text",
+    "grok_tool_status",
+    "grok_turn_usage_scans",
+    "grok_usage_token_scan",
+    "grok_usage_event_key",
+    "grok_tool_message_text",
+    "get_project_cache",
+    "get_files_cache",
+    "get_wsl_session_fingerprint_cache",
+    "get_history_index",
+    "invalidate_history_caches",
+    "invalidate_history_stats_caches",
+    "set_history_index_cache_dir",
+    "history_index_disk_lock",
+    "history_index_persisted_gen",
+    "history_index_cache_file",
+    "persisted_generation",
+    "set_persisted_generation",
+    "load_persisted_history_index",
+    "save_persisted_history_index",
+    "clear_persisted_history_index",
+    "refresh_history_index",
+    "refresh_history_index_snapshot",
+    "history_index_snapshot_for_stats",
+    "build_history_index",
+    "history_index_entries_match",
+    "can_reuse_session_scan",
+    "session_file_fingerprint",
+    "summary_from_computation",
+    "scan_session_computation",
+    "scan_session_computation_with_messages",
+    "build_session_computation",
+    "apply_grok_summary_metadata",
+    "grok_summary_timestamp_ms",
+    "scan_json_session",
+    "scan_gemini_json_session",
+    "gemini_usage_token_scan",
+    "gemini_usage_event_key",
+    "scan_kiro_json_session",
+    "scan_cline_json_session",
+    "json_session_scan_result",
+    "session_stats_from_messages",
+    "json_history_message",
+    "json_content_text",
+    "normalize_json_role",
+    "history_list_sessions_legacy",
+    "extract_editable_text",
+    "editable_text_from_content",
+    "message_title_candidate",
+    "title_candidate_from_text",
+    "extract_simple_tag_block",
+    "title_candidate_from_lines",
+    "image_title_candidate_from_lines",
+    "extract_image_title_parts",
+    "extract_image_label",
+    "find_ascii_ci",
+    "starts_with_ascii_ci",
+    "title_xml_tag_name",
+    "is_title_noise_block_tag",
+    "title_line_closes_tag",
+    "is_workflow_state_start_line",
+    "is_workflow_state_end_line",
+    "is_title_noise_line",
+    "is_injected_prompt_title_line",
+    "extract_role",
+    "is_injected_prompt_content",
+    "fallback_message_part_kind",
+    "fallback_history_message_part",
+    "message_part_kind",
+    "message_part_tool_name",
+    "message_part_call_id",
+    "extract_message_part_content",
+    "extract_message_parts",
+    "extract_content",
+    "extract_text_from_value",
+    "extract_timestamp",
+    "extract_timestamp_millis",
+    "update_timestamp_bounds",
+    "update_timestamp_bound",
+    "parse_timestamp_millis_value",
+    "parse_timestamp_millis_str",
+    "normalize_unix_timestamp_millis",
+    "extract_branch",
+    "normalize_text",
+    "looks_like_patch",
+    "iter_session_messages",
+    "extract_usage_tokens",
+    "extract_codex_token_count",
+    "extract_codex_context_info",
+    "extract_context_window",
+    "extract_context_window_from_value",
+    "resolve_opencode_database_path",
+    "opencode_session_locator",
+    "is_valid_opencode_session_id",
+    "parse_opencode_session_locator",
+    "path_equals_lenient",
+    "opencode_locator_in_default_scope",
+    "opencode_sqlite_options",
+    "opencode_sqlite_mutation_options",
+    "open_opencode_database",
+    "open_opencode_database_for_mutation",
+    "validate_opencode_schema",
+    "delete_opencode_session_from_locator",
+    "delete_opencode_session_from_database",
+    "opencode_catalog_sessions",
+    "parse_opencode_database",
+    "parse_opencode_session_row",
+    "opencode_message_parts",
+    "opencode_time_millis",
+    "timestamp_millis_to_rfc3339",
+    "opencode_model",
+    "opencode_usage_tokens",
+    "opencode_part_text",
+    "opencode_history_message_part",
+    "opencode_tool_name",
+    "opencode_tool_summary",
+    "opencode_tool_event",
+    "build_opencode_session_detail",
+    "finalize_opencode_detail",
+    "scan_pi_jsonl_session",
+    "collect_pi_tool_calls",
+    "pi_tool_call_id",
+    "pi_tool_name",
+    "scan_pi_tool_events",
+    "codex_project_key_from_session",
+    "gemini_project_key_from_path",
+    "copilot_project_key_from_path",
+    "kiro_project_key_from_path",
+    "project_key_from_cwd",
+    "codex_project_key_from_path",
+    "collect_files_recursive",
+    "read_dir_entries",
+    "is_jsonl",
+    "is_json",
+    "detect_home_dir",
+    "path_to_key",
+    "normalize_history_path",
+    "claude_project_key_from_path",
+    "session_matches_project_path",
+    "cwd_matches_target",
+    "get_or_scan_session_project",
+    "scan_session_project",
+    "extract_cwd",
+    "is_codex_rollout_session_path",
+    "extract_session_meta_id",
+    "remote_detail_value",
+    "validate_remote_history_plan",
+    "remote_scope_payload",
+    "remote_history_get_payload",
+    "remote_error_code",
+    "wait_for_history_daemon",
+    "validate_remote_history_sync_result",
+    "delete_document_rows",
+    "list_subagent_transcript_files",
+    "is_subagent_transcript_path",
+    "normalize_config_dir",
+    "resolve_claude_history_root",
+    "resolve_codex_config_root",
+    "scan_session_detail_parts",
+    "scan_session_detail_parts_for_roots",
+    "resolve_codex_history_root",
+    "resolve_codex_state_db_path",
+    "resolve_gemini_history_root",
+    "resolve_copilot_history_root",
+    "resolve_antigravity_history_root",
+    "resolve_grok_history_root",
+    "resolve_pi_history_root",
+    "resolve_cline_history_roots",
+    "resolve_cursor_history_root",
+    "resolve_cursor_global_storage_root",
+    "resolve_kiro_history_root",
+    "load_history_stats_data_quality",
+    "merge_route_usage_into_history_stats",
+    "route_record_matches_fact",
+    "remote_history_detail_cache",
+    "extract_session_meta_parent_id",
+    "scan_session_inner",
+    "validate_session_file_ref",
+    "validate_session_file_ref_for_conversion",
+    "history_source_base",
+    "is_supported_session_file",
+    "resolve_session_file_ref",
+    "path_within_history_scope",
+    "wsl_scope_path_parts",
+    "history_scope_debug_string",
+    "format_wsl_scope_parts",
+    "normalize_wsl_scope_unc",
+    "wsl_linux_path",
+    "codex_runtime_path",
+    "should_register_codex_state_db",
+    "scan_session_detail_parts_with_thread_names",
+    "finalize_session_detail",
+    "v2_fingerprint_value",
+    "v2_path_pointer",
+    "session_file_kind",
+    "v2_message_raw_pointers",
+    "v2_session_raw_pointers",
+    "build_v2_adapter_session",
+    "build_v2_adapter_session_from_parts",
+    "build_session_detail",
+    "build_session_detail_with_roots",
+    "merge_session_detail_parts",
+    "collect_subtask_session_file_refs",
+    "collect_claude_session_files",
+    "collect_codex_session_files",
+    "collect_gemini_session_files",
+    "collect_copilot_session_files",
+    "collect_antigravity_session_files",
+    "collect_grok_session_files",
+    "collect_wsl_grok_session_files",
+    "looks_like_grok_linux_updates",
+    "grok_project_key_from_linux_path",
+    "wsl_find_exact_grok_updates",
+    "grok_session_dir_from_updates",
+    "is_valid_grok_session_id",
+    "delete_grok_session_tree",
+    "delete_grok_session_tree_with_backup_root",
+    "find_exact_grok_session_in_root",
+    "collect_pi_session_files",
+    "collect_kiro_session_files",
+    "collect_cline_session_files",
+    "collect_cursor_session_files",
+    "looks_like_gemini_session_file",
+    "looks_like_copilot_events_file",
+    "looks_like_antigravity_transcript_file",
+    "antigravity_path_parts",
+    "load_antigravity_workspace_map",
+    "antigravity_workspace_from_path",
+    "looks_like_grok_updates_file",
+    "grok_summary_value",
+    "grok_value_at_path",
+    "grok_string_by_paths",
+    "grok_session_id_from_path",
+    "grok_workspace_from_path",
+    "grok_project_key_from_path",
+    "looks_like_pi_session_file",
+    "path_is_pi_session_tree",
+    "pi_session_meta",
+    "pi_string_by_keys",
+    "pi_workspace_from_path",
+    "pi_session_id_from_path",
+    "pi_project_key_from_path",
+    "looks_like_kiro_session_file",
+    "looks_like_cline_session_file",
+    "looks_like_cursor_agent_transcript_file",
+    "cursor_path_parts",
+    "cursor_session_id_from_path",
+    "cursor_project_key_from_path",
+    "cursor_project_slug_from_path",
+    "cursor_metadata_from_path",
+    "cursor_metadata_from_databases",
+    "cursor_metadata_from_databases_async",
+    "cursor_sqlite_options",
+    "read_cursor_conversation_metadata",
+    "read_cursor_state_metadata",
+    "cursor_table_exists",
+    "merge_cursor_metadata",
+    "cursor_metadata_is_empty",
+    "apply_cursor_metadata_to_computation",
+    "cursor_title_from_state_value",
+    "cursor_workspace_from_state_value",
+    "trim_optional_string",
+    "cline_task_dir",
+    "cline_task_id_from_path",
+    "cline_sibling_json",
+    "cline_metadata_value",
+    "cline_string_by_keys",
+    "cline_workspace_from_path",
+    "cline_workspace_from_api_history",
+    "cline_session_id_from_path",
+    "cline_title_from_path",
+    "cline_model_from_path",
+    "cline_project_key_from_path",
+    "cline_api_message_values",
+    "cline_api_message_count",
+    "cline_ui_timestamps",
+    "normalize_history_stats_project_paths",
+    "history_stats_project_paths_cache_key",
+    "source_includes",
+    "opencode_list_prompts",
+    "opencode_stats_facts",
+    "opencode_stats_generation",
+    "opencode_summary_from_parsed",
+    "opencode_cwd_matches_project_path",
+    "build_history_stats_daily_index",
+    "build_history_stats_response",
+    "resolve_stats_time_bounds",
+    "stats_day_start_offset",
+    "stats_day_start_with_offset",
+    "stats_usage_events_or_fallback",
+    "reprice_usage_stats",
+    "history_stats_session_key",
+    "make_history_stats_daily_index_cache_key",
+    "make_history_stats_aggregation_cache_key",
+    "get_stats_aggregation_cache",
+    "stats_aggregation_cache_get",
+    "stats_aggregation_cache_set",
+    "get_stats_daily_index_cache",
+    "stats_daily_index_cache_get",
+    "stats_daily_index_cache_set",
+    "convert_codex_history_to_claude_jsonl_readable_by_history_parser",
+    "convert_claude_history_to_codex_jsonl_readable_by_history_parser",
+    "append_jsonl_line_keeps_concurrent_records_intact",
+    "v2_adapter_outputs_claude_session_ref_and_raw_pointers",
+    "v2_adapter_outputs_codex_mixed_artifact_raw_pointers",
+    "conversion_matrix_supports_current_writers_and_plans_other_pairs",
+    "request_log_dedup_fixture",
+    "write_file",
+    "expect_string_err",
+    "remote_history_plan",
+    "empty_usage",
+    "sample_detail",
+    "write_kimi_session_fixture",
+    "open_opencode_test_database",
+    "explicit_grok_history_root_overrides_default_root",
+    "default_grok_history_root_is_the_real_session_root",
+    "explicit_grok_session_root_is_scanned_without_appending_sessions",
+    "grok_updates_parser_covers_history_pipeline",
+    "grok_delete_removes_session_directory_inside_history_home",
+    "grok_delete_rejects_session_outside_history_home",
+    "grok_delete_rejects_session_at_history_home",
+    "grok_delete_rejects_workspace_directory_under_history_home",
+    "grok_linux_update_paths_do_not_use_host_path_parser",
+    "exact_grok_session_lookup_bypasses_catalog_miss",
+    "apply_grok_summary_metadata_fills_list_fields",
+    "kimi_wire_parser_covers_history_pipeline",
+    "exact_kimi_session_lookup_bypasses_catalog_miss",
+    "exact_kimi_lookup_rejects_index_session_dir_escape",
+    "kimi_workspace_fallback_uses_latest_active_index_record",
+    "kimi_delete_removes_session_dir_and_index_row",
+    "kimi_delete_rejects_session_outside_history_home",
+    "kimi_history_root_uses_explicit_config_dir_and_ignores_legacy_home",
+    "kimi_application_pipeline_lists_details_and_deletes_like_history_workspace",
+    "parse_opencode_database_reads_sqlite_sessions",
+    "opencode_session_locator_requires_a_valid_session_id",
+    "delete_opencode_session_is_transactional_and_isolated",
+    "scan_json_session_reads_gemini_messages",
+    "scan_json_session_reads_kiro_workspace_history",
+    "copilot_events_jsonl_parser_covers_history_pipeline",
+    "antigravity_transcript_parser_covers_history_pipeline",
+    "pi_session_parser_covers_history_pipeline",
+    "cline_task_parser_covers_history_pipeline",
+    "cursor_agent_transcript_parser_covers_history_pipeline",
+    "cursor_metadata_reads_sqlite_title_time_and_workspace",
+    "cursor_metadata_updates_computation_without_overriding_real_title",
+    "collect_kiro_session_files_skips_registry",
+    "collect_gemini_session_files_reads_project_hash_folder",
+    "remote_history_sync_rejects_identity_changes_between_pages",
+    "remote_history_get_payload_encodes_missing_transcript_ref_as_empty_string",
+    "remote_history_detail_cache_evicts_lru_and_invalidates_instance",
+    "parse_wsl_find_session_file_line_extracts_path_metadata_and_project",
+    "session_matches_project_path_matches_wsl_encoded_claude_key",
+    "session_matches_project_path_rejects_unrelated_claude_key",
+    "resolve_session_file_ref_accepts_indexed_jsonl",
+    "resolve_session_file_ref_reconciles_codex_project_key_from_cwd",
+    "resolve_session_file_ref_rejects_non_jsonl",
+    "resolve_session_file_ref_rejects_path_outside_history_scope",
+    "path_within_history_scope_accepts_equivalent_wsl_unc_prefixes",
+    "path_within_history_scope_accepts_verbatim_wsl_unc_prefixes",
+    "codex_runtime_path_uses_linux_path_for_wsl_unc",
+    "codex_state_registration_is_disabled_for_wsl_database",
+    "path_within_history_scope_rejects_wsl_paths_outside_base",
+    "resolve_session_file_ref_rejects_source_or_project_mismatch",
+    "iter_session_messages_reads_json_sessions",
+    "scan_file_changes_reads_claude_and_codex_jsonl_operations_in_time_order",
+    "collect_codex_session_files_uses_cwd_project_name",
+    "build_session_computation_uses_codex_session_meta_id",
+    "build_session_computation_uses_codex_transcript_timestamps_for_duration",
+    "build_session_computation_extracts_codex_parent_thread_id",
+    "codex_thread_name_index_uses_last_valid_name_and_skips_invalid_rows",
+    "build_session_detail_exposes_cwd",
+    "build_session_detail_aggregates_subtasks_for_realtime_stats",
+    "delete_session_tree_rejects_subagent_and_cascades_from_parent",
+    "build_session_detail_marks_direct_subagent_messages_not_editable",
+    "build_session_computation_falls_back_for_codex_without_session_meta_id",
+    "build_session_computation_keeps_claude_file_stem_session_id",
+    "build_session_computation_title_uses_objective_from_internal_context",
+    "build_session_computation_title_skips_system_like_user_blocks",
+    "build_session_computation_title_skips_agents_instructions",
+    "build_session_computation_title_uses_image_placeholders_with_remaining_text",
+    "build_session_computation_title_skips_image_close_and_repeated_placeholder",
+    "build_session_computation_title_skips_inline_image_close_before_text",
+    "build_session_computation_title_uses_single_image_placeholder",
+    "get_or_scan_session_project_reuses_matching_fingerprint_cache",
+    "extract_command_name_strips_slash",
+    "parse_message_classifies_tool_result_lines_as_tool",
+    "parse_message_classifies_codex_developer_messages_as_system",
+    "parse_message_preserves_mixed_content_part_kinds",
+    "parse_message_preserves_codex_response_item_part_kinds",
+    "parse_message_marks_injected_user_prompt_as_system_part",
+    "parse_message_marks_embedded_codex_context_as_system_part",
+    "parse_message_marks_skill_directory_context_as_system_part",
+    "iter_session_messages_blanks_duplicate_usage_lines",
+    "iter_session_messages_extracts_model_with_fallback",
+    "scan_session_detail_collects_messages_and_stats_in_one_pass",
+    "scan_session_detail_maps_claude_messages_to_physical_lines",
+    "scan_session_detail_maps_codex_messages_to_physical_lines",
+    "build_session_detail_blanks_line_mapping_for_aggregated_subtask_messages",
+    "scan_session_detail_backfills_assistant_model_from_turn_context",
+    "scan_session_detail_backfills_codex_token_count_to_latest_assistant_message",
+    "route_usage_matches_cache_split_session_fact_at_completion_time",
+    "route_usage_does_not_replace_another_source_or_token_event",
+    "resolve_stats_time_bounds_accepts_full_year_range",
+    "hour_of_day_for_stats_uses_explicit_range_anchor",
+    "history_stats_project_paths_are_normalized_for_stable_cache_keys",
+    "history_stats_aggregation_cache_key_tracks_opencode_generation",
+    "history_stats_buckets_usage_by_event_timestamp",
+    "history_stats_multi_path_filter_counts_overlapping_session_once",
+    "history_stats_model_distribution_preserves_codex_reasoning_effort",
+    "history_stats_reprices_cached_usage_events_with_current_model_prices",
+    "scan_session_combined_dedups_streamed_usage_lines",
+    "scan_session_combined_diffs_codex_cumulative_token_count",
+    "history_stats_buckets_codex_usage_by_event_day",
+    "scan_session_combined_ignores_codex_cumulative_stale_snapshots",
+    "scan_session_combined_extracts_codex_context_window",
+    "scan_session_combined_extracts_claude_explicit_context_window",
+    "scan_session_combined_tracks_current_model_separately_from_dominant_model",
+    "scan_session_combined_extracts_codex_reasoning_effort",
+    "scan_session_combined_qualifies_codex_model_with_reasoning_effort",
+    "qualify_model_normalizes_embedded_reasoning_effort_suffix",
+    "scan_session_combined_tracks_claude_last_context_tokens",
+    "scan_session_combined_counts_tool_mcp_and_skill_calls",
+    "codex_usage_delta_ignores_cumulative_shrinks",
+    "scan_session_combined_ignores_synthetic_model",
+    "extract_usage_tokens_merges_top_level_cost_with_nested_tokens",
+    "day_start_utc",
+    "hour_of_day_utc",
+    "hour_of_day_for_stats",
+    "calc_heat_level",
+    "is_tool_result_message",
+    "collect_tool_calls",
+    "collect_tool_events_from_value",
+    "mark_tool_event_seen",
+    "make_tool_event",
+    "update_tool_event_output",
+    "summarize_json_value",
+    "extract_tool_duration_ms",
+    "extract_command_name",
+    "sorted_tool_counts",
+    "scan_cursor_jsonl_session",
+    "scan_antigravity_jsonl_session",
+    "extract_antigravity_user_request",
+    "empty_session_scan",
+    "codex_usage_delta",
+    "codex_usage_from_counts",
+    "extract_usage_dedup_key",
+    "build_usage_event_key",
+    "is_synthetic_model",
+    "extract_usage_tokens_from_value",
+    "extract_u64_by_keys",
+    "extract_f64_by_keys",
+    "extract_non_negative_f64",
+    "usage_total_tokens",
+    "message_has_token_usage",
+    "positive_usage_token",
+    "backfill_latest_assistant_message_usage",
+    "usage_stats_total_tokens",
+    "usage_trend_point",
+    "history_stats_total_tokens",
+    "calculate_usage_cost",
+    "find_history_model_pricing",
+    "extract_positive_u64",
+    "extract_model",
+    "qualify_model_with_reasoning_effort",
+    "split_model_reasoning_effort",
+    "supports_reasoning_effort_model_variant",
+    "normalize_reasoning_effort_label",
+    "wsl_find_session_files",
+    "parse_wsl_find_timestamp_millis",
+    "parse_wsl_find_session_file_line",
+    "remember_wsl_session_fingerprint",
+    "wsl_session_fingerprint",
+    "claude_project_key_from_wsl_linux_path",
+    "codex_project_key_from_wsl_linux_path",
+    "collect_wsl_claude_session_files",
+    "collect_wsl_codex_session_files",
+    "missing_git_history_capability_is_rejected_before_request_write",
+    "sqlite_object_exists",
+    "usage_error_detail_column_exists",
+    "usage_error_detail_marker_matches",
+    "usage_view_has_required_columns",
+    "usage_schema_is_ready"
+  ],
+  "high": [
+    {
+      "target": "set",
+      "file": "src-tauri/src/credential_store.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 105,
+        "processes_affected": 13,
+        "modules_affected": 18
+      }
+    },
+    {
+      "target": "open_connection",
+      "file": "src-tauri/src/provider/database.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 67,
+        "processes_affected": 10,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "silent_command",
+      "file": "src-tauri/src/shell_resolver.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 48,
+        "processes_affected": 0,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "parse_wsl_unc_path",
+      "file": "src-tauri/src/wsl.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 45,
+        "processes_affected": 1,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "entry",
+      "file": "src-tauri/src/credential_store.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 41,
+        "processes_affected": 9,
+        "modules_affected": 13
+      }
+    },
+    {
+      "target": "output_with_timeout",
+      "file": "src-tauri/src/shell_resolver.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 35,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "is_wsl_config_dir",
+      "file": "src-tauri/src/wsl.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 35,
+        "processes_affected": 6,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "cli_manager_data_dir",
+      "file": "src-tauri/src/app_paths.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 34,
+        "processes_affected": 10,
+        "modules_affected": 10
+      }
+    },
+    {
+      "target": "find_wsl_exe",
+      "file": "src-tauri/src/wsl.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 30,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "sample_profile",
+      "file": "src-tauri/src/commands/cc_connect.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 29,
+        "processes_affected": 0,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "normalize_app_type",
+      "file": "src-tauri/src/provider/repository/support.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 27,
+        "processes_affected": 10,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "map_database_error",
+      "file": "src-tauri/src/provider/repository/support.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 25,
+        "processes_affected": 0,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "ensure_schema",
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 24,
+        "processes_affected": 0,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "request",
+      "file": "src/lib/sshRemoteGit.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 22,
+        "processes_affected": 0,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "db_path",
+      "file": "src-tauri/src/app_paths.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 21,
+        "processes_affected": 3,
+        "modules_affected": 6
+      }
+    },
+    {
+      "target": "user_path_string",
+      "file": "src-tauri/src/commands/cc_connect.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 21,
+        "processes_affected": 0,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "open_git_repo",
+      "file": "src-tauri/src/commands/git.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 21,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "block_on",
+      "file": "src-tauri/src/commands/routing.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 19,
+        "processes_affected": 1,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "remote_manager_dir",
+      "file": "src-tauri/src/commands/cc_connect.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 18,
+        "processes_affected": 0,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "read_text_if_exists",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 18,
+        "processes_affected": 0,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "path_to_string",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 17,
+        "processes_affected": 11,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "write_json",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 16,
+        "processes_affected": 0,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "effective_git_project_path",
+      "file": "src-tauri/src/commands/git.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 15,
+        "processes_affected": 0,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "hook_exe_for_dir",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 15,
+        "processes_affected": 0,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "build_codex_status",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 14,
+        "processes_affected": 10,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "trim_line_ending",
+      "file": "src-tauri/src/codex_app_server_proxy.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 13,
+        "processes_affected": 0,
+        "modules_affected": 6
+      }
+    },
+    {
+      "target": "build_claude_status",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 13,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "build_pi_status",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 13,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "initialize_at",
+      "file": "src-tauri/src/provider/database.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 13,
+        "processes_affected": 7,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "linux_to_unc_wsl_path",
+      "file": "src-tauri/src/wsl.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 13,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolve_claude_dir",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 12,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "build_grok_status",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 12,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "build_kimi_status",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 12,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "select",
+      "file": "scripts/sshCodexSessionBinding.test.mjs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 12,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "validate_remote_home_path",
+      "file": "src-tauri/src/ssh_transport.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 12,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolve_codex_dir",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 11,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "resolve_grok_dir",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 11,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "resolve_kimi_dir",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 11,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "resolve_pi_dir",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 11,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "configure_builder",
+      "file": "src-tauri/src/provider/network_client.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 9,
+        "processes_affected": 1,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "logs_dir",
+      "file": "src-tauri/src/app_paths.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 8,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "json_line",
+      "file": "src-tauri/src/codex_app_server_proxy.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 8,
+        "processes_affected": 0,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "normalize_wsl_unc_path",
+      "file": "src-tauri/src/wsl.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 8,
+        "processes_affected": 4,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "inspect_client_line",
+      "file": "src-tauri/src/codex_app_server_proxy.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "local_path_from_input",
+      "file": "src-tauri/src/commands/git_worktree.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "read_live",
+      "file": "src-tauri/src/provider/global.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "default_config_root",
+      "file": "src-tauri/src/provider/home.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 9,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "answer_prompt_with",
+      "file": "src-tauri/src/ssh_askpass.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "validate_settings",
+      "file": "src-tauri/src/statusline.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "daemon_info_path",
+      "file": "src-tauri/src/daemon/discovery.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "create_log_writer",
+      "file": "src-tauri/src/log_rotation.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "parse_response_json",
+      "file": "src-tauri/src/usage.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "normalize_selected_dir",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 11,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "read_daemon_info",
+      "file": "src-tauri/src/daemon/discovery.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "ensure_usage_schema",
+      "file": "src-tauri/src/usage_schema.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 1,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "sqlite_url_for_path",
+      "file": "src-tauri/src/app_paths.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "remote_hook_payload_from_spool",
+      "file": "src-tauri/src/claude_hook.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "transform_server_line",
+      "file": "src-tauri/src/codex_app_server_proxy.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "validate_manifest",
+      "file": "src-tauri/src/ssh_agent_supply_chain.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "strip_windows_extended_path_prefix",
+      "file": "src-tauri/src/commands/git_worktree.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "ensure_supported_local_path",
+      "file": "src-tauri/src/commands/git_worktree.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "open_main_repo",
+      "file": "src-tauri/src/commands/git_worktree.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "validate_worktree_branch",
+      "file": "src-tauri/src/commands/git_worktree.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "sync_ccswitch_for_tool_status",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 4,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "parse_claude_hook_module",
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 4,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "configure_connection",
+      "file": "src-tauri/src/provider/database.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 7,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "providers_db_path",
+      "file": "src-tauri/src/app_paths.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 7,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "data_paths",
+      "file": "src-tauri/src/app_paths.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "home_dir",
+      "file": "src-tauri/src/statusline.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "parse_message",
+      "file": "src-tauri/history-core/src/lib.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "open_connection_at",
+      "file": "src-tauri/src/provider/database.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 7,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "connection_options",
+      "file": "src-tauri/src/provider/database.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 7,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "home_input",
+      "file": "src-tauri/src/provider/global.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 10,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "build_plan",
+      "file": "src-tauri/src/provider/global.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 10,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "plan_preview",
+      "file": "src-tauri/src/provider/global.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 10,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "pending_journal",
+      "file": "src-tauri/src/provider/global.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 10,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "current",
+      "file": "src-tauri/src/provider/global.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 11,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "format_remote_home_path",
+      "file": "src-tauri/src/ssh_transport.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "format_open_repo_error",
+      "file": "src-tauri/src/commands/git.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "normalize_path_for_compare",
+      "file": "src-tauri/src/commands/git_worktree.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "is_unc_or_remote_path",
+      "file": "src-tauri/src/commands/git_worktree.rs",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 1,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "initialize_store",
+      "file": "src-tauri/src/credential_store.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 1,
+        "processes_affected": 7,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "plan_matches_live",
+      "file": "src-tauri/src/provider/global.rs",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 1,
+        "processes_affected": 10,
+        "modules_affected": 1
+      }
+    }
+  ]
+}

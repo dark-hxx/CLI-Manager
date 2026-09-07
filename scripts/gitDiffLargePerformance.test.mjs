@@ -139,7 +139,7 @@ test("local and SSH transport normalize optional metadata at one boundary", () =
 });
 
 test("Desktop and Agent enforce the same final payload error contract", () => {
-  const desktop = read("../src-tauri/src/commands/git_diff.rs");
+  const desktop = read("../src-tauri/src/features/git/diff.rs");
   const agent = read("../src-tauri/ssh-agent/src/git_diff.rs");
   for (const source of [desktop, agent]) {
     assert.match(source, /MAX_DIFF_LINES: usize = 20_000/);

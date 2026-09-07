@@ -14,7 +14,7 @@
 
 ### 2. Signatures
 
-Backend commands in `src-tauri/src/commands/fs.rs`:
+Backend commands in `src-tauri/src/features/files/commands.rs`:
 
 ```rust
 file_watch_start(project_path: String) -> Result<(), String>

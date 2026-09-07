@@ -8,7 +8,7 @@
 
 ### 1. Scope / Trigger
 
-- Trigger: changes touching `model_prices` SQLite schema, `model_prices_set_cache`, `model_prices_sync`, `src/features/stats/api/modelPricing.ts`, `src/features/stats/api/modelPricingStore.ts`, or history cost calculation in `src-tauri/src/commands/history.rs`.
+- Trigger: changes touching `model_prices` SQLite schema, `model_prices_set_cache`, `model_prices_sync`, `src/features/stats/api/modelPricing.ts`, `src/features/stats/api/modelPricingStore.ts`, or history cost calculation in `src-tauri/src/features/history/mod.rs`.
 - This is a cross-layer contract because the WebView owns the app SQLite connection through `tauri-plugin-sql`, Rust owns history JSONL scanning and cost aggregation, and both layers must use the same user-configured prices.
 - The authoritative persisted source is the frontend-managed SQLite table. Rust history code must never silently maintain a separate persisted model-price store.
 

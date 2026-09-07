@@ -5,9 +5,9 @@ import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const listSource = read("../src/features/history/components/HistoryListPane.tsx");
 const detailSource = read("../src/features/history/components/SessionDetailPane.tsx");
-const historySource = read("../src-tauri/src/commands/history.rs");
-const catalogSource = read("../src-tauri/src/commands/history/catalog.rs");
-const catalogDetailSource = read("../src-tauri/src/commands/history/catalog/session_detail.rs");
+const historySource = read("../src-tauri/src/features/history/mod.rs");
+const catalogSource = read("../src-tauri/src/features/history/catalog.rs");
+const catalogDetailSource = read("../src-tauri/src/features/history/catalog/session_detail.rs");
 
 test("history exposes both session and message multi-select controls", () => {
   assert.match(listSource, /onClick=\{onEnterSelectionMode\}/);

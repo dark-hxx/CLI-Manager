@@ -170,7 +170,7 @@ build_diff_payload(content, can_revert_hunks)
 ### 1. Scope / Trigger
 
 - Trigger: Git 变更面板新增分支列表、Fetch、checkout、本地新建分支能力，跨越 Tauri command、Rust Git 执行、Zustand store、React UI 和 i18n。
-- Target: `src-tauri/src/commands/git.rs` 中 Git 面板相关命令；前端只通过 Tauri command 调用，不拼接 shell 命令。
+- Target: `src-tauri/src/features/git/mod.rs` 中 Git 面板相关命令；前端只通过 Tauri command 调用，不拼接 shell 命令。
 
 ### 2. Signatures
 
@@ -264,7 +264,7 @@ await invoke("git_checkout_branch", {
 ### 1. Scope / Trigger
 
 - Trigger: Git 分支切换遇到 `checkout_conflict` 时，前端提供用户确认后的 Smart Checkout。该流程会移动未提交改动，必须由后端按固定序列执行。
-- Target: `src-tauri/src/commands/git.rs` 中 `git_smart_checkout_branch`；前端只能在用户确认后调用。
+- Target: `src-tauri/src/features/git/mod.rs` 中 `git_smart_checkout_branch`；前端只能在用户确认后调用。
 
 ### 2. Signatures
 
@@ -345,7 +345,7 @@ try {
 ### 1. Scope / Trigger
 
 - Trigger: Git 变更面板允许从右键菜单物理删除未跟踪文件。
-- Target: `src-tauri/src/commands/git.rs` 的 `git_delete_untracked_paths`；前端只能通过 Tauri command 调用，不拼接 shell 命令。
+- Target: `src-tauri/src/features/git/mod.rs` 的 `git_delete_untracked_paths`；前端只能通过 Tauri command 调用，不拼接 shell 命令。
 
 ### 2. Signatures
 

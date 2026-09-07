@@ -122,12 +122,12 @@ src/
   shared/           # UI、全局 preferences、平台适配、工具、类型与翻译
   styles/           # 全局样式及保持顺序的组件样式导入
 src-tauri/src/
-  lib.rs            # Tauri 入口，插件注册，migrations
-  commands/         # Tauri command handlers
-    terminal.rs     # PTY 相关 commands
-    history.rs      # 历史会话 list/get/search/prompts/stats
-  pty/
-    manager.rs      # PtyManager：ConPTY 会话生命周期管理
+  lib.rs            # Tauri 入口、注册与兼容命名空间路由
+  app/              # 数据库迁移组合
+  commands/mod.rs   # 旧命令命名空间的显式路径入口，不复制实现
+  features/         # 历史、Git、供应商、终端等功能实现和测试
+  infrastructure/   # PTY、daemon、SSH、进程、存储、文件及系统适配
+  shared/           # 无业务依赖的共用逻辑
 ```
 
 ### 数据层

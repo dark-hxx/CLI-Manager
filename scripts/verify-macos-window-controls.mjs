@@ -56,7 +56,7 @@ const titleBarSource = await readFile("src/app/components/WindowTitleBar.tsx", "
 const appSource = await readFile("src/app/App.tsx", "utf8");
 const sidebarSource = await readFile("src/features/projects/index.ts", "utf8");
 const desktopPetCommandSource = await readFile(
-  "src-tauri/src/commands/desktop_pet.rs",
+  "src-tauri/src/features/desktop-pet/commands.rs",
   "utf8"
 );
 

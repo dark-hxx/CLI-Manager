@@ -7,7 +7,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const historyView = read("../src/features/git/components/GitHistoryView.tsx");
 const transport = read("../src/features/git/lib/gitTransport.ts");
 const remote = read("../src/features/remote/api/sshRemoteGit.ts");
-const bridge = read("../src-tauri/src/daemon/ssh_agent_bridge.rs");
+const bridge = read("../src-tauri/src/infrastructure/daemon/ssh_agent_bridge.rs");
 const agentProtocol = read("../src-tauri/ssh-agent/src/protocol.rs");
 
 test("commit history is wired through every Git transport", () => {

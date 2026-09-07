@@ -39,18 +39,18 @@ const CODEX_V2_ROWS: u32 = 11;
 const CATALOG_CACHE_MAX_AGE: Duration = Duration::from_secs(6 * 60 * 60);
 const REMOTE_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/GAMPA228/CLI-Manager/master/public/pet-catalog/catalog.json";
-const EMBEDDED_CATALOG: &str = include_str!("../../../public/pet-catalog/catalog.json");
+const EMBEDDED_CATALOG: &str = include_str!("../../../../public/pet-catalog/catalog.json");
 const TERMINAL_ROBOT_PACK: &[u8] =
-    include_bytes!("../../../public/pet-catalog/packages/terminal-robot-1.0.0.clipet");
+    include_bytes!("../../../../public/pet-catalog/packages/terminal-robot-1.0.0.clipet");
 const PIXEL_FOX_PACK: &[u8] =
-    include_bytes!("../../../public/pet-catalog/packages/pixel-fox-1.0.0.clipet");
+    include_bytes!("../../../../public/pet-catalog/packages/pixel-fox-1.0.0.clipet");
 const MINT_SLIME_PACK: &[u8] =
-    include_bytes!("../../../public/pet-catalog/packages/mint-slime-1.0.0.clipet");
+    include_bytes!("../../../../public/pet-catalog/packages/mint-slime-1.0.0.clipet");
 const TERMINAL_ROBOT_PREVIEW: &str =
-    include_str!("../../../public/pet-catalog/previews/terminal-robot.svg");
-const PIXEL_FOX_PREVIEW: &str = include_str!("../../../public/pet-catalog/previews/pixel-fox.svg");
+    include_str!("../../../../public/pet-catalog/previews/terminal-robot.svg");
+const PIXEL_FOX_PREVIEW: &str = include_str!("../../../../public/pet-catalog/previews/pixel-fox.svg");
 const MINT_SLIME_PREVIEW: &str =
-    include_str!("../../../public/pet-catalog/previews/mint-slime.svg");
+    include_str!("../../../../public/pet-catalog/previews/mint-slime.svg");
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

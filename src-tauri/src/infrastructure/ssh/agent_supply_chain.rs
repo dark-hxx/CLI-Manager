@@ -16,7 +16,7 @@ pub const DEFAULT_MANIFEST_URL: &str =
     };
 pub const FALLBACK_MANIFEST_URL: &str =
     "https://github.com/dark-hxx/CLI-Manager/releases/latest/download/ssh-agent-release-manifest.json";
-const TRUSTED_PUBLIC_KEY: &str = include_str!("../ssh-agent-public-key.txt");
+const TRUSTED_PUBLIC_KEY: &str = include_str!("../../../ssh-agent-public-key.txt");
 const MANIFEST_MAX_BYTES: usize = 1024 * 1024;
 const SIGNATURE_MAX_BYTES: usize = 64 * 1024;
 pub const ARTIFACT_MAX_BYTES: usize = 128 * 1024 * 1024;

@@ -212,5 +212,5 @@ fn untracked_diff(root: &Path, file_path: &str) -> Result<GitFileDiffPayload, St
 }
 
 #[cfg(test)]
-#[path = "git_diff_tests.rs"]
+#[path = "diff_tests.rs"]
 mod tests;

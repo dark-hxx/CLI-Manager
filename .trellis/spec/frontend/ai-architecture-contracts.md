@@ -12,7 +12,7 @@ is now empty; do not add new exemptions. Strict mode is the zero-debt integratio
 - `npm run check:architecture -- --strict`: ignore migration debt and enforce final limits.
 - `npm run report:architecture`: concise report of files above 1200 lines, bytes, estimated
   tokens and direct import count; reporting does not fail the build.
-- `node --test scripts/architecture.test.mjs`: rule boundary/regression tests.
+- `node --test scripts/architecture.test.mjs scripts/architectureRust.test.mjs`: rule boundary/regression tests.
 - `node scripts/architecture.mjs --baseline-json`: read-only candidate baseline output.
   Review the diff before applying; never regenerate debt upward to silence a failure.
 
@@ -23,8 +23,8 @@ for import parsing; no new package or background indexer is required.
 
 - Hard limit: 2000 physical lines, including blanks/comments; final newline is not an extra line.
   Aim for 400–1200 lines in normal modules. Small cohesive modules need no artificial padding.
-- Handwritten lines above 500 characters fail. Existing exact long-line hashes are tracked
-  temporarily; replacing/duplicating a long line is new debt. Do not minify JSX to game limits.
+- Handwritten lines above 500 characters fail. The historical exact-hash baseline is empty;
+  do not add or duplicate long lines, or minify JSX to game limits.
 - Scan Git-tracked and non-ignored untracked source, omit deleted files. Explicit exclusions
   are in `EXCLUDED_PREFIXES`; generated Trellis/platform scaffolding, vendored code and Tauri
   generated schemas are not handwritten application modules. Fixtures and SQL are not blanket exclusions.
@@ -43,11 +43,17 @@ for import parsing; no new package or background indexer is required.
 - Rust: keep stable `lib.rs` and thin IPC `commands`; extract domain implementation to
   `features/<domain>` and reusable runtime/storage to `infrastructure`/`shared`.
   SSH-agent and daemon crates retain their process/package boundaries.
+- Rust `lib.rs` and `commands/mod.rs` declare explicit `#[path]` namespace routes to the physical
+  owners. Keep these stable crate paths so helper binaries, command macros and `pub(super)`
+  ancestry do not change. This is a single implementation, not forwarding wrappers. See
+  [Rust directory structure](../backend/directory-structure.md).
 - `shared` cannot import `features`/`app`; features cannot import `app`. Cross-feature imports
   use a narrow public entry, not internal files. Prefer explicit exports over `export *`.
-  TypeScript static/type/inline-import-type/export/dynamic imports are parsed; Rust crate-qualified layer
-  references and CSS imports are checked conservatively. Relative Rust `super` references,
-  computed imports and legacy Rust paths still require review; this is not a complete module resolver.
+  TypeScript static/type/inline-import-type/export/dynamic imports are parsed. Rust direct/grouped
+  crate references resolve through explicit namespace routes to their real layer; literals and
+  nested comments do not create fake dependencies. Relative Rust `super` references, aliases
+  introduced by local `use`, macro-generated imports and computed imports still require compiler
+  checks/review; this is not a complete module resolver. CSS imports retain cascade order.
 - Preserve IPC names/arguments, serde keys, DB migrations, persisted store keys, i18n keys,
   CSS order/specificity, PTY event ordering and lifecycle. Retain explicit compatibility
   facades during migration; do not duplicate state or implementations.

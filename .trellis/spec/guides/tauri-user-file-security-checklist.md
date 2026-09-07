@@ -8,7 +8,7 @@
 
 User-supplied paths and broad asset/fs scopes are the two most common ways a desktop app gets a file-system escape vulnerability. The blast radius is the whole user account, not just the app.
 
-This project has a real defense pattern (see `src-tauri/src/commands/background.rs`) — copy it.
+This project has a real defense pattern (see `src-tauri/src/features/terminal/background.rs`) — copy it.
 
 ---
 
@@ -121,7 +121,7 @@ If the frontend needs JS-side fs calls, switch to per-permission grants (`fs:all
 
 ## Real-World Reference
 
-`src-tauri/src/commands/background.rs` implements all of the above:
+`src-tauri/src/features/terminal/background.rs` implements all of the above:
 
 - `validate_extension` (allowlist for `jpg/jpeg/png/gif`)
 - `validate_relative_path` (rejects `..`, `\`, leading `/`, outside `backgrounds/`)

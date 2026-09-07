@@ -11,11 +11,11 @@ const workspaceSource = readFileSync(
   "utf8"
 );
 const historySource = readFileSync(
-  new URL("../src-tauri/src/commands/history/conversion.rs", import.meta.url),
+  new URL("../src-tauri/src/features/history/conversion.rs", import.meta.url),
   "utf8"
 );
 const backupSource = readFileSync(
-  new URL("../src-tauri/src/commands/history_backup.rs", import.meta.url),
+  new URL("../src-tauri/src/features/history/backup.rs", import.meta.url),
   "utf8"
 );
 

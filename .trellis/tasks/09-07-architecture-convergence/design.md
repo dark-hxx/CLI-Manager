@@ -6,3 +6,9 @@
 4. Strengthen architecture rules to match actual public entries and dependencies, empty the temporary debt baseline, run the final cross-package gate.
 
 Separate Git/editor convergence task handles the pre-existing <=300-line editor responsibility test. No Tauri UI launch. Final human checklist covers local/WSL/SSH, split/Workspan/restore, both languages and Git destructive-action confirmations.
+
+## Rust namespace-preserving ownership
+
+Use explicit `#[path = ...] mod ...` declarations in the existing library and command registry as stable namespace facades. Physical implementation owners move into features/infrastructure/shared; no duplicated forwarding function is created. Preserve the logical crate/module names, visibility ancestry, command macro registration and module initialization. This is deliberate compatibility for helper binaries and extensive `pub(super)` contracts, not a second implementation location.
+
+Move complete child-module trees together, using mod.rs where children flatten into their feature directory. Resolve include_str/include_bytes and existing path attributes against the original file before moving; embedded resource bytes remain unchanged. The architecture checker must resolve these explicit facade routes when checking Rust dependencies rather than treating legacy crate aliases as invisible references. SSH-agent and helper process package/entry boundaries stay intact.

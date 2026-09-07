@@ -8,6 +8,7 @@
 
 | Guide | Description | Status |
 |-------|-------------|--------|
+| [Directory Structure](./directory-structure.md) | Domain/infrastructure owners and namespace-preserving module routes | Active |
 | [WebDAV Sync Contracts](./webdav-sync-contracts.md) | WebDAV sync request/response boundaries, size checks, and validation cases | Active |
 | [AI Architecture Contracts](../frontend/ai-architecture-contracts.md) | Handwritten Rust/agent/script limits, module boundaries and migration checks | Active |
 | [Terminal Runtime Monitoring Contracts](./terminal-runtime-monitoring-contracts.md) | PTY env keys, shell OSC markers, tab runtime status, and resource growth diagnostics | Active |

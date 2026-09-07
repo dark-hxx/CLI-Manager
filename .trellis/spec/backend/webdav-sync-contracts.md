@@ -2,7 +2,7 @@
 
 ## Scope
 
-Applies to `src/features/sync/api/syncStore.ts`, `src/features/sync/lib/syncSettings.ts`, the backup settings page, `src-tauri/src/sync/mod.rs`, `src-tauri/src/webdav/mod.rs`, and sync Tauri commands.
+Applies to `src/features/sync/api/syncStore.ts`, `src/features/sync/lib/syncSettings.ts`, the backup settings page, `src-tauri/src/features/sync/service/mod.rs`, `src-tauri/src/infrastructure/webdav/mod.rs`, and sync Tauri commands.
 
 ## Snapshot contract
 

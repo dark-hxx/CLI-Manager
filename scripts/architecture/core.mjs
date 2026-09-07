@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import ts from "typescript";
+import { resolveRustFacade, rustReferences } from "./rust.mjs";
 
 export const MAX_LINES = 2000;
 export const MAX_LINE_LENGTH = 500;
@@ -51,9 +52,7 @@ export function imports(file, source) {
   } else if (file.endsWith(".css")) {
     for (const match of source.matchAll(/@import\s+["']([^"']+)["']/g)) result.add(match[1]);
   } else if (file.endsWith(".rs")) {
-    for (const match of source.matchAll(/\bcrate::(app|features|shared|infrastructure)::([\w:]+)/g)) {
-      result.add(`crate::${match[1]}::${match[2]}`);
-    }
+    for (const reference of rustReferences(source)) result.add(reference);
   }
   return [...result];
 }
@@ -63,14 +62,15 @@ function layer(file) {
   return match && { root: match[1], name: match[2], domain: match[2] === "features" ? match[3] : null };
 }
 
-export function dependencyViolations(file, specifiers) {
+export function dependencyViolations(file, specifiers, rustRoutes = []) {
   const from = layer(file);
   if (!from) return [];
   const violations = [];
   for (const specifier of specifiers) {
-    const target = specifier.startsWith(".") ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier))
+    const facade = specifier.startsWith("crate::") ? resolveRustFacade(specifier, rustRoutes) : null;
+    const target = facade?.target ?? (specifier.startsWith(".") ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier))
       : specifier.startsWith("@/") ? `src/${specifier.slice(2)}`
-        : specifier.startsWith("crate::") ? `src-tauri/src/${specifier.slice(7).replaceAll("::", "/")}` : null;
+        : specifier.startsWith("crate::") ? `src-tauri/src/${specifier.slice(7).replaceAll("::", "/")}` : null);
     if (!target) continue;
     const to = layer(target);
     let reason;
@@ -82,7 +82,7 @@ export function dependencyViolations(file, specifiers) {
     if (from.name === "features" && to?.name === "features" && from.domain !== to.domain) {
       const entry = `${to.root}/features/${to.domain}`;
       // Rust's public entry exports named items via crate::features::domain::item.
-      const rustPublicItem = to.root === "src-tauri/src" && target.slice(entry.length + 1).split("/").length === 1;
+      const rustPublicItem = to.root === "src-tauri/src" && (Boolean(facade) || target.slice(entry.length + 1).split("/").length === 1);
       const relativeEntry = target.slice(entry.length + 1);
       const frontendPublicModule = to.root === "src" && (
         /^(?:index|state)(?:\.tsx?)?$/.test(relativeEntry)

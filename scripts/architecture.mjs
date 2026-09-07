@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { baselineFor, checkMetrics, dependencyViolations, imports, isSource, measure } from "./architecture/core.mjs";
+import { rustFacadeRoutes } from "./architecture/rust.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const flags = new Set(process.argv.slice(2));
@@ -14,11 +15,14 @@ const files = [...new Set(execFileSync("git", ["ls-files", "--cached", "--others
 }).split("\0"))].filter(isSource).filter((file) => existsSync(new URL(`../${file}`, import.meta.url))).sort();
 const metrics = [];
 const dependencies = [];
+const rustRoutes = ["src-tauri/src/lib.rs", "src-tauri/src/commands/mod.rs"].flatMap(file =>
+  rustFacadeRoutes(file, readFileSync(new URL(`../${file}`, import.meta.url), "utf8")));
+rustRoutes.sort((a,b) => b.prefix.length - a.prefix.length);
 for (const file of files) {
   const source = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
   const specifiers = imports(file, source);
   metrics.push({ ...measure(file, source), dependencies: specifiers.length });
-  dependencies.push(...dependencyViolations(file, specifiers));
+  dependencies.push(...dependencyViolations(file, specifiers, rustRoutes));
 }
 if (flags.has("--baseline-json")) {
   console.log(JSON.stringify({ version: 1, files: baselineFor(metrics) }, null, 2));

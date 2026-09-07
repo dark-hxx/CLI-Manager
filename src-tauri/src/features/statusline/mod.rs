@@ -29,7 +29,7 @@ const STATUSLINE_DIR: &str = "statusline";
 const SETTINGS_FILE: &str = "settings.json";
 const BUNDLED_POWERLINE_FONT_NAME: &str = "SymbolsNerdFontMono-Regular.ttf";
 const BUNDLED_POWERLINE_FONT: &[u8] =
-    include_bytes!("../resources/fonts/SymbolsNerdFontMono-Regular.ttf");
+    include_bytes!("../../../resources/fonts/SymbolsNerdFontMono-Regular.ttf");
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -32,42 +32,76 @@ pub(crate) use app::migrations::{
     MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
 };
 
+#[path = "infrastructure/storage/app_paths.rs"]
 pub mod app_paths;
+#[path = "features/providers/ccswitch_db.rs"]
 mod ccswitch_db;
+#[path = "features/hooks/claude.rs"]
 mod claude_hook;
+#[path = "features/codex-proxy/mod.rs"]
 pub mod codex_app_server_proxy;
+#[path = "features/statusline/codex.rs"]
 pub mod codex_statusline;
 mod commands;
+#[path = "infrastructure/process/conpty_sideload.rs"]
 mod conpty_sideload;
+#[path = "infrastructure/diagnostics/crash_reporter.rs"]
 mod crash_reporter;
+#[path = "infrastructure/storage/credential_store.rs"]
 mod credential_store;
 // daemon 二进制（src/bin/cli-manager-daemon.rs）经 lib 复用以下模块，
 // 因此 app_paths 与 daemon 需 pub。
+#[path = "infrastructure/daemon/mod.rs"]
 pub mod daemon;
+#[path = "infrastructure/files/file_watcher.rs"]
 mod file_watcher;
+#[path = "features/git/watcher.rs"]
 mod git_watcher;
+#[path = "features/hooks/client.rs"]
 pub mod hook_client;
+#[path = "infrastructure/system/linux_graphics.rs"]
 mod linux_graphics;
+#[path = "features/files/live_server/mod.rs"]
 mod live_server;
+#[path = "infrastructure/diagnostics/log_rotation.rs"]
 mod log_rotation;
+#[path = "infrastructure/process/process_job.rs"]
 mod process_job;
+#[path = "features/providers/service/mod.rs"]
 pub(crate) mod provider;
+#[path = "infrastructure/pty/mod.rs"]
 pub mod pty;
+#[path = "infrastructure/diagnostics/runtime.rs"]
 mod runtime_diagnostics;
+#[path = "infrastructure/process/shell_resolver.rs"]
 mod shell_resolver;
+#[path = "infrastructure/ssh/agent_supply_chain.rs"]
 mod ssh_agent_supply_chain;
+#[path = "infrastructure/ssh/askpass.rs"]
 pub mod ssh_askpass;
+#[path = "infrastructure/ssh/launch.rs"]
 pub mod ssh_launch;
+#[path = "infrastructure/ssh/proxy.rs"]
 pub mod ssh_proxy;
+#[path = "infrastructure/ssh/transport.rs"]
 pub mod ssh_transport;
+#[path = "features/statusline/mod.rs"]
 pub mod statusline;
+#[path = "features/statusline/profiles.rs"]
 pub mod statusline_profiles;
+#[path = "features/sync/service/mod.rs"]
 mod sync;
+#[path = "shared/text_encoding.rs"]
 mod text_encoding;
+#[path = "features/notifications/service/mod.rs"]
 mod third_party_notification;
+#[path = "features/stats/usage.rs"]
 pub mod usage;
+#[path = "features/stats/usage_schema.rs"]
 pub(crate) mod usage_schema;
+#[path = "infrastructure/webdav/mod.rs"]
 mod webdav;
+#[path = "infrastructure/process/wsl.rs"]
 mod wsl;
 
 use log::LevelFilter;

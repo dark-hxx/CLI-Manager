@@ -695,7 +695,7 @@ void sendSystemNotification(payload, tabTitle);
 ### 1. Scope / Trigger
 
 - Trigger: the local bridge or daemon accepts a validated Claude/Codex Hook payload for `SessionStart`, `UserPromptSubmit`, `Notification`, `Stop`, `StopFailure`, or `PermissionRequest`.
-- Applies to: `src-tauri/src/claude_hook.rs`, `src-tauri/src/daemon/server.rs`, `src-tauri/src/third_party_notification/*`, `thirdPartyHookTargets` in settings, and the Hook settings UI.
+- Applies to: `src-tauri/src/features/hooks/claude.rs`, `src-tauri/src/infrastructure/daemon/server.rs`, `src-tauri/src/third_party_notification/*`, `thirdPartyHookTargets` in settings, and the Hook settings UI.
 
 ### 2. Contracts
 
@@ -722,7 +722,7 @@ void sendSystemNotification(payload, tabTitle);
 ### 1. Scope / Trigger
 
 - Trigger: Claude/Codex Hook install/status/uninstall must survive external cc-switch provider switches that rewrite CLI settings.
-- Applies to: `src-tauri/src/commands/hook_settings.rs`, frontend Hook settings/status callers, persisted `ccSwitchDbPath`, and cc-switch SQLite `settings.common_config_claude` / `settings.common_config_codex`.
+- Applies to: `src-tauri/src/features/hooks/settings/mod.rs`, frontend Hook settings/status callers, persisted `ccSwitchDbPath`, and cc-switch SQLite `settings.common_config_claude` / `settings.common_config_codex`.
 - This scenario is global/user-level only. Do not implement project-local `.claude/settings.local.json` or Claude managed settings from this path.
 
 ### 2. Signatures

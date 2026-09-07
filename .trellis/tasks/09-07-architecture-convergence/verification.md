@@ -1,5 +1,17 @@
 # Convergence progress — 2026-09-07
 
+## Rust ownership and final gate
+
+- 236 of 243 desktop Rust sources moved into domain/infrastructure/shared ownership, preserving 78 logical registry routes. Eleven compiler-owned include/path strings resolve to the original resources. `verify-rust-move.mjs` compares all 243 complete files against `8cf2a86c`, allowing only those explicit path attributes/literals.
+- Rust scanner masks literals and nested comments, reads grouped/direct crate references and resolves stable registry aliases to physical layers. Eleven architecture rule tests pass; strict scan has 946 files and zero violations.
+- `cargo check --locked`: pass. Desktop library: 1237 pass / 1 pre-existing ignore. SSH Agent: 97 + 3 pass. Shared crates: history-core 9, hook-schema 16, agent-capabilities-core 10 pass.
+- Standalone shared libraries have no committed lockfiles. Their initial --locked invocation correctly refused to create one; history/capabilities tests then used offline standalone resolution and the existing desktop target directory. The newly generated untracked capabilities lockfile was removed; no dependency version or manifest changed.
+- Node static/in-memory suite: 657 pass. CLI wrapper uses mocked cargo/tauri executables: 20 checks pass without starting the app. App-level codex-proxy e2e and desktop/remote manual interaction remain unexecuted by design.
+- A local shell invocation emitted an R6016 thread-data message before cargo check; cargo itself completed successfully, and subsequent library/Agent/shared tests all passed. No application behavior workaround was added.
+- Empty retired directory cleanup was rejected by execution policy; no contents were deleted. These untracked empty directories do not appear in Git or contain implementation owners.
+- Final human-facing report and explicit pending desktop checklist: docs/AI架构治理验收.md.
+- Staged namespace move graph check succeeded: 39 indexed changes / 0 affected flows / low aggregate risk. Full byte/registry audit supplements old-path index coverage.
+
 ## Frontend ownership completion
 
 - 519 TS/TSX modules inventoried, 432 source path mappings changed, 7 redundant facades removed after all callers moved. Three owned CSS files moved byte-for-byte. No source remains in retired components/hooks/stores/lib/terminal/desktop-pet directories.

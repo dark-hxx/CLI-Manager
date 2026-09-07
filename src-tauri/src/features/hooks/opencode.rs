@@ -62,7 +62,7 @@ fn status_for(root: &Path) -> Result<OpenCodeHookStatus, String> {
 }
 
 fn plugin_source() -> String {
-    include_str!("../../resources/opencode/cli-manager-hook.js").to_string()
+    include_str!("../../../resources/opencode/cli-manager-hook.js").to_string()
 }
 
 #[tauri::command]
