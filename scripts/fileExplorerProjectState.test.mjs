@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 const fileStore = read("../src/stores/fileExplorerStore.ts");
-const terminalStore = read("../src/stores/terminalStore.ts");
+const terminalStore = read("../src/features/terminal/store/terminalStore.ts");
 const terminalTabs = read("../src/features/terminal/hooks/useTerminalTabsController.tsx");
 const paneLeafSource = read("../src/features/terminal/components/PaneLeafView.tsx");
 const sidebar = read("../src/features/projects/hooks/useSidebarController.tsx");

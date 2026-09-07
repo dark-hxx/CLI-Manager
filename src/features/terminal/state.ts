@@ -1,4 +1,7 @@
 export {
+  useTerminalStore,
+} from "./store/terminalStore";
+export {
   type SessionStatus,
   type CliHookSource,
   type CliHookEventName,
@@ -10,11 +13,12 @@ export {
   type SubagentTranscriptContent,
   type SplitState,
   type SplitTerminalOptions,
+  type DetachedPtyLaunchOptions,
+  type DetachedPtyLaunchResult,
+} from "./types/terminalStoreTypes";
+export {
   detectCliResumeKind,
   formatStartupInputForPty,
   formatManualDirectCodexInputForPty,
-  type DetachedPtyLaunchOptions,
-  type DetachedPtyLaunchResult,
   createDetachedPtyProcess,
-  useTerminalStore,
-} from "@/features/terminal/state";
+} from "./lib/terminalLaunch";

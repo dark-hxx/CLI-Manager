@@ -19,3 +19,12 @@
 - Existing pane marker test missed the already-present conditional marker wrapper; updated it against the baseline. The broad overflow Popover assertion actually targeted the close-confirm popover; now reads that owner explicitly. No UI behavior changed.
 - PaneLeafView imports its feature-local XTerm owner directly to avoid a new facade/barrel cycle.
 - Architecture: 934 sources, only terminalStore remains oversized, no new violations. Full directory convergence remains outstanding.
+
+## Terminal Store
+
+- One `create<TerminalStore>` remains. The runtime factory receives the exact same set/get/API once during initialization; it owns timers, counters and the serialized persistence queue. The orphan heartbeat remains a single post-initialization call.
+- Type-only dependencies are explicitly `import type`; runtime module graph is acyclic. `state.ts` is a narrow state entry independent of terminal UI exports.
+- `verify-store.mjs`: all 130 non-store declarations and all 61 state/action properties match fc92405e, including object-key order and all function bodies/literals after formatting.
+- TypeScript pass. Existing affected tests 27 pass. New runtime tests 4 pass (timer-free construction/counters, same-API timeout behavior, bounded append/reset, serialized cloned snapshots with error recovery).
+- Build pass: 6964 modules, 58.04 seconds. Architecture: 943 sources, zero oversized files, zero new violations. Long-line debt is still tracked separately; strict/final directory convergence remains pending.
+- GitNexus reported CRITICAL import impact on types (39 direct importers), warned before edits; several actions were unindexed. Public exports remain compatible and direct declaration/type checks supplement the graph.

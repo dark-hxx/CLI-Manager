@@ -10,7 +10,8 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-session-rebind-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(new URL("../src/stores/terminalCliSession.ts", import.meta.url), "utf8");
-const terminalStoreSource = readFileSync(new URL("../src/stores/terminalStore.ts", import.meta.url), "utf8");
+const terminalStoreSource = readFileSync(new URL("../src/features/terminal/store/terminalRuntime.ts", import.meta.url), "utf8");
+const terminalLaunchSource = readFileSync(new URL("../src/features/terminal/lib/terminalLaunch.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -54,7 +55,7 @@ test("Hook 对账持久化快照后，恢复时优先使用明确 ID", () => {
     /const persistedSession = useSessionStore\.getState\(\)\.sessions\.find[\s\S]*?const persistedCliSessionRebind = resolveCliSessionRebind\(persistedSession\?\.cliSessionId, cliSessionId\);[\s\S]*?if \(persistedCliSessionRebind\.changed \|\| boundSession\?\.environmentType === "ssh"\) \{\s*void queueSshSessionPersistence\(get\(\)\.sessions\)/,
   );
   assert.match(
-    terminalStoreSource,
+    terminalLaunchSource,
     /const base = hasValidId \? `codex resume --no-alt-screen \$\{id\}` : "codex resume --no-alt-screen --last";/,
   );
 });

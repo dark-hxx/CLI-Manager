@@ -11,7 +11,7 @@ const sidebarSource = readFileSync(
   "utf8"
 );
 const terminalStoreSource = readFileSync(
-  new URL("../src/stores/terminalStore.ts", import.meta.url),
+  new URL("../src/features/terminal/store/terminalStore.ts", import.meta.url),
   "utf8"
 );
 

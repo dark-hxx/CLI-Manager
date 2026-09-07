@@ -11,7 +11,7 @@ test("Grok history path args use session root then hook config dir", () => {
 });
 
 test("Grok resume uses --resume and validates session IDs", () => {
-  const terminal = readFileSync(new URL("../src/stores/terminalStore.ts", import.meta.url), "utf8");
+  const terminal = readFileSync(new URL("../src/features/terminal/lib/terminalLaunch.ts", import.meta.url), "utf8");
   assert.match(terminal, /grok --resume/);
   assert.match(terminal, /grok --continue/);
   assert.match(terminal, /isValidGrokSessionId/);

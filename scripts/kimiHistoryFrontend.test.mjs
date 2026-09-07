@@ -15,7 +15,7 @@ test("Kimi realtime stats infer the history source from the kimi command", () =>
 });
 
 test("Kimi resume kind uses --session and never injects KIMI_CODE_HOME in local history args", () => {
-  const terminal = readFileSync(new URL("../src/stores/terminalStore.ts", import.meta.url), "utf8");
+  const terminal = readFileSync(new URL("../src/features/terminal/lib/terminalLaunch.ts", import.meta.url), "utf8");
   assert.match(terminal, /KIMI_COMMAND_PATTERN/);
   assert.match(terminal, /kimi --session/);
   assert.match(terminal, /kimi --continue/);

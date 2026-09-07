@@ -12,6 +12,7 @@ src/
   features/settings/           # Hook settings page, controls and model
   features/history/            # History store, normalization, requests, cache and metadata
   features/projects/           # Sidebar controller, view, helpers and delete confirmation
+  features/terminal/           # XTerm/Tabs controllers, pane components, state/runtime and helpers
   lib/i18n.ts                   # Stable translation runtime, no dictionary monolith
   shared/i18n/catalogs.ts       # Explicit dictionary composition
   shared/i18n/messages/         # <domain>.zh-CN.ts and <domain>.en-US.ts
@@ -32,5 +33,6 @@ copying state or implementation, or large barrel exports.
 - Git translations: `src/shared/i18n/messages/git.zh-CN.ts` and `git.en-US.ts`.
 - Terminal background: `src/styles/components/terminal-background.css`.
 - Existing bounded Diff modules: `src/components/git/diff/`.
+- Terminal state: `src/features/terminal/state.ts`; terminal UI: `src/features/terminal/index.ts`. Keep state callers off the UI entry to preserve lazy loading and avoid facade cycles.
 - Locate the relevant domain via catalogs/import manifests; avoid reading all dictionaries/styles.
 - After moving source, run `npm run check:architecture` and affected tests.
