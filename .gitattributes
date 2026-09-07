@@ -1,5 +1,6 @@
 /.gitattributes text eol=lf
 *.toml text eol=lf
+apps/server/migrations/*.sql text eol=lf
 packaging/aur/** text eol=lf
 
 # Trellis: append-only developer journals should merge cleanly across

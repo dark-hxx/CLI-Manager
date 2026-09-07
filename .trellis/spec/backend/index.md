@@ -33,6 +33,7 @@
 | [System Resource Contracts](./system-resource-contracts.md) | CPU 物理核心、逻辑线程与前端展示字段契约 | Active |
 | [Local Path Opening Contracts](./local-path-opening-contracts.md) | WebView 本地路径打开、Rust command 参数与 opener scope 边界 | Active |
 | [SSH Remote Terminal Contracts](./ssh-remote-terminal-contracts.md) | SSH 主机、远程项目、OpenSSH Launch Plan、PTY/daemon、能力路由与同步安全边界 | Active |
+| [Web Service Contracts](./web-service-contracts.md) | 独立 Web 服务、认证配对、双 WebSocket、事件回放、SQLite 与 operation 状态机 | Active |
 | [SSH Agent Contracts](./ssh-agent-contracts.md) | `cli-manager-ssh-agent`、共享 SSH transport、probe/安装、远端 Hook 配置、spool bridge 与身份边界 | Active |
 | [Agent Capability Diagnostics Contracts](./agent-capability-diagnostics-contracts.md) | 精确会话绑定的五 Agent MCP/Skill 发现、健康分层、OpenCode bridge、WSL/SSH 路由与脱敏边界 | Active |
 

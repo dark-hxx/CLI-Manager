@@ -41,6 +41,7 @@ import { syncHistoryRequestLogs, useHistoryStore } from "./stores/historyStore";
 import { useExternalSessionSyncStore } from "./stores/externalSessionSyncStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useDesktopPetCoordinator } from "./hooks/useDesktopPetCoordinator";
+import { handleWebDeviceCliHook, useWebDeviceBridge } from "./hooks/useWebDeviceBridge";
 import { useRemoteHandoffCoordinator } from "./hooks/useRemoteHandoffCoordinator";
 import { useUpdateStore } from "./stores/updateStore";
 import { useReplayStore } from "./stores/replayStore";
@@ -831,6 +832,8 @@ function App() {
     onActivateSession: handleActivateHookNotificationTarget,
   });
 
+  useWebDeviceBridge(settingsLoaded && startupReady);
+
   useKeyboardShortcuts({
     onToggleSidebar: handleToggleSidebarShortcut,
     onToggleTerminalFullscreen: handleToggleTerminalFullscreen,
@@ -866,6 +869,7 @@ function App() {
         return;
       }
       const boundTabId = useTerminalStore.getState().handleCliHookEvent(event.payload);
+      handleWebDeviceCliHook(event.payload, boundTabId);
       // 任务栏提醒独立于 Tab 绑定和系统 Toast；外部 Hook 也可以提醒。
       void sendTaskbarAttention(event.payload);
       // External hooks (no PTY tab env) still carry a synthetic tabId like external:grok:<session>.

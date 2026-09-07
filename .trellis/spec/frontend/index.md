@@ -24,6 +24,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Workspace Session Restore Contracts](./workspace-session-restore-contracts.md) | 关闭后恢复工作区终端会话：TUI 走 resume、shell 贴 scrollback、节流落盘与启动问询 | Active |
 | [Terminal Output Scheduling Contracts](../backend/terminal-output-scheduling-contracts.md) | Daemon live-frame budget and frontend cross-terminal xterm scheduling contract | Active |
 | [Statusline Editor Contracts](./statusline-editor-contracts.md) | Claude/Codex 独立编辑状态、共享终端主题预览与响应式布局 | Active |
+| [Web UI Visual Guidelines](./web-ui-visual-guidelines.md) | macOS-inspired frosted-glass, clean white visual language and surface rules | Active |
 | [Git Diff Viewer Contracts](./git-diff-viewer-contracts.md) | Shared snapshot/live data sources, target identity, and viewer responsibility boundaries | Active |
 | [Markdown File Navigation Contracts](./markdown-file-navigation-contracts.md) | Scoped preview anchors, source gestures, project-bound file resolution, and stale navigation protection | Active |
 | [CCS-Compatible Provider Domain Contracts](./ccs-provider-domain-contracts.md) | Planned complete supplier list/editor, multi-key, type common config, Home/global apply, import, i18n and accessibility contract | Planned |

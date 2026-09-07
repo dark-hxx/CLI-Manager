@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/web-service-contracts.md","reason":"Web workspace-only publication and project reorder operation contract."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Project tree component and interaction consistency."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality gate and verification requirements."}
+{"file":".trellis/spec/frontend/web-ui-visual-guidelines.md","reason":"Web sidebar visual consistency."}

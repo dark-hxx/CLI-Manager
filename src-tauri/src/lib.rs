@@ -8,10 +8,11 @@ pub mod codex_statusline;
 mod commands;
 mod conpty_sideload;
 mod crash_reporter;
-mod credential_store;
+pub(crate) mod credential_store;
 // daemon 二进制（src/bin/cli-manager-daemon.rs）经 lib 复用以下模块，
 // 因此 app_paths 与 daemon 需 pub。
 pub mod daemon;
+pub mod device_identity;
 mod file_watcher;
 mod git_watcher;
 pub mod hook_client;
@@ -35,6 +36,7 @@ mod text_encoding;
 mod third_party_notification;
 pub mod usage;
 pub(crate) mod usage_schema;
+pub mod web_daemon;
 mod webdav;
 mod wsl;
 
@@ -1448,6 +1450,9 @@ pub fn run() {
                     if let Err(err) = commands::cc_connect::auto_start(&handle) {
                         log::warn!("cc-connect auto-start skipped: {err}");
                     }
+                    if let Err(err) = commands::web_device::auto_start(&handle) {
+                        log::warn!("web device auto-start skipped: {err}");
+                    }
                 });
             }
             if let Ok(dir) = app_paths::history_cache_dir() {
@@ -1517,6 +1522,7 @@ pub fn run() {
         .manage(live_server::LiveServerManager::new())
         .manage(commands::subagent_transcript::SubagentTranscriptBridge::new())
         .manage(commands::cc_connect::CcConnectManager::new())
+        .manage(commands::web_device::WebDeviceManager::new())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             SqlBuilder::default()
@@ -1710,6 +1716,19 @@ pub fn run() {
             commands::sync::sync_save_password,
             commands::sync::sync_load_password,
             commands::sync::sync_delete_password,
+            commands::web_device::web_device_get_status,
+            commands::web_device::web_device_save_profile,
+            commands::web_device::web_device_start,
+            commands::web_device::web_device_stop,
+            commands::web_device::web_device_restart,
+            commands::web_device::web_device_create_pairing,
+            commands::web_device::web_device_clear_pairing,
+            commands::web_device::web_device_take_operations,
+            commands::web_device::web_device_publish_history,
+            commands::web_device::web_device_validate_context,
+            commands::web_device::web_device_operation_accepted,
+            commands::web_device::web_device_operation_running,
+            commands::web_device::web_device_operation_completed,
             commands::system_resources::system_resources_get_snapshot,
             commands::version::get_app_version,
             commands::version::get_os_platform,
@@ -1888,6 +1907,7 @@ pub fn run() {
                 app.state::<live_server::LiveServerManager>().shutdown();
                 app.state::<commands::cc_connect::CcConnectManager>()
                     .shutdown();
+                commands::web_device::shutdown(app);
                 crash_reporter::mark_graceful_exit();
             }
 
