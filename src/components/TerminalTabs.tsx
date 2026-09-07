@@ -85,6 +85,7 @@ import { EmptyState } from "./ui/EmptyState";
 import { useAppPrompt } from "./ui/useAppPrompt";
 import { useAppConfirm } from "./ui/useAppConfirm";
 import { useHistoryStore } from "../stores/historyStore";
+import { useGitWorkspaceStore } from "../stores/gitWorkspaceStore";
 import { useSystemResources } from "../hooks/useSystemResources";
 import { useSaveSessionToSidebar } from "../hooks/useSaveSessionToSidebar";
 import { canSaveSessionToSidebar } from "../lib/saveSessionToSidebar";
@@ -141,6 +142,10 @@ const HistoryWorkspace = lazy(() =>
 
 const GitChangesPanel = lazy(() =>
   import("./git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
+);
+
+const GitWorkspace = lazy(() =>
+  import("./git/workspace/GitWorkspace").then((module) => ({ default: module.GitWorkspace }))
 );
 
 const TerminalStatsPanel = lazy(() =>
@@ -2576,6 +2581,10 @@ export function TerminalTabs({
   const openHistory = useHistoryStore((s) => s.openHistory);
   const closeHistory = useHistoryStore((s) => s.closeHistory);
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
+  const gitWorkspaceOpen = useGitWorkspaceStore((s) => s.isOpen);
+  const closeGitWorkspace = useGitWorkspaceStore((s) => s.close);
+  const [gitWorkspaceHeight, setGitWorkspaceHeight] = useState(420);
+  const gitWorkspaceResizeCleanupRef = useRef<(() => void) | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"terminal" | "history">("terminal");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [splitPicker, setSplitPicker] = useState<SplitPickerState>(null);
@@ -2770,6 +2779,12 @@ export function TerminalTabs({
   const sidePanelProjectPath = panelProject?.environment_type === "ssh"
     ? panelProject.remote_path.trim() || null
     : panelSession?.cwd?.trim() || filePanelProject?.path.trim() || null;
+  const gitWorkspaceProject = panelProject ?? scopedProject ?? filePanelProject;
+  const gitWorkspaceProjectPath = sidePanelProjectPath
+    ?? scopedWorktree?.path.trim()
+    ?? (gitWorkspaceProject?.environment_type === "ssh"
+      ? gitWorkspaceProject.remote_path.trim() || null
+      : gitWorkspaceProject?.path.trim() || null);
   const workspanTabModels = useMemo<WorkspanTabModel[]>(() => visibleWorkspanLayouts.map(({ workspan, sessionIds, closeSessionIds }) => {
     const memberSessions = sessionIds
       .map((sessionId) => sessions.find((session) => session.id === sessionId))
@@ -2978,6 +2993,7 @@ export function TerminalTabs({
     [panelCapabilities.files, panelCapabilities.history, panelCapabilities.statistics, panelGitSupported, terminalToolbarVisibility]
   );
   const historyActive = historyOpen && activeWorkspaceTab === "history";
+  const fullWorkspaceActive = historyActive;
   const statsPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "stats" : statsOpen;
   const replayPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "replay" : replayOpen;
   const gitPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "git" : gitOpen;
@@ -2997,6 +3013,35 @@ export function TerminalTabs({
   useEffect(() => {
     if (!historyOpen && activeWorkspaceTab === "history") setActiveWorkspaceTab("terminal");
   }, [activeWorkspaceTab, historyOpen]);
+
+  useEffect(() => {
+    if (!gitWorkspaceOpen) return;
+    closeHistory();
+    setActiveWorkspaceTab("terminal");
+    setGitOpen(false);
+    if (sidePanelMerged && sidePanelTab === "git") setSidePanelOpen(false);
+  }, [closeHistory, gitWorkspaceOpen, sidePanelMerged, sidePanelTab]);
+
+  useEffect(() => () => gitWorkspaceResizeCleanupRef.current?.(), []);
+
+  const beginGitWorkspaceResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    gitWorkspaceResizeCleanupRef.current?.();
+    const startY = event.clientY;
+    const startHeight = gitWorkspaceHeight;
+    const onMove = (moveEvent: PointerEvent) => {
+      const nextHeight = startHeight + startY - moveEvent.clientY;
+      setGitWorkspaceHeight(Math.max(260, Math.min(720, nextHeight)));
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", cleanup);
+      gitWorkspaceResizeCleanupRef.current = null;
+    };
+    gitWorkspaceResizeCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", cleanup, { once: true });
+  }, [gitWorkspaceHeight]);
 
   useEffect(() => {
     if (!terminalSidePanelSingleOpen || !historyOpen) return;
@@ -3135,6 +3180,42 @@ export function TerminalTabs({
       toast.error(t("sidebar.toast.openDirectoryFailed"), { description: String(err) }),
     );
   }, [rejectMissingWorktree, t]);
+
+  const handleOpenGitWorkspaceWorktree = useCallback(async (worktree: WorktreeRecord) => {
+    if (rejectMissingWorktree(worktree)) return;
+    const project = projectById.get(worktree.project_id);
+    if (!project) {
+      toast.error(t("git.empty.noProject"));
+      return;
+    }
+    if (useExternalTerminal) {
+      handleOpenWorktreeDirectory(worktree);
+      return;
+    }
+    const existing = sessions.find((session) => session.worktreeId === worktree.id && (session.kind ?? "pty") === "pty");
+    if (existing) {
+      closeGitWorkspace();
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+      setActive(existing.id);
+      return;
+    }
+    const scoped = projectWithWorktreeProviderOverrides(project, worktree);
+    const options = buildProjectSplitOptions(scoped, groups);
+    await createSession(
+      options.projectId,
+      worktree.path,
+      worktree.name,
+      options.startupCmd,
+      options.envVars,
+      options.shell,
+      undefined,
+      worktree.id,
+    );
+    closeGitWorkspace();
+    closeHistory();
+    setActiveWorkspaceTab("terminal");
+  }, [buildProjectSplitOptions, closeGitWorkspace, closeHistory, createSession, groups, handleOpenWorktreeDirectory, projectById, rejectMissingWorktree, sessions, setActive, t, useExternalTerminal]);
 
   const handleOpenWorktreeChanges = useCallback((sessionId: string) => {
     const session = sessions.find((item) => item.id === sessionId);
@@ -3480,6 +3561,7 @@ export function TerminalTabs({
     }
     const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
     if (project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
+    closeGitWorkspace();
     ensureTerminalSidePanelVisible();
     if (sidePanelMerged) {
       if (terminalSidePanelSingleOpen) {
@@ -3502,7 +3584,7 @@ export function TerminalTabs({
       }
       setGitOpen(true);
     }
-  }, [closeHistory, ensureTerminalSidePanelVisible, gitPanelActive, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
+  }, [closeGitWorkspace, closeHistory, ensureTerminalSidePanelVisible, gitPanelActive, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
 
   const handleToggleReplayPanel = useCallback(() => {
     if (replayPanelActive) {
@@ -3726,6 +3808,7 @@ export function TerminalTabs({
     }
     const project = activeSession?.projectId ? projects.find((item) => item.id === activeSession.projectId) : undefined;
     if (rejectUnsupportedCapability(project, "history")) return;
+    closeGitWorkspace();
     setActiveWorkspaceTab("history");
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project?.cli_tool),
@@ -3733,7 +3816,7 @@ export function TerminalTabs({
       projectId: project?.id ?? null,
       scopedProjectPath: activeWorktree?.path ?? null,
     });
-  }, [activeSession, activeWorktree?.path, closeHistory, historyOpen, openHistory, projects, rejectUnsupportedCapability, terminalSidePanelSingleOpen]);
+  }, [activeSession, activeWorktree?.path, closeGitWorkspace, closeHistory, historyOpen, openHistory, projects, rejectUnsupportedCapability, terminalSidePanelSingleOpen]);
 
   const handleOpenSplitPicker = useCallback((sessionId: string, direction: TerminalPaneSplitDirection, anchor?: SplitPickerAnchor) => {
     clearSplitPickerOpenSchedule();
@@ -4311,7 +4394,7 @@ export function TerminalTabs({
         worktrees={worktrees}
         allPanes={layoutPanes}
         activeSessionId={layoutActiveSessionId}
-        historyActive={historyActive}
+        historyActive={fullWorkspaceActive}
         editingSessionId={editingSessionId}
         tabNotifications={tabNotifications}
         hookNotifications={hookNotifications}
@@ -4380,7 +4463,7 @@ export function TerminalTabs({
     hiddenBackgroundSessionIds,
     hookNotifications,
     hideBackgroundForSession,
-    historyActive,
+    fullWorkspaceActive,
     isAppFocused,
     lightThemePalette,
     moveSessionToPane,
@@ -4500,6 +4583,29 @@ export function TerminalTabs({
           >
             <Suspense fallback={null}>
               <HistoryWorkspace active={historyActive} onOpenSettings={onOpenHistorySettings} />
+            </Suspense>
+          </div>
+        )}
+        {gitWorkspaceOpen && (
+          <div
+            className={`absolute z-[2] min-h-0 overflow-hidden border-t shadow-2xl ${fullscreen ? "inset-x-0 bottom-0" : "inset-x-3 bottom-3"}`}
+            style={{ height: gitWorkspaceHeight, borderColor: "var(--border-subtle, rgba(255,255,255,0.12))" }}
+          >
+            <div
+              className="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize"
+              onPointerDown={beginGitWorkspaceResize}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("git.workspace.resizeHeight")}
+            />
+            <Suspense fallback={null}>
+              <GitWorkspace
+                active={gitWorkspaceOpen}
+                project={gitWorkspaceProject}
+                projectPath={gitWorkspaceProjectPath}
+                onClose={closeGitWorkspace}
+                onOpenWorktreeSession={handleOpenGitWorkspaceWorktree}
+              />
             </Suspense>
           </div>
         )}

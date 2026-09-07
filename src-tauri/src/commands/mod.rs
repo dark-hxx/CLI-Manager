@@ -11,6 +11,8 @@ pub mod fs;
 pub mod git;
 pub mod git_diff;
 mod git_diff_display;
+pub mod git_history;
+pub mod git_tools;
 pub mod git_worktree;
 pub mod history;
 pub mod history_backup;

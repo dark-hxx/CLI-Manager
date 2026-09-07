@@ -290,8 +290,12 @@ fn capabilities() -> Value {
         "gitChanges",
         "gitDiff",
         "gitDiffOptions",
+        "gitHistory",
         "gitBranchStatus",
         "gitBranches",
+        "gitOperationContinue",
+        "gitOperationAbort",
+        "gitWorkspaceTools",
         "gitFull"
     ])
 }
@@ -1074,8 +1078,12 @@ mod tests {
             "gitChanges",
             "gitDiff",
             "gitDiffOptions",
+            "gitHistory",
             "gitBranchStatus",
             "gitBranches",
+            "gitOperationContinue",
+            "gitOperationAbort",
+            "gitWorkspaceTools",
             "gitFull",
         ] {
             assert!(frame.payload["capabilities"]

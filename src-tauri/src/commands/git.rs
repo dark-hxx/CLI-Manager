@@ -2173,15 +2173,9 @@ pub async fn git_branch_status(project_path: String) -> Result<GitBranchStatus, 
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
 
-        // 进行中的合并/变基（git2 仓库状态）。变基期间 HEAD 通常 detached，
-        // 需在 detached 早返回前计算，避免漏报。
-        let pending_op = match repo.state() {
-            git2::RepositoryState::Merge => Some("merge".to_string()),
-            git2::RepositoryState::Rebase
-            | git2::RepositoryState::RebaseInteractive
-            | git2::RepositoryState::RebaseMerge => Some("rebase".to_string()),
-            _ => None,
-        };
+        // 进行中的操作需要在 detached 早返回前计算。git2 对 cherry-pick/revert
+        // 没有单独的 RepositoryState，按 git-dir 标记补齐这两种状态。
+        let pending_op = pending_git_operation(&repo);
 
         let empty = GitBranchStatus {
             branch: None,
@@ -2289,7 +2283,10 @@ fn map_git_cli_error(stderr: &str) -> String {
     format!("{code}: {snippet}")
 }
 
-fn git_command_output(project_path: &str, args: &[&str]) -> Result<std::process::Output, String> {
+pub(super) fn git_command_output(
+    project_path: &str,
+    args: &[&str],
+) -> Result<std::process::Output, String> {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(project_path) {
         if let Some(windows_path) = resolve_wsl_mnt_git_project_path(&distro, &linux_path) {
             let path = Path::new(&windows_path);
@@ -2337,7 +2334,7 @@ fn git_command_output(project_path: &str, args: &[&str]) -> Result<std::process:
 /// shell out 系统 `git` 执行网络操作，继承用户凭据管理器 / SSH / git config 代理。
 /// WSL UNC 路径改由 wsl.exe 内部执行 git，避免 Windows git 在 UNC/Plan 9 上失败。
 /// 用 args 数组（非 shell）避免注入；成功返回合并输出，失败返回映射错误码。
-fn run_git_cli(project_path: &str, args: &[&str]) -> Result<String, String> {
+pub(super) fn run_git_cli(project_path: &str, args: &[&str]) -> Result<String, String> {
     let output = git_command_output(project_path, args)?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2379,6 +2376,26 @@ fn validate_branch_name_with_git(project_path: &str, branch: &str) -> Result<(),
     run_git_cli(project_path, &["check-ref-format", "--branch", branch])
         .map(|_| ())
         .map_err(|_| "invalid_branch".to_string())
+}
+
+pub(super) fn validate_operation_ref(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 256
+        || value.starts_with('-')
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err("invalid_git_ref".to_string());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_commit_ref(project_path: &str, value: &str) -> Result<(), String> {
+    validate_operation_ref(value)?;
+    run_git_cli(project_path, &["rev-parse", "--verify", value])
+        .map(|_| ())
+        .map_err(|_| "commit_not_found".to_string())
 }
 
 fn split_remote_branch(branch: &str) -> Option<(&str, &str)> {
@@ -2543,6 +2560,242 @@ pub async fn git_create_branch(project_path: String, branch: String) -> Result<S
     .map_err(|e| format!("task_failed: {e}"))?
 }
 
+/// 比较两个 Git 引用；target_ref 为空时比较 base_ref 与当前工作区（含暂存区）。
+/// 结果复用只读 Diff 的大小限制，避免把无限制的命令输出送入 WebView。
+#[tauri::command]
+pub async fn git_compare_refs(
+    project_path: String,
+    base_ref: String,
+    target_ref: Option<String>,
+) -> Result<GitFileDiffPayload, String> {
+    validate_operation_ref(&base_ref)?;
+    if let Some(target) = target_ref.as_deref() {
+        validate_operation_ref(target)?;
+    }
+    tokio::task::spawn_blocking(move || {
+        let base = base_ref.as_str();
+        let mut args = vec![
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--unified=3",
+            base,
+        ];
+        let range = target_ref
+            .as_deref()
+            .map(|target| format!("{base}...{target}"));
+        if let Some(range) = range.as_deref() {
+            args.pop();
+            args.push(range);
+        }
+        let output = git_command_output(&project_path, &args)?;
+        if !output.status.success() {
+            return Err(map_git_cli_error(&format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            )));
+        }
+        let content = String::from_utf8_lossy(&output.stdout).into_owned();
+        super::git_diff::build_diff_payload(content, false)
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 执行分支/提交相关的显式 Git 操作。高风险操作由前端确认后调用，后端仍负责校验引用。
+#[tauri::command]
+pub async fn git_execute_operation(
+    project_path: String,
+    operation: String,
+    branch: Option<String>,
+    target: Option<String>,
+    mode: Option<String>,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let branch_value = branch.as_deref();
+        let target_value = target.as_deref();
+        let require_branch = || branch_value.ok_or_else(|| "branch_required".to_string());
+        let require_target = || target_value.ok_or_else(|| "target_required".to_string());
+        match operation.as_str() {
+            "create-branch" => {
+                let name = require_branch()?;
+                validate_branch_name_with_git(&project_path, name)?;
+                if let Some(base) = target_value {
+                    validate_operation_ref(base)?;
+                    run_git_cli(&project_path, &["checkout", "-b", name, base])
+                } else {
+                    run_git_cli(&project_path, &["checkout", "-b", name])
+                }
+            }
+            "rename-branch" => {
+                let old = require_branch()?;
+                let new = require_target()?;
+                validate_branch_name_with_git(&project_path, old)?;
+                validate_branch_name_with_git(&project_path, new)?;
+                run_git_cli(&project_path, &["branch", "-m", old, new])
+            }
+            "delete-branch" => {
+                let name = require_branch()?;
+                validate_branch_name_with_git(&project_path, name)?;
+                let flag = if mode.as_deref() == Some("force") {
+                    "-D"
+                } else {
+                    "-d"
+                };
+                run_git_cli(&project_path, &["branch", flag, name])
+            }
+            "set-upstream" => {
+                let name = require_branch()?;
+                let upstream = require_target()?;
+                validate_branch_name_with_git(&project_path, name)?;
+                validate_operation_ref(upstream)?;
+                run_git_cli(
+                    &project_path,
+                    &["branch", "--set-upstream-to", upstream, name],
+                )
+            }
+            "merge" => {
+                let name = require_branch()?;
+                validate_operation_ref(name)?;
+                run_git_conflict_aware_with_code(
+                    &project_path,
+                    &["merge", "--no-edit", name],
+                    "merge_conflict",
+                )
+            }
+            "rebase" => {
+                let name = require_branch()?;
+                validate_operation_ref(name)?;
+                run_git_conflict_aware_with_code(
+                    &project_path,
+                    &["rebase", name],
+                    "rebase_conflict",
+                )
+            }
+            "cherry-pick" => {
+                let commit = require_target()?;
+                validate_commit_ref(&project_path, commit)?;
+                run_git_conflict_aware_with_code(
+                    &project_path,
+                    &["cherry-pick", commit],
+                    "cherry_pick_conflict",
+                )
+            }
+            "revert" => {
+                let commit = require_target()?;
+                validate_commit_ref(&project_path, commit)?;
+                run_git_conflict_aware_with_code(
+                    &project_path,
+                    &["revert", "--no-edit", commit],
+                    "revert_conflict",
+                )
+            }
+            "reset" => {
+                let commit = require_target()?;
+                validate_commit_ref(&project_path, commit)?;
+                let reset_mode = match mode.as_deref() {
+                    Some("soft") => "--soft",
+                    Some("mixed") | None => "--mixed",
+                    Some("hard") => "--hard",
+                    _ => return Err("invalid_reset_mode".to_string()),
+                };
+                run_git_cli(&project_path, &["reset", reset_mode, commit])
+            }
+            "create-tag" => {
+                let tag = require_branch()?;
+                let commit = require_target()?;
+                validate_operation_ref(tag)?;
+                validate_commit_ref(&project_path, commit)?;
+                run_git_cli(&project_path, &["tag", tag, commit])
+            }
+            "delete-tag" => {
+                let tag = require_branch()?;
+                validate_operation_ref(tag)?;
+                run_git_cli(&project_path, &["tag", "-d", tag])
+            }
+            _ => Err("git_operation_invalid".to_string()),
+        }
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+fn pending_git_operation(repo: &Repository) -> Option<String> {
+    let git_dir = repo.path();
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Some("merge".to_string());
+    }
+    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        return Some("rebase".to_string());
+    }
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Some("cherry-pick".to_string());
+    }
+    if git_dir.join("REVERT_HEAD").exists() {
+        return Some("revert".to_string());
+    }
+    match repo.state() {
+        git2::RepositoryState::Merge => Some("merge".to_string()),
+        git2::RepositoryState::Rebase
+        | git2::RepositoryState::RebaseInteractive
+        | git2::RepositoryState::RebaseMerge => Some("rebase".to_string()),
+        _ => None,
+    }
+}
+
+fn validate_pending_operation(operation: &str) -> Result<(), String> {
+    match operation {
+        "merge" | "rebase" | "cherry-pick" | "revert" => Ok(()),
+        _ => Err("git_operation_invalid".to_string()),
+    }
+}
+
+fn pending_operation_args(operation: &str, action: &str) -> Result<Vec<&'static str>, String> {
+    validate_pending_operation(operation)?;
+    let args = match (operation, action) {
+        ("merge", "continue") => vec!["-c", "core.editor=true", "merge", "--continue"],
+        ("rebase", "continue") => vec!["-c", "core.editor=true", "rebase", "--continue"],
+        ("cherry-pick", "continue") => vec!["-c", "core.editor=true", "cherry-pick", "--continue"],
+        ("revert", "continue") => vec!["-c", "core.editor=true", "revert", "--continue"],
+        ("merge", "abort") => vec!["merge", "--abort"],
+        ("rebase", "abort") => vec!["rebase", "--abort"],
+        ("cherry-pick", "abort") => vec!["cherry-pick", "--abort"],
+        ("revert", "abort") => vec!["revert", "--abort"],
+        _ => return Err("git_operation_invalid".to_string()),
+    };
+    Ok(args)
+}
+
+/// 继续已解决的 Merge/Rebase/Cherry-pick/Revert 操作。
+#[tauri::command]
+pub async fn git_operation_continue(
+    project_path: String,
+    operation: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let args = pending_operation_args(&operation, "continue")?;
+        run_git_conflict_aware(&project_path, &args)
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
+/// 中止进行中的 Merge/Rebase/Cherry-pick/Revert 操作，恢复操作前状态。
+#[tauri::command]
+pub async fn git_operation_abort(
+    project_path: String,
+    operation: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let args = pending_operation_args(&operation, "abort")?;
+        run_git_cli(&project_path, &args)
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
+
 /// 推送当前分支。set_upstream=true 时 `push -u origin <branch>` 建立跟踪。
 /// shell out 系统 git；失败错误码见 map_git_cli_error。
 #[tauri::command]
@@ -2608,6 +2861,34 @@ fn run_git_conflict_aware(project_path: &str, args: &[&str]) -> Result<String, S
     Err(map_git_cli_error(&format!("{stderr}{stdout}")))
 }
 
+fn run_git_conflict_aware_with_code(
+    project_path: &str,
+    args: &[&str],
+    conflict_code: &str,
+) -> Result<String, String> {
+    let output = git_command_output(project_path, args)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        return Ok(format!("{stdout}{stderr}").trim().to_string());
+    }
+    let combined = format!("{stdout}\n{stderr}").to_lowercase();
+    if combined.contains("conflict")
+        || combined.contains("automatic merge failed")
+        || combined.contains("could not apply")
+        || combined.contains("needs merge")
+        || combined.contains("fix conflicts")
+    {
+        let snippet: String = format!("{stdout}{stderr}")
+            .trim()
+            .chars()
+            .take(300)
+            .collect();
+        return Err(format!("{conflict_code}: {snippet}"));
+    }
+    Err(map_git_cli_error(&format!("{stderr}{stdout}")))
+}
+
 /// 按策略拉取当前分支（merge / rebase / ff-only）。shell out 系统 git，继承凭据/代理/SSH。
 /// 分叉时 merge/rebase 可直接拉取，无需切终端；冲突返回 `pull_conflict`，可经 git_pull_abort 安全回退。
 #[tauri::command]
@@ -2630,21 +2911,13 @@ pub async fn git_pull_abort(project_path: String) -> Result<String, String> {
         if !crate::wsl::is_wsl_config_dir(&project_path) && !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let rebasing = {
+        let pending_op = {
             let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
-            matches!(
-                repo.state(),
-                git2::RepositoryState::Rebase
-                    | git2::RepositoryState::RebaseInteractive
-                    | git2::RepositoryState::RebaseMerge
-            )
+            pending_git_operation(&repo)
         };
-        let args: &[&str] = if rebasing {
-            &["rebase", "--abort"]
-        } else {
-            &["merge", "--abort"]
-        };
-        run_git_cli(&project_path, args)
+        let operation = pending_op.ok_or_else(|| "git_operation_not_in_progress".to_string())?;
+        let args = pending_operation_args(&operation, "abort")?;
+        run_git_cli(&project_path, &args)
     })
     .await
     .map_err(|e| format!("task_failed: {e}"))?

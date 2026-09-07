@@ -1,5 +1,13 @@
 # Changelog
 
+## [TEMP] - 2026-09-07
+
+### PR #252 合并兼容与安全修复
+
+- 合并 Git 提交历史、工作区与增强工具实现，保留当前终端布局、工作区背景、SFTP 下载/删除和 SSH Agent 既有能力；Agent `0.1.14` 统一使用 protocol `1.15`，并分别协商 `gitHistory` 与 `gitWorkspaceTools`。
+- 用量数据库启动检查会验证必需表、索引、最终视图列与 migration marker；缺失索引可幂等补齐，过期 marker 会更新为当前 SQL checksum，避免健康误判或后续 migration 冲突。
+- Git 提交整理的恢复引用改用纳秒时间戳与原始提交前缀，降低覆盖旧恢复点的风险；补齐 SSH capability 回归、Node 20 测试兼容及 Git 引用树/增强工具弹窗的键盘和对话框语义。
+
 ## [V1.3.9] - 2026-09-07
 
 ### WSL AI CLI 图片粘贴与格式扩展

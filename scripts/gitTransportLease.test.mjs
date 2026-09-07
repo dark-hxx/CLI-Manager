@@ -1,7 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLocalGitTransportContextKey } from "../src/lib/gitTransportIdentity.ts";
-import { GitTransportLeaseRegistry } from "../src/lib/gitTransportLeaseRegistry.ts";
+import { readFile } from "node:fs/promises";
+import ts from "typescript";
+
+async function importTypeScript(path) {
+  const source = await readFile(new URL(path, import.meta.url), "utf8");
+  const output = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+}
+
+const { createLocalGitTransportContextKey } = await importTypeScript("../src/lib/gitTransportIdentity.ts");
+const { GitTransportLeaseRegistry } = await importTypeScript("../src/lib/gitTransportLeaseRegistry.ts");
 
 function deferred() {
   let resolve;

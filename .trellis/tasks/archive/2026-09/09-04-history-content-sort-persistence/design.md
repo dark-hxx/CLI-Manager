@@ -155,4 +155,3 @@ JSONL 逐行解析，只提取 id 和 thread_name；同一范围内重复 id 采
 - Windows 本地、WSL、SSH 的来源隔离与 fallback。
 - thread_name 变更触发缓存刷新；历史列表、详情、搜索共享新 title。
 - alias > AI > thread_name > source/fallback 的完整优先级。
-

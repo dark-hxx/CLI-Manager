@@ -22,6 +22,7 @@ import type { GitTreeNode, GitPullStrategy, GitBranchInfo, Project } from "../..
 import { useGitTransportLease } from "../../hooks/useGitTransportLease";
 import { GIT_BACKGROUND_REFRESH_INTERVAL_MS } from "../../lib/gitRefreshPolicy";
 import { TerminalPanelHeader } from "../terminal/TerminalPanelHeader";
+import { GitHistoryView } from "./GitHistoryView";
 
 interface GitChangesPanelProps {
   open: boolean;
@@ -29,6 +30,8 @@ interface GitChangesPanelProps {
   projectId?: string | null;
   visible?: boolean;
   embedded?: boolean;
+  workspaceMode?: boolean;
+  activeRepositoryPath?: string | null;
 }
 
 // 降级慢轮询间隔：仅当 fs-watcher 初始化失败（网络盘/WSL 等 notify 不可用）时启用。
@@ -281,7 +284,15 @@ function GitBranchMenu({
   );
 }
 
-export function GitChangesPanel({ open, projectPath, projectId, visible = true, embedded = false }: GitChangesPanelProps) {
+export function GitChangesPanel({
+  open,
+  projectPath,
+  projectId,
+  visible = true,
+  embedded = false,
+  workspaceMode = false,
+  activeRepositoryPath,
+}: GitChangesPanelProps) {
   const { t } = useI18n();
   const projects = useProjectStore((state) => state.projects);
   const {
@@ -325,7 +336,8 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     createBranch,
     pull,
     pullAbort,
-    rebaseContinue,
+    operationContinue,
+    operationAbort,
     selectedUntracked,
     setUntrackedSelection,
     clearUntrackedSelection,
@@ -350,6 +362,7 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
   const [groupByMenuOpen, setGroupByMenuOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [hideFilterLabels, setHideFilterLabels] = useState(false);
+  const [viewMode, setViewMode] = useState<"changes" | "history">("changes");
   const filterRowRef = useRef<HTMLDivElement | null>(null);
   const panelActive = open && visible;
   const project = useMemo<Project | null>(() => (
@@ -416,6 +429,11 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       }
     };
   }, [panelActive, open, projectPath, panelProject, panelLease, fetchChanges, fetchRepositories, fetchBranches, reset, setTransport]);
+
+  useEffect(() => {
+    if (!workspaceMode || !projectPath) return;
+    setActiveRepo(activeRepositoryPath ?? null);
+  }, [activeRepositoryPath, projectPath, setActiveRepo, workspaceMode]);
 
   useEffect(() => {
     if (transportError) {
@@ -769,18 +787,25 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
     }
   };
 
-  const handleRebaseContinue = async () => {
-    if (pulling) return;
+  const handlePendingOperationContinue = async () => {
+    if (!pendingOp || pulling || pendingOp === "merge") return;
     try {
-      await rebaseContinue();
-      toast.success(t("git.toast.rebaseContinued"));
+      await operationContinue(pendingOp);
+      toast.success(t("git.conflict.continued"));
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      if (m.includes("pull_conflict")) {
-        toast.error(t("git.toast.unresolvedConflicts"));
-      } else {
-        toast.error(formatGitNetError(t("git.error.continueRebaseFailed"), m, t));
-      }
+      toast.error(formatGitNetError(t("git.error.continueFailed"), m, t));
+    }
+  };
+
+  const handlePendingOperationAbort = async () => {
+    if (!pendingOp || pulling) return;
+    try {
+      await operationAbort(pendingOp);
+      toast.success(t("git.toast.aborted"));
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      toast.error(formatGitNetError(t("git.error.abortFailed"), m, t));
     }
   };
 
@@ -810,9 +835,9 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
       <TerminalPanelHeader
         icon={<GitBranch size={13} strokeWidth={2} />}
         accent={TERM.yellow}
-        title={t("git.title")}
+        title={t(viewMode === "changes" ? "git.title" : "git.history.title")}
         actions={(
-          <>
+          viewMode === "changes" ? <>
           {/* Group By 切换下拉 */}
           <div className="relative">
             <button
@@ -921,12 +946,33 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
           >
             <RefreshCw size={11} />
           </button>
-          </>
+          </> : null
         )}
       />
 
+      {!workspaceMode && <div className="grid shrink-0 grid-cols-2 border-b p-1" style={{ borderColor: TERM.dim }}>
+        {(["changes", "history"] as const).map((mode) => {
+          const selected = viewMode === mode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewMode(mode)}
+              className="ui-focus-ring rounded px-2 py-1 text-[10px] transition-colors"
+              style={{
+                color: selected ? TERM.yellow : TERM.dim,
+                backgroundColor: selected ? panelColorTint(TERM.yellow, 10) : "transparent",
+              }}
+              aria-pressed={selected}
+            >
+              {t(mode === "changes" ? "git.view.changes" : "git.view.history")}
+            </button>
+          );
+        })}
+      </div>}
+
       {/* 仓库切换：项目下检测到多个 Git 仓库时展示下拉（单仓库零 UI 变化） */}
-      {repositories.length > 1 && (
+      {!workspaceMode && repositories.length > 1 && (
         <div className="relative shrink-0 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
           <button
             type="button"
@@ -992,6 +1038,16 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
           )}
         </div>
       )}
+
+      {viewMode === "history" ? (
+        <GitHistoryView
+          active={panelActive}
+          transport={transport}
+          repositoryId={projectPath ? (activeRepo?.absolutePath ?? (panelProject?.environment_type === "ssh" ? "" : projectPath)) : null}
+          branchContext={`${branchStatus?.detached ? "detached" : branchStatus?.branch ?? ""}:${activeRepo?.branch ?? ""}`}
+        />
+      ) : (
+      <>
 
       {/* Filter */}
       {changes.length > 0 && (
@@ -1258,30 +1314,34 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
         >
           <span className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color: STATUS_CONFIG.C.color }}>
             <GitMerge size={12} strokeWidth={2} />
-            {pendingOp === "rebase" ? t("git.conflict.rebaseInProgress") : t("git.conflict.mergeInProgress")}
+            {pendingOp === "rebase" ? t("git.conflict.rebaseInProgress") : pendingOp === "cherry-pick" ? t("git.conflict.cherryPickInProgress") : pendingOp === "revert" ? t("git.conflict.revertInProgress") : t("git.conflict.mergeInProgress")}
             {hasConflicts && <span className="font-normal">· {t("git.conflict.hasConflicts")}</span>}
           </span>
           <span className="text-[10px] leading-snug" style={{ color: TERM.dim }}>
             {pendingOp === "rebase"
               ? t("git.conflict.rebaseHint")
-              : t("git.conflict.mergeHint")}
+              : pendingOp === "cherry-pick"
+                ? t("git.conflict.cherryPickHint")
+                : pendingOp === "revert"
+                  ? t("git.conflict.revertHint")
+                  : t("git.conflict.mergeHint")}
           </span>
           <span className="flex items-center gap-1.5">
-            {pendingOp === "rebase" && (
+            {pendingOp !== "merge" && (
               <button
                 type="button"
-                onClick={() => void handleRebaseContinue()}
+                onClick={() => void handlePendingOperationContinue()}
                 disabled={pulling || hasConflicts}
                 className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
                 style={{ color: TERM.green, border: `1px solid ${panelColorTint(TERM.green, 34)}` }}
-                title={hasConflicts ? t("git.conflict.resolveFirst") : t("git.conflict.continueRebase")}
+                title={hasConflicts ? t("git.conflict.resolveFirst") : t("git.conflict.continue")}
               >
                 <Check size={12} /> {t("git.conflict.continue")}
               </button>
             )}
             <button
               type="button"
-              onClick={() => void handlePullAbort()}
+              onClick={() => void (pendingOp === "merge" || pendingOp === "rebase" ? handlePullAbort() : handlePendingOperationAbort())}
               disabled={pulling}
               className="ui-focus-ring flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-40"
               style={{ color: STATUS_CONFIG.C.color, border: `1px solid ${panelColorTint(STATUS_CONFIG.C.color, 34)}` }}
@@ -1424,6 +1484,8 @@ export function GitChangesPanel({ open, projectPath, projectId, visible = true, 
         }}
         onClose={() => setConfirmAllOpen(false)}
       />
+      </>
+      )}
     </Container>
   );
 }

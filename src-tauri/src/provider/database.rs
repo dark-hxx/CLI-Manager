@@ -1073,7 +1073,10 @@ mod tests {
     fn builtin_identity_matches_only_seeded_pairs() {
         assert!(is_builtin_provider("codex", "builtin-fluxion-codex"));
         assert!(is_builtin_provider("claude", "builtin-fluxion-claude"));
-        assert!(is_builtin_provider("grokbuild", "builtin-fluxion-grokbuild"));
+        assert!(is_builtin_provider(
+            "grokbuild",
+            "builtin-fluxion-grokbuild"
+        ));
         // 跨类型或用户自建的 ID 都不是内置项，不能被登记退订。
         assert!(!is_builtin_provider("claude", "builtin-fluxion-codex"));
         assert!(!is_builtin_provider("codex", "my-provider"));

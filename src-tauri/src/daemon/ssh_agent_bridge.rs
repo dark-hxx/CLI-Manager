@@ -862,6 +862,29 @@ fn bridge_failure_should_fail_pending(error: &str) -> bool {
 fn required_capability(kind: &str) -> Option<&'static str> {
     match kind {
         "gitDiffWithOptions" => Some("gitDiffOptions"),
+        "gitListCommits" | "gitCommitDetail" | "gitCommitFileDiff" => Some("gitHistory"),
+        "gitListCommitsFiltered"
+        | "gitTags"
+        | "gitCompareRefs"
+        | "gitCommitPatch"
+        | "gitExecuteOperation"
+        | "gitListStashes"
+        | "gitStashCreate"
+        | "gitStashAction"
+        | "gitListRemotes"
+        | "gitRemoteAction"
+        | "gitPushTag"
+        | "gitDeleteRemoteBranch"
+        | "gitForcePushWithLease"
+        | "gitListReflog"
+        | "gitRestoreReflog"
+        | "gitFileHistory"
+        | "gitBlameFile"
+        | "gitBisectStatus"
+        | "gitBisectAction"
+        | "gitListSubmodules"
+        | "gitSubmoduleAction"
+        | "gitRewriteCommits" => Some("gitWorkspaceTools"),
         "fileAttachBegin" | "fileAttachChunk" | "fileAttachFinish" | "fileAttachAbort" => {
             Some("fileAttach")
         }
@@ -1837,6 +1860,35 @@ mod tests {
     }
 
     #[test]
+    fn missing_git_history_capability_is_rejected_before_request_write() {
+        let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        let mut writer = Vec::new();
+        let mut request_number = 8;
+
+        handle_agent_request(
+            &mut writer,
+            &reader_receiver,
+            "host-1",
+            &mut request_number,
+            &[],
+            AgentBridgeRequest {
+                kind: "gitListCommits".to_string(),
+                payload: json!({}),
+                response: response_sender,
+            },
+        )
+        .unwrap_err();
+
+        assert!(writer.is_empty());
+        assert_eq!(request_number, 8);
+        assert_eq!(
+            response_receiver.recv().unwrap().unwrap_err(),
+            "ssh_agent_capability_missing:gitHistory"
+        );
+    }
+
+    #[test]
     fn missing_attachment_capabilities_are_rejected_before_request_write() {
         for (kind, expected_error) in [
             ("fileAttachBegin", "ssh_agent_capability_missing:fileAttach"),
@@ -2191,6 +2243,11 @@ mod tests {
             Some("fileAttachmentRoot")
         );
         assert_eq!(required_capability("filePutBegin"), Some("filePut"));
+        assert_eq!(
+            required_capability("gitRewriteCommits"),
+            Some("gitWorkspaceTools")
+        );
+        assert_eq!(required_capability("gitListCommits"), Some("gitHistory"));
         assert_eq!(required_capability("fileGet"), Some("fileGet"));
         assert_eq!(required_capability("fileDelete"), Some("fileDelete"));
         let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
