@@ -1,69 +1,24 @@
 {
   "version": 1,
   "files": {
-    "src-tauri/src/codex_app_server_proxy.rs": {
-      "lines": 2145
-    },
     "src-tauri/src/commands/cc_connect.rs": {
       "lines": 8433,
       "longLines": {
         "e8c0c2d8b2ef2fe9": 1
       }
     },
-    "src-tauri/src/commands/db_repair.rs": {
-      "lines": 2905
-    },
-    "src-tauri/src/commands/git.rs": {
-      "lines": 3649
-    },
     "src-tauri/src/commands/history.rs": {
       "lines": 18391
-    },
-    "src-tauri/src/commands/history/catalog.rs": {
-      "lines": 6094
-    },
-    "src-tauri/src/commands/hook_settings.rs": {
-      "lines": 4544
-    },
-    "src-tauri/src/commands/ssh.rs": {
-      "lines": 2942
     },
     "src-tauri/src/commands/sync.rs": {
       "longLines": {
         "a0fc7d7da27af66f": 1
       }
     },
-    "src-tauri/src/daemon/route_http.rs": {
-      "lines": 3435
-    },
-    "src-tauri/src/daemon/server.rs": {
-      "lines": 3701
-    },
-    "src-tauri/src/daemon/ssh_agent_bridge.rs": {
-      "lines": 2547
-    },
-    "src-tauri/src/lib.rs": {
-      "lines": 2483
-    },
     "src-tauri/src/live_server/http.rs": {
       "longLines": {
         "207202a5bf49e846": 1
       }
-    },
-    "src-tauri/src/provider/global.rs": {
-      "lines": 3318
-    },
-    "src-tauri/src/provider/import.rs": {
-      "lines": 2009
-    },
-    "src-tauri/src/statusline.rs": {
-      "lines": 2312
-    },
-    "src-tauri/ssh-agent/src/history.rs": {
-      "lines": 2014
-    },
-    "src-tauri/ssh-agent/src/hook_config.rs": {
-      "lines": 2811
     },
     "src/components/TerminalTabs.tsx": {
       "lines": 4919

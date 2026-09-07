@@ -6,11 +6,13 @@ Split Rust app and infrastructure
 
 ## Requirements
 
-- TBD
+- Bound Rust app/runtime, database repair and provider modules without changing public paths, IPC, storage or lifecycle.
+- Separate test-only responsibilities first, then extract production responsibilities where still oversized.
 
 ## Acceptance Criteria
 
-- [ ] TBD
+- [ ] All affected source and test files are at most 2000 lines with named boundaries.
+- [ ] Existing desktop and Agent tests retain discovery/counts and pass; cargo check passes.
 
 ## Notes
 

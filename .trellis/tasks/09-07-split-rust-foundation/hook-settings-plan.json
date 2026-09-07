@@ -1,0 +1,12 @@
+[
+  {
+    "file": "src-tauri/src/commands/hook_settings.rs",
+    "groups": [
+      { "name": "codex", "first": "install_codex_hooks", "last": "disable_codex_hooks_feature" },
+      { "name": "grok", "first": "resolve_grok_dir", "last": "build_grok_status" },
+      { "name": "pi", "first": "resolve_pi_dir", "last": "build_pi_status" },
+      { "name": "kimi_adapter", "first": "resolve_kimi_dir", "last": "replace_kimi_config_with_stage_hook" },
+      { "name": "json_hooks", "first": "add_hook_command", "last": "ensure_child_object" }
+    ]
+  }
+]
