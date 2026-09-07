@@ -12,9 +12,9 @@ Split Rust history and services
 
 ## Acceptance Criteria
 
-- [ ] Every handwritten Rust source remains below the hard limit after formatting.
-- [ ] Desktop and SSH Agent tests pass without reduced coverage; normal/test compilation has no new warnings.
-- [ ] Architecture baseline only shrinks, and TEMP change records describe the actual scope.
+- [x] Every handwritten Rust source remains below the hard limit after formatting.
+- [x] Desktop and SSH Agent tests pass without reduced coverage; normal/test compilation has no new warnings.
+- [x] Architecture baseline only shrinks, and TEMP change records describe the actual scope.
 
 ## Notes
 

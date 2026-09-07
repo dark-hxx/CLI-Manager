@@ -11,8 +11,8 @@ Split Rust app and infrastructure
 
 ## Acceptance Criteria
 
-- [ ] All affected source and test files are at most 2000 lines with named boundaries.
-- [ ] Existing desktop and Agent tests retain discovery/counts and pass; cargo check passes.
+- [x] All affected source and test files are at most 2000 lines with named boundaries.
+- [x] Existing desktop and Agent tests retain discovery/counts and pass; cargo check passes.
 
 ## Notes
 

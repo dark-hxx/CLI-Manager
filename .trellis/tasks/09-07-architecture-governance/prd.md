@@ -12,8 +12,8 @@ Add AI architecture governance
 
 ## Acceptance Criteria
 
-- [ ] Boundary tests pass; current debt is reported, not hidden.
-- [ ] AGENTS, shared guide and layer specs agree; TEMP records updated.
+- [x] Boundary tests pass; current debt is reported, not hidden.
+- [x] AGENTS, shared guide and layer specs agree; TEMP records updated.
 
 ## Notes
 

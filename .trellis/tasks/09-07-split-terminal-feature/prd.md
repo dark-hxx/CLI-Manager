@@ -12,9 +12,9 @@ Split terminal feature
 
 ## Acceptance Criteria
 
-- [ ] All extracted modules meet physical and long-line limits without numbered chunks.
-- [ ] TypeScript, declaration/body equivalence, affected terminal tests and production build pass.
-- [ ] TEMP records, feature inventory, dependency boundaries and shrinking baseline updated.
+- [x] All extracted modules meet physical and long-line limits without numbered chunks.
+- [x] TypeScript, declaration/body equivalence, affected terminal tests and production build pass.
+- [x] TEMP records, feature inventory, dependency boundaries and shrinking baseline updated.
 
 ## Notes
 

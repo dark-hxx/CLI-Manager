@@ -13,9 +13,9 @@ Final architecture convergence
 
 ## Acceptance Criteria
 
-- [ ] No handwritten file above 2000 physical lines or line above 500 characters; empty debt baseline and strict check pass.
-- [ ] Populated domain directories and explicit public entries replace legacy implementation owners without duplicate state or new runtime import cycles.
-- [ ] TypeScript, Node regression suites, Rust checks/tests and production build pass; TEMP records/specs/tasks/journal synchronized.
+- [x] No handwritten file above 2000 physical lines or line above 500 characters; empty debt baseline and strict check pass.
+- [x] Populated domain directories and explicit public entries replace legacy implementation owners without duplicate state or new runtime import cycles.
+- [x] TypeScript, Node regression suites, Rust checks/tests and production build pass; TEMP records and specs synchronized. Archive/journal bookkeeping follows the finish-work workflow.
 
 ## Notes
 

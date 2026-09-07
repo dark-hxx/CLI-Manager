@@ -12,9 +12,9 @@ Split remaining frontend features
 
 ## Acceptance Criteria
 
-- [ ] Frontend targets and extracted modules satisfy physical/long-line limits.
-- [ ] TypeScript, targeted behavior/source tests and production build pass.
-- [ ] TEMP records and architecture baseline accurately track the shrinking debt.
+- [x] Frontend targets and extracted modules satisfy physical/long-line limits.
+- [x] TypeScript, targeted behavior/source tests and production build pass.
+- [x] TEMP records and architecture baseline accurately track the shrinking debt.
 
 ## Notes
 

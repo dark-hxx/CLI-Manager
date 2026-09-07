@@ -20,12 +20,12 @@ Repair and merge PR #252, then split all tracked handwritten source files over 2
 
 - [x] PR #252 is conflict-free, repaired, tested, pushed without force, and merged via GitHub CLI.
 - [x] SSH Agent 0.1.14 / protocol 1.15 preserves protocol 1.14 SFTP behavior and gates Git capabilities.
-- [ ] SQLite usage schema readiness cannot skip required columns, indexes, views, or marker repair.
-- [ ] Destructive Git operations have explicit confirmation/safety behavior and regression coverage.
-- [ ] All tracked handwritten application source files are at most 2,000 physical lines.
-- [ ] Feature-first dependency rules and long-line rules are executable through npm scripts.
-- [ ] TypeScript, Rust workspace, SSH-agent, targeted tests, and architecture checks pass.
-- [ ] Trellis tasks, changelog, and feature inventory accurately describe the delivered result.
+- [x] SQLite usage schema readiness cannot skip required columns, indexes, views, or marker repair.
+- [x] Destructive Git operations have explicit confirmation/safety behavior and regression coverage.
+- [x] All tracked handwritten application source files are at most 2,000 physical lines.
+- [x] Feature-first dependency rules and long-line rules are executable through npm scripts.
+- [x] TypeScript, Rust workspace, SSH-agent, targeted tests, and architecture checks pass.
+- [x] Trellis tasks, changelog, and feature inventory accurately describe the delivered result.
 
 ## Notes
 

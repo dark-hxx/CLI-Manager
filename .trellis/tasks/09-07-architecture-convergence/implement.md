@@ -4,4 +4,4 @@
 - [x] Finish frontend domain ownership and public-entry import rewrites.
 - [x] Finish Rust feature/infrastructure ownership with stable command facades.
 - [x] Review architecture enforcement, remove debt baseline, run strict check.
-- [ ] Run final package verification and sync TEMP/specs/tasks/journal with manual UI checklist.
+- [x] Run final package verification and sync TEMP/specs with manual UI checklist; complete task archive/journal in finish-work.

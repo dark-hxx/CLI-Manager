@@ -12,8 +12,8 @@ Split frontend i18n and styles
 
 ## Acceptance Criteria
 
-- [ ] Original and extracted dictionary maps and ordered CSS rules are equal.
-- [ ] No extracted file exceeds 2000 lines; type/build and affected source tests pass.
+- [x] Original and extracted dictionary maps and ordered CSS rules are equal.
+- [x] No extracted file exceeds 2000 lines; type/build and affected source tests pass.
 
 ## Notes
 

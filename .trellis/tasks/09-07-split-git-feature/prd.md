@@ -12,9 +12,9 @@ Split Git feature
 
 ## Acceptance Criteria
 
-- [ ] Each editor responsibility owner is at most 300 physical lines; no facade-only evasion.
-- [ ] Original statements and full JSX compare exactly, with TypeScript and focused file/Git/Markdown regressions passing.
-- [ ] TEMP records and navigation ownership contract reflect the real modules.
+- [x] Each editor responsibility owner is at most 300 physical lines; no facade-only evasion.
+- [x] Original statements and full JSX compare exactly, with TypeScript and focused file/Git/Markdown regressions passing.
+- [x] TEMP records and navigation ownership contract reflect the real modules.
 
 ## Notes
 

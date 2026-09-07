@@ -11,6 +11,7 @@
 - Empty retired directory cleanup was rejected by execution policy; no contents were deleted. These untracked empty directories do not appear in Git or contain implementation owners.
 - Final human-facing report and explicit pending desktop checklist: docs/AI架构治理验收.md.
 - Staged namespace move graph check succeeded: 39 indexed changes / 0 affected flows / low aggregate risk. Full byte/registry audit supplements old-path index coverage.
+- Post-commit GitNexus refresh attempted per gitnexus-cli skill, failed with Access denied for `.gitnexus/lbug`. CLI status still reports indexed commit cd9d549 versus current 8a5325df. Read-only exclusive open and file ACL read are also denied. No permissions changed, index deleted or unrelated process killed. This environment maintenance limitation is documented separately from completed code/automated acceptance.
 
 ## Frontend ownership completion
 
