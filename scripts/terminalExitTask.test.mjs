@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   shouldIncludeDaemonExitTask,
   shouldIncludeTerminalExitTask,
-} from "../src/lib/terminalExitTask.ts";
+} from "../src/features/terminal/api/terminalExitTask.ts";
 
 test("keeps the existing running PTY task rule for hook and shell tasks", () => {
   for (const hookStatus of ["running", "none"]) {

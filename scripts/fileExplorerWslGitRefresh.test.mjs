@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const fileStore = read("../src/stores/fileExplorerStore.ts");
+const fileStore = read("../src/features/files/api/fileExplorerStore.ts");
 const gitCommands = read("../src-tauri/src/commands/git/wsl.rs");
 
 function sliceBetween(source, startMarker, endMarker) {

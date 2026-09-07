@@ -23,7 +23,7 @@ const modulePath = join(tempDir, "kimiHookLifecycle.mjs");
 writeFileSync(modulePath, output, "utf8");
 const { mapCliHookEvent } = await import(pathToFileURL(modulePath).href);
 
-const hookErrorsSource = readFileSync(new URL("../src/lib/hookErrors.ts", import.meta.url), "utf8");
+const hookErrorsSource = readFileSync(new URL("../src/features/settings/api/hookErrors.ts", import.meta.url), "utf8");
 const hookErrorsOutput = ts.transpileModule(hookErrorsSource, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -38,15 +38,15 @@ test("Kimi 审批结束与中断形成静默状态闭环", () => {
 });
 
 test("Kimi Subagent 不进入本地 transcript split 特殊分支", () => {
-  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const appSource = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8");
   assert.match(appSource, /event\.payload\.source !== "kimi"/);
   assert.match(appSource, /event\.payload\.event !== "PermissionResult"/);
   assert.match(appSource, /event\.payload\.event !== "Interrupt"/);
 });
 
 test("Kimi bridge 设置默认启用且配置目录保持本机私有", () => {
-  const settingsSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
-  const syncSource = readFileSync(new URL("../src/lib/syncSettings.ts", import.meta.url), "utf8");
+  const settingsSource = readFileSync(new URL("../src/shared/preferences/settingsStore.ts", import.meta.url), "utf8");
+  const syncSource = readFileSync(new URL("../src/features/sync/lib/syncSettings.ts", import.meta.url), "utf8");
   assert.match(settingsSource, /kimiHookBridgeEnabled: true/);
   assert.match(settingsSource, /kimiHookConfigDir: null/);
   assert.match(syncSource, /kimiHookBridgeEnabled: "excluded"/);

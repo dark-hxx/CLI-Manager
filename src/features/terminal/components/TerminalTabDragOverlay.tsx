@@ -1,12 +1,12 @@
 import { type CSSProperties } from "react";
 import { DragOverlay, useDndContext } from "@dnd-kit/core";
-import { type TabNotificationState } from "../../../stores/terminalStore";
-import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../../../components/terminal/terminalTabVisuals";
-import { type CliToolIconKey } from "../../../lib/cliTools";
-import { X } from "../../../components/icons";
-import { VendorIcon, type VendorKey } from "../../../components/VendorIcon";
-import { CliToolIcon } from "../../../components/CliToolIcon";
-import { Portal } from "../../../components/ui/Portal";
+import { type TabNotificationState } from "../state";
+import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../api/terminalTabVisuals";
+import { type CliToolIconKey } from "../../../shared/lib/cliTools";
+import { X } from "../../../shared/ui/icons";
+import { VendorIcon, type VendorKey } from "../../../shared/ui/VendorIcon";
+import { CliToolIcon } from "../../../shared/ui/CliToolIcon";
+import { Portal } from "../../../shared/ui/Portal";
 
 export function DragOverlayTab({
   title,

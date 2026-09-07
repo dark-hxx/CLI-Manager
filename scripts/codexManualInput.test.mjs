@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveManualDirectCodexEnterData } from "../src/lib/codexManualInput.ts";
+import { resolveManualDirectCodexEnterData } from "../src/features/terminal/lib/codexManualInput.ts";
 
 test("does not override manual direct codex enter on Windows", () => {
   assert.equal(resolveManualDirectCodexEnterData({

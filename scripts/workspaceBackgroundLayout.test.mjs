@@ -2,19 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8");
 const backgroundSource = readFileSync(
-  new URL("../src/components/workspace/WorkspaceBackground.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspaceBackground.tsx", import.meta.url),
   "utf8",
 );
 const xtermSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
 const xtermView = readFileSync(new URL("../src/features/terminal/components/XTermView.tsx", import.meta.url), "utf8");
-const sidePanelSource = readFileSync(new URL("../src/components/terminal/TerminalSidePanel.tsx", import.meta.url), "utf8");
+const sidePanelSource = readFileSync(new URL("../src/features/terminal/components/TerminalSidePanel.tsx", import.meta.url), "utf8");
 const terminalTabsSource = readFileSync(new URL("../src/features/terminal/components/TerminalTabsView.tsx", import.meta.url), "utf8");
-const settingsModalSource = readFileSync(new URL("../src/components/SettingsModal.tsx", import.meta.url), "utf8");
-const statsSource = readFileSync(new URL("../src/components/stats/StatsPanel.tsx", import.meta.url), "utf8");
-const ccusageStatsSource = readFileSync(new URL("../src/components/stats/CcusageStatsPanel.tsx", import.meta.url), "utf8");
-const settingsSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
+const settingsModalSource = readFileSync(new URL("../src/features/settings/api/SettingsModal.tsx", import.meta.url), "utf8");
+const statsSource = readFileSync(new URL("../src/features/stats/api/StatsPanel.tsx", import.meta.url), "utf8");
+const ccusageStatsSource = readFileSync(new URL("../src/features/stats/api/CcusageStatsPanel.tsx", import.meta.url), "utf8");
+const settingsSource = readFileSync(new URL("../src/shared/preferences/settingsStore.ts", import.meta.url), "utf8");
 const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 
 test("App mounts one shared workspace layout boundary", () => {

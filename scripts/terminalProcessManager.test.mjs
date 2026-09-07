@@ -48,7 +48,7 @@ export function emitOutput(sessionId, frame) {
 }
 `);
 
-const source = readFileSync(new URL("../src/terminal/core/TerminalProcessManager.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/terminal/api/TerminalProcessManager.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -57,7 +57,7 @@ const transpiled = ts.transpileModule(source, {
   fileName: "TerminalProcessManager.ts",
 }).outputText
   .replace('from "@tauri-apps/api/core"', 'from "./tauriCore.mjs"')
-  .replace('from "../../lib/resourceDiagnosticsLog"', 'from "./resourceDiagnosticsLog.mjs"')
+  .replace('from "../../../shared/platform/resourceDiagnosticsLog"', 'from "./resourceDiagnosticsLog.mjs"')
   .replace('from "../capabilities/TerminalCapabilityStore"', 'from "./capabilities.mjs"')
   .replace('from "../transport/PtyHostSocket"', 'from "./ptyHostSocket.mjs"');
 const managerPath = join(tempDir, "TerminalProcessManager.mjs");

@@ -3,34 +3,34 @@ import assert from "node:assert/strict";
 import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
-const sidebar = read("../src/components/files/FileExplorerSidebar.tsx");
-const contextMenu = read("../src/components/ui/context-menu.tsx");
+const sidebar = read("../src/features/files/api/FileExplorerSidebar.tsx");
+const contextMenu = read("../src/shared/ui/context-menu.tsx");
 const componentStyles = read("../src/styles/components.css");
-const formatter = read("../src/lib/aiPathFormatter.ts");
-const drag = read("../src/lib/terminalFileDrag.ts");
-const terminalInput = read("../src/hooks/useTerminalInput.ts");
-const pointerDrag = read("../src/hooks/useTerminalFilePointerDrag.tsx");
+const formatter = read("../src/features/files/api/aiPathFormatter.ts");
+const drag = read("../src/features/terminal/api/terminalFileDrag.ts");
+const terminalInput = read("../src/features/terminal/hooks/useTerminalInput.ts");
+const pointerDrag = read("../src/features/terminal/api/useTerminalFilePointerDrag.tsx");
 const terminalTabs = read("../src/features/terminal/hooks/useTerminalTabsController.tsx");
 const tabIconSources = [
   read("../src/features/terminal/components/SortableTerminalTabs.tsx"),
   read("../src/features/terminal/components/TerminalTabDragOverlay.tsx"),
 ].join("\n");
-const gitPanel = read("../src/components/git/GitChangesPanel.tsx");
-const gitTree = read("../src/components/git/GitChangesTree.tsx");
-const gitNode = read("../src/components/git/GitTreeNode.tsx");
-const attachmentDialog = read("../src/components/settings/pages/SshHostAttachmentDialog.tsx");
+const gitPanel = read("../src/features/git/api/GitChangesPanel.tsx");
+const gitTree = read("../src/features/git/components/GitChangesTree.tsx");
+const gitNode = read("../src/features/git/components/GitTreeNode.tsx");
+const attachmentDialog = read("../src/features/settings/api/SshHostAttachmentDialog.tsx");
 
 test("terminal tab CLI icons inherit the terminal tab foreground color", () => {
   assert.equal((tabIconSources.match(/<CliToolIcon icon=\{cliToolIcon\} size=\{14\} className="text-current" \/>/g) ?? []).length, 3);
 });
 
 test("file menus expose relative and absolute path copy actions", () => {
-  assert.match(sidebar, /import \{ PathCopyMenu \} from "\.\.\/PathCopyMenu"/);
+  assert.match(sidebar, /import \{ PathCopyMenu \} from "\.\/PathCopyMenu"/);
   assert.equal((sidebar.match(/<PathCopyMenu /g) ?? []).length, 4);
 });
 
 test("file menus portal outside clipping sidebar and panel ancestors", () => {
-  assert.match(sidebar, /import \{ Portal \} from "\.\.\/ui\/Portal"/);
+  assert.match(sidebar, /import \{ Portal \} from "\.\.\/\.\.\/\.\.\/shared\/ui\/Portal"/);
   assert.match(
     sidebar,
     /<Portal>\s*<div ref=\{setMenuPortalContainer\} data-file-explorer-menu-portal="" style=\{panelStyle\} \/>\s*<\/Portal>/,

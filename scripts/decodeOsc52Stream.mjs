@@ -14,7 +14,7 @@ export function decodeOscPathValue(value) { return value; }
 writeFileSync(join(tempDir, "terminalColor.mjs"), `
 export function normalizeHexColor(value, fallback) { return value || fallback; }
 `);
-const parseSource = readFileSync(new URL("../src/lib/terminalOscParse.ts", import.meta.url), "utf8");
+const parseSource = readFileSync(new URL("../src/features/terminal/lib/terminalOscParse.ts", import.meta.url), "utf8");
 writeFileSync(join(tempDir, "terminalOscParse.mjs"), ts.transpileModule(parseSource, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   fileName: "terminalOscParse.ts",
@@ -24,7 +24,7 @@ writeFileSync(join(tempDir, "terminalOscParse.mjs"), ts.transpileModule(parseSou
 writeFileSync(join(tempDir, "terminalStore.mjs"), `
 export const useTerminalStore = { getState() { return { sessions: [], handleShellRuntimeEvent() {}, updateSessionCwd() {} }; } };
 `);
-const hookSource = readFileSync(new URL("../src/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
+const hookSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
 writeFileSync(join(tempDir, "useTerminalOsc.mjs"), ts.transpileModule(hookSource, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   fileName: "useTerminalOsc.ts",

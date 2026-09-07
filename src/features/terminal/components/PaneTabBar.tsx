@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
-import { type TabNotificationState } from "../../../stores/terminalStore";
-import { useSettingsStore } from "../../../stores/settingsStore";
-import { useI18n } from "../../../lib/i18n";
-import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../../../stores/terminalPaneTree";
-import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../../../components/terminal/terminalTabVisuals";
-import { X, Maximize2, Minimize2, ChevronDown, ChevronRight, Undo2 } from "../../../components/icons";
-import { inferVendor } from "../../../components/VendorIcon";
-import { canSaveSessionToSidebar } from "../../../lib/saveSessionToSidebar";
-import type { Project, TerminalSession, WorktreeRecord } from "../../../lib/types";
+import { type TabNotificationState } from "../state";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { useI18n } from "../../../shared/i18n/index";
+import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../api/terminalPaneTree";
+import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../api/terminalTabVisuals";
+import { X, Maximize2, Minimize2, ChevronDown, ChevronRight, Undo2 } from "../../../shared/ui/icons";
+import { inferVendor } from "../../../shared/ui/VendorIcon";
+import { canSaveSessionToSidebar } from "../../projects/api/saveSessionToSidebar";
+import type { Project, TerminalSession, WorktreeRecord } from "../../../shared/types/index";
 import {
   ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
-} from "../../../components/ui/context-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover";
-import { getTerminalTheme } from "../../../lib/terminalThemes";
+} from "../../../shared/ui/context-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "../../../shared/ui/popover";
+import { getTerminalTheme } from "../../../shared/lib/terminalThemes";
 import {
   normalizeTabMenuHex, tabMenuHexToRgba, PANE_DROP_PREFIX, type SplitPickerAnchor,
   buildTerminalTabHoverInfo, inferSessionVendor, inferSessionCliToolIcon,

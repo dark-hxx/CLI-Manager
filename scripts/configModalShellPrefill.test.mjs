@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as shell from "../src/lib/configModalShellPrefill.ts";
+import * as shell from "../src/features/projects/lib/configModalShellPrefill.ts";
 
 test("macOS create modal prefills zsh when shell is blank", () => {
   assert.equal(typeof shell.getConfigModalShellPrefill, "function");

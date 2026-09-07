@@ -38,6 +38,19 @@ test("import parsing includes type imports, exports and dynamic imports, not com
   assert.deepEqual(imports("src/a.ts", source), ["../x", "../y", "../z"]);
 });
 
+test("inline import types also obey dependency boundaries", () => {
+  assert.deepEqual(imports("src/a.ts", 'type X = import("../feature").X;'), ["../feature"]);
+});
+
+test("feature API modules are narrow entries, not permission for internal subdirectories", () => {
+  const from = "src/features/git/components/View.tsx";
+  assert.deepEqual(dependencyViolations(from, ["../../terminal/state", "../../files/api/FileExplorerSidebar"]), []);
+  assert.equal(dependencyViolations(from, ["../../files/api/internal/private"]).length, 1);
+  assert.equal(dependencyViolations(from, ["../../files/store/fileExplorerStore"]).length, 1);
+  assert.equal(dependencyViolations(from, ["../../../stores/fileExplorerStore"]).length, 1);
+  assert.equal(dependencyViolations("src/shared/ui/View.tsx", ["../../lib/i18n"]).length, 1);
+});
+
 test("layer rules allow composition and public cross-feature access only", () => {
   assert.equal(dependencyViolations("src/shared/lib/a.ts", ["../../features/git"]).length, 1);
   assert.equal(dependencyViolations("src/features/git/a.ts", ["../../app/main"]).length, 1);

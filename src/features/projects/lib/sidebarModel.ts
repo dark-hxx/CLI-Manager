@@ -1,15 +1,15 @@
 import { type MouseEvent as ReactMouseEvent } from "react";
-import { useProjectStore } from "../../../stores/projectStore";
-import { type SplitTerminalOptions } from "../../../stores/terminalStore";
-import { useExternalSessionSyncStore } from "../../../stores/externalSessionSyncStore";
-import type { HistorySourceFilter, Project, TreeNode as TNode, TerminalScope, TerminalSession } from "../../../lib/types";
-import type { WorkspaceDockSide } from "../../../lib/workspaceLayout";
-import { resolveProjectStartupCommand } from "../../../lib/projectStartupCommand";
-import { resolveCliToolHistorySourceId } from "../../../lib/cliTools";
-import { parseProjectEnvVars } from "../../../lib/providerSwitching";
-import { groupSyncedExternalSessions } from "../../../lib/externalSessionGrouping";
-import type { SettingsTab } from "../../../components/SettingsModal";
-import { resolveProjectPath } from "../../../lib/groupPath";
+import { useProjectStore } from "../api/projectStore";
+import { type SplitTerminalOptions } from "../../terminal/state";
+import { useExternalSessionSyncStore } from "../../history/api/externalSessionSyncStore";
+import type { HistorySourceFilter, Project, TreeNode as TNode, TerminalScope, TerminalSession } from "../../../shared/types/index";
+import type { WorkspaceDockSide } from "../../../shared/lib/workspaceLayout";
+import { resolveProjectStartupCommand } from "../api/projectStartupCommand";
+import { resolveCliToolHistorySourceId } from "../../../shared/lib/cliTools";
+import { parseProjectEnvVars } from "../../providers/api/providerSwitching";
+import { groupSyncedExternalSessions } from "../../history/api/externalSessionGrouping";
+import type { SettingsTab } from "../../settings/api/SettingsModal";
+import { resolveProjectPath } from "../api/groupPath";
 
 export interface SidebarProps {
   onOpenSettings: (tab?: SettingsTab) => void;

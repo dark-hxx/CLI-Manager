@@ -10,13 +10,13 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 refractor.register(markup);
 refractor.register(markdown);
 
-const css = read("../src/components/git/diffViewer.css");
-const content = read("../src/components/git/diff/GitDiffContent.tsx");
-const hunkList = read("../src/components/git/diff/GitDiffHunkList.tsx");
-const toolbar = read("../src/components/git/diff/GitDiffToolbar.tsx");
-const viewer = read("../src/components/git/diff/GitDiffViewer.tsx");
-const theme = read("../src/components/git/diff/theme.ts");
-const horizontalScroll = read("../src/components/git/diff/useGitDiffHorizontalScroll.ts");
+const css = read("../src/features/git/styles/diffViewer.css");
+const content = read("../src/features/git/components/diff/GitDiffContent.tsx");
+const hunkList = read("../src/features/git/components/diff/GitDiffHunkList.tsx");
+const toolbar = read("../src/features/git/components/diff/GitDiffToolbar.tsx");
+const viewer = read("../src/features/git/components/diff/GitDiffViewer.tsx");
+const theme = read("../src/features/git/components/diff/theme.ts");
+const horizontalScroll = read("../src/features/git/components/diff/useGitDiffHorizontalScroll.ts");
 
 test("terminal Diff tokens are isolated from the application light theme", () => {
   assert.match(viewer, /data-git-diff-theme=\{useTerminalTheme \? "terminal" : "application"\}/);

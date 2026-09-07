@@ -1,31 +1,31 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, NativeProviderLaunchSnapshot, TerminalSession } from "../../../lib/types";
-import { createAgentTerminalMetadata, resolveAgentTerminalMetadata } from "../../../lib/agentTerminal";
-import { logError, logWarn } from "../../../lib/logger";
+import type { Project, NativeProviderLaunchSnapshot, TerminalSession } from "../../../shared/types/index";
+import { createAgentTerminalMetadata, resolveAgentTerminalMetadata } from "../../agents/api/agentTerminal";
+import { logError, logWarn } from "../../../shared/platform/logger";
 import {
   appendResumeCliArgs, isDirectCodexStartupCommand, normalizeDirectCodexStartupCommand,
   resolveProjectStartupCommand, withClaudeSettingsPath, withCodexConfigOverrides, withCodexProfile,
   withCodexLightTuiTheme, withGrokModelOverride,
-} from "../../../lib/projectStartupCommand";
-import { getTerminalTheme } from "../../../lib/terminalThemes";
-import { normalizeHexColor } from "../../../lib/terminalColor";
-import { useSettingsStore } from "../../../stores/settingsStore";
+} from "../../projects/api/projectStartupCommand";
+import { getTerminalTheme } from "../../../shared/lib/terminalThemes";
+import { normalizeHexColor } from "../../../shared/lib/terminalColor";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import {
   defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey, type OsPlatform,
   type ShellKey,
-} from "../../../lib/shell";
-import { getProviderSwitchAppType, isExactCodexProject, parseProjectEnvVars } from "../../../lib/providerSwitching";
-import { useProjectStore } from "../../../stores/projectStore";
-import { useSshHostStore } from "../../../stores/sshHostStore";
-import { useSshAgentIntegrationStore } from "../../../stores/sshAgentIntegrationStore";
-import { buildSshConnectionSpec } from "../../../lib/ssh";
-import { parseStoredSshHookReport, resolveSshToolSource } from "../../../lib/sshToolIntegration";
-import { getSshClientInstanceId } from "../../../lib/sshClientIdentity";
-import { isValidGrokSessionId, isValidKimiSessionId } from "../../../lib/resumeCliArgs";
+} from "../../../shared/platform/shell";
+import { getProviderSwitchAppType, isExactCodexProject, parseProjectEnvVars } from "../../providers/api/providerSwitching";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { useSshHostStore } from "../../remote/api/sshHostStore";
+import { useSshAgentIntegrationStore } from "../../remote/api/sshAgentIntegrationStore";
+import { buildSshConnectionSpec } from "../../remote/api/ssh";
+import { parseStoredSshHookReport, resolveSshToolSource } from "../../remote/api/sshToolIntegration";
+import { getSshClientInstanceId } from "../../remote/api/sshClientIdentity";
+import { isValidGrokSessionId, isValidKimiSessionId } from "../../history/api/resumeCliArgs";
 import {
   terminalProcessManager, type TerminalClaudeProviderLaunchConfig,
   type TerminalCodexProviderLaunchConfig, type TerminalGrokProviderLaunchConfig,
-} from "../../../terminal/core/TerminalProcessManager";
+} from "../api/TerminalProcessManager";
 import {
   type HookSettingsStatusPayload, type OpenCodeHookStatusPayload, type DetachedPtyLaunchOptions,
   type DetachedPtyLaunchResult, type ProviderLaunchSnapshotResponse, type ResolvedPtyLaunch,

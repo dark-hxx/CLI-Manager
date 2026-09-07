@@ -4,7 +4,7 @@ import {
   formatLinuxGraphicsDiagnostics,
   isLinuxGraphicsConstrained,
   shouldDisableTerminalWebgl,
-} from "../src/lib/linuxGraphics.ts";
+} from "../src/shared/platform/linuxGraphics.ts";
 
 function diagnostics(overrides = {}) {
   return {

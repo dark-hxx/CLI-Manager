@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
-const listSource = read("../src/components/history/HistoryListPane.tsx");
-const detailSource = read("../src/components/history/SessionDetailPane.tsx");
+const listSource = read("../src/features/history/components/HistoryListPane.tsx");
+const detailSource = read("../src/features/history/components/SessionDetailPane.tsx");
 const historySource = read("../src-tauri/src/commands/history.rs");
 const catalogSource = read("../src-tauri/src/commands/history/catalog.rs");
 const catalogDetailSource = read("../src-tauri/src/commands/history/catalog/session_detail.rs");

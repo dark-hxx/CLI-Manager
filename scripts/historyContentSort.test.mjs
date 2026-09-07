@@ -3,21 +3,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
-const sortSource = read("../src/lib/historySort.ts");
-const settingsSource = read("../src/stores/settingsStore.ts");
-const workspaceSource = read("../src/components/HistoryWorkspace.tsx");
-const detailSource = read("../src/components/history/SessionDetailPane.tsx");
-const timelineSource = read("../src/components/history/SessionTimelineView.tsx");
-const changesSource = read("../src/components/history/SessionFileChangesView.tsx");
-const toolsSource = read("../src/components/history/SessionToolDiagnosticsView.tsx");
-const subtasksSource = read("../src/components/history/SessionSubtaskTreeView.tsx");
+const sortSource = read("../src/shared/lib/historySort.ts");
+const settingsSource = read("../src/shared/preferences/settingsStore.ts");
+const workspaceSource = read("../src/features/history/api/HistoryWorkspace.tsx");
+const detailSource = read("../src/features/history/components/SessionDetailPane.tsx");
+const timelineSource = read("../src/features/history/components/SessionTimelineView.tsx");
+const changesSource = read("../src/features/history/components/SessionFileChangesView.tsx");
+const toolsSource = read("../src/features/history/components/SessionToolDiagnosticsView.tsx");
+const subtasksSource = read("../src/features/history/components/SessionSubtaskTreeView.tsx");
 const historySource = [
   read("../src-tauri/src/commands/history/scan_state.rs"),
   read("../src-tauri/src/commands/history/roots.rs"),
 ].join("\n");
 const catalogSource = read("../src-tauri/src/commands/history/catalog.rs");
 const sshHistorySource = read("../src-tauri/ssh-agent/src/history.rs");
-const titleSource = read("../src/lib/historyTitle.ts");
+const titleSource = read("../src/features/history/lib/historyTitle.ts");
 
 test("history detail sorting keeps six views and excludes canvas/context", () => {
   assert.match(sortSource, /"conversation",\s*"transcript",\s*"timeline",\s*"changes",\s*"tools",\s*"subtasks"/s);

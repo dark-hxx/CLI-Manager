@@ -5,7 +5,7 @@ import ts from "typescript";
 import { readFileSync as readComposedSource } from "./helpers/readComposedSource.mjs";
 
 test("locale catalogs expose the same keys in both languages without duplicate definitions", () => {
-  const source = readComposedSource(new URL("../src/lib/i18n.ts", import.meta.url));
+  const source = readComposedSource(new URL("../src/shared/i18n/index.ts", import.meta.url));
   const parsed = ts.createSourceFile("catalogs.ts", source, ts.ScriptTarget.Latest, true);
   const keys = { zh: [], en: [] };
   for (const statement of parsed.statements) {

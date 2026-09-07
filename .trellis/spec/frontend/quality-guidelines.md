@@ -51,7 +51,7 @@ for (const message of messages) {
 
 ### Gate diagnostic console output behind Debug Mode
 
-**What**: WebView-side diagnostic `console.log`, `console.info`, and `console.warn` output must go through `src/lib/debugConsole.ts`, not direct `console.*` calls.
+**What**: WebView-side diagnostic `console.log`, `console.info`, and `console.warn` output must go through `src/shared/platform/debugConsole.ts`, not direct `console.*` calls.
 
 **Why**: normal users should not get noisy console diagnostics; Debug Mode is the explicit switch for frontend console diagnostics. Keep real error reporting paths such as `console.error` separate unless the task explicitly changes error reporting.
 

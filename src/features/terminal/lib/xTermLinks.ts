@@ -1,18 +1,18 @@
 import { Terminal, type IBufferRange, type IDisposable, type IViewportRange } from "@xterm/xterm";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { translateCurrent } from "../../../lib/i18n";
+import { translateCurrent } from "../../../shared/i18n/index";
 import {
   normalizeTerminalRelativePath, resolveTerminalFileSystemPath, type TerminalFileLinkMatch,
-} from "../../../lib/terminalFileLinks";
-import { requestTerminalFileNavigation } from "../../../lib/terminalFileNavigation";
-import { findProjectByPath, findWorktreeByPath } from "../../../lib/terminalProject";
-import { projectSupportsCapability } from "../../../lib/projectCapabilities";
-import { useProjectStore } from "../../../stores/projectStore";
-import { useTerminalStore } from "../../../stores/terminalStore";
-import { useSettingsStore } from "../../../stores/settingsStore";
+} from "./terminalFileLinks";
+import { requestTerminalFileNavigation } from "./terminalFileNavigation";
+import { findProjectByPath, findWorktreeByPath } from "../api/terminalProject";
+import { projectSupportsCapability } from "../../projects/api/projectCapabilities";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { useTerminalStore } from "../state";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { toast } from "sonner";
-import { logError } from "../../../lib/logger";
+import { logError } from "../../../shared/platform/logger";
 
 export const getTerminalRenderedCellSize = (terminal: Terminal, terminalContainer: HTMLElement, fallbackFontSize: number) => {
   const renderedCell = (

@@ -7,7 +7,7 @@ const storeSource = readFileSync(
   "utf8"
 );
 const workspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8"
 );
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSettingsStore } from "../../../stores/settingsStore";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import {
   TERMINAL_TAB_HOVER_DELAY_MS, TERMINAL_TAB_HOVER_CLOSE_DELAY_MS, TERMINAL_TAB_HOVER_CARD_WIDTH,
   TERMINAL_TAB_HOVER_CARD_ESTIMATED_HEIGHT, clampNumber,

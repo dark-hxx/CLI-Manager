@@ -7,12 +7,12 @@ DO NOT send optional commentary
 ## AI 开发结构约束（强制）
 
 - 手写代码文件不得超过 **2000 个物理行**；常规模块优先 400–1200 行，按职责拆分，禁止压缩长行、数字分片、循环转发或宽泛 `export *` 绕过限制。
-- 前端目标为 `src/app` → `src/features/<domain>` → `src/shared`；Rust 为薄 `commands` + `features` / `infrastructure` / `shared`。迁移期间旧路径可保留明确的兼容入口，不复制实现。
+- 前端采用 `src/app` → `src/features/<domain>` → `src/shared`；跨功能访问 `api/<module>` 或既有 index/state 入口，不建立连带加载 UI/状态的大聚合入口，不恢复旧 components/hooks/stores/lib 实现目录。Rust 为薄 `commands` + `features` / `infrastructure` / `shared`，迁移入口不复制实现。
 - 新任务先读相关领域入口与契约，再按符号定位；不默认全文读取大文件、全库输出或启动全量检查。改动批次运行定向测试，交付前运行必要的跨层检查。
 - 独立运行 `npm run check:architecture`；`npm run report:architecture` 提供长度、字节与粗略 Token 报告。检查不绑定开发启动或生产构建。
-- 迁移基线只允许缩减；最终用 `npm run check:architecture -- --strict` 验收零超限。生成代码等排除项必须有明确来源，不能排除业务目录来通过检查。
+- 迁移基线已经清空；用 `npm run check:architecture -- --strict` 验收零超限，不新增豁免。生成代码等排除项必须有明确来源，不能排除业务目录来通过检查。
 - 详细可执行规则见 [.trellis/spec/frontend/ai-architecture-contracts.md](.trellis/spec/frontend/ai-architecture-contracts.md)。
-- 翻译键值按领域维护于 `src/shared/i18n/messages/`，`src/lib/i18n.ts` 保留调用入口；组件样式从 `src/styles/components.css` 的有序导入定位。不要为了改一项文案或样式读取全部字典/样式。
+- 翻译键值按领域维护于 `src/shared/i18n/messages/`，`src/shared/i18n/index.ts` 保留调用入口；组件样式从 `src/styles/components.css` 的有序导入定位。不要为了改一项文案或样式读取全部字典/样式。
 
 ## 项目概述
 
@@ -53,7 +53,7 @@ CLI-Manager 是一款 Windows 桌面应用，用于集中管理基于 PowerShell
 
 - 前端新增或修改任何用户可见文案时，必须同步兼容 `zh-CN` 与 `en-US`。
 - 覆盖范围包括按钮、菜单、悬浮提示、aria 标签、空状态、toast、系统通知、设置页、历史会话、统计看板，以及 hook 通知脚本相关文案。
-- 不要硬编码中文/英文；优先通过 `src/lib/i18n.ts` 和 `useI18n()` / `translateCurrent()` 取文案。
+- 不要硬编码中文/英文；优先通过 `src/shared/i18n/index.ts` 和 `useI18n()` / `translateCurrent()` 取文案。
 - 交付前至少手动切换“设置 -> 通用 -> 界面语言”，确认新增界面在中英文下都生效，时间格式不得因英文切换变成 12 小时制。
 
 ## 任务分类与交付记录（强制）
@@ -117,9 +117,10 @@ npm run tauri add <plugin>           # 安装 Tauri 插件
 ### 关键目录
 ```
 src/
-  components/       # React 组件（Sidebar, TerminalTabs, XTermTerminal, ConfigModal）
-  stores/           # Zustand stores（projectStore, terminalStore, settingsStore）
-  lib/              # 工具（db.ts 数据库连接, types.ts 类型定义）
+  app/              # 应用组合与窗口级 UI；main.tsx 保留启动入口
+  features/         # 功能域：api 公共模块与内部 components/hooks/store/lib
+  shared/           # UI、全局 preferences、平台适配、工具、类型与翻译
+  styles/           # 全局样式及保持顺序的组件样式导入
 src-tauri/src/
   lib.rs            # Tauri 入口，插件注册，migrations
   commands/         # Tauri command handlers
@@ -131,7 +132,7 @@ src-tauri/src/
 
 ### 数据层
 - SQLite 表：`projects`（项目配置）、`command_templates`（命令模板）
-- migrations 定义在 `src-tauri/src/lib.rs`
+- migrations 定义在 `src-tauri/src/app/migrations.rs`，由 `lib.rs` 注册
 - 前端通过 `@tauri-apps/plugin-sql` 的 `Database.load("sqlite:cli-manager.db")` 直接执行 SQL
 
 ## 修复与新需求前置（强制）

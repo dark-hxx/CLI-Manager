@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { type TabNotificationState } from "../../../stores/terminalStore";
-import { useI18n, type TranslationKey } from "../../../lib/i18n";
-import { DND_SORTABLE_TRANSITION, WORKSPAN_DRAG_PREFIX } from "../../../lib/dragInteraction";
-import { type TerminalWorkspan } from "../../../stores/terminalWorkspan";
-import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../../../components/terminal/terminalTabVisuals";
-import { type CliToolIconKey } from "../../../lib/cliTools";
-import { Terminal, X, Cloud } from "../../../components/icons";
-import { WorktreeIcon } from "../../../components/WorktreeIcon";
-import { VendorIcon, type VendorKey } from "../../../components/VendorIcon";
-import { CliToolIcon } from "../../../components/CliToolIcon";
-import type { TerminalSession, WorktreeRecord } from "../../../lib/types";
-import { ContextMenu, ContextMenuTrigger, ContextMenuContent } from "../../../components/ui/context-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover";
-import { Portal } from "../../../components/ui/Portal";
+import { type TabNotificationState } from "../state";
+import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
+import { DND_SORTABLE_TRANSITION, WORKSPAN_DRAG_PREFIX } from "../../workspace/api/dragInteraction";
+import { type TerminalWorkspan } from "../api/terminalWorkspan";
+import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../api/terminalTabVisuals";
+import { type CliToolIconKey } from "../../../shared/lib/cliTools";
+import { Terminal, X, Cloud } from "../../../shared/ui/icons";
+import { WorktreeIcon } from "../../../shared/ui/WorktreeIcon";
+import { VendorIcon, type VendorKey } from "../../../shared/ui/VendorIcon";
+import { CliToolIcon } from "../../../shared/ui/CliToolIcon";
+import type { TerminalSession, WorktreeRecord } from "../../../shared/types/index";
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent } from "../../../shared/ui/context-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "../../../shared/ui/popover";
+import { Portal } from "../../../shared/ui/Portal";
 import {
   TAB_NOTIFICATION_LABELS, type SplitPickerAnchor, SSH_CONNECTION_STATE_COLORS,
   type TerminalTabHoverInfo,

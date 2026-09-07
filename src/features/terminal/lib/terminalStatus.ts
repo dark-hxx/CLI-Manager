@@ -1,8 +1,8 @@
-import type { SshDisconnectReason, TerminalSession } from "../../../lib/types";
-import { logInfo, recordCrashActivity } from "../../../lib/logger";
-import { useProjectStore } from "../../../stores/projectStore";
-import { translateCurrent } from "../../../lib/i18n";
-import { findProjectByPath, findWorktreeByPath } from "../../../lib/terminalProject";
+import type { SshDisconnectReason, TerminalSession } from "../../../shared/types/index";
+import { logInfo, recordCrashActivity } from "../../../shared/platform/logger";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { translateCurrent } from "../../../shared/i18n/index";
+import { findProjectByPath, findWorktreeByPath } from "../api/terminalProject";
 import {
   type CliHookEventName, type TabNotificationState, type ShellRuntimeEventName,
   type DaemonSessionState, type TabStatusSourceName, type TabStatusSources, type TabStatusDetails,

@@ -8,8 +8,8 @@ export function readFileSync(file, encoding = "utf8") {
   if (pathname.endsWith("/src/styles/components.css")) {
     return source.replace(/@import\s+"([^"]+)";/g, (_, specifier) => readRaw(new URL(specifier, file), encoding));
   }
-  if (pathname.endsWith("/src/lib/i18n.ts")) {
-    const catalogUrl = new URL("../shared/i18n/catalogs.ts", file);
+  if (pathname.endsWith("/src/shared/i18n/index.ts")) {
+    const catalogUrl = new URL("./catalogs.ts", file);
     const catalog = readRaw(catalogUrl, encoding);
     const dictionaries = [...catalog.matchAll(/import \{ (?:zh|en) as \w+ \} from "([^"]+)";/g)]
       .map(([, specifier]) => readRaw(new URL(`${specifier}.ts`, catalogUrl), encoding));

@@ -1,0 +1,846 @@
+{
+  "analyzed": 2182,
+  "unindexed": [
+    "GitHistoryView",
+    "CommitRow",
+    "sortNodes",
+    "TreeDirectory",
+    "GitChangedFilesTree",
+    "GitCommitDetails",
+    "GitCompareDialog",
+    "laneX",
+    "segmentPath",
+    "CommitGraph",
+    "GitLogTable",
+    "remoteWebUrl",
+    "GitPowerToolsDialog",
+    "RefSection",
+    "RefRow",
+    "RefContextMenu",
+    "TagContextMenu",
+    "GitRefTree",
+    "FolderTreeIcon",
+    "PlusIcon",
+    "workspaceError",
+    "effectiveProject",
+    "dateInputValue",
+    "GitWorkspace",
+    "GIT_GRAPH_LANE_WIDTH",
+    "GIT_GRAPH_COLORS",
+    "unique",
+    "gitGraphColor",
+    "layoutGitGraph",
+    "LANGUAGE_OPTIONS",
+    "detectPreferredLanguage",
+    "resolveLanguagePreference",
+    "isEnglishLanguage",
+    "isChineseLanguage",
+    "convertChineseForLanguage",
+    "pickByLanguage",
+    "getLanguageLocale",
+    "buildTraditionalChineseDictionary",
+    "formatTemplate",
+    "getCurrentLanguage",
+    "translateCurrent",
+    "useI18n",
+    "sshRemoteGitListCommits",
+    "sshRemoteGitCommitDetail",
+    "sshRemoteGitCommitFileDiff",
+    "sshRemoteGitOperationContinue",
+    "sshRemoteGitOperationAbort",
+    "sshRemoteGitTags",
+    "sshRemoteGitCompareRefs",
+    "sshRemoteGitCommitPatch",
+    "sshRemoteGitExecuteOperation",
+    "sshRemoteGitListStashes",
+    "sshRemoteGitStashCreate",
+    "sshRemoteGitStashAction",
+    "sshRemoteGitListRemotes",
+    "sshRemoteGitRemoteAction",
+    "sshRemoteGitPushTag",
+    "sshRemoteGitDeleteRemoteBranch",
+    "sshRemoteGitForcePushWithLease",
+    "sshRemoteGitListReflog",
+    "sshRemoteGitRestoreReflog",
+    "sshRemoteGitFileHistory",
+    "sshRemoteGitBlameFile",
+    "sshRemoteGitBisectStatus",
+    "sshRemoteGitBisectAction",
+    "sshRemoteGitListSubmodules",
+    "sshRemoteGitSubmoduleAction",
+    "sshRemoteGitRewriteCommits",
+    "useGitWorkspaceStore"
+  ],
+  "high": [
+    {
+      "target": "parseProjectEnvVars",
+      "file": "src/lib/providerSwitching.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "inferVendor",
+      "file": "src/components/VendorIcon.tsx",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 16,
+        "processes_affected": 4,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "translateError",
+      "file": "src/components/files/LiveServerMenuItems.tsx",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 5,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "ProviderBadge",
+      "file": "src/stores/projectStore.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 34,
+        "processes_affected": 0,
+        "modules_affected": 0
+      }
+    },
+    {
+      "target": "NativeProviderCard",
+      "file": "src/components/settings/providers/nativeProviderTypes.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 37,
+        "processes_affected": 0,
+        "modules_affected": 0
+      }
+    },
+    {
+      "target": "providerErrorCode",
+      "file": "src/components/settings/providers/nativeProviderTypes.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 10,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "orderFailoverProviders",
+      "file": "src/components/settings/providers/providerFailoverOrder.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "panelColorTint",
+      "file": "src/components/stats/termStatsUi.tsx",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 23,
+        "processes_affected": 3,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "calculateTokenStats",
+      "file": "src/components/stats/termStatsUi.tsx",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "useFontSizeControlVisibility",
+      "file": "src/components/ui/FontSizeControl.tsx",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "useAppConfirm",
+      "file": "src/components/ui/useAppConfirm.tsx",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 15,
+        "processes_affected": 11,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "useAppPrompt",
+      "file": "src/components/ui/useAppPrompt.tsx",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 3,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "useWorkspaceBackground",
+      "file": "src/components/workspace/WorkspaceBackground.tsx",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 3,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "useGitTransportLease",
+      "file": "src/hooks/useGitTransportLease.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "useTerminalPreviewTheme",
+      "file": "src/hooks/useTerminalPreviewTheme.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "formatAiPath",
+      "file": "src/lib/aiPathFormatter.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolveHistorySourceIconKey",
+      "file": "src/lib/cliTools.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolveCliToolHistorySourceId",
+      "file": "src/lib/cliTools.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "getDb",
+      "file": "src/lib/db.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 33,
+        "processes_affected": 1,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "isDebugConsoleEnabled",
+      "file": "src/lib/debugConsole.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 3,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "debugConsoleInfo",
+      "file": "src/lib/debugConsole.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "debugConsoleWarn",
+      "file": "src/lib/debugConsole.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 19,
+        "processes_affected": 3,
+        "modules_affected": 9
+      }
+    },
+    {
+      "target": "normalizeDesktopPetSizePercent",
+      "file": "src/lib/desktopPetSize.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "normalizeGitDiffPayload",
+      "file": "src/lib/gitDiffLimits.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolveProjectPath",
+      "file": "src/lib/groupPath.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 3,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "getHistoryPathArgs",
+      "file": "src/lib/historyPathArgs.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 14,
+        "processes_affected": 4,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "resolveHistoryProjectPath",
+      "file": "src/lib/historyProjectPaths.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 8,
+        "processes_affected": 3,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "formatArg",
+      "file": "src/lib/logger.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 5,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "addCrashBreadcrumb",
+      "file": "src/lib/logger.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 5,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "logInfo",
+      "file": "src/lib/logger.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 23,
+        "processes_affected": 6,
+        "modules_affected": 6
+      }
+    },
+    {
+      "target": "logWarn",
+      "file": "src/lib/logger.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 61,
+        "processes_affected": 7,
+        "modules_affected": 8
+      }
+    },
+    {
+      "target": "logError",
+      "file": "src/lib/logger.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 41,
+        "processes_affected": 6,
+        "modules_affected": 8
+      }
+    },
+    {
+      "target": "normalizeProjectPath",
+      "file": "src/lib/terminalProject.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 3,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "normalizeModelId",
+      "file": "src/lib/modelPricing.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolveContextLimit",
+      "file": "src/lib/modelPricing.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolveNodeAppearance",
+      "file": "src/lib/nodeAppearance.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 8,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "isSshProject",
+      "file": "src/lib/projectCapabilities.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 1,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "isSshHistorySourceUnsupported",
+      "file": "src/lib/projectCapabilities.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 4,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "resolveProjectCapabilities",
+      "file": "src/lib/projectCapabilities.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 4,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "projectSupportsCapability",
+      "file": "src/lib/projectCapabilities.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 8,
+        "processes_affected": 4,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolveProjectStartupCommand",
+      "file": "src/lib/projectStartupCommand.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "getProviderSwitchAppType",
+      "file": "src/lib/providerSwitching.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 9,
+        "processes_affected": 3,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "isValidKimiSessionId",
+      "file": "src/lib/resumeCliArgs.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "isValidGrokSessionId",
+      "file": "src/lib/resumeCliArgs.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "normalizeShellKey",
+      "file": "src/lib/shell.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 17,
+        "processes_affected": 3,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "getOsPlatform",
+      "file": "src/lib/shell.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 20,
+        "processes_affected": 8,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "buildJumpTarget",
+      "file": "src/lib/ssh.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 1,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "buildSshConnectionSpec",
+      "file": "src/lib/ssh.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 12,
+        "processes_affected": 3,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "buildSshAgentHostLaunch",
+      "file": "src/lib/sshAgentHistory.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 2,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "resolveSshHost",
+      "file": "src/lib/sshAgentHistory.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "buildSshAgentLaunchForHost",
+      "file": "src/lib/sshAgentHistory.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "isValidSshAttachmentRoot",
+      "file": "src/lib/sshAttachment.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "getSshClientInstanceId",
+      "file": "src/lib/sshClientIdentity.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 2,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "request",
+      "file": "src/lib/sshRemoteGit.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 22,
+        "processes_affected": 0,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "firstExecutableToken",
+      "file": "src/lib/sshToolIntegration.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 1,
+        "processes_affected": 3,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "resolveSshToolSource",
+      "file": "src/lib/sshToolIntegration.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 5,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "resolveSshHistorySource",
+      "file": "src/lib/sshToolIntegration.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 4,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "validateSshToolConfigRoot",
+      "file": "src/lib/sshToolIntegration.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "toCssFontFamilyName",
+      "file": "src/lib/systemFonts.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 8,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "splitFontFamilyStack",
+      "file": "src/lib/systemFonts.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 1,
+        "processes_affected": 8,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "normalizeFontFamilyKey",
+      "file": "src/lib/systemFonts.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 10,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "normalizeFontFamilyStack",
+      "file": "src/lib/systemFonts.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 7,
+        "processes_affected": 3,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "normalizeTerminalFontFamily",
+      "file": "src/lib/terminalFontFamily.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 4,
+        "processes_affected": 3,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "getSafeSuggestionSuffix",
+      "file": "src/lib/terminalInputSuggestions.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 5,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "findProjectByPath",
+      "file": "src/lib/terminalProject.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 1,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "findWorktreeByPath",
+      "file": "src/lib/terminalProject.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "projectWithWorktreePath",
+      "file": "src/lib/terminalProject.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 3,
+        "processes_affected": 1,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "getEnabledTerminalShellOptions",
+      "file": "src/lib/terminalShellProfiles.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 3,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "isLightTerminalTheme",
+      "file": "src/lib/terminalThemes.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 9,
+        "processes_affected": 5,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "withTerminalTextColor",
+      "file": "src/lib/terminalThemes.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 3,
+        "modules_affected": 2
+      }
+    },
+    {
+      "target": "getTerminalTheme",
+      "file": "src/lib/terminalThemes.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 11,
+        "processes_affected": 6,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "cn",
+      "file": "src/lib/utils.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 16,
+        "processes_affected": 0,
+        "modules_affected": 3
+      }
+    },
+    {
+      "target": "asString",
+      "file": "src/stores/historyStore.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 25,
+        "processes_affected": 1,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "asNumber",
+      "file": "src/stores/historyStore.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 24,
+        "processes_affected": 1,
+        "modules_affected": 1
+      }
+    },
+    {
+      "target": "createGitDiffWorkspaceContext",
+      "file": "src/stores/gitDiffWorkspaceStore.ts",
+      "risk": "HIGH",
+      "summary": {
+        "direct": 6,
+        "processes_affected": 3,
+        "modules_affected": 4
+      }
+    },
+    {
+      "target": "canonicalize",
+      "file": "src/stores/syncStore.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 14,
+        "processes_affected": 0,
+        "modules_affected": 5
+      }
+    },
+    {
+      "target": "normalizedPixelRatio",
+      "file": "src/terminal/browser/TerminalSplitLayout.ts",
+      "risk": "CRITICAL",
+      "summary": {
+        "direct": 2,
+        "processes_affected": 11,
+        "modules_affected": 2
+      }
+    }
+  ]
+}

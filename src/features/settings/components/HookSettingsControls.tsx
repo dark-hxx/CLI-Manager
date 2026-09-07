@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { ActionIcon, Badge, Box, Button, Card, Group, Stack, Switch, Text } from "@mantine/core";
 import { ChevronDown, Folder, FileCode, Copy, Check, Bell, BellOff } from "lucide-react";
-import { useI18n } from "@/lib/i18n";
+import { useI18n } from "../../../shared/i18n/index";
 import { type HookInstallStatus, STATUS_LABELS, STATUS_COLORS, pickText, formatPath } from "../lib/hookSettingsModel";
 
 export function PathRow({ label, value }: { label: string; value: string | null }) {

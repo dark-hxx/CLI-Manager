@@ -11,8 +11,8 @@ async function importTypeScript(path) {
   return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
 }
 
-const { createLocalGitTransportContextKey } = await importTypeScript("../src/lib/gitTransportIdentity.ts");
-const { GitTransportLeaseRegistry } = await importTypeScript("../src/lib/gitTransportLeaseRegistry.ts");
+const { createLocalGitTransportContextKey } = await importTypeScript("../src/features/git/lib/gitTransportIdentity.ts");
+const { GitTransportLeaseRegistry } = await importTypeScript("../src/features/git/lib/gitTransportLeaseRegistry.ts");
 
 function deferred() {
   let resolve;

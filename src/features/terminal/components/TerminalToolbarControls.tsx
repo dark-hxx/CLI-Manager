@@ -1,10 +1,10 @@
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useI18n } from "../../../lib/i18n";
-import { DND_SORTABLE_TRANSITION } from "../../../lib/dragInteraction";
-import { CliCat } from "../../../components/desktop-pet/CliCat";
-import { useSystemResources } from "../../../hooks/useSystemResources";
+import { useI18n } from "../../../shared/i18n/index";
+import { DND_SORTABLE_TRANSITION } from "../../workspace/api/dragInteraction";
+import { CliCat } from "../../desktop-pet/api/CliCat";
+import { useSystemResources } from "../../stats/api/useSystemResources";
 
 export function SortableToolbarButton({
   id,

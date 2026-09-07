@@ -72,7 +72,7 @@ let db_url = app_paths::db_url()?;
 ### 2. Signatures
 
 - Frontend setting: `settingsStore.debugMode: boolean`
-- Frontend handler: `src/App.tsx` 捕获 `KeyboardEvent.key === "F12"`
+- Frontend handler: `src/app/App.tsx` 捕获 `KeyboardEvent.key === "F12"`
 - Backend command: `app_open_devtools(app: AppHandle) -> Result<(), String>`
 - Tauri feature: `tauri = { features = ["devtools", ...] }`
 
@@ -255,7 +255,7 @@ window.addEventListener("keydown", (event) => {
 ### 2. Signatures
 
 - Frontend close behavior setting: `settingsStore.closeBehavior: "minimize" | "exit" | "ask"`.
-- Frontend cleanup entry: `runExitCleanup(source: string) -> Promise<void>` in `src/App.tsx`.
+- Frontend cleanup entry: `runExitCleanup(source: string) -> Promise<void>` in `src/app/App.tsx`.
 - Frontend overlay state: `exitPhase: "syncing" | "closing" | null`.
 - Frontend overlay component: `ExitProgressOverlay({ phase, notice })`.
 - Backend command during exit: `pty_close_all() -> Result<(), String>`.
@@ -320,14 +320,14 @@ await getCurrentWindow().destroy();
 
 ### 1. Scope / Trigger
 
-- Trigger: modifying `src-tauri/src/lib.rs::migrations()`, adding SQLite migrations, or changing startup database loading in `src/lib/db.ts`.
+- Trigger: modifying `src-tauri/src/lib.rs::migrations()`, adding SQLite migrations, or changing startup database loading in `src/shared/platform/db.ts`.
 - SQLx validates `_sqlx_migrations.checksum` by migration version. A released migration version must never be reused for different SQL.
 
 ### 2. Signatures
 
 - Backend migrations: `src-tauri/src/lib.rs::migrations() -> Vec<Migration>`.
 - Backend repair command: `db_repair_known_migration_drift() -> Result<DbMigrationRepairResult, String>`.
-- Frontend entry: `src/lib/db.ts::getDb() -> Promise<Database>`.
+- Frontend entry: `src/shared/platform/db.ts::getDb() -> Promise<Database>`.
 - SQLite bookkeeping table: `_sqlx_migrations(version, description, success, checksum, execution_time)`.
 
 ### 3. Contracts
@@ -362,7 +362,7 @@ await getCurrentWindow().destroy();
 - Rust unit tests for each supported old lineage and for partial-schema rejection.
 - `cargo check --manifest-path src-tauri/Cargo.toml`.
 - `cargo test --manifest-path src-tauri/Cargo.toml db_repair`.
-- `npx tsc --noEmit --pretty false` after touching `src/lib/db.ts`.
+- `npx tsc --noEmit --pretty false` after touching `src/shared/platform/db.ts`.
 
 ### 7. Wrong vs Correct
 

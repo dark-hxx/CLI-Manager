@@ -25,9 +25,9 @@ function transpile(relativePath, outputName, replacements = {}) {
   return outputPath;
 }
 
-transpile("../src/lib/terminalTui.ts", "terminalTui.mjs");
+transpile("../src/features/terminal/lib/terminalTui.ts", "terminalTui.mjs");
 const anchorPath = transpile(
-  "../src/lib/terminalImeAnchor.ts",
+  "../src/features/terminal/lib/terminalImeAnchor.ts",
   "terminalImeAnchor.mjs",
   { "./terminalTui": "./terminalTui.mjs" },
 );

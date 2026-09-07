@@ -5,8 +5,8 @@ import test from "node:test";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 test("provider catalog only marks a row selected while its detail dialog is open", () => {
-  const pageSource = read("../src/components/settings/pages/NativeProviderSettingsPage.tsx");
-  const cardSource = read("../src/components/settings/providers/NativeProviderCard.tsx");
+  const pageSource = read("../src/features/settings/components/pages/NativeProviderSettingsPage.tsx");
+  const cardSource = read("../src/features/settings/components/providers/NativeProviderCard.tsx");
 
   assert.match(
     pageSource,
@@ -16,9 +16,9 @@ test("provider catalog only marks a row selected while its detail dialog is open
 });
 
 test("provider detail close hands focus to the catalog page instead of its row", () => {
-  const pageSource = read("../src/components/settings/pages/NativeProviderSettingsPage.tsx");
-  const detailModalSource = read("../src/components/settings/providers/NativeProviderDetailModal.tsx");
-  const formModalSource = read("../src/components/settings/providers/NativeProviderFormModal.tsx");
+  const pageSource = read("../src/features/settings/components/pages/NativeProviderSettingsPage.tsx");
+  const detailModalSource = read("../src/features/settings/components/providers/NativeProviderDetailModal.tsx");
+  const formModalSource = read("../src/features/settings/components/providers/NativeProviderFormModal.tsx");
 
   assert.match(detailModalSource, /returnFocus=\{false\}/);
   assert.match(detailModalSource, /onExitTransitionEnd=\{onExitTransitionEnd\}/);

@@ -20,8 +20,8 @@ function transpileModule(fileName) {
 }
 
 const [{ isOpenCodeTerminalContext }, { attachOpenCodeTuiClipboard }] = await Promise.all([
-  transpileModule("terminal/browser/TerminalCliContext.ts"),
-  transpileModule("terminal/browser/OpenCodeTuiClipboard.ts"),
+  transpileModule("features/terminal/browser/TerminalCliContext.ts"),
+  transpileModule("features/terminal/browser/OpenCodeTuiClipboard.ts"),
 ]);
 
 function context(overrides = {}) {

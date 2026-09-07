@@ -45,31 +45,31 @@ writeFileSync(
   "utf8",
 );
 
-transpile(new URL("../src/lib/resumeCliArgs.ts", import.meta.url), "resumeCliArgs.mjs");
-transpile(new URL("../src/lib/providerSwitching.ts", import.meta.url), "providerSwitching.mjs");
+transpile(new URL("../src/features/history/api/resumeCliArgs.ts", import.meta.url), "resumeCliArgs.mjs");
+transpile(new URL("../src/features/providers/api/providerSwitching.ts", import.meta.url), "providerSwitching.mjs");
 const projectStartupPath = transpile(
-  new URL("../src/lib/projectStartupCommand.ts", import.meta.url),
+  new URL("../src/features/projects/api/projectStartupCommand.ts", import.meta.url),
   "projectStartupCommand.mjs",
   {
-    "./providerSwitching": "./providerSwitching.mjs",
-    "./resumeCliArgs": "./resumeCliArgs.mjs",
-    "./shell": "./shell.mjs",
+    "../../providers/api/providerSwitching": "./providerSwitching.mjs",
+    "../../history/api/resumeCliArgs": "./resumeCliArgs.mjs",
+    "../../../shared/platform/shell": "./shell.mjs",
   },
 );
 const saveSessionPath = transpile(
-  new URL("../src/lib/saveSessionToSidebar.ts", import.meta.url),
+  new URL("../src/features/projects/api/saveSessionToSidebar.ts", import.meta.url),
   "saveSessionToSidebar.mjs",
   {
-    "../stores/terminalStore": "./terminalStore.mjs",
-    "./resumeCliArgs": "./resumeCliArgs.mjs",
+    "../../terminal/state": "./terminalStore.mjs",
+    "../../history/api/resumeCliArgs": "./resumeCliArgs.mjs",
   },
 );
 const historyResumeCommandPath = transpile(
-  new URL("../src/lib/historyResumeCommand.ts", import.meta.url),
+  new URL("../src/features/history/api/historyResumeCommand.ts", import.meta.url),
   "historyResumeCommand.mjs",
   {
-    "./cliTools": "./cliTools.mjs",
-    "./projectStartupCommand": "./projectStartupCommand.mjs",
+    "../../../shared/lib/cliTools": "./cliTools.mjs",
+    "../../projects/api/projectStartupCommand": "./projectStartupCommand.mjs",
     "./resumeCliArgs": "./resumeCliArgs.mjs",
   },
 );
@@ -88,7 +88,7 @@ const { buildHistoryResumeCommand, buildRemoteHandoffResumeCommand, stripPiResum
   pathToFileURL(historyResumeCommandPath).href
 );
 const historySourcesPath = transpile(
-  new URL("../src/lib/historySources.ts", import.meta.url),
+  new URL("../src/shared/lib/historySources.ts", import.meta.url),
   "historySources.mjs",
 );
 const { HISTORY_SOURCE_DESCRIPTOR_BY_ID } = await import(pathToFileURL(historySourcesPath).href);

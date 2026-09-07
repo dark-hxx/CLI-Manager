@@ -4,12 +4,12 @@ import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const tabs = read("../src/components/files/FileEditorTabs.tsx");
+const tabs = read("../src/features/files/components/FileEditorTabs.tsx");
 const pane = read("../src/features/files/hooks/useFileEditorController.ts");
 const view = read("../src/features/files/components/FileEditorPaneView.tsx");
 const model = read("../src/features/files/types/fileEditorModel.ts");
-const diffTabs = read("../src/components/git/diff/GitDiffEditorTabs.tsx");
-const i18n = read("../src/lib/i18n.ts");
+const diffTabs = read("../src/features/git/api/GitDiffEditorTabs.tsx");
+const i18n = read("../src/shared/i18n/index.ts");
 const styles = read("../src/styles/components.css");
 
 test("file editor tabs expose only ordered file-close context actions", () => {

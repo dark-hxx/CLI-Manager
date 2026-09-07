@@ -1,27 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import type { TerminalSession } from "../../../lib/types";
-import { sourceTool } from "../../../lib/externalSessionGrouping";
-import { logError, logInfo, logWarn, recordCrashActivity } from "../../../lib/logger";
-import { normalizeDirectCodexStartupCommand } from "../../../lib/projectStartupCommand";
-import { useSettingsStore } from "../../../stores/settingsStore";
-import { useSessionStore } from "../../../stores/sessionStore";
-import { getOsPlatform, normalizeShellKey } from "../../../lib/shell";
-import { parseProjectEnvVars } from "../../../lib/providerSwitching";
-import { useProjectStore } from "../../../stores/projectStore";
-import { createGitDiffWorkspaceContext, useGitDiffWorkspaceStore } from "../../../stores/gitDiffWorkspaceStore";
-import { translateCurrent } from "../../../lib/i18n";
-import { buildRemoteHandoffResumeCommand } from "../../../lib/historyResumeCommand";
-import { terminalProcessManager } from "../../../terminal/core/TerminalProcessManager";
-import { shouldIncludeTerminalExitTask } from "../../../lib/terminalExitTask";
+import type { TerminalSession } from "../../../shared/types/index";
+import { sourceTool } from "../../history/api/externalSessionGrouping";
+import { logError, logInfo, logWarn, recordCrashActivity } from "../../../shared/platform/logger";
+import { normalizeDirectCodexStartupCommand } from "../../projects/api/projectStartupCommand";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { useSessionStore } from "../api/sessionStore";
+import { getOsPlatform, normalizeShellKey } from "../../../shared/platform/shell";
+import { parseProjectEnvVars } from "../../providers/api/providerSwitching";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { createGitDiffWorkspaceContext, useGitDiffWorkspaceStore } from "../../git/api/gitDiffWorkspaceStore";
+import { translateCurrent } from "../../../shared/i18n/index";
+import { buildRemoteHandoffResumeCommand } from "../../history/api/historyResumeCommand";
+import { terminalProcessManager } from "../api/TerminalProcessManager";
+import { shouldIncludeTerminalExitTask } from "../api/terminalExitTask";
 import {
   addSessionToPaneTree, findPaneLeaf, findPaneLeafBySession,
   getNextSessionIdForShortcut as resolveNextSessionIdForShortcut,
   moveSessionToPane as moveSessionToPaneTree, reorderSessionInPane, resizePaneSplit,
   setPaneActiveSession, splitPaneEmpty as splitPaneEmptyTree, splitPaneLeaf,
   splitExistingSessionToPaneEdge, unsplitPaneLeaf,
-} from "../../../stores/terminalPaneTree";
+} from "../api/terminalPaneTree";
 import {
   collapseTerminalWorkspansToLegacy, collectWorkspanSessionIds, createTerminalWorkspan,
   detachTerminalSessionToWorkspan, detachTerminalWorkspanSessions, findWorkspanByPane,
@@ -29,7 +29,7 @@ import {
   removeSessionFromTerminalWorkspans, reorderTerminalWorkspans, restoreTerminalWorkspans,
   sanitizeTerminalWorkspans, syncTerminalWorkspanLayout, updateTerminalWorkspan,
   type TerminalWorkspan,
-} from "../../../stores/terminalWorkspan";
+} from "../api/terminalWorkspan";
 import {
   type SessionStatus, type TabNotificationState, type DaemonSessionMeta, type TerminalStore,
   type WindowWithPtyOrphanTimer, type ResolvedPtyLaunch,

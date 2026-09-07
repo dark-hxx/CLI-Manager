@@ -6,24 +6,24 @@ const tabsSource = readFileSync(new URL("../src/features/terminal/components/Ter
 const sortableTabsSource = readFileSync(new URL("../src/features/terminal/components/SortableTerminalTabs.tsx", import.meta.url), "utf8");
 const tabDialogsSource = readFileSync(new URL("../src/features/terminal/components/TerminalTabDialogs.tsx", import.meta.url), "utf8");
 const tabBarSource = readFileSync(
-  new URL("../src/components/workspace/WorkspanTabBar.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspanTabBar.tsx", import.meta.url),
   "utf8",
 );
 const layoutComponentSource = readFileSync(
-  new URL("../src/components/workspace/WorkspanTerminalLayout.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspanTerminalLayout.tsx", import.meta.url),
   "utf8",
 );
 const controlsSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutControls.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspaceLayoutControls.tsx", import.meta.url),
   "utf8",
 );
 const menuSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutMenu.tsx", import.meta.url),
+  new URL("../src/features/workspace/components/WorkspaceLayoutMenu.tsx", import.meta.url),
   "utf8",
 );
 const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8");
-const i18nSource = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
-const layoutSource = readFileSync(new URL("../src/lib/workspaceLayout.ts", import.meta.url), "utf8");
+const i18nSource = readFileSync(new URL("../src/shared/i18n/index.ts", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/shared/lib/workspaceLayout.ts", import.meta.url), "utf8");
 
 test("top-level Workspan tabs use one direction-aware document-flow slot", () => {
   assert.equal((tabsSource.match(/<WorkspanTabBar/g) ?? []).length, 1);

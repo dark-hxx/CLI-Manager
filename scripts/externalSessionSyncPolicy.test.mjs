@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 
 const storeSource = readFileSync(
-  new URL("../src/stores/externalSessionSyncStore.ts", import.meta.url),
+  new URL("../src/features/history/api/externalSessionSyncStore.ts", import.meta.url),
   "utf8"
 );
 const sidebarSource = readFileSync(

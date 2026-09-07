@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(
-  new URL("../src/components/ui/MarkdownContent.tsx", import.meta.url),
+  new URL("../src/shared/ui/MarkdownContent.tsx", import.meta.url),
   "utf8",
 );
 const packageJson = JSON.parse(

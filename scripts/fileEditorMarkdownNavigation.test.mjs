@@ -15,7 +15,7 @@ function load(file, dependencies = {}) {
   runInNewContext(output, { exports, ...dependencies });
   return exports;
 }
-const navigation = load("../src/lib/markdownNavigation.ts");
+const navigation = load("../src/shared/lib/markdownNavigation.ts");
 const file = (path = "docs/current.md") => ({ path, content: "# Heading", previewKind: "markdown" });
 const settle = () => new Promise(resolve => setImmediate(resolve));
 

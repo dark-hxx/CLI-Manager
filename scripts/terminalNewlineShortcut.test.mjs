@@ -14,7 +14,7 @@ export const TUI_BORDER_PREFIX_PATTERN = /^$/;
 export const TUI_COMPOSER_PROMPT_PATTERN = /^[\\u203a\\u276f\\u00bb\\u2023>]\\s?/u;
 `);
 
-const cliContextSource = readFileSync(new URL("../src/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
+const cliContextSource = readFileSync(new URL("../src/features/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
 const cliContextOutput = ts.transpileModule(cliContextSource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -30,7 +30,7 @@ const {
   isGrokTerminalContext,
 } = await import(pathToFileURL(cliContextModulePath).href);
 
-const newlineSource = readFileSync(new URL("../src/terminal/browser/TerminalNewlineShortcut.ts", import.meta.url), "utf8");
+const newlineSource = readFileSync(new URL("../src/features/terminal/browser/TerminalNewlineShortcut.ts", import.meta.url), "utf8");
 const newlineModulePath = join(tempDir, "TerminalNewlineShortcut.mjs");
 writeFileSync(newlineModulePath, ts.transpileModule(newlineSource, {
   compilerOptions: {
@@ -45,7 +45,7 @@ const {
   resolveTerminalNewlineKeyEvent,
 } = await import(pathToFileURL(newlineModulePath).href);
 
-const colorSource = readFileSync(new URL("../src/lib/terminalColor.ts", import.meta.url), "utf8");
+const colorSource = readFileSync(new URL("../src/shared/lib/terminalColor.ts", import.meta.url), "utf8");
 writeFileSync(join(tempDir, "terminalColor.mjs"), ts.transpileModule(colorSource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -54,7 +54,7 @@ writeFileSync(join(tempDir, "terminalColor.mjs"), ts.transpileModule(colorSource
   fileName: "terminalColor.ts",
 }).outputText, "utf8");
 
-const source = readFileSync(new URL("../src/lib/terminalTuiDisplay.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/terminal/lib/terminalTuiDisplay.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -63,7 +63,7 @@ const transpiled = ts.transpileModule(source, {
   fileName: "terminalTuiDisplay.ts",
 }).outputText
   .replace('from "./terminalTui"', 'from "./terminalTui.mjs"')
-  .replace('from "./terminalColor"', 'from "./terminalColor.mjs"');
+  .replace('from "../../../shared/lib/terminalColor"', 'from "./terminalColor.mjs"');
 const modulePath = join(tempDir, "terminalTuiDisplay.mjs");
 writeFileSync(modulePath, transpiled, "utf8");
 
@@ -459,8 +459,8 @@ function eraseDarkBlocks(fixture, overrides = {}) {
 
 test("shared CLI context includes immutable session metadata for XTermTerminal", () => {
   const componentSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
-  const contextSource = readFileSync(new URL("../src/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
-  const inputSource = readFileSync(new URL("../src/hooks/useTerminalInput.ts", import.meta.url), "utf8");
+  const contextSource = readFileSync(new URL("../src/features/terminal/browser/TerminalCliContext.ts", import.meta.url), "utf8");
+  const inputSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalInput.ts", import.meta.url), "utf8");
   assert.match(componentSource, /createTerminalCliContext\(session, project\)/u);
   assert.match(contextSource, /sessionTool:\s*session\?\.cliTool/u);
   assert.match(contextSource, /sessionTool\s*===\s*"codex"/u);

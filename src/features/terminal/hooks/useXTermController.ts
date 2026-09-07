@@ -14,55 +14,55 @@ import { useShallow } from "zustand/shallow";
 import {
   applyTransparency, getTerminalBackground, getTerminalBackgroundOverlayColor,
   getTerminalMinimumContrastRatio, getTerminalTheme, isLightTerminalTheme, withTerminalTextColor,
-} from "../../../lib/terminalThemes";
-import { backgroundAssetUrl } from "../../../lib/assetUrl";
-import { useI18n } from "../../../lib/i18n";
-import { normalizeTerminalFontFamily } from "../../../lib/terminalFontFamily";
-import { canUseTerminalImageAddonWasm } from "../../../lib/terminalImageAddonSupport";
+} from "../../../shared/lib/terminalThemes";
+import { backgroundAssetUrl } from "../../../shared/platform/assetUrl";
+import { useI18n } from "../../../shared/i18n/index";
+import { normalizeTerminalFontFamily } from "../api/terminalFontFamily";
+import { canUseTerminalImageAddonWasm } from "../lib/terminalImageAddonSupport";
 import {
   findTerminalFileLinks, findTerminalRelativeFileLinks, normalizeTerminalRelativePath,
   terminalStringRangeToBufferColumns, type TerminalFileLinkMatch,
-} from "../../../lib/terminalFileLinks";
-import { useWorkspaceBackground } from "../../../components/workspace/WorkspaceBackground";
-import { useTerminalSearch } from "../../../hooks/useTerminalSearch";
-import { useTerminalContextMenu } from "../../../hooks/useTerminalContextMenu";
-import { useTerminalOsc } from "../../../hooks/useTerminalOsc";
-import { useTerminalDisplay } from "../../../hooks/useTerminalDisplay";
-import { useTerminalInput, type TerminalSuggestionGhostState } from "../../../hooks/useTerminalInput";
-import { resolveClaudeImeCompositionAnchor } from "../../../lib/terminalImeAnchor";
-import { copyTextToClipboard, readTextFromClipboard } from "../../../lib/systemClipboard";
-import { formatOsc52Reply } from "../../../lib/terminalOscParse";
-import { eventToCombo } from "../../../hooks/useKeyboardShortcuts";
-import { hasCodexTuiViewport, hasTuiComposerPromptViewport } from "../../../lib/terminalTuiDisplay";
-import { createTerminalTuiColorSyncController } from "../../../lib/terminalTuiColorSync";
-import { hexToRgba, normalizeHexColor } from "../../../lib/terminalColor";
-import { wrapTerminalPasteTextForCtrlShiftV } from "../../../lib/terminalKeyboard";
-import { didRenderFullTerminalViewport, refreshTerminalViewport } from "../../../lib/terminalVisibility";
+} from "../lib/terminalFileLinks";
+import { useWorkspaceBackground } from "../../workspace/api/WorkspaceBackground";
+import { useTerminalSearch } from "./useTerminalSearch";
+import { useTerminalContextMenu } from "./useTerminalContextMenu";
+import { useTerminalOsc } from "./useTerminalOsc";
+import { useTerminalDisplay } from "./useTerminalDisplay";
+import { useTerminalInput, type TerminalSuggestionGhostState } from "./useTerminalInput";
+import { resolveClaudeImeCompositionAnchor } from "../lib/terminalImeAnchor";
+import { copyTextToClipboard, readTextFromClipboard } from "../../../shared/platform/systemClipboard";
+import { formatOsc52Reply } from "../lib/terminalOscParse";
+import { eventToCombo } from "../../workspace/api/useKeyboardShortcuts";
+import { hasCodexTuiViewport, hasTuiComposerPromptViewport } from "../lib/terminalTuiDisplay";
+import { createTerminalTuiColorSyncController } from "../lib/terminalTuiColorSync";
+import { hexToRgba, normalizeHexColor } from "../../../shared/lib/terminalColor";
+import { wrapTerminalPasteTextForCtrlShiftV } from "../lib/terminalKeyboard";
+import { didRenderFullTerminalViewport, refreshTerminalViewport } from "../lib/terminalVisibility";
 import {
   getLinuxGraphicsDiagnostics, isLinuxGraphicsConstrained, shouldDisableTerminalWebgl,
-} from "../../../lib/linuxGraphics";
-import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../../../lib/shell";
-import { useFontSizeControlVisibility } from "../../../components/ui/FontSizeControl";
-import { useProjectStore } from "../../../stores/projectStore";
-import { formatStartupInputForPty, useTerminalStore } from "../../../stores/terminalStore";
-import { isTerminalMarkdownPreviewSupported } from "../../../components/terminal/TerminalMarkdownPreview";
+} from "../../../shared/platform/linuxGraphics";
+import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../../../shared/platform/shell";
+import { useFontSizeControlVisibility } from "../../../shared/ui/FontSizeControl";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { formatStartupInputForPty, useTerminalStore } from "../state";
+import { isTerminalMarkdownPreviewSupported } from "../components/TerminalMarkdownPreview";
 import {
   createTerminalCliContext, isClaudeTerminalContext, isCodexTerminalContext, isGrokLaunchCommand,
   isGrokRuntimeContext, isGrokTerminalContext, isOpenCodeTerminalContext,
-} from "../../../terminal/browser/TerminalCliContext";
-import { createTerminalMouseInteractionOptions } from "../../../terminal/browser/TerminalMouseInteraction";
-import { resolveTerminalNewlineKeyEvent } from "../../../terminal/browser/TerminalNewlineShortcut";
-import { attachOpenCodeTuiClipboard } from "../../../terminal/browser/OpenCodeTuiClipboard";
+} from "../browser/TerminalCliContext";
+import { createTerminalMouseInteractionOptions } from "../browser/TerminalMouseInteraction";
+import { resolveTerminalNewlineKeyEvent } from "../browser/TerminalNewlineShortcut";
+import { attachOpenCodeTuiClipboard } from "../browser/OpenCodeTuiClipboard";
 import {
   createPiTerminalCompatibility, type PiTerminalCompatibility,
-} from "../../../terminal/browser/TerminalPiCompatibility";
-import { shouldReflowTerminalCursorLine } from "../../../terminal/browser/TerminalReflowPolicy";
-import { terminalProcessManager } from "../../../terminal/core/TerminalProcessManager";
-import type { TerminalProcessTraits } from "../../../terminal/transport/PtyHostSocket";
-import { TERMINAL_SCROLLBACK_ROWS_DEFAULT, useSettingsStore } from "../../../stores/settingsStore";
+} from "../browser/TerminalPiCompatibility";
+import { shouldReflowTerminalCursorLine } from "../browser/TerminalReflowPolicy";
+import { terminalProcessManager } from "../api/TerminalProcessManager";
+import type { TerminalProcessTraits } from "../transport/PtyHostSocket";
+import { TERMINAL_SCROLLBACK_ROWS_DEFAULT, useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { toast } from "sonner";
-import { logError, logInfo, logWarn } from "../../../lib/logger";
-import { registerTerminalSnapshotSource } from "../../../lib/sessionSnapshotPersistence";
+import { logError, logInfo, logWarn } from "../../../shared/platform/logger";
+import { registerTerminalSnapshotSource } from "../api/sessionSnapshotPersistence";
 import {
   type TerminalSubsystemDisposable, type CodexImeDebugState, summarizeTextForDiagnostics,
   disposeTerminalSubsystem, canShowSuggestionAtCurrentInputEnd, withVisibleSelectionTheme,

@@ -10,7 +10,7 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-pane-marker-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-const source = readFileSync(new URL("../src/lib/terminalPaneMarker.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/shared/lib/terminalPaneMarker.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -59,7 +59,7 @@ test("explicit enabled state is preserved and invalid values fall back to disabl
 });
 
 test("Pane marker settings participate in preference sync", () => {
-  const syncSettings = readFileSync(new URL("../src/lib/syncSettings.ts", import.meta.url), "utf8");
+  const syncSettings = readFileSync(new URL("../src/features/sync/lib/syncSettings.ts", import.meta.url), "utf8");
   assert.match(syncSettings, /terminalPaneMarker:\s*"preferences"/);
 });
 
@@ -75,7 +75,7 @@ test("Pane marker overlay is anchored inside terminal content instead of the Tab
 test("default focus color follows the terminal theme and settings reuse the production marker overlay", () => {
   const styles = readFileSync(new URL("../src/styles/components.css", import.meta.url), "utf8");
   const settingsPage = readFileSync(
-    new URL("../src/components/settings/pages/ThemeSettingsPage.tsx", import.meta.url),
+    new URL("../src/features/settings/components/pages/ThemeSettingsPage.tsx", import.meta.url),
     "utf8",
   );
   assert.equal(DEFAULT_TERMINAL_PANE_MARKER_FOCUS_COLOR, defaultFocusColor);
@@ -97,7 +97,7 @@ test("default focus color follows the terminal theme and settings reuse the prod
 
 test("settings status color options drive both Pane marker previews", () => {
   const settingsPage = readFileSync(
-    new URL("../src/components/settings/pages/ThemeSettingsPage.tsx", import.meta.url),
+    new URL("../src/features/settings/components/pages/ThemeSettingsPage.tsx", import.meta.url),
     "utf8",
   );
   assert.match(settingsPage, /type PaneMarkerPreviewColorKey = "doneColor" \| "failedColor" \| "attentionColor"/);
@@ -115,10 +115,10 @@ test("removed tab-frame settings migrate to tab-top", () => {
 
 test("settings use the Terminal Status Marker name and expose no tab-frame option", () => {
   const settingsPage = readFileSync(
-    new URL("../src/components/settings/pages/ThemeSettingsPage.tsx", import.meta.url),
+    new URL("../src/features/settings/components/pages/ThemeSettingsPage.tsx", import.meta.url),
     "utf8",
   );
-  const i18n = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
+  const i18n = readFileSync(new URL("../src/shared/i18n/index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(settingsPage, /\["tab-frame",/);
   assert.doesNotMatch(i18n, /paneMarker\.style\.tabFrame/);
   assert.match(i18n, /"settings\.terminal\.paneMarker\.title": "终端状态标记"/);

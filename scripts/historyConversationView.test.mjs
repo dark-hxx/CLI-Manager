@@ -3,15 +3,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const detailSource = readFileSync(
-  new URL("../src/components/history/SessionDetailPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/SessionDetailPane.tsx", import.meta.url),
   "utf8",
 );
 const workspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const listSource = readFileSync(
-  new URL("../src/components/history/HistoryListPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/HistoryListPane.tsx", import.meta.url),
   "utf8",
 );
 const storeSource = readFileSync(
@@ -23,7 +23,7 @@ const normalizationSource = readFileSync(
   "utf8",
 );
 const conversationSource = readFileSync(
-  new URL("../src/lib/historyConversation.ts", import.meta.url),
+  new URL("../src/features/history/lib/historyConversation.ts", import.meta.url),
   "utf8",
 );
 

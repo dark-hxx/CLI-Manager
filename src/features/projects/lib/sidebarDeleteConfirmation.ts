@@ -1,11 +1,11 @@
 import type { Dispatch, SetStateAction } from "react";
-import { useProjectStore } from "../../../stores/projectStore";
-import { useTerminalStore } from "../../../stores/terminalStore";
-import { useExternalSessionSyncStore } from "../../../stores/externalSessionSyncStore";
-import type { Project, Group } from "../../../lib/types";
-import { collectProjectIdsForGroup } from "../../../lib/terminalScope";
+import { useProjectStore } from "../api/projectStore";
+import { useTerminalStore } from "../../terminal/state";
+import { useExternalSessionSyncStore } from "../../history/api/externalSessionSyncStore";
+import type { Project, Group } from "../../../shared/types/index";
+import { collectProjectIdsForGroup } from "../../terminal/api/terminalScope";
 import { toast } from "sonner";
-import { useI18n } from "../../../lib/i18n";
+import { useI18n } from "../../../shared/i18n/index";
 import { getSyncedSessionKeysForProject, type SidebarConfirmAction } from "./sidebarModel";
 
 interface SidebarDeleteContext {

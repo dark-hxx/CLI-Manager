@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { logInfo, logWarn } from "../../../lib/logger";
-import { queryClient } from "../../../lib/queryClient";
-import { normalizeHistoryProjectPaths } from "../../../lib/historyProjectPaths";
-import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../../../lib/sshAgentHistory";
-import { getHistoryPathArgs } from "../../../lib/historyPathArgs";
-import { useSshAgentIntegrationStore } from "../../../stores/sshAgentIntegrationStore";
-import { useBackgroundOperationStore } from "../../../stores/backgroundOperationStore";
+import { logInfo, logWarn } from "../../../shared/platform/logger";
+import { queryClient } from "../../../shared/platform/queryClient";
+import { normalizeHistoryProjectPaths } from "../api/historyProjectPaths";
+import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
+import { getHistoryPathArgs } from "../api/historyPathArgs";
+import { useSshAgentIntegrationStore } from "../../remote/api/sshAgentIntegrationStore";
+import { useBackgroundOperationStore } from "../../terminal/api/backgroundOperationStore";
 import type {
   HistorySessionDetail,
   HistorySessionSummary,
@@ -16,7 +16,7 @@ import type {
   HistorySource,
   HistorySourceFilter,
   SshRemoteHistorySyncResult,
-} from "../../../lib/types";
+} from "../../../shared/types/index";
 import {
   type TodayProjectStats,
   type FetchHistoryStatsOptions,

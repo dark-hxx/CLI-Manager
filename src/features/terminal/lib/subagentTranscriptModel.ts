@@ -1,4 +1,4 @@
-import type { SubagentTranscriptSource, TerminalSession } from "../../../lib/types";
+import type { SubagentTranscriptSource, TerminalSession } from "../../../shared/types/index";
 import { type CliHookPayload } from "../types/terminalStoreTypes";
 
 export function hasCodexTerminalEvent(content: string): boolean {

@@ -2,12 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("../src/stores/gitStore.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/git/store/gitStore.ts", import.meta.url), "utf8");
 const terminalTabsSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalTabsController.tsx", import.meta.url), "utf8");
-const gitPanelSource = readFileSync(new URL("../src/components/git/GitChangesPanel.tsx", import.meta.url), "utf8");
-const fileStoreSource = readFileSync(new URL("../src/stores/fileExplorerStore.ts", import.meta.url), "utf8");
-const filePanelSource = readFileSync(new URL("../src/components/files/FileExplorerSidebar.tsx", import.meta.url), "utf8");
-const terminalProjectSource = readFileSync(new URL("../src/lib/terminalProject.ts", import.meta.url), "utf8");
+const gitPanelSource = readFileSync(new URL("../src/features/git/api/GitChangesPanel.tsx", import.meta.url), "utf8");
+const fileStoreSource = readFileSync(new URL("../src/features/files/api/fileExplorerStore.ts", import.meta.url), "utf8");
+const filePanelSource = readFileSync(new URL("../src/features/files/api/FileExplorerSidebar.tsx", import.meta.url), "utf8");
+const terminalProjectSource = readFileSync(new URL("../src/features/terminal/api/terminalProject.ts", import.meta.url), "utf8");
 const sshAgentManifestSource = readFileSync(new URL("../src-tauri/ssh-agent/Cargo.toml", import.meta.url), "utf8");
 
 test("remote root repository permits deleting untracked files", () => {

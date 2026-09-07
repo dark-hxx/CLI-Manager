@@ -6,62 +6,62 @@ import {
   PointerSensor, useSensor, useSensors, type DragEndEvent, type DragOverEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-import { useTerminalStore, type TabNotificationState } from "../../../stores/terminalStore";
-import { useSettingsStore } from "../../../stores/settingsStore";
-import { updateWorkspaceLayout } from "../../../lib/workspaceLayout";
-import { useWorktreeStore } from "../../../stores/worktreeStore";
-import { useProjectStore } from "../../../stores/projectStore";
-import { useFileExplorerStore } from "../../../stores/fileExplorerStore";
-import { useI18n } from "../../../lib/i18n";
-import { logError } from "../../../lib/logger";
+import { useTerminalStore, type TabNotificationState } from "../state";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { updateWorkspaceLayout } from "../../../shared/lib/workspaceLayout";
+import { useWorktreeStore } from "../../projects/api/worktreeStore";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { useFileExplorerStore } from "../../files/api/fileExplorerStore";
+import { useI18n } from "../../../shared/i18n/index";
+import { logError } from "../../../shared/platform/logger";
 import {
   DND_ACTIVATION_CONSTRAINT, parseWorkspanDragId, resolveWorkspanDragHoverTarget,
   WORKSPAN_DRAG_AUTO_ACTIVATE_MS,
-} from "../../../lib/dragInteraction";
-import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../../../stores/terminalPaneTree";
-import { collectPaneLeaves, filterPaneTreeBySessionIds, findFirstSessionId } from "../../../stores/terminalPaneTree";
-import { collectWorkspanSessionIds } from "../../../stores/terminalWorkspan";
-import { type BackgroundTaskMeta } from "../../../components/BackgroundTasksPanel";
+} from "../../workspace/api/dragInteraction";
+import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../api/terminalPaneTree";
+import { collectPaneLeaves, filterPaneTreeBySessionIds, findFirstSessionId } from "../api/terminalPaneTree";
+import { collectWorkspanSessionIds } from "../api/terminalWorkspan";
+import { type BackgroundTaskMeta } from "../components/BackgroundTasksPanel";
 import {
   TERMINAL_SIDE_PANEL_TAB_ORDER, type TerminalSidePanelTab,
-} from "../../../components/terminal/TerminalSidePanel";
-import { openWindowsTerminal } from "../../../lib/externalTerminal";
-import { resolveProjectPath } from "../../../lib/groupPath";
-import { normalizeDirectCodexStartupCommand } from "../../../lib/projectStartupCommand";
+} from "../components/TerminalSidePanel";
+import { openWindowsTerminal } from "../api/externalTerminal";
+import { resolveProjectPath } from "../../projects/api/groupPath";
+import { normalizeDirectCodexStartupCommand } from "../../projects/api/projectStartupCommand";
 import {
   isSshGrokHistoryUnsupported, isSshHistorySourceUnsupported, projectSupportsCapability,
   resolveProjectCapabilities, type ProjectCapability,
-} from "../../../lib/projectCapabilities";
-import { resolveHistoryProjectPath } from "../../../lib/historyProjectPaths";
-import { resolveAgentRuntimeKind } from "../../../lib/agentCapabilities";
-import { resolveProviderSwitchAppType } from "../../../lib/providerSwitching";
-import { inferVendor } from "../../../components/VendorIcon";
-import { useAppPrompt } from "../../../components/ui/useAppPrompt";
-import { useAppConfirm } from "../../../components/ui/useAppConfirm";
-import { useHistoryStore } from "../../../stores/historyStore";
-import { useGitWorkspaceStore } from "../../../stores/gitWorkspaceStore";
-import { useSaveSessionToSidebar } from "../../../hooks/useSaveSessionToSidebar";
+} from "../../projects/api/projectCapabilities";
+import { resolveHistoryProjectPath } from "../../history/api/historyProjectPaths";
+import { resolveAgentRuntimeKind } from "../../agents/api/agentCapabilities";
+import { resolveProviderSwitchAppType } from "../../providers/api/providerSwitching";
+import { inferVendor } from "../../../shared/ui/VendorIcon";
+import { useAppPrompt } from "../../../shared/ui/useAppPrompt";
+import { useAppConfirm } from "../../../shared/ui/useAppConfirm";
+import { useHistoryStore } from "../../history/index";
+import { useGitWorkspaceStore } from "../../git/api/gitWorkspaceStore";
+import { useSaveSessionToSidebar } from "../../projects/api/useSaveSessionToSidebar";
 import {
   shouldConfirmTerminalTabClose, TERMINAL_TAB_CLOSE_REQUEST_EVENT, type TerminalTabCloseRequestDetail,
-} from "../../../lib/terminalCloseConfirm";
-import type { Project, TerminalSession, WorktreeRecord } from "../../../lib/types";
-import type { NativeProviderAppType } from "../../../components/settings/providers/nativeProviderTypes";
-import { getTerminalTheme, isLightTerminalTheme } from "../../../lib/terminalThemes";
-import { getTerminalSidePanelSkinStyle } from "../../../components/stats/termStatsUi";
+} from "../api/terminalCloseConfirm";
+import type { Project, TerminalSession, WorktreeRecord } from "../../../shared/types/index";
+import type { NativeProviderAppType } from "../../settings/api/nativeProviderTypes";
+import { getTerminalTheme, isLightTerminalTheme } from "../../../shared/lib/terminalThemes";
+import { getTerminalSidePanelSkinStyle } from "../../stats/api/termStatsUi";
 import {
   findWorktreeForSession, isSameProjectFileContext, projectWithWorktreeProviderOverrides,
   resolveProjectForSessionFileContext,
-} from "../../../lib/terminalProject";
+} from "../api/terminalProject";
 import {
   ALL_TERMINALS_SCOPE, collectProjectIdsForGroup, sessionMatchesTerminalScope,
-} from "../../../lib/terminalScope";
+} from "../api/terminalScope";
 import {
   TERMINAL_FILE_NAVIGATION_REQUEST_EVENT, type TerminalFileNavigationRequest,
-} from "../../../lib/terminalFileNavigation";
-import { consumeTerminalFileDragPanelSyncSuppression } from "../../../lib/terminalFileDrag";
+} from "../lib/terminalFileNavigation";
+import { consumeTerminalFileDragPanelSyncSuppression } from "../api/terminalFileDrag";
 import {
   WORKSPAN_TABBAR_END_DROP_ID, type WorkspanTabModel, type WorkspanTabOverflowState,
-} from "../../../components/workspace/WorkspanTabBar";
+} from "../../workspace/api/WorkspanTabBar";
 import {
   normalizeTabMenuHex, TERMINAL_PANEL_SEMANTIC_COLORS, tabMenuHexToRgba,
   SPLIT_PICKER_OUTSIDE_GUARD_MS, type SplitPickerAnchor, type SplitPickerAlign, type SplitPickerState,

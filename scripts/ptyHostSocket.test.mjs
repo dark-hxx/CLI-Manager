@@ -113,7 +113,7 @@ class FakeWebSocket {
 
 globalThis.WebSocket = FakeWebSocket;
 
-const source = readFileSync(new URL("../src/terminal/transport/PtyHostSocket.ts", import.meta.url), "utf8")
+const source = readFileSync(new URL("../src/features/terminal/transport/PtyHostSocket.ts", import.meta.url), "utf8")
   .replace("const AUTH_TIMEOUT_MS = 10_000;", "const AUTH_TIMEOUT_MS = 15;")
   .replace("const REQUEST_TIMEOUT_MS = 15_000;", "const REQUEST_TIMEOUT_MS = 15;")
   .replace("const HEARTBEAT_INTERVAL_MS = 5_000;", "const HEARTBEAT_INTERVAL_MS = 10;")
@@ -127,8 +127,8 @@ const transpiled = ts.transpileModule(source, {
 }).outputText
   .replace('from "@tauri-apps/api/core"', 'from "./tauriCore.mjs"')
   .replace('from "@tauri-apps/api/event"', 'from "./tauriEvent.mjs"')
-  .replace('from "../../lib/logger"', 'from "./logger.mjs"')
-  .replace('from "../../lib/resourceDiagnosticsLog"', 'from "./resourceDiagnosticsLog.mjs"');
+  .replace('from "../../../shared/platform/logger"', 'from "./logger.mjs"')
+  .replace('from "../../../shared/platform/resourceDiagnosticsLog"', 'from "./resourceDiagnosticsLog.mjs"');
 const socketPath = join(tempDir, "PtyHostSocket.mjs");
 writeFileSync(socketPath, transpiled, "utf8");
 const { PtyHostSocket } = await import(pathToFileURL(socketPath).href);

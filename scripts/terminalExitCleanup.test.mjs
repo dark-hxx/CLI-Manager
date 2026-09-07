@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cleanupTerminalProcessesForExit } from "../src/lib/terminalExitCleanup.ts";
+import { cleanupTerminalProcessesForExit } from "../src/features/terminal/api/terminalExitCleanup.ts";
 
 function createDependencies(overrides = {}) {
   const calls = [];

@@ -52,9 +52,9 @@ assert.equal(
   "macOS desktop pet window must keep its transparent background"
 );
 
-const titleBarSource = await readFile("src/components/WindowTitleBar.tsx", "utf8");
-const appSource = await readFile("src/App.tsx", "utf8");
-const sidebarSource = await readFile("src/components/sidebar/index.tsx", "utf8");
+const titleBarSource = await readFile("src/app/components/WindowTitleBar.tsx", "utf8");
+const appSource = await readFile("src/app/App.tsx", "utf8");
+const sidebarSource = await readFile("src/features/projects/index.ts", "utf8");
 const desktopPetCommandSource = await readFile(
   "src-tauri/src/commands/desktop_pet.rs",
   "utf8"

@@ -2,18 +2,18 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Project, NativeProviderLaunchSnapshot, RemoteHandoffSessionState, SshConnectionState,
   SshDisconnectReason, SubagentTranscriptSource, TerminalSession,
-} from "../../../lib/types";
-import type { SyncedHistoryGroup } from "../../../lib/externalSessionGrouping";
-import type { SshConnectionSpecPayload } from "../../../lib/ssh";
+} from "../../../shared/types/index";
+import type { SyncedHistoryGroup } from "../../history/api/externalSessionGrouping";
+import type { SshConnectionSpecPayload } from "../../remote/api/ssh";
 import type {
   TerminalClaudeProviderLaunchConfig, TerminalCodexProviderLaunchConfig,
   TerminalGrokProviderLaunchConfig,
-} from "../../../terminal/core/TerminalProcessManager";
-import type { TerminalExitNotificationState } from "../../../lib/terminalExitTask";
+} from "../api/TerminalProcessManager";
+import type { TerminalExitNotificationState } from "../api/terminalExitTask";
 import type {
   TerminalPaneDropEdge, TerminalPaneNode, TerminalPaneSplitDirection,
-} from "../../../stores/terminalPaneTree";
-import type { TerminalWorkspan } from "../../../stores/terminalWorkspan";
+} from "../api/terminalPaneTree";
+import type { TerminalWorkspan } from "../api/terminalWorkspan";
 import type { getCurrentTerminalColors } from "../lib/terminalLaunch";
 
 export type SessionStatus = "running" | "exited" | "error";

@@ -5,9 +5,9 @@ import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const terminalTabs = read("../src/features/terminal/components/TerminalTabsView.tsx");
 const terminalController = read("../src/features/terminal/hooks/useTerminalTabsController.tsx");
-const footer = read("../src/components/sidebar/SidebarFooter.tsx");
-const workspace = read("../src/components/git/workspace/GitWorkspace.tsx");
-const details = read("../src/components/git/workspace/GitCommitDetails.tsx");
+const footer = read("../src/features/projects/components/SidebarFooter.tsx");
+const workspace = read("../src/features/git/api/GitWorkspace.tsx");
+const details = read("../src/features/git/components/workspace/GitCommitDetails.tsx");
 
 test("the sidebar entry and terminal shell share one workspace store", () => {
   assert.match(footer, /useGitWorkspaceStore/);

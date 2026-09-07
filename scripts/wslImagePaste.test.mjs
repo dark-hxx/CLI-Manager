@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const terminalSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
-const inputSource = readFileSync(new URL("../src/hooks/useTerminalInput.ts", import.meta.url), "utf8");
-const toolsSource = readFileSync(new URL("../src/lib/cliTools.ts", import.meta.url), "utf8");
-const pathSource = readFileSync(new URL("../src/lib/terminalShellPath.ts", import.meta.url), "utf8");
+const inputSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalInput.ts", import.meta.url), "utf8");
+const toolsSource = readFileSync(new URL("../src/shared/lib/cliTools.ts", import.meta.url), "utf8");
+const pathSource = readFileSync(new URL("../src/features/terminal/lib/terminalShellPath.ts", import.meta.url), "utf8");
 
 test("Alt+V uses the host clipboard image bridge", () => {
   assert.match(terminalSource, /e\.altKey[^\n]+e\.key\.toLowerCase\(\) === "v"/u);

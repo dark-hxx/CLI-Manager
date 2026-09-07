@@ -1,4 +1,4 @@
-import { type SshAgentHistoryContext } from "../../../lib/sshAgentHistory";
+import { type SshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
 import type {
   HistoryBackupStatus,
   HistoryGeneratedTitleMeta,
@@ -14,7 +14,7 @@ import type {
   PromptScope,
   HistorySourceFilter,
   SessionMeta,
-} from "../../../lib/types";
+} from "../../../shared/types/index";
 
 export type SessionMetaMap = Record<string, SessionMeta>;
 

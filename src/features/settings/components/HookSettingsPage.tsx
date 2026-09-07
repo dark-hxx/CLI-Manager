@@ -10,10 +10,10 @@ import {
   Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Check, X, Activity,
   Bell, ShieldAlert, ToggleRight, AlertTriangle, XCircle, Layers, Volume2, Trash2,
 } from "lucide-react";
-import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "@/stores/settingsStore";
-import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "@/lib/hookErrors";
-import { useI18n } from "@/lib/i18n";
-import { ThirdPartyNotificationSection } from "../../../components/settings/ThirdPartyNotificationSection";
+import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "../../../shared/preferences/settingsStore";
+import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "../api/hookErrors";
+import { useI18n } from "../../../shared/i18n/index";
+import { ThirdPartyNotificationSection } from "./ThirdPartyNotificationSection";
 import {
   type HookTool, type HookModule, type HookSettingsStatus, pickText, isWindowsPlatform,
   type NotificationSoundStatus, getNotificationSoundFileName, getNotificationSoundErrorCode,

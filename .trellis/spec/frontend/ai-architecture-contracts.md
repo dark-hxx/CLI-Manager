@@ -3,8 +3,8 @@
 ## 1. Scope / Trigger
 
 All handwritten application, agent, daemon, test and build-script code. This supersedes
-the former guide claiming there is no file-length limit. Existing debt is temporarily
-listed in `scripts/architecture/baseline.json`; the target is zero debt, not permanent exemptions.
+the former guide claiming there is no file-length limit. `scripts/architecture/baseline.json`
+is now empty; do not add new exemptions. Strict mode is the zero-debt integration gate.
 
 ## 2. Commands
 
@@ -30,14 +30,24 @@ for import parsing; no new package or background indexer is required.
   generated schemas are not handwritten application modules. Fixtures and SQL are not blanket exclusions.
 - Frontend: `app` composes `features/<domain>/{components,hooks,store,lib,types,i18n,styles,tests}`
   and `shared/{ui,hooks,lib,types,i18n,platform}`. Create only populated directories.
+- `features/<domain>/api/<module>` is a narrow public source module, not a barrel. Expose a
+  cohesive component/service directly when another feature needs it; this preserves the original
+  module graph without facade files or eager aggregation of UI and stores. `index.ts` and `state.ts`
+  are existing explicit entries; never route state consumers through a UI entry. `api` subdirectories
+  are internal and cannot be imported across features.
+- `shared/preferences/settingsStore.ts` owns application-wide persisted preferences consumed by
+  i18n/themes and multiple features; the settings UI belongs to its feature. Shared wire types
+  (for example `shared/types/remoteHandoff.ts`) must not import transport implementations.
+- The retired frontend `components`, `hooks`, `stores`, `lib`, and `terminal` implementation
+  directories must not be reintroduced as an import bypass from the new layers.
 - Rust: keep stable `lib.rs` and thin IPC `commands`; extract domain implementation to
   `features/<domain>` and reusable runtime/storage to `infrastructure`/`shared`.
   SSH-agent and daemon crates retain their process/package boundaries.
 - `shared` cannot import `features`/`app`; features cannot import `app`. Cross-feature imports
   use a narrow public entry, not internal files. Prefer explicit exports over `export *`.
-  TypeScript static/type/export/dynamic imports are parsed; Rust crate-qualified layer
+  TypeScript static/type/inline-import-type/export/dynamic imports are parsed; Rust crate-qualified layer
   references and CSS imports are checked conservatively. Relative Rust `super` references,
-  computed imports and legacy paths still require review; this is not a complete module resolver.
+  computed imports and legacy Rust paths still require review; this is not a complete module resolver.
 - Preserve IPC names/arguments, serde keys, DB migrations, persisted store keys, i18n keys,
   CSS order/specificity, PTY event ordering and lifecycle. Retain explicit compatibility
   facades during migration; do not duplicate state or implementations.

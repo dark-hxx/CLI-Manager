@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 
-const source = readFileSync(new URL("../src/lib/markdownNavigation.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/shared/lib/markdownNavigation.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText;
 const navigation = await import(`data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`);
 const markdownRendererSource = readFileSync(
-  new URL("../src/components/ui/MarkdownContent.tsx", import.meta.url),
+  new URL("../src/shared/ui/MarkdownContent.tsx", import.meta.url),
   "utf8",
 );
 const fileEditorSource = readFileSync(
@@ -17,7 +17,7 @@ const fileEditorSource = readFileSync(
   "utf8",
 );
 const fileEditorContentSource = readFileSync(
-  new URL("../src/components/files/FileEditorContent.tsx", import.meta.url),
+  new URL("../src/features/files/components/FileEditorContent.tsx", import.meta.url),
   "utf8",
 );
 const repositoryReadme = readFileSync(new URL("../README.zh-CN.md", import.meta.url), "utf8");

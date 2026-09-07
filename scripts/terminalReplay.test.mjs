@@ -140,7 +140,7 @@ export function resetManager() {
 }
 `);
 
-const source = readFileSync(new URL("../src/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/terminal/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -151,14 +151,14 @@ const transpiled = ts.transpileModule(source, {
   .replace('from "react"', 'from "./react.mjs"')
   .replace('from "@xterm/addon-webgl"', 'from "./webgl.mjs"')
   .replace('from "../lib/terminalVisibility"', 'from "./visibility.mjs"')
-  .replace('from "../lib/terminalThemes"', 'from "./themes.mjs"')
-  .replace('from "../lib/logger"', 'from "./logger.mjs"')
-  .replace('from "../lib/sessionSnapshotPersistence"', 'from "./snapshot.mjs"')
-  .replace('from "../terminal/browser/TerminalResizeDebouncer"', 'from "./resize.mjs"')
-  .replace('from "../terminal/browser/TerminalResizeRenderBarrier"', 'from "./resizeBarrier.mjs"')
-  .replace('from "../terminal/core/TerminalProcessManager"', 'from "./manager.mjs"')
-  .replace('from "../stores/settingsStore"', 'from "./settings.mjs"')
-  .replace('from "../stores/terminalStore"', 'from "./terminalStore.mjs"');
+  .replace('from "../../../shared/lib/terminalThemes"', 'from "./themes.mjs"')
+  .replace('from "../../../shared/platform/logger"', 'from "./logger.mjs"')
+  .replace('from "../api/sessionSnapshotPersistence"', 'from "./snapshot.mjs"')
+  .replace('from "../browser/TerminalResizeDebouncer"', 'from "./resize.mjs"')
+  .replace('from "../browser/TerminalResizeRenderBarrier"', 'from "./resizeBarrier.mjs"')
+  .replace('from "../api/TerminalProcessManager"', 'from "./manager.mjs"')
+  .replace('from "../../../shared/preferences/settingsStore"', 'from "./settings.mjs"')
+  .replace('from "../state"', 'from "./terminalStore.mjs"');
 const modulePath = join(tempDir, "useTerminalDisplay.mjs");
 writeFileSync(modulePath, transpiled, "utf8");
 

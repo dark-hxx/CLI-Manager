@@ -70,18 +70,18 @@ export const useBackgroundOperationStore = { getState: () => state };
 `);
 writeModule("i18n.mjs", "export {};\n");
 
-const historyPath = transpile("../src/lib/sshAgentHistory.ts", "sshAgentHistory.mjs", {
+const historyPath = transpile("../src/features/remote/api/sshAgentHistory.ts", "sshAgentHistory.mjs", {
   "./ssh": "./ssh.mjs",
   "./sshClientIdentity": "./sshClientIdentity.mjs",
   "./sshToolIntegration": "./sshToolIntegration.mjs",
-  "../stores/sshAgentIntegrationStore": "./sshAgentIntegrationStore.mjs",
-  "../stores/sshHostStore": "./sshHostStore.mjs",
+  "./sshAgentIntegrationStore": "./sshAgentIntegrationStore.mjs",
+  "./sshHostStore": "./sshHostStore.mjs",
 });
-const remoteFilesPath = transpile("../src/lib/sshRemoteFiles.ts", "sshRemoteFiles.mjs", {
+const remoteFilesPath = transpile("../src/features/remote/api/sshRemoteFiles.ts", "sshRemoteFiles.mjs", {
   "@tauri-apps/api/core": "./tauriCore.mjs",
   "./sshAgentHistory": "./sshAgentHistory.mjs",
-  "../stores/backgroundOperationStore": "./backgroundOperationStore.mjs",
-  "./i18n": "./i18n.mjs",
+  "../../terminal/api/backgroundOperationStore": "./backgroundOperationStore.mjs",
+  "../../../shared/i18n/index": "./i18n.mjs",
 });
 
 const { buildSshAgentHistoryContext, buildSshAgentHostLaunch } = await import(pathToFileURL(historyPath).href);

@@ -6,7 +6,7 @@ import {
   createGitDiffSelectionOrder,
   createGitDiffSelectionState,
   findAdjacentGitDiffChange,
-} from "../src/components/git/diff/gitDiffSelection.ts";
+} from "../src/features/git/components/diff/gitDiffSelection.ts";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const selected = (state) => [...state.selectedKeys].sort();
@@ -89,9 +89,9 @@ test("keyboard adjacency follows visible order on the same side", () => {
 });
 
 test("gutter and selection status expose keyboard and non-color semantics", () => {
-  const gutter = read("../src/components/git/diff/GitDiffGutter.tsx");
-  const hunkList = read("../src/components/git/diff/GitDiffHunkList.tsx");
-  const selectionBar = read("../src/components/git/diff/GitDiffSelectionBar.tsx");
+  const gutter = read("../src/features/git/components/diff/GitDiffGutter.tsx");
+  const hunkList = read("../src/features/git/components/diff/GitDiffHunkList.tsx");
+  const selectionBar = read("../src/features/git/components/diff/GitDiffSelectionBar.tsx");
 
   assert.match(gutter, /aria-pressed=\{selected\}/);
   assert.match(gutter, /git-diff-gutter-marker/);
@@ -103,7 +103,7 @@ test("gutter and selection status expose keyboard and non-color semantics", () =
 });
 
 test("Diff dialog uses Radix focus management without a global Escape listener", () => {
-  const frame = read("../src/components/git/diff/GitDiffDialogFrame.tsx");
+  const frame = read("../src/features/git/components/diff/GitDiffDialogFrame.tsx");
 
   assert.match(frame, /<Dialog open=\{open\}/);
   assert.match(frame, /onOpenAutoFocus/);

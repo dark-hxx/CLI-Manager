@@ -11,23 +11,23 @@ const commandSource = readFileSync(
   "utf8",
 ).replaceAll("\r\n", "\n");
 const settingsSource = readFileSync(
-  new URL("../src/stores/settingsStore.ts", import.meta.url),
+  new URL("../src/shared/preferences/settingsStore.ts", import.meta.url),
   "utf8",
 );
 const settingsPageSource = readFileSync(
-  new URL("../src/components/settings/pages/HistorySourceSettingsPage.tsx", import.meta.url),
+  new URL("../src/features/settings/components/pages/HistorySourceSettingsPage.tsx", import.meta.url),
   "utf8",
 );
 const historyWorkspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const historyListPaneSource = readFileSync(
-  new URL("../src/components/history/HistoryListPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/HistoryListPane.tsx", import.meta.url),
   "utf8",
 );
 const sessionDetailPaneSource = readFileSync(
-  new URL("../src/components/history/SessionDetailPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/SessionDetailPane.tsx", import.meta.url),
   "utf8",
 );
 

@@ -4,7 +4,7 @@ import {
   createGitDiffTabId,
   createGitDiffWorkspaceContext,
   useGitDiffWorkspaceStore,
-} from "../src/stores/gitDiffWorkspaceStore.ts";
+} from "../src/features/git/api/gitDiffWorkspaceStore.ts";
 
 const project = (overrides = {}) => ({
   id: "project-1",

@@ -3,15 +3,15 @@ import {
   DndContext, DragOverlay, closestCenter, useSensors, type DragEndEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { useSettingsStore } from "../../../stores/settingsStore";
-import { useI18n } from "../../../lib/i18n";
-import { CommandTemplatePanel } from "../../../components/CommandTemplatePanel";
-import { BackgroundTasksPanel, type BackgroundTaskMeta } from "../../../components/BackgroundTasksPanel";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { useI18n } from "../../../shared/i18n/index";
+import { CommandTemplatePanel } from "../../prompts/api/CommandTemplatePanel";
+import { BackgroundTasksPanel, type BackgroundTaskMeta } from "../components/BackgroundTasksPanel";
 import {
   Activity, ArrowLeftRight, Plus, ListClockIcon, Maximize2, Minimize2, BarChart3, GitBranch, Folder,
   Cpu,
-} from "../../../components/icons";
-import type { Project } from "../../../lib/types";
+} from "../../../shared/ui/icons";
+import type { Project } from "../../../shared/types/index";
 import { SortableToolbarButton, CpuCatIndicator } from "../components/TerminalToolbarControls";
 
 interface TerminalToolbarContext {

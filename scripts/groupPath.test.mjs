@@ -5,7 +5,7 @@ import {
   findInheritedDescendants,
   resolveGroupBoundPath,
   resolveProjectPath,
-} from "../src/lib/groupPath.ts";
+} from "../src/features/projects/api/groupPath.ts";
 
 const groups = [
   { id: "root", parent_id: null, bound_path: "D:/root" },

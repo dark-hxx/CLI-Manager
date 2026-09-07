@@ -23,11 +23,11 @@ function transpile(relativePath, outputName) {
 }
 
 const contextPath = transpile(
-  "../src/terminal/browser/TerminalCliContext.ts",
+  "../src/features/terminal/browser/TerminalCliContext.ts",
   "TerminalCliContext.mjs",
 );
 const newlinePath = transpile(
-  "../src/terminal/browser/TerminalNewlineShortcut.ts",
+  "../src/features/terminal/browser/TerminalNewlineShortcut.ts",
   "TerminalNewlineShortcut.mjs",
 );
 

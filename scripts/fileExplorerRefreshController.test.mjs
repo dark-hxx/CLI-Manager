@@ -4,12 +4,12 @@ import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const app = read("../src/App.tsx");
-const controller = read("../src/components/files/ProjectFileRefreshController.tsx");
-const sidebar = read("../src/components/files/FileExplorerSidebar.tsx");
-const editorContent = read("../src/components/files/FileEditorContent.tsx");
-const fileStore = read("../src/stores/fileExplorerStore.ts");
-const remoteFiles = read("../src/lib/sshRemoteFiles.ts");
+const app = read("../src/app/App.tsx");
+const controller = read("../src/features/files/api/ProjectFileRefreshController.tsx");
+const sidebar = read("../src/features/files/api/FileExplorerSidebar.tsx");
+const editorContent = read("../src/features/files/components/FileEditorContent.tsx");
+const fileStore = read("../src/features/files/api/fileExplorerStore.ts");
+const remoteFiles = read("../src/features/remote/api/sshRemoteFiles.ts");
 const componentStyles = read("../src/styles/components.css");
 
 function sliceBetween(source, startMarker, endMarker) {

@@ -2,22 +2,22 @@ import type { useTerminalTabsController } from "../hooks/useTerminalTabsControll
 import { Suspense } from "react";
 import { toast } from "sonner";
 import { DndContext } from "@dnd-kit/core";
-import { TERMINAL_PANEL_WIDTH_DEFAULTS } from "../../../stores/settingsStore";
-import { SplitTerminalView } from "../../../components/SplitTerminalView";
-import { SystemResourcesPanel } from "../../../components/terminal/SystemResourcesPanel";
-import { TerminalSidePanel } from "../../../components/terminal/TerminalSidePanel";
-import { ResizableTerminalPanelFrame } from "../../../components/terminal/ResizableTerminalPanelFrame";
-import { TerminalWorkspaceFrame } from "../../../components/terminal/TerminalWorkspaceFrame";
-import { ProviderQuickSwitchPanel } from "../../../components/terminal/ProviderQuickSwitchPanel";
-import { WorktreeFinishDialog } from "../../../components/worktree/WorktreeFinishDialog";
-import { FileExplorerSidebar } from "../../../components/files/FileExplorerSidebar";
-import { Terminal } from "../../../components/icons";
-import { EmptyState } from "../../../components/ui/EmptyState";
-import { canSaveSessionToSidebar } from "../../../lib/saveSessionToSidebar";
-import { ContextMenuItem } from "../../../components/ui/context-menu";
-import { ConfirmDialog } from "../../../components/ConfirmDialog";
-import { WorkspanTabBar } from "../../../components/workspace/WorkspanTabBar";
-import { WorkspanTerminalLayout } from "../../../components/workspace/WorkspanTerminalLayout";
+import { TERMINAL_PANEL_WIDTH_DEFAULTS } from "../../../shared/preferences/settingsStore";
+import { SplitTerminalView } from "./SplitTerminalView";
+import { SystemResourcesPanel } from "./SystemResourcesPanel";
+import { TerminalSidePanel } from "./TerminalSidePanel";
+import { ResizableTerminalPanelFrame } from "./ResizableTerminalPanelFrame";
+import { TerminalWorkspaceFrame } from "./TerminalWorkspaceFrame";
+import { ProviderQuickSwitchPanel } from "./ProviderQuickSwitchPanel";
+import { WorktreeFinishDialog } from "../../projects/api/WorktreeFinishDialog";
+import { FileExplorerSidebar } from "../../files/api/FileExplorerSidebar";
+import { Terminal } from "../../../shared/ui/icons";
+import { EmptyState } from "../../../shared/ui/EmptyState";
+import { canSaveSessionToSidebar } from "../../projects/api/saveSessionToSidebar";
+import { ContextMenuItem } from "../../../shared/ui/context-menu";
+import { ConfirmDialog } from "../../../shared/ui/ConfirmDialog";
+import { WorkspanTabBar } from "../../workspace/api/WorkspanTabBar";
+import { WorkspanTerminalLayout } from "../../workspace/api/WorkspanTerminalLayout";
 import {
   HistoryWorkspace, GitChangesPanel, GitWorkspace, TerminalStatsPanel, SessionReplayPanel,
 } from "./lazyTerminalPanels";

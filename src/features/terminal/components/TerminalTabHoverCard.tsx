@@ -1,8 +1,8 @@
 import { useCallback, type CSSProperties } from "react";
 import { toast } from "sonner";
-import { useI18n, type TranslationKey } from "../../../lib/i18n";
-import { Activity, TerminalSquare, Sparkles, Copy, Folder, FolderOpen, Hash, Cloud } from "../../../components/icons";
-import { VendorIcon } from "../../../components/VendorIcon";
+import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
+import { Activity, TerminalSquare, Sparkles, Copy, Folder, FolderOpen, Hash, Cloud } from "../../../shared/ui/icons";
+import { VendorIcon } from "../../../shared/ui/VendorIcon";
 import { type TerminalTabHoverInfo, type TerminalTabHoverRow, formatSessionIdPreview } from "../lib/terminalTabsModel";
 
 export function TerminalTabHoverCard({

@@ -2,19 +2,19 @@ import type { LucideIcon } from "lucide-react";
 import {
   closestCenter, pointerWithin, type CollisionDetection, type DragEndEvent, type DragOverEvent,
 } from "@dnd-kit/core";
-import { type SplitTerminalOptions, type TabNotificationState } from "../../../stores/terminalStore";
-import { useSshHostStore } from "../../../stores/sshHostStore";
-import { type TranslationKey } from "../../../lib/i18n";
-import { WORKSPAN_DRAG_PREFIX } from "../../../lib/dragInteraction";
-import type { TerminalPaneDropEdge, TerminalPaneSplitDirection } from "../../../stores/terminalPaneTree";
-import { resolvePaneDropEdgeFromPoint } from "../../../stores/terminalPaneTree";
-import { resolveProjectPath } from "../../../lib/groupPath";
-import { resolveProjectStartupCommand } from "../../../lib/projectStartupCommand";
-import { resolveCliToolHistorySourceId, resolveCliToolIconKey, type CliToolIconKey } from "../../../lib/cliTools";
-import { parseProjectEnvVars } from "../../../lib/providerSwitching";
-import { inferVendor, type VendorKey } from "../../../components/VendorIcon";
-import type { Group, HistorySourceFilter, Project, TerminalScope, TerminalSession } from "../../../lib/types";
-import { WORKSPAN_TABBAR_END_DROP_ID } from "../../../components/workspace/WorkspanTabBar";
+import { type SplitTerminalOptions, type TabNotificationState } from "../state";
+import { useSshHostStore } from "../../remote/api/sshHostStore";
+import { type TranslationKey } from "../../../shared/i18n/index";
+import { WORKSPAN_DRAG_PREFIX } from "../../workspace/api/dragInteraction";
+import type { TerminalPaneDropEdge, TerminalPaneSplitDirection } from "../api/terminalPaneTree";
+import { resolvePaneDropEdgeFromPoint } from "../api/terminalPaneTree";
+import { resolveProjectPath } from "../../projects/api/groupPath";
+import { resolveProjectStartupCommand } from "../../projects/api/projectStartupCommand";
+import { resolveCliToolHistorySourceId, resolveCliToolIconKey, type CliToolIconKey } from "../../../shared/lib/cliTools";
+import { parseProjectEnvVars } from "../../providers/api/providerSwitching";
+import { inferVendor, type VendorKey } from "../../../shared/ui/VendorIcon";
+import type { Group, HistorySourceFilter, Project, TerminalScope, TerminalSession } from "../../../shared/types/index";
+import { WORKSPAN_TABBAR_END_DROP_ID } from "../../workspace/api/WorkspanTabBar";
 
 export const normalizeTabMenuHex = (value: string | undefined, fallback: string) => (
   value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback

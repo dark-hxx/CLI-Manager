@@ -1,8 +1,8 @@
-import { Button } from "../../../components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../../../components/ui/dialog";
-import { FileEditorContent } from "../../../components/files/FileEditorContent";
-import { FileEditorHeader } from "../../../components/files/FileEditorHeader";
-import { FileEditorTabs } from "../../../components/files/FileEditorTabs";
+import { Button } from "../../../shared/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../../../shared/ui/dialog";
+import { FileEditorContent } from "./FileEditorContent";
+import { FileEditorHeader } from "./FileEditorHeader";
+import { FileEditorTabs } from "./FileEditorTabs";
 import type { useFileEditorController } from "../hooks/useFileEditorController";
 type FileEditorPaneViewProps = ReturnType<typeof useFileEditorController>;
 

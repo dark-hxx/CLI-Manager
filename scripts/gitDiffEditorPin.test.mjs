@@ -6,15 +6,15 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 const fileEditor = read("../src/features/files/hooks/useFileEditorController.ts");
 const fileEditorView = read("../src/features/files/components/FileEditorPaneView.tsx");
-const fileEditorContent = read("../src/components/files/FileEditorContent.tsx");
-const editorHost = read("../src/components/git/diff/GitDiffEditorHost.tsx");
-const workspaceStore = read("../src/stores/gitDiffWorkspaceStore.ts");
-const fileStore = read("../src/stores/fileExplorerStore.ts");
-const gitStore = read("../src/stores/gitStore.ts");
-const gitPanel = read("../src/components/git/GitChangesPanel.tsx");
-const openWorkflow = read("../src/components/git/diff/useGitDiffOpenWorkflow.ts");
-const reviewDialog = read("../src/components/git/diff/GitDiffReviewDialog.tsx");
-const sshGit = read("../src/lib/sshRemoteGit.ts");
+const fileEditorContent = read("../src/features/files/components/FileEditorContent.tsx");
+const editorHost = read("../src/features/git/api/GitDiffEditorHost.tsx");
+const workspaceStore = read("../src/features/git/api/gitDiffWorkspaceStore.ts");
+const fileStore = read("../src/features/files/api/fileExplorerStore.ts");
+const gitStore = read("../src/features/git/store/gitStore.ts");
+const gitPanel = read("../src/features/git/api/GitChangesPanel.tsx");
+const openWorkflow = read("../src/features/git/components/diff/useGitDiffOpenWorkflow.ts");
+const reviewDialog = read("../src/features/git/components/diff/GitDiffReviewDialog.tsx");
+const sshGit = read("../src/features/remote/api/sshRemoteGit.ts");
 
 test("file editor composes pinned Diff without owning Git transport or mutations", () => {
   assert.match(fileEditorView, /<FileEditorContent/);
@@ -58,21 +58,21 @@ test("SSH Git context identity and release cover configuration changes", () => {
 
 test("new pinned editor modules stay split by responsibility", () => {
   const modules = [
-    "../src/lib/gitTransportLeaseRegistry.ts",
-    "../src/lib/gitTransportIdentity.ts",
-    "../src/lib/gitTransportLease.ts",
-    "../src/hooks/useGitTransportLease.ts",
-    "../src/stores/gitDiffWorkspaceStore.ts",
-    "../src/components/git/diff/GitDiffEditorHost.tsx",
-    "../src/components/git/diff/GitDiffEditorTabs.tsx",
-    "../src/components/git/diff/useGitDiffOpenWorkflow.ts",
-    "../src/components/files/FileEditorHeader.tsx",
-    "../src/components/files/FileEditorTabs.tsx",
-    "../src/components/files/FileEditorContent.tsx",
-    "../src/components/files/useGitFileDecorations.ts",
-    "../src/components/files/useFileEditorSearchNavigation.ts",
-    "../src/components/files/useFileEditorShortcuts.ts",
-    "../src/components/files/FileEditorPane.tsx",
+    "../src/features/git/lib/gitTransportLeaseRegistry.ts",
+    "../src/features/git/lib/gitTransportIdentity.ts",
+    "../src/features/git/lib/gitTransportLease.ts",
+    "../src/features/git/api/useGitTransportLease.ts",
+    "../src/features/git/api/gitDiffWorkspaceStore.ts",
+    "../src/features/git/api/GitDiffEditorHost.tsx",
+    "../src/features/git/api/GitDiffEditorTabs.tsx",
+    "../src/features/git/components/diff/useGitDiffOpenWorkflow.ts",
+    "../src/features/files/components/FileEditorHeader.tsx",
+    "../src/features/files/components/FileEditorTabs.tsx",
+    "../src/features/files/components/FileEditorContent.tsx",
+    "../src/features/files/components/useGitFileDecorations.ts",
+    "../src/features/files/components/useFileEditorSearchNavigation.ts",
+    "../src/features/files/components/useFileEditorShortcuts.ts",
+    "../src/features/files/index.ts",
     "../src/features/files/components/FileEditorPane.tsx",
     "../src/features/files/components/FileEditorPaneView.tsx",
     "../src/features/files/hooks/useFileEditorController.ts",

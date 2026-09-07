@@ -40,6 +40,8 @@ export function imports(file, source) {
         && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
         result.add(node.moduleSpecifier.text);
       }
+      if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+        && ts.isStringLiteral(node.argument.literal)) result.add(node.argument.literal.text);
       if (ts.isCallExpression(node) && node.arguments.length > 0
         && (node.expression.kind === ts.SyntaxKind.ImportKeyword || node.expression.getText(ast) === "require")
         && ts.isStringLiteral(node.arguments[0])) result.add(node.arguments[0].text);
@@ -72,13 +74,21 @@ export function dependencyViolations(file, specifiers) {
     if (!target) continue;
     const to = layer(target);
     let reason;
+    if (from.root === "src" && /^src\/(?:components|hooks|stores|lib|terminal)\//.test(target)) {
+      reason = "new layers cannot depend on retired implementation directories";
+    }
     if (from.name === "shared" && to && ["features", "app"].includes(to.name)) reason = "shared cannot depend on app/features";
     if (from.name === "features" && to?.name === "app") reason = "features cannot depend on app";
     if (from.name === "features" && to?.name === "features" && from.domain !== to.domain) {
       const entry = `${to.root}/features/${to.domain}`;
       // Rust's public entry exports named items via crate::features::domain::item.
       const rustPublicItem = to.root === "src-tauri/src" && target.slice(entry.length + 1).split("/").length === 1;
-      if (target !== entry && !rustPublicItem && ![`${entry}/index`, `${entry}/index.ts`, `${entry}/index.tsx`].includes(target)) {
+      const relativeEntry = target.slice(entry.length + 1);
+      const frontendPublicModule = to.root === "src" && (
+        /^(?:index|state)(?:\.tsx?)?$/.test(relativeEntry)
+        || /^api\/[^/]+(?:\.tsx?)?$/.test(relativeEntry)
+      );
+      if (target !== entry && !rustPublicItem && !frontendPublicModule) {
         reason = "cross-feature imports must use a public entry";
       }
     }

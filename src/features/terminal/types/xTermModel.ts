@@ -1,4 +1,4 @@
-import { type LightThemePalette, type DarkThemePalette } from "../../../stores/settingsStore";
+import { type LightThemePalette, type DarkThemePalette } from "../../../shared/preferences/settingsStore";
 
 export const SEARCH_HIGHLIGHT_LIMIT = 1000;
 

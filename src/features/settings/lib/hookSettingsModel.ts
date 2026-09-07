@@ -1,4 +1,4 @@
-import { pickByLanguage, type AppLanguage } from "@/lib/i18n";
+import { pickByLanguage, type AppLanguage } from "../../../shared/i18n/index";
 
 export type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
 

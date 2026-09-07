@@ -12,7 +12,7 @@ const source = readFileSync(
   "utf8",
 ).replaceAll("\r\n", "\n");
 const settingsSource = readFileSync(
-  new URL("../src/stores/settingsStore.ts", import.meta.url),
+  new URL("../src/shared/preferences/settingsStore.ts", import.meta.url),
   "utf8",
 ).replaceAll("\r\n", "\n");
 

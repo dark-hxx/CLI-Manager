@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../src/components/git/workspace/GitPowerToolsDialog.tsx", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/git/components/workspace/GitPowerToolsDialog.tsx", import.meta.url), "utf8");
 
 test("power tools reuse application dialogs without browser-native prompts", () => {
   assert.match(source, /<Modal\s+opened=\{open\}/);

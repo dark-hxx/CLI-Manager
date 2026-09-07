@@ -1,11 +1,11 @@
 import { Suspense, memo, type CSSProperties } from "react";
-import { useTerminalStore, type TabNotificationState } from "../../../stores/terminalStore";
-import { useSettingsStore } from "../../../stores/settingsStore";
-import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../../../stores/terminalPaneTree";
+import { useTerminalStore, type TabNotificationState } from "../state";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../api/terminalPaneTree";
 import { XTermTerminal } from "./XTermTerminal";
-import { RemoteHandoffOverlay } from "../../../components/terminal/RemoteHandoffOverlay";
-import type { Project, TerminalSession, WorktreeRecord } from "../../../lib/types";
-import { resolveTerminalPaneMarker, type TerminalPaneMarkerSettings } from "../../../lib/terminalPaneMarker";
+import { RemoteHandoffOverlay } from "./RemoteHandoffOverlay";
+import type { Project, TerminalSession, WorktreeRecord } from "../../../shared/types/index";
+import { resolveTerminalPaneMarker, type TerminalPaneMarkerSettings } from "../../../shared/lib/terminalPaneMarker";
 import { FileEditorPane, SubagentTranscriptView } from "./lazyTerminalPanels";
 import { type SplitPickerAnchor, type PaneDropPreview } from "../lib/terminalTabsModel";
 import { PaneTabBar } from "./PaneTabBar";

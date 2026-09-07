@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
-const app = read("../src/App.tsx");
-const i18n = read("../src/lib/i18n.ts");
+const app = read("../src/app/App.tsx");
+const i18n = read("../src/shared/i18n/index.ts");
 
 test("slow startup work remains a loading state instead of becoming a false failure", () => {
   assert.match(app, /setStartupStageSlow\(true\)/);

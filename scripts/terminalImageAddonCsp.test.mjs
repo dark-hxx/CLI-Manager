@@ -10,7 +10,7 @@ const terminalSource = readFileSync(
   "utf8",
 );
 const supportSource = readFileSync(
-  new URL("../src/lib/terminalImageAddonSupport.ts", import.meta.url),
+  new URL("../src/features/terminal/lib/terminalImageAddonSupport.ts", import.meta.url),
   "utf8",
 );
 

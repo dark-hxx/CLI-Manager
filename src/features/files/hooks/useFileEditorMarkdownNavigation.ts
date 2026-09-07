@@ -1,9 +1,9 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
-import { useI18n } from "../../../lib/i18n";
-import { findMarkdownHeadingLine, resolveMarkdownHref } from "../../../lib/markdownNavigation";
-import { useFileExplorerStore, type ActiveProjectFile } from "../../../stores/fileExplorerStore";
+import { useI18n } from "../../../shared/i18n/index";
+import { findMarkdownHeadingLine, resolveMarkdownHref } from "../../../shared/lib/markdownNavigation";
+import { useFileExplorerStore, type ActiveProjectFile } from "../api/fileExplorerStore";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { MonacoEditor, MarkdownNavigationMode, PendingMarkdownNavigation } from "../types/fileEditorModel";
 interface NavigationOptions {

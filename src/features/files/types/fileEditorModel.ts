@@ -1,5 +1,5 @@
 import type { OnMount } from "@monaco-editor/react";
-import type { TerminalSession } from "../../../lib/types";
+import type { TerminalSession } from "../../../shared/types/index";
 
 export interface FileEditorPaneProps {
   session: TerminalSession;

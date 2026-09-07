@@ -1,0 +1,477 @@
+import type {
+  Project,
+  RemoteHandoffPhase,
+  SshHost,
+  TerminalSession,
+  WorktreeRecord,
+} from "../../../shared/types/index";
+import {
+  getRemoteHandoffEligibility,
+  resolveRemoteHandoffAgent,
+  type CcConnectHandoffInfo,
+  type CcConnectHandoffPlatformTarget,
+} from "../../remote/api/remoteHandoff";
+import {
+  convertChineseForLanguage,
+  isEnglishLanguage,
+  resolveLanguagePreference,
+  type AppLanguage,
+} from "../../../shared/i18n/index";
+import type {
+  SessionStatus,
+  TabNotificationState,
+  TabStatusDetails,
+} from "../../terminal/state";
+import type { DesktopPetSettings, LanguagePreference } from "../../../shared/preferences/settingsStore";
+import { shouldIncludeAgentTerminal } from "../../agents/api/agentTerminal";
+import { desktopPetScaleFromPercent } from "../../../shared/lib/desktopPetSize";
+import { resolveDesktopPetOpenSessionStatus } from "../lib/desktopPetStatus";
+import { parseProjectProviderOverrides } from "../../providers/api/providerSwitching";
+
+export {
+  calculateDesktopPetMenuWindowGeometry,
+  DESKTOP_PET_MENU_MAX_VISIBLE_PLATFORMS,
+  DESKTOP_PET_MENU_MAX_VISIBLE_TARGETS,
+  resizeDesktopPetCollapsedWindowBounds,
+  createLatestAsyncTaskRunner,
+  type DesktopPetMenuHorizontalPlacement,
+  type DesktopPetMenuVerticalPlacement,
+  type DesktopPetMenuWindowOptions,
+  type DesktopPetMenuWindowGeometry,
+  type DesktopPetWindowRect,
+  type LatestAsyncTaskContext,
+  type LatestAsyncTaskRunner,
+} from "../lib/desktopPetMenu";
+export {
+  DESKTOP_PET_SIZE_DEFAULT_PERCENT,
+  DESKTOP_PET_SIZE_MAX_PERCENT,
+  DESKTOP_PET_SIZE_MIN_PERCENT,
+  DESKTOP_PET_SIZE_STEP_PERCENT,
+  normalizeDesktopPetSizePercent,
+  stepDesktopPetSizePercent,
+} from "../../../shared/lib/desktopPetSize";
+
+export const DESKTOP_PET_WINDOW_LABEL = "desktop-pet";
+export const DESKTOP_PET_CONFIG_EVENT = "desktop-pet-config";
+export const DESKTOP_PET_SNAPSHOT_EVENT = "desktop-pet-snapshot";
+export const DESKTOP_PET_READY_EVENT = "desktop-pet-ready";
+export const DESKTOP_PET_OPEN_TARGET_EVENT = "desktop-pet-open-target";
+export const DESKTOP_PET_OPEN_SETTINGS_EVENT = "desktop-pet-open-settings";
+export const DESKTOP_PET_CLOSE_MENU_EVENT = "desktop-pet-close-menu";
+export const DESKTOP_PET_POSITION_EVENT = "desktop-pet-position";
+export const DESKTOP_PET_SIZE_CHANGE_EVENT = "desktop-pet-size-change";
+export const DESKTOP_PET_HANDOFF_START_EVENT = "remote-handoff-start-request";
+export const DESKTOP_PET_HANDOFF_CANCEL_EVENT = "remote-handoff-cancel-request";
+
+export type DesktopPetMood = "idle" | "working" | "waiting" | "success" | "error" | "sleeping";
+
+export interface PetLocalizedText {
+  "zh-CN": string;
+  "en-US": string;
+}
+
+export interface PetStateAsset {
+  file: string;
+  row?: number;
+  frames?: number;
+}
+
+export interface PetManifest {
+  schemaVersion: number;
+  id: string;
+  version: string;
+  name: PetLocalizedText;
+  description: PetLocalizedText;
+  author: string;
+  license: string;
+  engine: "image-v1" | "codex-sprite";
+  canvas: { width: number; height: number };
+  states: Partial<Record<DesktopPetMood, PetStateAsset>> & { idle: PetStateAsset };
+  spriteVersionNumber?: 1 | 2;
+}
+
+export interface PetCatalogEntry {
+  id: string;
+  version: string;
+  name: PetLocalizedText;
+  description: PetLocalizedText;
+  author: string;
+  license: string;
+  minAppVersion: string;
+  previewUrl: string;
+  previewDataUrl?: string | null;
+  downloadUrl: string;
+  sha256: string;
+  sizeBytes: number;
+}
+
+export interface PetCatalogResponse {
+  items: PetCatalogEntry[];
+  source: "remote" | "cache" | "bundled" | string;
+  warning?: string | null;
+}
+
+export interface InstalledPet {
+  manifest: PetManifest;
+  baseDir: string;
+  source: "cli-manager" | "codex";
+  format: "clipet" | "codex";
+  removable: boolean;
+}
+
+export interface BackgroundPetTask {
+  sessionId: string;
+  cwd?: string | null;
+  alive: boolean;
+  taskStatus?: TabNotificationState | null;
+  taskUpdatedAtMs?: number | null;
+  createdAtMs: number;
+}
+
+export interface DesktopPetTarget {
+  sessionId: string;
+  daemonOnly: boolean;
+  sessionTitle: string | null;
+  projectName: string | null;
+  status: TabNotificationState;
+  active: boolean;
+  updatedAt: number;
+  handoffCandidate: boolean;
+  handoffEligible: boolean;
+  handoffRecoverable: boolean;
+  handoffAgent: import("../../remote/api/remoteHandoff").RemoteHandoffAgent | null;
+  handoffProviderName: string | null;
+  handoffReason: import("../../remote/api/remoteHandoff").RemoteHandoffEligibilityReason | null;
+  handedOff: boolean;
+  handoffPhase: RemoteHandoffPhase | null;
+}
+
+export interface DesktopPetSnapshot {
+  mood: DesktopPetMood;
+  sessionId: string | null;
+  daemonOnly: boolean;
+  sessionTitle: string | null;
+  projectName: string | null;
+  runningCount: number;
+  attentionCount: number;
+  updatedAt: number;
+  targets: DesktopPetTarget[];
+  handoff: CcConnectHandoffInfo | null;
+  handoffPlatforms: CcConnectHandoffPlatformTarget[];
+  handoffBusy: boolean;
+}
+
+export interface DesktopPetConfigPayload {
+  language: AppLanguage;
+  visible: boolean;
+  settings: DesktopPetSettings;
+  labels: {
+    openMain: string;
+    openSettings: string;
+    size: string;
+    hide: string;
+    idle: string;
+    working: string;
+    waiting: string;
+    success: string;
+    error: string;
+    sleeping: string;
+    runningCount: string;
+    taskList: string;
+    currentTask: string;
+    unnamedTask: string;
+    openCurrent: string;
+    remoteHandoff: string;
+    cancelHandoff: string;
+    handoffPlatforms: string;
+    handoffSessions: string;
+    handoffBack: string;
+    platformReady: string;
+    platformNotRunning: string;
+    platformCredentialsMissing: string;
+    platformUserMissing: string;
+    platformSessionMissing: string;
+    platformUnavailable: string;
+    platformTelegram: string;
+    platformFeishu: string;
+    platformWeixin: string;
+    platformWecom: string;
+    handoffPending: string;
+    handoffCancelling: string;
+    handedOff: string;
+    handoffRecoveryFailed: string;
+    noHandoffSessions: string;
+    handoffReady: string;
+    handoffResolveRemoteSession: string;
+    handoffTaskRunning: string;
+    handoffStateUnknown: string;
+    handoffUnavailable: string;
+    handoffRegisteredProvider: string;
+    handoffPiConfiguration: string;
+    handoffOpenCodeConfiguration: string;
+    handoffOpenCodeCapabilityLimited: string;
+  };
+}
+
+export interface DesktopPetPositionPayload {
+  x: number;
+  y: number;
+}
+
+export interface DesktopPetSizeChangePayload extends DesktopPetPositionPayload {
+  size: number;
+}
+
+export interface DesktopPetOpenTargetPayload {
+  sessionId: string | null;
+  daemonOnly: boolean;
+}
+
+export { DESKTOP_PET_OUTPUT_ACTIVITY_TTL_MS } from "../lib/desktopPetStatus";
+
+const STATUS_PRIORITY: Record<TabNotificationState, number> = {
+  none: 0,
+  done: 1,
+  running: 2,
+  failed: 3,
+  attention: 4,
+};
+
+function moodFromStatus(status: TabNotificationState): DesktopPetMood {
+  if (status === "running") return "working";
+  if (status === "attention") return "waiting";
+  if (status === "done") return "success";
+  if (status === "failed") return "error";
+  return "idle";
+}
+
+function daemonTaskStatus(task: BackgroundPetTask): TabNotificationState {
+  const explicitStatus = explicitDaemonTaskStatus(task);
+  if (explicitStatus) return explicitStatus;
+  return task.alive ? "running" : "done";
+}
+
+function daemonTaskUpdatedAt(task: BackgroundPetTask): number {
+  if (explicitDaemonTaskStatus(task)) {
+    return task.taskUpdatedAtMs ?? task.createdAtMs;
+  }
+  return task.alive ? 0 : task.createdAtMs;
+}
+
+function explicitDaemonTaskStatus(task: BackgroundPetTask | undefined): TabNotificationState | null {
+  if (
+    task?.taskStatus === "running" ||
+    task?.taskStatus === "attention" ||
+    task?.taskStatus === "done" ||
+    task?.taskStatus === "failed"
+  ) {
+    return task.taskStatus;
+  }
+  return null;
+}
+
+interface DeriveDesktopPetSnapshotInput {
+  sessions: TerminalSession[];
+  persistedSessions: TerminalSession[];
+  activeSessionId: string | null;
+  tabNotifications: Record<string, TabNotificationState>;
+  sessionStatuses: Record<string, SessionStatus>;
+  tabStatusDetails: Record<string, TabStatusDetails>;
+  ptyOutputActivityAt: Record<string, number>;
+  projects: Project[];
+  worktrees: WorktreeRecord[];
+  sshHosts: SshHost[];
+  backgroundTasks: BackgroundPetTask[];
+  agentSessionsOnly: boolean;
+  activeHandoff: CcConnectHandoffInfo | null;
+  handoffBusy: boolean;
+  now?: number;
+}
+
+function compareDesktopPetTargets(left: DesktopPetTarget, right: DesktopPetTarget): number {
+  const priority = STATUS_PRIORITY[right.status] - STATUS_PRIORITY[left.status];
+  if (priority !== 0) return priority;
+  if (left.active !== right.active) return left.active ? -1 : 1;
+  return right.updatedAt - left.updatedAt;
+}
+
+function snapshotFromTargets(
+  targets: DesktopPetTarget[],
+  now: number,
+  handoff: CcConnectHandoffInfo | null,
+  handoffBusy: boolean
+): DesktopPetSnapshot {
+  if (targets.length === 0) {
+    return {
+      mood: "sleeping",
+      sessionId: null,
+      daemonOnly: false,
+      sessionTitle: null,
+      projectName: null,
+      runningCount: 0,
+      attentionCount: 0,
+      updatedAt: now,
+      targets: [],
+      handoff,
+      handoffPlatforms: [],
+      handoffBusy,
+    };
+  }
+
+  const candidates = [...targets].sort(compareDesktopPetTargets);
+  const selected = candidates[0];
+  return {
+    mood: moodFromStatus(selected.status),
+    sessionId: selected.sessionId,
+    daemonOnly: selected.daemonOnly,
+    sessionTitle: selected.sessionTitle,
+    projectName: selected.projectName,
+    runningCount: candidates.filter((candidate) => candidate.status === "running").length,
+    attentionCount: candidates.filter((candidate) => candidate.status === "attention").length,
+    updatedAt: selected.updatedAt || now,
+    targets: candidates,
+    handoff,
+    handoffPlatforms: [],
+    handoffBusy,
+  };
+}
+
+export function deriveDesktopPetSnapshot(input: DeriveDesktopPetSnapshotInput): DesktopPetSnapshot {
+  const now = input.now ?? Date.now();
+  const projectById = new Map(input.projects.map((project) => [project.id, project]));
+  const worktreeById = new Map(input.worktrees.map((worktree) => [worktree.id, worktree]));
+  const sshHostById = new Map(input.sshHosts.map((host) => [host.id, host]));
+  const persistedById = new Map(input.persistedSessions.map((session) => [session.id, session]));
+  const backgroundById = new Map(input.backgroundTasks.map((task) => [task.sessionId, task]));
+  const allOpenPtySessions = input.sessions.filter((session) => !session.kind || session.kind === "pty");
+  const openIds = new Set(allOpenPtySessions.map((session) => session.id));
+  const openPtySessions = allOpenPtySessions.filter((session) => (
+    shouldIncludeAgentTerminal(
+      session,
+      session.projectId ? projectById.get(session.projectId) : undefined,
+      input.agentSessionsOnly
+    )
+  ));
+  const candidates: DesktopPetTarget[] = openPtySessions.map((session) => {
+    const { status, updatedAt } = resolveDesktopPetOpenSessionStatus({
+      frontendStatus: input.tabNotifications[session.id] ?? "none",
+      frontendDetails: input.tabStatusDetails[session.id],
+      daemonTask: backgroundById.get(session.id),
+      outputActivityAt: input.ptyOutputActivityAt[session.id] ?? 0,
+      now,
+    });
+    const project = session.projectId ? projectById.get(session.projectId) : undefined;
+    const handoffPhase = session.remoteHandoff?.phase
+      ?? (input.activeHandoff?.localSessionId === session.id ? "active" : null);
+    const handedOff = handoffPhase !== null && handoffPhase !== "recovery_failed";
+    const worktree = session.worktreeId ? worktreeById.get(session.worktreeId) ?? null : null;
+    const eligibility = getRemoteHandoffEligibility({
+      session,
+      project,
+      sshHost: project?.ssh_host_id ? sshHostById.get(project.ssh_host_id) : undefined,
+      worktree,
+      notification: status,
+      processStatus: input.sessionStatuses[session.id],
+      activeHandoff: input.activeHandoff,
+    });
+    const handoffAgent = resolveRemoteHandoffAgent(session, project).agent;
+    const worktreeProviderOverrides = worktree?.provider_overrides?.trim();
+    const providerOverrides = parseProjectProviderOverrides(
+      worktreeProviderOverrides && worktreeProviderOverrides !== "{}"
+        ? worktreeProviderOverrides
+        : project?.provider_overrides,
+    );
+    const handoffProviderName = handoffAgent === "claude"
+      ? providerOverrides.claude?.providerName ?? null
+      : handoffAgent === "codex"
+        ? providerOverrides.codex?.providerName ?? null
+        : null;
+    const handoffCandidate = eligibility.reason !== "unsupported_agent"
+      && eligibility.reason !== "agent_mismatch"
+      && eligibility.reason !== "ssh_agent_unsupported"
+      && eligibility.reason !== "missing_project"
+      && eligibility.reason !== "unsupported_session";
+    const handoffRecoverable = project?.environment_type === "ssh"
+      && eligibility.reason === "missing_cli_session_id";
+    return {
+      sessionId: session.id,
+      daemonOnly: false,
+      status,
+      updatedAt,
+      sessionTitle: session.title || null,
+      projectName: project?.name ?? null,
+      active: session.id === input.activeSessionId,
+      handoffCandidate,
+      handoffEligible: eligibility.eligible,
+      handoffRecoverable,
+      handoffAgent,
+      handoffProviderName,
+      handoffReason: eligibility.reason,
+      handedOff,
+      handoffPhase,
+    };
+  });
+  for (const task of input.backgroundTasks) {
+    if (openIds.has(task.sessionId)) continue;
+    const persisted = persistedById.get(task.sessionId);
+    const project = persisted?.projectId ? projectById.get(persisted.projectId) : undefined;
+    if (!shouldIncludeAgentTerminal(persisted, project, input.agentSessionsOnly)) continue;
+    candidates.push({
+      sessionId: task.sessionId,
+      daemonOnly: true,
+      status: daemonTaskStatus(task),
+      updatedAt: daemonTaskUpdatedAt(task),
+      sessionTitle: persisted?.title || task.cwd || null,
+      projectName: project?.name ?? null,
+      active: false,
+      handoffCandidate: false,
+      handoffEligible: false,
+      handoffRecoverable: false,
+      handoffAgent: null,
+      handoffProviderName: null,
+      handoffReason: "unsupported_session",
+      handedOff: false,
+      handoffPhase: null,
+    });
+  }
+  if (
+    input.activeHandoff
+    && !candidates.some((candidate) => candidate.sessionId === input.activeHandoff?.localSessionId)
+  ) {
+    candidates.push({
+      sessionId: input.activeHandoff.localSessionId,
+      daemonOnly: false,
+      status: "none",
+      updatedAt: input.activeHandoff.startedAtMs,
+      sessionTitle: null,
+      projectName: input.activeHandoff.projectName,
+      active: false,
+      handoffCandidate: true,
+      handoffEligible: false,
+      handoffRecoverable: false,
+      handoffAgent: input.activeHandoff.agent,
+      handoffProviderName: input.activeHandoff.providerName,
+      handoffReason: "already_handed_off",
+      handedOff: true,
+      handoffPhase: "active",
+    });
+  }
+
+  return snapshotFromTargets(candidates, now, input.activeHandoff, input.handoffBusy);
+}
+
+export function desktopPetScale(size: DesktopPetSettings["size"]): number {
+  return desktopPetScaleFromPercent(size);
+}
+
+export function localizedPetText(text: PetLocalizedText, language: LanguagePreference): string {
+  const resolvedLanguage = resolveLanguagePreference(language);
+  return isEnglishLanguage(resolvedLanguage)
+    ? text["en-US"]
+    : convertChineseForLanguage(resolvedLanguage, text["zh-CN"]);
+}
+
+export function joinPetAssetPath(baseDir: string, relativePath: string): string {
+  const separator = baseDir.includes("\\") ? "\\" : "/";
+  return `${baseDir.replace(/[\\/]$/, "")}${separator}${relativePath.replace(/^[\\/]/, "")}`;
+}

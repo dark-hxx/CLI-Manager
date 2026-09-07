@@ -69,7 +69,7 @@ export function isCodexTerminalContext() { return false; }
 export function isPiTerminalContext() { return piContext; }
 `);
 
-const source = readFileSync(new URL("../src/lib/terminalTuiColorSync.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/terminal/lib/terminalTuiColorSync.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -78,7 +78,7 @@ const transpiled = ts.transpileModule(source, {
   fileName: "terminalTuiColorSync.ts",
 }).outputText
   .replace('from "./terminalTuiDisplay"', 'from "./terminalTuiDisplay.mjs"')
-  .replace('from "../terminal/browser/TerminalCliContext"', 'from "./TerminalCliContext.mjs"');
+  .replace('from "../browser/TerminalCliContext"', 'from "./TerminalCliContext.mjs"');
 const modulePath = join(tempDir, "terminalTuiColorSync.mjs");
 writeFileSync(modulePath, transpiled, "utf8");
 

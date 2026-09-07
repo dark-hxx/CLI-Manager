@@ -1,16 +1,16 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getDb } from "../../../lib/db";
-import { createPerfMarker, logWarn } from "../../../lib/logger";
-import { resolveHistoryProjectPath } from "../../../lib/historyProjectPaths";
-import { buildSshAgentHistoryContext } from "../../../lib/sshAgentHistory";
-import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs } from "../../../lib/historyPathArgs";
-import { inferSubagentParentSessionId } from "../../../lib/historySubagents";
-import { sameHistorySessionIdentity } from "../../../lib/historySessionIdentity";
-import { extractHistoryTitleCandidate, resolveHistoryDisplayTitle } from "../../../lib/historyTitle";
-import { useProjectStore } from "../../../stores/projectStore";
-import { useSettingsStore } from "../../../stores/settingsStore";
+import { getDb } from "../../../shared/platform/db";
+import { createPerfMarker, logWarn } from "../../../shared/platform/logger";
+import { resolveHistoryProjectPath } from "../api/historyProjectPaths";
+import { buildSshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
+import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs } from "../api/historyPathArgs";
+import { inferSubagentParentSessionId } from "../lib/historySubagents";
+import { sameHistorySessionIdentity } from "../lib/historySessionIdentity";
+import { extractHistoryTitleCandidate, resolveHistoryDisplayTitle } from "../lib/historyTitle";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import type {
   HistoryGeneratedTitleTrigger,
   HistoryEditAuditEntry,
@@ -20,7 +20,7 @@ import type {
   HistorySessionView,
   HistoryTitleCandidate,
   SessionMeta,
-} from "../../../lib/types";
+} from "../../../shared/types/index";
 import { type HistoryStore, type HistoryEditOp, type HistoryEditOutcome } from "../types/historyStoreTypes";
 import {
   effectiveProjectPathFilter,

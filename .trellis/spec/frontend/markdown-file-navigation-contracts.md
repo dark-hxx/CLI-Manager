@@ -18,7 +18,7 @@ interface MarkdownContentProps {
 
 - `MarkdownContent` owns scoped same-document preview scrolling. It reads `anchor.getAttribute("href")`; resolved DOM `anchor.href` is forbidden because it prepends the Tauri origin.
 - `features/files/hooks/useFileEditorController.ts` owns editor refs/state and scoped Monaco gestures. Its `useFileEditorMarkdownNavigation` hook owns destination classification, system opener calls, project file navigation, source line reveal and localized failures using the controller's existing request refs/setters. Keep this hook at its original callback/effect position; never create a second request identity or file store.
-- `features/files/components/FileEditorPaneView.tsx` renders the complete editor view; the old `FileEditorPane` module is a compatibility entry. The controller, navigation hook and view each remain within the pinned-editor 300-line responsibility limit.
+- `features/files/components/FileEditorPaneView.tsx` renders the complete editor view; `features/files/index.ts` exports `FileEditorPane`. The old compatibility module was removed after callers migrated. The controller, navigation hook and view each remain within the pinned-editor 300-line responsibility limit.
 - `fileExplorerStore.revealPath` remains the authority for local/WSL/SSH/Worktree traversal and open-file reuse. Markdown navigation must not introduce direct filesystem calls or reinterpret remote paths as local paths.
 - `FileEditorContent` only delivers preview activation and applies a matching pending preview fragment after the target file renders.
 

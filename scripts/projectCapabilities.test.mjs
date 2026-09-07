@@ -28,12 +28,12 @@ export const resolveCliToolHistorySourceId = (value) => (
 );
 `);
 
-const source = readFileSync(new URL("../src/lib/projectCapabilities.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/projects/api/projectCapabilities.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText
-  .replaceAll('from "./sshToolIntegration"', 'from "./sshToolIntegration.mjs"')
-  .replaceAll('from "./cliTools"', 'from "./cliTools.mjs"');
+  .replaceAll('from "../../remote/api/sshToolIntegration"', 'from "./sshToolIntegration.mjs"')
+  .replaceAll('from "../../../shared/lib/cliTools"', 'from "./cliTools.mjs"');
 const modulePath = writeModule("projectCapabilities.mjs", output);
 const {
   isSshGrokHistoryUnsupported,
@@ -67,7 +67,7 @@ test("Grok 限制仅作用于 SSH 历史", () => {
 test("历史入口与双语提示复用 SSH 历史能力判断", () => {
   const terminalTabsSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalTabsController.tsx", import.meta.url), "utf8");
   const sidebarSource = readFileSync(new URL("../src/features/projects/hooks/useSidebarController.tsx", import.meta.url), "utf8");
-  const i18nSource = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
+  const i18nSource = readFileSync(new URL("../src/shared/i18n/index.ts", import.meta.url), "utf8");
 
   for (const componentSource of [terminalTabsSource, sidebarSource]) {
     assert.match(componentSource, /isSshHistorySourceUnsupported/);

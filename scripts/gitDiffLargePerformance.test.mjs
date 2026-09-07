@@ -11,12 +11,12 @@ import {
   normalizeGitDiffPayload,
   shouldHighlightGitDiff,
   shouldParseGitDiffInWorker,
-} from "../src/lib/gitDiffLimits.ts";
-import { parseGitDiffFile } from "../src/components/git/diff/gitDiffParser.ts";
+} from "../src/shared/lib/gitDiffLimits.ts";
+import { parseGitDiffFile } from "../src/features/git/components/diff/gitDiffParser.ts";
 import {
   countGitDiffRenderRows,
   estimateGitDiffHunkHeight,
-} from "../src/components/git/diff/gitDiffVirtualization.ts";
+} from "../src/features/git/components/diff/gitDiffVirtualization.ts";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -105,11 +105,11 @@ test("virtual height estimation matches unified and split row composition", () =
 });
 
 test("worker parsing and hunk virtualization keep cancellation and visible-only work", () => {
-  const hook = read("../src/components/git/diff/useGitDiffParser.ts");
-  const worker = read("../src/components/git/diff/gitDiffParser.worker.ts");
-  const list = read("../src/components/git/diff/GitDiffHunkList.tsx");
-  const block = read("../src/components/git/diff/GitDiffHunkBlock.tsx");
-  const controller = read("../src/components/git/diff/useGitDiffController.ts");
+  const hook = read("../src/features/git/components/diff/useGitDiffParser.ts");
+  const worker = read("../src/features/git/components/diff/gitDiffParser.worker.ts");
+  const list = read("../src/features/git/components/diff/GitDiffHunkList.tsx");
+  const block = read("../src/features/git/components/diff/GitDiffHunkBlock.tsx");
+  const controller = read("../src/features/git/components/diff/useGitDiffController.ts");
 
   assert.match(hook, /new Worker\(new URL\("\.\/gitDiffParser\.worker\.ts"/);
   assert.match(hook, /let settled = false/);
@@ -132,7 +132,7 @@ test("worker parsing and hunk virtualization keep cancellation and visible-only 
 });
 
 test("local and SSH transport normalize optional metadata at one boundary", () => {
-  const transport = read("../src/lib/gitTransport.ts");
+  const transport = read("../src/features/git/lib/gitTransport.ts");
   const matches = transport.match(/normalizeGitDiffPayload/g) ?? [];
   assert.ok(matches.length >= 3);
   assert.match(transport, /value: normalizeGitDiffPayload\(result\.value\)/);

@@ -5,7 +5,7 @@ import {
   findInitialReviewTargetIndex,
   reconcileReviewTargetIndex,
   stepReviewNavigation,
-} from "../src/components/git/diff/reviewNavigation.ts";
+} from "../src/features/git/components/diff/reviewNavigation.ts";
 
 const file = (path, status, added = 1, deleted = 0) => ({
   type: "file",

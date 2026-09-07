@@ -1,6 +1,6 @@
 import { Terminal, type IBufferLine, type IDisposable, type ITheme } from "@xterm/xterm";
-import { isLightTerminalTheme } from "../../../lib/terminalThemes";
-import { getTerminalCellWidth } from "../../../lib/terminalCellWidth";
+import { isLightTerminalTheme } from "../../../shared/lib/terminalThemes";
+import { getTerminalCellWidth } from "./terminalCellWidth";
 
 export type TerminalSubsystemDisposable = IDisposable;
 

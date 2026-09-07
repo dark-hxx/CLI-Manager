@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const layoutSource = readFileSync(new URL("../src/lib/workspaceLayout.ts", import.meta.url), "utf8");
-const settingsStoreSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/shared/lib/workspaceLayout.ts", import.meta.url), "utf8");
+const settingsStoreSource = readFileSync(new URL("../src/shared/preferences/settingsStore.ts", import.meta.url), "utf8");
 
 test("workspace layout v3 persists both sidebar docks and auxiliary visibility", () => {
   assert.match(layoutSource, /version: 3/);

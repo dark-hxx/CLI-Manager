@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const previewSource = readFileSync(
-  new URL("../src/components/terminal/TerminalMarkdownPreview.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/TerminalMarkdownPreview.tsx", import.meta.url),
   "utf8",
 );
 const markdownSource = readFileSync(
-  new URL("../src/lib/markdownSource.ts", import.meta.url),
+  new URL("../src/shared/lib/markdownSource.ts", import.meta.url),
   "utf8",
 );
 const historyStoreSource = readFileSync(
@@ -27,7 +27,7 @@ const terminalTabsSource = readFileSync(
   "utf8",
 );
 const i18nSource = readFileSync(
-  new URL("../src/lib/i18n.ts", import.meta.url),
+  new URL("../src/shared/i18n/index.ts", import.meta.url),
   "utf8",
 );
 
@@ -58,7 +58,7 @@ test("markdown preview can select every assistant response and unwrap source fen
   assert.match(previewSource, /function selectAssistantMarkdownMessages/);
   assert.match(previewSource, /message\?\.role\.toLowerCase\(\) !== "assistant"/);
   assert.match(markdownSource, /export function unwrapFencedMarkdown/);
-  assert.match(previewSource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/lib\/markdownSource"/);
+  assert.match(previewSource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/\.\.\/shared\/lib\/markdownSource"/);
   assert.doesNotMatch(previewSource, /const MARKDOWN_SOURCE_FENCE/);
   assert.match(previewSource, /unwrapFencedMarkdown\(selectedMessage\.content\)/);
   assert.match(previewSource, /terminal-markdown-preview-message-select/);

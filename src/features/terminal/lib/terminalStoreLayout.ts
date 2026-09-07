@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, TerminalSession } from "../../../lib/types";
-import { logError } from "../../../lib/logger";
-import { useSessionStore } from "../../../stores/sessionStore";
-import { useFileExplorerStore } from "../../../stores/fileExplorerStore";
-import { type TerminalWorkspan } from "../../../stores/terminalWorkspan";
+import type { Project, TerminalSession } from "../../../shared/types/index";
+import { logError } from "../../../shared/platform/logger";
+import { useSessionStore } from "../api/sessionStore";
+import { useFileExplorerStore } from "../../files/api/fileExplorerStore";
+import { type TerminalWorkspan } from "../api/terminalWorkspan";
 import { type SplitTerminalOptions, type TerminalStore } from "../types/terminalStoreTypes";
 
 export function buildWorkspanMirror(

@@ -19,7 +19,7 @@ export async function invoke(command, args) {
 }
 `);
 
-const source = readFileSync(new URL("../src/lib/resourceDiagnosticsLog.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/shared/platform/resourceDiagnosticsLog.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,

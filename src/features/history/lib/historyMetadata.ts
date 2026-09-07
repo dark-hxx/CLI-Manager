@@ -1,6 +1,6 @@
-import { getDb } from "../../../lib/db";
-import { logWarn } from "../../../lib/logger";
-import { resolveHistoryDisplayTitle } from "../../../lib/historyTitle";
+import { getDb } from "../../../shared/platform/db";
+import { logWarn } from "../../../shared/platform/logger";
+import { resolveHistoryDisplayTitle } from "./historyTitle";
 import type {
   HistoryGeneratedTitleMeta,
   HistorySessionDetail,
@@ -11,7 +11,7 @@ import type {
   HistorySourceFilter,
   SessionFavoriteSnapshot,
   SessionMeta,
-} from "../../../lib/types";
+} from "../../../shared/types/index";
 import { type SessionMetaMap, type GeneratedTitleMap, type HistoryEditOp } from "../types/historyStoreTypes";
 import {
   normalizeSessionRef,

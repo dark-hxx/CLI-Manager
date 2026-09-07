@@ -9,7 +9,7 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-desktop-pet-transport-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-const source = readFileSync(new URL("../src/lib/desktopPetTransport.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/desktop-pet/lib/desktopPetTransport.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,

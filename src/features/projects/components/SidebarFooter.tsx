@@ -1,0 +1,332 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
+import { BarChart3, GitBranch, Handshake, Settings } from "../../../shared/ui/icons";
+import { SyncStatusIndicator } from "./SyncStatusIndicator";
+import type { SettingsTab } from "../../settings/api/SettingsModal";
+import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "../../settings/api/hookErrors";
+import { useSettingsStore, type SidebarToolbarVisibilitySettings } from "../../../shared/preferences/settingsStore";
+import { useI18n } from "../../../shared/i18n/index";
+import { useGitWorkspaceStore } from "../../git/api/gitWorkspaceStore";
+
+type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
+type HookLightStatus = "missing" | "partial" | "installed";
+type HookTool = "claude" | "codex" | "kimi" | "pi" | "grok";
+
+interface ToolHookSettingsStatus {
+  configDir: string | null;
+  status: HookInstallStatus;
+}
+
+interface HookSettingsStatus {
+  claude: ToolHookSettingsStatus;
+  codex: ToolHookSettingsStatus;
+  kimi: ToolHookSettingsStatus;
+  pi: ToolHookSettingsStatus;
+  grok: ToolHookSettingsStatus;
+  claudeAutoRepaired?: boolean;
+}
+
+interface SidebarFooterProps {
+  collapsed: boolean;
+  onOpenSettings: (tab?: SettingsTab) => void;
+  onOpenStats: () => void;
+  toolbarVisibility: SidebarToolbarVisibilitySettings;
+}
+
+function trimDir(value: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function getApplicableTools(
+  status: HookSettingsStatus | null,
+  enabledTools: Record<HookTool, boolean>
+): HookTool[] {
+  if (!status) return [];
+  return (["claude", "codex", "kimi", "pi", "grok"] as const).filter(
+    (tool) => enabledTools[tool] && Boolean(status[tool]?.configDir)
+  );
+}
+
+function getHookLightStatus(
+  status: HookSettingsStatus | null,
+  enabledTools: Record<HookTool, boolean>
+): HookLightStatus {
+  const tools = getApplicableTools(status, enabledTools);
+  if (tools.length === 0) return "missing";
+
+  const statuses = tools.map((tool) => status?.[tool].status ?? "directoryMissing");
+  if (statuses.every((item) => item === "installed")) return "installed";
+  if (statuses.some((item) => item === "installed" || item === "partialInstalled")) return "partial";
+  return "missing";
+}
+
+function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTab) => void }) {
+  const { t } = useI18n();
+  const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
+  const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
+  const kimiHookConfigDir = useSettingsStore((s) => s.kimiHookConfigDir);
+  const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
+  const piHookConfigDir = useSettingsStore((s) => s.piHookConfigDir);
+  const grokHookConfigDir = useSettingsStore((s) => s.grokHookConfigDir);
+  const claudeHookBridgeEnabled = useSettingsStore((s) => s.claudeHookBridgeEnabled);
+  const codexHookBridgeEnabled = useSettingsStore((s) => s.codexHookBridgeEnabled);
+  const kimiHookBridgeEnabled = useSettingsStore((s) => s.kimiHookBridgeEnabled);
+  const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
+  const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
+  const claudeHookAutoRepairKnownInstalled = useSettingsStore((s) => s.claudeHookAutoRepairKnownInstalled);
+  const claudeHookAutoRepairNoticeShown = useSettingsStore((s) => s.claudeHookAutoRepairNoticeShown);
+  const updateSetting = useSettingsStore((s) => s.update);
+  const [status, setStatus] = useState<HookSettingsStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [working, setWorking] = useState(false);
+
+  const selectedDir = useMemo(() => trimDir(claudeHookConfigDir), [claudeHookConfigDir]);
+  const codexSelectedDir = useMemo(() => trimDir(codexHookConfigDir), [codexHookConfigDir]);
+  const kimiSelectedDir = useMemo(() => trimDir(kimiHookConfigDir), [kimiHookConfigDir]);
+  const piSelectedDir = useMemo(() => trimDir(piHookConfigDir), [piHookConfigDir]);
+  const grokSelectedDir = useMemo(() => trimDir(grokHookConfigDir), [grokHookConfigDir]);
+  const enabledTools = useMemo<Record<HookTool, boolean>>(
+    () => ({
+      claude: claudeHookBridgeEnabled,
+      codex: codexHookBridgeEnabled,
+      kimi: kimiHookBridgeEnabled,
+      pi: piHookBridgeEnabled,
+      grok: grokHookBridgeEnabled,
+    }),
+    [claudeHookBridgeEnabled, codexHookBridgeEnabled, kimiHookBridgeEnabled, piHookBridgeEnabled, grokHookBridgeEnabled]
+  );
+  const allBridgesDisabled =
+    !claudeHookBridgeEnabled && !codexHookBridgeEnabled && !kimiHookBridgeEnabled && !piHookBridgeEnabled && !grokHookBridgeEnabled;
+  const lightStatus = getHookLightStatus(status, enabledTools);
+
+  const refreshStatus = useCallback(async () => {
+    setLoading(true);
+    try {
+      const nextStatus = await invoke<HookSettingsStatus>("hook_settings_get_status", {
+        selectedDir,
+        codexSelectedDir,
+        kimiSelectedDir,
+        piSelectedDir,
+        grokSelectedDir,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+        autoRepair: claudeHookBridgeEnabled && claudeHookAutoRepairKnownInstalled,
+      });
+      setStatus(nextStatus);
+      if (nextStatus.claudeAutoRepaired && !claudeHookAutoRepairNoticeShown) {
+        toast.info("Claude Hook 已自动恢复", {
+          description: "检测到 Hook 被外部工具覆盖，已重新写入全局 Hook 配置。",
+        });
+        void updateSetting("claudeHookAutoRepairNoticeShown", true);
+      }
+    } catch (error) {
+      toast.error(t("sidebar.hook.refreshFailed"), { description: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    claudeHookBridgeEnabled,
+    claudeHookAutoRepairKnownInstalled,
+    claudeHookAutoRepairNoticeShown,
+    ccSwitchDbPath,
+    codexSelectedDir,
+    kimiSelectedDir,
+    grokSelectedDir,
+    piSelectedDir,
+    selectedDir,
+    t,
+    updateSetting,
+  ]);
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus]);
+
+  const reinstallHooks = async () => {
+    const tools = getApplicableTools(status, enabledTools).filter(
+      (tool) => status?.[tool].status !== "unsupported"
+    );
+    if (tools.length === 0) {
+      toast.info(t("sidebar.hook.chooseConfigDir"));
+      onOpenSettings("hooks");
+      return;
+    }
+
+    setWorking(true);
+    try {
+      const dirs = {
+        selectedDir,
+        codexSelectedDir,
+        kimiSelectedDir,
+        piSelectedDir,
+        grokSelectedDir,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      };
+      if (tools.includes("claude")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install", dirs);
+        await updateSetting("claudeHookAutoRepairKnownInstalled", true);
+        await updateSetting("claudeHookAutoRepairNoticeShown", false);
+      }
+      if (tools.includes("codex")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_codex", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_codex", dirs);
+      }
+      if (tools.includes("kimi")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_kimi", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_kimi", dirs);
+      }
+      if (tools.includes("pi")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_pi", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_pi", dirs);
+      }
+      if (tools.includes("grok")) {
+        await invoke<HookSettingsStatus>("hook_settings_uninstall_grok", dirs);
+        await invoke<HookSettingsStatus>("hook_settings_install_grok", dirs);
+      }
+      await refreshStatus();
+      toast.success(t("sidebar.hook.reinstalled"));
+    } catch (error) {
+      toast.error(t("sidebar.hook.reinstallFailed"), {
+        description: tools.includes("kimi") ? getKimiHookErrorMessage(error, t) : getPiHookErrorMessage(error, t),
+      });
+      await refreshStatus();
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleClick = () => {
+    if (allBridgesDisabled) {
+      onOpenSettings("hooks");
+      return;
+    }
+    if (lightStatus === "installed") {
+      onOpenSettings("hooks");
+      return;
+    }
+    void reinstallHooks();
+  };
+
+  const title = allBridgesDisabled
+    ? t("sidebar.hook.disabled")
+    : lightStatus === "installed"
+      ? t("sidebar.hook.ok")
+      : lightStatus === "partial"
+        ? t("sidebar.hook.partial")
+        : t("sidebar.hook.missing");
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={loading || working}
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-hook shrink-0"
+      data-hook-status={lightStatus}
+      title={working ? t("sidebar.hook.working") : title}
+      aria-label={title}
+    >
+      <span className="ui-sidebar-hook-light" aria-hidden="true" />
+    </button>
+  );
+}
+
+export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarVisibility }: SidebarFooterProps) {
+  const { t } = useI18n();
+  const gitWorkspaceOpen = useGitWorkspaceStore((state) => state.isOpen);
+  const openGitWorkspace = useGitWorkspaceStore((state) => state.open);
+  const closeGitWorkspace = useGitWorkspaceStore((state) => state.close);
+  const viewMode = useSettingsStore((state) => state.viewMode);
+  const updateSetting = useSettingsStore((state) => state.update);
+
+  const handleToggleGitWorkspace = () => {
+    if (gitWorkspaceOpen) {
+      closeGitWorkspace();
+      return;
+    }
+    if (viewMode === "compact") {
+      void updateSetting("viewMode", "standard").then(openGitWorkspace);
+      return;
+    }
+    openGitWorkspace();
+  };
+
+  const statsButton = toolbarVisibility.stats ? (
+    <button
+      onClick={onOpenStats}
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-stats shrink-0"
+      title={t("sidebar.stats")}
+      aria-label={t("sidebar.openStats")}
+    >
+      <BarChart3 size={14} strokeWidth={1.5} />
+    </button>
+  ) : null;
+
+  const settingsButton = (
+    <button
+      onClick={() => onOpenSettings()}
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-settings shrink-0"
+      title={t("sidebar.settings")}
+      aria-label={t("sidebar.openSettings")}
+    >
+      <Settings size={14} strokeWidth={1.5} />
+    </button>
+  );
+
+  const tokenStationButton = (
+    <button
+      type="button"
+      onClick={() => onOpenSettings("sponsors")}
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-token-station shrink-0"
+      title={t("sidebar.tokenStation")}
+      aria-label={t("sidebar.openTokenStation")}
+    >
+      <Handshake size={14} strokeWidth={1.7} aria-hidden="true" />
+    </button>
+  );
+
+  const gitButton = (
+    <button
+      type="button"
+      onClick={handleToggleGitWorkspace}
+      className="ui-focus-ring ui-icon-action shrink-0 data-[active=true]:bg-accent/15 data-[active=true]:text-accent"
+      data-active={gitWorkspaceOpen ? "true" : "false"}
+      title={t("sidebar.gitWorkspace")}
+      aria-label={t("sidebar.gitWorkspace")}
+      aria-pressed={gitWorkspaceOpen}
+    >
+      <GitBranch size={14} strokeWidth={1.7} aria-hidden="true" />
+    </button>
+  );
+
+  if (collapsed) {
+    return (
+      <div className="px-2 py-2">
+        <div className="flex flex-col items-center gap-1.5">
+          <SyncStatusIndicator collapsed onOpenSettings={onOpenSettings} />
+          {tokenStationButton}
+          {gitButton}
+          {statsButton}
+          <HookStatusLight onOpenSettings={onOpenSettings} />
+          {settingsButton}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-2.5 py-2.5">
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <SyncStatusIndicator onOpenSettings={onOpenSettings} />
+        </div>
+        {tokenStationButton}
+        {gitButton}
+        {statsButton}
+        <HookStatusLight onOpenSettings={onOpenSettings} />
+        {settingsButton}
+      </div>
+    </div>
+  );
+}

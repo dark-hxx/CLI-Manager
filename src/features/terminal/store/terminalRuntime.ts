@@ -1,23 +1,23 @@
 import type { StoreApi } from "zustand";
 import type { TerminalStore } from "../types/terminalStoreTypes";
 import { invoke } from "@tauri-apps/api/core";
-import type { SubagentTranscriptSource, TerminalSession } from "../../../lib/types";
-import { resolveAgentTerminalMetadata } from "../../../lib/agentTerminal";
-import { debugConsoleWarn } from "../../../lib/debugConsole";
-import { logError, logInfo, logWarn } from "../../../lib/logger";
-import { useSettingsStore } from "../../../stores/settingsStore";
-import { useSessionStore } from "../../../stores/sessionStore";
-import { normalizeShellKey } from "../../../lib/shell";
-import { useProjectStore } from "../../../stores/projectStore";
-import { resolveCliSessionRebind } from "../../../stores/terminalCliSession";
-import { inferHookBindingSource, resolveCliHookTarget } from "../../../stores/terminalHookBinding";
-import { findProjectByPath, findWorktreeByPath } from "../../../lib/terminalProject";
+import type { SubagentTranscriptSource, TerminalSession } from "../../../shared/types/index";
+import { resolveAgentTerminalMetadata } from "../../agents/api/agentTerminal";
+import { debugConsoleWarn } from "../../../shared/platform/debugConsole";
+import { logError, logInfo, logWarn } from "../../../shared/platform/logger";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { useSessionStore } from "../api/sessionStore";
+import { normalizeShellKey } from "../../../shared/platform/shell";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { resolveCliSessionRebind } from "./terminalCliSession";
+import { inferHookBindingSource, resolveCliHookTarget } from "./terminalHookBinding";
+import { findProjectByPath, findWorktreeByPath } from "../api/terminalProject";
 import {
   addSessionToPaneTree, findPaneLeafBySession, splitPaneLeaf, type TerminalPaneNode,
-} from "../../../stores/terminalPaneTree";
+} from "../api/terminalPaneTree";
 import {
   findWorkspanBySession, syncTerminalWorkspanLayout, updateTerminalWorkspan,
-} from "../../../stores/terminalWorkspan";
+} from "../api/terminalWorkspan";
 import {
   type TabStatusSources, type SubagentTranscriptSubscribeResult, type PtyStatusPayload,
 } from "../types/terminalStoreTypes";

@@ -1,10 +1,10 @@
 import { useCallback, useState, type CSSProperties, type ReactNode } from "react";
-import { useI18n } from "../../../lib/i18n";
-import { Terminal, X, ChevronRight, Folder, Check } from "../../../components/icons";
-import { VendorIcon, inferVendor } from "../../../components/VendorIcon";
-import type { Project, TreeNode } from "../../../lib/types";
-import { Popover, PopoverAnchor, PopoverContent } from "../../../components/ui/popover";
-import { Button } from "../../../components/ui/button";
+import { useI18n } from "../../../shared/i18n/index";
+import { Terminal, X, ChevronRight, Folder, Check } from "../../../shared/ui/icons";
+import { VendorIcon, inferVendor } from "../../../shared/ui/VendorIcon";
+import type { Project, TreeNode } from "../../../shared/types/index";
+import { Popover, PopoverAnchor, PopoverContent } from "../../../shared/ui/popover";
+import { Button } from "../../../shared/ui/button";
 import { type SplitPickerState, type TerminalCloseConfirmState } from "../lib/terminalTabsModel";
 
 export interface SplitProjectPickerProps {

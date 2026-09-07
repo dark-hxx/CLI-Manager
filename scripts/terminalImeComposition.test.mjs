@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const source = readFileSync(
-  new URL("../src/lib/terminalIme.ts", import.meta.url),
+  new URL("../src/features/terminal/lib/terminalIme.ts", import.meta.url),
   "utf8",
 ).replaceAll("\r\n", "\n");
 
@@ -30,14 +30,14 @@ function transpile(relativePath, outputName, replacements = {}) {
   return outputPath;
 }
 
-transpile("../src/lib/terminalTui.ts", "terminalTui.mjs");
+transpile("../src/features/terminal/lib/terminalTui.ts", "terminalTui.mjs");
 transpile(
-  "../src/lib/terminalImeAnchor.ts",
+  "../src/features/terminal/lib/terminalImeAnchor.ts",
   "terminalImeAnchor.mjs",
   { "./terminalTui": "./terminalTui.mjs" },
 );
 const terminalImePath = transpile(
-  "../src/lib/terminalIme.ts",
+  "../src/features/terminal/lib/terminalIme.ts",
   "terminalIme.mjs",
   { "./terminalImeAnchor": "./terminalImeAnchor.mjs" },
 );

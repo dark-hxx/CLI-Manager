@@ -19,7 +19,7 @@ export function decodeOscPathValue(value) { return value; }
 writeFileSync(join(tempDir, "terminalColor.mjs"), `
 export function normalizeHexColor(value, fallback) { return value || fallback; }
 `);
-const parseSource = readFileSync(new URL("../src/lib/terminalOscParse.ts", import.meta.url), "utf8");
+const parseSource = readFileSync(new URL("../src/features/terminal/lib/terminalOscParse.ts", import.meta.url), "utf8");
 const transpiledParse = ts.transpileModule(parseSource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -28,7 +28,7 @@ const transpiledParse = ts.transpileModule(parseSource, {
   fileName: "terminalOscParse.ts",
 }).outputText
   .replace('from "./terminalOscPath"', 'from "./terminalOscPath.mjs"')
-  .replace('from "./terminalColor"', 'from "./terminalColor.mjs"');
+  .replace('from "../../../shared/lib/terminalColor"', 'from "./terminalColor.mjs"');
 writeFileSync(join(tempDir, "terminalOscParse.mjs"), transpiledParse, "utf8");
 writeFileSync(join(tempDir, "terminalStore.mjs"), `
 export const useTerminalStore = {
@@ -41,7 +41,7 @@ export const useTerminalStore = {
   },
 };
 `);
-const hookSource = readFileSync(new URL("../src/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
+const hookSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
 const transpiledHook = ts.transpileModule(hookSource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -52,7 +52,7 @@ const transpiledHook = ts.transpileModule(hookSource, {
   .replace('from "react"', 'from "./react.mjs"')
   .replace('from "../lib/terminalOscPath"', 'from "./terminalOscPath.mjs"')
   .replace('from "../lib/terminalOscParse"', 'from "./terminalOscParse.mjs"')
-  .replace('from "../stores/terminalStore"', 'from "./terminalStore.mjs"');
+  .replace('from "../state"', 'from "./terminalStore.mjs"');
 writeFileSync(join(tempDir, "useTerminalOsc.mjs"), transpiledHook, "utf8");
 
 const parseUrl = pathToFileURL(join(tempDir, "terminalOscParse.mjs")).href;
@@ -124,10 +124,10 @@ test("decodeOsc52Payload accepts wrapped UTF-8 base64 and rejects junk", () => {
 });
 
 test("live PTY output enables OSC 52 copies and replay disables them", () => {
-  const displaySource = readFileSync(new URL("../src/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
+  const displaySource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
   const terminalSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
-  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const settingsSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
+  const appSource = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8");
+  const settingsSource = readFileSync(new URL("../src/shared/preferences/settingsStore.ts", import.meta.url), "utf8");
   assert.match(displaySource, /applyOsc52:\s*payload\.kind !== "replay" && payload\.kind !== "reset"/);
   assert.match(displaySource, /normalizeOutputRef\.current\(rawText, \{ applyOsc52: false \}\)/);
   assert.match(terminalSource, /osc52ClipboardEnabled/);

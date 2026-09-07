@@ -1,4 +1,4 @@
-import type { HistoryIndexStatus } from "../../../lib/types";
+import type { HistoryIndexStatus } from "../../../shared/types/index";
 import { type StatsCacheEntry, type StatsProjectOptionsCacheEntry } from "../types/historyStoreTypes";
 
 export const SESSION_PAGE_SIZE = 20;

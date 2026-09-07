@@ -1,7 +1,7 @@
-import type { Group, TerminalScope } from "../../../lib/types";
+import type { Group, TerminalScope } from "../../../shared/types/index";
 import { useMemo } from "react";
-import { useI18n } from "../../../lib/i18n";
-import type { Project, WorktreeRecord } from "../../../lib/types";
+import { useI18n } from "../../../shared/i18n/index";
+import type { Project, WorktreeRecord } from "../../../shared/types/index";
 
 interface ScopedTerminalEmptyStateContext {
   hasScopedTerminalFilter: boolean;

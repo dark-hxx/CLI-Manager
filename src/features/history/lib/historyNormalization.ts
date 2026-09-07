@@ -1,6 +1,6 @@
-import { resolveHistoryProjectPath } from "../../../lib/historyProjectPaths";
-import { type SshAgentHistoryContext } from "../../../lib/sshAgentHistory";
-import { getHistoryPathArgsSync } from "../../../lib/historyPathArgs";
+import { resolveHistoryProjectPath } from "../api/historyProjectPaths";
+import { type SshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
+import { getHistoryPathArgsSync } from "../api/historyPathArgs";
 import type {
   HistoryBackupStatus,
   HistoryGeneratedTitleMeta,
@@ -33,7 +33,7 @@ import type {
   HistorySource,
   HistorySourceFilter,
   SessionFavoriteSnapshot,
-} from "../../../lib/types";
+} from "../../../shared/types/index";
 import { type HistoryStore, type HistoryEditOutcome, type HistoryBatchDeleteOutcome } from "../types/historyStoreTypes";
 
 export function effectiveProjectPathFilter(state: Pick<HistoryStore, "projectPathFilter" | "scopedProjectPathFilter">): string | null {

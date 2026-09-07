@@ -1,13 +1,13 @@
 import type { useXTermController } from "../hooks/useXTermController";
 import { type CSSProperties } from "react";
-import { hexToRgba } from "../../../lib/terminalColor";
-import { Portal } from "../../../components/ui/Portal";
-import { FontSizeControl } from "../../../components/ui/FontSizeControl";
-import { ArrowDown, Eye, EyeOff } from "../../../components/icons";
-import { TerminalMarkdownPreview } from "../../../components/terminal/TerminalMarkdownPreview";
+import { hexToRgba } from "../../../shared/lib/terminalColor";
+import { Portal } from "../../../shared/ui/Portal";
+import { FontSizeControl } from "../../../shared/ui/FontSizeControl";
+import { ArrowDown, Eye, EyeOff } from "../../../shared/ui/icons";
+import { TerminalMarkdownPreview } from "./TerminalMarkdownPreview";
 import {
   TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN,
-} from "../../../stores/settingsStore";
+} from "../../../shared/preferences/settingsStore";
 
 export function XTermView({
   wrapperRef,

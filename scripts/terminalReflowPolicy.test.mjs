@@ -10,7 +10,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-reflow-policy-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(
-  new URL("../src/terminal/browser/TerminalReflowPolicy.ts", import.meta.url),
+  new URL("../src/features/terminal/browser/TerminalReflowPolicy.ts", import.meta.url),
   "utf8",
 );
 const transpiled = ts.transpileModule(source, {
