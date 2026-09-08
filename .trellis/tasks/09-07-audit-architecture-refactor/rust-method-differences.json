@@ -1,0 +1,1612 @@
+{
+  "summary": {
+    "baselineFiles": 158,
+    "currentFiles": 267,
+    "baselineMethods": 5930,
+    "currentMethods": 5930,
+    "exactBodies": 5734,
+    "formattingOnly": 120,
+    "unresolvedMethods": 76,
+    "unexpandedMacros": 0
+  },
+  "unmatched": [
+    {
+      "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+      "name": "pi_adapter_config_reports_active_and_disabled_mcp_without_unknown_diagnostic",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1289,
+      "candidates": [
+        {
+          "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+          "line": 1289,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "tive\" . into () , format : \"json\" . into () , content : r#\"{\n                  \"mcpServers\": {\n                    \"enabled-server\": { \"type\": \"stdio\", \"command\": \"secret-command\" },\n                    \"disabled-server\"",
+            "after": "tive\" . into () , format : \"json\" . into () , content : r#\"{\r\n                  \"mcpServers\": {\r\n                    \"enabled-server\": { \"type\": \"stdio\", \"command\": \"secret-command\" },\r\n                    \"disabled-serv"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+      "name": "complete_toml_documents_are_parsed_without_false_diagnostics",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1322,
+      "candidates": [
+        {
+          "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+          "line": 1322,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": " : \"toml\" . into () , content : r#\"model_provider = \"custom\"\n\n[mcp_servers.user_docs]\ncommand = \"docs\"\n\"# . into () , } , ConfigDocument { path_label : \"project/.codex/config.toml\" . into () , scope : \"project\" . into ()",
+            "after": " : \"toml\" . into () , content : r#\"model_provider = \"custom\"\r\n\r\n[mcp_servers.user_docs]\r\ncommand = \"docs\"\r\n\"# . into () , } , ConfigDocument { path_label : \"project/.codex/config.toml\" . into () , scope : \"project\" . int"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+      "name": "codex_probe_reads_snake_case_auth_status",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1383,
+      "candidates": [
+        {
+          "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+          "line": 1383,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "ative\" . into () , format : \"toml\" . into () , content : r#\"\n[mcp_servers.authenticated]\ncommand = \"auth\"\n\n[mcp_servers.unauthenticated]\ncommand = \"login\"\n\n[mcp_servers.stdio]\ncommand = \"local\"\n\"# . into () , }] .. Disco",
+            "after": "ative\" . into () , format : \"toml\" . into () , content : r#\"\r\n[mcp_servers.authenticated]\r\ncommand = \"auth\"\r\n\r\n[mcp_servers.unauthenticated]\r\ncommand = \"login\"\r\n\r\n[mcp_servers.stdio]\r\ncommand = \"local\"\r\n\"# . into () , }]"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+      "name": "jsonc_comments_and_trailing_commas_preserve_string_content",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1473,
+      "candidates": [
+        {
+          "file": "src-tauri/agent-capabilities-core/src/lib.rs",
+          "line": 1473,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "{ let normalized = json_comments_removed (\"{\\n              // comment\\n              \\\"mcp\\\": {\\n                \\\"docs\\\": { \\\"url\\\": \\\"https://example.test/a,}\\\", },\\n              },\\n            }\") ; ",
+            "after": "{ let normalized = json_comments_removed (\"{\\r\\n              // comment\\r\\n              \\\"mcp\\\": {\\r\\n                \\\"docs\\\": { \\\"url\\\": \\\"https://example.test/a,}\\\", },\\r\\n              },\\r\\n        "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/hook-schema/src/kimi.rs",
+      "name": "installs_idempotently_and_preserves_comments_order_and_user_hooks",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 530,
+      "candidates": [
+        {
+          "file": "src-tauri/hook-schema/src/kimi.rs",
+          "line": 530,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "{ let original = \"# provider comment\\nmodel = \\\"kimi-k2\\\"\\n\\n[[hooks]]\\n# user hook\\nevent = \\\"Stop\\\"\\ncommand = \\\"third-party --source kimi --event Stop\\\"\\ntimeout = 9\\n\" ; let commands = local_co",
+            "after": "{ let original = \"# provider comment\\r\\nmodel = \\\"kimi-k2\\\"\\r\\n\\r\\n[[hooks]]\\r\\n# user hook\\r\\nevent = \\\"Stop\\\"\\r\\ncommand = \\\"third-party --source kimi --event Stop\\\"\\r\\ntimeout = 9\\r\\n\" ; let com"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/hook-schema/src/kimi.rs",
+      "name": "similar_substrings_are_never_owned_or_removed",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 560,
+      "candidates": [
+        {
+          "file": "src-tauri/hook-schema/src/kimi.rs",
+          "line": 560,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "{ let original = \"[[hooks]]\\nevent = \\\"Stop\\\"\\ncommand = \\\"echo __hook --source kimi --event Stop --owner cli-manager-local later\\\"\\n\" ; let commands = local_commands (\"/cli-manager\") ; le",
+            "after": "{ let original = \"[[hooks]]\\r\\nevent = \\\"Stop\\\"\\r\\ncommand = \\\"echo __hook --source kimi --event Stop --owner cli-manager-local later\\\"\\r\\n\" ; let commands = local_commands (\"/cli-manager\""
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/hook-schema/src/kimi.rs",
+      "name": "exact_owner_with_wrong_event_is_a_conflict",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 671,
+      "candidates": [
+        {
+          "file": "src-tauri/hook-schema/src/kimi.rs",
+          "line": 671,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "= local_commands (\"/cli-manager\") ; let config = \"[[hooks]]\\nevent = \\\"Stop\\\"\\ncommand = \\\"'/cli-manager' __hook --source kimi --event Interrupt --owner cli-manager-local\\\"\\n\" ; let inspected = plan (config , & commands ",
+            "after": "= local_commands (\"/cli-manager\") ; let config = \"[[hooks]]\\r\\nevent = \\\"Stop\\\"\\r\\ncommand = \\\"'/cli-manager' __hook --source kimi --event Interrupt --owner cli-manager-local\\\"\\r\\n\" ; let inspected = plan (config , & com"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/hook-schema/src/kimi.rs",
+      "name": "exact_owner_with_wrong_source_is_a_conflict",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 686,
+      "candidates": [
+        {
+          "file": "src-tauri/hook-schema/src/kimi.rs",
+          "line": 686,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "= local_commands (\"/cli-manager\") ; let config = \"[[hooks]]\\nevent = \\\"Stop\\\"\\ncommand = \\\"'/cli-manager' __hook --source codex --event Stop --owner cli-manager-local\\\"\\n\" ; let inspected = plan (config , & commands , & ",
+            "after": "= local_commands (\"/cli-manager\") ; let config = \"[[hooks]]\\r\\nevent = \\\"Stop\\\"\\r\\ncommand = \\\"'/cli-manager' __hook --source codex --event Stop --owner cli-manager-local\\\"\\r\\n\" ; let inspected = plan (config , & command"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/cc_connect.rs",
+      "name": "codex_profile_wrapper_payload",
+      "kind": "function",
+      "scope": [],
+      "line": 3028,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/remote/cc_connect/codex_launch.rs",
+          "line": 72,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ format ! (\"#!/bin/sh\\nif [ -n \\\"${{{CODEX_SSH_LAUNCH_ENV}:-}}\\\" ]; then\\n  exec \\\"${PROXY_EXECUTABLE_ENV}\\\" {CODEX_PROXY_SUBCOMMAND} \\\"$@\\\"\\nfi\\nif [ \\\"${{1:-}}\\\" = \\\"app-server\\\" ];",
+            "after": "{ format ! (\"#!/bin/sh\\n\\\n        if [ -n \\\"${{{CODEX_SSH_LAUNCH_ENV}:-}}\\\" ]; then\\n\\\n        \\x20\\x20exec \\\"${PROXY_EXECUTABLE_ENV}\\\" {CODEX_PROXY_SUBCOMMAND} \\\"$@\\\"\\n\\\n        fi\\n\\"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "moves_cli_args_only_lineage_forward_and_leaves_missing_features_to_sqlx",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1766,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 93,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ait ; conn . execute (\"CREATE TABLE projects (\\n                id TEXT PRIMARY KEY,\\n                cli_args TEXT NOT NULL DEFAULT ''\\n            )\") . await . unwrap () ; insert_migration_row (& mut conn , 13 , MIGRA",
+            "after": "ait ; conn . execute (\"CREATE TABLE projects (\\n            id TEXT PRIMARY KEY,\\n            cli_args TEXT NOT NULL DEFAULT ''\\n        )\") . await . unwrap () ; insert_migration_row (& mut conn , 13 , MIGRATION_ADD_CLI"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "marks_frontend_created_ssh_group_schema_as_migrated",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1800,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 127,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ait ; conn . execute (\"CREATE TABLE projects (\\n                id TEXT PRIMARY KEY,\\n                name TEXT NOT NULL,\\n                path TEXT NOT NULL\\n            )\") . await . unwrap () ; sqlx :: raw_sql (MIGRAT",
+            "after": "ait ; conn . execute (\"CREATE TABLE projects (\\n            id TEXT PRIMARY KEY,\\n            name TEXT NOT NULL,\\n            path TEXT NOT NULL\\n        )\") . await . unwrap () ; sqlx :: raw_sql (MIGRATION_CREATE_SSH_H"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "migrates_replay_snapshot_inline_patch_to_file_metadata",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1870,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 197,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "nn . execute (\"CREATE TABLE ai_replay_events (\\n                id INTEGER PRIMARY KEY,\\n                session_key TEXT NOT NULL,\\n                event_index INTEGER NOT NULL,\\n                kind TEXT NOT NULL,\\n   ",
+            "after": "nn . execute (\"CREATE TABLE ai_replay_events (\\n            id INTEGER PRIMARY KEY,\\n            session_key TEXT NOT NULL,\\n            event_index INTEGER NOT NULL,\\n            kind TEXT NOT NULL,\\n            payload"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "skips_replay_snapshot_cleanup_when_current_version_marker_exists",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 1935,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 262,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "nn . execute (\"CREATE TABLE ai_replay_events (\\n                id INTEGER PRIMARY KEY,\\n                session_key TEXT NOT NULL,\\n                event_index INTEGER NOT NULL,\\n                kind TEXT NOT NULL,\\n   ",
+            "after": "nn . execute (\"CREATE TABLE ai_replay_events (\\n            id INTEGER PRIMARY KEY,\\n            session_key TEXT NOT NULL,\\n            event_index INTEGER NOT NULL,\\n            kind TEXT NOT NULL,\\n            payload"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "backfills_large_legacy_sets_in_batches_and_inherits_route_paths",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2220,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 546,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "rojects (id, name, path, environment_type) VALUES\\n             ('demo', 'demo', 'D:\\\\work\\\\demo', 'local'),\\n             ('dup-1', 'duplicate', 'D:\\\\one\\\\duplicate', 'local'),\\n             ('dup-2', 'duplicate', 'D:\\\\",
+            "after": "rojects (id, name, path, environment_type) VALUES\\n         ('demo', 'demo', 'D:\\\\work\\\\demo', 'local'),\\n         ('dup-1', 'duplicate', 'D:\\\\one\\\\duplicate', 'local'),\\n         ('dup-2', 'duplicate', 'D:\\\\two\\\\duplica"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "create_migration_table",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2347,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 673,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "nn . execute (\"CREATE TABLE _sqlx_migrations (\\n                version BIGINT PRIMARY KEY,\\n                description TEXT NOT NULL,\\n                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\\n       ",
+            "after": "nn . execute (\"CREATE TABLE _sqlx_migrations (\\n            version BIGINT PRIMARY KEY,\\n            description TEXT NOT NULL,\\n            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\\n            success"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "register_appearance_migration",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2382,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 708,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " sqlx :: query (\"INSERT INTO _sqlx_migrations\\n                 (version, description, installed_on, success, checksum, execution_time)\\n             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)\") . bind (NODE_APPEARANCE",
+            "after": " sqlx :: query (\"INSERT INTO _sqlx_migrations\\n             (version, description, installed_on, success, checksum, execution_time)\\n         VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)\") . bind (NODE_APPEARANCE_MIGRATI"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "register_legacy_node_appearance_v33_migration",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2450,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 774,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " sqlx :: query (\"INSERT INTO _sqlx_migrations\\n                 (version, description, installed_on, success, checksum, execution_time)\\n             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)\") . bind (MIGRATION_ADD_U",
+            "after": " sqlx :: query (\"INSERT INTO _sqlx_migrations\\n             (version, description, installed_on, success, checksum, execution_time)\\n         VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)\") . bind (MIGRATION_ADD_USAGE_ERR"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "ssh_attachment_root_repair_handles_registered_and_preexisting_states",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2546,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 861,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " sqlx :: query (\"INSERT INTO _sqlx_migrations\\n                 (version, description, installed_on, success, checksum, execution_time)\\n             VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)\") . bind (MIGRATION_ADD_S",
+            "after": " sqlx :: query (\"INSERT INTO _sqlx_migrations\\n             (version, description, installed_on, success, checksum, execution_time)\\n         VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)\") . bind (MIGRATION_ADD_SSH_ATTAC"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "create_project_path_backfill_schema",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2681,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 995,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ conn . execute (\"CREATE TABLE projects (\\n                id TEXT PRIMARY KEY,\\n                name TEXT NOT NULL,\\n                path TEXT NOT NULL,\\n                environment_type TEXT NOT NULL DEFAULT 'loca",
+            "after": "{ conn . execute (\"CREATE TABLE projects (\\n            id TEXT PRIMARY KEY,\\n            name TEXT NOT NULL,\\n            path TEXT NOT NULL,\\n            environment_type TEXT NOT NULL DEFAULT 'local'\\n        )\") "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "insert_usage_row",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2721,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 1035,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ sqlx :: query (\"INSERT INTO usage_records (\\n                record_id, data_source, source, session_id, project_key,\\n                project_path, updated_at_ms, started_at_ms\\n             ) VALUES (?1, ?2, ?3, ?4,",
+            "after": "{ sqlx :: query (\"INSERT INTO usage_records (\\n            record_id, data_source, source, session_id, project_key,\\n            project_path, updated_at_ms, started_at_ms\\n         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "create_user_data_db",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2749,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 1063,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " () ; conn . execute (\"CREATE TABLE projects (\\n                id TEXT PRIMARY KEY,\\n                name TEXT NOT NULL\\n            )\") . await . unwrap () ; conn . execute (\"CREATE TABLE groups (\\n                id T",
+            "after": " () ; conn . execute (\"CREATE TABLE projects (\\n            id TEXT PRIMARY KEY,\\n            name TEXT NOT NULL\\n        )\") . await . unwrap () ; conn . execute (\"CREATE TABLE groups (\\n            id TEXT PRIMARY KEY,"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "create_model_prices_table",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2789,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 1103,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "; conn . execute (\"CREATE TABLE model_prices (\\n                model TEXT PRIMARY KEY,\\n                input_per_1m REAL NOT NULL DEFAULT 0,\\n                output_per_1m REAL NOT NULL DEFAULT 0,\\n                cach",
+            "after": "; conn . execute (\"CREATE TABLE model_prices (\\n            model TEXT PRIMARY KEY,\\n            input_per_1m REAL NOT NULL DEFAULT 0,\\n            output_per_1m REAL NOT NULL DEFAULT 0,\\n            cache_read_per_1m RE"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "insert_model_price",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2810,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 1124,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": ") ; sqlx :: query (\"INSERT INTO model_prices (\\n                model, input_per_1m, output_per_1m, cache_read_per_1m,\\n                cache_creation_per_1m, source, updated_at_ms\\n             ) VALUES (?1, ?2, 10, 0, ",
+            "after": ") ; sqlx :: query (\"INSERT INTO model_prices (\\n            model, input_per_1m, output_per_1m, cache_read_per_1m,\\n            cache_creation_per_1m, source, updated_at_ms\\n         ) VALUES (?1, ?2, 10, 0, 0, ?3, 1)\") "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "create_complete_feature_schema",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2840,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 1154,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ conn . execute (\"CREATE TABLE projects (\\n                id TEXT PRIMARY KEY,\\n                cli_args TEXT NOT NULL DEFAULT '',\\n                worktree_strategy TEXT NOT NULL DEFAULT 'disabled',\\n             ",
+            "after": "{ conn . execute (\"CREATE TABLE projects (\\n            id TEXT PRIMARY KEY,\\n            cli_args TEXT NOT NULL DEFAULT '',\\n            worktree_strategy TEXT NOT NULL DEFAULT 'disabled',\\n            worktree_root"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/db_repair.rs",
+      "name": "insert_migration_row",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2887,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/app-data/repair/tests.rs",
+          "line": 1201,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ sqlx :: query (\"INSERT INTO _sqlx_migrations\\n             (version, description, success, checksum, execution_time)\\n             VALUES (?1, ?2, TRUE, ?3, 0)\") . bind (version) . bind (description) . bind (migrati",
+            "after": "{ sqlx :: query (\"INSERT INTO _sqlx_migrations\\n         (version, description, success, checksum, execution_time)\\n         VALUES (?1, ?2, TRUE, ?3, 0)\") . bind (version) . bind (description) . bind (migration_check"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history.rs",
+      "name": "cursor_metadata_reads_sqlite_title_time_and_workspace",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 15787,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/tests/other_sources.rs",
+          "line": 639,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " ; sqlx :: query (\"CREATE TABLE conversations(\\n                id TEXT PRIMARY KEY,\\n                title TEXT,\\n                updated_at INTEGER\\n             )\") . execute (& mut conversation) . await . unwrap () ;",
+            "after": " ; sqlx :: query (\"CREATE TABLE conversations(\\n            id TEXT PRIMARY KEY,\\n            title TEXT,\\n            updated_at INTEGER\\n         )\") . execute (& mut conversation) . await . unwrap () ; sqlx :: query ("
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history.rs",
+      "name": "open_opencode_test_database",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 15970,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/tests/fixtures.rs",
+          "line": 229,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " () ; for statement in [\"CREATE TABLE session(\\n                id TEXT PRIMARY KEY,\\n                directory TEXT,\\n                title TEXT,\\n                slug TEXT,\\n                time_created REAL,\\n        ",
+            "after": " () ; for statement in [\"CREATE TABLE session(\\n            id TEXT PRIMARY KEY,\\n            directory TEXT,\\n            title TEXT,\\n            slug TEXT,\\n            time_created REAL,\\n            time_updated REA"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history.rs",
+      "name": "parse_opencode_database_reads_sqlite_sessions",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 16009,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/tests/opencode.rs",
+          "line": 4,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "rectory, title, slug, time_created, time_updated)\\n             VALUES ('ses_1', 'F:\\\\idea-work\\\\business-center', 'OpenCode title', 'slug', 1700000000, 1700000010)\") . execute (& mut conn) . await . unwrap () ; sqlx :: ",
+            "after": "rectory, title, slug, time_created, time_updated)\\n         VALUES ('ses_1', 'F:\\\\idea-work\\\\business-center', 'OpenCode title', 'slug', 1700000000, 1700000010)\") . execute (& mut conn) . await . unwrap () ; sqlx :: quer"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history.rs",
+      "name": "delete_opencode_session_is_transactional_and_isolated",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 16103,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/tests/opencode.rs",
+          "line": 98,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "rectory, title, slug, time_created, time_updated)\\n             VALUES\\n                ('ses_delete', 'F:/workspace/delete', 'delete', 'delete', 1, 1),\\n                ('ses_keep', 'F:/workspace/keep', 'keep', 'keep', ",
+            "after": "rectory, title, slug, time_created, time_updated)\\n         VALUES\\n            ('ses_delete', 'F:/workspace/delete', 'delete', 'delete', 1, 1),\\n            ('ses_keep', 'F:/workspace/keep', 'keep', 'keep', 1, 1)\") . ex"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "list_sessions",
+      "kind": "function",
+      "scope": [],
+      "line": 1458,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/queries.rs",
+          "line": 255,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " let Ok (index) = tokio :: task :: spawn_blocking (move | | super :: codex_thread_name_index (& roots_for_names)) . await { for session in & mut sessions { if session . source == \"codex\" { if let Some (thread_name) = ind",
+            "after": " let Ok (index) = tokio :: task :: spawn_blocking (move | | { super :: super :: codex_thread_name_index (& roots_for_names) }) . await { for session in & mut sessions { if session . source == \"codex\" { if let Some (threa"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "search_sessions",
+      "kind": "function",
+      "scope": [],
+      "line": 1757,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/queries.rs",
+          "line": 555,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " let Ok (index) = tokio :: task :: spawn_blocking (move | | super :: codex_thread_name_index (& roots_for_names)) . await { for hit in & mut hits { if hit . source == \"codex\" { if let Some (thread_name) = index . names .",
+            "after": " let Ok (index) = tokio :: task :: spawn_blocking (move | | { super :: super :: codex_thread_name_index (& roots_for_names) }) . await { for hit in & mut hits { if hit . source == \"codex\" { if let Some (thread_name) = in"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "get_session_detail_from_v2_with_conn",
+      "kind": "function",
+      "scope": [],
+      "line": 2049,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/session_detail.rs",
+          "line": 26,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " clone () ; Some (tokio :: task :: spawn_blocking (move | | super :: codex_thread_name_index (& roots_for_names)) . await . map_err (| err | err . to_string ()) ?) } else { None } ; let row = sqlx :: query (\"SELECT hs.id",
+            "after": " clone () ; Some (tokio :: task :: spawn_blocking (move | | { super :: super :: codex_thread_name_index (& roots_for_names) }) . await . map_err (| err | err . to_string ()) ?) } else { None } ; let row = sqlx :: query ("
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "replace_v2_session",
+      "kind": "function",
+      "scope": [],
+      "line": 3393,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/materialization.rs",
+          "line": 110,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ref . source == \"codex\" { let codex_thread_names = super :: codex_thread_name_index (roots) ; super :: apply_codex_thread_name (& row . file_ref , & codex_thread_names , & mut parts . computed) ; } let adapted = build_v2",
+            "after": "ref . source == \"codex\" { let codex_thread_names = super :: super :: codex_thread_name_index (roots) ; super :: super :: apply_codex_thread_name (& row . file_ref , & codex_thread_names , & mut parts . computed) ; } let "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "create_legacy_source_instances_schema",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4229,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 3,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "uery (\"CREATE TABLE history_source_instances (\\n                id TEXT PRIMARY KEY,\\n                source_id TEXT NOT NULL,\\n                environment_kind TEXT NOT NULL,\\n                environment_key TEXT NOT NU",
+            "after": "uery (\"CREATE TABLE history_source_instances (\\n            id TEXT PRIMARY KEY,\\n            source_id TEXT NOT NULL,\\n            environment_kind TEXT NOT NULL,\\n            environment_key TEXT NOT NULL,\\n           "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "assert_catalog_fk_support_indexes",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4263,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 37,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "y_scalar (\"SELECT COUNT(*) FROM sqlite_master\\n                 WHERE type = 'index' AND name = ?1\") . bind (index_name) . fetch_one (& mut * conn) . await . unwrap () ; assert_eq ! (count , 1 , \"missing catalog index {i",
+            "after": "y_scalar (\"SELECT COUNT(*) FROM sqlite_master\\n             WHERE type = 'index' AND name = ?1\") . bind (index_name) . fetch_one (& mut * conn) . await . unwrap () ; assert_eq ! (count , 1 , \"missing catalog index {index"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "schema_triggers_populate_trigram_search",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4480,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 255,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_catalog_messages(\\n                roots_key, file_path, message_index, role, timestamp, content\\n             ) VALUES ('roots', 'session.jsonl', 0, 'user', NULL, '历史会话 searchCatalog')\") . e",
+            "after": " query (\"INSERT INTO history_catalog_messages(\\n            roots_key, file_path, message_index, role, timestamp, content\\n         ) VALUES ('roots', 'session.jsonl', 0, 'user', NULL, '历史会话 searchCatalog')\") . execute ("
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "schema_v5_upgrade_rebuilds_compact_fts_without_losing_messages",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4514,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 289,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_catalog_messages(\\n                roots_key, file_path, message_index, role, timestamp, content\\n             ) VALUES ('roots', 'session.jsonl', 0, 'user', NULL,\\n                       'hi",
+            "after": " query (\"INSERT INTO history_catalog_messages(\\n            roots_key, file_path, message_index, role, timestamp, content\\n         ) VALUES ('roots', 'session.jsonl', 0, 'user', NULL,\\n                   'history-catalo"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "current_version_rebuilds_legacy_fts_schema",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4604,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 381,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " (\"CREATE VIRTUAL TABLE {table} USING fts5(\n                    {column}, content='{source_table}', content_rowid='id',\n                    tokenize='trigram case_sensitive 0'\n                )\")) . execute (& mut conn) ",
+            "after": " (\"CREATE VIRTUAL TABLE {table} USING fts5(\n                {column}, content='{source_table}', content_rowid='id',\n                tokenize='trigram case_sensitive 0'\n            )\")) . execute (& mut conn) . await . un"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "schema_upgrades_legacy_source_instances_before_creating_scoped_index",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4666,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 442,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "concurrent_catalog_opens_serialize_legacy_schema_upgrade",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4725,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 501,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ROM pragma_table_info('history_source_instances')\\n             WHERE name = 'scope_kind'\") . fetch_one (& mut first) . await . unwrap () ; assert_eq ! (scope_kind , \"scope_kind\") ; first . close () . await . unwrap () ;",
+            "after": "ROM pragma_table_info('history_source_instances')\\n         WHERE name = 'scope_kind'\") . fetch_one (& mut first) . await . unwrap () ; assert_eq ! (scope_kind , \"scope_kind\") ; first . close () . await . unwrap () ; sec"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "schema_version_does_not_advance_when_metadata_update_fails",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4757,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 533,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " ; sqlx :: query (\"CREATE TABLE history_meta (\\n                key TEXT PRIMARY KEY,\\n                value TEXT NOT NULL,\\n                updated_at INTEGER NOT NULL\\n            )\") . execute (& mut conn) . await . u",
+            "after": " ; sqlx :: query (\"CREATE TABLE history_meta (\\n            key TEXT PRIMARY KEY,\\n            value TEXT NOT NULL,\\n            updated_at INTEGER NOT NULL\\n        )\") . execute (& mut conn) . await . unwrap () ; sqlx "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "schema_creates_v2_history_index_tables",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4791,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 567,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "query_scalar (\"SELECT COUNT(*) FROM sqlite_master\\n             WHERE type = 'table' AND name = 'history_sessions'\") . fetch_one (& mut conn) . await . unwrap () ; assert_eq ! (session_table , 1) ; assert_catalog_fk_supp",
+            "after": "query_scalar (\"SELECT COUNT(*) FROM sqlite_master\\n         WHERE type = 'table' AND name = 'history_sessions'\") . fetch_one (& mut conn) . await . unwrap () ; assert_eq ! (session_table , 1) ; assert_catalog_fk_support_"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "shadow_v2_source_selection_excludes_ssh_instances",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4901,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 677,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ry (\"INSERT INTO history_source_instances(\\n                    id, source_id, environment_kind, environment_key, storage_kind,\\n                    locations_json, settings_hash, activation_state,\\n                    s",
+            "after": "ry (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state,\\n                scope_kind, s"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "source_activation_scope_allows_local_and_multiple_ssh_instances",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 4939,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 715,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ry (\"INSERT INTO history_source_instances(\\n                    id, source_id, environment_kind, environment_key, storage_kind,\\n                    locations_json, settings_hash, activation_state,\\n                    s",
+            "after": "ry (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state,\\n                scope_kind, s"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "remote_sync_ignores_older_generation_and_cursor",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5037,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 813,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "eration, instance.sync_cursor_json, session.title\\n             FROM history_source_state AS state\\n             JOIN history_source_instances AS instance ON instance.id = state.source_instance_id\\n             JOIN hist",
+            "after": "eration, instance.sync_cursor_json, session.title\\n         FROM history_source_state AS state\\n         JOIN history_source_instances AS instance ON instance.id = state.source_instance_id\\n         JOIN history_sessions"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "remote_summary_sync_removes_persisted_message_and_fts_rows",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5081,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 857,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": ":: query_scalar (\"SELECT id FROM history_sessions\\n             WHERE source_instance_id = 'remote-instance' AND source_session_id = 'session-1'\") . fetch_one (& mut conn) . await . unwrap () ; sqlx :: query (\"INSERT INT",
+            "after": ":: query_scalar (\"SELECT id FROM history_sessions\\n         WHERE source_instance_id = 'remote-instance' AND source_session_id = 'session-1'\") . fetch_one (& mut conn) . await . unwrap () ; sqlx :: query (\"INSERT INTO hi"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "list_sessions_merges_v2_first_and_legacy_gaps",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5161,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 937,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "search_sessions_merges_v2_first_and_legacy_gaps",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5255,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 1024,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "stats_session_facts_reads_all_active_v2_sources",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5354,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 1122,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "get_session_detail_from_v2_rehydrates_messages_tools_and_changes",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5534,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 1301,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "shadow_build_v2_populates_sessions_messages_and_sync_run",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5662,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 1429,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "shadow_build_v2_uses_codex_adapter_stats_and_raw_pointers",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5834,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 1600,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "shadow_build_v2_includes_active_non_core_sources",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 5937,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 1703,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ssion.json\") ; std :: fs :: write (& file , \"{\\n                \\\"sessionId\\\": \\\"gemini-session\\\",\\n                \\\"projectHash\\\": \\\"hash-a\\\",\\n                \\\"messages\\\": [\\n                    { \\\"role\\\": \\\"user\\\",",
+            "after": "ssion.json\") ; std :: fs :: write (& file , \"{\\n            \\\"sessionId\\\": \\\"gemini-session\\\",\\n            \\\"projectHash\\\": \\\"hash-a\\\",\\n            \\\"messages\\\": [\\n                { \\\"role\\\": \\\"user\\\", \\\"content\\\": \\\""
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history/catalog.rs",
+      "name": "record_v2_index_failure_upserts_retry_count",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 6010,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/catalog/tests.rs",
+          "line": 1776,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " query (\"INSERT INTO history_source_instances(\\n                id, source_id, environment_kind, environment_key, storage_kind,\\n                locations_json, settings_hash, activation_state, created_at, updated_at\\n  ",
+            "after": " query (\"INSERT INTO history_source_instances(\\n            id, source_id, environment_kind, environment_key, storage_kind,\\n            locations_json, settings_hash, activation_state, created_at, updated_at\\n         )"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/history_title.rs",
+      "name": "ensure_table",
+      "kind": "function",
+      "scope": [],
+      "line": 158,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/history/title.rs",
+          "line": 158,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "ery (\"CREATE TABLE IF NOT EXISTS history_generated_titles (\\n            session_key             TEXT PRIMARY KEY,\\n            source_id               TEXT NOT NULL,\\n            source_instance_id      TEXT NOT NULL DE",
+            "after": "ery (\"CREATE TABLE IF NOT EXISTS history_generated_titles (\\r\\n            session_key             TEXT PRIMARY KEY,\\r\\n            source_id               TEXT NOT NULL,\\r\\n            source_instance_id      TEXT NOT N"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/hook_settings.rs",
+      "name": "claude_common_config_strip_keeps_user_hooks",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 3797,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/hooks/settings/tests.rs",
+          "line": 199,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ let managed = \"{\\n          \\\"env\\\": {\\\"KEEP\\\": \\\"yes\\\"},\\n          \\\"hooks\\\": {\\n            \\\"Stop\\\": [\\n              {\\\"matcher\\\": \\\"\\\", \\\"hooks\\\": [{\\\"type\\\": \\\"command\\\", \\\"comm",
+            "after": "{ let managed = \"{\\n      \\\"env\\\": {\\\"KEEP\\\": \\\"yes\\\"},\\n      \\\"hooks\\\": {\\n        \\\"Stop\\\": [\\n          {\\\"matcher\\\": \\\"\\\", \\\"hooks\\\": [{\\\"type\\\": \\\"command\\\", \\\"command\\\": \\\"cli-man"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/opencode_hook.rs",
+      "name": "plugin_source",
+      "kind": "function",
+      "scope": [],
+      "line": 64,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/hooks/opencode.rs",
+          "line": 64,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ include_str ! (\"../../resources/opencode/cli-manager-hook.js\") . to_string () }",
+            "after": "{ include_str ! (\"../../../resources/opencode/cli-manager-hook.js\") . to_string () }"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/project_groups.rs",
+      "name": "save_group_binding_in_transaction",
+      "kind": "function",
+      "scope": [],
+      "line": 264,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/projects/groups.rs",
+          "line": 264,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "s (MAX_ID_BATCH_SIZE) { let sql = format ! (\"UPDATE projects\n                 SET path = ?, path_mode = 'custom', updated_at = ?\n                 WHERE path_mode = 'inherit' AND group_id IN ({})\" , placeholders (chunk . ",
+            "after": "s (MAX_ID_BATCH_SIZE) { let sql = format ! (\"UPDATE projects\r\n                 SET path = ?, path_mode = 'custom', updated_at = ?\r\n                 WHERE path_mode = 'inherit' AND group_id IN ({})\" , placeholders (chunk "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/project_groups.rs",
+      "name": "delete_group_in_transaction",
+      "kind": "function",
+      "scope": [],
+      "line": 355,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/projects/groups.rs",
+          "line": 355,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " END\") ; expression } ; let sql = format ! (\"UPDATE projects\n             SET path = {path_expression},\n                 path_mode = CASE WHEN path_mode = 'inherit' THEN 'custom' ELSE path_mode END,\n                 grou",
+            "after": " END\") ; expression } ; let sql = format ! (\"UPDATE projects\r\n             SET path = {path_expression},\r\n                 path_mode = CASE WHEN path_mode = 'inherit' THEN 'custom' ELSE path_mode END,\r\n                 g"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/sync.rs",
+      "name": "database_restore_preserves_ssh_host_project_binding",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 676,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/sync/commands.rs",
+          "line": 676,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "(\"1\" . to_string ()) ,] } , BackupDatabaseStatement { sql : \"INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,pr",
+            "after": "(\"1\" . to_string ()) ,] } , BackupDatabaseStatement { sql : concat ! (\"INSERT INTO ssh_hosts (id,name,group_name,group_id,host,port,username,\" , \"config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands/system_notification.rs",
+      "name": "send_notification_via_windows",
+      "kind": "function",
+      "scope": [],
+      "line": 75,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/notifications/system.rs",
+          "line": 75,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "& title) , xml_escape (& body)) ; let script = format ! (r#\"\n        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;\n        [Windows.Data.Xml.Dom.X",
+            "after": "& title) , xml_escape (& body)) ; let script = format ! (r#\"\r\n        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;\r\n        [Windows.Data.Xml.Dom"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/hook_client.rs",
+      "name": "post",
+      "kind": "function",
+      "scope": [],
+      "line": 218,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/hooks/client.rs",
+          "line": 218,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " ; let head = format ! (\"POST /api/claude-hook HTTP/1.1\\r\\n\\\n         Host: 127.0.0.1\\r\\n\\\n         Authorization: Bearer {token}\\r\\n\\\n         Content-Type: application/json\\r\\n\\\n         Content-Length: {}\\r\\n\\\n       ",
+            "after": " ; let head = format ! (\"POST /api/claude-hook HTTP/1.1\\r\\n\\\r\n         Host: 127.0.0.1\\r\\n\\\r\n         Authorization: Bearer {token}\\r\\n\\\r\n         Content-Type: application/json\\r\\n\\\r\n         Content-Length: {}\\r\\n\\\r\n  "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/live_server/http.rs",
+      "name": "reload_script",
+      "kind": "function",
+      "scope": [],
+      "line": 339,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/files/live_server/http.rs",
+          "line": 339,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ format ! (r#\"<script data-cli-manager-live-server>(()=>{{const endpoint=\"{RELOAD_ENDPOINT}\";let version=\"{version}\";let reported=false;async function poll(){{try{{const r",
+            "after": "{ format ! (concat ! (r#\"<script data-cli-manager-live-server>(()=>{{const endpoint=\"{endpoint}\";\"# , r#\"let version=\"{version}\";let reported=false;async function poll(){{t"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/database.rs",
+      "name": "builtin_fluxion_settings_config",
+      "kind": "function",
+      "scope": [],
+      "line": 382,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/database.rs",
+          "line": 382,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "BASE_URL , \"config\" : format ! (r#\"model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"custom\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nbase_url = \"{FLUXION_OPENAI_BASE_URL}\"\n\"#) }) . to_string () , _ =",
+            "after": "BASE_URL , \"config\" : format ! (r#\"model_provider = \"custom\"\r\n\r\n[model_providers.custom]\r\nname = \"custom\"\r\nwire_api = \"responses\"\r\nrequires_openai_auth = true\r\nbase_url = \"{FLUXION_OPENAI_BASE_URL}\"\r\n\"#) }) . to_string ("
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/global.rs",
+      "name": "claude_writer_preserves_user_owned_fields",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2653,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/global/tests.rs",
+          "line": 9,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ let before = br#\"{\n          \"hooks\": {\"UserPromptSubmit\": []},\n          \"permissions\": {\"allow\": [\"Read\"]},\n          \"env\": {\"ANTHROPIC_AUTH_TOKEN\": \"old\", \"USER_FLAG\": \"keep\"},\n    ",
+            "after": "{ let before = br#\"{\n      \"hooks\": {\"UserPromptSubmit\": []},\n      \"permissions\": {\"allow\": [\"Read\"]},\n      \"env\": {\"ANTHROPIC_AUTH_TOKEN\": \"old\", \"USER_FLAG\": \"keep\"},\n      \"unknown\":"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/global.rs",
+      "name": "codex_auth_writer_removes_legacy_top_level_credentials",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2883,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/global/tests.rs",
+          "line": 239,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "{ let before = br#\"{\n          \"OPENAI_API_KEY\": \"old-root-secret\",\n          \"auth\": {\"api_key\": \"old-nested-secret\", \"account_id\": \"keep\"},\n          \"unknown\": true\n        }\"# ; let e",
+            "after": "{ let before = br#\"{\n      \"OPENAI_API_KEY\": \"old-root-secret\",\n      \"auth\": {\"api_key\": \"old-nested-secret\", \"account_id\": \"keep\"},\n      \"unknown\": true\n    }\"# ; let effective = json "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/global.rs",
+      "name": "codex_writer_preserves_unowned_toml_sections",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 2901,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/global/tests.rs",
+          "line": 257,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": " keep\n[mcp_servers.demo]\ncommand = \"demo\"\nmodel = \"old\"\n        model_provider = \"old-provider\"\n\"# ; let effective = json ! ({ \"config\" : \"[model_providers.demo]\\nname = \\\"new\\\"\\nauthorization = \\\"nested-secret\\\"\\n\\nmode",
+            "after": " keep\n[mcp_servers.demo]\ncommand = \"demo\"\nmodel = \"old\"\n    model_provider = \"old-provider\"\n\"# ; let effective = json ! ({ \"config\" : \"[model_providers.demo]\\nname = \\\"new\\\"\\nauthorization = \\\"nested-secret\\\"\\n\\nmodel = "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/models.rs",
+      "name": "fetch",
+      "kind": "function",
+      "scope": [],
+      "line": 44,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/models.rs",
+          "line": 44,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "t: app_type={app_type} url={url} auth_header={auth_header} \\\n         api_format={api_format} api_key_field={api_key_field} key_source={key_source} \\\n         key={key_fingerprint} key_len={key_len}\" , auth_header = if u",
+            "after": "t: app_type={app_type} url={url} auth_header={auth_header} \\\r\n         api_format={api_format} api_key_field={api_key_field} key_source={key_source} \\\r\n         key={key_fingerprint} key_len={key_len}\" , auth_header = if"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/repository/catalog.rs",
+      "name": "provider_update_preserves_key_manager_owned_codex_secrets",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 480,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/repository/catalog.rs",
+          "line": 480,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "{ let existing = \"{\\n            \\\"auth\\\": {\\\"OPENAI_API_KEY\\\": \\\"sk-real\\\"},\\n            \\\"config\\\": \\\"api_key = \\\\\\\"toml-real\\\\\\\"\\\\nmodel = \\\\\\\"old\\\\\\\"\\\\n\\\"\\n        }\" ; let in",
+            "after": "{ let existing = \"{\\r\\n            \\\"auth\\\": {\\\"OPENAI_API_KEY\\\": \\\"sk-real\\\"},\\r\\n            \\\"config\\\": \\\"api_key = \\\\\\\"toml-real\\\\\\\"\\\\nmodel = \\\\\\\"old\\\\\\\"\\\\n\\\"\\r\\n        }\" ; "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/repository/documents.rs",
+      "name": "codex_document_patch_preserves_redacted_credentials",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 538,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/repository/documents.rs",
+          "line": 538,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "{ let existing = \"{\\n            \\\"auth\\\": {\\\"OPENAI_API_KEY\\\": \\\"sk-secret\\\"},\\n            \\\"config\\\": \\\"# keep\\\\nmodel = \\\\\\\"gpt-test\\\\\\\"\\\\napi_key = \\\\\\\"toml-secret\\\\\\\"\\\\n\\\"\\n ",
+            "after": "{ let existing = \"{\\r\\n            \\\"auth\\\": {\\\"OPENAI_API_KEY\\\": \\\"sk-secret\\\"},\\r\\n            \\\"config\\\": \\\"# keep\\\\nmodel = \\\\\\\"gpt-test\\\\\\\"\\\\napi_key = \\\\\\\"toml-secret\\\\\\\"\\\\n\\"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/routing.rs",
+      "name": "resolve_wsl_nat_gateway",
+      "kind": "function",
+      "scope": [],
+      "line": 1076,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/routing.rs",
+          "line": 1076,
+          "kind": "function",
+          "scope": [],
+          "firstDifference": {
+            "before": "let route_and_addresses = run_wsl_script_output (distro , \"\\nroute=$(ip -4 route show default) || exit 1\\ngateway=\\ndevice=\\nset -- $route\\nwhile [ \\\"$#\\\" -gt 0 ]; do\\n  case \\\"$1\\\" in\\n    via) gateway=$2; shift 2 ;;\\n ",
+            "after": "let route_and_addresses = run_wsl_script_output (distro , \"\\r\\nroute=$(ip -4 route show default) || exit 1\\r\\ngateway=\\r\\ndevice=\\r\\nset -- $route\\r\\nwhile [ \\\"$#\\\" -gt 0 ]; do\\r\\n  case \\\"$1\\\" in\\r\\n    via) gateway=$2;"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/runtime.rs",
+      "name": "parses_projected_codex_runtime_fields",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 541,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/runtime.rs",
+          "line": 541,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "{ let settings = \"{\\n            \\\"env\\\": {\\n                \\\"OPENAI_BASE_URL\\\": \\\"https://api.example.com/v1\\\",\\n                \\\"OPENAI_MODEL\\\": \\\"gpt-test\\\",\\n                ",
+            "after": "{ let settings = \"{\\r\\n            \\\"env\\\": {\\r\\n                \\\"OPENAI_BASE_URL\\\": \\\"https://api.example.com/v1\\\",\\r\\n                \\\"OPENAI_MODEL\\\": \\\"gpt-test\\\",\\r\\n        "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/provider/runtime.rs",
+      "name": "selects_codex_provider_base_url_from_toml",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 570,
+      "candidates": [
+        {
+          "file": "src-tauri/src/features/providers/service/runtime.rs",
+          "line": 570,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "{ let settings = \"{\\n            \\\"config\\\": \\\"model_provider = \\\\\\\"cloud\\\\\\\"\\\\n\\\\n[model_providers.cloud]\\\\nbase_url = \\\\\\\"https://config.example.com\\\\\\\"\\\\nmodel = \\\\\\\"gpt-config\\",
+            "after": "{ let settings = \"{\\r\\n            \\\"config\\\": \\\"model_provider = \\\\\\\"cloud\\\\\\\"\\\\n\\\\n[model_providers.cloud]\\\\nbase_url = \\\\\\\"https://config.example.com\\\\\\\"\\\\nmodel = \\\\\\\"gpt-confi"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/pty/boundary.rs",
+      "name": "stress_random_split_reconstructs_original",
+      "kind": "function",
+      "scope": [
+        "tests"
+      ],
+      "line": 269,
+      "candidates": [
+        {
+          "file": "src-tauri/src/infrastructure/pty/boundary.rs",
+          "line": 269,
+          "kind": "function",
+          "scope": [
+            "tests"
+          ],
+          "firstDifference": {
+            "before": "R]\\x1b[0m \\xe6\\xb5\\x8b\\xe8\\xaf\\x95 emoji \\xf0\\x9f\\x98\\x80\\n\\\n            \\x1b]0;tab title\\x07normal text\\n\\\n            \\x1b[1;33mYellow\\x1b[0m \\xe4\\xb8\\xad\\xe6\\x96\\x87 done\\n\" . iter () . copied () . collect () ; let mu",
+            "after": "R]\\x1b[0m \\xe6\\xb5\\x8b\\xe8\\xaf\\x95 emoji \\xf0\\x9f\\x98\\x80\\n\\\r\n            \\x1b]0;tab title\\x07normal text\\n\\\r\n            \\x1b[1;33mYellow\\x1b[0m \\xe4\\xb8\\xad\\xe6\\x96\\x87 done\\n\" . iter () . copied () . collect () ; let "
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/pty/manager.rs",
+      "name": "powershell_runtime_monitor_args",
+      "kind": "method",
+      "scope": [
+        "impl PtyManager None"
+      ],
+      "line": 356,
+      "candidates": [
+        {
+          "file": "src-tauri/src/infrastructure/pty/manager.rs",
+          "line": 356,
+          "kind": "method",
+          "scope": [
+            "impl PtyManager None"
+          ],
+          "firstDifference": {
+            "before": "{ let script = \"\\n$global:CliManagerLastHistoryId = $null\\n$global:CliManagerPreviousPrompt = if (Test-Path function:\\\\prompt) { (Get-Command prompt).ScriptBlock } else { $null ",
+            "after": "{ let script = \"\\r\\n$global:CliManagerLastHistoryId = $null\\r\\n$global:CliManagerPreviousPrompt = if (Test-Path function:\\\\prompt) { (Get-Command prompt).ScriptBlock } else { $n"
+          }
+        }
+      ]
+    },
+    {
+      "file": "src-tauri/src/pty/manager.rs",
+      "name": "write_bash_integration_rcfile",
+      "kind": "method",
+      "scope": [
+        "impl PtyManager None"
+      ],
+      "line": 408,
+      "candidates": [
+        {
+          "file": "src-tauri/src/infrastructure/pty/manager.rs",
+          "line": 408,
+          "kind": "method",
+          "scope": [
+            "impl PtyManager None"
+          ],
+          "firstDifference": {
+            "before": "{ let script = \"[ -f /etc/profile ] && . /etc/profile\\n[ -f ~/.bashrc ] && . ~/.bashrc\\n__cli_manager_prompt() {\\n  local exit_code=$?\\n  if [ \\\"${__cli_manager_ran:-0}\\\" = \\\"1\\\" ]; then\\n    printf '\\\\033]133;D;%s",
+            "after": "{ let script = \"[ -f /etc/profile ] && . /etc/profile\\r\\n[ -f ~/.bashrc ] && . ~/.bashrc\\r\\n__cli_manager_prompt() {\\r\\n  local exit_code=$?\\r\\n  if [ \\\"${__cli_manager_ran:-0}\\\" = \\\"1\\\" ]; then\\r\\n    printf '\\\\03"
+          }
+        }
+      ]
+    }
+  ]
+}
