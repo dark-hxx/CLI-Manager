@@ -48,7 +48,8 @@ const MINT_SLIME_PACK: &[u8] =
     include_bytes!("../../../../public/pet-catalog/packages/mint-slime-1.0.0.clipet");
 const TERMINAL_ROBOT_PREVIEW: &str =
     include_str!("../../../../public/pet-catalog/previews/terminal-robot.svg");
-const PIXEL_FOX_PREVIEW: &str = include_str!("../../../../public/pet-catalog/previews/pixel-fox.svg");
+const PIXEL_FOX_PREVIEW: &str =
+    include_str!("../../../../public/pet-catalog/previews/pixel-fox.svg");
 const MINT_SLIME_PREVIEW: &str =
     include_str!("../../../../public/pet-catalog/previews/mint-slime.svg");
 
@@ -211,10 +212,12 @@ fn ensure_pet_dirs(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// 校验修剪后的桌宠 ID 非空且只含规定的小写 ASCII 字符。
+// 校验修剪后的桌宠 ID 是单个普通路径组件且只含规定的小写 ASCII 字符。
 fn valid_pet_id(value: &str) -> bool {
     let value = value.trim();
-    !value.is_empty()
+    let mut components = Path::new(value).components();
+    matches!(components.next(), Some(Component::Normal(_)))
+        && components.next().is_none()
         && value.len() <= 80
         && value.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
@@ -1162,7 +1165,7 @@ pub fn desktop_pet_import(path: String) -> Result<InstalledPet, String> {
 }
 
 #[tauri::command]
-// 按校验后的 ID 拼接安装根并删除目录，未额外规范化校验目标；仅存在于外部的 Codex 桌宠拒绝卸载。
+// 按已验证为单个普通路径组件的 ID 删除受管理目录；仅存在于外部的 Codex 桌宠拒绝卸载。
 pub fn desktop_pet_uninstall(pet_id: String) -> Result<(), String> {
     let pet_id = pet_id.trim();
     if !valid_pet_id(pet_id) {
@@ -1593,6 +1596,9 @@ mod tests {
     // 验证桌宠 ID 和相对资产路径拒绝典型非法输入。
     fn pet_ids_and_paths_reject_unsafe_values() {
         assert!(valid_pet_id("official.pixel-fox"));
+        assert!(!valid_pet_id("."));
+        assert!(!valid_pet_id(".."));
+        assert!(!valid_pet_id("  ..  "));
         assert!(!valid_pet_id("../pixel-fox"));
         assert!(valid_codex_pet_id("banana-cat"));
         assert!(!valid_codex_pet_id("banana--cat"));

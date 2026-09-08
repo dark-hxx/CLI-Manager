@@ -23,6 +23,13 @@ This project has a real defense pattern (see `src-tauri/src/features/terminal/ba
 | Composed from `appLocalDataDir() + <static>` | **Trusted by construction** |
 | Anything mixed (user-supplied fragment glued onto a root) | **Untrusted — validate the fragment** |
 
+An opaque identifier is still a path when code later calls `base.join(id)`. If it must name exactly
+one child directory, require exactly one `std::path::Component::Normal` in addition to the domain
+allowlist. Explicitly test `.`, `..`, and whitespace-trimmed variants; a character allowlist that
+permits `.` does not make those special components safe.
+For the executable desktop-pet contract and error matrix, see
+[`desktop-pet-file-safety-contracts.md`](../backend/desktop-pet-file-safety-contracts.md).
+
 ### Step 2 — Layer the defense (BOTH layers required, not either-or)
 
 **Layer A — Path-string validation (cheap, before I/O)**
