@@ -362,7 +362,6 @@ export function ToolsCard({ session }: { session: HistorySessionDetail | null })
     >
       {inferred.total > 0 && (
         <div title={t("termStats.inferredHelp")}>
-          <div className="text-[11px]">{t("termStats.inferredCount", { count: inferred.total })}</div>
           <ToolCountList label={t("termStats.inferredTools")} color={TERM_PANEL.dim} items={inferred.builtin} />
           <ToolCountList label={t("termStats.inferredMcp")} color={TERM_PANEL.cyan} items={inferred.mcp} />
         </div>
